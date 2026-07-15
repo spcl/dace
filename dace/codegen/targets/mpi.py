@@ -50,10 +50,10 @@ int __dace_comm_rank = 0;
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_mpi_{sdfg_name}({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_mpi_{sdfg_name}({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_init_mpi({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_mpi({sdfg_state_name} *__state);
 
-int __dace_init_mpi_{sdfg_name}({sdfg_state_name} *__state{params}) {{
+int __dace_init_mpi({sdfg_state_name} *__state{params}) {{
     int isinit = 0;
     if (MPI_Initialized(&isinit) != MPI_SUCCESS)
         return 1;
@@ -71,7 +71,7 @@ int __dace_init_mpi_{sdfg_name}({sdfg_state_name} *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_mpi_{sdfg_name}({sdfg_state_name} *__state) {{
+int __dace_exit_mpi({sdfg_state_name} *__state) {{
     MPI_Comm_free(&__dace_mpi_comm);
     MPI_Finalize();
 
@@ -81,7 +81,6 @@ int __dace_exit_mpi_{sdfg_name}({sdfg_state_name} *__state) {{
 }}
 """.format(params=params_comma,
            sdfg=sdfg,
-           sdfg_name=sdfg.name,
            sdfg_state_name=mangle_dace_state_struct_name(sdfg),
            file_header=fileheader.getvalue()), 'cpp', MPICodeGen, 'MPI')
         return [codeobj]

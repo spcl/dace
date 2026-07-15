@@ -407,14 +407,14 @@ class CUDACodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_cuda_{sdfg_name}({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_cuda_{sdfg_name}({sdfg_state_name} *__state);
-DACE_EXPORTED bool __dace_gpu_set_stream_{sdfg_name}({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
-DACE_EXPORTED void __dace_gpu_set_all_streams_{sdfg_name}({sdfg_state_name} *__state, gpuStream_t stream);
+DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
+DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
 {other_globalcode}
 
-int __dace_init_cuda_{sdfg_name}({sdfg_state_name} *__state{params}) {{
+int __dace_init_cuda({sdfg_state_name} *__state{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -453,7 +453,7 @@ int __dace_init_cuda_{sdfg_name}({sdfg_state_name} *__state{params}) {{
     return 0;
 }}
 
-int __dace_exit_cuda_{sdfg_name}({sdfg_state_name} *__state) {{
+int __dace_exit_cuda({sdfg_state_name} *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
@@ -472,7 +472,7 @@ int __dace_exit_cuda_{sdfg_name}({sdfg_state_name} *__state) {{
     return __err;
 }}
 
-bool __dace_gpu_set_stream_{sdfg_name}({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
+bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
 {{
     if (streamid < 0 || streamid >= {nstreams})
         return false;
@@ -482,7 +482,7 @@ bool __dace_gpu_set_stream_{sdfg_name}({sdfg_state_name} *__state, int streamid,
     return true;
 }}
 
-void __dace_gpu_set_all_streams_{sdfg_name}({sdfg_state_name} *__state, gpuStream_t stream)
+void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
 {{
     for (int i = 0; i < {nstreams}; ++i)
         __state->gpu_context->streams[i] = stream;
@@ -491,7 +491,6 @@ void __dace_gpu_set_all_streams_{sdfg_name}({sdfg_state_name} *__state, gpuStrea
 {localcode}
 """.format(params=params_comma,
            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
-           sdfg_name=self._global_sdfg.name,
            initcode=initcode.getvalue(),
            exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),
@@ -1602,13 +1601,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     create_grid_barrier = True
 
         self.create_grid_barrier = create_grid_barrier
-        # Suffix with the root SDFG's name so distinct SDFGs compiled
-        # into the same binary don't produce colliding kernel symbols
-        # when they happen to share a map label. ``__dace_runkernel_<kernel_name>``
-        # and the generated ``<kernel_name>(...)`` device function both
-        # inherit this suffix.
-        kernel_name = '%s_%d_%d_%d_%s' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry),
-                                          self._global_sdfg.name)
+        kernel_name = '%s_%d_%d_%d' % (scope_entry.map.label, cfg.cfg_id, state.block_id, state.node_id(scope_entry))
 
         # Comprehend grid/block dimensions from scopes
         grid_dims, block_dims, tbmap, dtbmap, _ = self.get_kernel_dimensions(dfg_scope)
@@ -2248,8 +2241,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             except (TypeError, ValueError, AttributeError):
                 continue
             # Loop-invariant target (not indexed by the map iteration variables).
-            if iedge.data.subset is not None and any(
-                    str(s) in map_params for s in iedge.data.subset.free_symbols):
+            if iedge.data.subset is not None and any(str(s) in map_params for s in iedge.data.subset.free_symbols):
                 continue
             redtype = operations.detect_reduction_type(iedge.data.wcr)
             identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
@@ -2267,8 +2259,8 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             })
         return out
 
-    def _emit_gpu_block_reduction(self, red: dict, idstr: str, cfg: ControlFlowRegion, state_id: int,
-                                  node: nodes.Node, stream: CodeIOStream) -> None:
+    def _emit_gpu_block_reduction(self, red: dict, idstr: str, cfg: ControlFlowRegion, state_id: int, node: nodes.Node,
+                                  stream: CodeIOStream) -> None:
         """Emit the thread-block fold for one reduction: ``cub::BlockReduce`` over each
         thread's register partial, then one ``reduce_atomic`` from thread 0. Emitted AFTER
         the bounds guard closes so all threads reach the (barrier-using) cub call;
@@ -3030,8 +3022,7 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # all threads live for the (barrier-using) cub fold. Out-of-range threads carry the
             # identity; thread 0 commits the single atomic.
             for i, red in enumerate(self._gpu_block_reductions):
-                self._emit_gpu_block_reduction(red, '%s_%d' % (node.map.label, i), cfg, state_id, node,
-                                               callsite_stream)
+                self._emit_gpu_block_reduction(red, '%s_%d' % (node.map.label, i), cfg, state_id, node, callsite_stream)
                 self._cpu_codegen._gpu_block_reduction_covered.discard(red['data'])
             self._gpu_block_reductions = []
 
