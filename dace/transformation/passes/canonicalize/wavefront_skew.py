@@ -211,13 +211,47 @@ def nested_loop_context(state: SDFGState, inner: LoopRegion) -> Optional[List[Tu
 
 
 class Dependence:
-    """One carried dependence: distance ``(du, dv)`` (possibly parametric in the
-    enclosing reduction-loop vars ``nested``, each with an interval)."""
+    """One carried dependence: distance ``(du, dv) = writer_iteration - current``
+    (possibly parametric in the enclosing reduction-loop vars ``nested``, each
+    with an interval), plus its ``kind``.
 
-    def __init__(self, du, dv, nested: List[Tuple[str, object, object]]):
+    ``kind`` is ``'flow'`` when the current iteration reads a value the sweep
+    already produced (the writer is lexicographically *before* the current
+    iteration -- a backward distance), and ``'anti'`` when it reads a value that
+    a *later* iteration overwrites (the writer is lexicographically *after* --
+    a forward distance, as in the in-place Gauss-Seidel reads ``A[i, j+1]`` /
+    ``A[i+1, j]`` of the old value). The two impose opposite-signed legality
+    constraints (see :func:`schedule_legal`): flow needs ``tau . delta < 0``
+    (producer before consumer), anti needs ``tau . delta > 0`` (read before the
+    overwrite). Treating an anti dependence as flow -- the pre-fix behaviour --
+    makes both the backward and forward reads demand contradictory signs, so no
+    skew is ever found for a symmetric stencil."""
+
+    def __init__(self, du, dv, nested: List[Tuple[str, object, object]], kind: str = 'flow'):
         self.du = symbolic.simplify(du)
         self.dv = symbolic.simplify(dv)
         self.nested = nested
+        self.kind = kind
+
+
+def dependence_kind(du, dv) -> str:
+    """Classify a distance ``(du, dv) = writer - current`` as ``'flow'`` or
+    ``'anti'`` by the lexicographic sign of its first non-zero component (a
+    positive first component means the writer runs after the current iteration,
+    so the read sees the soon-to-be-overwritten old value -- an anti dependence).
+
+    Only *numeric* (constant) distances are classified as ``'anti'``; a distance
+    with a symbolic component keeps the conservative ``'flow'`` treatment. This is
+    sound: a symbolic forward read handled as flow can only cause the skew to be
+    *refused* (its flow constraint is unsatisfiable under the symbol-positivity
+    assumption), never mis-scheduled -- and every symbolic case in practice is a
+    backward (flow) read anyway."""
+    du_s, dv_s = symbolic.simplify(du), symbolic.simplify(dv)
+    if not (du_s.is_number and dv_s.is_number):
+        return 'flow'
+    if du_s > 0 or (du_s == 0 and dv_s > 0):
+        return 'anti'
+    return 'flow'
 
 
 def collect_carrier(inner: LoopRegion, sdfg: SDFG,
@@ -264,7 +298,7 @@ def collect_carrier(inner: LoopRegion, sdfg: SDFG,
             dv = symbolic.simplify(v_r - sym(v))
             if du == 0 and dv == 0:
                 continue                   # in-place self-read, not a dependence
-            deps.append(Dependence(du, dv, ctx))
+            deps.append(Dependence(du, dv, ctx, dependence_kind(du, dv)))
         if deps:
             carriers.append((arr, wmap, deps))
     if len(carriers) != 1:
@@ -319,10 +353,20 @@ def params_of(cons: List[object], dims: List[str]) -> List[str]:
 
 def schedule_legal(tau: Tuple[int, int], deps: List[Dependence], u: str, v: str,
                    domain: List[object], assume: List[object]) -> bool:
-    """``tau`` is legal iff no dependence has a domain point with ``tau.delta >= 0``."""
+    """``tau`` is legal iff every dependence is strictly ordered on the sequential
+    ``t`` axis. For a **flow** dependence the producer must precede the consumer
+    (``tau.delta < 0``, i.e. no domain point with ``tau.delta >= 0``); for an
+    **anti** dependence the read must precede the overwrite (``tau.delta > 0``,
+    i.e. no domain point with ``tau.delta <= 0``). ``delta`` is the stored
+    ``(du, dv) = writer - current``."""
     for dep in deps:
         dims, cons = dep_dims_and_cons(dep, u, v, domain, assume)
-        cons = cons + [tau_dot(tau, dep)]
+        # Add the constraint whose satisfiable region is the *illegal* one: for
+        # flow that is ``tau.delta >= 0``, for anti ``tau.delta <= 0`` (rendered
+        # as ``-tau.delta >= 0``). ``tau`` is legal for this dep iff that region
+        # is empty over the domain.
+        td = tau_dot(tau, dep)
+        cons = cons + [td if dep.kind == 'flow' else symbolic.simplify(-td)]
         try:
             empty = poly.is_domain_empty(dims, params_of(cons, dims), cons)
         except ValueError:

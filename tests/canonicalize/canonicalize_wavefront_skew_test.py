@@ -289,5 +289,72 @@ def test_wavefront_skew_steep_then_l2m_keeps_one_sequential_loop():
     assert len(_loops(sdfg)) <= 1
 
 
+def test_dependence_kind_classifies_backward_flow_forward_anti():
+    """A distance ``(du, dv) = writer - current`` is flow when lexicographically
+    backward (writer earlier -> read sees the new value) and anti when forward
+    (writer later -> read sees the soon-overwritten old value). Symbolic
+    components stay conservatively flow."""
+    from dace import symbolic
+    from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
+    p = symbolic.pystr_to_symbolic
+    assert dependence_kind(p('0'), p('-1')) == 'flow'   # aa[i, j-1]
+    assert dependence_kind(p('-1'), p('0')) == 'flow'   # aa[i-1, j]
+    assert dependence_kind(p('-1'), p('1')) == 'flow'   # aa[i-1, j+1] (du<0 dominates)
+    assert dependence_kind(p('0'), p('1')) == 'anti'    # aa[i, j+1] (old)
+    assert dependence_kind(p('1'), p('0')) == 'anti'    # aa[i+1, j] (old)
+    assert dependence_kind(p('1'), p('-1')) == 'anti'   # aa[i+1, j-1] (du>0 dominates)
+    assert dependence_kind(p('0'), p('-sym1')) == 'flow'  # symbolic -> conservative flow
+
+
+@dace.program
+def gauss_seidel_5pt(aa: dace.float64[N, N]):
+    """Classic 5-point in-place Gauss-Seidel. It reads FORWARD neighbours
+    ``aa[i, j+1]`` and ``aa[i+1, j]`` (the still-old values a later iteration
+    overwrites) as well as backward ``aa[i, j-1]`` / ``aa[i-1, j]``. The forward
+    reads are ANTI dependences whose legality constraint is opposite-signed to a
+    flow dependence's; modelling them as flow makes the backward and forward reads
+    demand contradictory skews, so the pass would refuse. With the flow/anti split
+    the anti-diagonal skew ``tau = (1, 1)`` is legal."""
+    for i in range(1, N - 1):
+        for j in range(1, N - 1):
+            aa[i, j] = (aa[i, j - 1] + aa[i - 1, j] + aa[i, j + 1] + aa[i + 1, j]) / 4.0
+
+
+def test_wavefront_skew_five_point_gauss_seidel_forward_reads_lifts_to_map():
+    """The 5-point in-place Gauss-Seidel skews on the anti-diagonal despite its
+    forward (anti-dependence) reads -- one sequential ``t``-loop + a parallel
+    inner ``p``-Map."""
+    from dace.sdfg import nodes
+
+    sdfg = gauss_seidel_5pt.to_sdfg(simplify=True)
+    res = WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+    loops = _loops(sdfg)
+    assert len(loops) == 1 and loops[0].loop_variable.startswith(_SKEW_T_PREFIX)
+    map_entries = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    assert len(map_entries) == 1 and map_entries[0].map.params[0].startswith(_SKEW_P_PREFIX)
+
+
+def test_wavefront_skew_five_point_gauss_seidel_value_preserving():
+    """The anti-diagonal skew of the 5-point Gauss-Seidel reproduces the
+    sequential reference exactly -- the forward reads must be scheduled before
+    the overwrite for this to hold."""
+    n = 12
+    rng = np.random.default_rng(51)
+    aa0 = rng.standard_normal((n, n))
+    ref = aa0.copy()
+    for i in range(1, n - 1):
+        for j in range(1, n - 1):
+            ref[i, j] = (ref[i, j - 1] + ref[i - 1, j] + ref[i, j + 1] + ref[i + 1, j]) / 4.0
+
+    sdfg = gauss_seidel_5pt.to_sdfg(simplify=True)
+    WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+    got = aa0.copy()
+    sdfg(aa=got, N=n)
+    assert np.allclose(got, ref)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
