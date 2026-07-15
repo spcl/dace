@@ -159,8 +159,14 @@ def find_promotable_scalars(sdfg: sd.SDFG,
             continue
         if transients_only and not desc.transient:
             # A non-transient (argument) scalar is admissible only as a read-only
-            # const input when ``readonly_inputs`` is set.
-            if not (readonly_inputs and aname not in written_data):
+            # const input when ``readonly_inputs`` is set -- and only a TRUE scalar
+            # (``dt.Scalar``), never a length-1 ARRAY argument. Promoting an array
+            # argument to a symbol silently changes the external ABI (the caller passes
+            # an array, not a scalar value); a length-1 array is part of the array
+            # signature and must survive canonicalization unchanged. A ``stride: int32``
+            # scalar arg (the intended read-only-input case) is a ``dt.Scalar`` and still
+            # promotes.
+            if not (readonly_inputs and aname not in written_data and isinstance(desc, dt.Scalar)):
                 continue
             readonly_input_candidates.add(aname)
         if desc.total_size != 1:
