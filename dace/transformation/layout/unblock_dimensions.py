@@ -58,14 +58,17 @@ class UnblockDimensions(ppl.Pass):
     def _recover_extent(self, blocked_dim, factor: int):
         """Invert Block's per-dimension division to recover the original extent.
 
-        Block emitted ``int_ceil(E, factor)`` (symbol), ``E / factor`` (divisible
-        symexpr) or ``E // factor`` (int). ``int_ceil(E, factor)`` inverts to ``E``
-        exactly (Block already assumed divisibility); the division forms invert by
-        ``blocked * factor`` (sympy folds ``(E/factor)*factor -> E``).
+        Block emits ``int_ceil(E, factor)`` (non-divisible / bare symbol) or
+        ``int_floor(E, factor)`` (divisible symexpr) for the outer block count; a concrete
+        divisible int folds to a plain integer. Both ``int_ceil(E, factor)`` and
+        ``int_floor(E, factor)`` invert to ``E`` exactly -- Block only emits them where it
+        assumed the extent maps back to ``E`` under blocking (``floor(E/f)*f`` would NOT fold
+        to ``E`` symbolically, so we unwrap the wrapper rather than multiply). A folded
+        integer count hits the fallback ``count * factor``.
         """
         expr = dace.symbolic.pystr_to_symbolic(blocked_dim)
-        if type(expr).__name__ == 'int_ceil' and len(expr.args) == 2 and dace.symbolic.simplify(expr.args[1] -
-                                                                                                 factor) == 0:
+        if type(expr).__name__ in ('int_ceil', 'int_floor') and len(
+                expr.args) == 2 and dace.symbolic.simplify(expr.args[1] - factor) == 0:
             return expr.args[0]
         return dace.symbolic.simplify(expr * factor)
 
@@ -147,7 +150,12 @@ class UnblockDimensions(ppl.Pass):
                     if edge.data.other_subset is not None:
                         raise NotImplementedError("UnblockDimensions: other_subset memlets are unsupported.")
                     new_subset = self._unblocked_subset(edge.data.subset, masks, factors)
-                    edge.data = dace.memlet.Memlet(data=edge.data.data, subset=new_subset)
+                    # Preserve wcr: a reduction into the unblocked target keeps accumulating.
+                    edge.data = dace.memlet.Memlet(data=edge.data.data,
+                                                   subset=new_subset,
+                                                   wcr=edge.data.wcr,
+                                                   wcr_nonatomic=edge.data.wcr_nonatomic,
+                                                   dynamic=edge.data.dynamic)
         for nsdfg, inner in self._nested_targets(sdfg, arr_name):
             self._replace_memlets_recursive(nsdfg, inner, masks, factors)
 
@@ -186,8 +194,8 @@ class UnblockDimensions(ppl.Pass):
                             merged.append(f"(({outer}) * {factors[d]} + ({inner}))")
                         else:
                             merged.append(idx[d])
-                    new_assignments[k] = re.sub(rf'{re.escape(arr_name)}\[(.*)\]',
-                                                f"{arr_name}[{', '.join(merged)}]", v)
+                    new_assignments[k] = re.sub(rf'{re.escape(arr_name)}\[(.*)\]', f"{arr_name}[{', '.join(merged)}]",
+                                                v)
                 else:
                     new_assignments[k] = v
             edge.data.assignments = new_assignments

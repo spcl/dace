@@ -24,20 +24,22 @@ class SplitDimensions(ppl.Pass):
 
     def _split_dimension(sefl, arr: dace.data.Data, dim_expr: dace.symbolic.SymExpr | dace.symbolic.symbol | int,
                          factor: int):
-        # If we can't divide the block properly we need 1 extra block, therefore use int_ceil
+        # Outer block count. When the dimension divides evenly the count is int_floor(E, factor);
+        # otherwise one extra block is needed, i.e. int_ceil(E, factor). Never use `/` or `//` --
+        # `int_floor`/`int_ceil` are the correct integer forms (a symbolic `E / factor` would carry
+        # a rational, and C `/` truncates rather than floors). int_floor(8, 4) folds to the int 4.
         if isinstance(dim_expr, dace.symbolic.symbol):
             return dace.symbolic.SymExpr(f"int_ceil({dim_expr}, {factor})")
         elif isinstance(dim_expr, int):
-            # If the length is an integer, ensure we evaluate an integer
             if dim_expr % factor == 0:
-                return (dim_expr // factor)
+                return dace.symbolic.pystr_to_symbolic(f"int_floor({dim_expr}, {factor})")
             else:
-                return ((dim_expr // factor) + 1)
+                return dace.symbolic.pystr_to_symbolic(f"int_ceil({dim_expr}, {factor})")
         elif isinstance(dim_expr, dace.symbolic.SymExpr):
-            # Same threament for SymExpr as Symbol
+            # Same treatment for SymExpr as Symbol
             divisible = simplify(dim_expr.expr % factor) == 0
             if divisible:
-                return dace.symbolic.SymExpr(f"({dim_expr} / {factor})")
+                return dace.symbolic.SymExpr(f"int_floor({dim_expr}, {factor})")
             else:
                 return dace.symbolic.SymExpr(f"int_ceil({dim_expr}, {factor})")
         else:
@@ -320,9 +322,16 @@ class SplitDimensions(ppl.Pass):
                     # we would have [(b,e,s)], if we have a range then:
                     # we would have [(floor(b/16), floor(e/16), s)]
                     new_range = self._split_range_expressions(edge.data.subset, masks, factors, edge, state)
+                    # Preserve write-conflict resolution (a reduction into a blocked
+                    # target keeps its wcr), the non-atomic flag, and the dynamic flag --
+                    # rebuilding the memlet with only subset/other_subset would silently
+                    # drop the reduction and turn `+=` into last-writer-wins.
                     new_memlet = dace.memlet.Memlet(data=edge.data.data,
                                                     subset=new_range,
-                                                    other_subset=copy.deepcopy(edge.data.other_subset))
+                                                    other_subset=copy.deepcopy(edge.data.other_subset),
+                                                    wcr=edge.data.wcr,
+                                                    wcr_nonatomic=edge.data.wcr_nonatomic,
+                                                    dynamic=edge.data.dynamic)
                     edge.data = new_memlet
                 # Other subset issue be careful
                 if isinstance(edge.dst, dace.nodes.AccessNode) and edge.dst.data == arr_name:

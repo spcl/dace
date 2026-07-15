@@ -183,7 +183,12 @@ class ShuffleElements(ppl.Pass):
                     raise NotImplementedError("ShuffleElements: other_subset memlets are unsupported.")
                 self._rename_connectors(edge, arr, shuffled)
                 new_subset = self._compose_subset(edge.data.subset, fn, dim, size)
-                edge.data = dace.memlet.Memlet(data=shuffled, subset=new_subset)
+                # Preserve wcr: a reduction into the shuffled target keeps accumulating.
+                edge.data = dace.memlet.Memlet(data=shuffled,
+                                               subset=new_subset,
+                                               wcr=edge.data.wcr,
+                                               wcr_nonatomic=edge.data.wcr_nonatomic,
+                                               dynamic=edge.data.dynamic)
         # Nested SDFGs: the inner array keeps its connector name; only its body memlets compose
         # sigma^{-1} (the shape is unchanged, so no descriptor edits and no boundary states).
         for nsdfg, inner in nested:
@@ -197,7 +202,11 @@ class ShuffleElements(ppl.Pass):
                 if edge.data.other_subset is not None:
                     raise NotImplementedError("ShuffleElements: other_subset memlets are unsupported.")
                 new_subset = self._compose_subset(edge.data.subset, fn, dim, size)
-                edge.data = dace.memlet.Memlet(data=arr, subset=new_subset)
+                edge.data = dace.memlet.Memlet(data=arr,
+                                               subset=new_subset,
+                                               wcr=edge.data.wcr,
+                                               wcr_nonatomic=edge.data.wcr_nonatomic,
+                                               dynamic=edge.data.dynamic)
         for nsdfg, inner in self._nested_targets(sdfg, arr):
             self._rewrite_inner(nsdfg, inner, fn, dim, size)
 
