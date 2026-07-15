@@ -11,10 +11,11 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 
-from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets
+from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.dataflow.map_unroll import MapUnroll
 from dace.transformation.passes.analysis.analysis import AccessSets, FindAccessNodes, StateReachability
 from dace.transformation.passes.inline_tasklet_connectors import tasklet_emits_brace_free
 
@@ -22,6 +23,12 @@ from dace.transformation.passes.inline_tasklet_connectors import tasklet_emits_b
 WRITER_CONST = 'const'  #: A compile-time constant value (numeric, no data inputs).
 WRITER_RUNTIME = 'runtime'  #: A value that depends on other data at runtime.
 WRITER_UNKNOWN = 'unknown'  #: Cannot prove either of the above -> leave unmarked.
+
+# Upper bound on the iteration count of a constant-fill map that is fully unrolled into per-element
+# writes (see _unroll_constant_fill_maps). A larger fill is left as a runtime map (not const-inited),
+# so only genuinely small compile-time buffers unroll -- a bigger extent never explodes into a giant
+# initializer / many tasklets.
+CONST_FILL_UNROLL_LIMIT = 16
 
 
 @properties.make_properties
@@ -33,10 +40,12 @@ class MarkConstInit(ppl.Pass):
 
     For each such descriptor the pass distinguishes two cases:
 
-    * Every writer is a pure constant producer (an assignment tasklet with no data inputs, e.g. ``out = 0``, or a
-      constant-fill map / memset-0). This covers both a single write and an element-wise pattern such as
-      ``arr[0]=0; arr[1]=1; arr[2]=2; arr[3]=3`` whose writes collectively initialize the array (possibly spread across
-      several states or access nodes). The descriptor is classified as ``constexpr_static``: a compile-time initializer
+    * Every writer is a pure constant producer (an assignment tasklet with no data inputs, e.g. ``out = 0``). A small
+      static-extent constant-fill MAP (``for i: arr[i] = <f(i)>``) is first fully unrolled into exactly this pattern
+      (see :meth:`_unroll_constant_fill_maps`), so a uniform fill and an index-dependent one share the same path. This
+      covers both a single write and an element-wise pattern such as ``arr[0]=0; arr[1]=1; arr[2]=2; arr[3]=3`` whose
+      writes collectively initialize the array (possibly spread across several states or access nodes). The descriptor
+      is classified as ``constexpr_static``: a compile-time initializer
       is built from the collected ``{subset -> value}`` map (zero-filling any unwritten elements), promoted to an SDFG
       constant (so that ``generate_constants`` emits a ``constexpr`` initializer), and every now-dead init write is
       removed from the dataflow. The descriptor itself is intentionally left in ``sdfg.arrays`` -- allocation is skipped
@@ -71,6 +80,19 @@ class MarkConstInit(ppl.Pass):
         :return: A dictionary mapping each SDFG's ``cfg_id`` to a dictionary of ``{descriptor name: classification}``
                  for the descriptors that were marked, or ``None`` if nothing was marked.
         """
+        # Step 0: fully unroll static-extent constant-fill maps (``for i: arr[i] = <f(i)>``) into
+        # per-element writes, so a single uniform ``map -> tasklet -> array`` fill and an
+        # index-dependent fill collapse into the SAME element-wise tasklet pattern the classifier
+        # already handles -- no map-exit producer special case, and a fill of a compile-time-computable
+        # index expression (``arr[i] = i*i``) becomes constant once the index is substituted.
+        if self._unroll_constant_fill_maps(top_sdfg):
+            # The unroll changed the graph, so the analyses this pass consumes are stale: recompute
+            # them on the mutated SDFG before classifying.
+            pipeline_results = dict(pipeline_results)
+            pipeline_results[FindAccessNodes.__name__] = FindAccessNodes().apply_pass(top_sdfg, {})
+            pipeline_results[AccessSets.__name__] = AccessSets().apply_pass(top_sdfg, {})
+            pipeline_results[StateReachability.__name__] = StateReachability().apply_pass(top_sdfg, {})
+
         access_nodes_all = pipeline_results[FindAccessNodes.__name__]
         access_sets = pipeline_results[AccessSets.__name__]
         state_reach_all = pipeline_results[StateReachability.__name__]
@@ -100,6 +122,72 @@ class MarkConstInit(ppl.Pass):
         return f'MarkConstInit marked {count} descriptor(s) as const-initializable.'
 
     # ---------------------------------------------------------------------------------------------------------------
+
+    def _unroll_constant_fill_maps(self, top_sdfg: SDFG) -> bool:
+        """Fully unrolls every static-extent constant-fill map into per-element tasklet writes.
+
+        A constant-fill map is a top-level (unnested) map, with a compile-time-constant range of at
+        most ``CONST_FILL_UNROLL_LIMIT`` iterations, whose body reads no data (only the map index and
+        constants flow in) and writes only transient arrays -- the ``map entry -depedge- tasklet
+        -mapexit-> array`` shape. Unrolling it via :class:`MapUnroll` (which substitutes each index
+        literal into the body) turns it into the element-wise ``arr[0]=..; arr[1]=..`` pattern the
+        classifier already collects, so a uniform fill and an index-dependent fill (``arr[i]=i*i``,
+        constant once ``i`` is a literal) go through one path with no map-producer special case.
+
+        :return: True if any map was unrolled (the caller then recomputes its stale analyses).
+        """
+        changed = False
+        for sdfg in list(top_sdfg.all_sdfgs_recursive()):
+            for state in list(sdfg.states()):
+                scope = state.scope_dict()
+                targets = [
+                    node for node in state.nodes() if isinstance(node, nd.MapEntry) and scope[node] is None
+                    and self._is_constant_fill_map(sdfg, state, node)
+                ]
+                for map_entry in targets:
+                    if map_entry not in state.nodes():
+                        continue  # defensive: an earlier unroll in this state removed it
+                    MapUnroll.apply_to(sdfg, verify=False, save=False, annotate=False, map_entry=map_entry)
+                    changed = True
+        return changed
+
+    def _is_constant_fill_map(self, sdfg: SDFG, state: SDFGState, map_entry: nd.MapEntry) -> bool:
+        """True for a top-level map whose iterations only WRITE transient arrays from the index and
+        constants (no data read in), with a compile-time-constant range of at most
+        ``CONST_FILL_UNROLL_LIMIT`` iterations -- the shape it is safe and worthwhile to unroll."""
+        # No data flows into the scope: every value written comes from the index / constants.
+        if any(not e.data.is_empty() for e in state.in_edges(map_entry)):
+            return False
+        map_exit = state.exit_node(map_entry)
+        out_edges = [e for e in state.out_edges(map_exit) if e.data is not None and e.data.data is not None]
+        if not out_edges:
+            return False
+        # Only fills of plain transient arrays (never program I/O, streams, views, references, ...).
+        for e in out_edges:
+            desc = sdfg.arrays.get(e.data.data)
+            if not isinstance(desc, (dt.Scalar, dt.Array)) or isinstance(desc, (dt.View, dt.Reference)):
+                return False
+            if not desc.transient:
+                return False
+        # A nested-SDFG / library-node body is not a simple fill -- leave it alone.
+        body = state.scope_subgraph(map_entry, include_entry=False, include_exit=False).nodes()
+        if any(isinstance(n, (nd.NestedSDFG, nd.LibraryNode)) for n in body):
+            return False
+        # Constant, bounded iteration count.
+        count = 1
+        for begin, end, step in map_entry.map.range:
+            try:
+                lo = int(symbolic.evaluate(begin, sdfg.constants))
+                hi = int(symbolic.evaluate(end, sdfg.constants))
+                st = int(symbolic.evaluate(step, sdfg.constants))
+            except (TypeError, ValueError):
+                return False
+            if st == 0:
+                return False
+            count *= max(0, (hi - lo) // st + 1)
+            if count == 0 or count > CONST_FILL_UNROLL_LIMIT:
+                return False
+        return True
 
     def _process_sdfg(self, sdfg: SDFG, access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode],
                                                                                       Set[nd.AccessNode]]]],
@@ -290,37 +378,16 @@ class MarkConstInit(ppl.Pass):
         return True
 
     def _edge_producer_value(self, state: SDFGState, edge: Any, name: str) -> Tuple[str, Any]:
-        """Classifies the value delivered by a single write ``edge`` as constant, runtime, or unknown."""
+        """Classifies the value delivered by a single write ``edge`` as constant, runtime, or unknown.
+
+        Only a direct tasklet writer is a const/runtime candidate. A constant-fill MAP is handled up
+        front by :meth:`_unroll_constant_fill_maps` (it becomes per-element tasklet writes before this
+        runs), so a map exit reaching here is a non-constant producer -- classified runtime, hence
+        never const-inited (and never touched by ``_remove_write``)."""
         src = edge.src
         if isinstance(src, nd.Tasklet):
             return self._tasklet_value(state, src, edge.src_conn)
-        if isinstance(src, nd.MapExit):
-            entry = state.entry_node(src)
-            if entry is not None and any(not ie.data.is_empty() for ie in state.in_edges(entry)):
-                return WRITER_RUNTIME, None
-            # Prefer the inner producers feeding exactly this exit output connector; fall back to all inner producers.
-            in_conn = 'IN_' + edge.src_conn[4:] if isinstance(edge.src_conn,
-                                                              str) and edge.src_conn.startswith('OUT_') else None
-            inner_edges = [ie for ie in state.in_edges(src) if in_conn is None or ie.dst_conn == in_conn]
-            if not inner_edges:
-                inner_edges = state.in_edges(src)
-            values: List[Any] = []
-            for inner_edge in inner_edges:
-                inner = inner_edge.src
-                if isinstance(inner, nd.Tasklet):
-                    kind, value = self._tasklet_value(state, inner, inner_edge.src_conn)
-                    if kind != WRITER_CONST:
-                        return kind, None
-                    values.append(value)
-                elif isinstance(inner, nd.AccessNode):
-                    # Value copied in from other data inside the map -> runtime.
-                    return WRITER_RUNTIME, None
-                else:
-                    return WRITER_UNKNOWN, None
-            if not values or len(set(values)) != 1:
-                return WRITER_UNKNOWN, None
-            return WRITER_CONST, values[0]
-        # e.g. a copy directly from another access node -> value from other data.
+        # e.g. a copy from another access node, or a (non-unrolled) map exit -> value from other data.
         return WRITER_RUNTIME, None
 
     def _tasklet_value(self, state: SDFGState, tasklet: nd.Tasklet, out_conn: Optional[str]) -> Tuple[str, Any]:
@@ -474,22 +541,12 @@ class MarkConstInit(ppl.Pass):
                     state.remove_node(node)
 
     def _prune_dead(self, state: SDFGState, node: nd.Node) -> None:
-        """Recursively removes a producer node (tasklet or map scope) that no longer has any consumers."""
+        """Recursively removes a dead producer node (a now-consumerless tasklet, and any access node
+        it orphans). Constant-fill maps are unrolled to tasklets before classification, so a removed
+        const write is always a tasklet -- no map-scope pruning is needed here."""
         if node not in state.nodes():
             return
-        if isinstance(node, nd.MapExit):
-            if state.out_degree(node) != 0:
-                return
-            entry = state.entry_node(node)
-            if entry is None:
-                return
-            external_srcs = [ie.src for ie in state.in_edges(entry)]
-            for scope_node in list(state.scope_subgraph(entry, include_entry=True, include_exit=True).nodes()):
-                if scope_node in state.nodes():
-                    state.remove_node(scope_node)
-            for src in external_srcs:
-                self._prune_dead(state, src)
-        elif isinstance(node, nd.Tasklet):
+        if isinstance(node, nd.Tasklet):
             if state.out_degree(node) != 0:
                 return
             external_srcs = [ie.src for ie in state.in_edges(node)]

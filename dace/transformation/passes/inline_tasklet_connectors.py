@@ -32,13 +32,13 @@ classic connector-based lowering), so the pass is always correctness-preserving:
   atomic ``write_and_resolve`` path.
 * Non-single-element accesses (vector / pointer connectors, e.g. a whole row
   passed to a library call) are left alone.
-* For non-Python (C++/library) tasklets only scalar connectors are inlined, via
-  conservative token replacement; pointer/array connectors passed to library
-  calls (cuBLAS, memcpy, ...) are never touched.
+* Only Python tasklet bodies are rewritten here. C++ / library tasklet bodies are
+  handled at code-generation time (``ExperimentalCPUCodeGen.rewrite_cpp_tasklet_body``),
+  which tokenizes with the pygments C++ lexer so string / char literals and comments
+  are never touched; this pass leaves them in classic connector form.
 * Reference-set, stream push/pop, and non-Array/Scalar data are left alone.
 """
 import ast
-import re
 import warnings
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -49,9 +49,6 @@ from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.pass_pipeline import Modifies
-
-# Characters that terminate an identifier when scanning a C++ tasklet body.
-CPP_TOKEN_BOUNDARY = re.compile(r'[A-Za-z_]\w*')
 
 
 class InlineTaskletConnectors(ppl.Pass):
@@ -184,31 +181,6 @@ class InlineTaskletConnectors(ppl.Pass):
         ast.fix_missing_locations(new_tree)
         return ast.unparse(new_tree), inliner.inlined
 
-    def _rewrite_cpp(self, node: nodes.Tasklet, accesses: Dict[str, Tuple[str, List[str]]]) -> Tuple[str, Set[str]]:
-        code = node.code.as_string
-        inlined: Set[str] = set()
-        # Only inline connectors that appear as whole-word identifiers and are
-        # never immediately followed by '[' (i.e. not subscripted / not pointer
-        # arguments to a library call). Conservative: skip the whole tasklet if
-        # any target connector is subscripted.
-        for conn in accesses:
-            for m in re.finditer(r'\b%s\b' % re.escape(conn), code):
-                after = code[m.end():m.end() + 1]
-                if after == '[':
-                    return code, set()  # subscripted -> not safe, keep classic
-
-        def replace_identifier(match: 're.Match') -> str:
-            ident = match.group(0)
-            if ident in accesses:
-                data, indices = accesses[ident]
-                inlined.add(ident)
-                return '%s[%s]' % (data, ', '.join(indices))
-            return ident
-
-        # Replace outside of string/char literals: split on literals, rewrite gaps.
-        new_code = _replace_cpp_identifiers(code, replace_identifier)
-        return new_code, inlined
-
 
 def tasklet_emits_brace_free(sdfg: SDFG, state, tasklet: nodes.Tasklet) -> bool:
     """True iff ``InlineTaskletConnectors`` will inline EVERY connector of ``tasklet``,
@@ -267,54 +239,3 @@ class _ConnectorInliner(ast.NodeTransformer):
             self.inlined.add(node.id)
             return ast.copy_location(self._make_access(data, indices), node)
         return node
-
-
-def _replace_cpp_identifiers(code: str, replace: 're.Match') -> str:
-    """
-    Applies ``replace`` to every identifier token in ``code`` that lies outside
-    of string / char literals and line/block comments.
-    """
-    out: List[str] = []
-    i = 0
-    n = len(code)
-    while i < n:
-        c = code[i]
-        # String or char literal
-        if c in ('"', "'"):
-            quote = c
-            j = i + 1
-            while j < n:
-                if code[j] == '\\':
-                    j += 2
-                    continue
-                if code[j] == quote:
-                    j += 1
-                    break
-                j += 1
-            out.append(code[i:j])
-            i = j
-            continue
-        # Line comment
-        if c == '/' and i + 1 < n and code[i + 1] == '/':
-            j = code.find('\n', i)
-            j = n if j == -1 else j
-            out.append(code[i:j])
-            i = j
-            continue
-        # Block comment
-        if c == '/' and i + 1 < n and code[i + 1] == '*':
-            j = code.find('*/', i + 2)
-            j = n if j == -1 else j + 2
-            out.append(code[i:j])
-            i = j
-            continue
-        # Identifier
-        if c.isalpha() or c == '_':
-            m = CPP_TOKEN_BOUNDARY.match(code, i)
-            ident = m.group(0)
-            out.append(replace(re.match(r'.*', ident)))
-            i = m.end()
-            continue
-        out.append(c)
-        i += 1
-    return ''.join(out)

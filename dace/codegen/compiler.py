@@ -157,9 +157,13 @@ def apply_clang_tidy(code_path: str) -> None:
     header, body = split_leading_includes(lines)
     tmp_path = code_path + '.tidytmp'
     checks = CLANG_TIDY_CHECKS
-    lang_args = ['-std=c++20']
+    # Tidy at the configured C++ standard (the same value CMake compiles with, see
+    # DACE_CPP_STANDARD), so a fix is never applied under a different standard than the code
+    # is built with.
+    std_arg = '-std=c++%s' % str(Config.get('compiler', 'cpp_standard')).strip()
+    lang_args = [std_arg]
     if code_path.endswith('.cu'):
-        lang_args = ['-x', 'cuda', '--cuda-host-only', '--no-cuda-version-check', '-std=c++20']
+        lang_args = ['-x', 'cuda', '--cuda-host-only', '--no-cuda-version-check', std_arg]
     try:
         with open(tmp_path, 'w') as fh:
             fh.writelines(body)

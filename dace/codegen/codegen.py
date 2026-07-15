@@ -247,7 +247,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         from dace.transformation.pass_pipeline import Pipeline
         from dace.transformation.passes.mark_const_init import MarkConstInit
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
-        from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
         from dace.transformation.interstate.sdfg_nesting import InlineSDFG
         from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
         from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
