@@ -11,7 +11,7 @@ import copy
 import numpy
 import dace
 
-from dace.libraries.layout.shuffle import register_shuffle
+from dace.libraries.layout.shuffle import register_shuffle, emit_shuffle_globals, _symbol_params
 from dace.libraries.layout.algebra import Shuffle
 from dace.libraries.layout.lowering import relayout_map
 from dace.transformation.layout.shuffle_elements import ShuffleElements
@@ -53,6 +53,28 @@ def test_registry_inverse_roundtrips_numerically():
     fwd, inv = cyc.numeric_forward(), cyc.numeric_inverse()
     for i in range(10):
         assert inv(fwd(i, M=10), M=10) == i  # sigma^-1 . sigma == id over the domain
+
+
+def test_registry_excludes_call_callees():
+    """A function callee (pow/isqrt/...) is NOT mistaken for an SDFG symbol parameter."""
+    assert _symbol_params("pow(i, 2)", "isqrt(i)") == ()
+    assert _symbol_params("(3*i) % M", "(i + M) % M") == ("M", )
+
+
+def test_registry_emits_floored_mod():
+    """A modulo lowers through the floored-mod helper, matching Python's % (not C's truncation)."""
+    sh = register_shuffle("t_shift", "(i + 3) % 8", "(i - 3) % 8")
+    assert "shuffle_pymod(" in sh.c_definitions()
+
+
+def test_emit_shuffle_globals_name_collision_raises():
+    """Two shuffles whose emitted C names collide with different bodies fail loudly."""
+    import pytest
+    register_shuffle("collide", "i ^ 1", "i ^ 1")  # emits shuffle_inv_collide (body i^1)
+    register_shuffle("inv_collide", "i ^ 2", "i ^ 3")  # forward name == shuffle_inv_collide (body i^2)
+    sdfg = dace.SDFG("collide_sdfg")
+    with pytest.raises(ValueError):
+        emit_shuffle_globals(sdfg, ["collide", "inv_collide"])
 
 
 # --------------------------------------------------------------------------- #
@@ -138,6 +160,59 @@ def test_shuffle_2d_single_dim_transparent():
     rowscale.to_sdfg()(A=A.copy(), C=C0, N=_N)
     sh(A=A.copy(), C=C1, N=_N)
     assert numpy.allclose(C1, C0)
+
+
+def test_shuffle_negative_mod_transparent():
+    """A cyclic shift whose inverse (i - 3) % 8 produces a negative dividend stays transparent:
+    the emitted C floors like Python (would give an OOB negative index under C's truncating %)."""
+    register_shuffle("shift3", "(i + 3) % 8", "(i - 3) % 8")
+    sh = _apply_shuffle(scale, "scale_shift3", {"A": ("shift3", 0)})
+
+    _N = 8
+    A = numpy.random.rand(_N)
+    C0 = numpy.zeros(_N)
+    C1 = numpy.zeros(_N)
+    scale.to_sdfg()(A=A.copy(), C=C0, N=_N)
+    sh(A=A.copy(), C=C1, N=_N)
+    assert numpy.allclose(C1, C0)
+
+
+@dace.program
+def rows_partial(A: dace.float64[N, N], C: dace.float64[N, N]):
+    for i, j in dace.map[0:N - 1, 0:N] @ dace.ScheduleType.Sequential:
+        C[i, j] = A[i, j] + 1.0
+
+
+def test_shuffle_partial_write_nonshuffled_dim_preserved():
+    """Shuffle dim 1 of C while the kernel writes only rows 0:N-1: the gather-on-write initializes
+    the transient so the untouched last row round-trips (would be clobbered without it)."""
+    register_shuffle("xor3", "i ^ 3", "i ^ 3")
+    sh = _apply_shuffle(rows_partial, "rows_partial_xor", {"C": ("xor3", 1)})
+
+    _N = 8
+    A = numpy.random.rand(_N, _N)
+    Cin = numpy.random.rand(_N, _N)  # caller-provided; last row must survive
+    C0 = Cin.copy()
+    C1 = Cin.copy()
+    rows_partial.to_sdfg()(A=A.copy(), C=C0, N=_N)
+    sh(A=A.copy(), C=C1, N=_N)
+    assert numpy.allclose(C1, C0) and numpy.allclose(C1[-1], Cin[-1])
+
+
+@dace.program
+def partial_shuffled(A: dace.float64[N], C: dace.float64[N]):
+    for i in dace.map[0:N - 1] @ dace.ScheduleType.Sequential:
+        C[i] = A[i] + 1.0
+
+
+def test_shuffle_partial_on_shuffled_dim_raises():
+    """A partial (non-point, non-full) range on the shuffled dimension cannot be sigma^-1-composed
+    and is refused rather than silently miscompiled."""
+    import pytest
+    register_shuffle("xor3", "i ^ 3", "i ^ 3")
+    sdfg = copy.deepcopy(partial_shuffled.to_sdfg(simplify=True))
+    with pytest.raises(NotImplementedError):
+        ShuffleElements(shuffle_map={"A": ("xor3", 0)}).apply_pass(sdfg, {})
 
 
 def test_shuffle_emits_c_functions():

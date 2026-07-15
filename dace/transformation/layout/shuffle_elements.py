@@ -95,15 +95,22 @@ class ShuffleElements(ppl.Pass):
         sdfg.add_datadesc(shuffled, cloned, find_new_name=False)
 
         skip = set()
-        if reads:
+        # Gather whenever the array is read OR written. A written array must start as a full
+        # shuffled copy of its incoming values: a write that does not cover the whole array (e.g.
+        # partial on a non-shuffled dim) otherwise leaves part of the transient uninitialized, and
+        # the full-array scatter would clobber the caller's array there. A fully-overwritten output
+        # re-reads its input redundantly (an extra O(size) boundary copy) -- correct, not wrong.
+        if reads or writes:
             pre = sdfg.add_state_before(sdfg.start_state, f"shuffle_in_{arr}")
             skip.add(pre)
             self._emit_reorder(sdfg, pre, src=arr, dst=shuffled, fn=fn, dim=dim, forward=True)
         if writes:
-            final = [v for v in sdfg.nodes() if sdfg.out_degree(v) == 0][0]
-            post = sdfg.add_state_after(final, f"shuffle_out_{arr}")
-            skip.add(post)
-            self._emit_reorder(sdfg, post, src=shuffled, dst=arr, fn=fn, dim=dim, forward=False)
+            # Scatter back after EVERY sink block, so results are restored to the original order on
+            # whichever terminating path executes (not just the first sink).
+            for sink in [v for v in sdfg.nodes() if sdfg.out_degree(v) == 0]:
+                post = sdfg.add_state_after(sink, f"shuffle_out_{arr}")
+                skip.add(post)
+                self._emit_reorder(sdfg, post, src=shuffled, dst=arr, fn=fn, dim=dim, forward=False)
 
         self._rewrite_body(sdfg, arr, shuffled, fn, dim, size, skip)
 
