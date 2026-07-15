@@ -18,9 +18,11 @@ that would need real CMake -- an unknown ``find_package``, an environment shippi
 or an unexpanded ``${...}`` -- raises a clear error telling the user to switch to ``build_mode=cmake``.
 """
 import os
+import re
 import shlex
 import shutil
 import subprocess
+import warnings
 from typing import Dict, List, Optional
 
 from dace.config import Config
@@ -277,22 +279,40 @@ def _collect_auxiliary_sources(environments) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-def _cuda_arch_flags() -> List[str]:
-    """``-arch=native`` for auto-detection, or explicit ``-gencode`` per configured architecture.
+def _nvcc_supported_arches(nvcc: str, build_env: dict) -> Optional[set]:
+    """The set of ``sm_XX`` numbers ``nvcc`` can target, from ``--list-gpu-arch``; ``None`` if the
+    probe fails (then no filtering is applied). Lets us drop archs a newer toolkit dropped -- e.g.
+    CUDA 13 no longer builds ``sm_60`` -- so a stale ``compiler.cuda.cuda_arch`` cannot fail the build."""
+    try:
+        out = subprocess.run([nvcc, '--list-gpu-arch'], capture_output=True, text=True, env=build_env)
+    except OSError:
+        return None
+    if out.returncode != 0:
+        return None
+    return {int(m) for m in re.findall(r'compute_(\d+)', out.stdout)}
 
-    ``compiler.cuda.cuda_arch == 'auto'`` (or empty) uses nvcc's built-in local-GPU detection (CUDA
-    11.5+), which replaces CMake's separate get_cuda_arch.cpp compile+run. An explicit
-    comma-separated list emits one ``-gencode`` each.
+
+def _cuda_arch_flags(supported: Optional[set]) -> List[str]:
+    """Always target the local GPU with ``-arch=native`` (nvcc's built-in detection, matching what
+    CMake's get_cuda_arch.cpp does), plus one ``-gencode`` per *additional* architecture in
+    ``compiler.cuda.cuda_arch`` that the toolkit still supports.
+
+    ``cuda_arch`` is documented as extra architectures excluding the local one, so the local GPU is
+    handled by ``-arch=native`` regardless of it; an arch the toolkit dropped is skipped (with a
+    warning) rather than failing the compile.
     """
+    flags = ['-arch=native']
     cfg = Config.get('compiler', 'cuda', 'cuda_arch').strip()
-    if cfg in ('', 'auto', 'native'):
-        return ['-arch=native']
-    flags: List[str] = []
-    for arch in cfg.split(','):
-        arch = arch.strip()
-        if arch:
+    if cfg and cfg not in ('auto', 'native'):
+        for arch in cfg.split(','):
+            arch = arch.strip()
+            if not arch:
+                continue
+            if supported is not None and int(arch) not in supported:
+                warnings.warn(f'Native build: the CUDA toolkit does not support architecture sm_{arch}; skipping it.')
+                continue
             flags += ['-gencode', f'arch=compute_{arch},code=sm_{arch}']
-    return flags or ['-arch=native']
+    return flags
 
 
 def _newest_mtime(directory: str) -> float:
@@ -456,7 +476,7 @@ def build_native(program_folder: str,
     includes = ['-I' + runtime_inc, '-I' + generated_inc] + ['-I' + d for d in _dedup(spec.includes)]
 
     # --- compile ------------------------------------------------------------
-    cuda_arch_flags = _cuda_arch_flags() if (has_gpu and not is_hip) else []
+    cuda_arch_flags = _cuda_arch_flags(_nvcc_supported_arches(nvcc, build_env)) if (has_gpu and not is_hip) else []
     ccbin = (['-ccbin', _cxx()] if Config.get('compiler', 'cpu', 'executable') else [])
 
     # Precompile the DaCe runtime header once (per compiler+flags) to speed up host translation
