@@ -6,5 +6,7 @@ from dace.transformation.layout.unblock_dimensions import UnblockDimensions
 from dace.transformation.layout.pad_dimensions import PadDimensions
 from dace.transformation.layout.block_aware_map_tiling import BlockAwareMapTiling
 from dace.transformation.layout.zip_arrays import ZipArrays
+from dace.transformation.layout.unzip_arrays import UnzipArrays
+from dace.transformation.layout.shuffle_elements import ShuffleElements
 from dace.transformation.layout.split_array import SplitArray
 from dace.transformation.layout.prepare import prepare_for_layout

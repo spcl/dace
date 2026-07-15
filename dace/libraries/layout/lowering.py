@@ -36,6 +36,14 @@ def relayout_map(logical_shape: List, ops: List) -> Tuple[List, LayoutMap, List]
     dims = list(range(len(logical_shape)))
     simplified = simplify_ops(ops)
     out_map = compose_ops(simplified, base=identity_map(logical_shape, dims))
+    if out_map.shuffles:
+        # A net Shuffle renumbers elements by a bijection sigma -- that is a data-dependent
+        # reorder, not a digit reshape this copy can express. It is lowered by the
+        # ShuffleElements pass (which materializes sigma / sigma^{-1} as C functions and rewrites
+        # consumers), so refuse here rather than silently emitting an unshuffled copy.
+        raise NotImplementedError(
+            "LayoutChange cannot lower a net Shuffle; apply dace.transformation.layout.ShuffleElements "
+            "for the value-permutation, then LayoutChange for the remaining digit reshape.")
     out_shape = [dace.symbolic.simplify(e) for e in out_map.shape()]
     return simplified, out_map, out_shape
 

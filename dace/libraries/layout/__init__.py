@@ -20,6 +20,13 @@ from dace.libraries.layout.algebra import (
     ops_to_list,
     ops_from_list,
 )
+from dace.libraries.layout.shuffle import (
+    ShuffleFunction,
+    register_shuffle,
+    get_shuffle,
+    is_registered,
+    emit_shuffle_globals,
+)
 from dace.libraries.layout.lowering import build_relayout, build_relayout_sdfg, relayout_map
 from dace.libraries.layout.layout_change import (
     LayoutChange,
