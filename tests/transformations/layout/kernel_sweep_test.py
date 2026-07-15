@@ -9,7 +9,7 @@ import numpy
 
 from dace.transformation.layout.brute_force import sweep, best
 from dace.transformation.layout.timing import compute_region_timer
-from tests.transformations.layout.kernels import k04_mvt, k15_colstore, k11_thomas
+from tests.transformations.layout.kernels import k04_mvt, k15_colstore, k11_thomas, k12_dlt_stencil
 
 
 def _sdfg_candidates(program, candidate_dict):
@@ -73,8 +73,23 @@ def test_k11_thomas_layout_sweep_timed():
     assert best(results) is not None
 
 
+def test_k12_dlt_stencil_block_sweep_all_verify():
+    """DLT stencil: the Block family over x (unblocked + [N/V, V]) reproduces the 3-point stencil;
+    the run closure reshapes the flat input into each candidate's blocked shape."""
+    n = 32  # divisible by every block factor
+    inputs = k12_dlt_stencil.make_inputs(n)
+    reference = k12_dlt_stencil.oracle(inputs["x"])
+    candidates = _sdfg_candidates(k12_dlt_stencil.stencil, k12_dlt_stencil.candidates())
+    assert set(candidates) == {"noblock_x", "block_x_d0_4", "block_x_d0_8"}
+
+    results = sweep(candidates, k12_dlt_stencil.run_closure(inputs, n), reference, do_time=False)
+    assert all(r.correct for r in results), [(r.name, r.error) for r in results]
+    assert best(results) is not None
+
+
 if __name__ == "__main__":
     test_k04_mvt_layout_sweep_all_verify()
     test_k15_colstore_layout_sweep_all_verify()
     test_k11_thomas_layout_sweep_timed()
+    test_k12_dlt_stencil_block_sweep_all_verify()
     print("kernel sweep tests PASS")
