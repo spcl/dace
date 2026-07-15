@@ -4,8 +4,21 @@ import numpy
 import dace
 
 from dace.transformation.layout.zip_arrays import ZipArrays
+from dace.transformation.layout.unzip_arrays import UnzipArrays
 
 N = dace.symbol("N")
+KRED = 5
+
+
+def _wcr_count(sdfg):
+    return sum(1 for st in sdfg.all_states() for e in st.edges() if e.data is not None and e.data.wcr is not None)
+
+
+@dace.program
+def dual_reduce(x: dace.float64[N], acc0: dace.float64[N], acc1: dace.float64[N]):
+    for i, j in dace.map[0:N, 0:KRED]:
+        acc0[i] += x[i]
+        acc1[i] += x[i] * 2.0
 
 
 @dace.program
@@ -104,8 +117,46 @@ def test_zip_heterogeneous_struct_padded_dtypes():
     assert numpy.allclose(C, ref)
 
 
+def test_zip_preserves_wcr_reduction():
+    """Zipping two homogeneous WCR reduction targets (acc0/acc1) must keep their wcr, else the
+    ``+=`` degrades to last-writer-wins. The fused Z[i, k] accumulates bit-exactly."""
+    _N = 8
+    x = numpy.random.default_rng(0).random(_N)
+    ref0, ref1 = KRED * x, 2.0 * KRED * x
+
+    sdfg = dual_reduce.to_sdfg(simplify=True)
+    assert _wcr_count(sdfg) == 2
+    ZipArrays(zip_map={"Z": ["acc0", "acc1"]}).apply_pass(sdfg, {})
+    assert _wcr_count(sdfg) == 2, "Zip dropped the WCR"
+    sdfg.validate()
+
+    Z = numpy.zeros((_N, 2))
+    sdfg(x=x.copy(), Z=Z, N=_N)
+    assert numpy.allclose(Z[:, 0], ref0) and numpy.allclose(Z[:, 1], ref1)
+
+
+def test_zip_unzip_wcr_roundtrip():
+    """Zip then Unzip two WCR reduction targets: the wcr survives both memlet rebuilds and the
+    reductions stay exact."""
+    _N = 8
+    x = numpy.random.default_rng(1).random(_N)
+    ref0, ref1 = KRED * x, 2.0 * KRED * x
+
+    sdfg = dual_reduce.to_sdfg(simplify=True)
+    ZipArrays(zip_map={"Z": ["acc0", "acc1"]}).apply_pass(sdfg, {})
+    UnzipArrays(unzip_map={"Z": ["acc0", "acc1"]}).apply_pass(sdfg, {})
+    assert _wcr_count(sdfg) == 2, "Zip->Unzip dropped the WCR"
+    sdfg.validate()
+
+    a0, a1 = numpy.zeros(_N), numpy.zeros(_N)
+    sdfg(x=x.copy(), acc0=a0, acc1=a1, N=_N)
+    assert numpy.allclose(a0, ref0) and numpy.allclose(a1, ref1)
+
+
 if __name__ == "__main__":
     test_zip_homogeneous_fields()
     test_zip_heterogeneous_struct_true_aos()
     test_zip_heterogeneous_struct_padded_dtypes()
+    test_zip_preserves_wcr_reduction()
+    test_zip_unzip_wcr_roundtrip()
     print("zip tests PASS")

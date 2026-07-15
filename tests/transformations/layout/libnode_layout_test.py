@@ -157,6 +157,30 @@ def test_implicit_copy_normalized_and_layout_correct():
     assert numpy.allclose(C, 2.0 * A)
 
 
+@dace.program
+def copy3(A: dace.float64[M, K, Nn], C: dace.float64[M, K, Nn]):
+    for i, j, k in dace.map[0:M, 0:K, 0:Nn] @ dace.ScheduleType.Sequential:
+        C[i, j, k] = A[i, j, k]
+
+
+@pytest.mark.parametrize("perm", [[2, 0, 1], [1, 2, 0], [2, 1, 0], [0, 2, 1]])
+def test_copy_libnode_transposing_3d_rewrite_bitexact(perm):
+    """A 3D copy whose input is permuted becomes a genuine (non-self-inverse) transpose;
+    RewriteCopyForLayout -> TensorTranspose must reproduce it bit-exact for every 3D permutation
+    (verifies the axes convention beyond the self-inverse 2D case). Distinct extents keep the
+    permutation unambiguous."""
+    _M, _K, _N = 3, 4, 5
+    A = numpy.random.default_rng(sum(perm)).random((_M, _K, _N))
+    sdfg = copy3.to_sdfg(simplify=True)
+    prepare_for_layout(sdfg, validate=False)
+    PermuteDimensions(permute_map={"A": perm}, add_permute_maps=True).apply_pass(sdfg, {})
+    assert RewriteCopyForLayout().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    C = numpy.zeros((_M, _K, _N))
+    sdfg(A=A.copy(), C=C, M=_M, K=_K, Nn=_N)
+    assert numpy.allclose(C, A)
+
+
 def test_copy_permutation_axes_helper():
     """The axis-inference used by RewriteCopyForLayout: a distinct-size permutation is recovered; an
     identity / reshape yields None; a repeated-size permutation is ambiguous and raises."""

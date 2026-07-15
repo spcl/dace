@@ -115,9 +115,13 @@ class ZipArrays(ppl.Pass):
                     k = field_index[edge.data.data]
                     new_ranges = list(edge.data.subset.ranges)
                     new_ranges.insert(axis, (k, k, 1))
+                    # Preserve wcr: a reduction into a zipped field keeps accumulating (into Z[.., k]).
                     edge.data = dace.memlet.Memlet(data=new_name,
                                                    subset=dace.subsets.Range(new_ranges),
-                                                   other_subset=None)
+                                                   other_subset=None,
+                                                   wcr=edge.data.wcr,
+                                                   wcr_nonatomic=edge.data.wcr_nonatomic,
+                                                   dynamic=edge.data.dynamic)
             # Point field access nodes at the fused array (connector names are left as-is;
             # they need not match the data name).
             for node in state.nodes():

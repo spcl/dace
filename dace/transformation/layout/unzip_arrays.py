@@ -133,9 +133,13 @@ class UnzipArrays(ppl.Pass):
                         raise NotImplementedError("UnzipArrays: other_subset memlets are unsupported.")
                     ranges = list(edge.data.subset.ranges)
                     k = self._const_field(ranges[axis], fused)
+                    # Preserve wcr: a reduction into an unzipped field keeps accumulating.
                     edge.data = dace.memlet.Memlet(data=fields[k],
                                                    subset=self._drop_axis(ranges, axis),
-                                                   other_subset=None)
+                                                   other_subset=None,
+                                                   wcr=edge.data.wcr,
+                                                   wcr_nonatomic=edge.data.wcr_nonatomic,
+                                                   dynamic=edge.data.dynamic)
             for node in list(state.nodes()):
                 if isinstance(node, nd.AccessNode) and node.data == fused:
                     node.data = fields[self._node_field(state, node, fields)]
@@ -169,7 +173,11 @@ class UnzipArrays(ppl.Pass):
             k = self._const_field(list(e.data.subset.ranges)[axis], fused)
             f = fields[k]
             fconn = ("OUT_" if is_entry else "IN_") + f
-            mem = dace.memlet.Memlet(data=f, subset=self._drop_axis(list(e.data.subset.ranges), axis))
+            mem = dace.memlet.Memlet(data=f,
+                                     subset=self._drop_axis(list(e.data.subset.ranges), axis),
+                                     wcr=e.data.wcr,
+                                     wcr_nonatomic=e.data.wcr_nonatomic,
+                                     dynamic=e.data.dynamic)
             if is_entry:
                 if fconn not in scope.out_connectors:
                     scope.add_out_connector(fconn)
@@ -253,9 +261,9 @@ class UnzipArrays(ppl.Pass):
         """The field a map connector now carries -- read from its interior edges after they have been
         renamed from the fused struct to a member array (the inverse of the zip's connector reuse)."""
         edges = state.out_edges(scope) if is_entry else state.in_edges(scope)
-        attr = "src_conn" if is_entry else "dst_conn"
         for e in edges:
-            if getattr(e, attr) == interior_conn and e.data is not None and e.data.data in fields:
+            conn = e.src_conn if is_entry else e.dst_conn
+            if conn == interior_conn and e.data is not None and e.data.data in fields:
                 return e.data.data
         return None
 
@@ -297,20 +305,28 @@ class UnzipArrays(ppl.Pass):
                         e.data.data = conn_field[e.src_conn]
                         node.out_connectors[e.src_conn] = members[conn_field[e.src_conn]]
             # 2. Rename the map-boundary edges: the field is the one its paired interior edge carries.
-            for scope in [n for n in state.nodes() if isinstance(n, nd.MapEntry)]:
-                for e in list(state.in_edges(scope)):
-                    if e.data is None or e.data.data != fused or not e.dst_conn:
-                        continue
-                    f = self._interior_field(state, scope, "OUT_" + e.dst_conn[len("IN_"):], fields, is_entry=True)
-                    if f is not None:
-                        e.data.data = f
-            for scope in [n for n in state.nodes() if isinstance(n, nd.MapExit)]:
-                for e in list(state.out_edges(scope)):
-                    if e.data is None or e.data.data != fused or not e.src_conn:
-                        continue
-                    f = self._interior_field(state, scope, "IN_" + e.src_conn[len("OUT_"):], fields, is_entry=False)
-                    if f is not None:
-                        e.data.data = f
+            #    A boundary edge can only be resolved once its INTERIOR edge is renamed, so with a
+            #    multi-level map nest an inner boundary must be resolved before its outer one.
+            #    Iterate to a fixpoint so the result is independent of node iteration order.
+            changed = True
+            while changed:
+                changed = False
+                for scope in [n for n in state.nodes() if isinstance(n, nd.MapEntry)]:
+                    for e in list(state.in_edges(scope)):
+                        if e.data is None or e.data.data != fused or not e.dst_conn:
+                            continue
+                        f = self._interior_field(state, scope, "OUT_" + e.dst_conn[len("IN_"):], fields, is_entry=True)
+                        if f is not None:
+                            e.data.data = f
+                            changed = True
+                for scope in [n for n in state.nodes() if isinstance(n, nd.MapExit)]:
+                    for e in list(state.out_edges(scope)):
+                        if e.data is None or e.data.data != fused or not e.src_conn:
+                            continue
+                        f = self._interior_field(state, scope, "IN_" + e.src_conn[len("OUT_"):], fields, is_entry=False)
+                        if f is not None:
+                            e.data.data = f
+                            changed = True
             # 3. Point each fused access node at the field its (now-renamed) incident edges carry.
             for node in list(state.nodes()):
                 if isinstance(node, nd.AccessNode) and node.data == fused:
