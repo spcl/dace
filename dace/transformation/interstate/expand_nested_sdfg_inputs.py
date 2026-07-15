@@ -18,11 +18,13 @@ After it runs, every edge passes the full-array check and ``InlineMultistateSDFG
 Refuses when: the widening would change inner-descriptor rank (axis-collapse, ``a[0:1, 0:M]`` →
 1-D ``[M]``); the outer array is absent from the parent SDFG (orphan descriptor).
 """
+import ast
 import copy
 from typing import List, Set, Dict, Tuple
 
 from dace import SDFG, dtypes, subsets, symbolic, data
 from dace.codegen.common import CodeBlock
+from dace.frontend.python import astutils
 from dace.properties import Property, make_properties
 from dace.sdfg import SDFGState, nodes
 from dace.sdfg import utils as sdutil
@@ -31,6 +33,62 @@ from dace.transformation import transformation
 from dace.subsets import Range
 from dace.memlet import Memlet
 import sympy
+
+
+class _RenameLoadName(ast.NodeTransformer):
+    """Rename every ``Load`` use of ``old`` to ``new`` in a tasklet's Python code."""
+
+    def __init__(self, old: str, new: str):
+        self._old = old
+        self._new = new
+
+    def visit_Name(self, node: ast.Name):
+        if node.id == self._old and isinstance(node.ctx, ast.Load):
+            return ast.copy_location(ast.Name(id=self._new, ctx=ast.Load()), node)
+        return node
+
+
+def _rewrite_scalar_reads_in_tasklets(inner_sdfg: SDFG, inner_name: str, outer_name: str,
+                                      offset_dims: List[sympy.Basic]) -> None:
+    """Convert a folded scalar read of a widened connector into a dataflow read.
+
+    A scalar NSDFG input can be consumed SYMBOLICALLY -- its value bound into an interstate
+    assignment (``C_slice = tmp``) that ``ConstantPropagation`` then inlines into a tasklet's code
+    (``__out = tmp * ...``). Once :func:`_replace_desc_and_uncollapse_dims` widens ``tmp`` to the full
+    array ``outer_name``, that bare name is an array in a scalar expression -- invalid C (pointer
+    arithmetic on ``const T*``). A tasklet cannot index an array in its code either; the value must
+    arrive through a CONNECTOR. So for every tasklet that reads ``inner_name`` as a bare (non-
+    connector) name, add an input connector fed by the single element ``outer_name[offset_dims]`` and
+    rewrite the code reference to that connector. Runs BEFORE ``replace_dict`` so it matches the still-
+    distinct ``inner_name``; the memlet already names the widened ``outer_name`` descriptor."""
+    for state in inner_sdfg.states():
+        for tnode in [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]:
+            if inner_name in tnode.in_connectors:
+                continue  # already a dataflow read, not a symbolic one
+            loads = {
+                n.id
+                for n in ast.walk(ast.parse(tnode.code.as_string))
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)
+            }
+            if inner_name not in loads:
+                continue
+
+            cin = "__" + inner_name + "_elem"
+            while cin in tnode.in_connectors or cin in tnode.out_connectors:
+                cin += "_"
+            tnode.add_in_connector(cin)
+            read = state.add_read(outer_name)
+            memlet = Memlet(data=outer_name, subset=Range([(o, o, 1) for o in offset_dims]))
+            scope = state.entry_node(tnode)
+            if scope is None:
+                state.add_edge(read, None, tnode, cin, memlet)
+            else:
+                state.add_memlet_path(read, scope, tnode, dst_conn=cin, memlet=memlet)
+
+            tree = ast.parse(tnode.code.as_string)
+            _RenameLoadName(inner_name, cin).visit(tree)
+            ast.fix_missing_locations(tree)
+            tnode.code = CodeBlock(astutils.unparse(tree))
 
 
 def _resolve_outer_symbol_type(sym_name: str, sdfg: SDFG, default=None):
@@ -365,6 +423,13 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
                     continue
                 _uncollapse_subset_refs(memlet.subset)
                 _uncollapse_subset_refs(memlet.other_subset)
+
+    # A widened scalar consumed symbolically (its value inlined into a tasklet's code as a bare
+    # name) has no valid array form as a bare name -- convert those reads to a dataflow connector
+    # fed by ``outer_name[offset_dims]``. Only for an Array source read into the NSDFG (``in``);
+    # a Scalar source stays a bare symbol, and outputs already flow through a memlet.
+    if not outer_is_scalar and direction == 'in':
+        _rewrite_scalar_reads_in_tasklets(inner_sdfg, inner_name, outer_name, offset_dims)
 
     inner_sdfg.replace_dict({inner_name: outer_name})
 

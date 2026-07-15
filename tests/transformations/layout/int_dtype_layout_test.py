@@ -1,17 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Layout transforms over INTEGER element types, written in the vectorized ``C[:] = A op B`` form.
+"""Layout transforms over INTEGER element types, written as an EXPLICIT elementwise map.
 
-An integer elementwise kernel written as an EXPLICIT map (``for i,j,k: C[i,j,k] = A[i,j,k]*B[i,j,k]``)
+An integer elementwise kernel written as an explicit map (``for i,j,k: C[i,j,k]=A[i,j,k]*B[i,j,k]``)
 is wrapped by the frontend in a nested *scalar-computation* SDFG (int elements are symbol candidates,
-so the body is lowered through a scalar sub-SDFG). ``prepare_for_layout`` runs
-``ExpandNestedSDFGInputs``, which widens those scalar connectors to whole-array pointers, and the
-inner ``__out = A * B`` then fails to compile (pointer arithmetic on ``const int64_t*``). That
-over-widening lives in a shared interstate pass, not in the layout code, and reductions genuinely
-need the widening -- so the fix is to author integer elementwise kernels in the VECTORIZED
-``C[:] = A * B`` form, which stays a flat map (no scalar wrapper) and lowers correctly.
+so the body is lowered through a scalar sub-SDFG whose value is bound into an interstate assignment
+and then inlined into the tasklet code). ``prepare_for_layout`` runs ``ExpandNestedSDFGInputs``,
+which widens those scalar connectors to whole-array descriptors; the tasklet's inlined bare read
+``__out = tmp * ...`` then has no valid array form (pointer arithmetic on ``const int64_t*``).
 
-These tests pin that down: int64 / int32 elementwise, under Permute, Block, and combined
-Block+Permute, all bit-exact (numpy array_equal -- integer results are exact)."""
+``ExpandNestedSDFGInputs`` now handles that case: a bare symbolic read of a widened scalar connector
+is converted to a dataflow read -- an input connector fed by the single element ``A[offset]`` -- so
+the explicit-map integer kernel lowers correctly. These tests exercise that fix: int64 / int32
+elementwise, under Permute, Block, and combined Block+Permute, all bit-exact (integer array_equal)."""
 import itertools
 
 import numpy
@@ -30,7 +30,8 @@ def make_mul(dtype):
 
     @dace.program
     def mul3d(A: dtype[N, N, N], B: dtype[N, N, N], C: dtype[N, N, N]):
-        C[:] = A * B  # vectorized form -> flat map, no scalar-wrapper nested SDFG
+        for i, j, k in dace.map[0:N, 0:N, 0:N]:  # explicit map -> scalar-wrapper nested SDFG (the fixed path)
+            C[i, j, k] = A[i, j, k] * B[i, j, k]
 
     return mul3d
 
