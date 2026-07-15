@@ -8,9 +8,9 @@ import time
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
 
-skip_callbacks_on_nanobind = pytest.mark.skipif(
+skip_arraylike_args_on_nanobind = pytest.mark.skipif(
     dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='nanobind does not support callbacks yet (deferred to part 2 of the port)')
+    reason='nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style coercion)')
 
 skip_pyobject_return_on_nanobind = pytest.mark.skipif(
     dace.Config.get('compiler', 'interface') == 'nanobind',
@@ -38,7 +38,6 @@ def scale(C, beta):
     C *= beta
 
 
-@skip_callbacks_on_nanobind
 def test_automatic_callback():
 
     @dace.program
@@ -59,7 +58,6 @@ def test_automatic_callback():
     assert np.allclose(C, expected)
 
 
-@skip_callbacks_on_nanobind
 def test_automatic_callback_2():
 
     @dace.program
@@ -82,7 +80,6 @@ def test_automatic_callback_2():
     assert np.allclose(C, expected)
 
 
-@skip_callbacks_on_nanobind
 def test_automatic_callback_inference():
 
     @dace.program
@@ -104,7 +101,6 @@ def test_automatic_callback_inference():
     assert np.allclose(C, expected)
 
 
-@skip_callbacks_on_nanobind
 def test_automatic_callback_inference_2():
 
     @dace.program
@@ -127,7 +123,6 @@ def test_automatic_callback_inference_2():
     assert np.allclose(C, expected)
 
 
-@skip_callbacks_on_nanobind
 def test_automatic_callback_method():
 
     class NotDace:
@@ -160,7 +155,6 @@ def modcallback(A: dace.float64[N, N], B: dace.float64[N]):
     B[:] = tmp
 
 
-@skip_callbacks_on_nanobind
 def test_callback_from_module():
     A = np.random.rand(24, 24)
     B = np.random.rand(24)
@@ -192,7 +186,6 @@ def test_callback_tasklet():
     assert np.allclose(A * A, B)
 
 
-@skip_callbacks_on_nanobind
 def test_view_callback():
 
     @dace.program
@@ -213,7 +206,6 @@ def test_view_callback():
     assert np.allclose(C, expected)
 
 
-@skip_callbacks_on_nanobind
 def test_print():
 
     @dace.program
@@ -225,7 +217,6 @@ def test_print():
         printprog(a)
 
 
-@skip_callbacks_on_nanobind
 def test_reorder():
     counter = 0
     should_be_one, should_be_two = 0, 0
@@ -259,7 +250,6 @@ def test_reorder():
     assert should_be_two == 2
 
 
-@skip_callbacks_on_nanobind
 def test_reorder_nested():
     counter = 0
     should_be_one, should_be_two = 0, 0
@@ -300,7 +290,6 @@ def test_reorder_nested():
     assert should_be_two == 2
 
 
-@skip_callbacks_on_nanobind
 def test_callback_samename():
     counter = 0
     should_be_one, should_be_two = 0, 0
@@ -377,7 +366,6 @@ def test_gpu_callback():
     assert cp.allclose(a, expected)
 
 
-@skip_callbacks_on_nanobind
 def test_bad_closure():
     """
     Testing functions that should not be in the closure (must be implemented as
@@ -399,7 +387,6 @@ def test_bad_closure():
     assert np.all(B > A) and np.all(A > now)
 
 
-@skip_callbacks_on_nanobind
 def test_object_with_nested_callback():
     c = np.random.rand(20)
 
@@ -427,7 +414,6 @@ def test_object_with_nested_callback():
     assert np.allclose(c, a + b)
 
 
-@skip_callbacks_on_nanobind
 def test_two_parameters_same_name():
 
     @dace_inhibitor
@@ -445,7 +431,6 @@ def test_two_parameters_same_name():
     assert np.allclose(b, a + a)
 
 
-@skip_callbacks_on_nanobind
 def test_inout_same_name():
 
     @dace_inhibitor
@@ -486,7 +471,6 @@ def test_inhibit_state_fusion():
         assert sdfg.number_of_nodes() == 1
 
 
-@skip_callbacks_on_nanobind
 def test_two_callbacks():
     called_cnt = 0
 
@@ -509,7 +493,6 @@ def test_two_callbacks():
     assert called_cnt == 2
 
 
-@skip_callbacks_on_nanobind
 def test_two_callbacks_different_sig():
     called_cnt = 0
 
@@ -536,7 +519,6 @@ def test_two_callbacks_different_sig():
     assert called_cnt == 2
 
 
-@skip_callbacks_on_nanobind
 def test_two_callbacks_different_type():
     called_cnt = 0
 
@@ -563,7 +545,6 @@ def test_two_callbacks_different_type():
     assert called_cnt == 2
 
 
-@skip_callbacks_on_nanobind
 def test_disallowed_keyword():
 
     class Obj:
@@ -584,7 +565,6 @@ def test_disallowed_keyword():
         assert np.allclose(prog(a), a + 1)
 
 
-@skip_callbacks_on_nanobind
 def test_nested_duplicate_callbacks():
     called = 0
 
@@ -622,7 +602,6 @@ def test_nested_duplicate_callbacks():
     assert called == 6
 
 
-@skip_callbacks_on_nanobind
 def test_scalar_retval():
 
     @dace.program
@@ -638,7 +617,6 @@ def test_scalar_retval():
     assert result[0] >= old_time and result[0] <= new_time
 
 
-@skip_callbacks_on_nanobind
 def test_callback_kwargs():
     called_with = (None, None, None)
     called_2_with = (None, None, None)
@@ -674,7 +652,6 @@ def test_callback_kwargs():
     assert called_3_with == 7
 
 
-@skip_callbacks_on_nanobind
 def test_same_callback_kwargs():
     """ Calls the same callback twice, with different kwargs each time. """
     called_with = (None, None, None)
@@ -701,7 +678,6 @@ def test_same_callback_kwargs():
     assert called_2_with == (4, 6, 5)
 
 
-@skip_callbacks_on_nanobind
 def test_builtin_callback_kwargs():
 
     @dace
@@ -712,7 +688,6 @@ def test_builtin_callback_kwargs():
         callprint()
 
 
-@skip_callbacks_on_nanobind
 @pytest.mark.parametrize('as_kwarg', (False, True))
 def test_callback_literal_list(as_kwarg):
     success = False
@@ -741,7 +716,6 @@ def test_callback_literal_list(as_kwarg):
     assert success is True
 
 
-@skip_callbacks_on_nanobind
 @pytest.mark.parametrize('as_kwarg', (False, True))
 def test_callback_literal_dict(as_kwarg):
     success = False
@@ -799,7 +773,6 @@ def test_unused_callback():
     assert np.allclose(result, expected)
 
 
-@skip_callbacks_on_nanobind
 def test_callback_with_nested_calls():
     success = False
 
@@ -819,7 +792,6 @@ def test_callback_with_nested_calls():
     assert success is True
 
 
-@skip_callbacks_on_nanobind
 def test_string_callback():
     result = (None, None)
 
@@ -837,7 +809,6 @@ def test_string_callback():
     assert result == ('hello', 'world')
 
 
-@skip_callbacks_on_nanobind
 def test_unknown_pyobject():
     counter = 1334
     last_seen = counter
@@ -933,7 +904,6 @@ def test_pyobject_return_tuple():
     assert obj2.q == 3
 
 
-@skip_callbacks_on_nanobind
 def test_custom_generator():
 
     def reverse_range(sz):
@@ -956,7 +926,6 @@ def test_custom_generator():
     assert np.allclose(aa, np.arange(20, 0, -1))
 
 
-@skip_callbacks_on_nanobind
 def test_custom_generator_with_break():
 
     def reverse_range(sz):
@@ -1076,7 +1045,7 @@ class _MyArrayLike:
         return dace.float64[10]
 
 
-@skip_callbacks_on_nanobind
+@skip_arraylike_args_on_nanobind
 def test_callback_with_arraylike_closure_object():
     test = False
 
@@ -1096,7 +1065,7 @@ def test_callback_with_arraylike_closure_object():
     assert test
 
 
-@skip_callbacks_on_nanobind
+@skip_arraylike_args_on_nanobind
 def test_callback_with_arraylike_object():
     test = False
 
@@ -1114,7 +1083,7 @@ def test_callback_with_arraylike_object():
     assert test
 
 
-@skip_callbacks_on_nanobind
+@skip_arraylike_args_on_nanobind
 def test_callback_with_arraylike_object_typehints():
     test = False
 
@@ -1132,7 +1101,7 @@ def test_callback_with_arraylike_object_typehints():
     assert test
 
 
-@skip_callbacks_on_nanobind
+@skip_arraylike_args_on_nanobind
 def test_nested_callback_with_nested_arraylike_object():
     test = False
 

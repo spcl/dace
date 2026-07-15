@@ -387,9 +387,11 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
 // DaCe runtime types used in the extern "C" program signature, the argument
 // casts, and the nb::ndarray scalar types: dace::uint, dace::complex64/128
-// (aliases of unsigned int / std::complex<...>), and dace::vec<T, N>.
+// (aliases of unsigned int / std::complex<...>), dace::vec<T, N>, and the
+// `pyobject` typedef (pyinterop.h) that callback signatures may reference.
 #include <dace/types.h>
 #include <dace/vector.h>
+#include <dace/pyinterop.h>
 
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
