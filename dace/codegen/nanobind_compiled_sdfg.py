@@ -32,10 +32,8 @@ class NanobindCompiledSDFG:
         goes out of scope.
     - Marshalling Python arguments into C arguments happens in the generated
         C++ code (nanobind's dispatcher), with the GIL released around the
-        C calls. This includes struct arguments (a ``dt.Structure`` or an array
-        of a ``dace.struct`` element): they bind as ``nb::object`` and the
-        generated C++ pulls their raw pointer via the Python buffer protocol
-        (see ``nanobind_bindings._argument_binding``).
+        C calls. This includes struct arguments, whose raw pointer the
+        generated code reads via the Python buffer protocol.
 
     Unlike ``CompiledSDFG`` there is only ``__call__()``; the advanced
     three-step interface (``construct_arguments()`` / ``fast_call()`` /
@@ -49,7 +47,9 @@ class NanobindCompiledSDFG:
     :param arg_names: The user-facing positional argument order
                       (``sdfg.arg_names``), used to map positional call
                       arguments to their names.
-    :note: The arrays used as return values are allocated fresh on every call.
+    :note: The arrays used as return values are allocated fresh on every call,
+           unless ``compiler.nanobind_allow_return_override`` is enabled and the
+           caller passes their own ``__return*`` buffer.
     :note: Return values are arrays only; unlike the ctypes ``CompiledSDFG`` the
            nanobind interface returns neither Python scalars nor pyobjects.
     """
@@ -97,8 +97,8 @@ class NanobindCompiledSDFG:
         Arguments are passed positionally (in ``arg_names`` order) and/or by
         keyword. Return-value arrays are freshly allocated and returned - a
         single array, or a tuple when there are several; with no return values
-        the result is ``None``. Struct arguments pass straight through as
-        ``nb::object`` - the generated C++ extracts their pointer.
+        the result is ``None``. Passing a ``__return*`` buffer explicitly is
+        refused unless ``compiler.nanobind_allow_return_override`` is enabled.
         """
         # Early exit: no return values, no need to do more processing.
         if not self._return_values:
@@ -129,15 +129,15 @@ class NanobindCompiledSDFG:
     def _allocate_return_arrays(self, kwargs: Dict[str, Any]) -> List[Any]:
         """Allocates the ``__return*`` arrays (fresh each call) and adds them to ``kwargs``.
 
-        Return values are arrays only: every ``__return*`` must be a ``dt.Array``
-        (non-array returns raise below), and pyobject returns are rejected at
-        codegen time.
+        A caller-provided return buffer is accepted only when
+        ``compiler.nanobind_allow_return_override`` is enabled; its shape and
+        dtype are then the caller's responsibility.
         """
         arrays = self._sdfg.arrays
         syms = {k: v for k, v in kwargs.items() if k not in arrays}
         syms.update(self._sdfg.constants)
 
-        # Stores the value of `compiler.nanobind_allow_return_override`.
+        # Config lookups are not free; resolve lazily, at most once per call.
         nanobind_allow_return_override: Union[bool, None] = None
 
         return_arrays = []
@@ -146,8 +146,9 @@ class NanobindCompiledSDFG:
             assert isinstance(desc, dt.Array)  # Non-array returns are refused by the bindings generator at codegen
 
             if name in kwargs:
-                # Caller supplied buffer of implicit output buffers, i.e. `__return*`. This is
-                #  opt-in and must be allowed through the configuration.
+                # Caller-provided output buffer (opt-in): the kernel writes into
+                # and returns it. No shape/dtype validation - the caller owns
+                # correctness; the binding rejects what it cannot accept.
                 if nanobind_allow_return_override is None:
                     nanobind_allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
 
@@ -158,17 +159,13 @@ class NanobindCompiledSDFG:
                 arr = kwargs[name]
 
             else:
-                # Return array is allocated by us.
                 shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
                 dtype = desc.dtype.as_numpy_dtype()
                 total_size = int(symbolic.evaluate(desc.total_size, syms))
                 strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
                 arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
 
-            # A dtypes.struct element is bound as nb::ndarray<uint8_t> (nanobind
-            # rejects numpy record arrays), so hand the handle a byte view that
-            # shares the buffer; the caller still gets the structured array back.
-            kwargs[name] = arr.view(np.uint8) if isinstance(desc.dtype, dtypes.struct) else arr
+            kwargs[name] = arr
             return_arrays.append(arr)
 
         return return_arrays

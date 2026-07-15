@@ -15,28 +15,25 @@ extra keyword arguments, which the old ctypes interface allowed.
 from dace import data as dt, dtypes
 from dace.config import Config
 
-# FIX: This should probably be a nested class inside the generated handle.
-# RAII wrapper around a Python buffer view, emitted once per module when the
-# SDFG has struct arguments. It pulls a struct argument's raw data pointer
-# (== ctypes.addressof for a ctypes.Structure, or the record array's data
-# pointer) from the Python buffer protocol. PyBUF_SIMPLE returns the contiguous
-# bytes, ignoring the compound dtype that makes nanobind's ndarray reject a
-# record array. The object is kept alive by nanobind for the call's duration;
-# PyBuffer_Release runs on destruction under the re-acquired GIL (the guard
-# outlives the nested gil_scoped_release scope in call()).
-_PYBUFFER_HELPER = '''struct _DacePyBuffer {
-    Py_buffer view{};
-    bool ok = false;
-    explicit _DacePyBuffer(PyObject *o) {
-        ok = (PyObject_GetBuffer(o, &view, PyBUF_SIMPLE) == 0);
-        if (!ok) throw nb::python_error();
-    }
-    _DacePyBuffer(_DacePyBuffer &&other) noexcept : view(other.view), ok(other.ok) { other.ok = false; }
-    _DacePyBuffer(const _DacePyBuffer &) = delete;
-    _DacePyBuffer &operator=(const _DacePyBuffer &) = delete;
-    ~_DacePyBuffer() { if (ok) PyBuffer_Release(&view); }
-    void *data() const { return view.buf; }
-};
+# RAII wrapper around a Python buffer view; nested inside the generated handle,
+# emitted only when the SDFG has struct arguments. PyBUF_SIMPLE yields the raw
+# contiguous bytes regardless of the compound dtype that makes nb::ndarray
+# reject record arrays; the resulting address is the struct's/array's data
+# pointer. The guard outlives call()'s nested GIL release, so PyBuffer_Release
+# always runs with the GIL held.
+_PYBUFFER_HELPER = '''    struct _DacePyBuffer {
+        Py_buffer view{};
+        bool ok = false;
+        explicit _DacePyBuffer(PyObject *o) {
+            ok = (PyObject_GetBuffer(o, &view, PyBUF_SIMPLE) == 0);
+            if (!ok) throw nb::python_error();
+        }
+        _DacePyBuffer(_DacePyBuffer &&other) noexcept : view(other.view), ok(other.ok) { other.ok = false; }
+        _DacePyBuffer(const _DacePyBuffer &) = delete;
+        _DacePyBuffer &operator=(const _DacePyBuffer &) = delete;
+        ~_DacePyBuffer() { if (ok) PyBuffer_Release(&view); }
+        void *data() const { return view.buf; }
+    };
 '''
 
 
@@ -74,85 +71,66 @@ def _argument_binding(arglist, binding_order=None):
     setup_stmts = []
     strict_scalar = Config.get_bool('compiler', 'nanobind_strict_scalar_cast')
     for name, desc in arglist.items():
-        # pyobject (arguments and returns, incl. the PR#2206 bug-compatible
-        # decay of pyobject arrays) is deferred to part 2 of the port; its
-        # ctype is not a C++ type, so refuse here instead of emitting code
-        # that fails to compile.
+        # A pyobject's ctype is not a C++ type, so refuse here instead of
+        # emitting code that fails to compile. Returns are permanently out
+        # (arrays only); arguments are callbacks, deferred to part 2 of the port.
         if isinstance(desc.dtype, dtypes.pyobject):
-            # pyobject returns are dropped (the nanobind interface returns arrays
-            # only); pyobject arguments are callbacks, deferred to part 2.
             if name.startswith('__return'):
                 raise NotImplementedError(f'Nanobind interface: pyobject return value "{name}" is not supported; '
                                           f'the nanobind interface returns arrays only.')
             raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is not supported yet '
                                       f'(callbacks are deferred to part 2 of the port); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
-        # Callbacks (a dtypes.callback scalar) are not a pyobject subclass, so
-        # the check above misses them; their ctype ("dace.callback") is not a
-        # C++ type, so refuse here instead of emitting code that fails to
-        # compile. Callback support is deferred to part 2 of the port.
+        # dtypes.callback is not a pyobject subclass, so the check above misses
+        # it; its ctype is not a C++ type either. Deferred to part 2 of the port.
         if isinstance(desc.dtype, dtypes.callback):
             raise NotImplementedError(f'Nanobind interface: callback argument "{name}" is not supported yet '
                                       f'(callbacks are deferred to part 2 of the port); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
-        # Return values must be arrays; a non-array return (scalar, structure)
-        # cannot carry output back, so refuse it here at codegen time.
+        # A non-array return (scalar, structure) cannot carry output back.
         if name.startswith('__return') and not isinstance(desc, dt.Array):
             raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                       f'{type(desc).__name__} is not supported; returns are arrays only.')
-        # float16 maps to dace::half, a custom struct nanobind's ndarray cannot
-        # accept as a scalar dtype; refuse loudly instead of emitting code that
-        # fails to compile. A proper mapping is deferred to a future slice.
+        # float16 maps to dace::half, which nanobind's ndarray cannot take as a
+        # scalar dtype; a proper mapping is a TODO.
         if desc.dtype.base_type == dtypes.float16:
             raise NotImplementedError(f'Nanobind interface: float16 argument/return value "{name}" is not '
                                       f'supported yet (dace::half is not a valid nanobind ndarray dtype); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
         ctype = desc.dtype.ctype
         if isinstance(desc, dt.Scalar) and desc.dtype == dtypes.string:
-            # A string scalar is a C string (int8_t*). Marshal a Python str -
-            # or None, which the ctypes path also accepts - through
-            # std::optional<std::string>: None becomes a null pointer, and the
-            # owned std::string keeps its buffer valid across the GIL release.
-            # .none() is required: nanobind rejects None by default, and
-            # std::optional only accepts it implicitly on some versions.
+            # A string scalar is a C string (int8_t*). std::optional<std::string>
+            # lets None become a null pointer, and the owned copy keeps the
+            # buffer valid across the GIL release. .none() is required:
+            # nanobind rejects None by default.
             params_by_name[name] = f'std::optional<std::string> {name}'
             call_args.append(
                 f'{name}.has_value() ? reinterpret_cast<{ctype}>(const_cast<char *>({name}->c_str())) : nullptr')
             nb_args_by_name[name] = f'nb::arg("{name}").none()'
 
         elif isinstance(desc, dt.ContainerArray):
-            # ContainerArray (an array of structures/containers): the caller
-            # passes a numpy array of pointers - one per element, e.g.
-            # ``ctypes.addressof`` of a per-element ctypes.Structure - exactly as
-            # on the ctypes path. Forward that array's data pointer, cast to the
-            # element-pointer type (``ctype`` is the element's pointer, so the
-            # buffer is ``ctype *``). Structs referenced this way are
-            # forward-declared (see generate_bindings_code). Checked before the
-            # Array branch, since ContainerArray subclasses Array.
+            # Array of structures: the caller passes a numpy array of
+            # per-element pointers (e.g. ctypes.addressof), whose data pointer
+            # is forwarded cast to the element-pointer type. Must precede the
+            # Array branch - ContainerArray subclasses Array.
             params_by_name[name] = f'nb::ndarray<uint64_t, nb::device::cpu> {name}'
             call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
             nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
 
         elif isinstance(desc, dt.Structure):
-            # Thin pointer passthrough, mirroring the ctypes path: the caller
-            # builds the C struct (as a ``ctypes.Structure`` filled with the raw
-            # pointers of its members) and we forward a pointer to it. The struct
-            # type is forward-declared in the module (see generate_bindings_code).
-            # The caller passes the ctypes.Structure directly; its data pointer
-            # (== ctypes.addressof) is pulled from the Python buffer protocol in
-            # C++, so no Python-side marshalling is needed.
+            # Thin pointer passthrough: the caller builds the C struct as a
+            # ctypes.Structure, whose address the buffer protocol yields
+            # directly. Marshalling a Python object field by field instead
+            # would need the full struct definition; deferred.
             params_by_name[name] = f'nb::object {name}'
             setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
             call_args.append(f'reinterpret_cast<{ctype}>({name}_buf.data())')
             nb_args_by_name[name] = f'nb::arg("{name}")'
 
         elif isinstance(desc, dt.Array) and isinstance(desc.dtype, dtypes.struct):
-            # Array of a C struct declared with `dace.struct(...)`. nanobind's
-            # `ndarray` rejects a numpy record array (DLPack has no compound
-            # dtype), so we take it as a generic `nb::object` and pull its raw
-            # data pointer from the Python buffer protocol in C++ (PyBUF_SIMPLE
-            # gives the contiguous bytes, ignoring the compound format). A
-            # nullable one (optional is not False) accepts None -> null pointer.
+            # nb::ndarray rejects a numpy record array (DLPack has no compound
+            # dtype), so take a generic object and pull the raw bytes via the
+            # buffer protocol. A nullable one accepts None -> null pointer.
             params_by_name[name] = f'nb::object {name}'
             if desc.optional is False:
                 setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
@@ -174,20 +152,16 @@ def _argument_binding(arglist, binding_order=None):
                 call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
             else:
-                # Nullable array: None (allowed unless optional is explicitly
-                # False) becomes a null pointer, matching the ctypes marshaller.
-                # .none() is required (see the string case above).
+                # Nullable array: None becomes a null pointer. .none() is
+                # required - nanobind rejects None by default.
                 params_by_name[name] = f'std::optional<nb::ndarray<{nb_scalar}, nb::device::cpu>> {name}'
                 call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
 
         elif isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.bool_:
-            # nanobind's `bool` caster accepts only a Python bool (rejects
-            # numpy.bool_); bind as uint8_t (whose caster accepts Python/numpy
-            # bools and ints) and cast back to bool for the kernel call. Matches
-            # ctypes' permissive coercion. Bool deliberately ignores the
-            # strict_scalar `.noconvert()` option, which would re-reject
-            # numpy.bool_ and defeat this.
+            # nanobind's bool caster accepts only a Python bool; uint8_t also
+            # takes numpy bools and ints. Deliberately exempt from
+            # strict_scalar's .noconvert(), which would re-reject numpy.bool_.
             params_by_name[name] = f'uint8_t {name}'
             call_args.append(f'static_cast<{ctype}>({name})')
             nb_args_by_name[name] = f'nb::arg("{name}")'
@@ -348,12 +322,10 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     struct_decls = _structure_forward_decls(arglist)
     struct_fwd_block = f'\n{struct_decls}' if struct_decls else ''
 
-    # Struct arguments arrive as nb::object; their raw pointers are pulled from
-    # the Python buffer protocol under the GIL (setup_stmts), then the GIL is
-    # released only around the kernel call. SDFGs without struct arguments keep
-    # the simpler whole-body form. The `_DacePyBuffer` RAII helper is emitted
-    # only when needed; its destructor releases the buffer under the re-acquired
-    # GIL (it outlives the nested gil_scoped_release scope).
+    # setup_stmts (struct pointer extraction) need the Python API, so with them
+    # the GIL is released only around the kernel call - the RAII buffer guards
+    # outlive that nested scope and release with the GIL re-acquired. Without
+    # them, call() keeps the simpler whole-body release.
     if setup_stmts:
         pybuffer_helper = _PYBUFFER_HELPER
         setup_block = '\n        '.join(setup_stmts)
@@ -403,9 +375,9 @@ void __program_{name}({program_params});
 }}
 
 namespace dace {{ namespace generated {{ namespace {name} {{
-{pybuffer_helper}
+
 struct DaceHandle_{name} {{
-    {state_t} *m_state = nullptr;
+{pybuffer_helper}    {state_t} *m_state = nullptr;
 {sym_members}
 
     void require_state() const {{
