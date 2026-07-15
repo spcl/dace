@@ -222,6 +222,25 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Experimental readable generator: flatten nested SDFGs (so the connector-free + index-function
+    # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
+    # const/constexpr and inline tasklet connectors. After library expansion so post-expansion
+    # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
+    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.mark_const_init import MarkConstInit
+        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+        from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+        from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+        sdfg.apply_transformations_repeated(InlineSDFG)
+        sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
+        Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+        InlineTaskletConnectors().apply_pass(sdfg, {})
+        sdfg.validate()
+
     # Lower ``base ** exp`` to ``ipow`` (exact integer power) wherever the exponent is a
     # provable non-negative integer -- array sizes, subscripts, loop bounds and interstate
     # edges. Runs here, right before codegen, rather than in ``simplify``: a size is "just a
@@ -246,6 +265,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # If another target has already been registered as CPU, use it instead
         if v['name'] == 'cpu':
             default_target = k
+    # The experimental readable CPU generator is opt-in and selected explicitly
+    # (it is not registered with the target registry), so it wins over any 'cpu'
+    # extension picked above.
+    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
+        from dace.codegen.targets import experimental_cpu
+        default_target = experimental_cpu.ExperimentalCPUCodeGen
     targets = {'cpu': default_target(frame, sdfg)}
 
     # Both CUDA code generators are registered, but only the one selected in
