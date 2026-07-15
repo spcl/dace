@@ -535,21 +535,25 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         # Get CUDA architectures from configuration
         backend = common.get_gpu_backend()
         if backend == 'cuda':
-            cuda_arch = Config.get('compiler', 'cuda', 'cuda_arch').split(',')
-            cuda_arch = [ca for ca in cuda_arch if ca is not None and len(ca) > 0]
 
-            cuda_arch = ';'.join(cuda_arch)
-            options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
+            if cuda_arch := Config.get('compiler', 'cuda', 'cuda_arch'):
+                # A CUDA architecture was provided so use it.
+                cuda_arch = cuda_arch.split(',')
+                cuda_arch = [ca for ca in map(str.strip, cuda_arch) if len(ca) > 0]
+                options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{";".join(cuda_arch)}"')
 
             flags = Config.get("compiler", "cuda", "args")
             options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
-            hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
-            hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
+
+            if hip_arch := Config.get('compiler', 'cuda', 'hip_arch'):
+                # HIP architecture was given.
+                hip_arch = hip_arch.split(',')
+                hip_arch = [ha for ha in map(str.strip, hip_arch) if len(ha) > 0]
+                options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
 
             flags = Config.get("compiler", "cuda", "hip_args")
-            options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
             options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):

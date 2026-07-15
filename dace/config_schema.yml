@@ -343,21 +343,17 @@ required:
 
                     cuda_arch:
                         type: str
-                        title: Additional CUDA architectures
+                        title: CUDA architectures to compile for
                         description: >
-                            Additional CUDA architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: '60'
+                            If empty, the SDFG is compiled for the 'native' CUDA architecture.
+                        default: ''
 
                     hip_arch:
                         type: str
-                        title: Additional HIP architectures
+                        title: HIP architectures to compile for
                         description: >
-                            Additional HIP architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: 'gfx906'
+                            If empty, the SDFG build will detect the local HIP architecture.
+                        default: ''
 
                     default_block_size:
                         type: str

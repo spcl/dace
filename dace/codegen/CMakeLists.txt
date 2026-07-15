@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-cmake_minimum_required(VERSION 3.17)
+cmake_minimum_required(VERSION 3.18)
 project(dace_program)
 
 # General options
@@ -77,18 +77,15 @@ if(DACE_ENABLE_CUDA)
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
-  if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
-      execute_process(COMMAND "${CUDAToolkit_NVCC_EXECUTABLE}" "--run"
-                      "${CMAKE_SOURCE_DIR}/tools/get_cuda_arch.cpp"
-                      OUTPUT_VARIABLE _local_arch RESULT_VARIABLE _arch_res)
+  if (DEFINED LOCAL_CUDA_ARCHITECTURES)
+    message(STATUS "Use cached CUDA architectures: '${DACE_CUDA_ARCHITECTURES_DEFAULT}'")
 
-    if(_arch_res EQUAL 0)
-      set(LOCAL_CUDA_ARCHITECTURES "${_local_arch}" CACHE STRING "Detected local GPUs for compilation")
-      message(STATUS "Local CUDA architectures detected: ${LOCAL_CUDA_ARCHITECTURES}")
-    else()
-      set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
-      message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
-    endif()
+  elseif(DACE_CUDA_ARCHITECTURES_DEFAULT)
+    set(LOCAL_CUDA_ARCHITECTURES "${DACE_CUDA_ARCHITECTURES_DEFAULT}" CACHE STRING "Detected local GPUs for compilation")
+    message(STATUS "No local CUDA-capable GPUs found. Using default: ${DACE_CUDA_ARCHITECTURES_DEFAULT}")
+  else()
+    set(LOCAL_CUDA_ARCHITECTURES "native" CACHE STRING "Detected local GPUs for compilation")
+    message(STATUS "No CUDA architecture provided, using native.")
   endif()
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
@@ -214,12 +211,18 @@ if(DACE_ENABLE_HIP)
   enable_language(HIP)
 
   # Get local AMD architectures
-  if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
+  if (DEFINED LOCAL_HIP_ARCHITECTURES)
+    message(STATUS "Use cached HIP architectures: '${DACE_HIP_ARCHITECTURES_DEFAULT}'")
+
+  elseif(DACE_HIP_ARCHITECTURES_DEFAULT)
+    message(STATUS "Use explicitly passed HIP architectures '${DACE_HIP_ARCHITECTURES_DEFAULT}'")
+    set(LOCAL_HIP_ARCHITECTURES "${DACE_HIP_ARCHITECTURES_DEFAULT}" CACHE STRING "Specified HIP architecture for compilation")
+
+  else()
     # Compile and run a test program
-    execute_process(COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o
-      "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
-      OUTPUT_VARIABLE _arch_compout
-      RESULT_VARIABLE _arch_res)
+    execute_process(
+      COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
+      OUTPUT_VARIABLE _arch_compout RESULT_VARIABLE _arch_res)
     if(_arch_res EQUAL 0)
       execute_process(COMMAND "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
       OUTPUT_VARIABLE _arch_out
