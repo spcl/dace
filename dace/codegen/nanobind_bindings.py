@@ -149,6 +149,17 @@ def _argument_binding(arglist, binding_order=None):
                 call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
 
+        elif isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.bool_:
+            # nanobind's `bool` caster accepts only a Python bool (rejects
+            # numpy.bool_); bind as uint8_t (whose caster accepts Python/numpy
+            # bools and ints) and cast back to bool for the kernel call. Matches
+            # ctypes' permissive coercion. Bool deliberately ignores the
+            # strict_scalar `.noconvert()` option, which would re-reject
+            # numpy.bool_ and defeat this.
+            params_by_name[name] = f'uint8_t {name}'
+            call_args.append(f'static_cast<{ctype}>({name})')
+            nb_args_by_name[name] = f'nb::arg("{name}")'
+
         elif isinstance(desc, dt.Scalar):
             # `.noconvert()` (strict option on) makes nanobind reject even a safe
             # widening scalar cast (e.g. int -> double). A lossy cast (float ->

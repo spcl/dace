@@ -310,6 +310,46 @@ def test_nanobind_interface_callback_rejected():
         generate_bindings_code(cb_sdfg)
 
 
+def test_nanobind_interface_bool_scalar_binds_as_uint8():
+    """A bool scalar arg binds as uint8_t (nanobind's bool caster rejects numpy.bool_)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('bool_scalar_bind_probe')
+    sdfg.add_scalar('flag', dace.bool)
+    sdfg.add_array('__return', [1], dace.bool)
+    state = sdfg.add_state()
+    r = state.add_read('flag')
+    w = state.add_write('__return')
+    state.add_edge(r, None, w, None, sdfg.make_array_memlet('flag'))
+
+    code = generate_bindings_code(sdfg)
+    # The nanobind binding param is uint8_t (nanobind's `bool` caster rejects
+    # numpy.bool_), cast back to bool for the kernel call. The kernel's own
+    # extern-C declaration still takes `bool flag` - that is correct - so this
+    # asserts the binding param specifically, not the whole TU.
+    assert 'uint8_t flag' in code
+    assert 'static_cast<bool>(flag)' in code
+    assert 'bool flag' not in code.split('void call(')[1].split(') {')[0]
+
+
+def test_nanobind_interface_bool_scalar_numpy_input():
+    """A numpy.bool_ scalar argument is accepted end-to-end on the nanobind interface."""
+    import numpy as np
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = dace.SDFG('bool_scalar_numpy_e2e')
+        sdfg.add_scalar('flag', dace.bool)
+        sdfg.add_array('__return', [1], dace.bool)
+        state = sdfg.add_state()
+        r = state.add_read('flag')
+        w = state.add_write('__return')
+        state.add_edge(r, None, w, None, sdfg.make_array_memlet('flag'))
+
+        csdfg = sdfg.compile()
+        assert csdfg(flag=np.True_)[0]  # numpy.bool_ (the previously-rejected case)
+        assert not csdfg(flag=np.False_)[0]
+        assert csdfg(flag=True)[0]  # python bool still works
+
+
 def test_nanobind_interface_string_argument():
     """A ``dtypes.string`` scalar argument marshals a Python ``str`` (and ``None``) into the kernel.
 
