@@ -6,7 +6,7 @@ Under ``compiler.cpu.implementation = experimental`` a heap array whose
 ``total_size`` is symbolic or a compound expression is allocated as
 ``dace::aligned_alloc<T>(<array>_size(...), align)``, where the generated
 ``<array>_size`` helper returns that size. Constant sizes get a nullary
-``consteval`` helper (``T_size()``); compound symbolic sizes get a ``constexpr``
+``T_size()`` helper (``consteval`` under C++20, ``constexpr`` under C++17); compound symbolic sizes get a ``constexpr``
 helper over the sorted free symbols (``T_size(M, N)``); a bare single symbol
 (``T[N]``) is deliberately left as the plain name (wrapping it is no readability
 win).
@@ -25,6 +25,7 @@ from typing import Callable, Dict
 import numpy as np
 
 import dace
+from dace.config import Config
 from dace.dtypes import StorageType
 from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY, run_isolated, use_implementation
 
@@ -235,7 +236,8 @@ def test_ipow_size_helper(require_experimental):
 
 
 def test_constant_size_helper(require_experimental):
-    """Constant-size ``CPU_Heap`` transient -> nullary ``consteval T_size()``."""
+    """Constant-size ``CPU_Heap`` transient -> nullary ``T_size()``: ``consteval`` under C++20,
+    degrading to ``constexpr`` under C++17 (``consteval`` is not a keyword before C++20)."""
     build = lambda name: heap_pipeline_1d(name, 200, '0:200')
     base = dict(A=np.random.rand(200), B=np.zeros(200))
 
@@ -244,7 +246,8 @@ def test_constant_size_helper(require_experimental):
 
     code = experimental_code(build, 'constsize_inspect')
     definition = size_helper_definition(code, 'T')
-    assert 'consteval' in definition, definition
+    expected_qual = 'consteval' if int(str(Config.get('compiler', 'cpp_standard')).strip()) >= 20 else 'constexpr'
+    assert expected_qual in definition, definition
     assert 'T_size()' in definition and 'return 200;' in definition, definition
     assert 'dace::aligned_alloc<double>(T_size(), 64)' in allocation_line(code, 'T')
 

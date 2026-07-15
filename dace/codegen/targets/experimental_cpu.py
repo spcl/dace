@@ -50,9 +50,28 @@ INDEX_FUNCTION_QUALIFIER = 'static DACE_HDFI constexpr'
 # (a runtime-evaluated ``constexpr`` over the size's free symbols).
 SIZE_FUNCTION_QUALIFIER = INDEX_FUNCTION_QUALIFIER
 # Qualifier for a constant ``<array>_size`` helper: ``consteval`` forces the fixed
-# allocation extent to fold at compile time (C++20; host .cpp only -- a constant
-# heap size is never registered while emitting a device kernel).
+# allocation extent to fold at compile time. Only under C++20 -- ``consteval`` is not a
+# keyword before it, and every ``_size`` helper is ``DACE_HDFI`` and flushed to every
+# stream that uses the array (including the ``.cu``, compiled at the CPU standard), so a
+# constant size falls back to plain ``constexpr`` on C++17 (see size_qualifier).
 SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
+
+
+def size_qualifier(is_constant: bool) -> str:
+    """The qualifier for a ``<array>_size`` helper.
+
+    A constant size gets ``consteval`` (forcing the extent to fold at compile time) only when the
+    configured C++ standard is C++20 or later; on C++17 it degrades to ``constexpr``, which folds
+    just as well in the constant contexts these helpers are used in (array bounds, allocation
+    sizes) and is a valid keyword. A symbolic size is always ``constexpr``.
+    """
+    if not is_constant:
+        return SIZE_FUNCTION_QUALIFIER
+    try:
+        standard = int(str(Config.get('compiler', 'cpp_standard')).strip())
+    except (TypeError, ValueError):
+        standard = 0
+    return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else SIZE_FUNCTION_QUALIFIER
 # Alignment (bytes) for CPU heap arrays allocated via std::aligned_alloc (matches
 # the classic generator's DACE_ALIGN(64)).
 HEAP_ALIGNMENT = 64
@@ -612,7 +631,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._size_sig_to_name[key] = fnname
         self._size_name_to_sig[fnname] = sig
 
-        qualifier = SIZE_CONSTEVAL_QUALIFIER if is_constant else SIZE_FUNCTION_QUALIFIER
+        qualifier = size_qualifier(is_constant)
         params = ['%s %s' % (INDEX_CTYPE, s) for s in call_args]
         body = sym2cpp(total)
         self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, INDEX_CTYPE, fnname,
