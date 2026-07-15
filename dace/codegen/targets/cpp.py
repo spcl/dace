@@ -51,6 +51,10 @@ def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
     return type_name
 
 
+def readable_cpu_codegen_active() -> bool:
+    return Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable'
+
+
 def copy_expr(
     dispatcher,
     sdfg,
@@ -327,7 +331,9 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
-            ref = '&'
+            # A read-only scalar is passed by const value (``const T x``) instead of const reference,
+            # under the experimental readable generator only (legacy output must stay byte-identical).
+            ref = '' if (is_write is False and readable_cpu_codegen_active()) else '&'
         else:
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
@@ -335,9 +341,13 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                 typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        # Same const-value calling convention as above (a nested SDFG never writes a scalar argument);
+        # a written scalar keeps its reference either way.
+        const_by_value = (is_scalar and is_write is False and not isinstance(desc, data.Structure)
+                          and readable_cpu_codegen_active())
         if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
-        ref = '&' if is_scalar else ''
+        ref = '' if const_by_value else ('&' if is_scalar else '')
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
     elif defined_type in (DefinedType.Stream, DefinedType.Object):
@@ -904,7 +914,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
 
         if node.language == dtypes.Language.CPP:
-            callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
+            callsite_stream.write(codegen.rewrite_cpp_tasklet_body(node, sdfg, state_dfg), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
             # Get GPU codegen
@@ -951,14 +961,14 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, cfg, state_id, node)
+    callsite_stream.write(codegen.tasklet_body_comment(node), cfg, state_id, node)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit_TopLevelExpr(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
