@@ -20,6 +20,7 @@ from typing import Optional, Set
 import dace
 from dace import Memlet, properties
 from dace.properties import CodeBlock
+from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 
@@ -146,8 +147,36 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                     for edge in state.out_edges(node):
                         if edge.data is not None and edge.data.data is not None:
                             nsdfg_written.add(edge.data.data)
+        # A length-1 Array that BACKS a View (some View's viewed edge points
+        # at it) must not be scalarized either: a View needs an Array source
+        # to alias -- a ``Scalar`` source is emitted ``const`` in codegen, so
+        # a write through the view (``view[0] = ...``) fails to compile
+        # (``assignment of read-only location``).  Collect every such source.
+        view_sources: Set[str] = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and isinstance(sdfg.arrays.get(node.data), dace.data.View):
+                    ve = sdutil.get_view_edge(state, node)
+                    if ve is None:
+                        continue
+                    other = ve.src if ve.dst is node else ve.dst
+                    if isinstance(other, nodes.AccessNode):
+                        view_sources.add(other.data)
         for arr_name, arr in list(sdfg.arrays.items()):
             if not isinstance(arr, dace.data.Array):
+                continue
+            # A length-1 ``View`` (incl. ``ArrayView``) subclasses ``Array``
+            # but must NOT be scalarized: a View is an alias into another
+            # array's storage, wired through a ``views`` edge that a
+            # ``Scalar`` cannot carry (``get_view_edge`` would fail and the
+            # alias would be silently dropped).  A length-1 view of a length-1
+            # array -- e.g. a Fortran scalar POINTER rebind lowered as a
+            # length-1-array view -- must stay a View.
+            if isinstance(arr, dace.data.View):
+                continue
+            # A length-1 Array that backs a View (collected above) must also
+            # stay an Array so the view retains an aliasable source.
+            if arr_name in view_sources:
                 continue
             is_len1 = arr.shape == (1, ) or arr.shape == [1]
             # ``single_element`` additionally scalarizes a higher-rank all-ones array (e.g. a (1, 1)

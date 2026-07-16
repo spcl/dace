@@ -94,6 +94,28 @@ static DACE_CONSTEXPR DACE_HDFI int frexp(const T& a) {
   return exponent;
 }
 
+// Fortran ``SCALE(x, n)`` -- return ``x * 2^n``.  Matches C's
+// ``std::ldexp`` exactly.  Templated so the same name covers
+// f32 / f64 operands without the frontend having to specialise.
+template <typename T,
+          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI T ldexp(const T& x, int n) {
+  return std::ldexp(x, n);
+}
+
+// Fortran ``EXPONENT(x)`` -- return the integer exponent ``e`` such
+// that ``x = mantissa * 2^e`` with ``0.5 <= |mantissa| < 1``.
+// Equivalent to ``std::frexp``'s second result; ``ilogb(x) + 1`` for
+// finite ``x``.  Provide as ``ilogb`` so the bridge's runtime-call
+// recognition can map ``_FortranAExponent*`` to a single short name.
+template <typename T,
+          std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
+static DACE_CONSTEXPR DACE_HDFI int ilogb(const T& x) {
+  int e = 0;
+  std::frexp(x, &e);
+  return e;
+}
+
 // Implement to support Fortran's intrinsic NINT - round, but return an integer
 template <typename T,
           std::enable_if_t<std::is_floating_point<T>::value>* = nullptr>
@@ -317,6 +339,20 @@ template <typename T,
 static DACE_CONSTEXPR DACE_HDFI T cpp_mod(const T& numerator,
                                           const T& denominator) {
   return (T)std::fmod(numerator, denominator);
+}
+
+// ``floor_mod(a, b)`` -- Fortran ``MODULO``: floored-quotient remainder
+// (same sign as the divisor).  Matches Python's ``%`` on both ints and
+// floats -- distinct from C++ ``%``, which truncates on signed ints.
+// Templated so a single ``floor_mod(a, b)`` call covers ``int32`` /
+// ``int64`` / ``float`` / ``double`` operands without the frontend
+// having to hint the operand type.  Fortran ``MOD`` (truncated) lowers
+// directly to ``arith.remsi`` for ints / ``std::fmod`` for floats and
+// doesn't need a helper.
+template <typename T>
+static DACE_CONSTEXPR DACE_HDFI T floor_mod(const T& numerator,
+                                            const T& denominator) {
+  return py_mod(numerator, denominator);
 }
 
 // Computes C/C++ divmod (std::div)
@@ -584,6 +620,23 @@ namespace math {
 static DACE_CONSTEXPR_HOSTDEV typeless_pi pi{};
 static DACE_CONSTEXPR typeless_nan nan{};
 //////////////////////////////////////////////////////
+
+// Complex-component accessors.  ``re(z)`` / ``im(z)`` extract the real
+// / imaginary part of a complex value.  ``cppunparse`` maps the
+// tasklet-body spellings ``re(_in)`` / ``im(_in)`` here so a complex
+// connector's component is read directly.  Generic over
+// ``std::complex`` / ``thrust::complex`` (both expose ``.real()`` /
+// ``.imag()``); the trailing ``decltype`` constrains it to complex
+// types.
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI auto re(const T& z) -> decltype(z.real()) {
+  return z.real();
+}
+template <typename T>
+DACE_CONSTEXPR DACE_HDFI auto im(const T& z) -> decltype(z.imag()) {
+  return z.imag();
+}
+
 template <typename T>
 DACE_CONSTEXPR DACE_HDFI T exp(const T& a) {
   return (T)std::exp(a);
