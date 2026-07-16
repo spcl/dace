@@ -120,6 +120,8 @@ def test_uninlined_kernel_no_duplicate_idx(kernel):
     import os
     base = os.path.join(os.path.dirname(__file__), "..", "..", "corpus", "polybench", "linear_algebra", "solvers")
     path = os.path.join(base, f"{kernel}.py")
+    if not os.path.exists(path):
+        pytest.skip("in-repo polybench corpus not present in this build")
     spec = importlib.util.spec_from_file_location(f"k_{kernel}", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
