@@ -376,7 +376,10 @@ def test_nanobind_interface_symbol_inference_binding():
     def sym_infer_probe(A: dace.float64[N + 1], B: dace.float64[10]):
         B[0] = A[0] * N + M  # M appears in no shape: not inferable
 
-    code = generate_bindings_code(sym_infer_probe.to_sdfg())
+    # Explicit simplify=True: the simplify pipeline marks the arrays
+    # non-nullable (optional=False), which this test's unguarded-fallback
+    # asserts rely on; the unsimplified path has its own test below.
+    code = generate_bindings_code(sym_infer_probe.to_sdfg(simplify=True))
     # N: optional, inferred from A's shape (inverted expression N = shape - 1).
     assert 'N__opt' in code
     assert 'nb::arg("N") = nb::none()' in code
@@ -409,6 +412,46 @@ def test_nanobind_interface_symbol_inference():
         expected2 = a2 + b2
         csdfg(A=a2, B=b2, N=np.int32(n))
         assert np.allclose(b2, expected2)
+
+
+def test_nanobind_interface_symbol_inference_unsimplified_binding():
+    """Inference works on an unsimplified SDFG, where arrays have unknown
+    nullability (``optional=None`` - only the simplify pipeline's
+    OptionalArrayInference sets ``False``) and bind as ``std::optional``:
+    the shape fallback is then guarded by a has_value check."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def sym_infer_unsimplified(A: dace.float64[N + 1], B: dace.float64[10]):
+        B[0] = A[0] * N
+
+    code = generate_bindings_code(sym_infer_unsimplified.to_sdfg(simplify=False))
+    assert 'N__opt' in code
+    assert 'nb::arg("N") = nb::none()' in code
+    assert 'A.has_value()' in code
+    assert 'A->shape(0)' in code
+    assert "inference source 'A' is None" in code
+
+
+def test_nanobind_interface_symbol_inference_unsimplified():
+    """E2E: omitting a size symbol works on an unsimplified SDFG too (the CI
+    legs run with automatic simplification off)."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def infer_e2e_unsimplified(A: dace.float64[N], B: dace.float64[N]):
+            B[:] = A + B
+
+        csdfg = infer_e2e_unsimplified.to_sdfg(simplify=False).compile()
+        n = 9
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = a + b
+        csdfg(A=a, B=b)  # no N: inferred from A.shape through the guard
+        assert np.allclose(b, expected)
 
 
 def test_nanobind_interface_symbol_inference_return_requires_symbol():
