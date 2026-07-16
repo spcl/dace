@@ -10,12 +10,21 @@ reorders results back. To attribute time to the compute -- not to the relayout -
     the copy-in / copy-out states can never be merged into the compute region -- the timed boundary
     (a state boundary) survives any later simplification.
   * :class:`InsertLayoutTiming` classifies each state (a source/sink whose every tasklet is a pure
-    copy is a copy-in/out state; the rest is compute), barriers the copy states, and sets
-    ``InstrumentationType.Timer`` on the compute states -- so a run times the compute alone (a start
-    marker after copy-in, a stop marker before copy-out).
+    copy is a copy-in/out state; the rest is compute), barriers the copy states, and instruments the
+    compute states -- so a run times the compute alone (a start marker after copy-in, a stop marker
+    before copy-out). The instrument is chosen PER DEVICE, never hardcoded: a GPU-scheduled state
+    gets ``InstrumentationType.GPU_Events`` (CUDA events around the kernels -- a host wall-clock
+    ``Timer`` would only bracket the asynchronous launch, not the GPU work), a host state gets
+    ``InstrumentationType.Timer``. Both report milliseconds, so a report mixing the two still sums.
   * :func:`time_compute` runs the instrumented SDFG and reads the compute duration back from the
     instrumentation report -- the timing the brute-force sweep should compare (relayout is a
     one-time global cost, not part of the steady-state kernel).
+
+.. note:: The copy/compute split needs the relayout states to STILL BE SEPARATE states when this pass
+   runs -- the barriers only stop LATER fusion. ``SDFG.apply_gpu_transformations`` fuses the relayout
+   and compute states into one before this pass ever sees them, so on such an SDFG there is no
+   boundary left and the single remaining state is timed WHOLE (relayout included). Run this pass
+   before the GPU transform if the split matters.
 """
 import statistics
 from dataclasses import dataclass
@@ -46,6 +55,20 @@ def _is_pure_copy_tasklet(t: nodes.Node) -> bool:
     return rhs in t.in_connectors
 
 
+def state_runs_on_gpu(state: dace.SDFGState) -> bool:
+    """True iff ``state``'s compute is scheduled on the GPU, i.e. it carries a GPU map. Such a state
+    must be timed with CUDA events: a host ``Timer`` around it brackets only the asynchronous kernel
+    launch, not the kernel."""
+    return any(
+        isinstance(node, nodes.MapEntry) and node.map.schedule in dace.dtypes.GPU_SCHEDULES
+        for node in state.nodes())
+
+
+def instrumentation_for(state: dace.SDFGState) -> dace.InstrumentationType:
+    """The instrument to time ``state`` with: CUDA events on the GPU, the host timer otherwise."""
+    return dace.InstrumentationType.GPU_Events if state_runs_on_gpu(state) else dace.InstrumentationType.Timer
+
+
 def is_copy_state(state: dace.SDFGState) -> bool:
     """True iff ``state`` is a pure relayout copy: it has tasklets and every one is an ``out = in``
     copy (no arithmetic)."""
@@ -55,11 +78,13 @@ def is_copy_state(state: dace.SDFGState) -> bool:
 
 @dataclass
 class InsertLayoutTiming(ppl.Pass):
-    """Barrier the copy-in / copy-out relayout states and Timer-instrument the compute region.
+    """Barrier the copy-in / copy-out relayout states and instrument the compute region.
 
     After this pass a run of the SDFG produces an instrumentation report whose entries are the
     compute states only (the relayout copies are excluded). Returns the number of compute states
-    instrumented.
+    instrumented. The instrument is picked per state by :func:`instrumentation_for` -- CUDA events for
+    a GPU-scheduled state, the host timer otherwise -- so the pass never hardcodes a device-specific
+    measurement.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -82,7 +107,7 @@ class InsertLayoutTiming(ppl.Pass):
             if state in boundary:
                 continue
             if any(isinstance(n, nodes.Tasklet) for n in state.nodes()):
-                state.instrument = dace.InstrumentationType.Timer
+                state.instrument = instrumentation_for(state)
                 instrumented += 1
         return instrumented
 

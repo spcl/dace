@@ -6,7 +6,8 @@ import numpy
 import dace
 
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
-from dace.transformation.layout.timing import (InsertLayoutTiming, is_copy_state, add_fusion_barrier, time_compute)
+from dace.transformation.layout.timing import (InsertLayoutTiming, is_copy_state, add_fusion_barrier, time_compute,
+                                               instrumentation_for, state_runs_on_gpu)
 
 N = dace.symbol("N")
 
@@ -111,6 +112,25 @@ def test_sweep_with_compute_region_timer():
     assert best(results) is not None
 
 
+def test_instrument_is_chosen_per_device():
+    """The pass must not hardcode the instrument: a host state is timed with the wall-clock Timer, a
+    GPU-scheduled state with CUDA events (a host timer would bracket only the async launch). Purely
+    structural -- applying the GPU transform needs no device."""
+    cpu = _permuted()
+    assert InsertLayoutTiming().apply_pass(cpu, {}) == 1
+    timed = [s for s in cpu.states() if s.instrument != dace.InstrumentationType.No_Instrumentation]
+    assert [s.instrument for s in timed] == [dace.InstrumentationType.Timer]
+    assert not any(state_runs_on_gpu(s) for s in cpu.states())
+
+    gpu = _permuted()
+    gpu.apply_gpu_transformations()
+    assert InsertLayoutTiming().apply_pass(gpu, {}) >= 1
+    timed = [s for s in gpu.states() if s.instrument != dace.InstrumentationType.No_Instrumentation]
+    assert timed, "no state instrumented on the GPU SDFG"
+    assert all(s.instrument == dace.InstrumentationType.GPU_Events for s in timed)
+    assert all(instrumentation_for(s) == dace.InstrumentationType.GPU_Events for s in timed)
+
+
 if __name__ == "__main__":
     test_is_copy_state_classifies_relayout_vs_compute()
     test_insert_timing_instruments_compute_only()
@@ -118,4 +138,5 @@ if __name__ == "__main__":
     test_time_compute_and_correctness()
     test_add_fusion_barrier_is_side_effecting()
     test_sweep_with_compute_region_timer()
+    test_instrument_is_chosen_per_device()
     print("timing tests PASS")
