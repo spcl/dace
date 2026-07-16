@@ -1,19 +1,22 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Drive the ported SC26 reference kernels (k02, k03, k06, k07, k09, k13, k14) through the layout
-sweep, verifying every candidate against the numpy oracle.
+"""Drive the ported SC26 reference kernels (k01, k02, k03, k06, k07, k09, k10, k13, k14) through the
+layout sweep, verifying every candidate against the numpy oracle.
 
-Each kernel exercises a different primitive family: k02 transpose (Block + Permute), k03 complex
-conjugate (Zip SoA/AoS/AoSoA), k06 gather-accumulate-scatter (Shuffle, complex128), k07 ICON stencil
-(Permute 3D), k09 particle fields (Zip AoSoA), k13 1x1 conv (Permute + nChw16c Block), k14 Eytzinger
-search (Shuffle). For the kernels with a large candidate set (k02: 9, k13: 25) a representative
-SUBSET is swept so the test stays fast -- the module's ``candidates()`` still enumerates the full
-family for a real (timed) sweep. Correctness is the invariant; timing is not asserted."""
+Each kernel exercises a different primitive family: k01 STREAM triad (Block, the fragmentation
+instrument), k02 transpose (Block + Permute), k03 complex conjugate (Zip SoA/AoS/AoSoA), k06
+gather-accumulate-scatter (Shuffle, complex128), k07 ICON stencil (Permute 3D), k09 particle fields
+(Zip AoSoA), k10 OMEN windowed contraction (cross-phase Permute of a transient, complex128), k13 1x1
+conv (Permute + nChw16c Block), k14 Eytzinger search (Shuffle). For the kernels with a large
+candidate set (k02: 9, k13: 25) a representative SUBSET is swept so the test stays fast -- the
+module's ``candidates()`` still enumerates the full family for a real (timed) sweep. Correctness is
+the invariant; timing is not asserted."""
 import numpy
 
 from dace.transformation.layout.brute_force import sweep, best
-from tests.transformations.layout.kernels import (k02_transpose_blocked, k03_complex_conjugate_zip,
-                                                  k06_gather_accumulate_scatter, k07_icon_stencil,
-                                                  k09_particle_field_affinity, k13_conv1x1_channel_layouts,
+from tests.transformations.layout.kernels import (k01_stream_triad, k02_transpose_blocked,
+                                                  k03_complex_conjugate_zip, k06_gather_accumulate_scatter,
+                                                  k07_icon_stencil, k09_particle_field_affinity,
+                                                  k10_omen_windowed_contraction, k13_conv1x1_channel_layouts,
                                                   k14_eytzinger_search)
 
 
@@ -37,6 +40,14 @@ def _assert_all_correct(candidates, run, reference):
     assert all(r.correct for r in results), [(r.name, r.error) for r in results]
     assert best(results) is not None
     return results
+
+
+def test_k01_stream_triad_block():
+    inp = k01_stream_triad.make_inputs(64)
+    cand_dict = k01_stream_triad.candidates()
+    cands = _subset(k01_stream_triad.triad, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, k01_stream_triad.run_closure(inp, 64),
+                        k01_stream_triad.oracle(inp["b"], inp["c"]))
 
 
 def test_k02_transpose_block_and_permute():
@@ -78,6 +89,14 @@ def test_k09_particle_field_affinity_aosoa():
                         k09_particle_field_affinity.oracle(*[inp[f] for f in fields]))
 
 
+def test_k10_omen_windowed_contraction_permute():
+    inp = k10_omen_windowed_contraction.make_inputs(3, 8)
+    cand_dict = k10_omen_windowed_contraction.candidates()
+    cands = _subset(k10_omen_windowed_contraction.omen, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, k10_omen_windowed_contraction.run_closure(inp, 3, 8),
+                        k10_omen_windowed_contraction.oracle(inp["H"], inp["X"], inp["D"]))
+
+
 def test_k13_conv1x1_channel_layouts():
     inp = k13_conv1x1_channel_layouts.make_inputs(2, 16, 4, 4, 8)
     cand_dict = k13_conv1x1_channel_layouts.candidates()
@@ -95,11 +114,13 @@ def test_k14_eytzinger_search_shuffle():
 
 
 if __name__ == "__main__":
+    test_k01_stream_triad_block()
     test_k02_transpose_block_and_permute()
     test_k03_complex_conjugate_zip()
     test_k06_gather_accumulate_scatter_shuffle()
     test_k07_icon_stencil_permute()
     test_k09_particle_field_affinity_aosoa()
+    test_k10_omen_windowed_contraction_permute()
     test_k13_conv1x1_channel_layouts()
     test_k14_eytzinger_search_shuffle()
     print("kernel ports tests PASS")
