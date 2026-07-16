@@ -807,3 +807,56 @@ def test_loop_fission_refuses_constant_slot_intra_iter_carry():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+@dace.program
+def unfissionable_per_iter_bridge(b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+    """A body that does NOT fission: every statement is chained through the scalar ``s``, so the
+    independent-group partition finds one group. ``d`` and ``c`` are per-iteration bridges -- written and
+    then read in the SAME iteration, which is what _rewrite_per_iter_bridges redirects."""
+    s = np.float64(0.0)
+    for i in range(1, N - 1):
+        d[i] = b[i] + s
+        c[i] = d[i] + s
+        s = c[i]
+
+
+def test_unfissionable_loop_is_left_untouched():
+    """The bridge rewrite runs before the grouping (it is what makes a producer and its consumer look
+    independent), but it is only sound once the fission separates them into their own loops. A loop that
+    does not fission must therefore come back EXACTLY as it went in: leaving the rewrite in place drops the
+    edge ordering the write of d[i]/c[i] before the read in the same iteration, and the value then depends
+    on the order codegen picks (measured wrong ~1/3 of runs).
+    """
+    sdfg = unfissionable_per_iter_bridge.to_sdfg(simplify=True)
+
+    def shape(sd):
+        return (len(list(sd.all_states())), sum(len(st.nodes()) for st in sd.all_states()),
+                sum(len(st.edges()) for st in sd.all_states()))
+
+    before = shape(sdfg)
+    applied = LoopFission().apply_pass(sdfg, {})
+    assert applied is None  # nothing fissioned ...
+    assert shape(sdfg) == before  # ... so nothing changed: the return value must not lie
+    sdfg.validate()
+
+
+def test_unfissionable_per_iter_bridge_is_value_preserving():
+    n = 16
+    rng = np.random.default_rng(0)
+    ins = {k: rng.random(n) for k in ("b", "c", "d")}
+
+    # the value the source text means, computed in plain python
+    b, c, d = ins["b"].copy(), ins["c"].copy(), ins["d"].copy()
+    s = 0.0
+    for i in range(1, n - 1):
+        d[i] = b[i] + s
+        c[i] = d[i] + s
+        s = c[i]
+    ref = {"b": b, "c": c, "d": d}
+
+    sdfg = unfissionable_per_iter_bridge.to_sdfg(simplify=True)
+    LoopFission().apply_pass(sdfg, {})
+    got = {k: v.copy() for k, v in ins.items()}
+    sdfg(**got, N=n)
+    assert all(np.allclose(got[k], ref[k]) for k in ref), f"ref d={ref['d'][:4]} got d={got['d'][:4]}"
