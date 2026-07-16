@@ -7,7 +7,8 @@ import dace
 
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.timing import (InsertLayoutTiming, is_copy_state, add_fusion_barrier, time_compute,
-                                               instrumentation_for, state_runs_on_gpu)
+                                               instrumentation_for, state_runs_on_gpu, barrier_relayout_states,
+                                               has_fusion_barrier)
 
 N = dace.symbol("N")
 
@@ -131,6 +132,41 @@ def test_instrument_is_chosen_per_device():
     assert all(instrumentation_for(s) == dace.InstrumentationType.GPU_Events for s in timed)
 
 
+def test_barrier_survives_gpu_transform_and_only_compute_is_timed():
+    """apply_gpu_transformations fuses the relayout states into the compute state, leaving nothing to
+    time apart. Barriering them FIRST (a side-effect tasklet blocks StateFusion) keeps the split, and
+    the compute state alone is then instrumented -- with CUDA events, since it is a GPU state.
+    Structural: applying the GPU transform needs no device."""
+    fused = _permuted()
+    fused.apply_gpu_transformations()  # no barrier: everything collapses into one state
+    assert len(list(fused.states())) == 1
+
+    kept = _permuted()
+    assert barrier_relayout_states(kept) == 2  # the two relayout copy states
+    kept.apply_gpu_transformations()
+    assert len(list(kept.states())) > 1, "barrier did not stop the GPU transform from fusing"
+
+    # A barriered copy state must still READ as a copy state, else it gets timed as compute.
+    copies = [s for s in kept.states() if is_copy_state(s)]
+    assert copies and all(has_fusion_barrier(s) for s in copies)
+
+    assert InsertLayoutTiming().apply_pass(kept, {}) == 1  # compute only, not the relayout
+    timed = [s for s in kept.states() if s.instrument != dace.InstrumentationType.No_Instrumentation]
+    assert len(timed) == 1 and not is_copy_state(timed[0])
+    assert timed[0].instrument == dace.InstrumentationType.GPU_Events
+
+
+def test_barrier_relayout_states_is_idempotent():
+    """Barriering twice must not stack barriers (InsertLayoutTiming may run after an early call)."""
+    sdfg = _permuted()
+    assert barrier_relayout_states(sdfg) == 2
+    assert barrier_relayout_states(sdfg) == 0  # already barriered
+    InsertLayoutTiming().apply_pass(sdfg, {})  # must not add a second barrier either
+    for state in sdfg.states():
+        barriers = [n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.Tasklet) and n.side_effects]
+        assert len(barriers) <= 1
+
+
 if __name__ == "__main__":
     test_is_copy_state_classifies_relayout_vs_compute()
     test_insert_timing_instruments_compute_only()
@@ -139,4 +175,6 @@ if __name__ == "__main__":
     test_add_fusion_barrier_is_side_effecting()
     test_sweep_with_compute_region_timer()
     test_instrument_is_chosen_per_device()
+    test_barrier_survives_gpu_transform_and_only_compute_is_timed()
+    test_barrier_relayout_states_is_idempotent()
     print("timing tests PASS")

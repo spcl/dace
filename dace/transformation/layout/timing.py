@@ -20,11 +20,12 @@ reorders results back. To attribute time to the compute -- not to the relayout -
     instrumentation report -- the timing the brute-force sweep should compare (relayout is a
     one-time global cost, not part of the steady-state kernel).
 
-.. note:: The copy/compute split needs the relayout states to STILL BE SEPARATE states when this pass
-   runs -- the barriers only stop LATER fusion. ``SDFG.apply_gpu_transformations`` fuses the relayout
-   and compute states into one before this pass ever sees them, so on such an SDFG there is no
-   boundary left and the single remaining state is timed WHOLE (relayout included). Run this pass
-   before the GPU transform if the split matters.
+.. note:: Barriers only stop LATER fusion, so they must exist BEFORE anything that fuses.
+   ``SDFG.apply_gpu_transformations`` fuses the relayout states into the compute state, leaving
+   nothing to time apart -- call :func:`barrier_relayout_states` BEFORE it and the split survives
+   (measured on an RTX 4050: the compute region is then 0.009-0.021 ms of a ~400 ms whole call, and
+   it separates layouts the whole-call timer cannot). :class:`InsertLayoutTiming` is idempotent with
+   respect to barriers already present, so it is safe to call afterwards.
 """
 import statistics
 from dataclasses import dataclass
@@ -35,9 +36,22 @@ from dace import nodes
 from dace.transformation import pass_pipeline as ppl
 
 
+BARRIER_PREFIX = "__layout_barrier_"
+
+
 def add_fusion_barrier(state: dace.SDFGState) -> nodes.Tasklet:
     """Add an empty side-effect tasklet to ``state`` so ``StateFusion`` cannot merge it."""
-    return state.add_tasklet(f"__layout_barrier_{state.label}", {}, {}, "", side_effects=True)
+    return state.add_tasklet(f"{BARRIER_PREFIX}{state.label}", {}, {}, "", side_effects=True)
+
+
+def is_fusion_barrier(node: nodes.Node) -> bool:
+    """True for a barrier tasklet this module added (see :func:`add_fusion_barrier`)."""
+    return isinstance(node, nodes.Tasklet) and node.label.startswith(BARRIER_PREFIX)
+
+
+def has_fusion_barrier(state: dace.SDFGState) -> bool:
+    """True iff ``state`` already carries a barrier, so it is not barriered twice."""
+    return any(is_fusion_barrier(n) for n in state.nodes())
 
 
 def _is_pure_copy_tasklet(t: nodes.Node) -> bool:
@@ -71,9 +85,56 @@ def instrumentation_for(state: dace.SDFGState) -> dace.InstrumentationType:
 
 def is_copy_state(state: dace.SDFGState) -> bool:
     """True iff ``state`` is a pure relayout copy: it has tasklets and every one is an ``out = in``
-    copy (no arithmetic)."""
-    tasklets = [n for n in state.nodes() if isinstance(n, nodes.Tasklet)]
+    copy (no arithmetic). A barrier tasklet this module added is ignored -- barriering a copy state
+    must not stop it from being recognized as one (it may have been barriered by an earlier pass, or
+    before a GPU transform)."""
+    tasklets = [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and not is_fusion_barrier(n)]
     return len(tasklets) >= 1 and all(_is_pure_copy_tasklet(t) for t in tasklets)
+
+
+def barrier_relayout_states(sdfg: dace.SDFG) -> int:
+    """Barrier every relayout copy state, so a later fusing transform cannot merge relayout into
+    compute. Call this BEFORE ``SDFG.apply_gpu_transformations`` (which otherwise fuses them into one
+    state, leaving no boundary to time). Already-barriered states are left alone. Returns the count.
+    """
+    count = 0
+    for state in list(sdfg.states()):
+        if is_copy_state(state) and not has_fusion_barrier(state):
+            add_fusion_barrier(state)
+            count += 1
+    return count
+
+
+def state_has_tasklets(state: dace.SDFGState) -> bool:
+    """True iff ``state`` does real work -- a tasklet that is not one of our barriers. dace's host
+    copy-in/copy-out states (added by ``apply_gpu_transformations``) carry memlet copies but no
+    tasklets, so they are transparent by this measure."""
+    return any(isinstance(n, nodes.Tasklet) and not is_fusion_barrier(n) for n in state.nodes())
+
+
+def reaches_tasklets(sdfg: dace.SDFG, state: dace.SDFGState, forward: bool) -> bool:
+    """True iff any state reachable from ``state`` (forward or backward) does real work, looking
+    THROUGH states that do none.
+
+    This is the source/sink test that identifies a relayout boundary, made robust to wrapper states:
+    a plain ``in_degree == 0`` breaks as soon as ``apply_gpu_transformations`` wraps the graph in
+    tasklet-less host copy states, which leaves the relayout in the middle and makes it read as
+    compute. Looking through those keeps a MID-GRAPH copy (a real algorithmic copy, which has a
+    working state on both sides) classified as compute, as it must be.
+    """
+    edges = sdfg.out_edges if forward else sdfg.in_edges
+    pick = (lambda e: e.dst) if forward else (lambda e: e.src)
+    seen = set()
+    stack = [pick(e) for e in edges(state)]
+    while stack:
+        nxt = stack.pop()
+        if nxt in seen:
+            continue
+        seen.add(nxt)
+        if state_has_tasklets(nxt):
+            return True
+        stack.extend(pick(e) for e in edges(nxt))
+    return False
 
 
 @dataclass
@@ -95,18 +156,19 @@ class InsertLayoutTiming(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         states = list(sdfg.states())
-        copy_in = [s for s in states if sdfg.in_degree(s) == 0 and is_copy_state(s)]
-        copy_out = [s for s in states if sdfg.out_degree(s) == 0 and is_copy_state(s)]
+        copy_in = [s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=False)]
+        copy_out = [s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=True)]
         boundary = set(copy_in) | set(copy_out)
 
         for state in boundary:
-            add_fusion_barrier(state)
+            if not has_fusion_barrier(state):  # idempotent: a state barriered earlier is left alone
+                add_fusion_barrier(state)
 
         instrumented = 0
         for state in states:
             if state in boundary:
                 continue
-            if any(isinstance(n, nodes.Tasklet) for n in state.nodes()):
+            if any(isinstance(n, nodes.Tasklet) and not is_fusion_barrier(n) for n in state.nodes()):
                 state.instrument = instrumentation_for(state)
                 instrumented += 1
         return instrumented
