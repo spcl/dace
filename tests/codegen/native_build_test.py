@@ -119,15 +119,6 @@ def test_cuda_arch_flags_no_native_no_arch_errors():
                 nc._cuda_arch_flags(None, allow_native=False)
 
 
-def test_lib_subdir(tmp_path):
-    """_lib_subdir prefers lib64, falls back to lib (used by the HIP/ROCm path)."""
-    os.makedirs(tmp_path / 'lib64')
-    assert nc._lib_subdir(str(tmp_path)) == str(tmp_path / 'lib64')
-    root2 = tmp_path / 'r2'
-    os.makedirs(root2 / 'lib')
-    assert nc._lib_subdir(str(root2)) == str(root2 / 'lib')
-
-
 # ---------------------------------------------------------------------------
 # Per-environment resolution
 # ---------------------------------------------------------------------------
@@ -192,6 +183,62 @@ def test_resolve_mpi_missing_wrapper_errors_clearly():
 
 def _blas_loadable():
     return any(ctypes.util.find_library(n) for n in ('openblas', 'blas', 'cblas', 'mkl_rt', 'mkl_rt.1'))
+
+
+def test_unknown_build_mode_raises(tmp_path):
+    """A typo'd compiler.build_mode must raise a clear error, not silently fall back to cmake."""
+
+    @dace.program
+    def inc(a: dace.float64[8]):
+        a[:] = a + 1.0
+
+    sdfg = inc.to_sdfg()
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'build_mode', value='cmakee'):
+        with pytest.raises(cgx.CompilerConfigurationError, match='build_mode'):
+            sdfg.compile()
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_native_rejects_hip_backend(tmp_path):
+    """Native mode is CUDA-only: a HIP/ROCm backend must raise a clear error, not crash downstream
+    on a half-wired code path."""
+    from dace.transformation.interstate import GPUTransformSDFG
+
+    @dace.program
+    def inc(a: dace.float64[16]):
+        a[:] = a + 1.0
+
+    sdfg = inc.to_sdfg()
+    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'cuda', 'backend', value='hip'):
+        with set_temporary('compiler', 'build_mode', value='native'):
+            with pytest.raises(cgx.CompilerConfigurationError, match='HIP'):
+                sdfg.compile()
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_cmake_build_still_works(tmp_path):
+    """The default cmake backend (extracted into its own function) still builds + runs -- guards the
+    refactor that split configure_and_compile into native/cmake dispatch."""
+
+    @dace.program
+    def axpy_cmake(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+        c[:] = 2.0 * a + b
+
+    a = np.random.rand(32)
+    b = np.random.rand(32)
+    c = np.zeros(32)
+    sdfg = axpy_cmake.to_sdfg()
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'build_mode', value='cmake'):
+        csdfg = sdfg.compile()
+    lib = str(csdfg._lib._library_filename)
+    stub = os.path.join(os.path.dirname(lib), 'libdacestub_' + os.path.basename(lib)[3:])
+    assert os.path.isfile(lib) and os.path.isfile(stub)
+    csdfg(a=a, b=b, c=c)
+    assert np.allclose(c, 2.0 * a + b)
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')

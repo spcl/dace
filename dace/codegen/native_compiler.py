@@ -42,7 +42,8 @@ _BUILD_TYPE_FLAGS = {
     'MinSizeRel': ['-Os', '-DNDEBUG'],
 }
 
-#: Target names whose sources are GPU device code (compiled by nvcc / amdclang++, not g++).
+#: Target names whose sources are GPU device code (compiled by nvcc, not g++). Native mode is
+#: CUDA-only; a HIP/ROCm backend is rejected early with a clear error (use compiler.build_mode=cmake).
 _GPU_TARGETS = ('cuda', 'experimental_cuda')
 
 
@@ -148,30 +149,6 @@ def _cuda_paths() -> tuple:
     return _cuda_paths_cached(root, os.environ.get('PATH', ''))
 
 
-def _lib_subdir(root: str) -> str:
-    """The library directory under a toolkit ``root`` (``lib64`` if present, else ``lib``)."""
-    for sub in ('lib64', 'lib'):
-        d = os.path.join(root, sub)
-        if os.path.isdir(d):
-            return d
-    return os.path.join(root, 'lib')
-
-
-def _resolve_rocm_root() -> str:
-    cand = os.environ.get('ROCM_PATH') or os.environ.get('HIP_PATH')
-    if not cand:
-        hipcc = shutil.which('hipcc') or shutil.which('amdclang++')
-        if hipcc:
-            cand = os.path.dirname(os.path.dirname(hipcc))
-    if not cand and os.path.isdir('/opt/rocm'):
-        cand = '/opt/rocm'
-    if not cand or not os.path.isdir(cand):
-        raise cgx.CompilerConfigurationError(
-            'Native build cannot locate ROCm. Set ROCM_PATH, add amdclang++ to PATH, or use '
-            'compiler.build_mode=cmake.')
-    return cand
-
-
 @functools.lru_cache(maxsize=None)
 def _mpi_flags(mpicxx: str, path_env: str) -> tuple:
     """Query the MPI wrapper compiler for its include/lib flags, as
@@ -228,18 +205,6 @@ def _classify_library(spec: _LinkSpec, lib: str) -> None:
         spec.libs.append(lib)
 
 
-def _env_class_attr(env, name: str, default):
-    """Read a class attribute across the environment's MRO without ``getattr``/``hasattr``.
-
-    ``vars(env)`` sees only the class's *own* dict, so an attribute defined on a base environment
-    would be missed; walking ``__mro__`` honors inheritance while still avoiding ``getattr``.
-    """
-    for klass in env.__mro__:
-        if name in vars(klass):
-            return vars(klass)[name]
-    return default
-
-
 def _resolve_environment(env, spec: _LinkSpec) -> None:
     """Resolve one collected environment into ``spec``, or raise if it needs real CMake."""
     name = env.__name__
@@ -289,16 +254,6 @@ def _resolve_environment(env, spec: _LinkSpec) -> None:
     for lib in _get_or_eval(env.cmake_libraries):
         if not _is_deferred(lib):
             _classify_library(spec, lib)
-
-
-def _collect_auxiliary_sources(environments) -> List[str]:
-    """Absolute paths of ``.cu`` translation units contributed by environments (e.g. libnode wrappers)."""
-    out: List[str] = []
-    for env in environments:
-        env_dir = os.path.dirname(env._dace_file_path)
-        for src in _get_or_eval(_env_class_attr(env, 'auxiliary_sources', [])):
-            out.append(src if os.path.isabs(src) else os.path.join(env_dir, src))
-    return out
 
 
 # ---------------------------------------------------------------------------
@@ -380,15 +335,7 @@ def _newest_mtime(directory: str) -> float:
     return newest
 
 
-@functools.lru_cache(maxsize=None)
-def _static_tree_mtime(directory: str) -> float:
-    """Cached :func:`_newest_mtime` for a tree that does not change within a run (the DaCe runtime
-    headers). Avoids re-walking hundreds of headers on every build; use the uncached version for the
-    per-program generated include dir, which codegen rewrites."""
-    return _newest_mtime(directory)
-
-
-def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, run) -> Optional[List[str]]:
+def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, runtime_mtime: float, run) -> Optional[List[str]]:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it in the user cache dir.
 
     The DaCe runtime umbrella header dominates the compile time of a small kernel (~1s of parsing +
@@ -405,7 +352,7 @@ def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, run) -> O
         pch_dir = os.path.join(os.path.expanduser('~/.cache/dace/native_pch'), key)
         header = os.path.join(pch_dir, 'dace_prewarm.h')
         gch = header + '.gch'
-        if not (os.path.isfile(gch) and os.path.getmtime(gch) >= _static_tree_mtime(runtime_inc)):
+        if not (os.path.isfile(gch) and os.path.getmtime(gch) >= runtime_mtime):
             os.makedirs(pch_dir, exist_ok=True)
             if not os.path.isfile(header):
                 with open(header, 'w') as f:
@@ -456,6 +403,10 @@ def build_native(program_folder: str,
     generated_inc = os.path.join(program_folder, 'include')
     src_folder = os.path.join(program_folder, 'src')
     lib_ext = Config.get('compiler', 'library_extension')
+    # Walked once per build (not cached across builds): the runtime headers are stable within a build,
+    # but a developer editing them between builds in one long-lived process must still invalidate
+    # objects/PCH -- a process-lifetime cache here would wrongly reuse stale objects.
+    runtime_mtime = _newest_mtime(runtime_inc)
 
     def run(cmd: List[str], stream=output_stream) -> None:
         line = ' '.join(shlex.quote(c) for c in cmd)
@@ -470,12 +421,14 @@ def build_native(program_folder: str,
         if not os.path.isfile(product):
             return False
         ptime = os.path.getmtime(product)
-        return all(os.path.isfile(s) and os.path.getmtime(s) <= ptime for s in sources)
+        # Strict ``<``: an input sharing the product's mtime (possible on coarse-granularity
+        # filesystems where a same-second edit lands on the same tick) counts as stale, so the
+        # product is rebuilt rather than silently reused.
+        return all(os.path.isfile(s) and os.path.getmtime(s) < ptime for s in sources)
 
     # --- classify sources ---------------------------------------------------
     host_objs: List[str] = []  # (.cpp -> .o)
     cuda_objs: List[str] = []  # (.cu  -> .o via nvcc)
-    hip_objs: List[str] = []  # (.cpp -> .o via amdclang++, target_type 'hip')
     compile_jobs: List[tuple] = []  # (kind, src, obj)
 
     def add_source(abspath: str, tag: str) -> None:
@@ -483,39 +436,30 @@ def build_native(program_folder: str,
         if abspath.endswith('.cu'):
             cuda_objs.append(obj)
             compile_jobs.append(('cuda', abspath, obj))
-        elif os.sep + 'hip' + os.sep in abspath:
-            hip_objs.append(obj)
-            compile_jobs.append(('hip', abspath, obj))
         else:
             host_objs.append(obj)
             compile_jobs.append(('host', abspath, obj))
 
     for rel in files:
         add_source(os.path.join(src_folder, rel), rel.replace(os.sep, '__'))
-    for aux in _collect_auxiliary_sources(environments):
-        add_source(aux, 'aux__' + os.path.basename(aux))
 
-    has_gpu = bool(cuda_objs or hip_objs) or any(t in _GPU_TARGETS for t in targets)
-    backend = common.get_gpu_backend() if has_gpu else None
-    is_hip = backend == 'hip' or bool(hip_objs)
+    has_gpu = bool(cuda_objs) or any(t in _GPU_TARGETS for t in targets)
+    # Native mode is CUDA-only. A HIP/ROCm backend is rejected with a clear, actionable error
+    # instead of attempting an unvalidated build that would fail confusingly downstream.
+    if has_gpu and common.get_gpu_backend() == 'hip':
+        raise cgx.CompilerConfigurationError(
+            'Native build mode supports CUDA GPUs only, not HIP/ROCm. Use compiler.build_mode=cmake '
+            'for this program.')
 
     # --- resolve toolkits + environment libraries ---------------------------
     spec = _LinkSpec()
     nvcc = None
-    if has_gpu and not is_hip:
+    if has_gpu:
         nvcc, cuda_incdirs, cuda_libdirs = _cuda_paths()
         spec.includes += cuda_incdirs
         for d in cuda_libdirs:
             spec.libdirs.append(d)
             spec.link_flags.append(f'-Wl,-rpath,{d}')
-    rocm_root = None
-    if is_hip:
-        rocm_root = _resolve_rocm_root()
-        rocm_libdir = _lib_subdir(rocm_root)
-        spec.includes.append(os.path.join(rocm_root, 'include'))
-        spec.libdirs.append(rocm_libdir)
-        spec.link_flags.append(f'-Wl,-rpath,{rocm_libdir}')
-        spec.libs.append('amdhip64')
 
     for env in environments:
         _resolve_environment(env, spec)
@@ -542,39 +486,38 @@ def build_native(program_folder: str,
     defines = [f'-DDACE_BINARY_DIR="{build_folder}"']
     if has_gpu:
         defines.append('-DWITH_CUDA')
-        if is_hip:
-            defines.append('-DWITH_HIP')
     includes = ['-I' + runtime_inc, '-I' + generated_inc] + ['-I' + d for d in deduplicate(spec.includes)]
 
     # --- compile ------------------------------------------------------------
     cuda_arch_flags: List[str] = []
-    if has_gpu and not is_hip:
+    if has_gpu:
         cuda_arch_flags = _cuda_arch_flags(_nvcc_supported_arches(nvcc), allow_native=_can_use_arch_native(nvcc))
     ccbin = (['-ccbin', _cxx()] if Config.get('compiler', 'cpu', 'executable') else [])
 
     # Precompile the DaCe runtime header once (per compiler+flags) to speed up host translation
-    # units. WITH_CUDA/WITH_HIP change what dace.h pulls in, so they are part of the PCH's flags;
-    # the per-program -DDACE_BINARY_DIR and -I dirs are tolerated as extras on the compile line. Only
-    # the generated framecode gets the forced ``-include``; an environment's auxiliary .cpp is left
-    # alone, since force-including <dace/dace.h> into a TU that does not expect it can break it.
+    # units. WITH_CUDA changes what dace.h pulls in, so it is part of the PCH's flags; the per-program
+    # -DDACE_BINARY_DIR and -I dirs are tolerated as extras on the compile line. Only the generated
+    # framecode gets the forced ``-include``; an environment's auxiliary .cpp is left alone, since
+    # force-including <dace/dace.h> into a TU that does not expect it can break it.
     generated_prefix = src_folder + os.sep
     host_pch: List[str] = []
     if any(kind == 'host' and src.startswith(generated_prefix) for kind, src, _ in compile_jobs):
         pch_flags = list(host_base_flags)
         if has_gpu:
-            pch_flags += ['-DWITH_CUDA'] + (['-DWITH_HIP'] if is_hip else [])
-        host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, run) or []
+            pch_flags += ['-DWITH_CUDA']
+        host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, runtime_mtime, run) or []
 
     # An object is stale if it predates its source, predates any header it may include, or was built
     # by a different command (changed flags/defines/build_type). CMake tracks header deps and
     # reconfigures on flag changes; approximating both here keeps a stale object from being linked.
-    newest_header = max(_static_tree_mtime(runtime_inc), _newest_mtime(generated_inc))
+    newest_header = max(runtime_mtime, _newest_mtime(generated_inc))
 
     def obj_current(obj: str, src: str, cmd: List[str]) -> bool:
         if not os.path.isfile(obj):
             return False
         otime = os.path.getmtime(obj)
-        if not os.path.isfile(src) or os.path.getmtime(src) > otime or newest_header > otime:
+        # ``>=``: a source/header sharing the object's mtime counts as newer (coarse-mtime safety).
+        if not os.path.isfile(src) or os.path.getmtime(src) >= otime or newest_header >= otime:
             return False
         return identical_file_exists(obj + '.cmd', ' '.join(cmd))
 
@@ -591,17 +534,13 @@ def build_native(program_folder: str,
             pch = host_pch if src.startswith(generated_prefix) else []
             cmd = ([_cxx()] + host_base_flags + defines + pch + includes + spec.compile_flags +
                    ['-c', src, '-o', obj])
-        elif kind == 'cuda':
-            # host-side ``-fPIC`` (via --compiler-options) placed after cuda.args so it wins if a user
-            # passed a conflicting host code-model flag through.
+        else:  # cuda
+            # Host-side flags forwarded to the host compiler via ``-Xcompiler``: ``-fPIC`` (placed
+            # after cuda.args so it wins over any conflicting host code-model flag) and ``-fopenmp``
+            # so host-side OpenMP in the generated .cu links against libgomp like the .cpp TUs do.
             cmd = ([nvcc, '-std=c++17'] + ccbin + cuda_arch_flags +
-                   shlex.split(Config.get('compiler', 'cuda', 'args')) + ['--compiler-options', '-fPIC'] + defines +
+                   shlex.split(Config.get('compiler', 'cuda', 'args')) + ['-Xcompiler', '-fPIC,-fopenmp'] + defines +
                    includes + ['-dc', src, '-o', obj])
-        else:  # hip  (AMD path -- structurally validated; unvalidated on this NVIDIA host)
-            amdclang = shutil.which('amdclang++') or os.path.join(rocm_root, 'llvm', 'bin', 'amdclang++')
-            cmd = ([amdclang, '-x', 'hip', f'-std=c++{std}', '--offload-arch=native', '-D__HIP_PLATFORM_AMD__'] +
-                   shlex.split(Config.get('compiler', 'cuda', 'hip_args')) + ['-fPIC'] + defines + includes +
-                   ['-c', src, '-o', obj])
         if not obj_current(obj, src, cmd):
             compile_units.append((obj, cmd))
 
@@ -637,7 +576,7 @@ def build_native(program_folder: str,
     # --- final shared library ----------------------------------------------
     lib_path = os.path.join(build_folder, f'lib{program_name}.{lib_ext}')
     link_cmd = [_cxx(), '-shared', '-fopenmp', '-o', lib_path]
-    link_cmd += host_objs + hip_objs
+    link_cmd += host_objs
     if cuda_archive:
         link_cmd += [cuda_archive]
     link_cmd += ['-pthread']
@@ -646,14 +585,14 @@ def build_native(program_folder: str,
     link_cmd += ['-l' + lib for lib in deduplicate(spec.libs)]
     # The CUDA runtime is placed last so libraries that depend on it (e.g. cublas) precede it.
     # ``cudadevrt`` resolves the device-link registration symbols from separable compilation.
-    if has_gpu and not is_hip:
+    if has_gpu:
         link_cmd += ['-lcudadevrt', '-lcudart']
     link_cmd += target_libs
     link_cmd += shlex.split(Config.get('compiler', 'linker', 'args') or '')
     # Relink only when an input object/archive is newer than the library or the link command itself
     # changed (a lib/flag edit that leaves the objects untouched). The ``.cmd`` sidecar records the
     # exact command, mirroring the per-object staleness check.
-    link_inputs = host_objs + hip_objs + ([cuda_archive] if cuda_archive else [])
+    link_inputs = host_objs + ([cuda_archive] if cuda_archive else [])
     if not (up_to_date(lib_path, *link_inputs) and identical_file_exists(lib_path + '.cmd', ' '.join(link_cmd))):
         run(link_cmd)
         with open(lib_path + '.cmd', 'w') as f:
