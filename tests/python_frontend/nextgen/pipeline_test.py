@@ -348,7 +348,11 @@ def test_pyobject_consumption_becomes_callback():
 
     tree = nextgen.parse_program(pyobject_flow)
     callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
-    assert len(callbacks) == 2
+    # Both statements run in the interpreter; being adjacent, they batch into
+    # one callback whose I/O chains through the opaque object
+    assert len(callbacks) == 1
+    assert 'box' in callbacks[0].output_names
+    assert 'box' not in callbacks[0].input_names
     # The consuming statement is a callback, not a tasklet on an opaque object
     tasklets = _nodes_of_type(tree, tn.TaskletNode)
     assert not any('box' in t.node.code.as_string for t in tasklets)

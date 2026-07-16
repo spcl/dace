@@ -54,22 +54,33 @@ from dace.frontend.python.nextgen.common import CanonicalViolationError
 
 class OpaqueStmt(ast.stmt):
     """
-    Explicit marker for a statement that must execute in the Python
-    interpreter. Produced only by the canonicalization stage.
+    Explicit marker for one or more statements that must execute in the
+    Python interpreter. Produced only by the canonicalization stage; adjacent
+    markers are coalesced by the batching pass into a single marker carrying
+    the whole statement run.
 
-    :param original: The original (non-canonical) statement.
+    :param original: The first original (non-canonical) statement.
     :param reason: Human-readable reason why the statement is opaque.
-    :param inputs: Names read by the statement.
-    :param outputs: Names written by the statement.
+    :param inputs: Names read by the statement run (excluding names produced
+                   earlier within the same run).
+    :param outputs: Names written by the statement run.
+    :param originals: All original statements of the run, in order. Defaults
+                      to ``[original]``.
     """
     _fields = ()
 
-    def __init__(self, original: ast.stmt, reason: str, inputs: Set[str], outputs: Set[str]):
+    def __init__(self,
+                 original: ast.stmt,
+                 reason: str,
+                 inputs: Set[str],
+                 outputs: Set[str],
+                 originals: Optional[List[ast.stmt]] = None):
         super().__init__()
         self.original = original
         self.reason = reason
         self.inputs = inputs
         self.outputs = outputs
+        self.originals = list(originals) if originals is not None else [original]
         ast.copy_location(self, original)
 
 

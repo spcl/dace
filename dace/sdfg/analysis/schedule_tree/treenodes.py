@@ -495,6 +495,9 @@ class PythonCallbackNode(ScheduleTreeNode):
     Python code that cannot be represented in the dataflow model and must be
     executed via native Python callback at runtime. Distinct from StatementNode
     in that it explicitly marks code as never lowerable.
+
+    The node is a side-effect fence: transformations must not reorder memory
+    accesses or other callbacks across it.
     """
     code: CodeBlock
     reason: str

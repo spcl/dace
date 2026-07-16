@@ -467,6 +467,45 @@ class MarkOpaque(_BodyTransformer):
         return OpaqueStmt(statement, reason, reads, writes)
 
 
+class BatchOpaque(_BodyTransformer):
+    """
+    Coalesce maximal runs of adjacent :class:`OpaqueStmt` siblings into a
+    single marker, so consecutive interpreter statements become one Python
+    callback instead of many. Both statements already executed adjacently in
+    the interpreter, so merging changes callback granularity, not semantics.
+
+    The merged I/O sets chain dataflow through the run: a name produced by an
+    earlier statement and consumed by a later one is not an input of the
+    merged marker.
+    """
+    name = 'batch-opaque'
+
+    def _transform_body(self, body: List[ast.stmt]) -> List[ast.stmt]:
+        transformed = super()._transform_body(body)
+        result: List[ast.stmt] = []
+        for statement in transformed:
+            if isinstance(statement, OpaqueStmt) and result and isinstance(result[-1], OpaqueStmt):
+                result[-1] = _merge_opaque(result[-1], statement)
+            else:
+                result.append(statement)
+        return result
+
+
+def _merge_opaque(first: OpaqueStmt, second: OpaqueStmt) -> OpaqueStmt:
+    """Merge two adjacent opaque markers into one, chaining their I/O sets."""
+    inputs = set(first.inputs) | (set(second.inputs) - set(first.outputs))
+    outputs = set(first.outputs) | set(second.outputs)
+    reasons = list(dict.fromkeys([first.reason, second.reason]))  # Distinct, order-preserving
+    return OpaqueStmt(first.original, '; '.join(reasons), inputs, outputs, originals=first.originals + second.originals)
+
+
 def default_passes() -> List[_BodyTransformer]:
     """The default canonicalization pass order."""
-    return [RecognizeExplicitDataflow(), DesugarStatements(), NormalizeLoops(), ANFTransform(), MarkOpaque()]
+    return [
+        RecognizeExplicitDataflow(),
+        DesugarStatements(),
+        NormalizeLoops(),
+        ANFTransform(),
+        MarkOpaque(),
+        BatchOpaque(),
+    ]

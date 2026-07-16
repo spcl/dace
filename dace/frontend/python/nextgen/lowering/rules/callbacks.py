@@ -28,11 +28,13 @@ from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 
 @rule(OpaqueStmt)
 def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
+    source_to_repository: dict = {}
     input_names = []
     for name in sorted(statement.inputs):
         binding = state.context.resolve(name)
         if binding is not None and binding.kind == 'container':
             input_names.append(binding.container)
+            source_to_repository[name] = binding.container
 
     output_names = []
     for name in sorted(statement.outputs):
@@ -45,13 +47,108 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
             container_name = state.context.add_container(name, data.Scalar(dtypes.pyobject()))
             state.context.bind(name, container_name)
             output_names.append(container_name)
+        source_to_repository[name] = output_names[-1]
 
-    code = ast.unparse(ast.fix_missing_locations(_reconstitute_source(statement.original, state)))
+    reconstituted = [_reconstitute_source(original, state) for original in statement.originals]
+    code = '\n'.join(ast.unparse(original) for original in reconstituted)
+    renamed = _rename_to_repository(reconstituted, source_to_repository)
+
+    # Emission-time batching: if this scope's previous node is already a
+    # callback, extend it instead of emitting a second one. Both statement
+    # runs executed adjacently in the interpreter anyway, so merging changes
+    # callback granularity, not semantics (and keeps the fence contract:
+    # relative order within the merged run is preserved).
+    children = state.emitter.current_scope.children
+    previous = children[-1] if children else None
+    if isinstance(previous, tn.PythonCallbackNode):
+        _merge_into(previous, statement.reason, code, renamed, input_names, output_names, state)
+        return
+
+    function_name = state.context.fresh_name('__nextgen_callback')
+    function_code, call_code = _outline(renamed, function_name, input_names, output_names, state)
     state.emitter.emit(
         tn.PythonCallbackNode(code=CodeBlock(code),
                               reason=statement.reason,
                               input_names=input_names,
-                              output_names=output_names))
+                              output_names=output_names,
+                              outlined_function_name=function_name,
+                              outlined_function_code=function_code,
+                              outlined_call_code=call_code))
+
+
+def _merge_into(previous: tn.PythonCallbackNode, reason: str, code: str, renamed: list, input_names: list,
+                output_names: list, state: LoweringState) -> None:
+    """Extend an adjacent callback node with another statement run, chaining
+    I/O (names the earlier run produced are not inputs of the merged run) and
+    rebuilding the outlined scaffolding under the same callback name."""
+    merged_inputs = list(previous.input_names)
+    merged_inputs.extend(name for name in input_names
+                         if name not in previous.output_names and name not in merged_inputs)
+    merged_outputs = list(previous.output_names)
+    merged_outputs.extend(name for name in output_names if name not in merged_outputs)
+
+    previous_renamed = _outlined_body(previous)
+    previous.code = CodeBlock(f'{previous.code.as_string}\n{code}')
+    previous.reason = '; '.join(dict.fromkeys([previous.reason, reason]))
+    previous.input_names = merged_inputs
+    previous.output_names = merged_outputs
+    previous.outlined_function_code, previous.outlined_call_code = _outline(previous_renamed + renamed,
+                                                                            previous.outlined_function_name,
+                                                                            merged_inputs,
+                                                                            merged_outputs,
+                                                                            state,
+                                                                            register=False)
+
+
+def _outlined_body(node: tn.PythonCallbackNode) -> list:
+    """Recover the repository-renamed statement run from a callback node's
+    outlined function (dropping the synthesized trailing return)."""
+    function_def = ast.parse(node.outlined_function_code.as_string).body[0]
+    body = list(function_def.body)
+    if body and isinstance(body[-1], ast.Return):
+        body.pop()
+    if body == [ast.Pass()] or (len(body) == 1 and isinstance(body[0], ast.Pass)):
+        return []
+    return body
+
+
+def _outline(renamed: list,
+             function_name: str,
+             input_names: list,
+             output_names: list,
+             state: LoweringState,
+             register: bool = True):
+    """
+    Build the outlined callback scaffolding (a function definition over the
+    repository-named inputs and a call statement binding the outputs), and
+    optionally register the callback name in the tree's callback mapping.
+
+    The scaffolding references *repository* names so the tree-to-SDFG lowering
+    can connect it directly; the node's ``code`` field keeps the source-level
+    statement text.
+    """
+    # Reuses the staged frontend's outliner, which is builder-independent.
+    from dace.frontend.python.schedule_tree.callback_support import CallbackOutliner
+    function_code, call_code = CallbackOutliner.outline(renamed,
+                                                        callback_name=function_name,
+                                                        input_names=input_names,
+                                                        output_names=output_names)
+    if register:
+        state.emitter.root.callback_mapping[function_name] = function_name
+    return function_code, call_code
+
+
+def _rename_to_repository(statements: list, source_to_repository: dict) -> list:
+    """Copies of the statements with source names replaced by their repository
+    container names."""
+
+    class _Renamer(ast.NodeTransformer):
+
+        def visit_Name(self, node: ast.Name) -> ast.Name:
+            node.id = source_to_repository.get(node.id, node.id)
+            return node
+
+    return [ast.fix_missing_locations(_Renamer().visit(copy.deepcopy(statement))) for statement in statements]
 
 
 def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
