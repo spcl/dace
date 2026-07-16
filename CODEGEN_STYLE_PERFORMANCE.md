@@ -145,6 +145,10 @@ Every row is a candidate `codegen_params` axis, and a candidate NestForge varian
 | `schedule(dynamic,1)` vs `static` | **5×** slower on a small-iteration loop — even one that is genuinely irregular (57% CV) — from per-chunk hand-off overhead ([Eleliemy/Ciorba](https://arxiv.org/abs/1809.03188)) |
 | Explicit `#pragma unroll` factor | Loses when the bottleneck is the FP/vector unit; the unrolled body evicts the µop-cache/loopback buffer and spills → *slower*, and can slow neighbouring code ([llvm#42332](https://github.com/llvm/llvm-project/issues/42332)) |
 | Divide/modulo by a runtime var vs a constant | **12× measured (Zen 4, §6)**: a constant divisor becomes a Granlund–Montgomery magic-number multiply that vectorizes; a runtime divisor is a scalar `div` ([our reproducer](samples/codegen/style_levers/)) |
+| `__builtin_prefetch` on a gather/indirect loop | **Bimodal, but the safe direction of bimodal** (a pure timing hint — never changes results): **2.6× (x86) / 1.55× (ARM)** on a 256 MB irregular hash-set gather; ~neutral-to-small-loss on unit-stride streams (the HW prefetcher already covers them) ([Johnny's SW Lab](https://johnnysswlab.com/the-pros-and-cons-of-explicit-software-prefetching/); Lemire's mild-irregularity case is only 10%, below the floor) |
+| `ivdep` is three different soundness contracts | Intel `#pragma ivdep` ignores only *assumed* deps and **respects proven ones** (can't miscompile) ([Intel](https://www.smcm.iqfr.csic.es/docs/intel/compiler_c/main_cls/cref_cls/common/cppref_pragma_ivdep.htm)); GCC `ivdep` / clang `vectorize(assume_safety)` / `omp simd` override *all* deps and **miscompile if wrong** ([GCC](https://gcc.gnu.org/onlinedocs/gcc/Loop-Specific-Pragmas.html)) — same class as `!noalias` |
+| `assume_aligned(N)` on a returned/param pointer | NOT the aligned-move (§9's ~2% myth): it lets the vectorizer **skip the alignment prologue AND epilogue and the runtime alignment branch** ([P0886](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0886r0.pdf)) — real, but sub-noise except split-prone / short-trip loops; **UB if the alignment promise is false** |
+| Return a small struct by value vs via an `sret` out-pointer | `sret` leaves redundant stack `memcpy`s the middle end often can't fold; `MemCpyOpt` recovers **17–42%** of them ([llvm D140089](https://reviews.llvm.org/D140089)) — note that is a memcpy *count*, not a wall-clock number |
 
 ---
 
@@ -308,6 +312,10 @@ compiler-dependent** — §1 again.
 
 **Register pressure / branch shape** — [Shipilëv, FPU spills](https://shipilev.net/jvm/anatomy-quarks/20-fpu-spills/) (spill cost anchor, 37%) · [Lemire, mispredicted branches](https://lemire.me/blog/2019/10/15/mispredicted-branches-can-multiply-your-running-times/) (~5×) · [Algorithmica, binary search](https://en.algorithmica.org/hpc/data-structures/binary-search/) (branchless sign flips by size) · [Wennborg, switch lowering](https://llvm.org/devmtg/2015-10/slides/Wennborg-SwitchLowering.pdf) (whole-program effect sub-noise). REFUTED: alignment `movaps`-vs-`movups` is [a ~2% myth](https://lemire.me/blog/2012/05/31/data-alignment-for-speed-myth-or-reality/) on modern x86; the real mechanism is cache-line-split avoidance
 
+**Loop addressing form** — [LLVM Passes](https://llvm.org/docs/Passes.html) (indvars canonicalizes to a single 0-step-1 IV; LSR lowers back to a walking GEP — pointer-vs-index is a non-knob) · [LLVM Vectorizers](https://llvm.org/docs/Vectorizers.html) (accepts pointer-IV form) · [ILT, signed overflow](https://www.airs.com/blog/archives/120) (signed IV lets the compiler assume no wrap) · [llvm-dev delinearization](https://groups.google.com/g/llvm-dev/c/Apd9mx3tbcU) (fails on symbolic bounds)
+
+**Prefetch / function attributes** — [Johnny's SW Lab, software prefetch](https://johnnysswlab.com/the-pros-and-cons-of-explicit-software-prefetching/) (2.6× gather / neutral on streams) · [Lemire, is `__builtin_prefetch` useful](https://lemire.me/blog/2018/04/30/is-software-prefetching-__builtin_prefetch-useful-for-performance/) (10%, below floor; "if it helps, your code needs work") · [Intel ivdep](https://www.smcm.iqfr.csic.es/docs/intel/compiler_c/main_cls/cref_cls/common/cppref_pragma_ivdep.htm) (respects proven deps — the only non-miscompiling ivdep) · [P0886 assume_aligned](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0886r0.pdf) (skips the vectorizer peel+epilogue, not the move) · [llvm D140089](https://reviews.llvm.org/D140089) (sret memcpy elimination 17–42%) · [GCC function attributes](https://gcc.gnu.org/onlinedocs/gcc-13.2.0/gcc/Common-Function-Attributes.html) (`const`/`pure`/`malloc`/`hot`/`cold` — soundness contracts)
+
 **SVE / Neoverse V2** — [Arm Neoverse V2 SWOG](https://documentation-service.arm.com/static/668bc0a369e89f01e39c4668) (Tables 3-1, 3-25; §4.17) **— read before repeating any pipe claim** · [de Smalen, Optimizing Code for Scalable Vector Architectures](https://llvm.org/devmtg/2021-11/slides/2021-OptimizingCodeForScalableVectorArchitectures.pdf) (LLVM Dev'21) · [GCC PR115531](https://www.mail-archive.com/gcc-bugs@gcc.gnu.org/msg818483.html) · [predicate-pipe dependency](https://www.mail-archive.com/gcc-patches@gcc.gnu.org/msg373383.html) · [A Critical Look at SVE2](https://gist.github.com/zingaburga/805669eb891c820bd220418ee3f0d6bd) — why a V2 result does not generalize to "SVE"
 
 **Methodology** — [STABILIZER](https://people.cs.umass.edu/~emery/pubs/stabilizer-asplos13.pdf) · [Beyls, Ameliorating Measurement Bias](https://llvm.org/devmtg/2016-03/Presentations/Beyls2016_AmelioratingMeasurmentBias.pdf)
@@ -335,6 +343,8 @@ knob's default MUST reproduce legacy byte-for-byte (§6 rule 3); **`experimental
 | `loop_bound_hoist` | inline (def) / hoisted | `cpu.py:2609` | **both** | LICM; usually nil, matters only when a compound bound defeats hoisting | trivial |
 | `const_scalar_binding` | fused_const (def) / mutable_decl | `experimental_cpu.py:691` | experimental | `const` binding + decl placement → regalloc/lifetime; **weak** — §2 doubts `const` is causal | moderate |
 | `size_fn_qualifier` | consteval (def) / constexpr | `experimental_cpu.py:44` | experimental | UNKNOWN — both fold at compile time; expected compile-time-only | trivial |
+| `loop_index_signed` | signed (def) / unsigned | `cpu.py` loop emitter | **both** | Signed IV → `nsw` → SCEV proves no-wrap → IV widening + vectorization *legality* (not just address cost). Non-re-derivable **on symbolic shapes** — DaCe's exact case. Distinct from `index_ctype`'s width/sext axis ([Walfridsson](http://kristerw.blogspot.com/2016/02/how-undefined-signed-overflow-enables.html), [ILT](https://www.airs.com/blog/archives/120)) | moderate |
+| `sw_prefetch` | off (def) / gather | tasklet/gather emit | experimental | `__builtin_prefetch` on an indirect/gather access. A *pure timing hint* (not a soundness assertion), so it can be defaulted-on for detected indirection; **2.6× on irregular gather**, ~neutral on streams | moderate |
 
 Best "free to expose, low risk" first picks: `heap_ptr_restrict`, `index_fn_qualifier`, `loop_bound_cmp`.
 Highest mechanism but structural: `array_access_form` (row-pointer) — the one grounded in §5's own
@@ -351,3 +361,30 @@ the vectorizer already owns (predication is how a masked loop becomes vectorizab
 post-hoc codegen spelling, so it is not a `codegen_params` knob. (Its measured behavior is real —
 ~5× on genuinely unpredictable, un-if-convertible branches, sign-flipping by working-set size — but
 the compiler if-converts the common case away, per §6.)
+
+Also judged NOT a knob — **pointer-walking (`*p++` / `p += stride`) vs indexed `base[i]`, and a
+non-zero pointer start / custom stride.** The backend re-derives both directions and the loop form
+does not survive to the vectorizer: *"All loops are transformed to have a single canonical induction
+variable which starts at zero and steps by one"* and *"Any pointer arithmetic recurrences are raised
+to use array subscripts"* ([LLVM indvars](https://llvm.org/docs/Passes.html)), then loop-strength-reduce
+lowers the surviving index back to a walking GEP per target, and the vectorizer accepts pointer-IV
+form regardless ([LLVM Vectorizers](https://llvm.org/docs/Vectorizers.html)); on x86-64 the
+scaled-index addressing mode makes the index form's address math free anyway. So a carried-increment
+loop is a *readability* choice, not a performance lever — and it is only legal on a SEQUENTIAL
+construct, since a walking pointer across iterations is a loop-carried dependency an OpenMP `parallel
+for` forbids (each thread must derive its address from its private index). The two axes hiding next to
+it that ARE real on symbolic shapes are `loop_index_signed` and the multi-dim subscript form
+(linearized `A[i*N+j]` vs a delinearizable 2-D form — SCEV delinearization *"tend[s] to fail in many
+common cases (involving loops with symbolic bounds)"*, [llvm-dev](https://groups.google.com/g/llvm-dev/c/Apd9mx3tbcU)).
+
+The function-attribute family a generator could attach to its emitted helpers, and why most do not
+clear the bar: `((const))`/`((pure))` on an `<array>_idx` helper would enable CSE **but is redundant
+once the helper inlines** (GVN already commons the exposed arithmetic) and is a *miscompile* if
+misapplied to a pointer-reading function; `((hot))`/`((cold))` are **pure code layout**, so entirely
+inside §3's 7–51% confound (the profile-driven MFS ceiling is only ~1.6–2.3%); `((malloc))` on an
+allocator is the return-value twin of `__restrict__` (same bimodality, a miscompile on a View-returning
+helper); `((noinline))` is just the attribute spelling of §6's measured 6–8× out-of-line-call lever.
+Explicitly OUT OF SCOPE as *semantic* (they change FP results, so not neutral knobs): `#pragma clang fp
+reassociate`/`contract(fast)`, `__attribute__((optimize("fast-math")))`, `#pragma STDC FP_CONTRACT` —
+and GCC's own manual disqualifies `((optimize(...)))` for production regardless (*"for debugging
+purposes only"*).
