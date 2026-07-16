@@ -6,7 +6,9 @@ need neither root nor a GPU. Peak is the sum over populated devices of ``speed x
 must be right for both DIMMs and soldered LPDDR (where a per-channel formula gets it wrong)."""
 import pytest
 
-from dace.transformation.layout.cost_model.hardware import (parse_dmidecode_memory, read_dmidecode_file)
+from dace.transformation.layout.cost_model import hardware
+from dace.transformation.layout.cost_model.hardware import (parse_dmidecode_memory, read_dmidecode_file,
+                                                            host_dram_spec, run_dmidecode, DMIDECODE_COMMAND)
 
 # Soldered LPDDR5x: 4 packages x 32-bit @ 6400 MT/s -> 128-bit total -> 102.4 GB/s.
 LPDDR5X_DUMP = """
@@ -147,6 +149,42 @@ def test_read_dmidecode_file(tmp_path):
     path = tmp_path / "dram.txt"
     path.write_text(LPDDR5X_DUMP)
     assert read_dmidecode_file(str(path)).peak_bytes_per_s() == pytest.approx(102.4e9)
+
+
+def test_host_dram_spec_prefers_the_dump_and_never_shells_out(tmp_path, monkeypatch):
+    """Given a dump, host_dram_spec must NOT run dmidecode (an unattended caller must never hit a
+    sudo password prompt)."""
+    path = tmp_path / "dram.txt"
+    path.write_text(LPDDR5X_DUMP)
+
+    def explode(*args, **kwargs):
+        raise AssertionError("host_dram_spec shelled out despite being given a dump")
+
+    monkeypatch.setattr(hardware, "run_dmidecode", explode)
+    assert host_dram_spec(str(path)).peak_bytes_per_s() == pytest.approx(102.4e9)
+
+
+def test_run_dmidecode_builds_a_sudo_command(monkeypatch):
+    """The live path runs `sudo dmidecode --type 17` and parses its stdout. Verified without ever
+    invoking real sudo."""
+    seen = {}
+
+    class Completed:
+        stdout = DDR5_DUMP
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        assert kwargs.get("check") is True
+        return Completed()
+
+    import subprocess
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    spec = run_dmidecode()
+    assert seen["command"] == ["sudo"] + DMIDECODE_COMMAND
+    assert spec.peak_bytes_per_s() == pytest.approx(89.6e9)
+
+    run_dmidecode(sudo=False)
+    assert seen["command"] == DMIDECODE_COMMAND  # opt out when already root
 
 
 if __name__ == "__main__":

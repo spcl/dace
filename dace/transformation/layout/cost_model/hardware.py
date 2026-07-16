@@ -5,11 +5,12 @@ The LogP/LogGP memory model needs a DENOMINATOR: the achievable bandwidth a benc
 means something next to the hardware peak (achievable is typically 50-85% of it). This module reports
 that peak from hardware facts, never from a guess.
 
-Host DRAM: read from a ``dmidecode --type 17`` dump. dmidecode needs root, so it is NOT shelled out
-to here -- the caller saves the output once (``sudo dmidecode -t 17 > dram.txt``) and passes the
-file. Peak is the sum over POPULATED devices of ``speed x data_width``, which is correct for both
-DIMMs (e.g. 2 x 64-bit DDR5-5600 -> 89.6 GB/s) and soldered LPDDR (e.g. 4 x 32-bit LPDDR5x-6400 ->
-102.4 GB/s); a per-channel-count formula gets the soldered case wrong.
+Host DRAM comes from ``dmidecode --type 17``, which needs root: either run it live via
+:func:`run_dmidecode` (sudo will prompt) or read a dump saved once with
+``sudo dmidecode -t 17 > dram.txt``. :func:`host_dram_spec` picks between the two. Peak is the sum
+over POPULATED devices of ``speed x data_width``, which is correct for both DIMMs (e.g. 2 x 64-bit
+DDR5-5600 -> 89.6 GB/s) and soldered LPDDR (e.g. 4 x 32-bit LPDDR5x-6400 -> 102.4 GB/s); the usual
+per-channel-count formula reports 2x that for the soldered case.
 
 GPU: read from the CUDA device properties, so no file is needed --
 ``memory_clock x 2 (DDR) x bus_width / 8``.
@@ -117,6 +118,28 @@ def read_dmidecode_file(path: str) -> DramSpec:
     """:func:`parse_dmidecode_memory` on a saved dump (``sudo dmidecode -t 17 > dram.txt``)."""
     with open(path, "r") as handle:
         return parse_dmidecode_memory(handle.read())
+
+
+DMIDECODE_COMMAND = ["dmidecode", "--type", "17"]
+
+
+def run_dmidecode(sudo: bool = True) -> DramSpec:
+    """Run ``dmidecode --type 17`` and parse it. dmidecode reads the DMI table and needs root, so
+    ``sudo`` is prepended by default -- this may PROMPT for a password, which is why it is never
+    called implicitly. Use :func:`read_dmidecode_file` in an unattended context."""
+    import subprocess
+
+    command = (["sudo"] if sudo else []) + DMIDECODE_COMMAND
+    completed = subprocess.run(command, capture_output=True, text=True, check=True)
+    return parse_dmidecode_memory(completed.stdout)
+
+
+def host_dram_spec(dump_path: Optional[str] = None, sudo: bool = True) -> DramSpec:
+    """The host DRAM configuration: parsed from ``dump_path`` when given, else read live via
+    :func:`run_dmidecode` (which may prompt for a sudo password)."""
+    if dump_path is not None:
+        return read_dmidecode_file(dump_path)
+    return run_dmidecode(sudo=sudo)
 
 
 def gpu_peak_bytes_per_s(device: int = 0) -> float:
