@@ -335,7 +335,8 @@ def _newest_mtime(directory: str) -> float:
     return newest
 
 
-def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, runtime_mtime: float, run) -> Optional[List[str]]:
+def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, runtime_mtime: float,
+                     run) -> Optional[List[str]]:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it in the user cache dir.
 
     The DaCe runtime umbrella header dominates the compile time of a small kernel (~1s of parsing +
@@ -532,8 +533,7 @@ def build_native(program_folder: str,
     for kind, src, obj in compile_jobs:
         if kind == 'host':
             pch = host_pch if src.startswith(generated_prefix) else []
-            cmd = ([_cxx()] + host_base_flags + defines + pch + includes + spec.compile_flags +
-                   ['-c', src, '-o', obj])
+            cmd = ([_cxx()] + host_base_flags + defines + pch + includes + spec.compile_flags + ['-c', src, '-o', obj])
         else:  # cuda
             # Host-side flags forwarded to the host compiler via ``-Xcompiler``: ``-fPIC`` (placed
             # after cuda.args so it wins over any conflicting host code-model flag) and ``-fopenmp``
