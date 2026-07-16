@@ -83,7 +83,8 @@ VARIANTS = (
 )
 #: Thread count for the paper (multi-core) lane, read from the launch environment.
 MULTI_THREADS = max(1, int(os.environ.get('OMP_NUM_THREADS', '4')))
-FIELDS = ('kernel', 'build_mode', 'implementation', 'codegen_ms', 'compile_total_ms', 'build_ms', 'run_ms', 'correct')
+FIELDS = ('kernel', 'build_mode', 'implementation', 'codegen_ms', 'codegen_bytes', 'compile_total_ms', 'build_ms',
+          'run_ms', 'correct')
 
 
 def build_variant(program, tag):
@@ -114,13 +115,18 @@ def bench_kernel(name, compile_reps, run_reps, timeout):
         with set_temporary('compiler', 'build_mode', value=mode):
             with set_temporary('compiler', 'cpu', 'implementation', value=impl):
                 # codegen time -- depends on the implementation (the emitted code), measured in
-                # context so each variant is timed with its own generator selected.
+                # context so each variant is timed with its own generator selected. The size of the
+                # emitted C++ (summed over all code objects) is captured too: translation-unit size
+                # is a codegen-quality lever in its own right -- it moves compile time and can move
+                # runtime -- and it is exactly where legacy and experimental_readable differ.
                 codegen_samples = []
+                generated_bytes = 0
                 for rep in range(compile_reps):
                     sdfg = build_variant(program, f'{index}_cg{rep}')
                     t0 = time.perf_counter()
-                    codegen.generate_code(sdfg)
+                    objects = codegen.generate_code(sdfg)
                     codegen_samples.append((time.perf_counter() - t0) * 1000.0)
+                    generated_bytes = sum(len(obj.clean_code) for obj in objects)
 
                 # full compile wall, cold each rep via a unique name, under this (mode, impl).
                 compile_samples = []
@@ -144,6 +150,7 @@ def bench_kernel(name, compile_reps, run_reps, timeout):
             'build_mode': mode,
             'implementation': impl,
             'codegen_ms': round(codegen_ms, 3),
+            'codegen_bytes': generated_bytes,
             'compile_total_ms': round(compile_ms, 3),
             'build_ms': round(max(0.0, compile_ms - codegen_ms), 3),
             'run_ms': round(min(run_samples), 4) if run_samples else '',
@@ -194,20 +201,21 @@ def write_tables(results_dir):
         '',
         '## Codegen + compile wall (ms) per variant',
         '',
-        'codegen_ms depends on the implementation (the emitted code); build_ms (= compile_total - '
-        'codegen) depends on build_mode (cmake configure vs native) and on code size. correct = the '
-        'variant matched NumPy.',
+        'codegen_ms and codegen_bytes (size of the emitted C++) depend on the implementation; build_ms '
+        '(= compile_total - codegen) depends on build_mode (cmake configure vs native) and on code size. '
+        'correct = the variant matched NumPy.',
         '',
-        '| kernel | variant | codegen ms | compile ms | build ms | run ms | correct |',
-        '|---|---|--:|--:|--:|--:|:-:|',
+        '| kernel | variant | codegen ms | codegen B | compile ms | build ms | run ms | correct |',
+        '|---|---|--:|--:|--:|--:|--:|:-:|',
     ]
     for kernel in sorted(cells):
         for mode, impl in VARIANTS:
             row = cells[kernel].get((mode, impl))
             if not row:
                 continue
-            lines.append(f"| {kernel} | {mode}/{impl} | {row['codegen_ms']} | {row['compile_total_ms']} | "
-                         f"{row['build_ms']} | {row['run_ms']} | {'yes' if row['correct'] == '1' else 'NO'} |")
+            lines.append(f"| {kernel} | {mode}/{impl} | {row['codegen_ms']} | {row.get('codegen_bytes', '')} | "
+                         f"{row['compile_total_ms']} | {row['build_ms']} | {row['run_ms']} | "
+                         f"{'yes' if row['correct'] == '1' else 'NO'} |")
 
     # Runtime: legacy vs experimental_readable under cmake (build_mode-independent, so cmake is the
     # clean pairing the user asked for). speedup = legacy / experimental (>1 = experimental faster).
@@ -253,11 +261,33 @@ def write_tables(results_dir):
             f'{statistics.geometric_mean(speedups):.3f}x over {len(speedups)} kernels, '
             f'median {statistics.median(speedups):.3f}x (>1 = experimental faster).'
         ]
+    # Code-size lever: how much smaller/larger the readable generator's C++ is than legacy's.
+    size_ratios = []
+    for kernel in sorted(cells):
+        leg, exp = cells[kernel].get(('cmake', 'legacy')), cells[kernel].get(('cmake', 'experimental_readable'))
+        bl, be = (num(leg, 'codegen_bytes') if leg else None), (num(exp, 'codegen_bytes') if exp else None)
+        if bl and be:
+            size_ratios.append(be / bl)
+    if size_ratios:
+        lines.append(f'**codegen size experimental vs legacy**: geomean {statistics.geometric_mean(size_ratios):.3f}x '
+                     f'over {len(size_ratios)} kernels (<1 = readable generator emits less C++).')
     for impl in ('legacy', 'experimental_readable'):
         bs = build_speedup(impl)
         if bs:
             lines.append(f'**native vs cmake build speedup ({impl})**: geomean '
                          f'{statistics.geometric_mean(bs):.2f}x over {len(bs)} kernels.')
+
+    # Correctness audit: the readable generator is newer, so flag every kernel where any variant
+    # missed NumPy -- the first full sweep doubles as an experimental-codegen correctness check.
+    failing = sorted(k for k, by_mode in cells.items() if any(r.get('correct') != '1' for r in by_mode.values()))
+    lines += ['', '## Correctness audit', '']
+    if failing:
+        lines.append(f'{len(failing)} kernel(s) with a variant that did NOT match NumPy:')
+        for kernel in failing:
+            bad = [f"{m}/{i}" for (m, i), r in sorted(cells[kernel].items()) if r.get('correct') != '1']
+            lines.append(f'- `{kernel}`: {", ".join(bad)}')
+    else:
+        lines.append('All variants matched NumPy on every kernel.')
 
     out = os.path.join(os.path.dirname(path), 'codegen_variants.md')
     with open(out, 'w') as fp:
