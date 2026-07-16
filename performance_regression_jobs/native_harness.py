@@ -79,6 +79,52 @@ def openmp_rpath_flags(cc):
                 dirs.append(d)
     return [f'-Wl,-rpath,{d}' for d in dirs]
 
+
+def library_discovery_flags():
+    """``-isystem`` / ``-L`` / ``-rpath`` flags so a kernel that expands a DaCe library node
+    (BLAS/LAPACK via ``cblas.h`` / ``lapacke.h``, MKL, ...) finds its headers and libraries in
+    the common install layouts the bare compiler does not search on its own.
+
+    The compiler already honors ``CPATH`` / ``C_INCLUDE_PATH`` / ``CPLUS_INCLUDE_PATH`` and
+    ``LIBRARY_PATH`` from the inherited environment, so this ADDS only the prefix layouts those
+    miss: the ``include`` / ``lib`` / ``lib64`` siblings of every ``PATH`` entry (the standard
+    ``bin/ include/ lib/`` prefix used by conda / spack / venv), the common prefix variables,
+    every ``CMAKE_PREFIX_PATH`` entry, and the Debian multiarch cblas/openblas header subdirs.
+    Purely additive: a nonexistent dir is dropped and re-adding a default dir is a no-op, so a
+    build that already resolved is unchanged."""
+    inc, lib = [], []
+
+    def add_prefix(pfx):
+        inc.append(os.path.join(pfx, 'include'))
+        lib.extend((os.path.join(pfx, 'lib'), os.path.join(pfx, 'lib64')))
+
+    for entry in os.environ.get('PATH', '').split(os.pathsep):
+        if entry:
+            add_prefix(os.path.dirname(entry.rstrip(os.sep)))
+    for var in ('CONDA_PREFIX', 'VIRTUAL_ENV', 'OPENBLAS_ROOT', 'BLAS_ROOT', 'LAPACK_ROOT', 'MKLROOT', 'CUDA_HOME',
+                'CUDA_PATH'):
+        if os.environ.get(var):
+            add_prefix(os.environ[var])
+    for pfx in os.environ.get('CMAKE_PREFIX_PATH', '').split(os.pathsep):
+        if pfx:
+            add_prefix(pfx)
+    for base in ('/usr/include', '/usr/include/x86_64-linux-gnu'):
+        for sub in ('openblas', 'openblas-pthread', 'openblas-openmp', 'openblas-serial', 'cblas', 'lapacke', 'mkl'):
+            inc.append(os.path.join(base, sub))
+
+    flags, seen = [], set()
+    for d in inc:
+        if d and d not in seen and os.path.isdir(d):
+            seen.add(d)
+            flags.extend(('-isystem', d))
+    seen = set()
+    for d in lib:
+        if d and d not in seen and os.path.isdir(d):
+            seen.add(d)
+            flags.extend(('-L', d, f'-Wl,-rpath,{d}'))
+    return flags
+
+
 _CTYPE = {'double': ctypes.c_double, 'float': ctypes.c_float, 'int': ctypes.c_int, 'int64': ctypes.c_int64}
 
 
@@ -205,7 +251,7 @@ def compile_lane(cpp_path, so_path, lane, timeout=1200):
     if not cc:
         return False, f'{lane}: compiler not found'
 
-    cmd = [cc, *OPT_FLAGS] + extra_flags(cc) + openmp_rpath_flags(cc) + [
+    cmd = [cc, *OPT_FLAGS] + extra_flags(cc) + openmp_rpath_flags(cc) + library_discovery_flags() + [
         '-shared', '-fPIC', cpp_path, '-o', so_path
     ]
     try:

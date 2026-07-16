@@ -457,7 +457,13 @@ class BestEffortLoopPeeling(ppl.Pass):
         [x, end] (``x`` joins the second half), for a band-boundary split where each
         half's wrap-around modulo folds to a different affine index -- the symbolic
         modular split ``a[(i + K) % N]`` at ``x = N - K``. A no-op ``x == start``
-        (whole loop is the second half) returns ``False`` without splitting."""
+        (whole loop is the second half) returns ``False`` without splitting.
+
+        CONTRACT: the segments regroup the SAME iterations only while ``start <= x <= end``. An
+        ``x`` outside the range would invent iterations the loop never ran (the middle at ``i = x``)
+        or run past its end (``before``'s ``i < x`` REPLACES the original bound), so a caller that
+        cannot prove the range membership must guard the split with it -- see
+        :meth:`_split_range_relations` and :meth:`_specialize_index_set_split`."""
         import copy
         from dace.properties import CodeBlock
         from dace.sdfg.sdfg import InterstateEdge
@@ -492,9 +498,13 @@ class BestEffortLoopPeeling(ppl.Pass):
             before.loop_condition = CodeBlock(f'{ivar} < ({x})')  # [start, x-1]
             chain.append(before)
         if middle_singleton:
-            at = clone_segment()  # {x}: a single iteration
-            at.init_statement = CodeBlock(f'{ivar} = ({x})')
-            at.loop_condition = CodeBlock(f'{ivar} < ({x}) + 1')
+            at = clone_segment()  # {x} intersected with [start, end]: at most a single iteration
+            # Clamped to the range, so an out-of-range ``x`` runs nothing here rather than an
+            # iteration the loop never had. Nobody maps a singleton, so the min/max costs no
+            # parallelism -- unlike the range segments, whose bounds must stay bare for
+            # ``LoopToMap`` and are guarded by :meth:`_split_range_relations` instead.
+            at.init_statement = CodeBlock(f'{ivar} = max(({x}), ({start}))')
+            at.loop_condition = CodeBlock(f'{ivar} < min(({x}), ({end})) + 1')
             chain.append(at)
             if want_after:
                 after = clone_segment()
@@ -521,6 +531,62 @@ class BestEffortLoopPeeling(ppl.Pass):
             parent.start_block = parent.node_id(chain[0])
         parent.reset_cfg_list()
         return True
+
+    def _split_range_relations(self, loop: LoopRegion, x):
+        """The range-membership relations an index-set split at ``x`` needs for ``loop`` but cannot
+        prove -- the missing half of :meth:`_split_loop_at`'s contract, for
+        :meth:`_specialize_index_set_split` to emit as the ``if cond: par else: seq`` guard.
+
+        A split point is only known to be loop-INVARIANT: a free ``K`` in ``if i == K``, or a
+        ``N // 2`` broadcast point against a symbolic ``N``, says nothing about where it lands
+        relative to the bounds. Only the two RANGE segments need guarding, and only in the one
+        direction each can run away in (the middle singleton is clamped in
+        :meth:`_split_loop_at`, and either range segment is simply empty in its other direction):
+
+        - ``before`` = [start, x-1], emitted as ``i < x``, REPLACES the original end bound -- an
+          ``x > end`` runs it past the loop's last iteration. Needs ``x <= end``.
+        - ``after`` = [x+1, end], entered at ``i = x + 1`` -- an ``x < start`` re-runs the
+          iterations below the start. Needs ``start <= x``.
+
+        Empty means every needed side is provable and the split applies unconditionally (the
+        boundary ``x == start`` of a front conflict emits no ``before`` at all, so nothing is left
+        to prove). ``None`` means the bounds are unreadable and the caller must not split."""
+        import sympy
+        from dace.transformation.passes.analysis import loop_analysis
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        if start is None or end is None:
+            return None  # bounds unreadable -> membership cannot even be stated
+        relations = set()
+        if symbolic.simplify(x - start) != 0 and not self._provably_nonneg(end - x):
+            relations.add(sympy.LessThan(x, end))  # a `before` segment exists -> it must not overrun
+        if symbolic.simplify(x - end) != 0 and not self._provably_nonneg(x - start):
+            relations.add(sympy.LessThan(start, x))  # an `after` segment exists -> it must not underrun
+        return frozenset(relations)
+
+    def _specialize_index_set_split(self, sdfg: SDFG, loop: LoopRegion, x, relations) -> None:
+        """Replace ``loop`` with ``if (start <= x <= end) { index-set split } else { original loop }``.
+
+        The split form regroups the same iterations only inside the range (see
+        :meth:`_split_loop_at`), so it is emitted as the true branch guarded by ``relations`` and
+        the untouched loop -- correct wherever ``x`` lands -- is the sequential fallback. With no
+        relation (a provably in-range ``x``) the split is applied in place, no branch. Mirrors
+        :meth:`_specialize_modulo_split`, whose far-half fold is likewise conditional."""
+        from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
+        if not relations:
+            if self._split_loop_at(sdfg, loop, x):
+                self._clean_peeled_remainder(sdfg)
+            return
+        # A ``CodeBlock`` condition is PYTHON (``and``, not ``&&``), and the relation is rendered by
+        # sympy's own printer -- not ``sym2cpp``, whose C ``/`` would turn the ``N // 2`` split point
+        # into a true division. ``int_floor`` and friends round-trip through ``pystr_to_symbolic``.
+        condition = ' and '.join(f'({r})' for r in sorted(relations, key=str))
+
+        def _parallelize(par_loop, par_region, _owner):
+            if self._split_loop_at(sdfg, par_loop, x):
+                self._clean_peeled_remainder(par_region)
+
+        specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
 
     def _best_split_for(self, loop: LoopRegion, sdfg: SDFG):
         """The ``if i == x`` guard value whose index-set split unblocks the most maps
@@ -1011,7 +1077,11 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         Splitting is tried first: an interior equality guard (``if i == x`` with ``x``
         away from the boundary) is carved out as [start, x-1] + {x} + [x+1, end], which
-        no bounded boundary peel could reach. Next a wrapping-modulo peel fixes a
+        no bounded boundary peel could reach. That carve regroups the loop's own iterations
+        only while ``start <= x <= end``, and a loop-invariant ``x`` need not satisfy it (a
+        free ``K`` in ``if i == K``, a ``N // 2`` against a symbolic ``N``), so an unprovable
+        membership is emitted as ``if (start <= x <= end) { split } else { original loop }``
+        rather than assumed. Next a wrapping-modulo peel fixes a
         boundary that reads/writes the wrong element under C's truncated ``%`` (a
         correctness fix that runs even when the loop already maps). A wrap whose
         boundary is symbolic -- unreachable by any constant-count peel -- is instead
@@ -1023,12 +1093,19 @@ class BestEffortLoopPeeling(ppl.Pass):
         if self.peel_limit <= 0 or not _loops(sdfg):
             return None
         applied = 0
-        # 1. Index-set splitting for interior equality guards.
+        # 1. Index-set splitting for interior equality guards. The split only regroups the loop's
+        #    own iterations while the split point lies inside the range, which a loop-invariant
+        #    point does not have to (``if i == K`` with a free ``K``), so an unprovable membership
+        #    becomes the `if in-range: split else: original loop` branch condition.
         for loop in list(_loops(sdfg)):
             x = self._best_split_for(loop, sdfg)
-            if x is not None and self._split_loop_at(sdfg, loop, x):
-                self._clean_peeled_remainder(sdfg)
-                applied += 1
+            if x is None:
+                continue
+            relations = self._split_range_relations(loop, x)
+            if relations is None:
+                continue
+            self._specialize_index_set_split(sdfg, loop, x, relations)
+            applied += 1
         # 2. Peel a genuinely-wrapping body modulo to its floor-correct affine form,
         #    even for loops LoopToMap already maps (the wrap-around access otherwise
         #    emits C's truncated ``%`` and computes the wrong boundary value).

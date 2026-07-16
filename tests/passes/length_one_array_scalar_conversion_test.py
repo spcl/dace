@@ -314,5 +314,29 @@ def test_length_one_view_source_is_not_scalarized():
     assert isinstance(sdfg.arrays["a"], dd.Scalar)
 
 
+def test_other_subset_of_scalarized_side_collapses():
+    """A copy edge names only ONE side in ``Memlet.data``; the opposite side is addressed by
+    ``other_subset``. Scalarizing THAT side must collapse its ``other_subset`` too, or the edge
+    keeps the pre-scalarization rank and validation rejects it with "Memlet other_subset does not
+    match node dimension". Reproduces the npbench ``vadv`` failure, where ``single_element``
+    scalarizes the ``(1, 1)`` MapFusion scratch and leaves a 2-D ``other_subset`` behind."""
+    sdfg = dace.SDFG("len1_other_subset")
+    st = sdfg.add_state("s")
+    sdfg.add_array("big", [4, 4], dace.float64)
+    sdfg.add_array("scratch", [1, 1], dace.float64, transient=True)
+    rb = st.add_access("big")
+    ws = st.add_access("scratch")
+    # data == 'big' (stays 2-D); other_subset addresses 'scratch' (about to become a Scalar).
+    st.add_nedge(rb, ws, dace.Memlet(data="big", subset="1, 1", other_subset="0, 0"))
+    sdfg.validate()
+
+    rewritten = ConvertLengthOneArraysToScalars(single_element=True, transient_only=True).apply_pass(sdfg, {})
+    assert "scratch" in rewritten
+    assert isinstance(sdfg.arrays["scratch"], dd.Scalar)
+    edge = next(iter(st.edges()))
+    assert edge.data.other_subset.dims() == 1, f"stale other_subset rank: {edge.data.other_subset}"
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

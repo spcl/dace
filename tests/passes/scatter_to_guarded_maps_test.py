@@ -10,7 +10,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.libraries.sort.nodes.integer_sort import IntegerSort
+from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.scatter_to_guarded_maps import (ScatterToGuardedMaps, detect_scatter_idx_arrays)
@@ -129,8 +129,11 @@ def _build_nested_map_scatter_sdfg():
 # -- Helpers ------------------------------------------------------------------
 
 
-def _count_integer_sort_nodes(sdfg: dace.SDFG) -> int:
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, IntegerSort))
+def _count_guard_nodes(sdfg: dace.SDFG) -> int:
+    """The per-idx-array runtime guard. This is the opaque ``ScatterConflictCheck`` libnode --
+    the guard no longer materialises an ``IntegerSort`` (it sorts a copy internally and counts
+    adjacent-equal), so counting sort nodes would find none."""
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ScatterConflictCheck))
 
 
 def _count_map_entries(sdfg: dace.SDFG) -> int:
@@ -184,17 +187,17 @@ def test_detect_returns_empty_for_elementwise():
     }),
 ])
 def test_scatter_kernel_guarded_and_parallelized(kernel, inputs_fn):
-    """Each TSVC scatter is guarded (1 IntegerSort node) and parallelized (>=1 MapEntry)."""
+    """Each TSVC scatter is guarded (1 ScatterConflictCheck node) and parallelized (>=1 MapEntry)."""
     sdfg = kernel.to_sdfg(simplify=True)
     loops_before = _count_loop_regions(sdfg)
     maps_before = _count_map_entries(sdfg)
-    sort_before = _count_integer_sort_nodes(sdfg)
+    sort_before = _count_guard_nodes(sdfg)
 
     rewritten = ScatterToGuardedMaps().apply_pass(sdfg, {})
     sdfg.validate()
 
     assert rewritten == 1, f"Expected exactly 1 guarded idx for {kernel.name}; got {rewritten}."
-    assert _count_integer_sort_nodes(sdfg) == sort_before + 1, "IntegerSort guard not emitted."
+    assert _count_guard_nodes(sdfg) == sort_before + 1, "ScatterConflictCheck guard not emitted."
     assert _count_map_entries(sdfg) > maps_before, "Scatter loop was not parallelized to a Map."
     assert _count_loop_regions(sdfg) < loops_before, "Original LoopRegion was not lifted."
 
@@ -225,7 +228,7 @@ def test_two_distinct_scatters_get_individual_guards():
     rewritten = ScatterToGuardedMaps().apply_pass(sdfg, {})
     sdfg.validate()
     assert rewritten == 2, f"Expected both ip and jp to be guarded; got {rewritten}."
-    assert _count_integer_sort_nodes(sdfg) == 2, "Need one IntegerSort per idx array."
+    assert _count_guard_nodes(sdfg) == 2, "Need one ScatterConflictCheck per idx array."
 
     n = 24
     ip = _make_permutation(n, seed=100)
@@ -283,7 +286,7 @@ def _ref_s4113_ssym(a, ip, ssym, kw):
     }, _ref_s4113_ssym),
 ])
 def test_symbolic_stride_scatter_guarded_and_parallelized(kernel, inputs_fn, ref):
-    """Each symbolic-stride scatter is guarded (1 IntegerSort) and lifted (>=1
+    """Each symbolic-stride scatter is guarded (1 ScatterConflictCheck) and lifted (>=1
     Map), and reproduces the sequential result bit-for-bit under a permutation
     ``ip``."""
     sdfg = kernel.to_sdfg(simplify=True)
@@ -294,7 +297,7 @@ def test_symbolic_stride_scatter_guarded_and_parallelized(kernel, inputs_fn, ref
     sdfg.validate()
 
     assert rewritten == 1, f"Expected exactly 1 guarded idx for {kernel.name}; got {rewritten}."
-    assert _count_integer_sort_nodes(sdfg) == 1, "IntegerSort guard not emitted."
+    assert _count_guard_nodes(sdfg) == 1, "ScatterConflictCheck guard not emitted."
     assert _count_map_entries(sdfg) > maps_before, "Scatter loop was not parallelized to a Map."
     assert _count_loop_regions(sdfg) < loops_before, "Original LoopRegion was not lifted."
 
@@ -321,7 +324,7 @@ def test_detect_and_lift_nested_map_scatter():
     sdfg.validate()
 
     assert rewritten == 1, f"Expected exactly one guarded idx (``idx``); got {rewritten}."
-    assert _count_integer_sort_nodes(sdfg) == 1, "IntegerSort guard not emitted for the nested-SDFG scatter."
+    assert _count_guard_nodes(sdfg) == 1, "ScatterConflictCheck guard not emitted for the nested-SDFG scatter."
     assert _count_map_entries(sdfg) >= 1, "Nested-SDFG scatter loop was not parallelized to a Map."
     assert _count_loop_regions(sdfg) < loops_before, "Original LoopRegion was not lifted."
 
@@ -353,7 +356,7 @@ def test_no_scatter_elementwise_no_op_modified_skips_global_permissive_lift():
     sdfg.validate()
 
     assert rewritten is None, "No idx array should be detected for a plain elementwise loop."
-    assert _count_integer_sort_nodes(sdfg) == 0, "No guard should be emitted for non-scatter loops."
+    assert _count_guard_nodes(sdfg) == 0, "No guard should be emitted for non-scatter loops."
     assert _count_map_entries(sdfg) == maps_before, (
         "Non-scatter loops must NOT be permissively lifted here; the parallelize "
         "stage handles them.")
@@ -418,9 +421,9 @@ def test_idempotent_on_already_guarded_sdfg():
     """Re-running the pass on a previously-guarded SDFG does not double-emit guards."""
     sdfg = tsvc_vas.to_sdfg(simplify=True)
     ScatterToGuardedMaps().apply_pass(sdfg, {})
-    sort_after_first = _count_integer_sort_nodes(sdfg)
+    sort_after_first = _count_guard_nodes(sdfg)
     ScatterToGuardedMaps().apply_pass(sdfg, {})
-    assert _count_integer_sort_nodes(sdfg) == sort_after_first, ("Re-running the pass must not duplicate the guard.")
+    assert _count_guard_nodes(sdfg) == sort_after_first, ("Re-running the pass must not duplicate the guard.")
 
 
 # -- emit_unparallelized_else_branch=True: runtime dispatcher tests ------------
@@ -526,7 +529,7 @@ def test_assume_no_conflicts_skips_guard_and_lifts_unconditionally():
     ScatterToGuardedMaps(assume_no_conflicts=True).apply_pass(sdfg, {})
     sdfg.validate()
 
-    assert _count_integer_sort_nodes(sdfg) == 0, 'assume mode must emit NO sort guard'
+    assert _count_guard_nodes(sdfg) == 0, 'assume mode must emit NO sort guard'
     assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)], \
         'assume mode must emit NO ConditionalBlock (no if-else fallback)'
     assert _count_map_entries(sdfg) > maps_before, 'the scatter loop must be lifted to a Map'
@@ -543,10 +546,10 @@ def test_assume_no_conflicts_skips_guard_and_lifts_unconditionally():
 
 @pytest.mark.parametrize('kernel', [tsvc_s4113, tsvc_s491, tsvc_vas])
 def test_no_conflict_guard_survives_full_canonicalize(kernel):
-    """The runtime no-conflict guard (IntegerSort + __builtin_trap) must survive
+    """The runtime no-conflict guard (``ScatterConflictCheck`` + ``__builtin_trap``) must survive
     the WHOLE canonicalize pipeline -- including the terminal SimplifyPass. The
     trap tasklet has no data output, so unless it is marked side-effecting,
-    DeadDataflowElimination prunes it and the sort/count chain feeding it looks
+    DeadDataflowElimination prunes it and the check/count chain feeding it looks
     dead too, silently dropping the guard and leaving the scatter Map unguarded.
     """
     from dace.transformation.passes.canonicalize.pipeline import canonicalize
@@ -554,15 +557,15 @@ def test_no_conflict_guard_survives_full_canonicalize(kernel):
     canonicalize(sdfg, validate=True)
     sdfg.validate()
 
-    has_sort = any(isinstance(n, IntegerSort) for n, _ in sdfg.all_nodes_recursive())
+    has_check = _count_guard_nodes(sdfg) >= 1
     has_trap = any(
         isinstance(n, nodes.Tasklet) and '__builtin_trap' in n.code.as_string for st in sdfg.all_states()
         for n in st.nodes())
     maps = sum(1 for st in sdfg.all_states() for n in st.nodes()
                if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)
     assert maps >= 1, 'the scatter must parallelize into a Map'
-    assert has_sort and has_trap, ('the no-conflict guard (IntegerSort + trap) must survive full '
-                                   f'canonicalize; got sort={has_sort} trap={has_trap}')
+    assert has_check and has_trap, ('the no-conflict guard (ScatterConflictCheck + trap) must survive full '
+                                    f'canonicalize; got check={has_check} trap={has_trap}')
 
 
 if __name__ == '__main__':

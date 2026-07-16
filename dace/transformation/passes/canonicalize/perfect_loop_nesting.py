@@ -77,11 +77,14 @@ class PerfectLoopNesting(ppl.Pass):
                 changed = True
             if trivial.apply_pass(sdfg, {}):
                 changed = True
-            # SSA-rename cloned iterators (a pure relabelling; not a fixpoint
-            # signal, it just keeps the next round's matchers clean).
-            uniq.apply_pass(sdfg, {})
             if not changed:
                 break
+            # SSA-rename cloned iterators (a pure relabelling; not a fixpoint
+            # signal, it just keeps the next round's matchers clean). Runs ONLY after
+            # a round that changed something -- otherwise a refusing pass would still
+            # rename every iterator and drop names from ``sdfg.symbols``, mutating an
+            # SDFG it did not apply to (a purity violation the empty early-out avoids).
+            uniq.apply_pass(sdfg, {})
             rounds += 1
         return rounds or None
 

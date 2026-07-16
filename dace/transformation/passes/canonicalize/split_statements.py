@@ -246,7 +246,17 @@ class SplitStatements(ppl.Pass):
             pre = loop.parent_graph.add_state_before(loop, label=f'{arr}_split_snapshot')
             pre.add_nedge(pre.add_read(arr), pre.add_write(snap), Memlet.from_array(arr, desc))
             for expr in sym_guards:
-                oracle._emit_positive_guard(pre, expr)  # trap unless sym >= 0 (rename soundness)
+                # STRICT (>0) guard -- NOT the >=0 that BreakAntiDependence's whole-array
+                # pure-WAR rename uses. There every read of ``arr`` moves to the snapshot and
+                # a same-index read ``arr[i]`` equals the pre-loop original (only iteration i
+                # writes ``arr[i]``), so a symbolic offset of 0 is sound. HERE the split is
+                # the MIXED shape ``arr[i]=..; d[i]=arr[i]+arr[i+sym]``: a SIBLING statement
+                # writes ``arr[i]`` earlier in the SAME iteration, so a read ``arr[i+sym]``
+                # with ``sym == 0`` aliases that just-written live value and must NOT be
+                # redirected to the stale snapshot. Trap unless ``sym >= 1`` (offsets are
+                # integer, so ``sym - 1 >= 0`` is exactly the strict ``sym > 0``); ``sym == 0``
+                # is then a loud runtime fault instead of a silent miscompile.
+                oracle._emit_positive_guard(pre, expr - 1)
 
             for src, e in fwd_edges:
                 snap_node = state.add_access(snap)

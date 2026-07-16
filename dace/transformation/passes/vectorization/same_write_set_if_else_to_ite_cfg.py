@@ -21,8 +21,120 @@ from dace.sdfg.construction_utils import (
     assert_connector_role_matches_edges,
     copy_state_contents,
 )
-from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.helpers import get_parent_map_and_loop_scopes
+
+
+def free_names_outside_subscript_indices(code: str) -> set:
+    """Names in ``code`` occurring at least once OUTSIDE every array-subscript index.
+
+    A name used ONLY as an index (``a[i] < 0.0``) does not constrain the iteration space -- it
+    merely selects which element the DATA predicate reads -- so it does not count. A name used
+    outside an index even once (the ``i`` in ``a[j] < 0.0 and i < N - 1``) does.
+
+    Parsed with ``ast`` rather than ``pystr_to_symbolic``: the latter raises on ordinary
+    conditions (``math.fabs(a[i]) > 1e-9`` -> ``TypeError: 'Attr' object is not callable``), and
+    its ``free_symbols``-minus-``index_symbols`` set subtraction drops a name that appears BOTH as
+    an index and as a genuine guard -- exactly the case that must be caught.
+
+    :param code: the condition (or assignment RHS) source.
+    :returns: the names used outside subscript indices; empty if ``code`` does not parse.
+    """
+    try:
+        tree = ast.parse(code, mode="eval")
+    except SyntaxError:
+        return set()
+
+    names = set()
+
+    def walk(node, in_index: bool) -> None:
+        if isinstance(node, ast.Name):
+            if not in_index:
+                names.add(node.id)
+            return
+        if isinstance(node, ast.Subscript):
+            walk(node.value, in_index)
+            walk(node.slice, True)
+            return
+        for child in ast.iter_child_nodes(node):
+            walk(child, in_index)
+
+    walk(tree, False)
+    return names
+
+
+def enclosing_iteration_symbols(cb: ConditionalBlock) -> set:
+    """Iteration symbols of every map/loop scope enclosing ``cb``.
+
+    A region-scoped loop variable and a map param are NOT in ``sdfg.symbols``, so membership
+    there would silently never match; the defined-symbol scopes are walked instead (including
+    across nested-SDFG boundaries, where a map param enters as a symbol mapping).
+
+    :param cb: the conditional block whose enclosing scopes are collected.
+    :returns: the names of the enclosing loop variables and map params.
+    """
+    params = set()
+    for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
+        if isinstance(scope, dace.nodes.MapEntry):
+            params.update(scope.map.params)
+        else:
+            assert isinstance(scope, LoopRegion)
+            params.add(scope.loop_variable)
+    return params
+
+
+def condition_guards_iteration_symbol(cb: ConditionalBlock) -> bool:
+    """Whether some arm condition of ``cb`` constrains an enclosing iteration symbol.
+
+    True for a DIRECT mention (``i < N - 1``) and for a TRANSITIVE one -- a condition naming a
+    symbol whose interstate-edge assignment chain resolves to the iteration symbol
+    (``ip1 = i + 1`` on the edge into ``cb``, guard ``ip1 < N``). Such a guard is what keeps the
+    arm's own accesses in range, so if-converting it (which makes the arm's reads unconditional)
+    would fabricate out-of-bounds reads on the lanes the guard excludes; it needs masking instead.
+
+    :param cb: the candidate conditional block.
+    :returns: ``True`` if the block must be refused.
+    """
+    params = enclosing_iteration_symbols(cb)
+    if not params:
+        return False
+
+    free_syms = set()
+    for cond, _body in cb.branches:
+        if cond is None:
+            continue
+        free_syms |= free_names_outside_subscript_indices(cond.as_string)
+
+    # Widen through the interstate assignment chains reaching ``cb``: a symbol bound to an
+    # expression over ``i`` carries the iteration symbol into the condition just as directly.
+    # Iterate to a fixed point -- a chain ``ip1 = j1; j1 = i + 1`` needs more than one sweep, and
+    # the edges may be visited in any order.
+    graph = cb.parent_graph
+    edges = []
+    to_check = {cb}
+    seen = set()
+    while to_check:
+        node = to_check.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        for ie in graph.in_edges(node):
+            edges.append(ie)
+            to_check.add(ie.src)
+
+    widened = True
+    while widened:
+        widened = False
+        for ie in edges:
+            for sym, rhs in ie.data.assignments.items():
+                if sym in free_syms:
+                    new = free_names_outside_subscript_indices(rhs) - free_syms
+                    if new:
+                        free_syms |= new
+                        widened = True
+
+    return bool(params & free_syms)
 
 
 def _wcr_apply_code(wcr_str: str, base_conn: str, acc_conn: str) -> str:
@@ -214,9 +326,17 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
           else reads pre-cb target via ITE ``else_op = arr``) -> any element-write arm
           matches.
 
+        Refused outright when a condition constrains an enclosing ITERATION symbol: the rewrite
+        lifts each arm's compute into an unconditional ``compute_then`` / ``compute_else`` state,
+        so an ``if i < N - 1: s += a[i+1]*a[i+1]`` guard -- the very thing keeping ``a[i+1]`` in
+        range -- would leave lane ``i = N-1`` reading ``a[N]``. That needs masking, not
+        if-conversion, so the block is left for the masking path.
+
         :param cb: candidate conditional block.
         :returns: ``True`` if ``cb`` matches a variant above.
         """
+        if condition_guards_iteration_symbol(cb):
+            return False
         if len(cb.branches) == 2:
             (cond0, body0), (cond1, body1) = cb.branches
             if cond0 is None or cond1 is not None:

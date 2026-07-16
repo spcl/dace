@@ -1,7 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Rewrites every ``ITE(c, t, e)`` call in a tasklet body to the
-floating-point factor form ``c * t + (1 - c) * e``; only the code string
-changes (connectors and edges are untouched)."""
+"""Rewrites an INTEGER-dtype ``ITE(c, t, e)`` call in a tasklet body to the
+factor form ``c * t + (1 - c) * e``; only the code string changes (connectors
+and edges are untouched).
+
+The blend evaluates BOTH arms, so a non-finite *unselected* arm leaks into the
+result (``0 * inf`` is NaN, and IEEE-754 propagates NaN through every operation,
+so no arithmetic form can sanitize it afterwards). Integers have no inf/nan, so
+the blend is exact there; a float/complex output keeps its ``ITE`` call and is
+lowered by a real select instead. See :meth:`_ITEToFpFactor.visit_Call`."""
 import ast
 from typing import Optional
 
@@ -37,6 +43,15 @@ class _ITEToFpFactor(ast.NodeTransformer):
         self.generic_visit(node)
         if not (isinstance(node.func, ast.Name) and node.func.id == "ITE" and len(node.args) == 3):
             return node
+        # Only an integer output is blended. Both arms are evaluated, so a non-finite
+        # unselected arm would leak a NaN (``0 * inf``) into the result; integers have no
+        # inf/nan, so the blend is exact for them. Anything else -- float/complex, or a dtype
+        # ``_ite_output_dtype`` could not resolve -- keeps its ``ITE`` call and lowers to a real
+        # select (``TileITE`` on the vectorized path, ``dace/ITE.h``'s ``c ? a : b`` at codegen),
+        # which copies the taken arm bit-exactly. ``ExpandTileITECudaPython`` gates its identical
+        # blend the same way.
+        if self._cast_dtype is None or not self._cast_dtype.startswith(("int", "uint")):
+            return node
         c, t, e = (unparse(arg) for arg in node.args)
         cf = f"dace.{self._cast_dtype}({c})" if self._cast_dtype is not None else f"({c})"
         replacement = ast.parse(f"{cf} * ({t}) + (1 - {cf}) * ({e})", mode="eval").body
@@ -46,7 +61,10 @@ class _ITEToFpFactor(ast.NodeTransformer):
 
 @properties.make_properties
 class LowerITEToFpFactor(ppl.Pass):
-    """Lower every ``ITE(c, t, e)`` call in tasklet bodies to ``c*t + (1-c)*e``."""
+    """Lower an integer-dtype ``ITE(c, t, e)`` call in tasklet bodies to ``c*t + (1-c)*e``.
+
+    A float/complex ``ITE`` is deliberately left intact (it lowers via a real select, which is
+    bit-exact and cannot leak a NaN from the unselected arm) -- see the module docstring."""
 
     CATEGORY: str = "Vectorization Preparation"
 

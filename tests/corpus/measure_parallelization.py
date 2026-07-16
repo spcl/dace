@@ -230,7 +230,14 @@ def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool =
                 fin.name = f"{fin.name}_mp_{i}"
                 row['correct'] = bool(checker(fin))
         except Exception as e:  # a build/codegen raise is recorded, not fatal to the sweep
-            row['error'] = f"{type(e).__name__}: {str(e)[:160]}"
+            # Some validation errors carry a stale node/state id whose own ``__str__`` re-raises
+            # (e.g. ``NodeNotFoundError`` after the offending node was removed); stringifying the
+            # message must not itself abort the sweep, so fall back to the type name alone.
+            try:
+                detail = str(e)[:160]
+            except Exception:
+                detail = '<message unavailable>'
+            row['error'] = f"{type(e).__name__}: {detail}"
         rows[name] = row
         if verbose:
             flag = 'OK ' if row['correct'] else ('.. ' if row['correct'] is None and not row['error'] else

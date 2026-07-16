@@ -15,7 +15,8 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.state import ConditionalBlock
+from dace.sdfg import nodes
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
 
 N = dace.symbol('N')
@@ -61,24 +62,56 @@ def test_guard_over_imperfect_nest_is_value_preserving(av):
     assert np.allclose(ob, eb) and np.allclose(oc, ec), f"mismatch act={av}"
 
 
-def test_guard_over_imperfect_nest_guard_moved_inside():
-    """After trivial-loop-wrap perfect-nesting the guard is moved into /
-    duplicated across the loops, leaving no top-level guard, and the result
-    stays value-preserving for the guard taken and not-taken."""
+def test_guard_over_imperfect_nest_parallelizes_value_preserving():
+    """A guarded imperfect nest (``if act > 0: for i: {for j: b[i,j]=...; } c[i]=...}``) must fully
+    parallelize -- both the inner elementwise nest and the bare per-i statement become Maps, leaving
+    NO residual sequential loop -- while keeping the guard (not dropping it) and the exact values for
+    the guard taken and not-taken.
+
+    Note: canonicalize is free to keep the guard as a single top-level ``ConditionalBlock`` wrapping
+    the maps, rather than duplicating it inside each -- both expose the same parallelism, and the
+    single top-level guard is the cleaner form. This test pins the invariant that matters (maximal
+    mapping + guard preserved + value-preserving), not one particular guard placement."""
     n, m = 6, 5
-    a = np.random.rand(n, m)
+    a = np.random.default_rng(0).random((n, m))
     sdfg = guard_over_imperfect_nest.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=True)
-    assert not _top_level_conds(sdfg), "guard survived at SDFG top level"
-    # The guard is not dropped -- it has been duplicated inside the nest.
+
+    # Maximal parallelism: the nest is exposed as Maps with no sequential-loop residue.
+    maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    seq_loops = [r for r in sdfg.all_control_flow_regions(recursive=True)
+                 if isinstance(r, LoopRegion) and not r.pinned_sequential]
+    assert len(maps) >= 2, f"nest did not fully map (maps={len(maps)})"
+    assert not seq_loops, f"sequential loop survived: {[r.label for r in seq_loops]}"
+    # The guard is preserved (not silently dropped), wherever canonicalize placed it.
     assert any(isinstance(x, ConditionalBlock)
-               for x in sdfg.all_control_flow_regions(recursive=True)), "guard was dropped, not moved inside"
+               for x in sdfg.all_control_flow_regions(recursive=True)), "guard was dropped"
 
     for av in (1, 0):
         eb, ec = _oracle(a, n, m, av)
         ob, oc = np.full((n, m), 9.0), np.full(n, 9.0)
         sdfg(a=a.copy(), b=ob, c=oc, act=np.array([av], np.int32), N=n, M=m)
         assert np.allclose(ob, eb) and np.allclose(oc, ec), f"mismatch act={av}"
+
+
+def test_refusal_leaves_sdfg_byte_identical():
+    """A pass that does not apply must not mutate the SDFG. PerfectLoopNesting used to SSA-rename
+    every loop iterator and drop names from ``sdfg.symbols`` even when all sub-passes refused,
+    because the iterator uniquification ran once more on the final (no-change) round. On a loop with
+    a carried recurrence -- which it cannot perfect-nest -- ``apply_pass`` must return None and leave
+    the SDFG byte-identical."""
+    from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
+
+    @dace.program
+    def carried(a: dace.float64[N]):
+        for i in range(1, N):
+            a[i] = a[i - 1] + 1.0
+
+    sdfg = carried.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    result = PerfectLoopNesting().apply_pass(sdfg, {})
+    assert result is None, "the carried recurrence must be refused"
+    assert sdfg.to_json() == before, "refusal mutated the SDFG (iterator rename / symbol drop)"
 
 
 if __name__ == "__main__":

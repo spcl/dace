@@ -383,16 +383,24 @@ def dependence_kind(du, dv) -> str:
     positive first component means the writer runs after the current iteration,
     so the read sees the soon-to-be-overwritten old value -- an anti dependence).
 
-    Only *numeric* (constant) distances are classified as ``'anti'``; a distance
-    with a symbolic component keeps the conservative ``'flow'`` treatment. This is
-    sound: a symbolic forward read handled as flow can only cause the skew to be
-    *refused* (its flow constraint is unsatisfiable under the symbol-positivity
-    assumption), never mis-scheduled -- and every symbolic case in practice is a
-    backward (flow) read anyway."""
+    A *symbolic* leading component is classified ``'anti'`` when its forward
+    (positive) sign is PROVABLE -- e.g. a read ``arr[i, j + K]`` with ``K`` a
+    declared-positive symbol is a genuine forward anti-dependence. Classifying it
+    as flow (the pre-fix blanket rule) is UNSOUND: the pass then finds the
+    difference-diagonal skew ``tau = (1, -1)`` legal under the (wrong) flow
+    constraint ``-K < 0`` and schedules the overwrite *before* the read, silently
+    miscompiling. A distance whose forward sign is not provable -- an unannotated
+    or a backward symbol (``arr[i, j - K]``) -- stays conservatively ``'flow'``:
+    it is a genuine backward recurrence, or an unannotated offset the optimistic
+    retry pins with a runtime positive-guard, so a flow treatment can only refuse
+    or trap, never mis-order."""
     du_s, dv_s = symbolic.simplify(du), symbolic.simplify(dv)
-    if not (du_s.is_number and dv_s.is_number):
+    if du_s.is_number and dv_s.is_number:
+        if du_s > 0 or (du_s == 0 and dv_s > 0):
+            return 'anti'
         return 'flow'
-    if du_s > 0 or (du_s == 0 and dv_s > 0):
+    lead = du_s if du_s != 0 else dv_s     # lexicographically leading (first non-zero) component
+    if lead.is_positive:
         return 'anti'
     return 'flow'
 

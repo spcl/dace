@@ -18,7 +18,7 @@ import re
 from typing import Optional, Set
 
 import dace
-from dace import Memlet, properties
+from dace import Memlet, properties, subsets
 from dace.properties import CodeBlock
 from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -239,9 +239,21 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 mem = edge.data
                 if mem is None or mem.data is None:
                     continue
-                if mem.data not in scalarized:
+                if mem.data in scalarized:
+                    edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
                     continue
-                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
+                # A copy edge names only ONE side in ``data``; the opposite side is addressed by
+                # ``other_subset``. When THAT side is the array we just scalarized, its subset has
+                # to collapse too -- otherwise it keeps the pre-scalarization rank and validation
+                # rejects the edge ("Memlet other_subset does not match node dimension"). This bites
+                # on the ``(1, 1)`` MapFusion scratch that ``single_element`` admits: a 2-D
+                # ``other_subset`` against a now 1-D Scalar.
+                if mem.other_subset is None:
+                    continue
+                if any(
+                        isinstance(node, nodes.AccessNode) and node.data in scalarized and node.data != mem.data
+                        for node in (edge.src, edge.dst)):
+                    mem.other_subset = subsets.Range.from_string('0')
 
         # Offset / dimension symbols carried purely for the rewritten arrays are
         # now dead; drop them so the signature shrinks and codegen doesn't pass

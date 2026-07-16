@@ -54,6 +54,12 @@ class ScalarFission(ppl.Pass):
                 cond_referenced |= cb.get_free_symbols()
         cond_referenced &= set(sdfg.arrays.keys())
 
+        # A scalar threaded through a single ``NestedSDFG`` inout connector is a
+        # loop-carried value whose read and write share one storage location (the
+        # connector); versioning its two sides into different containers is invalid
+        # (see ``_inout_nsdfg_carried``). Leave it untouched, like ``cond_referenced``.
+        inout_carried: Set[str] = self._inout_nsdfg_carried(sdfg)
+
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
@@ -68,6 +74,14 @@ class ScalarFission(ppl.Pass):
             # A scalar read by a control-flow condition is used, not a privatizable
             # temporary -- leave it for symbol promotion (see ``cond_referenced``).
             if name in cond_referenced:
+                continue
+
+            # A scalar read AND written through a single NestedSDFG inout connector is
+            # a carried value shared across both sides of that one connector; fission
+            # would give the read side (``beta_0``) a different version from the write
+            # side (``beta_1``) while the connector must name ONE array on both sides,
+            # producing an invalid inout connector. Leave it (see ``_inout_nsdfg_carried``).
+            if name in inout_carried:
                 continue
 
             # Privatize the undominated (``None``) scope -- accesses whose reads are
@@ -123,6 +137,42 @@ class ScalarFission(ppl.Pass):
 
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+
+    @staticmethod
+    def _inout_nsdfg_carried(sdfg: SDFG) -> Set[str]:
+        """Names threaded through a single ``NestedSDFG`` inout connector.
+
+        A connector present in BOTH ``in_connectors`` and ``out_connectors`` reads
+        and writes ONE inner array through one boundary; when both its outer sides
+        reference the same array (``beta`` in / ``beta`` out) that array is a
+        loop-carried value shared across the connector, not a privatizable
+        per-iteration temporary. The write-shadow analysis, blind to that join,
+        would give the read a different version (``beta_0``) from the write
+        (``beta_1``); renaming the boundary memlets then leaves the connector --
+        which must name the SAME array on both sides -- reading ``beta_0`` and
+        writing ``beta_1``, an invalid inout connector (``NestedSDFG.validate``).
+        This is aggravated when the NSDFG sits inside a Map: its edges terminate at
+        the MapEntry/MapExit, so ``_propagate_rename_into_nsdfgs`` (which renames the
+        connector only when the edge's own endpoint is the renamed AccessNode) never
+        fires, while ``_rename_memlet_path`` still renames the pass-through memlets.
+        Collect such names so the caller leaves them for the carry handling.
+        """
+        carried: Set[str] = set()
+        for state in sdfg.all_states():
+            for n in state.nodes():
+                if not isinstance(n, nd.NestedSDFG):
+                    continue
+                for conn in n.in_connectors.keys() & n.out_connectors.keys():
+                    in_arrays = {
+                        e.data.data
+                        for e in state.in_edges(n) if e.dst_conn == conn and e.data is not None and e.data.data
+                    }
+                    out_arrays = {
+                        e.data.data
+                        for e in state.out_edges(n) if e.src_conn == conn and e.data is not None and e.data.data
+                    }
+                    carried |= in_arrays & out_arrays
+        return carried
 
     @staticmethod
     def _rename_memlet_path(state: SDFGState, edge, old: str, new: str) -> None:

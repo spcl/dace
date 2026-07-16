@@ -137,7 +137,9 @@ class _Scan(NamedTuple):
     # :class:`NormalizeNegativeStride` normalises the loop. With ``coef == -1``,
     # ``k_w`` / ``k_r`` hold the array constants (i.e. the array index visited
     # at the first iteration), and the rewrite emits seed-add Map subscripts
-    # ``k_w - i`` instead of ``iter_start + k_w + i``.
+    # ``k_w - i`` instead of ``iter_start + k_w + i``. The reverse seed is not
+    # applied there but folded into the delta heads beforehand (one seed
+    # ``k_r - k`` per residue class ``k``; see :func:`_emit_reverse_seed_fold`).
     coef: int = 1
 
 
@@ -2764,6 +2766,25 @@ def _rewrite(parent: ControlFlowRegion, loop: LoopRegion, info: _Scan, sdfg: SDF
     s_scan = parent.add_state(loop.label + '_scan')
     parent.add_edge(loop, s_scan, dace.InterstateEdge())
 
+    # REVERSE iteration folds each residue class's seed into that class's delta HEAD
+    # before the scan runs, so the apply is a plain copy rather than a seed-add.
+    # This is what keeps the lift BIT-EXACT: a seed-add computes
+    # ``seed OP (d0 OP d1 OP ...)`` whereas the sequential loop computes
+    # ``((seed OP d0) OP d1) OP ...``, and for floating-point ``+`` / ``*`` those
+    # two associations differ in the last ulp. Folding the seed in makes the
+    # libnode's own left-to-right class walk reproduce the sequential order
+    # exactly. The forward path gets the same guarantee from the ``Scan``
+    # libnode's ``_scan_init`` connector, which it cannot use here (``init`` with
+    # ``stride > 1`` is unsupported) and which is single-valued anyway, while the
+    # reverse residue-class scan needs one seed PER CLASS.
+    if info.coef == -1:
+        s_fold = parent.add_state(loop.label + '_scan_seed_fold')
+        for e in list(parent.in_edges(s_scan)):
+            parent.remove_edge(e)
+            parent.add_edge(e.src, s_fold, e.data)
+        parent.add_edge(s_fold, s_scan, dace.InterstateEdge())
+        _emit_reverse_seed_fold(s_fold, sdfg, info, delta_buf, trip)
+
     if _can_emit_direct_write(info, out_desc):
         for e in out_edges:
             parent.remove_edge(e)
@@ -3395,6 +3416,50 @@ def _emit_scan(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, scan_b
                    mm.Memlet(data=scan_buf, subset=subsets.Range([(0, trip - 1, 1)])))
 
 
+def _emit_reverse_seed_fold(state: SDFGState, sdfg: SDFG, info: _Scan, delta_buf: str, trip: Any):
+    """Reverse path only: Map over ``_k`` folding each residue class's pre-loop seed
+    into that class's delta HEAD -- ``delta_buf[_k] = out[k_r - _k] OP delta_buf[_k]``
+    for ``_k in [0, min(S, trip))``.
+
+    Class ``_k``'s first iteration is ``_i = _k`` (it reads the pre-loop value at
+    ``out[k_r - _k]``), and ``delta_buf[_k]`` is exactly that iteration's delta, so
+    folding here makes the libnode's subsequent left-to-right class walk emit
+    ``((seed OP d0) OP d1) OP ...`` -- the sequential association, bit for bit.
+    :func:`_emit_seed_add` then degenerates to a copy for ``coef == -1``.
+
+    The ``min(S, trip)`` clamp matters when the loop runs FEWER iterations than the
+    stride: only the first ``trip`` classes have any iteration at all, and
+    ``delta_buf`` is only ``trip`` long, so an unclamped ``0:S`` would write OOB.
+
+    The seed slots ``k_r - _k`` span ``k_w + 1 .. k_w + S`` -- strictly above the
+    scan's write range ``k_w - trip + 1 .. k_w`` -- so this Map reads ``out`` where
+    nothing in the rewritten chain ever writes it.
+    """
+    _k = symbolic.pystr_to_symbolic('_k')
+    out_desc = sdfg.arrays[info.out_name]
+    seed_axis_expr = symbolic.simplify(info.k_r - _k)
+    seed_subset = _build_subset(out_desc, info.scan_axis, seed_axis_expr, info.other_indices)
+    nclasses = symbolic.simplify(sympy.Min(info.scan_stride, trip))
+
+    op_expr = {
+        ScanOp.SUM: '__seed + __d',
+        ScanOp.PRODUCT: '__seed * __d',
+        ScanOp.MIN: 'min(__seed, __d)',
+        ScanOp.MAX: 'max(__seed, __d)',
+    }[info.op]
+    state.add_mapped_tasklet(
+        f'{state.label}_tasklet',
+        {'_k': f'0:{nclasses}'},
+        {
+            '__seed': mm.Memlet(data=info.out_name, subset=seed_subset),
+            '__d': mm.Memlet(data=delta_buf, subset=subsets.Range([('_k', '_k', 1)])),
+        },
+        f'__o = {op_expr}',
+        {'__o': mm.Memlet(data=delta_buf, subset=subsets.Range([('_k', '_k', 1)]))},
+        external_edges=True,
+    )
+
+
 def _emit_seed_add(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: str, trip: Any):
     """Map over ``_i`` writing ``out[start + k_w + _i, ...] = seed OP scan_buf[_i]``.
 
@@ -3406,21 +3471,40 @@ def _emit_seed_add(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: str, tri
     head of that class). The libnode has already run the ``S`` independent
     class scans into ``scan_buf``; this Map fans the ``S`` pre-loop seeds
     out by ``_i mod S``.
+
+    Reverse iteration (``coef == -1``) takes no seed here at all -- the per-class
+    seeds are folded into the delta heads up front by
+    :func:`_emit_reverse_seed_fold`, leaving this Map a plain copy into
+    ``out[k_w - _i, ...]``.
     """
     out_desc = sdfg.arrays[info.out_name]
     _i = symbolic.pystr_to_symbolic('_i')
     if info.coef == -1:
         # Reverse iteration: ``k_w`` / ``k_r`` are array constants (positions at
-        # iter 0). Seed reads from ``out[k_r]`` (pre-loop value, broadcast),
-        # write goes to ``out[k_w - _i]`` (i.e. iter 0 writes the highest array
-        # index, iter trip-1 writes the lowest).
-        seed_axis_expr = symbolic.simplify(info.k_r)
+        # iter 0), and the write goes to ``out[k_w - _i]`` (iter 0 writes the
+        # highest array index, iter trip-1 the lowest). Every residue class's seed
+        # was already folded into its delta head by :func:`_emit_reverse_seed_fold`
+        # -- which is what makes the reverse lift bit-exact, and which fans the
+        # seeds out per class rather than broadcasting one -- so ``scan_buf``
+        # already holds the final values and the apply is a straight copy.
         write_axis_expr = symbolic.simplify(info.k_w - _i)
-    elif info.scan_stride == 1:
+        state.add_mapped_tasklet(
+            f'{state.label}_tasklet',
+            {'_i': f'0:{trip}'},
+            {'__v': mm.Memlet(data=scan_buf, subset=subsets.Range([('_i', '_i', 1)]))},
+            '__o = __v',
+            {
+                '__o':
+                mm.Memlet(data=info.out_name,
+                          subset=_build_subset(out_desc, info.scan_axis, write_axis_expr, info.other_indices))
+            },
+            external_edges=True,
+        )
+        return
+    if info.scan_stride == 1:
         seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r)
         write_axis_expr = symbolic.simplify(info.iter_start + info.k_w) + _i
     else:
-        import sympy
         class_idx = sympy.Mod(_i, info.scan_stride)
         seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r + class_idx)
         write_axis_expr = symbolic.simplify(info.iter_start + info.k_w) + _i

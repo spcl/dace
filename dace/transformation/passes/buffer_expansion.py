@@ -449,10 +449,16 @@ class BufferExpansion(ppl.Pass):
         if not isinstance(read, subsets.Range):
             return False
         dims = read.dims()
-        # ``Subset.covers`` returns a (truthy) ValueError on a dimensionality mismatch instead of
-        # raising, so gate the fast path on matching dims -- every subset here is for the same
-        # buffer, so this only rejects malformed input, never a real cover.
-        if any(w is not None and w.dims() == dims and w.covers(read) for w in writes):
+        # ``covers_precise``, NOT ``covers``: the latter is a *bounding-box* test that ignores the
+        # step, so a strided write ``buf[0:2*H:2]`` -- which touches only the even slots -- reports
+        # covering the dense read ``buf[0:2*H]`` its box happens to span. Crediting that leaves the
+        # skipped slots carrying an earlier iteration's value while the buffer is declared private,
+        # and every iteration then reads its own never-written slice. ``covers_precise`` accounts
+        # for the step and, like ``covers``, answers False when it cannot prove coverage.
+        # Both return a (truthy) ValueError on a dimensionality mismatch instead of raising, so gate
+        # the fast path on matching dims -- every subset here is for the same buffer, so this only
+        # rejects malformed input, never a real cover.
+        if any(w is not None and w.dims() == dims and w.covers_precise(read) for w in writes):
             return True
         chunks = [w for w in writes if isinstance(w, subsets.Range) and w.dims() == dims]
         if len(chunks) < 2:

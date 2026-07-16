@@ -463,6 +463,14 @@ class LoopToMap(xf.MultiStateTransformation):
             if [n for n in loop_state.data_nodes() if isinstance(n.desc(sdfg), dt.StructureView)]:
                 return refuse(f"loop body contains a StructureView in state {loop_state}")
 
+        # A loop that provably runs at most once carries no cross-iteration dependence, so it is
+        # trivially DOALL -- accept here, skipping the dependence analysis below (which a clamped
+        # ``Max``/``Min`` bound would otherwise confound). This maps the single-iteration middle
+        # segment a range split leaves behind (e.g. the ``{x}`` clamp of the s1113 broadcast split),
+        # where the dependence analysis has nothing to prove. The structural guards above still gate.
+        if loop_analysis.loop_provably_at_most_one_iteration(self.loop):
+            return True
+
         # Collect symbol reads and writes from inter-state assignments. The read-before-assigned
         # analysis needs the loop's blocks in topological order, but that (dominator-heavy) sort is
         # only meaningful when the loop body actually has inter-state assignments. A loop whose

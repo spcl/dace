@@ -19,21 +19,29 @@ In DaCe IR the conditional accumulator chain sits *inside* the
 ``reduce_atomic`` (one atomic per passing thread) -- the slow path.
 
 The rewrite folds the guard into the accumulated value using the reduction
-identity and splits the computation into a mask tasklet and a plain accumulate::
+identity, by splicing a mask tasklet in front of the update tasklet's addend
+input and hoisting the (now unconditional) branch body into the loop::
 
     if cond: acc OP= x   ==>   masked_val = (x if cond else IDENTITY(OP))
                                acc        = acc OP masked_val
 
 The masking is value-exact: a false iteration contributes ``IDENTITY(OP)``,
 which ``OP`` leaves the accumulator unchanged -- exactly the sequential
-semantics of the original guarded update. The accumulate tasklet reads the
-masked value BARE (``acc OP __masked``), so it is the same "compute then
-accumulate" shape as a dot product (``s += a[i]*b[i]``); the downstream
+semantics of the original guarded update. The update tasklet is reused as-is and
+reads the masked value BARE (``acc OP __masked``), so it is the same "compute
+then accumulate" shape as a dot product (``s += a[i]*b[i]``); the downstream
 ``reduction_to_wcr_map`` canonicalize stage lifts it to a parallel WCR-on-scalar
 map whose codegen emits the tree reduction. (A single fused tasklet ``acc OP=
 (x if cond else id)`` would instead be mis-lifted by ``LoopToReduce``'s
 single-tasklet matcher, which keys off the top-level ``OP`` and would silently
 drop the mask -- hence the two-tasklet split.)
+
+The addend ``x`` may be COMPUTED (``s += a[i]*a[i]``), not just a bare array
+element: splicing into the branch's own state keeps the addend's producer
+subgraph attached, and any array read the guard names that is not the addend's
+element (here ``a[i]``, which traces to the product transient) is WIRED as an
+extra ``__guardN`` input to the mask tasklet. Only a guard read that cannot be
+expressed as a memlet subset -- an indirection such as ``a[b[i]]`` -- is refused.
 
 Identities come from :func:`~dace.dtypes.reduction_identity` keyed on the
 reduction type detected for the op (``+``/``-`` -> ``0``, ``*`` -> ``1``), never
@@ -95,14 +103,6 @@ _OP_TO_WCR: Dict[str, str] = {
     '+': 'lambda a, b: a + b',
     '-': 'lambda a, b: a + b',
     '*': 'lambda a, b: a * b',
-}
-
-#: Reduction operator string -> AST binary-operator node class, for building the
-#: unconditional accumulator tasklet body ``__out = __acc OP (...)`` as an AST.
-_OP_TO_AST: Dict[str, type] = {
-    '+': ast.Add,
-    '-': ast.Sub,
-    '*': ast.Mult,
 }
 
 
@@ -394,108 +394,105 @@ class LoopToConditionalReduce(ppl.Pass):
     # ---------------------------- rewrite ----------------------------
 
     def _rewrite(self, m: _Match, sdfg: SDFG):
-        """Replace the ``ConditionalBlock`` with a fresh body state holding an
-        UNCONDITIONAL masked reduction -- a mask tasklet writing a fresh
-        per-iteration transient, then a plain accumulate reading it BARE::
+        """Turn the guarded update into an UNCONDITIONAL masked reduction by
+        SPLICING a mask tasklet in front of the update tasklet's addend input
+        and hoisting the (now unconditional) true-branch state into the loop::
 
-            masked_val = (__addend if (cond) else IDENTITY)
-            __out      = __acc OP __masked
+            masked_val = (__addend if (cond) else IDENTITY)   # spliced-in mask
+            __out      = __acc OP __masked                    # the ORIGINAL update
 
         Folding the guard into the masked value via the reduction identity is
         value-exact -- a false iteration contributes the neutral element, so
         ``OP`` leaves the accumulator unchanged, which is exactly the sequential
-        semantics of the original guarded update. The accumulate writes back
-        with a PLAIN (non-WCR) memlet and keeps the loop-carried scalar, so the
-        loop stays sequential through ``parallelize``; the downstream
-        ``reduction_to_wcr_map`` stage then lifts the "compute then accumulate"
-        shape to a parallel WCR-on-scalar map whose codegen emits an OpenMP
-        ``reduction(OP:acc)`` clause (CPU) / a block/warp tree-reduce (GPU) --
-        the fast tree reduction -- instead of the guarded atomic. See the module
-        docstring for why the mask must be a SEPARATE tasklet.
+        semantics of the original guarded update. The update tasklet keeps its
+        PLAIN (non-WCR) write and the loop-carried scalar, so the loop stays
+        sequential through ``parallelize``; the downstream ``reduction_to_wcr_map``
+        stage then lifts the "compute then accumulate" shape to a parallel
+        WCR-on-scalar map whose codegen emits an OpenMP ``reduction(OP:acc)``
+        clause (CPU) / a block/warp tree-reduce (GPU) -- the fast tree reduction
+        -- instead of the guarded atomic. See the module docstring for why the
+        mask must be a SEPARATE tasklet.
+
+        Reusing the true-branch state (rather than synthesising a fresh one) is
+        what makes a COMPUTED addend work: the addend's producer subgraph
+        (``a -> a_index -> _Mult_ -> product``, for ``s += a[i]*a[i]``) lives in
+        that state, so hoisting the state carries the producer with it and the
+        mask reads a genuinely-defined value. The matcher already guarantees the
+        state's only non-transient write is the accumulator, so hoisting it out
+        of the guard moves no stores -- only the addend's loads/arithmetic, whose
+        masked-out results are discarded by the identity.
 
         The cond expression is resolved against iedge symbol bindings; the
-        addend's array gather is rewritten to the mask tasklet's ``__addend``
-        connector and remaining references resolve to loop symbols. Returns
-        ``True`` on a successful rewrite, ``False`` if the addend shape is
-        unrecognized (loop left untouched).
+        addend's array gather is rewritten to the mask's ``__addend`` connector
+        and every array read the guard still names is WIRED as an additional
+        mask input. Returns ``True`` on a successful rewrite, ``False`` if a
+        guard read cannot be expressed as a mask input (loop left untouched).
         """
         loop = m.loop
-        # The new tasklet's addend input connector is ``__addend``; the cond
-        # resolution rewrites the addend gather to that connector name.
-        cond_expr_resolved = self._resolve_cond(m, sdfg, addend_conn_name='__addend')
+        true_state = m.true_state
+        # The mask tasklet's addend input connector is ``__addend``; the cond
+        # resolution rewrites the addend gather to that connector name, and every
+        # OTHER array read the guard names becomes a wired ``__guardN`` input.
+        guard_inputs: Dict[str, tuple] = {}
+        cond_expr_resolved = self._resolve_cond(m, sdfg, addend_conn_name='__addend', guard_inputs=guard_inputs)
+        if cond_expr_resolved is None:
+            return False  # a guard read is not expressible as a mask input -- leave the loop untouched
 
-        # 1. Trace back to the addend's source array + subset.
-        gather = self._addend_gather(m)
-        if gather is None:
-            return False  # unexpected shape -- leave the loop untouched
-        addend_src_name, addend_subset = gather
-
-        # 2. Two-tasklet split (mask THEN accumulate). The masked value is
-        #    computed in its own elementwise tasklet writing a fresh per-iteration
-        #    transient, and the accumulation reads that transient BARE:
-        #
-        #        masked_val = (__addend if (cond) else IDENTITY)   # mask tasklet
-        #        __out      = __acc OP __masked                    # accumulate tasklet
-        #
-        #    This is the SAME "compute then accumulate" shape as a dot-product
-        #    (``s += a[i]*b[i]``). A single fused tasklet ``__out = __acc OP
-        #    (__addend if cond else id)`` would instead be mis-lifted by
-        #    ``LoopToReduce``'s single-tasklet ``_extract`` matcher, which keys off
-        #    the top-level ``OP`` and treats the non-accumulator operand as a bare
-        #    array read -- silently dropping the mask. Splitting the mask out gives
-        #    the accumulate tasklet a bare transient operand (correctly lifted) and
-        #    routes the whole loop through the multi-tasklet compute-then-accumulate
-        #    path, which preserves the mask.
+        # 1. The mask tasklet: ``__addend`` plus one connector per wired guard read.
         acc_desc = sdfg.arrays[m.acc_name]
         masked_val, _ = sdfg.add_scalar(f'{m.acc_name}_masked_val', acc_desc.dtype, transient=True, find_new_name=True)
-
         mask_body = self._build_mask_body(cond_expr_resolved, m.identity_value)
-        acc_body = self._build_acc_body(m.op_str)
+        mask_tasklet = true_state.add_tasklet(name=f'{m.acc_name}_mask',
+                                              inputs={'__addend'} | set(guard_inputs),
+                                              outputs={'__out'},
+                                              code=mask_body,
+                                              language=dtypes.Language.Python)
 
-        # 3. Fresh body state with the mask + accumulate tasklets.
-        new_state = loop.add_state(loop.label + '_masked_body')
-        mask_tasklet = new_state.add_tasklet(name=f'{m.acc_name}_mask',
-                                             inputs={'__addend'},
-                                             outputs={'__out'},
-                                             code=mask_body,
-                                             language=dtypes.Language.Python)
-        acc_tasklet = new_state.add_tasklet(name=f'{m.acc_name}_masked_acc',
-                                            inputs={'__acc', '__masked'},
-                                            outputs={'__out'},
-                                            code=acc_body,
-                                            language=dtypes.Language.Python)
-
-        # 4. Wire: addend_src -> mask -> masked_val -> accumulate; acc_read ->
-        #    accumulate -> acc_write (PLAIN, no WCR). The loop keeps its scalar RMW
-        #    carry so it stays sequential until ``reduction_to_wcr_map`` lifts it.
+        # 2. Splice the mask between the addend's producer and the update tasklet:
+        #    ``producer -> update.addend`` becomes ``producer -> mask -> masked_val
+        #    -> update.addend``. The update tasklet is left untouched -- the matcher
+        #    already proved its body is ``__out = __acc OP __addend`` with BARE
+        #    operands, i.e. exactly the "compute then accumulate" shape (as in a
+        #    dot product ``s += a[i]*b[i]``) that ``reduction_to_wcr_map`` lifts
+        #    while preserving the mask. A single fused tasklet ``__out = __acc OP
+        #    (__addend if cond else id)`` would instead be mis-lifted by
+        #    ``LoopToReduce``'s single-tasklet ``_extract`` matcher, which keys off
+        #    the top-level ``OP`` and would silently drop the mask.
+        addend_edge = next(e for e in true_state.in_edges(m.upd_tasklet) if e.dst_conn == m.addend_in_conn)
         acc_subset = '0'  # scalar / length-1 carrier; matcher enforces this
-        src_read = new_state.add_read(addend_src_name)
-        masked_an = new_state.add_access(masked_val)
-        acc_read = new_state.add_read(m.acc_name)
-        acc_write = new_state.add_write(m.acc_name)
-        new_state.add_edge(src_read, None, mask_tasklet, '__addend',
-                           mm.Memlet(data=addend_src_name, subset=addend_subset))
-        new_state.add_edge(mask_tasklet, '__out', masked_an, None, mm.Memlet(data=masked_val, subset=acc_subset))
-        new_state.add_edge(masked_an, None, acc_tasklet, '__masked', mm.Memlet(data=masked_val, subset=acc_subset))
-        new_state.add_edge(acc_read, None, acc_tasklet, '__acc', mm.Memlet(data=m.acc_name, subset=acc_subset))
-        new_state.add_edge(acc_tasklet, '__out', acc_write, None, mm.Memlet(data=m.acc_name, subset=acc_subset))
+        masked_an = true_state.add_access(masked_val)
+        true_state.add_edge(addend_edge.src, addend_edge.src_conn, mask_tasklet, '__addend',
+                            _copy_module.deepcopy(addend_edge.data))
+        true_state.remove_edge(addend_edge)
+        true_state.add_edge(mask_tasklet, '__out', masked_an, None, mm.Memlet(data=masked_val, subset=acc_subset))
+        true_state.add_edge(masked_an, None, m.upd_tasklet, m.addend_in_conn,
+                            mm.Memlet(data=masked_val, subset=acc_subset))
 
-        # 5. Reroute the loop body: replace ``... -> cond_block`` and
-        #    ``cond_block -> ...`` with ``... -> new_state`` /
-        #    ``new_state -> ...``, stripping dead iedge assignments (the
-        #    resolved cond no longer references the gather symbols).
+        # 3. Wire the guard's own array reads as real mask inputs, so the folded
+        #    cond evaluates against genuine data instead of an unbound name (the
+        #    ``if a[i] > 0: s += a[i]*a[i]`` case, where the addend traces to the
+        #    product transient and the guard's ``a[i]`` cannot map onto it).
+        for conn, (arr_name, idx_str) in guard_inputs.items():
+            true_state.add_edge(true_state.add_read(arr_name), None, mask_tasklet, conn,
+                                mm.Memlet(data=arr_name, subset=idx_str))
+
+        # 4. Hoist the true-branch state into the loop in the ConditionalBlock's
+        #    place, stripping dead iedge assignments (the resolved cond no longer
+        #    references the gather symbols).
+        was_start = (m.cond_block is loop.start_block)
+        m.true_branch.remove_node(true_state)
+        loop.add_node(true_state, is_start_block=was_start, ensure_unique_name=True)
         for ie in list(loop.in_edges(m.cond_block)):
             stripped = InterstateEdge(condition=ie.data.condition, assignments={})
-            loop.add_edge(ie.src, new_state, stripped)
+            loop.add_edge(ie.src, true_state, stripped)
             loop.remove_edge(ie)
         for oe in list(loop.out_edges(m.cond_block)):
-            loop.add_edge(new_state, oe.dst, oe.data)
+            loop.add_edge(true_state, oe.dst, oe.data)
             loop.remove_edge(oe)
 
-        # 6. Drop the now-disconnected ConditionalBlock and the original
-        #    true-branch state.
+        # 5. Drop the now-disconnected ConditionalBlock.
         loop.remove_node(m.cond_block)
-        # 7. Collapse empty wrapper states; if ``new_state`` ends up being
+        # 6. Collapse empty wrapper states; if ``true_state`` ends up being
         #    the unique non-empty block, the loop body is a clean single-
         #    state accumulator that ``reduction_to_wcr_map`` lifts.
         self._collapse_empty_wrappers(loop)
@@ -515,20 +512,11 @@ class LoopToConditionalReduce(ppl.Pass):
         ast.fix_missing_locations(module)
         return ast.unparse(module)
 
-    def _build_acc_body(self, op_str: str) -> str:
-        """Return Python source for the accumulate tasklet
-        ``__out = __acc OP __masked`` (both operands bare connectors), built as an
-        AST. The bare masked operand is what lets ``LoopToReduce`` lift the
-        accumulation without dropping the mask."""
-        rhs = ast.BinOp(left=ast.Name(id='__acc', ctx=ast.Load()),
-                        op=_OP_TO_AST[op_str](),
-                        right=ast.Name(id='__masked', ctx=ast.Load()))
-        assign = ast.Assign(targets=[ast.Name(id='__out', ctx=ast.Store())], value=rhs)
-        module = ast.Module(body=[assign], type_ignores=[])
-        ast.fix_missing_locations(module)
-        return ast.unparse(module)
-
-    def _resolve_cond(self, m: _Match, sdfg: SDFG, addend_conn_name: str = '__addend') -> str:
+    def _resolve_cond(self,
+                      m: _Match,
+                      sdfg: SDFG,
+                      addend_conn_name: str = '__addend',
+                      guard_inputs: Optional[Dict[str, tuple]] = None) -> Optional[str]:
         """Resolve the cond expression to use only tasklet input connectors.
 
         Steps:
@@ -540,7 +528,14 @@ class LoopToConditionalReduce(ppl.Pass):
            substitute any ``Subscript(Name(arr), idx)`` that matches an
            existing tasklet input edge's memlet with the corresponding
            connector ``Name(__inN)``.
-        3. Unparse back to a Python expression string.
+        3. Any subscript that does NOT match the addend gather (the guard reads
+           an element other than the addend, or the addend is a computed
+           expression the guard's read cannot map onto) is allocated its own
+           ``__guardN`` connector and recorded in ``guard_inputs`` as
+           ``conn -> (array_name, index_str)``, for the caller to wire as a real
+           mask input. Returns ``None`` if such a read is not expressible as a
+           mask input -- see :meth:`_wireable_guard_read`.
+        4. Unparse back to a Python expression string.
 
         We use AST-level substitution rather than ``dace.symbolic.subs`` to
         preserve Python subscript syntax (``a[i]``) -- ``pystr_to_symbolic``
@@ -548,6 +543,8 @@ class LoopToConditionalReduce(ppl.Pass):
         which is not valid Python.
         """
         cond_text = m.cond_codeblock.as_string.strip()
+        if guard_inputs is None:
+            guard_inputs = {}
 
         # Step 1: collect iedge bindings (parsed as ASTs once).
         binding_asts: Dict[str, ast.AST] = {}
@@ -574,7 +571,12 @@ class LoopToConditionalReduce(ppl.Pass):
                 except Exception:
                     pass
 
-        # Step 2b: AST-rewrite the cond.
+        # Step 2b: AST-rewrite the cond. Reads that resolve to neither the addend
+        # gather nor a wireable ``__guardN`` input land in ``unwireable``, which
+        # turns the whole rewrite into a refusal below.
+        unwireable: list = []
+        wireable_guard_read = self._wireable_guard_read
+
         class _Subst(ast.NodeTransformer):
 
             def visit_Name(self, node: ast.Name):
@@ -589,6 +591,7 @@ class LoopToConditionalReduce(ppl.Pass):
             def visit_Subscript(self, node: ast.Subscript):
                 self.generic_visit(node)  # recurse into the subscript value/slice
                 if not isinstance(node.value, ast.Name):
+                    unwireable.append(node)  # subscript of a non-name (e.g. a call result)
                     return node
                 arr_name = node.value.id
                 idx = node.slice
@@ -597,11 +600,18 @@ class LoopToConditionalReduce(ppl.Pass):
                 try:
                     idx_str = ast.unparse(idx)
                 except Exception:
+                    unwireable.append(node)
                     return node
                 key = (arr_name, (idx_str, ))
                 conn = connector_for_access.get(key)
                 if conn is None:
-                    return node
+                    # Not the addend's element: wire this read as its own mask input.
+                    if not wireable_guard_read(m, sdfg, arr_name, idx):
+                        unwireable.append(node)
+                        return node
+                    conn = f'__guard{len(guard_inputs)}'
+                    guard_inputs[conn] = (arr_name, idx_str)
+                    connector_for_access[key] = conn  # reuse one connector per distinct element
                 return ast.copy_location(ast.Name(id=conn, ctx=ast.Load()), node)
 
         try:
@@ -609,11 +619,59 @@ class LoopToConditionalReduce(ppl.Pass):
         except SyntaxError:
             return cond_text
         new_ast = _Subst().visit(cond_ast)
+        if unwireable:
+            return None
         ast.fix_missing_locations(new_ast)
         try:
             return ast.unparse(new_ast)
         except Exception:
             return cond_text
+
+    def _wireable_guard_read(self, m: _Match, sdfg: SDFG, arr_name: str, idx: ast.AST) -> bool:
+        """Can ``arr_name[idx]`` be handed to the mask tasklet as a plain input
+        edge? Requires that
+
+        * ``arr_name`` is a real data descriptor (not a symbol or a builtin);
+        * the index is a pure symbolic expression -- every ``Name`` in it is a
+          symbol available at the loop body (see :meth:`_available_symbols`) and
+          it contains no nested subscript/call. An index that is itself read from
+          memory (``a[b[i]]``) is an INDIRECTION: a memlet subset is a static
+          symbolic range, so the element the mask must read is not knowable
+          without materialising the indirection, which this pass does not do --
+          refuse and leave it to the gather passes;
+        * the true-branch does not WRITE ``arr_name``. The mask's read node has
+          no ordering edge against such a write, so wiring it would race with /
+          reorder against the branch's own update.
+        """
+        desc = sdfg.arrays.get(arr_name)
+        if desc is None:
+            return False
+        available = self._available_symbols(m, sdfg)
+        for sub in ast.walk(idx):
+            if isinstance(sub, (ast.Subscript, ast.Call)):
+                return False  # data-dependent (indirect) index -- not a static memlet subset
+            if isinstance(sub, ast.Name) and sub.id not in available:
+                return False  # not a symbol we can put in a subset
+        written = {n.data for n in m.true_state.data_nodes() if m.true_state.in_degree(n) > 0}
+        return arr_name not in written
+
+    def _available_symbols(self, m: _Match, sdfg: SDFG) -> set:
+        """Names usable in a memlet subset at the update tasklet, taken from the
+        DEFINED-symbol API rather than ``sdfg.symbols`` membership. ``sdfg.symbols``
+        holds only the SDFG's GLOBAL symbols, so it sees none of the three binders a
+        guard index is actually written in: a region-scoped loop iterator (mid-pipeline
+        the frontend's ``i`` is renamed to a ``_loop_it_0`` bound by the LoopRegion), a
+        map parameter, and an interstate-edge assignment. Gating on it silently refuses
+        every such guard read, so the guarded atomic survives to codegen.
+
+        :meth:`~dace.sdfg.state.SDFGState.symbols_defined_at` contributes what is bound
+        at the tasklet's POSITION -- the iterators of all enclosing ``LoopRegion``s and
+        the parameters of the dataflow scopes it sits in;
+        :meth:`~dace.sdfg.state.SDFGState.defined_symbols` contributes the symbols bound
+        by interstate-edge assignments, which the former does not walk. Constants are
+        usable in a subset too but are not symbols, so they are added explicitly."""
+        return (set(m.true_state.symbols_defined_at(m.upd_tasklet)) | set(m.true_state.defined_symbols())
+                | set(sdfg.constants))
 
     def _collapse_empty_wrappers(self, loop: LoopRegion):
         """Eliminate empty SDFGState blocks in the loop body whose only role

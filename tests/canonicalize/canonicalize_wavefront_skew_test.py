@@ -596,5 +596,143 @@ def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
     assert a_readers and any(body.out_degree(n) > 0 for n in a_readers)
 
 
+def test_dependence_kind_symbolic_forward_positive_is_anti():
+    """Soundness of :func:`dependence_kind` on symbolic distances. A forward read
+    at a *declared-positive* symbolic distance ``aa[i, j + S]`` (``du, dv`` =
+    ``(0, S)``, ``S > 0``) is a genuine ANTI dependence and MUST classify as
+    ``'anti'`` -- treating it as flow lets the pass pick the difference-diagonal
+    ``tau = (1, -1)`` and schedule the overwrite before the read (silent
+    miscompile). A backward symbolic read ``aa[i, j - S]`` (``(0, -S)``) stays
+    ``'flow'``; an unannotated / unprovable-sign symbol also stays conservatively
+    ``'flow'`` (the optimistic retry pins it with a runtime guard)."""
+    from dace import symbolic
+    from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
+    p = symbolic.pystr_to_symbolic
+    S = dace.symbol('S', positive=True)
+    assert dependence_kind(p('0'), S) == 'anti'          # aa[i, j+S], S>0 -> forward anti
+    assert dependence_kind(S, p('0')) == 'anti'          # aa[i+S, j], S>0 -> forward anti
+    assert dependence_kind(p('0'), -S) == 'flow'         # aa[i, j-S] -> backward flow
+    assert dependence_kind(p('-1'), S) == 'flow'         # du=-1 backward dominates lexicographically
+    assert dependence_kind(p('0'), p('-sym1')) == 'flow'  # unprovable sign -> conservative flow
+
+
+def _hand_built_forward_symbolic_nest(fwd_col):
+    """A perfect 2-D nest ``aa[i,j] = aa[i-1,j] + aa[i, <fwd_col>]`` built directly
+    (not via ``@dace.program``): the frontend lowers a two-read integer body
+    through ``aa_index`` slice transients that ``simplify`` collapses into
+    disconnected symbol refs, hiding the reads from ``collect_carrier`` so the pass
+    would refuse and never engage. Building the memlets from the positive ``S``
+    symbol OBJECT (not a parsed string, which strips ``positive=True``) is what
+    drives the genuine forward-anti dependence into the pass."""
+    from dace import subsets
+    N_ = dace.symbol('N')
+    i, j = dace.symbol('i'), dace.symbol('j')
+    sdfg = dace.SDFG('wf_fwd_sym')
+    sdfg.add_array('aa', [N_, N_], dace.int64)
+    sdfg.add_symbol('S', dace.int64)
+    outer = LoopRegion('outer', 'i < N - 1', 'i', 'i = 1', 'i = i + 1')
+    sdfg.add_node(outer, is_start_block=True)
+    inner = LoopRegion('inner', 'j < N - 1', 'j', 'j = 1', 'j = j + 1')
+    outer.add_node(inner, is_start_block=True)
+    body = inner.add_state('body', is_start_block=True)
+    rb, rf, w = body.add_access('aa'), body.add_access('aa'), body.add_access('aa')
+    tk = body.add_tasklet('c', {'a', 'b'}, {'o'}, 'o = a + b')
+
+    def point(e0, e1):
+        return subsets.Range([(e0, e0, 1), (e1, e1, 1)])
+
+    body.add_edge(rb, None, tk, 'a', dace.Memlet(data='aa', subset=point(i - 1, j)))
+    body.add_edge(rf, None, tk, 'b', dace.Memlet(data='aa', subset=point(i, fwd_col)))
+    body.add_edge(tk, 'o', w, None, dace.Memlet(data='aa', subset=point(i, j)))
+    return sdfg
+
+
+def test_wavefront_skew_symbolic_positive_forward_read_value_preserving():
+    """Regression for the symbolic-forward-read soundness bug. ``aa[i, j + S]``
+    (``S`` declared positive) is a forward ANTI dependence; the pre-fix
+    ``dependence_kind`` classified every symbolic distance as flow, so the pass
+    committed the difference-diagonal ``tau = (1, -1)`` UNGUARDED and scheduled the
+    overwrite before the read -- a silent miscompile (verified: 182 wrong cells).
+    With the fix the forward distance classifies ``'anti'`` and the pass picks the
+    sum-diagonal ``tau = (1, 1)`` (which schedules the overwrite on a strictly
+    later ``t``), reproducing the sequential reference bit-for-bit. Integer
+    arithmetic keeps the check exact."""
+    S = dace.symbol('S', positive=True)
+    sdfg = _hand_built_forward_symbolic_nest(dace.symbol('j') + S)
+    res = WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1, "the hand-built forward-symbolic nest must engage the skew"
+    # No runtime guard is planted for a declared-positive offset, so the schedule
+    # must be correct outright (not merely trap-safe).
+    guards = [s for s in sdfg.all_states() if s.label.startswith('_skew_guard_')]
+    assert not guards, f"a declared-positive forward read must not need a runtime guard; got {len(guards)}"
+
+    n, s = 16, 1
+    rng = np.random.default_rng(2111)
+    aa0 = rng.integers(0, 7, size=(n, n), dtype=np.int64)
+    ref = aa0.copy()
+    for i in range(1, n - 1):
+        for j in range(1, n - 1):
+            ref[i, j] = ref[i - 1, j] + ref[i, j + s]
+    got = aa0.copy()
+    sdfg(aa=got, N=n, S=s)
+    assert np.array_equal(got, ref), f"mismatch: got\n{got}\nref\n{ref}"
+
+
+def test_wavefront_skew_symbolic_backward_read_not_over_refused():
+    """Guard against the fix over-refusing: a BACKWARD symbolic read ``aa[i, j - S]``
+    is a genuine flow (RAW) recurrence and must still skew correctly (``tau = (1, 1)``
+    reads the freshly produced value), reproducing the sequential reference."""
+    S = dace.symbol('S', positive=True)
+    sdfg = _hand_built_forward_symbolic_nest(dace.symbol('j') - S)
+    res = WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert res == 1
+
+    n, s = 16, 1
+    rng = np.random.default_rng(2112)
+    aa0 = rng.integers(0, 7, size=(n, n), dtype=np.int64)
+    ref = aa0.copy()
+    for i in range(1, n - 1):
+        for j in range(1, n - 1):
+            ref[i, j] = ref[i - 1, j] + ref[i, j - s]
+    got = aa0.copy()
+    sdfg(aa=got, N=n, S=s)
+    assert np.array_equal(got, ref), f"mismatch: got\n{got}\nref\n{ref}"
+
+
+def test_wavefront_skew_non_2d_carried_dependence_value_preserving():
+    """A 3-D array ``bb`` carries a dependence ``bb[i-1, j+1, 0]`` that lies exactly
+    ON the chosen ``tau = (1, 1)`` wavefront (``tau . (-1, 1) == 0``), so its source
+    and sink fall in the SAME parallel ``p``-wavefront. ``collect_carrier`` skips
+    every non-2-D array, so the skew is decided from the 2-D ``aa`` alone and the
+    forced inner->Map lift races ``bb``. The result must match the sequential
+    reference bit-for-bit."""
+    @dace.program
+    def prog(aa: dace.int64[N, N], bb: dace.int64[N, N, 1]):
+        for i in range(1, N - 1):
+            for j in range(1, N - 1):
+                aa[i, j] = aa[i, j - 1] + aa[i - 1, j]
+                bb[i, j, 0] = bb[i - 1, j + 1, 0] + aa[i, j]
+
+    sdfg = prog.to_sdfg(simplify=True)
+    WavefrontSkew().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    n = 10
+    rng = np.random.default_rng(4711)
+    aa0 = rng.integers(0, 5, size=(n, n), dtype=np.int64)
+    bb0 = rng.integers(0, 5, size=(n, n, 1), dtype=np.int64)
+    aref, bref = aa0.copy(), bb0.copy()
+    for i in range(1, n - 1):
+        for j in range(1, n - 1):
+            aref[i, j] = aref[i, j - 1] + aref[i - 1, j]
+            bref[i, j, 0] = bref[i - 1, j + 1, 0] + aref[i, j]
+    agot, bgot = aa0.copy(), bb0.copy()
+    sdfg(aa=agot, bb=bgot, N=n)
+    assert np.array_equal(agot, aref) and np.array_equal(bgot, bref), \
+        f"bb mismatch: got\n{bgot[..., 0]}\nref\n{bref[..., 0]}"
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
