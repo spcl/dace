@@ -8,8 +8,9 @@ stage. It owns the descriptor repository (which *is* the resulting tree's
 never cloned), the name-binding table, and the demand-driven inference service.
 """
 import ast
+from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from dace import data, dtypes, symbolic
 from dace.frontend.python.nextgen.common import FrontendError
@@ -65,6 +66,13 @@ class ProgramContext:
 
         #: Names of generated return containers, in return-value order.
         self.return_names: List[str] = []
+
+        #: Prefix applied to materialized return containers (empty at top level,
+        #: set by :meth:`inline_scope` while lowering an inlined callee).
+        self.return_prefix: str = ''
+
+        #: Stack of function objects currently being inlined (recursion detection).
+        self.inline_stack: List[Any] = []
 
         self._name_counter = 0
 
@@ -142,6 +150,44 @@ class ProgramContext:
         actual_name = self.add_container(name, descriptor, transient=True)
         self.constants[actual_name] = (descriptor, value)
         return actual_name
+
+    # ------------------------------------------------------------------ #
+    # Nested-program inlining support
+    # ------------------------------------------------------------------ #
+
+    @contextmanager
+    def inline_scope(self, function: Any, parameter_bindings: Dict[str, str], callee_globals: Dict[str, Any],
+                     return_prefix: str) -> Iterator[List[str]]:
+        """
+        Establish a fresh binding scope for lowering an inlined callee into
+        the shared repository. Saves and restores the caller's bindings,
+        static values, globals, and return handling; seeds the callee's
+        parameter bindings; and tracks the inline stack for recursion
+        detection.
+
+        :param function: The callee function object (for recursion detection).
+        :param parameter_bindings: Mapping from callee parameter names to
+                                   repository container names.
+        :param callee_globals: The callee's resolved global variables.
+        :param return_prefix: Prefix for materialized callee return containers.
+        :yield: The callee's ``return_names`` list, populated as return
+                statements are lowered (read it before the scope exits).
+        """
+        saved = (self.bindings, self.static_values, self.globals, self.return_prefix, self.return_names)
+        self.inline_stack.append(function)
+        self.bindings = {
+            name: Binding(kind='container', container=container)
+            for name, container in parameter_bindings.items()
+        }
+        self.static_values = {}
+        self.globals = callee_globals
+        self.return_prefix = return_prefix
+        self.return_names = []
+        try:
+            yield self.return_names
+        finally:
+            self.inline_stack.pop()
+            (self.bindings, self.static_values, self.globals, self.return_prefix, self.return_names) = saved
 
     def resolve(self, source_name: str) -> Optional[Binding]:
         """Look up the current binding of a source-level name."""

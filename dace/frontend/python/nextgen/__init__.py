@@ -22,7 +22,8 @@ from dace.frontend.python.nextgen.semantics.context import ProgramContext
 from dace.frontend.python.nextgen.verify import verify_tree
 
 # Importing the rule modules registers all lowering rules.
-from dace.frontend.python.nextgen.lowering.rules import (assign, callbacks, calls, control_flow, returns)  # noqa: F401
+from dace.frontend.python.nextgen.lowering.rules import (assign, callbacks, calls, control_flow, dataflow_explicit,
+                                                         returns)  # noqa: F401
 
 
 def build_schedule_tree(name: str,

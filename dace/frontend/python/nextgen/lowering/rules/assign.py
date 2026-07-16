@@ -87,7 +87,7 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
             _lower_view_binding(target, access, state)
             return
 
-    target_access = _prepare_name_target(target, inferred, state, statement)
+    target_access = prepare_name_target(target, inferred, state, statement)
     dispatch.lower_computation(target_access, value, statement, state)
 
 
@@ -135,8 +135,8 @@ def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringSta
                     view_desc=view_descriptor))
 
 
-def _prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringState,
-                         statement: ast.Assign) -> DataAccess:
+def prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringState,
+                        statement: ast.Assign) -> DataAccess:
     """
     Return the target access for a name assignment, reusing the currently
     bound container when it is compatible (in-place update) or registering a

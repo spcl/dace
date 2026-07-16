@@ -225,11 +225,13 @@ def _literal_code(value: Any) -> str:
 @oprepo.infers_descriptor('dace.ndarray')
 @oprepo.infers_descriptor('numpy.ndarray')
 @oprepo.infers_descriptor('numpy.empty')
-def _infer_local_array_descriptor(input_descs, shape: Shape, dtype: dtypes.typeclass, **_kw):
+def _infer_local_array_descriptor(input_descs, shape: Shape, dtype: Optional[dtypes.typeclass] = None, **_kw):
     del input_descs
     out_shape = _normalize_allocator_shape(shape)
-    if out_shape is None or dtype is None:
+    if out_shape is None:
         return None
+    if dtype is None:
+        dtype = dtypes.float64  # numpy.empty/ndarray default
     if not isinstance(dtype, dtypes.typeclass):
         try:
             dtype = dtypes.dtype_to_typeclass(dtype)

@@ -5,6 +5,13 @@ Lowering rules for canonical ``return`` statements.
 Return values are materialized into the conventional non-transient
 ``__return`` containers (``__return_<index>`` for tuples), followed by an
 explicit :class:`ReturnNode` naming them.
+
+Inside an inlined nested ``@dace.program``
+(:attr:`ProgramContext.return_prefix` is non-empty), return containers are
+prefixed transients instead, their names are recorded in
+:attr:`ProgramContext.return_names` for the call rule to bind, and no
+:class:`ReturnNode` is emitted: inlining only admits tail returns, so control
+falls off the end of the :class:`FunctionCallScope` naturally.
 """
 import ast
 from typing import List
@@ -21,16 +28,20 @@ from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 
 @rule(ast.Return)
 def lower_return(statement: ast.Return, state: LoweringState) -> None:
+    prefix = state.context.return_prefix
     if statement.value is None:
-        state.emitter.emit(tn.ReturnNode())
+        if not prefix:
+            state.emitter.emit(tn.ReturnNode())
         return
 
     values = statement.value.elts if isinstance(statement.value, ast.Tuple) else [statement.value]
     names: List[str] = []
     for index, value in enumerate(values):
-        return_name = '__return' if len(values) == 1 else f'__return_{index}'
-        names.append(_materialize_return_value(return_name, value, statement, state))
-    state.emitter.emit(tn.ReturnNode(values=names))
+        base_name = '__return' if len(values) == 1 else f'__return_{index}'
+        names.append(_materialize_return_value(f'{prefix}{base_name}', value, statement, state))
+    state.context.return_names.extend(names)
+    if not prefix:
+        state.emitter.emit(tn.ReturnNode(values=names))
 
 
 def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.Return, state: LoweringState) -> str:
@@ -42,12 +53,16 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
             access = static_values.materialize(sequence, state)
             value = ast.copy_location(ast.Name(id=access.container, ctx=ast.Load()), value)
 
+    # Top-level returns are non-transient program outputs; inlined-callee
+    # returns are internal temporaries.
+    transient = bool(state.context.return_prefix)
+
     access = resolve_access(value, state) if isinstance(value, (ast.Name, ast.Subscript)) else None
     if access is not None:
         shape = [s for s in access.subset.size() if s != 1] or [1]
         if return_name not in state.context.containers:
             descriptor = data.Array(access.descriptor.dtype, shape)
-            state.context.add_container(return_name, descriptor, transient=False)
+            return_name = state.context.add_container(return_name, descriptor, transient=transient)
         descriptor = state.context.containers[return_name]
         state.emitter.emit(
             tn.CopyNode(target=return_name,
@@ -62,7 +77,7 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
         raise UnsupportedFeatureError(f'Cannot determine return value type: {astutils.unparse(value)}',
                                       state.context.filename, statement)
     if return_name not in state.context.containers:
-        state.context.add_container(return_name, data.Array(dtype, [1]), transient=False)
+        return_name = state.context.add_container(return_name, data.Array(dtype, [1]), transient=transient)
     tasklet = nodes.Tasklet(f'return_{statement.lineno}', set(), {'__out'}, f'__out = {astutils.unparse(value)}')
     state.emitter.emit(
         tn.TaskletNode(node=tasklet,

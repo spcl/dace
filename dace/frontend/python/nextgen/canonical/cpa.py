@@ -11,12 +11,14 @@ node shape.
 Canonical statement grammar::
 
     stmt := Assign(target, flat)         # single target: Name | Subscript(Name, idx)
+          | Expr(Call)                   # call statement (flat call)
           | If(atomexpr, [stmt], [stmt])
           | While(atomexpr, [stmt])      # test is atomic (complex tests are pre-hoisted)
           | For(Name, range(atom, atom, atom), [stmt])
           | For([Name...], dace.map[...], [stmt])
           | Return(atom | Tuple[atom] | None)
           | Break | Continue | Pass
+          | ExplicitTasklet              # explicit-dataflow tasklet (opaque body)
           | OpaqueStmt                   # explicit interpreter-fallback marker
 
     flat  := atomexpr
@@ -69,6 +71,42 @@ class OpaqueStmt(ast.stmt):
         self.inputs = inputs
         self.outputs = outputs
         ast.copy_location(self, original)
+
+
+class ExplicitTasklet(ast.stmt):
+    """
+    Canonical marker for explicit-dataflow tasklets (``with dace.tasklet:``
+    blocks and ``@dace.tasklet``-decorated functions).
+
+    The tasklet body is *tasklet code*, not program code: canonicalization
+    passes must not desugar, flatten, or otherwise rewrite it. Memlet
+    statements (``local << A[i]``, ``local >> B[i]``) are parsed during
+    lowering, when data descriptors are available.
+
+    :param label: Tasklet label (function name or generated from the line).
+    :param statements: The raw tasklet body statements.
+    :param language: Optional language name (e.g. ``'Python'``, ``'CPP'``).
+    :param side_effects: Optional explicit side-effect flag.
+    """
+    _fields = ()
+
+    def __init__(self,
+                 label: str,
+                 statements: List[ast.stmt],
+                 language: Optional[str] = None,
+                 side_effects: Optional[bool] = None,
+                 location: Optional[ast.AST] = None):
+        super().__init__()
+        self.label = label
+        self.statements = statements
+        self.language = language
+        self.side_effects = side_effects
+        if location is not None:
+            ast.copy_location(self, location)
+
+
+#: Canonical statement markers whose contents no canonicalization pass may touch.
+CANONICAL_LEAVES = (OpaqueStmt, ExplicitTasklet)
 
 
 def statement_io_sets(node: ast.stmt) -> Tuple[Set[str], Set[str]]:
@@ -215,7 +253,7 @@ def is_return_value(node: ast.AST) -> bool:
 
 def _violations_in_statement(node: ast.stmt) -> Iterable[str]:
     """Yield CPA violations for a single statement (non-recursive)."""
-    if isinstance(node, OpaqueStmt):
+    if isinstance(node, CANONICAL_LEAVES):
         return
     if isinstance(node, ast.Assign):
         if len(node.targets) != 1:
@@ -247,6 +285,11 @@ def _violations_in_statement(node: ast.stmt) -> Iterable[str]:
     elif isinstance(node, ast.Return):
         if node.value is not None and not is_return_value(node.value):
             yield f'Non-canonical return value: {ast.dump(node.value)[:80]}'
+    elif isinstance(node, ast.Expr):
+        # Call statements are canonical (nested programs, library calls);
+        # other bare expressions are not.
+        if not (isinstance(node.value, ast.Call) and is_flat(node.value)):
+            yield f'Non-canonical expression statement: {ast.dump(node.value)[:80]}'
     elif isinstance(node, (ast.Break, ast.Continue, ast.Pass)):
         return
     else:
@@ -268,7 +311,7 @@ def verify_canonical(tree: ast.FunctionDef, filename: Optional[str] = None) -> N
             for violation in _violations_in_statement(statement):
                 line = getattr(statement, 'lineno', '?')
                 violations.append(f'line {line}: {violation}')
-            if isinstance(statement, OpaqueStmt):
+            if isinstance(statement, CANONICAL_LEAVES):
                 continue
             for field in ('body', 'orelse'):
                 child_body = getattr(statement, field, None)

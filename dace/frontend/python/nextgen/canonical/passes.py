@@ -22,7 +22,7 @@ import copy
 from typing import List, Union
 
 from dace.frontend.python.nextgen.canonical import cpa
-from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt
+from dace.frontend.python.nextgen.canonical.cpa import CANONICAL_LEAVES, ExplicitTasklet, OpaqueStmt
 
 _TERMINAL_STMTS = (ast.Break, ast.Continue, ast.Pass)
 
@@ -77,9 +77,124 @@ class _BodyTransformer:
         return statement
 
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
-        if isinstance(statement, OpaqueStmt):
+        if isinstance(statement, CANONICAL_LEAVES):
             return statement
         return self._recurse(statement)
+
+
+class RecognizeExplicitDataflow(_BodyTransformer):
+    """
+    Recognize explicit-dataflow syntax before any other normalization, so
+    tasklet bodies are preserved verbatim:
+
+    - ``with dace.tasklet:`` and ``with dace.tasklet(language=...):`` blocks
+      become :class:`ExplicitTasklet` markers.
+    - ``@dace.tasklet``-decorated functions become :class:`ExplicitTasklet`.
+    - ``@dace.map``-decorated functions become ``for ... in dace.map[...]``
+      loops whose body is a single :class:`ExplicitTasklet` (map + tasklet,
+      matching the stable frontend's explicit-dataflow semantics).
+    """
+    name = 'recognize-explicit-dataflow'
+
+    def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
+        if isinstance(statement, CANONICAL_LEAVES):
+            return statement
+        if isinstance(statement, ast.With) and len(statement.items) == 1:
+            context_expr = statement.items[0].context_expr
+            callee = context_expr.func if isinstance(context_expr, ast.Call) else context_expr
+            if _refers_to(callee, 'dace.tasklet', self.context.global_vars):
+                language, side_effects = _tasklet_arguments(context_expr)
+                return ExplicitTasklet(label=f'tasklet_{statement.lineno}',
+                                       statements=statement.body,
+                                       language=language,
+                                       side_effects=side_effects,
+                                       location=statement)
+        if isinstance(statement, ast.FunctionDef) and len(statement.decorator_list) == 1:
+            decorator = statement.decorator_list[0]
+            decorator_callee = decorator.func if isinstance(decorator, ast.Call) else decorator
+            if _refers_to(decorator_callee, 'dace.tasklet', self.context.global_vars):
+                language, side_effects = _tasklet_arguments(decorator)
+                return ExplicitTasklet(label=statement.name,
+                                       statements=statement.body,
+                                       language=language,
+                                       side_effects=side_effects,
+                                       location=statement)
+            if _refers_to(decorator_callee, 'dace.map', self.context.global_vars):
+                return self._desugar_map_function(statement, decorator)
+        return self._recurse(statement)
+
+    def _desugar_map_function(self, function: ast.FunctionDef, decorator: ast.expr) -> ast.stmt:
+        """Turn ``@dace.map``-decorated functions into dace.map for-loops with a tasklet body."""
+        # Ranges come either from decorator arguments (@dace.map(_[0:N, 0:M]))
+        # or per-argument annotations (def f(i: _[0:N], j: _[0:M])).
+        dimension_slices: List[ast.expr] = []
+        if isinstance(decorator, ast.Call) and decorator.args:
+            range_argument = decorator.args[0]
+            if isinstance(range_argument, ast.Subscript):
+                index = range_argument.slice
+                dimension_slices = list(index.elts) if isinstance(index, ast.Tuple) else [index]
+        else:
+            for argument in function.args.args:
+                if isinstance(argument.annotation, ast.Subscript):
+                    dimension_slices.append(argument.annotation.slice)
+        if len(dimension_slices) != len(function.args.args) or not dimension_slices:
+            # Malformed explicit map: leave for MarkOpaque
+            return function
+
+        parameter_names = [argument.arg for argument in function.args.args]
+        if len(parameter_names) == 1:
+            loop_target = _name_store(parameter_names[0], function)
+        else:
+            loop_target = _located(
+                ast.Tuple(elts=[_name_store(parameter, function) for parameter in parameter_names], ctx=ast.Store()),
+                function)
+        map_attribute = _located(ast.Attribute(value=_name_load('dace', function), attr='map', ctx=ast.Load()),
+                                 function)
+        if len(dimension_slices) == 1:
+            index: ast.expr = dimension_slices[0]
+        else:
+            index = _located(ast.Tuple(elts=dimension_slices, ctx=ast.Load()), function)
+        iterator = _located(ast.Subscript(value=map_attribute, slice=index, ctx=ast.Load()), function)
+        tasklet = ExplicitTasklet(label=function.name, statements=function.body, location=function)
+        return _located(ast.For(target=loop_target, iter=iterator, body=[tasklet], orelse=[]), function)
+
+
+def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:
+    """
+    Check whether an expression actually resolves to a dace built-in (e.g.
+    ``dace.tasklet``), rather than merely sharing its name with one. Bare
+    names (``from dace import tasklet``) must resolve to the built-in through
+    the program globals; attribute accesses must go through the dace module.
+    """
+    import dace  # Deferred to avoid an import cycle during package initialization
+    attribute_name = qualified_name.split('.', 1)[1]
+    builtin = getattr(dace, attribute_name)
+    if isinstance(node, ast.Name):
+        return global_vars.get(node.id) is builtin
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.attr == attribute_name:
+        root = global_vars.get(node.value.id)
+        if root is None:
+            # Preprocessing rewrites aliased module imports to the real module
+            # name, which may be absent from the caller's globals.
+            return node.value.id == 'dace'
+        return getattr(root, attribute_name, None) is builtin
+    return False
+
+
+def _tasklet_arguments(node: ast.expr) -> tuple:
+    """Extract (language, side_effects) from a ``dace.tasklet(...)`` call, if present."""
+    language = None
+    side_effects = None
+    if isinstance(node, ast.Call):
+        positional = [a for a in node.args if isinstance(a, ast.Constant)]
+        if positional and isinstance(positional[0].value, str):
+            language = positional[0].value
+        for keyword in node.keywords:
+            if keyword.arg == 'language' and isinstance(keyword.value, ast.Constant):
+                language = keyword.value.value
+            elif keyword.arg == 'side_effects' and isinstance(keyword.value, ast.Constant):
+                side_effects = keyword.value.value
+    return language, side_effects
 
 
 class DesugarStatements(_BodyTransformer):
@@ -96,7 +211,7 @@ class DesugarStatements(_BodyTransformer):
     name = 'desugar-statements'
 
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
-        if isinstance(statement, OpaqueStmt):
+        if isinstance(statement, CANONICAL_LEAVES):
             return statement
         if isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Constant) and isinstance(
                 statement.value.value, str):
@@ -177,7 +292,7 @@ class NormalizeLoops(_BodyTransformer):
     name = 'normalize-loops'
 
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
-        if isinstance(statement, OpaqueStmt):
+        if isinstance(statement, CANONICAL_LEAVES):
             return statement
         if isinstance(statement, ast.For) and isinstance(statement.iter, ast.Call) and isinstance(
                 statement.iter.func, ast.Name) and statement.iter.func.id == 'range' and not statement.iter.keywords:
@@ -215,13 +330,15 @@ class ANFTransform(_BodyTransformer):
     name = 'anf'
 
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
-        if isinstance(statement, OpaqueStmt) or isinstance(statement, _TERMINAL_STMTS):
+        if isinstance(statement, CANONICAL_LEAVES) or isinstance(statement, _TERMINAL_STMTS):
             return statement
         hoisted: List[ast.stmt] = []
         try:
             if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
                 statement.value = self._flatten(statement.value, hoisted, level='flat')
                 statement.targets[0] = self._flatten_target(statement.targets[0], hoisted)
+            elif isinstance(statement, ast.Expr) and isinstance(statement.value, ast.Call):
+                statement.value = self._flatten(statement.value, hoisted, level='flat')
             elif isinstance(statement, ast.If):
                 statement.test = self._flatten(statement.test, hoisted, level='atomexpr')
                 self._recurse(statement)
@@ -338,7 +455,7 @@ class MarkOpaque(_BodyTransformer):
     name = 'mark-opaque'
 
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
-        if isinstance(statement, OpaqueStmt):
+        if isinstance(statement, CANONICAL_LEAVES):
             return statement
         violations = list(cpa._violations_in_statement(statement))
         if violations:
@@ -352,4 +469,4 @@ class MarkOpaque(_BodyTransformer):
 
 def default_passes() -> List[_BodyTransformer]:
     """The default canonicalization pass order."""
-    return [DesugarStatements(), NormalizeLoops(), ANFTransform(), MarkOpaque()]
+    return [RecognizeExplicitDataflow(), DesugarStatements(), NormalizeLoops(), ANFTransform(), MarkOpaque()]

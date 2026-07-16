@@ -13,8 +13,9 @@ call-lowering rules through the replacement registry; this module only covers
 the operator core.
 """
 import ast
+import types
 from dataclasses import dataclass
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
@@ -79,6 +80,29 @@ class _LocationShim:
 
     def __init__(self, filename: str):
         self.filename = filename
+
+
+def is_literal_constant(value: Any) -> bool:
+    """Whether a constant node's value is a plain Python literal (as opposed
+    to an arbitrary object embedded by preprocessing's global resolution)."""
+    if value is None or value is Ellipsis:
+        return True
+    if isinstance(value, (bool, int, float, complex, str, bytes)):
+        return True
+    if isinstance(value, (tuple, frozenset)):
+        return all(is_literal_constant(element) for element in value)
+    return False
+
+
+def _qualified_object_name(obj: Any, fallback: Optional[str]) -> Optional[str]:
+    """The registry-facing qualified name of a resolved Python object."""
+    module_name = getattr(obj, '__module__', None)
+    object_name = getattr(obj, '__name__', None)
+    if module_name and object_name and module_name != 'builtins':
+        return f'{module_name}.{object_name}'
+    if object_name:
+        return object_name
+    return fallback
 
 
 def broadcast_shapes(first: Sequence[Any], second: Sequence[Any]) -> Tuple[Any, ...]:
@@ -147,8 +171,186 @@ class InferenceService:
             return self._infer_subscript(node)
         if isinstance(node, (ast.BinOp, ast.Compare, ast.BoolOp)):
             return self._infer_operator(node)
+        if isinstance(node, ast.Call):
+            inferred = self.infer_call(node)
+            if inferred is not None:
+                return inferred
         raise UnsupportedFeatureError(f'Cannot infer type of expression: {astutils.unparse(node)}',
                                       self.context.filename, node)
+
+    def resolve_callee(self, func: ast.expr) -> Tuple[str, Optional[Any]]:
+        """
+        Resolve a canonical callee expression (a name or attribute chain) to a
+        qualified name and, when possible, the Python object it refers to.
+
+        The qualified name is normalized to ``module.__name__``-based form
+        (e.g. ``numpy.zeros`` even for ``np.zeros``), matching the keys of the
+        replacement registry.
+
+        :return: A 2-tuple of (qualified name, resolved object or None).
+        """
+        # Preprocessing embeds resolved global objects (dace programs, SDFGs,
+        # constants) directly into the AST as constant nodes with a qualname.
+        if isinstance(func, ast.Constant) and not is_literal_constant(func.value):
+            resolved = func.value
+            return _qualified_object_name(resolved, getattr(func, 'qualname', None)), resolved
+
+        parts: List[str] = []
+        node = func
+        while isinstance(node, ast.Attribute):
+            parts.append(node.attr)
+            node = node.value
+        if not isinstance(node, ast.Name):
+            return astutils.rname(func), None
+        parts.append(node.id)
+        parts.reverse()
+
+        root = self._global_value(parts[0])
+        resolved = root
+        for attribute in parts[1:]:
+            if resolved is None:
+                break
+            resolved = getattr(resolved, attribute, None)
+
+        if resolved is not None:
+            qualified = _qualified_object_name(resolved, None)
+            if qualified is not None:
+                return qualified, resolved
+        if len(parts) > 1 and isinstance(root, types.ModuleType):
+            return f'{root.__name__}.{".".join(parts[1:])}', resolved
+        return '.'.join(parts), resolved
+
+    def infer_call(self, node: ast.Call) -> Optional[Inferred]:
+        """
+        Descriptor inference for a canonical flat call through the
+        descriptor-inference families of the replacement registry
+        (:class:`dace.frontend.common.op_repository.Replacements`).
+
+        Queried in order: method inference for calls on data-bound objects,
+        ufunc inference for NumPy universal functions, then free-function
+        inference by qualified name.
+
+        :return: The inferred result, or None if no registry entry matched
+                 (the caller decides how to fall back).
+        """
+        from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+        arguments = self.call_arguments(node)
+        if arguments is None:
+            return None
+        input_descs, args, kwargs = arguments
+
+        # Method calls on data containers (a.sum(), a.copy(), ...)
+        if isinstance(node.func, ast.Attribute):
+            base = self._bound_descriptor_of(node.func.value)
+            if base is not None:
+                infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(base), node.func.attr)
+                if infer_fn is None:
+                    return None
+                return self._registry_inference(infer_fn, base, *args, **kwargs)
+
+        qualname, callee = self.resolve_callee(node.func)
+
+        # NumPy universal functions (np.add, np.sin, ...)
+        if isinstance(callee, numpy.ufunc):
+            infer_fn = oprepo.Replacements.get_ufunc_descriptor_inference()
+            if infer_fn is None:
+                return None
+            return self._registry_inference(infer_fn, input_descs, callee.__name__, *args, **kwargs)
+
+        # Free functions by qualified name (numpy.zeros, numpy.sum, ...)
+        infer_fn = oprepo.Replacements.get_descriptor_inference(qualname)
+        if infer_fn is None:
+            textual_name = astutils.rname(node.func)
+            if textual_name != qualname:
+                infer_fn = oprepo.Replacements.get_descriptor_inference(textual_name)
+        if infer_fn is None:
+            return None
+        return self._registry_inference(infer_fn, input_descs, *args, **kwargs)
+
+    def call_arguments(self, node: ast.Call) -> Optional[Tuple[Dict[str, data.Data], List[Any], Dict[str, Any]]]:
+        """
+        Resolve canonical call arguments to the replacement registry's
+        inference convention: data operands are passed by name with their
+        descriptors collected separately; constants, symbols, and static
+        sequences are passed by value.
+
+        :return: A 3-tuple of (input descriptors by name, positional argument
+                 values, keyword argument values), or None if any argument
+                 cannot be represented (e.g., references an opaque object).
+        """
+        input_descs: Dict[str, data.Data] = {}
+
+        def convert(argument: ast.expr) -> Tuple[bool, Any]:
+            try:
+                inferred = self.infer(argument)
+            except UnsupportedFeatureError:
+                return False, None
+            if inferred.is_pyobject:
+                return False, None
+            if inferred.is_data:
+                name = astutils.rname(argument)
+                input_descs[name] = inferred.descriptor
+                return True, name
+            if inferred.kind in ('constant', 'symbolic'):
+                return True, inferred.value
+            if inferred.kind == 'static':
+                elements = []
+                for element in inferred.value.elements:
+                    ok, value = convert(element)
+                    if not ok or isinstance(value, str) and value in input_descs:
+                        return False, None  # Data elements cannot be passed by value
+                    elements.append(value)
+                return True, tuple(elements) if inferred.value.kind == 'tuple' else elements
+            return False, None
+
+        args: List[Any] = []
+        for argument in node.args:
+            ok, value = convert(argument)
+            if not ok:
+                return None
+            args.append(value)
+        kwargs: Dict[str, Any] = {}
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                return None
+            ok, value = convert(keyword.value)
+            if not ok:
+                return None
+            kwargs[keyword.arg] = value
+        return input_descs, args, kwargs
+
+    def _global_value(self, name: str) -> Optional[Any]:
+        """Resolve a root name against the program globals, tolerating the
+        module-name rewriting done by preprocessing (aliased imports appear
+        under their real module names in the AST)."""
+        if name in self.context.globals:
+            return self.context.globals[name]
+        for value in self.context.globals.values():
+            if isinstance(value, types.ModuleType) and value.__name__ == name:
+                return value
+        return None
+
+    def _bound_descriptor_of(self, node: ast.expr) -> Optional[data.Data]:
+        """The container descriptor a canonical name expression is bound to, if any."""
+        if isinstance(node, ast.Name):
+            binding = self.context.resolve(node.id)
+            if binding is not None and binding.kind == 'container':
+                return self.context.containers[binding.container]
+        return None
+
+    def _registry_inference(self, infer_fn: Any, *args: Any, **kwargs: Any) -> Optional[Inferred]:
+        """Invoke a registry inference function defensively and normalize its
+        result. Only single-descriptor results are supported; multi-output
+        inference results fall back."""
+        try:
+            result = infer_fn(*args, **kwargs)
+        except Exception:
+            return None
+        if isinstance(result, data.Data):
+            return Inferred(kind='data', descriptor=result)
+        if isinstance(result, (tuple, list)) and len(result) == 1 and isinstance(result[0], data.Data):
+            return Inferred(kind='data', descriptor=result[0])
+        return None
 
     def parse_access(self, node: Union[ast.Name, ast.Subscript]) -> MemletExpr:
         """
