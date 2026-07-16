@@ -99,6 +99,24 @@ def shared_inner_nest_sdfg(name: str) -> dace.SDFG:
 
 
 @pytest.mark.parametrize('implementation', IMPLEMENTATIONS)
+def test_nest_tu_forward_declares_the_state_struct(implementation):
+    """A nest that only passes the state POINTER through needs the type declared, not complete. The
+    nest's file therefore carries `struct <name>_state_t;` and NOT a re-definition of the struct --
+    keeping it independent of the struct's contents, and removing the one repeated definition that a
+    namespace-scope statestruct entry could turn into a multiple-definition link error."""
+    objects = generate('fwd_decl_%s' % implementation, implementation, split=True)
+    nests = nsdfg_objects(objects)
+    assert nests
+    for obj in nests:
+        code = obj.clean_code or obj.code
+        assert re.search(r'struct \w+_state_t;', code), 'nest TU should forward-declare the state struct'
+        assert not re.search(r'struct \w+_state_t\s*\{', code), 'nest TU must not re-define the state struct'
+    # The frame keeps the real definition -- the nest only ever holds a pointer to it.
+    frame = host_objects(objects)[0].clean_code
+    assert re.search(r'struct \w+_state_t\s*\{', frame), 'frame TU still defines the state struct'
+
+
+@pytest.mark.parametrize('implementation', IMPLEMENTATIONS)
 def test_split_dedups_inner_nest_per_tu_and_links(implementation):
     """The default hash-dedup must not route an inner nest's call across a TU boundary without its
     definition. Compiling + linking + running is the proof -- a whole-build dedup key link-fails here."""

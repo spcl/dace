@@ -524,20 +524,29 @@ class CPUCodeGen(TargetCodeGenerator):
         objects = []
         for label, (code, envs) in sorted(self._nsdfg_translation_units.items()):
             fileheader = CodeIOStream()
-            # Re-emit the shared preamble into this TU: includes, custom type definitions, constants
-            # and the ``<sdfg>_state_t`` struct the nest function takes a pointer to. Same technique
-            # the CUDA target uses to make its .cu self-contained (cuda.py, get_generated_codeobjects).
-            # ``include_hash=False``: the frame's hash.h include is written relative to src/<target>/
-            # and this file sits one level deeper (src/cpu/nsdfg/); only frame code uses __HASH_*.
+            # Re-emit the shared preamble into this TU: includes, custom type definitions and
+            # constants. Same technique the CUDA target uses to make its .cu self-contained
+            # (cuda.py, get_generated_codeobjects). ``include_hash=False``: the frame's hash.h
+            # include is written relative to src/<target>/ and this file sits one level deeper
+            # (src/cpu/nsdfg/); only frame code uses __HASH_*.
             #
-            # INVARIANT (why re-emitting is safe rather than a multiple-definition bug): everything
-            # generate_fileheader emits is repeatable per TU -- includes are guarded, type definitions
-            # are types, generate_constants emits ``constexpr`` (implicitly internal linkage), and the
-            # state struct is a class definition, which needs exactly one definition PER TU. If a
-            # target ever appends a DEFINED namespace-scope global (not constexpr/inline) to
-            # ``statestruct``/global code, it would be defined in every TU and multiply-defined at
-            # link time; keep such state in the struct's fields, not at namespace scope.
-            self._frame.generate_fileheader(top_sdfg, fileheader, 'frame', include_hash=False)
+            # The <sdfg>_state_t struct is FORWARD-DECLARED, not re-defined, whenever this nest only
+            # passes the state pointer through -- which an offloaded loop nest does, since it takes
+            # arrays and symbols and never touches persistent state. That keeps the nest's file
+            # independent of the struct's contents and removes the one repeated DEFINITION here: a
+            # struct is one careless namespace-scope statestruct entry away from being multiply
+            # defined across every TU. A nest that does dereference __state needs the complete type,
+            # so it falls back to the full definition.
+            #
+            # Everything else generate_fileheader emits is repeatable per TU by construction:
+            # includes are guarded, type definitions are types, and generate_constants emits
+            # ``constexpr`` (implicitly internal linkage).
+            state_struct = 'define' if '__state->' in code else 'forward'
+            self._frame.generate_fileheader(top_sdfg,
+                                            fileheader,
+                                            'frame',
+                                            include_hash=False,
+                                            state_struct=state_struct)
             objects.append(
                 CodeObject(f'{top_sdfg.name}.{label}',
                            '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n#include <dace/dace.h>\n' +

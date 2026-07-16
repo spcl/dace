@@ -132,7 +132,8 @@ class DaCeCodeGenerator(object):
                             sdfg: SDFG,
                             global_stream: CodeIOStream,
                             backend: str = 'frame',
-                            include_hash: bool = True):
+                            include_hash: bool = True,
+                            state_struct: str = 'define'):
         """ Generate a header in every output file that includes custom types
             and constants.
 
@@ -147,6 +148,14 @@ class DaCeCodeGenerator(object):
                                  deeper -- a split nested-SDFG translation unit under
                                  ``src/cpu/nsdfg/`` -- must pass False and would otherwise fail to
                                  resolve the include.
+            :param state_struct: ``define`` (the default) writes the full ``<sdfg>_state_t``
+                                 definition; ``forward`` writes only ``struct <sdfg>_state_t;``. A
+                                 file that merely passes the state POINTER through needs the type
+                                 declared, not complete -- a split nested-SDFG translation unit is the
+                                 case -- and forward-declaring keeps that file independent of the
+                                 struct's contents. Only use ``forward`` where the emitted code never
+                                 dereferences ``__state``, since the incomplete type cannot be
+                                 accessed.
         """
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
         # Hash file include
@@ -208,8 +217,14 @@ class DaCeCodeGenerator(object):
 
         #########################################################
         # Write state struct
-        structstr = '\n'.join(self.statestruct)
-        global_stream.write(f'''
+        if state_struct == 'forward':
+            # A file that only passes the state pointer through needs the type to be declared, not
+            # complete -- and a forward declaration cannot multiply-define anything, which a repeated
+            # struct definition is one careless statestruct entry away from doing.
+            global_stream.write(f'struct {mangle_dace_state_struct_name(sdfg)};\n', sdfg)
+        else:
+            structstr = '\n'.join(self.statestruct)
+            global_stream.write(f'''
 struct {mangle_dace_state_struct_name(sdfg)} {{
     {structstr}
 }};
