@@ -9,7 +9,7 @@ metadata), so memlet propagation and downstream analysis behave identically
 for frontend-produced and SDFG-derived schedule trees.
 """
 import ast
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from dace import dtypes, subsets, symbolic
 from dace.properties import CodeBlock
@@ -21,48 +21,130 @@ from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import resolve_symbol_names
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
+from dace.frontend.python.nextgen.semantics.context import BindingSnapshot
+from dace.frontend.python.nextgen.semantics.joins import merge_branches
 
 
 @rule(ast.If)
 def lower_if(statement: ast.If, state: LoweringState) -> None:
+    """
+    Lower an if/elif/else chain with branch-scoped bindings: each branch is
+    lowered from the pre-chain binding state, and the branch-end states are
+    merged at the join (see :mod:`~...semantics.joins`). If the join cannot be
+    merged soundly, the whole chain is rolled back and re-lowered as a single
+    Python callback.
+    """
+    from dace.frontend.python.nextgen.lowering import dispatch
+    mark = state.emitter.checkpoint()
+    before = state.context.snapshot()
+    try:
+        branch_scopes, branch_ends = _lower_if_chain(statement, before, state)
+        state.context.restore(before)
+        merge_branches(before, branch_ends, branch_scopes, statement, state)
+    except UnsupportedFeatureError as reason:
+        state.emitter.rollback(mark)
+        state.context.restore(before)
+        dispatch.fallback_to_callback(statement, state, str(reason))
+
+
+def _lower_if_chain(statement: ast.If, before: BindingSnapshot,
+                    state: LoweringState) -> Tuple[List[Optional[tn.ScheduleTreeScope]], List[BindingSnapshot]]:
+    """
+    Emit the scopes of an if/elif/else chain, lowering every branch from the
+    ``before`` binding state, and collect (scope, end-state) per path. A chain
+    without ``else`` contributes an implicit fall-through path (scope None,
+    end state ``before``).
+    """
+    branch_scopes: List[Optional[tn.ScheduleTreeScope]] = []
+    branch_ends: List[BindingSnapshot] = []
+
+    def _lower_branch(scope: tn.ScheduleTreeScope, body: List[ast.stmt]) -> None:
+        with state.emitter.scope(scope):
+            state.lower_body(body)
+        branch_scopes.append(scope)
+        branch_ends.append(state.context.snapshot())
+        state.context.restore(before)
+
     condition = CodeBlock(astutils.unparse(resolve_symbol_names(statement.test, state)))
-    with state.emitter.scope(tn.IfScope(condition=condition, children=[])):
-        state.lower_body(statement.body)
-    _lower_orelse(statement.orelse, state)
+    _lower_branch(tn.IfScope(condition=condition, children=[]), statement.body)
 
-
-def _lower_orelse(orelse: List[ast.stmt], state: LoweringState) -> None:
-    if not orelse:
-        return
-    if len(orelse) == 1 and isinstance(orelse[0], ast.If):
+    orelse = statement.orelse
+    while len(orelse) == 1 and isinstance(orelse[0], ast.If):
         elif_statement = orelse[0]
         condition = CodeBlock(astutils.unparse(resolve_symbol_names(elif_statement.test, state)))
-        with state.emitter.scope(tn.ElifScope(condition=condition, children=[])):
-            state.lower_body(elif_statement.body)
-        _lower_orelse(elif_statement.orelse, state)
-        return
-    with state.emitter.scope(tn.ElseScope(children=[])):
-        state.lower_body(orelse)
+        _lower_branch(tn.ElifScope(condition=condition, children=[]), elif_statement.body)
+        orelse = elif_statement.orelse
+
+    if orelse:
+        _lower_branch(tn.ElseScope(children=[]), orelse)
+    else:
+        branch_scopes.append(None)
+        branch_ends.append(before)
+    return branch_scopes, branch_ends
 
 
 @rule(ast.While)
 def lower_while(statement: ast.While, state: LoweringState) -> None:
-    condition = astutils.unparse(resolve_symbol_names(statement.test, state))
-    loop = LoopRegion(f'while_{statement.lineno}', condition_expr=condition)
-    with state.emitter.scope(tn.WhileScope(loop=loop, children=[])):
-        state.lower_body(statement.body)
+
+    def _emit(state: LoweringState) -> None:
+        condition = astutils.unparse(resolve_symbol_names(statement.test, state))
+        loop = LoopRegion(f'while_{statement.lineno}', condition_expr=condition)
+        with state.emitter.scope(tn.WhileScope(loop=loop, children=[])):
+            state.lower_body(statement.body)
+
+    _lower_loop_with_stability_check(statement, _emit, state)
 
 
 @rule(ast.For)
 def lower_for(statement: ast.For, state: LoweringState) -> None:
     if cpa.is_range_iterator(statement.iter):
-        _lower_range_loop(statement, state)
+        _lower_loop_with_stability_check(statement, lambda s: _lower_range_loop(statement, s), state)
     elif cpa.is_dace_map_iterator(statement.iter):
-        _lower_map_loop(statement, state)
+        _lower_loop_with_stability_check(statement, lambda s: _lower_map_loop(statement, s), state)
     else:
         raise UnsupportedFeatureError(
             f'Non-canonical for-iterator reached lowering: '
             f'{astutils.unparse(statement.iter)}', state.context.filename, statement)
+
+
+def _lower_loop_with_stability_check(statement: ast.stmt, emit_loop, state: LoweringState) -> None:
+    """
+    Lower a loop and enforce the loop-entry stability rule: any name bound
+    before the loop whose binding the body changed (a different container,
+    kind, or static value) would need a φ at the loop head, which the binding
+    design intentionally avoids — the loop rolls back and re-lowers as a
+    single Python callback instead. In-place rebinding through the same
+    container (the common case for scalars) passes.
+    """
+    from dace.frontend.python.nextgen.lowering import dispatch
+    mark = state.emitter.checkpoint()
+    before = state.context.snapshot()
+    try:
+        emit_loop(state)
+    except UnsupportedFeatureError as reason:
+        state.emitter.rollback(mark)
+        state.context.restore(before)
+        dispatch.fallback_to_callback(statement, state, str(reason))
+        return
+    reason = _loop_instability(before, state)
+    if reason is not None:
+        state.emitter.rollback(mark)
+        state.context.restore(before)
+        dispatch.fallback_to_callback(statement, state, reason)
+
+
+def _loop_instability(before: BindingSnapshot, state: LoweringState) -> Optional[str]:
+    """The reason a loop body is binding-unstable, or None if it is stable.
+    Names first bound inside the body are loop-local and always stable."""
+    for name, binding in before.bindings.items():
+        current = state.context.bindings.get(name)
+        if current is None:
+            return f'loop body unbinds "{name}"'
+        if (current.kind, current.container) != (binding.kind, binding.container):
+            return f'loop-carried rebinding of "{name}" requires a merge at the loop head'
+        if binding.kind == 'static' and (state.context.static_values.get(name) is not before.static_values.get(name)):
+            return f'loop-carried compile-time value change of "{name}"'
+    return None
 
 
 def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:

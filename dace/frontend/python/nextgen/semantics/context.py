@@ -18,6 +18,18 @@ from dace.frontend.python.nextgen.semantics.values import StaticSequence
 
 
 @dataclass
+class BindingSnapshot:
+    """
+    A restorable view of the name-binding state (bindings and compile-time
+    static values). The container repository is deliberately *not* part of a
+    snapshot: containers registered on a discarded path become orphans, which
+    are harmless.
+    """
+    bindings: Dict[str, 'Binding']
+    static_values: Dict[str, StaticSequence]
+
+
+@dataclass
 class Binding:
     """
     Associates a source-level name with its current meaning.
@@ -150,6 +162,20 @@ class ProgramContext:
         actual_name = self.add_container(name, descriptor, transient=True)
         self.constants[actual_name] = (descriptor, value)
         return actual_name
+
+    # ------------------------------------------------------------------ #
+    # Branch-scoped binding state
+    # ------------------------------------------------------------------ #
+
+    def snapshot(self) -> BindingSnapshot:
+        """Capture the current binding state (shallow copies)."""
+        return BindingSnapshot(bindings=dict(self.bindings), static_values=dict(self.static_values))
+
+    def restore(self, saved: BindingSnapshot) -> None:
+        """Restore a previously captured binding state. The snapshot itself
+        stays intact, so it can be restored multiple times."""
+        self.bindings = dict(saved.bindings)
+        self.static_values = dict(saved.static_values)
 
     # ------------------------------------------------------------------ #
     # Nested-program inlining support

@@ -56,11 +56,18 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
 
 def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
     """
-    Return a copy of a statement in which objects embedded as constants by
-    preprocessing's global resolution (dace programs, SDFGs, modules, ...) are
-    replaced by their source-level qualified names, so the statement unparses
-    to valid interpreter code again.
+    Return a copy of a statement in which canonicalization/preprocessing
+    artifacts are restored to interpreter-executable source form:
+
+    - objects embedded as constants by preprocessing's global resolution
+      (dace programs, SDFGs, modules, ...) become their source-level
+      qualified names again,
+    - nested :class:`OpaqueStmt` markers (inside a rolled-back compound
+      statement) are replaced by their original statements,
+    - nested :class:`ExplicitTasklet` markers cannot be reconstructed (their
+      with-block form was consumed during canonicalization) and raise.
     """
+    from dace.frontend.python.nextgen.canonical.cpa import ExplicitTasklet, OpaqueStmt
     from dace.frontend.python.nextgen.semantics.inference import is_literal_constant
 
     class _Restorer(ast.NodeTransformer):
@@ -73,5 +80,13 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
                 raise FrontendError('Cannot reconstruct interpreter code for a resolved object without a source name',
                                     state.context.filename, node)
             return ast.copy_location(ast.parse(qualname, mode='eval').body, node)
+
+        def visit_OpaqueStmt(self, node: OpaqueStmt) -> ast.stmt:
+            return self.visit(node.original)
+
+        def visit_ExplicitTasklet(self, node: ExplicitTasklet) -> ast.stmt:
+            raise FrontendError(
+                'Cannot re-lower an explicit dataflow tasklet through the Python interpreter '
+                '(e.g., inside a control-flow construct that fell back to a callback)', state.context.filename, node)
 
     return ast.fix_missing_locations(_Restorer().visit(copy.deepcopy(statement)))

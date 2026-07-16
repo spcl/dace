@@ -76,3 +76,17 @@ class TreeEmitter:
             yield scope_node
         finally:
             self._scope_stack.pop()
+
+    def checkpoint(self) -> int:
+        """A rollback mark for the current scope (see :meth:`rollback`)."""
+        return len(self.current_scope.children)
+
+    def rollback(self, mark: int) -> None:
+        """
+        Discard every node emitted into the current scope since ``mark`` was
+        taken. Used by rules that must retract partially emitted structures
+        (e.g., an if-chain whose join cannot be merged) before falling back to
+        a callback. Containers registered meanwhile stay in the repository;
+        orphaned containers are harmless.
+        """
+        del self.current_scope.children[mark:]

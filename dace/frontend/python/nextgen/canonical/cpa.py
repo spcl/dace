@@ -124,6 +124,12 @@ def statement_io_sets(node: ast.stmt) -> Tuple[Set[str], Set[str]]:
 
     class _IOVisitor(ast.NodeVisitor):
 
+        def visit_OpaqueStmt(self, opaque_node: 'OpaqueStmt') -> None:
+            # Opaque markers hide their contents from AST traversal
+            # (_fields is empty) but carry precomputed I/O sets.
+            reads.update(opaque_node.inputs)
+            writes.update(opaque_node.outputs)
+
         def visit_Name(self, name_node: ast.Name) -> None:
             if isinstance(name_node.ctx, ast.Load):
                 reads.add(name_node.id)
