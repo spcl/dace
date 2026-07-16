@@ -16,5 +16,7 @@ from dace.transformation.layout.rewrite_libnodes import (GemmToTensorDot, Rewrit
                                                          copy_permutation_axes)
 from dace.transformation.layout.split_array import SplitArray
 from dace.transformation.layout.brute_force import (sweep, best, time_cpu, permutation_candidates, block_candidates,
-                                                    shuffle_candidates, SweepResult)
+                                                    shuffle_candidates, indirection_candidates, SweepResult)
+from dace.transformation.layout.indirect_access import (IndirectAccess, indirect_accesses, index_bindings,
+                                                        resolve_index_source)
 from dace.transformation.layout.prepare import prepare_for_layout

@@ -150,3 +150,58 @@ def shuffle_candidates(array: str, dim: int, shuffle_names):
             ShuffleElements(shuffle_map={array: (name, dim)}).apply_pass(sdfg, {})
 
         yield f"shuffle_{array}_{name}", apply
+
+
+def indirection_candidates(index_array: str, data_array: str, dim: int, ndim: int, shuffle_names,
+                           prepare: bool = True):
+    """Yield ``(name, apply)`` layout candidates for a DATA array reached through indirection --
+    ``data_array[index_array[f(i)]]`` (a sparse gather/scatter, as found by
+    :func:`dace.transformation.layout.indirect_access.indirect_accesses`).
+
+    The bijective layout levers for indirection are Shuffle and Permute, applied to the DATA array:
+
+      * ``indir_shuffle_<data>_<name>`` -- renumber the data array by each registered shuffle
+        ``sigma`` (``ShuffleElements``); the consumer's runtime index is composed with ``sigma^-1``,
+        so ``data'[sigma^-1(idx[i])] == data[idx[i]]`` for ANY index distribution (duplicates
+        included) -- correctness needs no injectivity guard.
+      * ``indir_permute_<data>_<perm>`` -- reorder the data array's dimensions (``PermuteDimensions``
+        with ``add_permute_maps``); the mu-invariant-layout lever. Emitted only for ``ndim > 1``
+        (a 1-D data array has only the identity permutation).
+      * ``noindir_<data>`` -- the baseline.
+
+    ``index_array`` is named for provenance only; the reorder is applied to ``data_array``. Because a
+    Shuffle / Permute *through* an indirection needs the prepared normal form (the gather's
+    ``other_subset`` copy lifted to a ``CopyLibraryNode`` so ``ShuffleElements`` can rewrite it), each
+    apply runs :func:`~dace.transformation.layout.prepare.prepare_for_layout` first when ``prepare``
+    is set (the default). Every candidate is transparent, so all reproduce the oracle -- the sweep
+    picks the layout, the algebra guarantees correctness.
+    """
+    from dace.transformation.layout.shuffle_elements import ShuffleElements
+    from dace.transformation.layout.permute_dimensions import PermuteDimensions
+    from dace.transformation.layout.prepare import prepare_for_layout
+
+    def prepared(fn):
+
+        def apply(sdfg):
+            if prepare:
+                prepare_for_layout(sdfg, validate=False)
+            fn(sdfg)
+
+        return apply
+
+    yield f"noindir_{data_array}", prepared(lambda sdfg: None)
+    for name in shuffle_names:
+
+        def shuffle_apply(sdfg, name=name):
+            ShuffleElements(shuffle_map={data_array: (name, dim)}).apply_pass(sdfg, {})
+
+        yield f"indir_shuffle_{data_array}_{name}", prepared(shuffle_apply)
+    if ndim > 1:
+        for perm in itertools.permutations(range(ndim)):
+            if list(perm) == list(range(ndim)):
+                continue  # identity permutation duplicates the noindir baseline
+
+            def permute_apply(sdfg, perm=perm):
+                PermuteDimensions(permute_map={data_array: list(perm)}, add_permute_maps=True).apply_pass(sdfg, {})
+
+            yield f"indir_permute_{data_array}_{''.join(map(str, perm))}", prepared(permute_apply)
