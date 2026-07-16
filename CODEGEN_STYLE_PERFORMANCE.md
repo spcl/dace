@@ -151,7 +151,7 @@ Every row is a candidate `codegen_params` axis, and a candidate NestForge varian
 | Manual SIMD intrinsics vs auto-vectorization | Bimodal: hand intrinsics win **1.35–1.9×** on reduction-tail-heavy loops ([oliora](https://oliora.github.io/2023/08/07/Optimizing-auto-vectorized-code.html)), but forced **512-bit intrinsics LOSE** to the compiler's 256-bit default (frequency downclock) — gcc/clang/icc all default `-mprefer-vector-width=256` ([llvm D67259](https://reviews.llvm.org/D67259)) |
 | Table-driven / computed-goto vs switch dispatch | **REFUTED on modern cores**: was up to **4.77×** from predictor quality ([Ertl/Gregg](https://jilp.org/vol5/v5paper12.pdf)), but ITTAGE erased it — *"indirect branch prediction is no longer critical"* ([Rohou CGO'15](https://hal.science/hal-01100647)). A variant only for old/embedded predictors |
 | `ivdep` is three different soundness contracts | Intel `#pragma ivdep` ignores only *assumed* deps and **respects proven ones** (can't miscompile) ([Intel](https://www.smcm.iqfr.csic.es/docs/intel/compiler_c/main_cls/cref_cls/common/cppref_pragma_ivdep.htm)); GCC `ivdep` / clang `vectorize(assume_safety)` / `omp simd` override *all* deps and **miscompile if wrong** ([GCC](https://gcc.gnu.org/onlinedocs/gcc/Loop-Specific-Pragmas.html)) — same class as `!noalias` |
-| `assume_aligned(N)` on a returned/param pointer | NOT the aligned-move (§9's ~2% myth): it lets the vectorizer **skip the alignment prologue AND epilogue and the runtime alignment branch** ([P0886](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0886r0.pdf)) — real, but sub-noise except split-prone / short-trip loops; **UB if the alignment promise is false** |
+| `assume_aligned(N)` on a returned/param pointer | NOT the aligned-move (§10's ~2% myth): it lets the vectorizer **skip the alignment prologue AND epilogue and the runtime alignment branch** ([P0886](https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2018/p0886r0.pdf)) — real, but sub-noise except split-prone / short-trip loops; **UB if the alignment promise is false** |
 | Return a small struct by value vs via an `sret` out-pointer | `sret` leaves redundant stack `memcpy`s the middle end often can't fold; `MemCpyOpt` recovers **17–42%** of them ([llvm D140089](https://reviews.llvm.org/D140089)) — note that is a memcpy *count*, not a wall-clock number |
 
 ---
@@ -247,7 +247,7 @@ guard can recover it.** We watched it happen four times, with disassembly:
 | divide by a by-reference value | cloned a constant-divisor specialization | IPA-CP `.constprop` |
 | `std::pow(x,2.0)` vs `x*x` | folded pow→mul | `expand_builtin_pow` / SimplifyLibCalls |
 
-This is §7 rule 6 ("a knob the compiler can re-derive is not a knob") observed live. It gives the
+This is §8 rule 6 ("a knob the compiler can re-derive is not a knob") observed live. It gives the
 **selection criterion for a real lever, and for NestForge's worst/best variants**: a lever survives
 only when the fast form is **not recoverable by a runtime guard**. Don't spend variants on
 alias/predictability/stride axes — the backend erases them.
@@ -274,7 +274,48 @@ compiler-dependent** — §1 again.
 
 ---
 
-## 7. Rules this imposes on a code generator
+## 7. When bigger is worse: translation-unit size (`split_nsdfg_translation_units`)
+
+Every other axis in this doc is a *spelling* choice inside a function. Translation-unit *structure*
+is a different lever, and DaCe ships a flag for it — `split_nsdfg_translation_units` emits each
+top-level nest into its own `.cpp` (compiled in parallel with `cmake -G Ninja`). Its sign flips with
+size, which is the doc's thesis applied to a build-structure knob:
+
+- **Small / medium SDFG — splitting HURTS runtime.** A TU boundary blocks cross-function inlining
+  (§4's measured **6.3–8.0×** out-of-line-call lever is exactly this cost), so the monolith optimizes
+  better. If you split for build parallelism at this size, recover the inlining with **ThinLTO**
+  (`-flto=thin`, never full `-flto` — it OOMs low-memory hosts).
+- **Large SDFG — splitting HELPS runtime, and the compiler vendors say why.** The intuition "one big
+  TU inlines everything" is folklore that GCC's own docs refute past documented sizes: a monolith that
+  crosses them *throttles its own inlining, drops to a worse register allocator, and skips GCSE.*
+  Splitting per nest keeps each function/TU under the cutoffs, so each gets the full optimizer.
+
+| GCC `--param` (default) | What happens past it |
+|---|---|
+| `large-function-insns` (2700) | inlining INTO the function is throttled — *"to avoid extreme compilation time caused by non-linear algorithms used by the back end"* |
+| `large-unit-insns` (10000) + `inline-unit-growth` (40) | cross-nest inlining across the unit capped at **1.4×** — so the monolith is NOT fusing everything |
+| `ira-max-conflict-table-size` (1000 MB) | register allocation falls back to *"a faster, simpler, and **lower-quality** algorithm"* |
+| `max-gcse-memory` (128 MB) | global CSE / hoisting: *"the optimization is **not done**"* |
+| (far end) | quadratic compile memory → **OOM / SIGSEGV** — [GCC #54052](https://www.mail-archive.com/gcc-bugs@gcc.gnu.org/msg803638.html); a generated function of n=30000 assignments took 27 s and **7.48 GB** ([Julia #19158](https://github.com/JuliaLang/julia/issues/19158)) |
+
+GCC "insns" are internal GIMPLE/RTL statements, not source lines — a fused/unrolled/vectorized DaCe
+nest reaches 2,700 easily. LLVM's own [frontend-author guide](https://llvm.org/docs/Frontend/PerformanceTips.html)
+tells code generators the same thing qualitatively: *"several passes have super-linear complexity,
+and the generated code is often sub-par."*
+
+**Honest epistemics** (this is the calibration-bar-honest version): the runtime win from splitting a
+large SDFG is *"avoid documented size-triggered pass degradation"* — it clears the bar via **named
+disabled/degraded passes** ([GCC General Parameters](https://gcc.gnu.org/onlinedocs/gcc-16.1.0/gccint/General-Parameters.html)),
+NOT via a measured >17% delta (no layout-controlled split-vs-monolith runtime benchmark exists, and
+per §3 two binaries are two layout draws). The **compile-time / memory** benefit is real and *binary*
+("it compiles at all"). The strong runtime levers are **GCC-specific** `--param` throttles; on clang
+the argument is mostly compile-time plus that qualitative "sub-par." So: document the split flag as
+build-parallelism first, and as a size-gated runtime-quality safeguard second — never advertise a
+runtime percentage.
+
+---
+
+## 8. Rules this imposes on a code generator
 
 1. **Match a known-good ABI; don't reason from first principles.** Lemire and #121262 disagree about
    which binding wins — both are right, on different targets. There is no rule to derive.
@@ -297,7 +338,7 @@ compiler-dependent** — §1 again.
 
 ---
 
-## 8. Further reading
+## 9. Further reading
 
 **Framing**
 - Gong et al., [Compiler stability](https://iacoma.cs.uiuc.edu/iacoma-papers/oopsla18.pdf) (OOPSLA'18) — the 16.9% number.
@@ -330,7 +371,7 @@ compiler-dependent** — §1 again.
 
 ---
 
-## 9. Candidate knobs already located in the generator
+## 10. Candidate knobs already located in the generator
 
 An audit of `experimental_cpu.py` and the `cpu.py` / `cpp.py` emitters it overrides found ten more
 hardcoded style points, each a place the generator picks one C++ spelling over a semantically-equal
