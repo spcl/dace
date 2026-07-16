@@ -9,7 +9,9 @@ an unexpected error. A handful of gated end-to-end tests then actually build + r
 program under ``compiler.build_mode = native``.
 """
 import ctypes.util
+import glob
 import os
+import time
 
 import numpy as np
 import pytest
@@ -66,6 +68,31 @@ def test_classify_library():
     assert '-lfoo' in spec.link_flags and '-L/x' in spec.link_flags
 
 
+def test_classify_library_filename_becomes_stem():
+    """A library FILENAME must be reduced to its ``-l`` stem, exactly as CMake does.
+
+    ``ctypes.util.find_library`` (used by the OpenBLAS environment) returns names like
+    ``libblas.so.3``, and the reference ScaLAPACK environments hardcode ``libscalapack-mpich.so``.
+    Emitting those verbatim yields ``-llibblas.so.3``, which ld cannot resolve.
+    """
+    spec = nc._LinkSpec()
+    for lib in ('libblas.so.3', 'libopenblas.so.0', 'liblapacke.so.3', 'libscalapack-mpich.so', 'libfoo.a'):
+        nc._classify_library(spec, lib)
+    assert spec.libs == ['blas', 'openblas', 'lapacke', 'scalapack-mpich', 'foo']
+
+
+def test_resolve_splits_multi_token_flag_strings():
+    """An environment may return several flags in ONE string (IntelMKLScaLAPACKMPICH returns its
+    whole link line that way). CMake lets the shell tokenize it; native must tokenize too, or the
+    string arrives as a single unusable argv element and the -l libraries never reach ld."""
+    env = _make_env(cmake_link_flags=['-L /opt/mkl/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_core -ldl'],
+                    cmake_compile_flags=['-m64 -DMKL_ILP64'])
+    spec = nc._LinkSpec()
+    nc._resolve_environment(env, spec)
+    assert spec.link_flags == ['-L', '/opt/mkl/lib', '-lmkl_scalapack_lp64', '-Wl,--no-as-needed', '-lmkl_core', '-ldl']
+    assert spec.compile_flags == ['-m64', '-DMKL_ILP64']
+
+
 def test_is_deferred():
     assert nc._is_deferred('${MPI_CXX_LIBRARIES}')
     assert nc._is_deferred('-I${MPI_CXX_HEADER_DIR}')
@@ -93,6 +120,29 @@ def test_cuda_arch_flags_skips_unsupported():
     stale cuda_arch default never breaks the build; the local GPU is still covered by native."""
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='60'):
         assert nc._cuda_arch_flags({80, 89}) == ['-arch=native']
+
+
+def test_cuda_arch_flags_normalizes_prefixed_tokens():
+    """'sm_90'/'compute_80' are canonical nvcc spellings; interpolating them raw would emit the
+    unbuildable 'arch=compute_sm_90,code=sm_sm_90', so the prefix must be stripped first."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='sm_90'):
+        assert nc._cuda_arch_flags({90}) == ['-arch=native', '-gencode', 'arch=compute_90,code=sm_90']
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='compute_80'):
+        assert nc._cuda_arch_flags({80}) == ['-arch=native', '-gencode', 'arch=compute_80,code=sm_80']
+
+
+def test_cuda_arch_flags_ignores_native_token_in_list():
+    """A 'native' entry mixed into the list is already covered by -arch=native; emitting it as a
+    -gencode would produce 'arch=compute_native'."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='native,80'):
+        assert nc._cuda_arch_flags({80}) == ['-arch=native', '-gencode', 'arch=compute_80,code=sm_80']
+
+
+def test_cuda_arch_flags_skips_unparseable():
+    """An entry that is not an architecture at all is warned about and skipped, never interpolated."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='garbage'):
+        with pytest.warns(UserWarning, match='unparseable'):
+            assert nc._cuda_arch_flags({80}) == ['-arch=native']
 
 
 def test_cuda_arch_flags_feature_suffix():
@@ -132,8 +182,10 @@ def test_every_library_environment_resolves_or_errors_clearly(env):
     try:
         nc._resolve_environment(env, spec)
     except cgx.CompilerConfigurationError:
-        pass  # acceptable: e.g. MPI wrapper or ROCm not installed on this machine
+        return  # acceptable: e.g. MPI wrapper or ROCm not installed on this machine
     # Resolution must not have crashed with anything else, and any produced fragments are strings.
+    # This says little on its own (it is vacuously true for an empty spec); the tests below pin the
+    # actual resolved content per shape -- bare name, library filename, and multi-token flag string.
     for bucket in (spec.includes, spec.libs, spec.libdirs, spec.link_flags, spec.compile_flags):
         assert all(isinstance(x, str) for x in bucket)
 
@@ -266,25 +318,91 @@ def test_native_build_plain_cpu(tmp_path):
 
 @pytest.mark.skipif(os.name != 'posix' or not _blas_loadable(), reason='no BLAS available')
 def test_native_build_blas_matmul(tmp_path):
-    """A BLAS library node (matmul) builds + runs correctly under native mode."""
+    """A real BLAS library node (matmul) builds + runs correctly under native mode.
+
+    ``blas.default_implementation`` MUST be forced: with the stock config the matmul expands to
+    ExpandGemmPure (plain generated loops, no environment at all), so the test would pass without
+    ever resolving or linking a BLAS library -- i.e. providing zero coverage of the very link path
+    it exists to protect.
+    """
+    import dace.libraries.blas as blas
     n = 48
+    previous = blas.default_implementation
+    blas.default_implementation = 'OpenBLAS'
+    try:
+
+        @dace.program
+        def mm(x: dace.float64[n, n], y: dace.float64[n, n], z: dace.float64[n, n]):
+            z[:] = x @ y
+
+        x = np.random.rand(n, n)
+        y = np.random.rand(n, n)
+        z = np.zeros((n, n))
+        sdfg = mm.to_sdfg()
+        sdfg.build_folder = str(tmp_path / 'cache')
+        with set_temporary('compiler', 'build_mode', value='native'):
+            try:
+                csdfg = sdfg.compile()
+            except cgx.CompilerConfigurationError as ex:
+                pytest.skip(f'native BLAS resolution unavailable here: {ex}')
+        csdfg(x=x, y=y, z=z)
+        assert np.allclose(z, x @ y)
+    finally:
+        blas.default_implementation = previous
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_native_incremental_rebuild_and_invalidation(tmp_path):
+    """The staleness machinery must reuse everything on an identical rebuild and rebuild when an
+    input actually changes -- neither half was covered, since every other test builds exactly once.
+
+    ``configure_and_compile`` is driven directly on one program folder: calling ``sdfg.compile()``
+    twice would rename the SDFG (it is still loaded) and build a different program instead.
+    """
+    from dace.codegen import codegen, compiler
 
     @dace.program
-    def mm(x: dace.float64[n, n], y: dace.float64[n, n], z: dace.float64[n, n]):
-        z[:] = x @ y
+    def incr(a: dace.float64[16]):
+        a[:] = a + 1.0
 
-    x = np.random.rand(n, n)
-    y = np.random.rand(n, n)
-    z = np.zeros((n, n))
-    sdfg = mm.to_sdfg()
-    sdfg.build_folder = str(tmp_path / 'cache')
+    sdfg = incr.to_sdfg()
+    program_folder = compiler.generate_program_folder(sdfg, codegen.generate_code(sdfg), str(tmp_path / 'prog'))
+    build = os.path.join(program_folder, 'build')
+
+    def build_products():
+        """Objects + the program library. The loader stub is excluded on purpose: it is built from a
+        fixed dacestub.cpp with fixed flags, so it is correctly unaffected by source/flag changes."""
+        artifacts = glob.glob(os.path.join(build, '*.o')) + glob.glob(os.path.join(build, 'lib*.so'))
+        return [p for p in artifacts if 'dacestub' not in os.path.basename(p)]
+
     with set_temporary('compiler', 'build_mode', value='native'):
-        try:
-            csdfg = sdfg.compile()
-        except cgx.CompilerConfigurationError as ex:
-            pytest.skip(f'native BLAS resolution unavailable here: {ex}')
-    csdfg(x=x, y=y, z=z)
-    assert np.allclose(z, x @ y)
+        compiler.configure_and_compile(program_folder)
+        products = build_products()
+        assert products, 'native build produced no objects/library'
+        stamps = {p: os.path.getmtime(p) for p in products}
+
+        # (a) identical inputs -> the fast path fires: nothing is recompiled or relinked.
+        compiler.configure_and_compile(program_folder)
+        for product, stamp in stamps.items():
+            assert os.path.getmtime(product) == stamp, f'{os.path.basename(product)} rebuilt on a no-op build'
+
+        # (b) a changed header must invalidate the objects (touch the generated include, not a repo
+        # file, so the test never mutates the source tree).
+        generated_header = glob.glob(os.path.join(program_folder, 'include', '*.h'))
+        assert generated_header, 'expected a generated include header'
+        os.utime(generated_header[0], (time.time() + 1, time.time() + 1))
+        compiler.configure_and_compile(program_folder)
+        objects = [p for p in stamps if p.endswith('.o')]
+        for obj in objects:
+            assert os.path.getmtime(obj) > stamps[obj], f'{os.path.basename(obj)} not rebuilt after a header change'
+
+    # (c) changed flags must invalidate too: the .cmd sidecar records the exact command.
+    after_header = {p: os.path.getmtime(p) for p in products}
+    with set_temporary('compiler', 'build_mode', value='native'):
+        with set_temporary('compiler', 'build_type', value='Debug'):
+            compiler.configure_and_compile(program_folder)
+    for product, stamp in after_header.items():
+        assert os.path.getmtime(product) > stamp, f'{os.path.basename(product)} not rebuilt after a flag change'
 
 
 @pytest.mark.gpu
