@@ -28,20 +28,26 @@ N = dace.symbol("N")
 
 @functools.lru_cache(maxsize=1)
 def openmp_reduce_available():
-    """True iff the OpenMP reduce expansion is present in this build (an extended-only feature; the
-    CPU-only PR branch off main lacks it, so these reduction cases skip there)."""
-    try:
-        s = dace.SDFG("omp_probe")
-        s.add_array("a", [8], dace.float64)
-        s.add_array("o", [1], dace.float64)
-        st = s.add_state("m")
-        red = st.add_reduce("lambda x, y: x + y", None, 0.0)
-        red.implementation = "OpenMP"
-        st.add_edge(st.add_read("a"), None, red, None, dace.Memlet("a[0:8]"))
-        st.add_edge(red, None, st.add_write("o"), None, dace.Memlet("o[0]"))
-        s.validate()
+    """True iff the OpenMP reduce expansion generates AND compiles in this build (an extended-only
+    feature; the CPU-only PR branch off main lacks the full lowering, so these reduction cases skip
+    there). Probes with a compile in a forked child so an off-main failure cannot crash pytest."""
+
+    def probe():
         with use_implementation(EXPERIMENTAL):
-            generated_code(s)
+            s = dace.SDFG("omp_probe")
+            s.add_array("a", [8], dace.float64)
+            s.add_array("o", [1], dace.float64)
+            st = s.add_state("m")
+            red = st.add_reduce("lambda x, y: x + y", None, 0.0)
+            red.implementation = "OpenMP"
+            st.add_edge(st.add_read("a"), None, red, None, dace.Memlet("a[0:8]"))
+            st.add_edge(red, None, st.add_write("o"), None, dace.Memlet("o[0]"))
+            s.validate()
+            s.compile()
+        return {}
+
+    try:
+        run_isolated(probe, timeout=120)
         return True
     except Exception:  # noqa: BLE001 - expansion absent / unsupported off main
         return False

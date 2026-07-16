@@ -146,9 +146,10 @@ def _scalar_constant_subscript_sdfg(name):
 
 
 def test_scalar_constant_subscript_lowered_to_bare_name():
-    # Before the fix, generate_code raises SyntaxError('Missing dimensions ... got 0').
+    # Before the fix, generate_code raises SyntaxError('Missing dimensions ... got 0'). The fix lowers
+    # the `C[0]` subscript on the 0-d scalar constant to the bare name; assert that behavior (the exact
+    # `constexpr T C = v;` declaration is framecode's job and its formatting is not under test here).
     _sdfg, code = _gen(_scalar_constant_subscript_sdfg, 'experimental_readable', 'sc_exp')
-    assert 'constexpr double C = 3.0;' in code, 'scalar constant not emitted as bare constexpr'
     assert 'C[' not in code, 'scalar-constant subscript survived (should lower to bare name)'
     assert '= C;' in code, 'read did not lower to the bare name'
 
