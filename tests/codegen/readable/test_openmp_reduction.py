@@ -80,9 +80,60 @@ def test_openmp_reduction_bit_exact(op, masked):
     assert_outputs_equivalent(legacy, experimental, "cpu", label=f"reduce_{op}_{masked}")
 
 
+import importlib.util
+import os
+
+from dace.libraries.standard.nodes.reduce import Reduce
+from dace.transformation.dataflow import MapFusion
+from dace.transformation.interstate import LoopToMap
+
+# Real corpus kernels whose OpenMP-expanded SCALAR reductions previously mis-compiled under the
+# readable generator (``&x[0]`` on a scalar sink + an undeclared ``_out`` in the reduction clause).
+_SCALAR_REDUCTION_KERNELS = {
+    "azimint_hist": "map_reduce/azimint_hist.py",
+    "azimint_naive": "map_reduce/azimint_naive.py",
+    "channel_flow": "structured_grids/channel_flow.py",
+    "nbody": "n_body_methods/nbody.py",
+}
+
+
+def _load_corpus(relpath):
+    path = os.path.join(os.path.dirname(__file__), "..", "..", "corpus", "npbench", relpath)
+    spec = importlib.util.spec_from_file_location("k_" + os.path.basename(relpath), path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.CORPUS["program"]
+
+
+@pytest.mark.parametrize("kernel", list(_SCALAR_REDUCTION_KERNELS))
+def test_scalar_reduction_kernel_compiles(kernel):
+    """Each kernel, pinned to the OpenMP reduce expansion, must generate + compile under the readable
+    generator with no mangled scalar-sink subscript."""
+    if not experimental_available():
+        pytest.skip("experimental readable codegen not ready")
+
+    def build_and_run():
+        with use_implementation(EXPERIMENTAL):
+            sdfg = _load_corpus(_SCALAR_REDUCTION_KERNELS[kernel]).to_sdfg(simplify=True)
+            sdfg.apply_transformations_repeated(LoopToMap)
+            sdfg.apply_transformations_repeated(MapFusion)
+            sdfg.simplify()
+            for n, _ in sdfg.all_nodes_recursive():
+                if isinstance(n, Reduce):
+                    n.implementation = "OpenMP"
+            code = generated_code(sdfg)
+            assert "&_out[0]" not in code, "scalar reduction sink mis-inlined as &_out[0]"
+            sdfg.compile()  # raises CompilationError on the old `&rmax[0]` / undeclared `_out` bug
+        return {}
+
+    run_isolated(build_and_run)
+
+
 if __name__ == "__main__":
     for op in ("sum", "max"):
         for masked in (False, True):
             test_openmp_reduction_generates_clean(op, masked)
             test_openmp_reduction_bit_exact(op, masked)
+    for k in _SCALAR_REDUCTION_KERNELS:
+        test_scalar_reduction_kernel_compiles(k)
     print("ok")

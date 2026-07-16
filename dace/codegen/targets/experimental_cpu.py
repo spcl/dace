@@ -628,10 +628,13 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             # scope, and MarkConstInit proved it is the only write and precedes reads.
             newnode = ast.Name(id='const %s %s = %s;' % (desc.dtype.ctype, lhs, rhs))
         elif self.codegen._is_const_len1_array(desc):
-            # Single-write single-element stack array -> `const T x[1] = {expr};`; reads
-            # keep their `x[x_idx(0)]` form (== x[0]).
+            # Single-write single-element stack array -> `const T x[1] = {(T)(expr)};`; reads keep their
+            # `x[x_idx(0)]` form (== x[0]). The explicit `(T)` cast matches legacy's implicit narrowing on
+            # a plain `x[0] = expr;` assignment (e.g. a float sink of a double-returning ``sqrt``); without
+            # it the braced list-initializer would raise -Wnarrowing where legacy is silent.
             name = self.codegen.ptr(target, desc, self.sdfg)
-            newnode = ast.Name(id='const %s %s[1] = {%s};' % (desc.dtype.ctype, name, rhs))
+            ctype = desc.dtype.ctype
+            newnode = ast.Name(id='const %s %s[1] = {(%s)(%s)};' % (ctype, name, ctype, rhs))
         else:
             newnode = ast.Name(id='%s = %s;' % (lhs, rhs))
         return self._replace_assignment(newnode, node)
