@@ -110,8 +110,22 @@ class OutlineTopLevelNests(ppl.Pass):
             for symbol in loop_defined_symbols(loop):
                 if symbol not in sdfg.symbols:
                     sdfg.add_symbol(symbol, dtypes.int64)
+            loop_vars = {
+                block.loop_variable
+                for block in [loop, *loop.all_control_flow_blocks()]
+                if isinstance(block, LoopRegion) and block.loop_variable and block.init_statement
+            }
             inner_state = helpers.nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
             nsdfg = next(n for n in inner_state.nodes() if isinstance(n, nodes.NestedSDFG))
+            # A loop variable that the nest re-initialises internally needs no INBOUND value. The
+            # outliner maps it (``sym: sym``) anyway -- because we pre-declared it on the parent to
+            # type the outliner's symbolic outputs, it is no longer classified strictly-internal
+            # (helpers.nest_sdfg_subgraph keys that on ``not in sdfg.symbols``), so it survives in the
+            # node's symbol_mapping and would leak as a REQUIRED free-symbol argument of the root SDFG.
+            # Drop those inbound mappings; the outbound ``sym = __sym_out_sym`` assignment the outliner
+            # also emits still propagates the final value out.
+            for var in loop_vars:
+                nsdfg.symbol_mapping.pop(var, None)
             self._mark(nsdfg, self._unique_label(sdfg, count))
             count += 1
 

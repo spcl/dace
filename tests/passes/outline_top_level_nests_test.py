@@ -106,6 +106,24 @@ def test_sequential_loop_region_is_outlined():
     # No un-outlined top-level LoopRegion should remain.
     assert not any(isinstance(b, LoopRegion) for b in sdfg.nodes())
     sdfg.validate()
+    # The loop index must NOT leak out as a required argument: the outliner pre-declares it and maps
+    # it (sym: sym), and unless that inbound mapping is dropped it becomes a spurious root free symbol.
+    assert 'i' not in {str(s) for s in sdfg.free_symbols}, 'loop index leaked as a required symbol'
+    for nsdfg in nsdfgs:
+        assert 'i' not in nsdfg.symbol_mapping, 'loop index left in the nest symbol_mapping'
+
+
+@pytest.mark.parametrize('outline', [False, True])
+def test_loop_region_numerically_equivalent(outline):
+    """The loop-region path must RUN, not just validate: a leaked loop-index argument makes the built
+    SDFG demand an `i` no caller supplies. seq_loop is a carried-dependency prefix sum."""
+    sdfg = seq_loop.to_sdfg(simplify=True)
+    if outline:
+        assert outline_top_level_nests(sdfg) >= 1
+    A = numpy.random.default_rng(0).random(37)
+    B = numpy.zeros(37)
+    sdfg(A=A, B=B, N=37)
+    assert numpy.allclose(B, numpy.cumsum(A))
 
 
 @pytest.mark.parametrize('outline', [False, True])
