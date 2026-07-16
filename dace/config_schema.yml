@@ -355,6 +355,25 @@ required:
                             write-once data. This flag also governs GPU-kernel tasklets,
                             which are emitted through the shared CPU generator instance.
 
+                    const_scalar_abi:
+                        type: str
+                        default: by_ref
+                        title: Read-only scalar calling convention (readable codegen)
+                        description: >
+                            How the experimental readable CPU generator binds a READ-ONLY scalar:
+                            ``by_ref`` emits ``const T& x`` (the legacy convention -- forming the
+                            reference never copies), ``by_value`` emits ``const T x`` (a copy).
+                            The two are semantically identical; which one is faster is a BACKEND
+                            artifact, not a general rule. Measured example: on Neoverse-V2, clang
+                            vectorizes the ``by_ref`` form of a masked sum-reduction to predicated
+                            loads plus an UNPREDICATED ``fadd``, but the ``by_value`` form (a
+                            distinct local copy in the inlined IR shifts the autovectorizer's cost
+                            model) to a MERGING-PREDICATED ``fadd``, which issues on fewer FP
+                            pipelines -- ~17% slower there. Elsewhere a small by-value scalar is
+                            usually the canonical fast choice, hence the knob. Default ``by_ref``
+                            matches legacy. Ignored by the legacy generator, which always binds by
+                            reference.
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:
