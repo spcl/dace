@@ -52,6 +52,21 @@ def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
     return type_name
 
 
+def readable_cpu_codegen_active() -> bool:
+    return Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable'
+
+
+def const_scalar_by_value() -> bool:
+    """Whether a READ-ONLY scalar is bound by const VALUE (``const T x``) rather than by const
+    reference (``const T& x``, the legacy convention).
+
+    Only the experimental readable generator honours ``compiler.cpu.const_scalar_abi``; the legacy
+    generator always binds by reference, so its output stays byte-identical. The two forms are
+    semantically identical -- which is faster is a backend artifact (see the config description),
+    so it is a knob rather than a hardcoded choice."""
+    return (readable_cpu_codegen_active() and Config.get('compiler', 'cpu', 'const_scalar_abi') == 'by_value')
+
+
 def copy_expr(
     dispatcher,
     sdfg,
@@ -340,12 +355,9 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
-            # A read-only scalar is passed by const REFERENCE (``const T& x``) -- the default binding,
-            # shared with the legacy generator. Forming the reference never copies, and this is the
-            # convention the extended integration branch settles on (const_scalar_abi defaults to
-            # by_ref there); keeping it always-on here means readable and legacy stay identical on
-            # this axis rather than diverging to a by-value copy.
-            ref = '&'
+            # A read-only scalar binds by const reference (legacy, and the readable default) or by
+            # const value, per ``compiler.cpu.const_scalar_abi`` -- see const_scalar_by_value().
+            ref = '' if (is_write is False and const_scalar_by_value()) else '&'
         else:
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
@@ -356,10 +368,14 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                 typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '*')
-        # A read-only scalar binds by const reference (the default, shared with legacy -- see above).
+        # A read-only scalar binds by const reference (legacy, and the readable default) or by const
+        # value, per ``compiler.cpu.const_scalar_abi`` -- see const_scalar_by_value(). A WRITTEN
+        # scalar always keeps its reference.
+        by_value = (is_scalar and is_write is False and not isinstance(desc, data.Structure)
+                    and const_scalar_by_value())
         if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
-        ref = '&' if is_scalar else ''
+        ref = '' if by_value else ('&' if is_scalar else '')
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
     elif defined_type in (DefinedType.Stream, DefinedType.Object):
