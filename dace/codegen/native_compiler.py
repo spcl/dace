@@ -564,7 +564,11 @@ def build_native(program_folder: str,
     # --- compile ------------------------------------------------------------
     cuda_arch_flags: List[str] = []
     if has_gpu:
-        cuda_arch_flags = _cuda_arch_flags(_nvcc_supported_arches(nvcc), allow_native=_can_use_arch_native(nvcc))
+        # The supported-arch list is only consulted to filter the fallback entries, so probing for it
+        # when the local GPU is detected would spawn an nvcc it never reads.
+        allow_native = _can_use_arch_native(nvcc)
+        supported = None if allow_native else _nvcc_supported_arches(nvcc)
+        cuda_arch_flags = _cuda_arch_flags(supported, allow_native=allow_native)
     ccbin = (['-ccbin', _cxx()] if Config.get('compiler', 'cpu', 'executable') else [])
 
     # Precompile the DaCe runtime header once (per compiler+flags) to speed up host translation
