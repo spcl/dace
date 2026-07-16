@@ -45,6 +45,92 @@ def two_nest_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
+def shared_inner_nest_sdfg(name: str) -> dace.SDFG:
+    """Two DIFFERENT top-level nests that contain an IDENTICAL inner nested SDFG.
+
+    Both top-level nests differ (one scales by 2, the other by 3) so both are emitted to their own
+    TU; the inner nest (``io += 1``) is byte-identical between them, so under the default
+    ``unique_functions='hash'`` it is generated once and deduplicated. If that dedup is keyed on the
+    whole build rather than per-TU, the second TU gets a CALL to the inner function with no definition
+    (it was emitted only into the first TU, and as ``inline`` it is not even linkable) -- so the split
+    build fails to link. This is the fixture that exercises that path.
+    """
+
+    def inner() -> dace.SDFG:
+        w = dace.SDFG('W')
+        w.add_array('io', [1], dace.float64)
+        st = w.add_state()
+        t = st.add_tasklet('add1', {'i'}, {'o'}, 'o = i + 1.0')
+        st.add_edge(st.add_read('io'), None, t, 'i', dace.Memlet('io[0]'))
+        st.add_edge(t, 'o', st.add_write('io'), None, dace.Memlet('io[0]'))
+        w.validate()
+        return w
+
+    def wrapper(mult: float) -> dace.SDFG:
+        x = dace.SDFG('X')
+        x.add_array('io', [1], dace.float64)
+        s0 = x.add_state('w', is_start_block=True)
+        n = s0.add_nested_sdfg(inner(), {'io'}, {'io'})
+        n.no_inline = True
+        s0.add_edge(s0.add_read('io'), None, n, 'io', dace.Memlet('io[0]'))
+        s0.add_edge(n, 'io', s0.add_write('io'), None, dace.Memlet('io[0]'))
+        s1 = x.add_state_after(s0, 'scale')
+        t = s1.add_tasklet('mul', {'i'}, {'o'}, 'o = i * %s' % repr(mult))
+        s1.add_edge(s1.add_read('io'), None, t, 'i', dace.Memlet('io[0]'))
+        s1.add_edge(t, 'o', s1.add_write('io'), None, dace.Memlet('io[0]'))
+        x.validate()
+        return x
+
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('B', [1], dace.float64)
+    s1 = sdfg.add_state('s0', is_start_block=True)
+    n1 = s1.add_nested_sdfg(wrapper(2.0), {'io'}, {'io'})
+    n1.no_inline = True
+    s1.add_edge(s1.add_read('A'), None, n1, 'io', dace.Memlet('A[0]'))
+    s1.add_edge(n1, 'io', s1.add_write('A'), None, dace.Memlet('A[0]'))
+    s2 = sdfg.add_state_after(s1, 's1')
+    n2 = s2.add_nested_sdfg(wrapper(3.0), {'io'}, {'io'})
+    n2.no_inline = True
+    s2.add_edge(s2.add_read('B'), None, n2, 'io', dace.Memlet('B[0]'))
+    s2.add_edge(n2, 'io', s2.add_write('B'), None, dace.Memlet('B[0]'))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('implementation', IMPLEMENTATIONS)
+def test_nest_tu_forward_declares_the_state_struct(implementation):
+    """A nest that only passes the state POINTER through needs the type declared, not complete. The
+    nest's file therefore carries `struct <name>_state_t;` and NOT a re-definition of the struct --
+    keeping it independent of the struct's contents, and removing the one repeated definition that a
+    namespace-scope statestruct entry could turn into a multiple-definition link error."""
+    objects = generate('fwd_decl_%s' % implementation, implementation, split=True)
+    nests = nsdfg_objects(objects)
+    assert nests
+    for obj in nests:
+        code = obj.clean_code or obj.code
+        assert re.search(r'struct \w+_state_t;', code), 'nest TU should forward-declare the state struct'
+        assert not re.search(r'struct \w+_state_t\s*\{', code), 'nest TU must not re-define the state struct'
+    # The frame keeps the real definition -- the nest only ever holds a pointer to it.
+    frame = host_objects(objects)[0].clean_code
+    assert re.search(r'struct \w+_state_t\s*\{', frame), 'frame TU still defines the state struct'
+
+
+@pytest.mark.parametrize('implementation', IMPLEMENTATIONS)
+def test_split_dedups_inner_nest_per_tu_and_links(implementation):
+    """The default hash-dedup must not route an inner nest's call across a TU boundary without its
+    definition. Compiling + linking + running is the proof -- a whole-build dedup key link-fails here."""
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
+         dace.config.set_temporary('compiler', 'cpu', 'codegen_params',
+                                   'split_nsdfg_translation_units', value=True):
+        sdfg = shared_inner_nest_sdfg('shared_inner_%s' % implementation)
+        A = np.array([5.0])
+        B = np.array([7.0])
+        sdfg(A=A, B=B)
+        assert np.allclose(A, (5.0 + 1.0) * 2.0)  # 12
+        assert np.allclose(B, (7.0 + 1.0) * 3.0)  # 24
+
+
 def generate(name: str, implementation: str, split: bool):
     with dace.config.set_temporary('compiler', 'cpu', 'implementation', value=implementation):
         with dace.config.set_temporary('compiler',

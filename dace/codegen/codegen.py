@@ -251,6 +251,16 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
+        # ``ssa_loop_scalars``: version a scalar reassigned several times in a scope/loop nest into
+        # single-assignment names, so each write-once version below becomes a ``const T nx_0 = expr;``
+        # binding. Reuses the existing ScalarFission pass (the SSA renaming simplify already uses), run
+        # BEFORE MarkConstInit so the versioned single writes are seen as write-once and marked const.
+        # Default 'off' -> pass not run -> byte-identical output.
+        if config.Config.get('compiler', 'cpu', 'codegen_params', 'ssa_loop_scalars') == 'on':
+            from dace.transformation.passes.scalar_fission import PrivatizeScalars
+            PrivatizeScalars().apply_pass(sdfg, {})
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name

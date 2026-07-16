@@ -83,7 +83,8 @@ VARIANTS = (
 )
 #: Thread count for the paper (multi-core) lane, read from the launch environment.
 MULTI_THREADS = max(1, int(os.environ.get('OMP_NUM_THREADS', '4')))
-FIELDS = ('kernel', 'build_mode', 'implementation', 'codegen_ms', 'compile_total_ms', 'build_ms', 'run_ms', 'correct')
+FIELDS = ('kernel', 'build_mode', 'implementation', 'codegen_ms', 'codegen_bytes', 'compile_total_ms', 'build_ms',
+          'run_ms', 'correct')
 
 
 def build_variant(program, tag):
@@ -114,13 +115,18 @@ def bench_kernel(name, compile_reps, run_reps, timeout):
         with set_temporary('compiler', 'build_mode', value=mode):
             with set_temporary('compiler', 'cpu', 'implementation', value=impl):
                 # codegen time -- depends on the implementation (the emitted code), measured in
-                # context so each variant is timed with its own generator selected.
+                # context so each variant is timed with its own generator selected. The size of the
+                # emitted C++ (summed over all code objects) is captured too: translation-unit size
+                # is a codegen-quality lever in its own right -- it moves compile time and can move
+                # runtime -- and it is exactly where legacy and experimental_readable differ.
                 codegen_samples = []
+                generated_bytes = 0
                 for rep in range(compile_reps):
                     sdfg = build_variant(program, f'{index}_cg{rep}')
                     t0 = time.perf_counter()
-                    codegen.generate_code(sdfg)
+                    objects = codegen.generate_code(sdfg)
                     codegen_samples.append((time.perf_counter() - t0) * 1000.0)
+                    generated_bytes = sum(len(obj.clean_code) for obj in objects)
 
                 # full compile wall, cold each rep via a unique name, under this (mode, impl).
                 compile_samples = []
@@ -144,6 +150,7 @@ def bench_kernel(name, compile_reps, run_reps, timeout):
             'build_mode': mode,
             'implementation': impl,
             'codegen_ms': round(codegen_ms, 3),
+            'codegen_bytes': generated_bytes,
             'compile_total_ms': round(compile_ms, 3),
             'build_ms': round(max(0.0, compile_ms - codegen_ms), 3),
             'run_ms': round(min(run_samples), 4) if run_samples else '',
@@ -157,9 +164,23 @@ def results_csv(results_dir):
 
 
 def append_rows(results_dir, rows):
+    """Append this kernel's rows, refusing to write into a file whose columns are not FIELDS.
+
+    csv.DictWriter writes values positionally and does not check them against the header already on
+    disk, so appending to a results file written by an older column set silently shifts every field
+    (a codegen_bytes landing under compile_total_ms, a run_ms under correct) -- the tables then report
+    numbers that are confidently wrong, and the correctness audit calls a fine kernel miscompiled.
+    Fail loudly instead; the fix is to move the stale file aside.
+    """
     path = results_csv(results_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    exists = os.path.isfile(path)
+    exists = os.path.isfile(path) and os.path.getsize(path) > 0
+    if exists:
+        with open(path, newline='') as fp:
+            header = next(csv.reader(fp), [])
+        if tuple(header) != FIELDS:
+            raise SystemExit(f'{path} has columns {tuple(header)} but this job writes {FIELDS}; appending would '
+                             f'misalign every row. Move the stale file aside and re-run.')
     with open(path, 'a', newline='') as fp:
         writer = csv.DictWriter(fp, fieldnames=FIELDS)
         if not exists:
@@ -172,6 +193,18 @@ def num(row, key):
         return float(row[key])
     except (ValueError, KeyError, TypeError):
         return None
+
+
+def ratio(numerator, denominator):
+    """``numerator / denominator``, or None when either is missing or the divisor is zero.
+
+    Deliberately not a truthiness test: a measured 0.0 is data, not absence, and ``if a and b``
+    would silently drop it from the aggregate instead of counting it (or reporting it as
+    unmeasurable). Only a genuinely absent value (None) or a zero divisor yields None.
+    """
+    if numerator is None or denominator is None or denominator == 0.0:
+        return None
+    return numerator / denominator
 
 
 def write_tables(results_dir):
@@ -194,20 +227,21 @@ def write_tables(results_dir):
         '',
         '## Codegen + compile wall (ms) per variant',
         '',
-        'codegen_ms depends on the implementation (the emitted code); build_ms (= compile_total - '
-        'codegen) depends on build_mode (cmake configure vs native) and on code size. correct = the '
-        'variant matched NumPy.',
+        'codegen_ms and codegen_bytes (size of the emitted C++) depend on the implementation; build_ms '
+        '(= compile_total - codegen) depends on build_mode (cmake configure vs native) and on code size. '
+        'correct = the variant matched NumPy.',
         '',
-        '| kernel | variant | codegen ms | compile ms | build ms | run ms | correct |',
-        '|---|---|--:|--:|--:|--:|:-:|',
+        '| kernel | variant | codegen ms | codegen B | compile ms | build ms | run ms | correct |',
+        '|---|---|--:|--:|--:|--:|--:|:-:|',
     ]
     for kernel in sorted(cells):
         for mode, impl in VARIANTS:
             row = cells[kernel].get((mode, impl))
             if not row:
                 continue
-            lines.append(f"| {kernel} | {mode}/{impl} | {row['codegen_ms']} | {row['compile_total_ms']} | "
-                         f"{row['build_ms']} | {row['run_ms']} | {'yes' if row['correct'] == '1' else 'NO'} |")
+            lines.append(f"| {kernel} | {mode}/{impl} | {row['codegen_ms']} | {row.get('codegen_bytes', '')} | "
+                         f"{row['compile_total_ms']} | {row['build_ms']} | {row['run_ms']} | "
+                         f"{'yes' if row['correct'] == '1' else 'NO'} |")
 
     # Runtime: legacy vs experimental_readable under cmake (build_mode-independent, so cmake is the
     # clean pairing the user asked for). speedup = legacy / experimental (>1 = experimental faster).
@@ -229,8 +263,8 @@ def write_tables(results_dir):
             continue
         both_ok = leg['correct'] == '1' and exp['correct'] == '1'
         rl, re_ = num(leg, 'run_ms'), num(exp, 'run_ms')
-        sx = rl / re_ if (rl and re_ and both_ok) else None
-        if sx:
+        sx = ratio(rl, re_) if both_ok else None
+        if sx is not None:
             speedups.append(sx)
         lines.append(f"| {kernel} | {leg['run_ms']} | {exp['run_ms']} | "
                      f"{sx:.3f} | {'yes' if both_ok else 'NO'} |" if sx is not None else
@@ -243,8 +277,9 @@ def write_tables(results_dir):
             cm = cells[kernel].get(('cmake', impl))
             nat = cells[kernel].get(('native', impl))
             bc, bn = (num(cm, 'build_ms') if cm else None), (num(nat, 'build_ms') if nat else None)
-            if bc and bn:
-                vals.append(bc / bn)
+            sx = ratio(bc, bn)
+            if sx is not None:
+                vals.append(sx)
         return vals
 
     if speedups:
@@ -253,11 +288,34 @@ def write_tables(results_dir):
             f'{statistics.geometric_mean(speedups):.3f}x over {len(speedups)} kernels, '
             f'median {statistics.median(speedups):.3f}x (>1 = experimental faster).'
         ]
+    # Code-size lever: how much smaller/larger the readable generator's C++ is than legacy's.
+    size_ratios = []
+    for kernel in sorted(cells):
+        leg, exp = cells[kernel].get(('cmake', 'legacy')), cells[kernel].get(('cmake', 'experimental_readable'))
+        bl, be = (num(leg, 'codegen_bytes') if leg else None), (num(exp, 'codegen_bytes') if exp else None)
+        sx = ratio(be, bl)
+        if sx is not None:
+            size_ratios.append(sx)
+    if size_ratios:
+        lines.append(f'**codegen size experimental vs legacy**: geomean {statistics.geometric_mean(size_ratios):.3f}x '
+                     f'over {len(size_ratios)} kernels (<1 = readable generator emits less C++).')
     for impl in ('legacy', 'experimental_readable'):
         bs = build_speedup(impl)
         if bs:
             lines.append(f'**native vs cmake build speedup ({impl})**: geomean '
                          f'{statistics.geometric_mean(bs):.2f}x over {len(bs)} kernels.')
+
+    # Correctness audit: the readable generator is newer, so flag every kernel where any variant
+    # missed NumPy -- the first full sweep doubles as an experimental-codegen correctness check.
+    failing = sorted(k for k, by_mode in cells.items() if any(r.get('correct') != '1' for r in by_mode.values()))
+    lines += ['', '## Correctness audit', '']
+    if failing:
+        lines.append(f'{len(failing)} kernel(s) with a variant that did NOT match NumPy:')
+        for kernel in failing:
+            bad = [f"{m}/{i}" for (m, i), r in sorted(cells[kernel].items()) if r.get('correct') != '1']
+            lines.append(f'- `{kernel}`: {", ".join(bad)}')
+    else:
+        lines.append('All variants matched NumPy on every kernel.')
 
     out = os.path.join(os.path.dirname(path), 'codegen_variants.md')
     with open(out, 'w') as fp:
@@ -271,6 +329,13 @@ def main():
     ap.add_argument('--compile-reps', type=int, default=3, help='cold-compile samples per cell (default: 3)')
     ap.add_argument('--run-reps', type=int, default=10, help='runtime samples per cell (default: 10)')
     args = ap.parse_args()
+
+    # Every cell reports min() over its samples, so a zero rep count would die on an empty sequence
+    # deep inside the isolated subprocess rather than here.
+    if args.compile_reps < 1:
+        ap.error('--compile-reps must be >= 1 (each cell reports the minimum over its samples)')
+    if args.run_reps < 1:
+        ap.error('--run-reps must be >= 1')
 
     if args.list_kernels:
         print('\n'.join(base.kernel_list(args)))

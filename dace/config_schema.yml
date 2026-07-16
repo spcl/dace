@@ -644,6 +644,54 @@ required:
                                     non-unit-tasklet scope) falls back to ``indexed`` for that construct
                                     rather than emitting a walk. ``indexed`` reproduces today's output
                                     byte-for-byte.
+                            scalar_decl_placement:
+                                type: str
+                                default: eager
+                                title: Mutable scope-scalar declaration placement
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy hoists every scope
+                                    transient's declaration to its scope top and ignores this key, so its
+                                    output stays byte-identical for every value).
+
+                                    Where a MUTABLE scope-lifetime value scalar (a ``dace.data.Scalar``
+                                    transient that is reassigned, so it is not the ``const T x = expr;``
+                                    write-once form the ``MarkConstInit`` path already declares at its
+                                    definition) is declared: ``eager`` (the default) emits ``T x;`` at the
+                                    top of its scope, as the legacy generator does; ``late`` defers it to
+                                    the line immediately before the first tasklet that uses ``x`` -- a
+                                    shorter live range and a declaration next to its first write.
+
+                                    Move-to-first-use is applied ONLY where it is provably sound: a plain
+                                    transient value scalar whose every access lives in ONE scope and is a
+                                    direct-child tasklet of that scope (so the deferred declaration lands
+                                    in the same brace as -- and before -- every use). Any other shape (a
+                                    write-once const scalar, a len-1 array, a heap/device/GPU-global
+                                    scalar, a scalar crossing states or map/nested-SDFG/copy boundaries, or
+                                    one used across scopes) keeps the eager declaration for that scalar.
+                                    This is a READABILITY / live-range form, not a speed lever -- the
+                                    backend sinks a dead declaration to first use regardless. ``eager``
+                                    reproduces today's output byte-for-byte.
+                            ssa_loop_scalars:
+                                type: str
+                                default: 'off'
+                                title: Single-assignment versioning of reassigned scope scalars
+                                description: >
+                                    Applies to: experimental_readable ONLY (this runs an SDFG rewrite
+                                    inside the readable-generator pipeline in ``codegen.py``; legacy never
+                                    enters that block, so its output stays byte-identical for every value).
+
+                                    Whether a transient scalar that is REASSIGNED several times in a scope
+                                    / loop nest is versioned into single-assignment names before codegen:
+                                    ``off`` (the default) leaves it as one mutable variable; ``on`` runs
+                                    the existing :class:`~dace.transformation.passes.scalar_fission.
+                                    PrivatizeScalars` (``ScalarFission``) pass so each dominating write
+                                    becomes its own container (``nx``, ``nx_0``, ``nx_1`` ...), each
+                                    written exactly once. A single-assignment version is then a write-once
+                                    value, which ``MarkConstInit`` marks and the generator emits as
+                                    ``const T nx_0 = expr;`` -- shorter live ranges and a ``const`` per
+                                    version. This is a semantics-preserving SSA renaming (the same pass
+                                    ``simplify`` uses to unblock ``LoopToMap``), applied here purely for
+                                    the readable form; ``off`` reproduces today's output byte-for-byte.
 
             #############################################
             # GPU (CUDA/HIP) compiler

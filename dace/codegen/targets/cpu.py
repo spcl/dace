@@ -524,20 +524,29 @@ class CPUCodeGen(TargetCodeGenerator):
         objects = []
         for label, (code, envs) in sorted(self._nsdfg_translation_units.items()):
             fileheader = CodeIOStream()
-            # Re-emit the shared preamble into this TU: includes, custom type definitions, constants
-            # and the ``<sdfg>_state_t`` struct the nest function takes a pointer to. Same technique
-            # the CUDA target uses to make its .cu self-contained (cuda.py, get_generated_codeobjects).
-            # ``include_hash=False``: the frame's hash.h include is written relative to src/<target>/
-            # and this file sits one level deeper (src/cpu/nsdfg/); only frame code uses __HASH_*.
+            # Re-emit the shared preamble into this TU: includes, custom type definitions and
+            # constants. Same technique the CUDA target uses to make its .cu self-contained
+            # (cuda.py, get_generated_codeobjects). ``include_hash=False``: the frame's hash.h
+            # include is written relative to src/<target>/ and this file sits one level deeper
+            # (src/cpu/nsdfg/); only frame code uses __HASH_*.
             #
-            # INVARIANT (why re-emitting is safe rather than a multiple-definition bug): everything
-            # generate_fileheader emits is repeatable per TU -- includes are guarded, type definitions
-            # are types, generate_constants emits ``constexpr`` (implicitly internal linkage), and the
-            # state struct is a class definition, which needs exactly one definition PER TU. If a
-            # target ever appends a DEFINED namespace-scope global (not constexpr/inline) to
-            # ``statestruct``/global code, it would be defined in every TU and multiply-defined at
-            # link time; keep such state in the struct's fields, not at namespace scope.
-            self._frame.generate_fileheader(top_sdfg, fileheader, 'frame', include_hash=False)
+            # The <sdfg>_state_t struct is FORWARD-DECLARED, not re-defined, whenever this nest only
+            # passes the state pointer through -- which an offloaded loop nest does, since it takes
+            # arrays and symbols and never touches persistent state. That keeps the nest's file
+            # independent of the struct's contents and removes the one repeated DEFINITION here: a
+            # struct is one careless namespace-scope statestruct entry away from being multiply
+            # defined across every TU. A nest that does dereference __state needs the complete type,
+            # so it falls back to the full definition.
+            #
+            # Everything else generate_fileheader emits is repeatable per TU by construction:
+            # includes are guarded, type definitions are types, and generate_constants emits
+            # ``constexpr`` (implicitly internal linkage).
+            state_struct = 'define' if '__state->' in code else 'forward'
+            self._frame.generate_fileheader(top_sdfg,
+                                            fileheader,
+                                            'frame',
+                                            include_hash=False,
+                                            state_struct=state_struct)
             objects.append(
                 CodeObject(f'{top_sdfg.name}.{label}',
                            '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n#include <dace/dace.h>\n' +
@@ -2388,24 +2397,31 @@ class CPUCodeGen(TargetCodeGenerator):
         code_already_generated = False
         if unique_functions and not inline:
             hash = node.sdfg.hash_sdfg()
+            # Dedup is per OUTPUT FILE, not per whole build: _current_tu_key names the TU being emitted
+            # right now (id(self) -- the frame .cpp -- unless split_nsdfg_translation_units re-points it
+            # at a nest's own .cpp). Keying on it means an inner nest shared by two split top-level nests
+            # is RE-EMITTED into each of their TUs (as an ``inline`` definition, which is ODR-legal across
+            # TUs) instead of being emitted into the first and only CALLED -- with no definition -- from
+            # the second, which would not link. With the flag off _current_tu_key is invariantly
+            # id(self), so this reduces to the old single-key behaviour and the output stays byte-identical.
             if unique_functions_hash:
                 # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
                 # use the saved name to call it, otherwise save the hash and the associated name
-                if hash in self._generated_nested_sdfg:
+                if (self._current_tu_key, hash) in self._generated_nested_sdfg:
                     code_already_generated = True
-                    sdfg_label = self._generated_nested_sdfg[hash]
+                    sdfg_label = self._generated_nested_sdfg[(self._current_tu_key, hash)]
                 else:
-                    self._generated_nested_sdfg[hash] = sdfg_label
+                    self._generated_nested_sdfg[(self._current_tu_key, hash)] = sdfg_label
             else:
                 # Use the SDFG label to check if this has been already code generated.
                 # Check the hash of the formerly generated SDFG to check that we are not
                 # generating different SDFGs with the same name
-                if sdfg_label in self._generated_nested_sdfg:
+                if (self._current_tu_key, sdfg_label) in self._generated_nested_sdfg:
                     code_already_generated = True
-                    if hash != self._generated_nested_sdfg[sdfg_label]:
+                    if hash != self._generated_nested_sdfg[(self._current_tu_key, sdfg_label)]:
                         raise ValueError(f'Different Nested SDFGs have the same unique name: {sdfg_label}')
                 else:
-                    self._generated_nested_sdfg[sdfg_label] = hash
+                    self._generated_nested_sdfg[(self._current_tu_key, sdfg_label)] = hash
 
         #########################################
         # Take care of nested SDFG I/O (arguments)
