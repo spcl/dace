@@ -70,6 +70,7 @@ def mk(n=48, names=("a", "b", "c", "d"), seed=0):
 
 
 def test_fuse_loops_fuses_two_sequential_recurrences():
+
     @dace.program
     def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
@@ -83,6 +84,7 @@ def test_fuse_loops_fuses_two_sequential_recurrences():
 
 
 def test_can_be_applied_to_identifies_the_fusable_pair():
+
     @dace.program
     def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
@@ -98,6 +100,7 @@ def test_can_be_applied_to_identifies_the_fusable_pair():
 
 
 def test_apply_to_a_named_pair_fuses_it():
+
     @dace.program
     def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
@@ -138,6 +141,7 @@ def test_refuses_read_ahead_forward_flow():
 
 
 def test_refuses_mismatched_iteration_range():
+
     @dace.program
     def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(1, N):
@@ -169,6 +173,7 @@ def test_refuses_doall_parallel_loops():
 
 @pytest.mark.parametrize("simplify", [True, False])
 def test_never_crashes_on_single_or_no_loop(simplify):
+
     @dace.program
     def one_loop(a: dace.float64[N], b: dace.float64[N]):
         for i in range(1, N):
@@ -270,11 +275,12 @@ def test_map_bodied_recurrence_pair_is_conservatively_refused(prog, names):
 
 
 def test_fusable_outer_seq_loop_with_reduction_body():
-    before, after, applied, exact = run_fused(seq_outer_map_reduction_body, {
-        "a": np.random.default_rng(1).random((24, 24)),
-        "b": np.random.default_rng(2).random(24),
-        "c": np.random.default_rng(3).random(24),
-    }, 24)
+    before, after, applied, exact = run_fused(
+        seq_outer_map_reduction_body, {
+            "a": np.random.default_rng(1).random((24, 24)),
+            "b": np.random.default_rng(2).random(24),
+            "c": np.random.default_rng(3).random(24),
+        }, 24)
     assert exact  # value-preserving whether or not the reduction-bodied pair fuses
 
 
@@ -600,6 +606,7 @@ def test_same_cell_reread_scale_is_refused():
 
 @pytest.mark.parametrize("n", [4, 16, 32, 64])
 def test_scalar_recurrence_fuses_across_sizes(n):
+
     @dace.program
     def prog(a: f64[N], b: f64[N], c: f64[N]):
         for i in range(1, N):
@@ -723,3 +730,36 @@ def test_three_map_bodied_loops_are_value_preserving():
     before, after, applied, exact = run_fused(outer_loop_2d_map_3ops, mk2d(names=("a", "b", "c", "d")), 20)
     assert exact
     assert after <= before
+
+
+@dace.program
+def invariant_scalar_then_recurrence(a: f64[N], d: f64[N]):
+    s = np.float64(0.0)
+    for i in range(1, N):
+        s = a[i]  # writes a LOOP-INVARIANT location: the last iteration's value wins
+    for i in range(1, N):
+        d[i] = d[i - 1] + s  # a recurrence reading it -> neither loop is DOALL
+
+
+@dace.program
+def invariant_scalar_read_then_written(a: f64[N], d: f64[N]):
+    s = np.float64(0.0)
+    for i in range(1, N):
+        d[i] = d[i - 1] + s  # reads the invariant location...
+    for i in range(1, N):
+        s = a[i]  # ...that the second loop overwrites (the mirror, anti direction)
+
+
+def test_fusion_across_an_invariant_scalar_is_refused():
+    # The dependence classifier reports no CARRIED offset for a loop-invariant location -- there is no
+    # iterator in either subset to carry one -- which must not be read as "no dependence". Unfused, loop2
+    # sees the FINAL s; fused, it sees the RUNNING s (d[i]=d[i-1]+a[i], a different prefix sum).
+    before, after, applied, exact = run_fused(invariant_scalar_then_recurrence, mk(names=("a", "d")), 48)
+    assert exact
+    assert applied == 0
+
+
+def test_fusion_across_an_invariant_scalar_overwritten_later_is_refused():
+    before, after, applied, exact = run_fused(invariant_scalar_read_then_written, mk(names=("a", "d")), 48)
+    assert exact
+    assert applied == 0

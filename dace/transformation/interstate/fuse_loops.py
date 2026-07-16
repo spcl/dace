@@ -96,10 +96,16 @@ class FuseLoops(transformation.MultiStateTransformation):
     @staticmethod
     def _is_doall(sdfg: SDFG, loop: LoopRegion) -> bool:
         """``True`` iff ``LoopToMap`` would parallelize ``loop`` (the same oracle the ``parallelize`` stage
-        uses)."""
+        uses).
+
+        The oracle is asked about the loop's OWN SDFG, not the caller's ``sdfg``: the two differ for a loop
+        inside a NestedSDFG, and asking about the wrong graph makes ``LoopToMap`` raise, which the guard
+        below would read as "not DOALL" -- silently disabling itself exactly where it still applies. They
+        are the same object for a top-level loop, so this costs nothing there.
+        """
         from dace.transformation.interstate.loop_to_map import LoopToMap
         try:
-            return LoopToMap.can_be_applied_to(sdfg, loop=loop)
+            return LoopToMap.can_be_applied_to(loop.sdfg, loop=loop)
         except Exception:  # noqa: BLE001 -- oracle refuses exotic shapes -> not provably DOALL
             return False
 
@@ -155,18 +161,22 @@ class FuseLoops(transformation.MultiStateTransformation):
             if any(sub is None for d in (r1, w1, r2, w2) for sub in d.get(arr, [])):
                 return False
             # flow: a value written in body1 and read in body2 must not be read ahead of its production
-            # (read-ahead WAR = fused reads stale value).
+            # (read-ahead WAR = fused reads stale value). 'invariant' is refused: body1 writes a
+            # loop-invariant location that body2 reads, so unfused body2 sees the FINAL value body1 left
+            # there while fused it sees the RUNNING one (`for i: s = a[i]` then `for i: d[i] = d[i-1] + s`).
             for write in w1.get(arr, []):
                 for read in r2.get(arr, []):
                     cls, _ = classifier._dep_class(read, write, ivar)
-                    if cls != 'RAW' and cls != 'none':
+                    if cls not in ('RAW', 'none'):
                         return False
             # anti: a value read in body1 must not have been overwritten earlier in the fused sweep by
-            # body2 (read-behind of body2's write).
+            # body2 (read-behind of body2's write). 'invariant' is refused for the mirror reason: fused,
+            # body1's read at iteration i sees body2's write from iteration i-1 instead of the value the
+            # location held before the second loop ran at all.
             for read in r1.get(arr, []):
                 for write in w2.get(arr, []):
                     cls, _ = classifier._dep_class(read, write, ivar)
-                    if cls != 'WAR' and cls != 'none':
+                    if cls not in ('WAR', 'none'):
                         return False
             # output: writes from both bodies must hit the same cell each iteration, else the last-writer
             # order differs between fused and unfused.

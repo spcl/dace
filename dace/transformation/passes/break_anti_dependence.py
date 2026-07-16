@@ -121,7 +121,16 @@ class BreakAntiDependence(ppl.Pass):
               some array ``arr``; only sound to rename if every element of ``arr`` is
               positive at runtime (the caller emits a per-element guard loop).
             * ``('RAW', None)``             -- read-behind true dep (sequential)
-            * ``('none', None)``            -- never alias or same element
+            * ``('none', None)``            -- never alias, or the same element of the
+              same iteration (no dependence is CARRIED either way)
+            * ``('invariant', None)``       -- both accesses hit the same LOOP-INVARIANT
+              location (no subset mentions the iterator), so there is no carried offset
+              to speak of. Distinct from ``'none'``: the accesses DO alias, every
+              iteration. This pass treats it exactly as ``'none'`` -- neither is a
+              carried anti-dependence, so neither is renamable -- but a caller reasoning
+              about reordering (e.g. fusing two loops) must not: unfused, a later loop
+              reads the FINAL value left in that location; interleaved, it reads the
+              RUNNING one.
             * ``('complex', None)``         -- give up
         """
         isym = symbolic.pystr_to_symbolic(ivar)
@@ -183,7 +192,11 @@ class BreakAntiDependence(ppl.Pass):
             # reverse index test can be normalized to a positive forward form so
             # LoopToMap can map the snapshotted loop. Not addressed here.
         if carried_offset is None:
-            return ('none', None)  # loop-invariant read of the array, not our case
+            # No dimension mentioned the iterator, and every one was the same fixed index (a differing
+            # one already returned 'none' above): the read and the write hit the SAME loop-invariant
+            # location. Not a carried anti-dependence, so not our case -- but it is an alias, which
+            # ``'none'`` would deny to callers who need to know.
+            return ('invariant', None)
         if carried_offset.is_number:
             if carried_offset > 0:
                 return ('WAR', None)
@@ -410,9 +423,8 @@ class BreakAntiDependence(ppl.Pass):
         # A non-cast single-arg call (``min(i, C)``, ``abs(i)``, any intrinsic) must NOT be
         # unwrapped: doing so mis-reads its argument as the bare iterator and would unsoundly
         # break an unrelated anti-dependence guarded on the wrong offset.
-        int_cast_callees = frozenset({
-            'int', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'intc', 'intp'
-        })
+        int_cast_callees = frozenset(
+            {'int', 'int8', 'int16', 'int32', 'int64', 'uint8', 'uint16', 'uint32', 'uint64', 'intc', 'intp'})
 
         def _strip_casts(node):
             while isinstance(node, ast.Call):
@@ -608,15 +620,69 @@ class BreakAntiDependence(ppl.Pass):
         return guard
 
     def _snapshot_and_redirect(self, loop: LoopRegion, name: str, sdfg: SDFG, guards=None, array_guards=None):
-        """Insert ``snap = name`` before ``loop`` and point the loop's reads of
-        ``name`` at ``snap``. Also plants runtime positive-check guards:
+        """Insert ``snap = name`` before ``loop`` and point the loop's
+        *read-ahead* reads of ``name`` at ``snap``. Also plants runtime
+        positive-check guards:
 
         * ``guards``        -- symbolic expressions (each asserted ``> 0``).
         * ``array_guards``  -- array names (each element asserted ``> 0``).
 
         Both guard kinds emit a side-effect ``__builtin_trap`` tasklet into the
-        snapshot pre-state."""
+        snapshot pre-state.
+
+        Redirection is PER EDGE and restricted to strict read-ahead reads
+        (``a[i + k], k > 0``). A same-index read ``a[i]`` classifies as ``none``
+        (offset 0), NOT as a WAR -- and it may consume a value an *earlier state*
+        of the SAME iteration wrote (an intra-iteration flow dependence, e.g. a
+        later branch-body state reading the ``a[i]`` the loop just produced).
+        Redirecting such a read to the pre-loop snapshot would read the stale
+        original and corrupt the result, so those edges stay on the live array
+        (which always holds the correct -- original or freshly written -- value
+        and remains per-iteration-local, so ``LoopToMap`` still maps the loop
+        once the read-ahead edges are broken). Reading a genuine read-ahead
+        element off a node that was also *written* this iteration is still the
+        cross-iteration original (this iteration only wrote its own index), so
+        those edges are moved regardless of the node's in-degree; but an element
+        that is ALSO written at the same index this iteration classifies ``none``
+        against that write and is therefore left live."""
         desc = sdfg.arrays[name]
+        ivar = loop.loop_variable
+
+        # Collect every write subset of `name` in the loop body (same criterion
+        # as :meth:`_renamable_arrays`) so each read edge can be classified and
+        # only the strict read-ahead ones moved.
+        writes = []
+        for st in loop.all_states():
+            for n in st.data_nodes():
+                if n.data != name:
+                    continue
+                for e in st.in_edges(n):
+                    if e.data is not None and not e.data.is_empty():
+                        ws = e.data.get_dst_subset(e, st) or e.data.subset
+                        if ws is not None:
+                            writes.append(ws)
+
+        # Read edges to redirect: those whose subset is a strict read-ahead
+        # against EVERY write (WAR / WAR_symbolic / WAR_indirected). A read that
+        # is `none` (same index) or otherwise not purely read-ahead stays live.
+        ahead = {'WAR', 'WAR_symbolic', 'WAR_indirected'}
+        to_move = []
+        for st in loop.all_states():
+            for n in list(st.data_nodes()):
+                if n.data != name:
+                    continue
+                for e in st.out_edges(n):
+                    if e.data is None or e.data.is_empty():
+                        continue
+                    rs = e.data.get_src_subset(e, st) or e.data.subset
+                    if rs is None:
+                        continue
+                    kinds = {self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg)[0] for w in writes}
+                    if kinds and kinds <= ahead:
+                        to_move.append((st, e))
+        if not to_move:
+            return  # no genuine read-ahead edge to break -> nothing (and no snapshot)
+
         snap, _ = sdfg.add_transient(f'{name}_antidep_snap',
                                      desc.shape,
                                      desc.dtype,
@@ -633,15 +699,18 @@ class BreakAntiDependence(ppl.Pass):
         for arr_name in (array_guards or ()):
             self._emit_array_positive_guard(pre, arr_name, sdfg)
 
-        # Redirect every pure read of `name` inside the loop body to `snap`.
-        for st in loop.all_states():
-            for n in list(st.data_nodes()):
-                if n.data != name or st.in_degree(n) != 0:
-                    continue  # only pure-read sources (writes stay on `name`)
-                n.data = snap
-                for e in st.out_edges(n):
-                    if e.data is not None and e.data.data == name:
-                        e.data.data = snap
+        # Redirect only the read-ahead edges to a fresh `snap` source, keeping any
+        # destination subset (copy edges carry an `other_subset`).
+        for st, e in to_move:
+            snap_node = st.add_access(snap)
+            new_mem = Memlet(data=snap, subset=e.data.get_src_subset(e, st) or e.data.subset)
+            if isinstance(e.dst, nodes.AccessNode):
+                new_mem.other_subset = e.data.get_dst_subset(e, st)
+            src = e.src
+            st.add_edge(snap_node, e.src_conn, e.dst, e.dst_conn, new_mem)
+            st.remove_edge(e)
+            if st.degree(src) == 0:
+                st.remove_node(src)
 
     def _break_mixed_forward_reads(self, loop: LoopRegion, sdfg: SDFG) -> int:
         """Break a forward-read anti-dependence carried on a MIXED array -- one that
@@ -676,10 +745,9 @@ class BreakAntiDependence(ppl.Pass):
         internal_syms = self._loop_internal_symbols(loop)
         applied = 0
 
-        written = sorted({
-            n.data
-            for n in state.data_nodes() if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient
-        })
+        written = sorted(
+            {n.data
+             for n in state.data_nodes() if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient})
         for arr in written:
             write_subsets = []
             for n in state.data_nodes():
