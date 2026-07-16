@@ -11,6 +11,7 @@ program under ``compiler.build_mode = native``.
 import ctypes.util
 import glob
 import os
+import subprocess
 import time
 
 import numpy as np
@@ -221,6 +222,14 @@ def test_resolve_drops_deferred_cmake_vars():
     assert not any('${' in x for x in spec.libs + spec.link_flags + spec.compile_flags + spec.includes)
 
 
+def test_resolve_unbalanced_flag_gives_clear_error():
+    """A malformed flag string (unbalanced quote) must surface as CompilerConfigurationError, not a
+    bare shlex ValueError -- the resolver's contract is that anything it cannot handle raises clearly."""
+    env = _make_env(name='BadFlags', cmake_compile_flags=['-DMSG="unterminated'])
+    with pytest.raises(cgx.CompilerConfigurationError, match='BadFlags'):
+        nc._resolve_environment(env, nc._LinkSpec())
+
+
 def test_resolve_cmake_files_rejected():
     """An environment shipping a ``.cmake`` script cannot be honored without CMake."""
     env = _make_env(name='NeedsCMake', cmake_files=['find_thing.cmake'])
@@ -247,8 +256,24 @@ def test_resolve_mpi_missing_wrapper_errors_clearly():
 # ---------------------------------------------------------------------------
 
 
-def _blas_loadable():
-    return any(ctypes.util.find_library(n) for n in ('openblas', 'blas', 'cblas', 'mkl_rt', 'mkl_rt.1'))
+def _blas_buildable():
+    """A BLAS library is loadable AND its dev headers are on the compiler's include path.
+
+    The BLAS matmul test forces the OpenBLAS expansion, which ``#include``s cblas.h/lapacke.h. Gating
+    on the .so alone would turn a headers-missing host into a hard CompilationError (which the test's
+    CompilerConfigurationError guard does not catch) instead of a clean skip. Ask the preprocessor
+    rather than guessing include paths.
+    """
+    if not any(ctypes.util.find_library(n) for n in ('openblas', 'blas', 'cblas', 'mkl_rt', 'mkl_rt.1')):
+        return False
+    for header in ('cblas.h', 'lapacke.h'):
+        probe = subprocess.run(['cc', '-E', '-x', 'c', '-'],
+                               input=f'#include <{header}>\n',
+                               capture_output=True,
+                               text=True)
+        if probe.returncode != 0:
+            return False
+    return True
 
 
 def test_unknown_build_mode_raises(tmp_path):
@@ -330,7 +355,7 @@ def test_native_build_plain_cpu(tmp_path):
     assert np.allclose(c, 2.0 * a + b)
 
 
-@pytest.mark.skipif(os.name != 'posix' or not _blas_loadable(), reason='no BLAS available')
+@pytest.mark.skipif(os.name != 'posix' or not _blas_buildable(), reason='no BLAS + dev headers available')
 def test_native_build_blas_matmul(tmp_path):
     """A real BLAS library node (matmul) builds + runs correctly under native mode.
 

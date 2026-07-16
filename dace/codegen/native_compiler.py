@@ -268,14 +268,15 @@ def _resolve_environment(env, spec: _LinkSpec) -> None:
     # tokenize here -- otherwise the whole string arrives as one quoted, unusable argument.
     # Deferred ${...} fragments are dropped per token: a known package (MPI) already supplied the real
     # flags, and an unknown one would have raised on cmake_packages above.
-    for flag in _get_or_eval(env.cmake_compile_flags):
-        for token in shlex.split(flag):
-            if not _is_deferred(token):
-                spec.compile_flags.append(token)
-    for flag in _get_or_eval(env.cmake_link_flags):
-        for token in shlex.split(flag):
-            if not _is_deferred(token):
-                spec.link_flags.append(token)
+    def tokenize(flags):
+        try:
+            return [tok for flag in flags for tok in shlex.split(flag) if not _is_deferred(tok)]
+        except ValueError as ex:  # unbalanced quote etc. -- keep the module's clear-error contract
+            raise cgx.CompilerConfigurationError(f"Native build cannot parse a flag from environment '{name}': {ex}. "
+                                                 f"Use compiler.build_mode=cmake for this program.")
+
+    spec.compile_flags += tokenize(_get_or_eval(env.cmake_compile_flags))
+    spec.link_flags += tokenize(_get_or_eval(env.cmake_link_flags))
     for lib in _get_or_eval(env.cmake_libraries):
         if not _is_deferred(lib):
             _classify_library(spec, lib)
@@ -361,8 +362,9 @@ def _cuda_arch_flags(supported: Optional[set], allow_native: bool = True) -> Lis
         flags += ['-gencode', f'arch=compute_{target},code=sm_{target}']
     if not flags:
         raise cgx.CompilerConfigurationError(
-            'Native build: nvcc -arch=native found no local GPU and compiler.cuda.cuda_arch is empty. Set '
-            'compiler.cuda.cuda_arch to the target architecture(s), or use compiler.build_mode=cmake.')
+            'Native build: nvcc -arch=native found no local GPU and compiler.cuda.cuda_arch names no '
+            'architecture this toolkit supports. Set compiler.cuda.cuda_arch to a supported target, or '
+            'use compiler.build_mode=cmake.')
     return flags
 
 
@@ -391,11 +393,15 @@ def _depfile_headers(depfile: str) -> List[str]:
             text = f.read()
     except OSError:
         return []
-    if ':' not in text:
+    # Split off the ``<obj>:`` target on the first colon that ends the target -- i.e. one followed by
+    # whitespace. A bare ``split(':')`` would break on a colon inside the object path (the compiler
+    # escapes spaces but not colons), so match the separator, not any colon.
+    parts = re.split(r':\s', text, maxsplit=1)
+    if len(parts) < 2:
         return []
     # Protect escaped spaces before splitting, or a path containing one would be torn into pieces
     # that never exist on disk -- which would silently rebuild everything on every build.
-    text = text.split(':', 1)[1].replace('\\\n', ' ').replace('\\ ', '\0')
+    text = parts[1].replace('\\\n', ' ').replace('\\ ', '\0')
     return [entry.replace('\0', ' ') for entry in text.split()]
 
 
