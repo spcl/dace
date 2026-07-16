@@ -1,29 +1,30 @@
 #!/bin/bash
-#SBATCH --job-name=dace-tsvc2-compile-perf
+#SBATCH --job-name=dace-tsvc-compile-perf
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4      # 4 ranks/node = one per Grace CPU (GH200 node = 4 Grace sockets)
 #SBATCH --cpus-per-task=72       # 72 cores per Grace CPU -> 4 x 72 = 288 cores = the whole node
 #SBATCH --hint=nomultithread     # Grace Neoverse-V2 has no SMT (1 thread/core); keep it explicit
-#SBATCH --time=06:00:00          # single-compiler default; cross-compiler = this x len(CXXES)
+#SBATCH --time=12:00:00          # single-compiler over BOTH corpora; scales x len(CXXES) x len(CORPORA)
 #SBATCH --partition=normal
 #SBATCH --account=g34
-#SBATCH --output=tsvc2_compile_%j.out
-#SBATCH --error=tsvc2_compile_%j.err
+#SBATCH --output=tsvc_compile_%j.out
+#SBATCH --error=tsvc_compile_%j.err
 #SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 #
 # Compile-speed + post-compile-performance comparison of the 3 DaCe pipelines
-# (auto_opt, parallel = simplify+loop2map+mapfusion, canon) on TSVC2,
-# distributed over nodes * ntasks-per-node ranks total.
+# (auto_opt, parallel = simplify+loop2map+mapfusion, canon) on BOTH TSVC corpora
+# -- TSVC2 and TSVC2.5 -- distributed over nodes * ntasks-per-node ranks total.
 #
-# ONE job, TWO metrics into the SAME results tree:
-#   1. tsvc2_perf.py           -> post-compile RUNTIME  (speedup.md, correctness.md)
-#   2. tsvc2_compile_perf.py   -> COMPILE speed         (compile_total.md,
-#                                 compile_codegen.md, compile_cxx.md)
+# ONE job, TWO metrics per corpus into the SAME results tree (results/<...>/<corpus>/):
+#   1. <corpus>_perf.py               -> post-compile RUNTIME  (speedup.md, correctness.md)
+#   2. tsvc_compile_perf.py --corpus  -> COMPILE speed         (compile_total.md,
+#                                        compile_codegen.md, compile_cxx.md)
+# where <corpus> in {tsvc2, tsvc2_5} -- one script now covers both corpora via --corpus.
 #
-# Sweeps every compiler in $CXXES. The DEFAULT is a single compiler (clang++) --
-# that is the plain single-compiler run. Set CXXES to more than one to turn this
-# into the CROSS-COMPILER sweep: each compiler builds every DaCe lane once and is
-# timed for runtime + cold-compile, results namespaced per compiler
+# Sweeps every compiler in $CXXES over every corpus in $CORPORA. The DEFAULT is a
+# single compiler (clang++) over both corpora. Set CXXES to more than one to turn
+# this into the CROSS-COMPILER sweep: each compiler builds every DaCe lane once and
+# is timed for runtime + cold-compile, results namespaced per compiler
 # (engine.compiler_host_tag = <compiler>_<host>_<preset>) so each kernel gets one
 # row per compiler -- read a lane DOWN the rows to compare it ACROSS compilers.
 # An absent compiler is skipped, not fatal. Both drivers self-partition kernels
@@ -31,8 +32,9 @@
 # (and cross-compiler) aggregation step.
 #
 # Submit with:
-#   sbatch slurm_tsvc2_compile.sh                                   # clang++ only
-#   CXXES="g++ clang++ icpx nvc++" sbatch slurm_tsvc2_compile.sh    # cross-compiler
+#   sbatch slurm_tsvc_compile.sh                                    # clang++, both corpora
+#   CORPORA=tsvc2 sbatch slurm_tsvc_compile.sh                      # one corpus only
+#   CXXES="g++ clang++ icpx nvc++" sbatch slurm_tsvc_compile.sh     # cross-compiler
 # Adjust --nodes / --ntasks-per-node for however many ranks you want.
 
 set -euo pipefail
@@ -129,8 +131,9 @@ export HPTT_ROOT="$PWD/hptt"
 # For icpx add:  source /opt/intel/oneapi/setvars.sh
 # For nvc++ add: add the nvhpc compilers/bin to PATH (or load its modulefile)
 
-# Compilers to sweep. Default = single clang++ (plain single-compiler run);
-# override with more than one for the cross-compiler comparison.
+# Corpora and compilers to sweep. Defaults = both TSVC corpora, single clang++;
+# override CORPORA to run one corpus, or CXXES for the cross-compiler comparison.
+CORPORA="${CORPORA:-tsvc2 tsvc2_5}"
 CXXES="${CXXES:-clang++}"
 REPS="${REPS:-25}"
 COMPILE_REPS="${COMPILE_REPS:-5}"
@@ -138,16 +141,21 @@ COMPILE_REPS="${COMPILE_REPS:-5}"
 # srun pinning: --distribution=block:block gives rank i a contiguous 72-core block = Grace socket i
 # (72-72-72-72 across the node's 4 Grace CPUs); --cpu-bind=cores pins each rank to its cores
 # (verbose logs the CPU mask so you can confirm the split in the job output).
-for CXX in $CXXES; do
-  if ! command -v "$CXX" >/dev/null 2>&1; then
-    echo "[compile] skip '$CXX' (not on PATH)"; continue
-  fi
-  echo "[compile] === $CXX ==="
-  # || echo so one compiler's failure never aborts the rest or the table passes.
-  srun --cpu-bind=verbose,cores --distribution=block:block python3 tsvc2_perf.py --reps "$REPS" --cxx="$CXX" || echo "[compile] runtime sweep failed for $CXX"
-  srun --cpu-bind=verbose,cores --distribution=block:block python3 tsvc2_compile_perf.py --compile-reps "$COMPILE_REPS" --cxx="$CXX" || echo "[compile] compile sweep failed for $CXX"
+for corpus in $CORPORA; do
+  echo "[compile] ========== corpus: $corpus =========="
+  for CXX in $CXXES; do
+    if ! command -v "$CXX" >/dev/null 2>&1; then
+      echo "[compile] skip '$CXX' (not on PATH)"; continue
+    fi
+    echo "[compile] === $corpus / $CXX ==="
+    # || echo so one compiler's failure never aborts the rest or the table passes.
+    srun --cpu-bind=verbose,cores --distribution=block:block python3 "${corpus}_perf.py" --reps "$REPS" --cxx="$CXX" || echo "[compile] runtime sweep failed for $corpus/$CXX"
+    srun --cpu-bind=verbose,cores --distribution=block:block python3 tsvc_compile_perf.py --corpus "$corpus" --compile-reps "$COMPILE_REPS" --cxx="$CXX" || echo "[compile] compile sweep failed for $corpus/$CXX"
+  done
 done
 
-# Cross-rank (and cross-compiler) aggregation: re-scans the whole results tree.
-python3 tsvc2_perf.py --tables-only
-python3 tsvc2_compile_perf.py --tables-only
+# Cross-rank (and cross-compiler) aggregation per corpus: re-scans the whole results tree.
+for corpus in $CORPORA; do
+  python3 "${corpus}_perf.py" --tables-only
+  python3 tsvc_compile_perf.py --corpus "$corpus" --tables-only
+done

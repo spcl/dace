@@ -57,8 +57,8 @@ export PYTHONUNBUFFERED=1
 # Single rank, single node: clear any stray SLURM_* so nothing re-partitions the sweep.
 unset SLURM_PROCID SLURM_NTASKS 2>/dev/null || true
 # Read-only scalars bind by const reference (the legacy ABI, and the readable default). Set
-# DACE_compiler_cpu_const_scalar_abi=by_value to measure the const-value binding instead.
-export DACE_compiler_cpu_const_scalar_abi="${CONST_SCALAR_ABI:-by_ref}"
+# DACE_compiler_cpu_codegen_params_const_scalar_abi=by_value to measure the const-value binding instead.
+export DACE_compiler_cpu_codegen_params_const_scalar_abi="${CONST_SCALAR_ABI:-by_ref}"
 
 if ! command -v "$CXX" >/dev/null 2>&1; then
     echo "error: compiler '$CXX' not found on PATH" >&2; exit 1
@@ -80,7 +80,7 @@ ARGS=(--preset "$PRESET" --corpus "$CORPUS" --reps "$REPS" --timeout "$TIMEOUT" 
 
 echo "== local 4-variant codegen job =="
 echo "   repo=$REPO_ROOT  cxx=$CXX ($($CXX -dumpversion 2>/dev/null))  c++$CPP_STD  threads=$THREADS"
-echo "   preset=$PRESET  corpus=$CORPUS  reps=$REPS (median)  const_scalar_abi=$DACE_compiler_cpu_const_scalar_abi"
+echo "   preset=$PRESET  corpus=$CORPUS  reps=$REPS (median)  const_scalar_abi=$DACE_compiler_cpu_codegen_params_const_scalar_abi"
 echo "   variants: cmake-oldcpu cmake-newcpu native-oldcpu native-newcpu"
 echo "   out=$OUT"
 

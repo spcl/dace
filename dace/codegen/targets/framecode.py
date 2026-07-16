@@ -20,8 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
-                             UnstructuredControlFlow)
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -129,17 +128,29 @@ class DaCeCodeGenerator(object):
             else:
                 callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
 
-    def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream, backend: str = 'frame'):
+    def generate_fileheader(self,
+                            sdfg: SDFG,
+                            global_stream: CodeIOStream,
+                            backend: str = 'frame',
+                            include_hash: bool = True):
         """ Generate a header in every output file that includes custom types
             and constants.
 
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
+            :param include_hash: Whether to include ``include/hash.h``. Only meaningful for the
+                                 ``frame`` backend, and only the frame code actually uses the
+                                 ``__HASH_<name>`` macro it defines (to name an instrumentation
+                                 report). The include is written with a path relative to the frame's
+                                 own directory (``src/<target>/``), so a file emitted one level
+                                 deeper -- a split nested-SDFG translation unit under
+                                 ``src/cpu/nsdfg/`` -- must pass False and would otherwise fail to
+                                 resolve the include.
         """
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
         # Hash file include
-        if backend == 'frame':
+        if backend == 'frame' and include_hash:
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
 
         #########################################################
@@ -505,15 +516,23 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             return True
         if self.to_allocate.get(state):
             return True
-        none_instr = dtypes.InstrumentationType.No_Instrumentation
         scope = state.scope_dict()
         for node in state.nodes():
             if scope[node] is not None:
                 continue  # nested inside a map -> that scope braces it (and its declarations)
-            if not isinstance(node, (nodes.MapEntry, nodes.MapExit, nodes.AccessNode)):
+            # An instrumented node declares its timers at state scope, so the brace must bound them.
+            # Read each property directly and against ITS OWN enum: a Property is stored under a
+            # mangled ``_name``, so a ``vars(node).get('instrument')`` lookup silently returns the
+            # default and never fires; and an AccessNode's ``instrument`` is a DataInstrumentationType,
+            # which never compares equal to an InstrumentationType member of the same name.
+            if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+                if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:
+                    return True
+            elif isinstance(node, nodes.AccessNode):
+                if node.instrument != dtypes.DataInstrumentationType.No_Instrumentation:
+                    return True
+            else:
                 return True  # a top-level tasklet / nested SDFG / library node may declare at state scope
-            if vars(node).get('instrument', none_instr) != none_instr:
-                return True  # an instrumented top-level map declares timers at state scope
         return False
 
     def generate_state(self,

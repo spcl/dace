@@ -172,11 +172,14 @@ required:
 
             build_type:
                 type: str
-                default: RelWithDebInfo
+                default: Release
                 title: Build configuration
                 description: >
-                    Configuration type for CMake build (can be Debug, Release,
-                    RelWithDebInfo, or MinSizeRel).
+                    Configuration type for the build (can be Debug, Release,
+                    RelWithDebInfo, or MinSizeRel). The build type is the single
+                    source of the optimization level -- compiler.cpu.args carries
+                    only non-optimization flags -- so Release compiles at -O3,
+                    RelWithDebInfo at -O2 -g, Debug at -O0 -g, MinSizeRel at -Os.
 
             build_mode:
                 type: str
@@ -189,6 +192,27 @@ required:
                     subprocess, skipping cmake configure overhead. "native" is
                     Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
                     anything it cannot resolve without cmake.
+
+            build_jobs:
+                type: int
+                default: 4
+                title: Parallel compile jobs for the CMake build
+                description: >
+                    How many source files the CMake build may compile concurrently
+                    (passed as ``cmake --build . --parallel <N>``). Applies to
+                    ``build_mode: cmake``.
+
+                    Deliberately a SMALL default rather than the core count: builds
+                    often share a machine, and each concurrent C++ compile of a
+                    generated file can take a lot of memory, so an unbounded build is
+                    a good way to run a box out of RAM. Raise it on a machine you own.
+
+                    This is what makes
+                    ``compiler.cpu.codegen_params.split_nsdfg_translation_units``
+                    pay off: that knob turns one huge translation unit into several,
+                    and this one lets them compile at the same time. With the Ninja
+                    generator (used automatically when ``ninja`` is on PATH) the bound
+                    is also what keeps Ninja from defaulting to every core.
 
             allow_shadowing:
                 type: bool
@@ -323,7 +347,7 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
+                        default: '-fPIC -Wall -Wextra -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
                         default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
@@ -355,24 +379,235 @@ required:
                             write-once data. This flag also governs GPU-kernel tasklets,
                             which are emitted through the shared CPU generator instance.
 
-                    const_scalar_abi:
-                        type: str
-                        default: by_ref
-                        title: Read-only scalar calling convention (readable codegen)
+                    codegen_params:
+                        type: dict
+                        title: CPU codegen parameters
                         description: >
-                            How the experimental readable CPU generator binds a READ-ONLY scalar:
-                            ``by_ref`` emits ``const T& x`` (the legacy convention -- forming the
-                            reference never copies), ``by_value`` emits ``const T x`` (a copy).
-                            The two are semantically identical; which one is faster is a BACKEND
-                            artifact, not a general rule. Measured example: on Neoverse-V2, clang
-                            vectorizes the ``by_ref`` form of a masked sum-reduction to predicated
-                            loads plus an UNPREDICATED ``fadd``, but the ``by_value`` form (a
-                            distinct local copy in the inlined IR shifts the autovectorizer's cost
-                            model) to a MERGING-PREDICATED ``fadd``, which issues on fewer FP
-                            pipelines -- ~17% slower there. Elsewhere a small by-value scalar is
-                            usually the canonical fast choice, hence the knob. Default ``by_ref``
-                            matches legacy. Ignored by the legacy generator, which always binds by
-                            reference.
+                            Tuning knobs for the CPU code generators. Each names a source-level form
+                            that is SEMANTICALLY NEUTRAL but can move backend decisions -- the
+                            published mean coefficient of variation across semantically-equivalent
+                            loop forms is ~17% for clang ("compiler instability", Gong et al.
+                            OOPSLA'18), and the sign of any given knob is target-, compiler- and
+                            kernel-dependent. So none of these is hardcoded: every default reproduces
+                            the legacy generator's existing output, and each knob exists to be SWEPT
+                            and MEASURED per target rather than argued from first principles.
+
+                            EVERY key here MUST state which generator(s) it affects, on an
+                            ``Applies to:`` line -- ``legacy``, ``experimental_readable``, or both
+                            (see ``compiler.cpu.implementation``). A knob that names only
+                            ``experimental_readable`` is a no-op under ``legacy``, whose output stays
+                            byte-identical.
+                        required:
+                            const_scalar_abi:
+                                type: str
+                                default: by_ref
+                                title: Read-only scalar calling convention
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy always binds by
+                                    reference and ignores this key).
+
+                                    How the readable generator binds a READ-ONLY scalar: ``by_ref``
+                                    emits ``const T& x`` (the legacy convention -- forming the
+                                    reference never copies), ``by_value`` emits ``const T x`` (a
+                                    copy). Semantically identical, and the faster one is NOT fixed:
+                                    LLVM #121262 is the same axis with the REFERENCE winning, while
+                                    Lemire measured by-reference 4.5x SLOWER on an aliasing-bound
+                                    loop. Measured here: on Neoverse-V2 + clang the two forms lower a
+                                    masked sum-reduction differently (``ld1w p/z`` + ``sel`` +
+                                    unpredicated ``fadd`` vs ``ldr z`` + merging-predicated ``fadd``),
+                                    correlating with ~17%. NOTE: Arm's Neoverse-V2 optimization guide
+                                    (Table 3-25) lists identical latency/throughput/pipelines for ALL
+                                    FADD forms, so that delta is NOT explained by published
+                                    instruction costs -- the mechanism is OPEN (a predicate-pipe
+                                    dependency in the accumulate chain is the leading candidate) and
+                                    code layout has not been excluded. Default ``by_ref`` matches
+                                    legacy.
+                            index_ctype:
+                                type: str
+                                default: int64
+                                title: Index-function integer type
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy inlines its offset
+                                    arithmetic instead of emitting ``<array>_idx`` helpers, so it has
+                                    no index type to pick and ignores this key).
+
+                                    The integer type the generated ``<array>_idx`` / ``<array>_size``
+                                    helpers compute a flat index in: ``int64`` emits ``long long``
+                                    (the default, and byte-identical to the historical signature),
+                                    ``int32`` emits ``int``.
+
+                                    UNSAFE ABOVE 2**31: ``int32`` silently WRAPS past 2147483647, and
+                                    the bound is on the ELEMENT COUNT, not the byte size -- an int8
+                                    array overflows at just 2 GiB of data (float32 at 8 GiB, float64
+                                    at 16 GiB). It is therefore never selected automatically: the
+                                    generator cannot prove a symbolic shape stays under the bound, and
+                                    an overflow here corrupts data with no diagnostic. Set it only for
+                                    an SDFG whose extents you know.
+
+                                    Do not expect a win by default. Measured on x86-64 (Zen 4), most
+                                    kernels land inside a 0.5-6% noise floor, and the deltas that do
+                                    clear it point OPPOSITE ways (gcc/gather -26% for int32, but
+                                    clang/stencil +12% against it) -- a knob to sweep, not a default to
+                                    flip. It is also NOT an ABI axis: templating or overloading the
+                                    helpers on the index type was measured and rejected, because GCC's
+                                    identical-code folding collapses the instantiations back onto one
+                                    body (``<stencil3d_v3_c32>: jmp <stencil3d_v2_c32>``) while C++
+                                    argument deduction silently picks 32-bit math from the generated
+                                    ``for (auto i = 0; ...)`` call sites -- an explicit knob cannot do
+                                    that behind your back.
+                            heap_ptr_restrict:
+                                type: str
+                                default: restrict
+                                title: __restrict__ on heap array pointers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy does not emit the
+                                    fused ``T* ptr = alloc`` declaration this qualifies).
+
+                                    Whether a heap-allocated array pointer is declared
+                                    ``T* __restrict__ p`` (``restrict``, the default) or ``T* p``
+                                    (``none``). ``restrict`` promises the pointer does not alias, which
+                                    is what lets the vectorizer prove independence -- the default and
+                                    the faster bet. It is NEVER applied to a ``may_alias`` descriptor
+                                    regardless of this key: that array is deliberately reachable through
+                                    a second pointer, so promising no-alias would be a miscompile, not a
+                                    win. The effect is genuinely BIMODAL when it does apply (46 tests
+                                    faster / 18 slower in rust#82834; ``!noalias`` has even DISABLED
+                                    vectorization via GVN load-PRE in llvm#38583), which is why it is a
+                                    knob and not a hardcode. ``restrict`` reproduces today's output.
+                            split_nsdfg_translation_units:
+                                type: bool
+                                default: false
+                                title: Emit each top-level nested SDFG as its own translation unit
+                                description: >
+                                    Applies to: legacy AND experimental_readable.
+
+                                    Split codegen output so that each TOP-LEVEL nested SDFG becomes its
+                                    own ``.cpp``. When on, ``OutlineTopLevelNests`` first wraps every
+                                    top-level map-nest / loop region of the root SDFG in a ``no_inline``
+                                    nested SDFG, and each such nest is emitted to
+                                    ``src/cpu/nsdfg/<label>.cpp`` instead of being written into the one
+                                    frame ``.cpp``. The frame keeps a forward declaration and the call.
+
+                                    This is a BUILD-PARALLELISM tactic, not a codegen-quality one: one
+                                    huge TU is compiled by exactly one core, so a big SDFG serializes
+                                    the build. N translation units let the CMake Ninja generator (used
+                                    automatically when ``ninja`` is on PATH) compile them concurrently.
+
+                                    The nest function is called across the TU boundary as a normal
+                                    IN-BINARY function -- forward-declared, external linkage, and
+                                    ``DACE_HIDDEN`` (hidden visibility) so it stays out of the shared
+                                    library's public ABI. It is NOT a separate ``.so`` and is NOT
+                                    ``dlopen``ed; the static linker resolves the cross-object call.
+                                    (Unrelated to ``NestedSDFG.ext_sdfg_path``, which is a runtime lazy
+                                    LOADER and does not touch codegen.)
+
+                                    COST: splitting puts the nest body behind a TU boundary, so the
+                                    compiler can no longer inline it into the frame or specialize it on
+                                    the call site. Recover that with ThinLTO -- add ``-flto=thin`` to
+                                    ``compiler.cpu.args`` and to ``compiler.linker.args``, which keeps
+                                    the cross-TU inlining while staying parallel and bounded in memory.
+                                    NEVER use plain ``-flto`` (monolithic LTO): it merges every TU into
+                                    one serial link-time module, which both destroys the parallelism
+                                    this knob buys and can exhaust RAM on a small machine. ThinLTO is
+                                    strictly OPT-IN and CORRECTNESS DOES NOT DEPEND ON IT -- it only
+                                    affects whether the cross-TU call is re-inlined.
+
+                                    Default ``false`` reproduces today's output BYTE-IDENTICALLY for
+                                    both generators: every split path is gated on this key, so when it
+                                    is off the nest bodies are written inline into the single frame
+                                    ``.cpp`` exactly as before.
+                            index_fn_qualifier:
+                                type: str
+                                default: inline_constexpr
+                                title: Qualifier on generated index/size helpers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy inlines its offset
+                                    arithmetic and emits no ``<array>_idx`` / ``<array>_size`` helpers).
+
+                                    The linkage/inlining qualifier on the generated index and size
+                                    helpers. ``inline_constexpr`` (the default) emits
+                                    ``static DACE_HDFI constexpr`` -- ``inline`` is a hint the backend
+                                    already honours for these tiny functions at -O2, so they are inlined
+                                    and the access reads as ``p[i*S+j]`` to the vectorizer.
+                                    ``always_inline`` additionally attaches
+                                    ``__attribute__((always_inline))`` to FORCE inlining regardless of
+                                    the inliner's cost model -- useful only where a helper is (wrongly)
+                                    left out of line, which pins a vectorization precondition. Inlining
+                                    is the precondition for every downstream idiom/vectorization
+                                    decision, so leaving these helpers un-inlined is the failure mode
+                                    this guards against. ``inline_constexpr`` reproduces today's output.
+                            loop_index_type:
+                                type: str
+                                default: auto
+                                title: Map-loop induction variable type
+                                description: >
+                                    Applies to: legacy AND experimental_readable (both emit map loops
+                                    through the same emitter in cpu.py).
+
+                                    The declared type of a map loop's induction variable. ``auto`` (the
+                                    default) deduces it from the lower bound -- for the usual ``0`` that
+                                    makes it ``int``, i.e. 32-bit index math. ``int64`` emits
+                                    ``long long`` and ``int32`` emits ``int`` explicitly.
+
+                                    Widening the induction variable can let TBAA disprove aliasing so a
+                                    store sinks out of the loop, and it changes the no-wrap facts SCEV
+                                    and the vectorizer rely on -- but a wider counter is also more
+                                    register pressure and, on a 32-bit-safe loop, pure cost. The sign is
+                                    not fixed; sweep it. This is DISTINCT from ``index_ctype``, which
+                                    types the generated helper bodies, not the loop variable; if the two
+                                    disagree the loop index converts at the call. ``auto`` reproduces
+                                    today's output byte-for-byte, so legacy is unaffected by default.
+                            loop_bound_cmp:
+                                type: str
+                                default: lt
+                                title: Map-loop bound comparison
+                                description: >
+                                    Applies to: legacy AND experimental_readable (shared map-loop
+                                    emitter).
+
+                                    How a map loop's exit test is spelled, for the identical iteration
+                                    space: ``lt`` emits ``i < end + 1`` (the default), ``le`` emits
+                                    ``i <= end`` (same range, without the ``+ 1`` add), ``ne`` emits
+                                    ``i != end + 1``.
+
+                                    ``ne`` supports any stride. A naive ``i != end + 1`` is correct only
+                                    when the stride divides the range -- otherwise the counter steps
+                                    OVER that bound, never compares equal, and the loop does not
+                                    terminate. So for a non-unit stride the bound is normalised to the
+                                    first value the counter actually LANDS on at or past the end,
+                                    ``begin + int_ceil(end + 1 - begin, skip) * skip``, which it is
+                                    guaranteed to hit exactly. Even so, ``ne`` forces the optimizer to
+                                    prove termination before it may vectorize or unroll, where ``<``
+                                    hands SCEV a trip count directly -- so ``ne`` is the pessimistic end
+                                    of this axis and exists to be measured, not recommended. ``lt``
+                                    reproduces today's output byte-for-byte.
+                            loop_decl_style:
+                                type: str
+                                default: for_init
+                                title: Map-loop induction variable declaration placement
+                                description: >
+                                    Applies to: legacy AND experimental_readable (shared map-loop
+                                    emitter).
+
+                                    Where a map loop's induction variable is declared, for the identical
+                                    loop: ``for_init`` (the default) declares it in the for-statement's
+                                    init clause, ``for (auto i = 0; ...)``; ``hoisted`` declares it ahead
+                                    of the loop, ``auto i = 0; for (; ...)``.
+
+                                    The variable's lifetime is the only difference: hoisted, it outlives
+                                    the loop, which is what makes this a style axis at all -- a longer
+                                    live range is a different input to register allocation. It also means
+                                    two sibling maps sharing a parameter name would collide, so hoisting
+                                    forces the map's encapsulating scope to be emitted (that brace is
+                                    exactly what bounds a declaration made ahead of the loop headers).
+
+                                    Applies to SEQUENTIAL maps only. An OpenMP pragma must be
+                                    immediately followed by a CANONICAL loop whose init clause declares
+                                    the induction variable, so hoisting it leaves the pragma facing a
+                                    declaration and the compiler rejects it outright ("loop nest
+                                    expected"). A CPU_Multicore / CPU_Persistent map therefore keeps
+                                    ``for_init`` regardless of this key. ``for_init`` reproduces today's
+                                    output byte-for-byte.
 
             #############################################
             # GPU (CUDA/HIP) compiler

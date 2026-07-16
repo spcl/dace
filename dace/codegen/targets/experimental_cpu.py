@@ -12,7 +12,7 @@ CPU instance, so these changes also apply inside ``__global__`` kernels.
 """
 import ast
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import numpy
 from pygments.lexers import CppLexer
@@ -25,20 +25,45 @@ from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import CPUCodeGen
+from dace.codegen.targets.cpu import CPUCodeGen, hoist_loop_decls
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.sdfg import nodes
 from dace.sdfg.utils import dynamic_map_inputs
 
-# The C++ integer type used for computed flat indices.
-INDEX_CTYPE = 'long long'
+#: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. ``int`` (not
+#: ``int32_t``) and ``long long`` (not ``int64_t``) are spelled out deliberately: ``int`` is exactly
+#: what the generated loops declare (``for (auto i = 0; ...)``), so an int32 helper takes its indices
+#: with no conversion at all, and ``long long`` preserves the historical signature byte-for-byte.
+INDEX_CTYPES = {'int64': 'long long', 'int32': 'int'}
 # Qualifier for the generated ``<array>_idx`` and symbolic ``<array>_size`` helpers: host+device
 # callable, inlined, usable in constant expressions.
 INDEX_FUNCTION_QUALIFIER = 'static DACE_HDFI constexpr'
 # Qualifier for a CONSTANT ``<array>_size`` helper: ``consteval`` forces the fixed extent to fold at
 # compile time (a C++20 keyword, so size_qualifier falls back to ``constexpr`` before C++20).
 SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
+
+
+def index_function_qualifier() -> str:
+    """Qualifier for the generated ``<array>_idx`` / ``<array>_size`` helpers, per
+    ``compiler.cpu.codegen_params.index_fn_qualifier``. ``inline_constexpr`` is the default
+    (``static DACE_HDFI constexpr`` -- the backend inlines these tiny functions at -O2); ``always_inline``
+    additionally forces inlining, which only matters where a helper is otherwise left out of line and
+    an un-inlined access would block vectorization."""
+    if Config.get('compiler', 'cpu', 'codegen_params', 'index_fn_qualifier') == 'always_inline':
+        return 'static __attribute__((always_inline)) inline constexpr'
+    return INDEX_FUNCTION_QUALIFIER
+
+
+def index_ctype() -> str:
+    """The C++ integer type the ``<array>_idx`` / ``<array>_size`` helpers compute in, per
+    ``compiler.cpu.codegen_params.index_ctype``.
+
+    ``int32`` is UNSAFE past 2**31 ELEMENTS and is never selected automatically -- the bound is on the
+    element count, not the byte size, so an int8 array overflows at only 2 GiB (a float64 one at 16
+    GiB). The generator cannot prove an SDFG stays under that for symbolic shapes, so this stays an
+    opt-in knob whose default (``int64``) reproduces the historical signature exactly."""
+    return INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'index_ctype')]
 
 
 def size_qualifier(is_constant: bool) -> str:
@@ -72,7 +97,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # (= per output file), so an array used on both the host (.cpp) and a device kernel (.cu)
         # gets its definition in each file. Index and size helpers share the set (names never
         # collide: ``A_idx`` vs ``A_size``).
-        self._emitted_functions: Dict[int, Set[str]] = {}
+        self._emitted_functions: Dict[Union[int, str], Set[str]] = {}
         # (base-name, signature) -> emitted function name, so one shape reuses a function while
         # two same-named arrays of different shape (e.g. a connector-derived ``_out`` that is 1-D
         # in one inlined SDFG and 2-D in another) get distinct helpers, not a colliding name with
@@ -97,6 +122,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         only add nesting. Keep the scope for every construct that does declare into it.
         """
         if dynamic_map_inputs(state_dfg, node):  # emit memlet_definition declarations
+            return True
+        if hoist_loop_decls(node):  # declares the induction variables ahead of the loop headers
             return True
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:  # declares the thread id
             return True
@@ -405,6 +432,67 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # stream, mirroring the _idx flush in _generate_Tasklet.
         self._flush_generated_functions(function_stream, cfg, state_id, node)
 
+    def fused_heap_declarator(self, sdfg, name: str, nodedesc: dt.Data, arrsize, declared: bool, declaration_stream,
+                              allocation_stream) -> Optional[str]:
+        """Declarator fusing ``T *p;`` + ``p = new T[...];`` into one ``T* __restrict__ p = new
+        T[...];`` definition, or None to keep the classic split pair.
+
+        DaCe deliberately routes the declaration and the allocation to two streams so a transient's
+        DECLARATION can be hoisted to an outer scope while its ALLOCATION stays in an inner one.
+        Fusing is a purely textual merge of two writes, so it is sound only when both land in the
+        same scope with nothing in between. All three of these must hold:
+
+        * ``not declared`` -- otherwise ``declare_array`` already emitted ``T *p = nullptr;`` in an
+          enclosing scope (a transient whose size depends on a non-free symbol) and registered it in
+          ``declared_arrays``; a fused definition would declare a SECOND, inner ``p`` that shadows it,
+          so every access outside this scope would see the still-null outer pointer.
+        * ``declaration_stream is allocation_stream`` -- the dispatcher (``dispatch_allocate``) hands
+          out two different streams for the Persistent and External lifetimes, where the pointer
+          really lives in the state struct: the declaration goes to a throwaway stream and the
+          allocation to ``__dace_init``. Fusing there would emit a local definition into
+          ``__dace_init`` that shadows the state-struct member, so the program would read an
+          unallocated member. For every other lifetime the dispatcher passes ONE stream for both
+          (``declaration_stream = callsite_stream``) and the base writes the declaration immediately
+          before the allocation, so merging them changes nothing but the text.
+        * ``arrsize`` is a RUNTIME extent -- a compile-time constant one keeps the split form because
+          GCC rejects the fused spelling. ``heap_alloc_stmt`` emits the element type carrying
+          ``DACE_ALIGN(64)`` (== ``__attribute__((aligned(64)))``), which is load-bearing: it makes
+          ``new`` call the over-aligned ``operator new[](size_t, align_val_t)``. With a constant
+          bound the new-type-id in a DECLARATION names the fixed array type ``double[1]``, whose
+          elements would each need 64-byte alignment at 8 bytes of size -- "error: alignment of array
+          elements is greater than element size". The very same ``new`` expression is accepted as a
+          bare assignment (the split form), and with a runtime bound no fixed array type is formed,
+          so both of those stay legal. No fused spelling avoids this (``::new``, a cast, an aligned
+          type alias and brace-init were all tried), and dropping ``DACE_ALIGN`` would silently
+          de-align the allocation, so a constant-extent heap array stays split.
+
+        Registration is untouched: the caller still runs ``define_var(...)`` after this, so
+        ``defined_vars`` (and ``declared_arrays``, which only ``declare_array`` populates) resolve
+        later accesses exactly as before.
+        """
+        if declared or declaration_stream is not allocation_stream:
+            return None
+        # The same test the base uses to route a variable-length Register array to the heap.
+        if not symbolic.issymbolic(arrsize, sdfg.constants):
+            return None
+        return self.array_pointer_declarator(name, nodedesc)
+
+    def array_pointer_declarator(self, name: str, nodedesc: dt.Data) -> str:
+        """``T* __restrict__ name`` for a heap-allocated array pointer.
+
+        ``__restrict__`` is dropped for a ``may_alias`` descriptor -- the same condition
+        ``Array.as_arg`` and ``CPUCodeGen.generate_nsdfg_arguments`` already use to decide the
+        qualifier on kernel/nested-SDFG arguments. ``may_alias`` marks an array that is deliberately
+        reachable through a second pointer in the same function, so promising no-alias for it would
+        be a miscompile rather than a readability win. It is also dropped when
+        ``compiler.cpu.codegen_params.heap_ptr_restrict`` is ``none`` (the qualifier is a bimodal
+        knob; ``restrict``, the default, is the faster bet but not universally so).
+        """
+        emit_restrict = (not nodedesc.may_alias
+                         and Config.get('compiler', 'cpu', 'codegen_params', 'heap_ptr_restrict') == 'restrict')
+        restrict = '__restrict__ ' if emit_restrict else ''
+        return '%s* %s%s' % (nodedesc.dtype.ctype, restrict, name)
+
     def heap_alloc_stmt(self,
                         alloc_name: str,
                         ctype: str,
@@ -436,7 +524,16 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # post-pass). A device (.cu) file is generated through a delegating GPU codegen that sets
         # ``calling_codegen`` to itself, so its streams keep the per-stream emitted-set and their own
         # copy, exactly as before.
-        file_key = id(self) if self.calling_codegen is self else id(function_stream)
+        #
+        # ``_current_tu_key`` (not a bare ``id(self)``) names the host file being generated RIGHT NOW.
+        # It equals ``id(self)`` -- the frame .cpp -- for the whole host build unless
+        # ``split_nsdfg_translation_units`` is on, in which case ``_generate_NestedSDFG`` re-points it
+        # at the nest's own buffer while that nest is generated. Without that, a helper already emitted
+        # into the frame TU (say ``A_idx``) would be seen as emitted and SKIPPED in a split nest's TU
+        # that also indexes ``A``, leaving that TU referencing an undefined ``A_idx``. Keying on
+        # ``id(function_stream)`` instead is NOT the fix: many host streams feed the one frame TU, and
+        # that is exactly the duplicate-definition bug the file-owner key exists to prevent.
+        file_key = self._current_tu_key if self.calling_codegen is self else id(function_stream)
         emitted = self._emitted_functions.setdefault(file_key, set())
         for registry in (self._index_functions, self._size_functions):
             for name, defn in registry.items():
@@ -451,14 +548,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         """A single-write (``const_runtime``) scope-local scalar emitted as a fused
         ``const T x = expr;`` binding. Restricted to scope-lifetime CPU value scalars so the binding
         is declared in exactly the scope its reads live in; a device/persistent scalar stays classic."""
-        return (isinstance(desc, dt.Scalar) and vars(desc).get('const_init')
-                and desc.lifetime == dtypes.AllocationLifetime.Scope and desc.storage
-                in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap))
+        return (isinstance(desc, dt.Scalar) and desc.const_init and desc.lifetime == dtypes.AllocationLifetime.Scope and
+                desc.storage in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap))
 
     def _is_const_len1_array(self, desc) -> bool:
         """A single-write (``const_runtime``) single-element STACK (Register) array emitted as a fused
         ``const T x[1] = {expr};`` binding. A heap or device single-element array stays classic."""
-        return (isinstance(desc, dt.Array) and not isinstance(desc, dt.View) and vars(desc).get('const_init')
+        return (isinstance(desc, dt.Array) and not isinstance(desc, dt.View) and desc.const_init
                 and desc.lifetime == dtypes.AllocationLifetime.Scope and desc.storage == dtypes.StorageType.Register
                 and len(desc.shape) >= 1 and all(d == 1 for d in desc.shape))
 
@@ -511,10 +607,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             fnname = '%s_%dd_%d_idx' % (base, ndim, len(self._index_sig_to_name))
         self._index_sig_to_name[key] = fnname
 
-        params = ['%s %s' % (INDEX_CTYPE, str(d)) for d in dim_syms]
-        params += ['%s %s' % (INDEX_CTYPE, s) for s in extra_names]
+        ctype = index_ctype()
+        params = ['%s %s' % (ctype, str(d)) for d in dim_syms]
+        params += ['%s %s' % (ctype, s) for s in extra_names]
         body = sym2cpp(flatexpr)
-        self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (INDEX_FUNCTION_QUALIFIER, INDEX_CTYPE, fnname,
+        self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (index_function_qualifier(), ctype, fnname,
                                                                          ', '.join(params), body)
         return fnname, extra_names
 
@@ -552,10 +649,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._size_sig_to_name[key] = fnname
 
         qualifier = size_qualifier(is_constant)
-        params = ['%s %s' % (INDEX_CTYPE, s) for s in call_args]
+        ctype = index_ctype()
+        params = ['%s %s' % (ctype, s) for s in call_args]
         body = sym2cpp(total)
-        self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, INDEX_CTYPE, fnname,
-                                                                        ', '.join(params), body)
+        self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, ctype, fnname, ', '.join(params),
+                                                                        body)
         return fnname, call_args
 
 

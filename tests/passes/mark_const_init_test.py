@@ -138,7 +138,7 @@ def test_scalar_runtime_single_write():
 
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert kinds.get('a') == 'const_runtime'
-    assert vars(sdfg.arrays['a']).get('const_init') is True
+    assert sdfg.arrays['a'].const_init is True
     assert 'a' not in sdfg.constants
     # Dataflow must be untouched: producer + consumer tasklets and the access node stay.
     assert len(_tasklets(s)) == 2
@@ -173,7 +173,7 @@ def test_array_double_write_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'A' not in kinds
     assert 'A' not in sdfg.constants
-    assert not vars(sdfg.arrays['A']).get('const_init')
+    assert not sdfg.arrays['A'].const_init
     # Both writes must be preserved.
     assert _tasklets(s1) != []
     assert _tasklets(s2) != []
@@ -213,7 +213,7 @@ def test_interstate_edge_read_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'a' not in kinds
     assert 'a' not in sdfg.constants
-    assert not vars(sdfg.arrays['a']).get('const_init')
+    assert not sdfg.arrays['a'].const_init
     # Dataflow untouched: the writing tasklet and access node remain.
     assert len(_tasklets(s1)) == 1
     assert any(n.data == 'a' for n in s1.data_nodes())
@@ -269,7 +269,7 @@ def test_same_state_non_separable_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'a' not in kinds
     assert 'a' not in sdfg.constants
-    assert not vars(sdfg.arrays['a']).get('const_init')
+    assert not sdfg.arrays['a'].const_init
     # Dataflow untouched.
     assert init_t in s.nodes()
     assert a_write in s.nodes()
@@ -432,7 +432,7 @@ def test_multiwrite_read_before_write_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'arr' not in kinds
     assert 'arr' not in sdfg.constants
-    assert not vars(sdfg.arrays['arr']).get('const_init')
+    assert not sdfg.arrays['arr'].const_init
     # Dataflow untouched.
     assert t0 in s0.nodes()
     assert t2 in s2.nodes()
@@ -489,7 +489,7 @@ def test_multiwrite_overlapping_not_marked():
     kinds = (res or {}).get(sdfg.cfg_id, {})
     assert 'arr' not in kinds
     assert 'arr' not in sdfg.constants
-    assert not vars(sdfg.arrays['arr']).get('const_init')
+    assert not sdfg.arrays['arr'].const_init
     assert t1 in s1.nodes()
     assert t2 in s2.nodes()
 

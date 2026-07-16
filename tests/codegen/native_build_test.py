@@ -9,7 +9,10 @@ an unexpected error. A handful of gated end-to-end tests then actually build + r
 program under ``compiler.build_mode = native``.
 """
 import ctypes.util
+import glob
 import os
+import subprocess
+import time
 
 import numpy as np
 import pytest
@@ -66,6 +69,31 @@ def test_classify_library():
     assert '-lfoo' in spec.link_flags and '-L/x' in spec.link_flags
 
 
+def test_classify_library_filename_becomes_stem():
+    """A library FILENAME must be reduced to its ``-l`` stem, exactly as CMake does.
+
+    ``ctypes.util.find_library`` (used by the OpenBLAS environment) returns names like
+    ``libblas.so.3``, and the reference ScaLAPACK environments hardcode ``libscalapack-mpich.so``.
+    Emitting those verbatim yields ``-llibblas.so.3``, which ld cannot resolve.
+    """
+    spec = nc._LinkSpec()
+    for lib in ('libblas.so.3', 'libopenblas.so.0', 'liblapacke.so.3', 'libscalapack-mpich.so', 'libfoo.a'):
+        nc._classify_library(spec, lib)
+    assert spec.libs == ['blas', 'openblas', 'lapacke', 'scalapack-mpich', 'foo']
+
+
+def test_resolve_splits_multi_token_flag_strings():
+    """An environment may return several flags in ONE string (IntelMKLScaLAPACKMPICH returns its
+    whole link line that way). CMake lets the shell tokenize it; native must tokenize too, or the
+    string arrives as a single unusable argv element and the -l libraries never reach ld."""
+    env = _make_env(cmake_link_flags=['-L /opt/mkl/lib -lmkl_scalapack_lp64 -Wl,--no-as-needed -lmkl_core -ldl'],
+                    cmake_compile_flags=['-m64 -DMKL_ILP64'])
+    spec = nc._LinkSpec()
+    nc._resolve_environment(env, spec)
+    assert spec.link_flags == ['-L', '/opt/mkl/lib', '-lmkl_scalapack_lp64', '-Wl,--no-as-needed', '-lmkl_core', '-ldl']
+    assert spec.compile_flags == ['-m64', '-DMKL_ILP64']
+
+
 def test_is_deferred():
     assert nc._is_deferred('${MPI_CXX_LIBRARIES}')
     assert nc._is_deferred('-I${MPI_CXX_HEADER_DIR}')
@@ -74,32 +102,69 @@ def test_is_deferred():
 
 
 def test_cuda_arch_flags_auto():
-    """The local GPU is always targeted via ``-arch=native``, with no extra archs for auto/empty."""
+    """The local GPU is targeted via ``-arch=native``, nvcc's own detection."""
     for value in ('auto', 'native', ''):
         with set_temporary('compiler', 'cuda', 'cuda_arch', value=value):
             assert nc._cuda_arch_flags(None) == ['-arch=native']
 
 
-def test_cuda_arch_flags_explicit_additional():
-    """Explicit architectures are appended as additional ``-gencode`` targets on top of native."""
+def test_cuda_arch_flags_ignores_cuda_arch_when_gpu_detected():
+    """cuda_arch is a FALLBACK, not an addition -- matching what CMake targets.
+
+    CMake reads DACE_CUDA_ARCHITECTURES_DEFAULT only when local detection fails, so compiling the
+    configured archs on top of the detected one would emit architectures the cmake build never
+    produces (a fatter binary and a slower compile). With the shipped default of '60' that would
+    silently double the arch count of every native GPU build on a toolkit that still supports sm_60.
+    """
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='80,90'):
-        assert nc._cuda_arch_flags({80, 90}) == [
-            '-arch=native', '-gencode', 'arch=compute_80,code=sm_80', '-gencode', 'arch=compute_90,code=sm_90'
-        ]
+        assert nc._cuda_arch_flags({80, 90}) == ['-arch=native']
 
 
 def test_cuda_arch_flags_skips_unsupported():
     """An architecture the toolkit dropped (e.g. sm_60 on CUDA 13) is skipped, not fatal -- so a
-    stale cuda_arch default never breaks the build; the local GPU is still covered by native."""
-    with set_temporary('compiler', 'cuda', 'cuda_arch', value='60'):
-        assert nc._cuda_arch_flags({80, 89}) == ['-arch=native']
+    stale cuda_arch default never breaks a fallback build."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='60,80'):
+        assert nc._cuda_arch_flags({80, 89}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
+
+
+def test_cuda_build_type_flags_are_nvcc_safe():
+    """nvcc must never be handed the host's ``-Os``: it rejects it outright with
+    ``nvcc fatal : 's': expected a number``, so MinSizeRel maps to -O1 for CUDA. That is why the CUDA
+    build-type table is separate from the host one -- do not merge them back together."""
+    assert set(nc._CUDA_BUILD_TYPE_FLAGS) == set(nc._BUILD_TYPE_FLAGS), 'every build_type needs CUDA flags'
+    for build_type, flags in nc._CUDA_BUILD_TYPE_FLAGS.items():
+        assert '-Os' not in flags, f'{build_type} would pass -Os to nvcc, which is fatal'
+    assert nc._CUDA_BUILD_TYPE_FLAGS['MinSizeRel'] == ['-O1', '-DNDEBUG']
+
+
+def test_cuda_arch_flags_normalizes_prefixed_tokens():
+    """'sm_90'/'compute_80' are canonical nvcc spellings; interpolating them raw would emit the
+    unbuildable 'arch=compute_sm_90,code=sm_sm_90', so the prefix must be stripped first."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='sm_90'):
+        assert nc._cuda_arch_flags({90}, allow_native=False) == ['-gencode', 'arch=compute_90,code=sm_90']
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='compute_80'):
+        assert nc._cuda_arch_flags({80}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
+
+
+def test_cuda_arch_flags_ignores_native_token_in_list():
+    """A 'native' entry inside the fallback list cannot be emitted as a -gencode: it would produce
+    'arch=compute_native'. On a host with no GPU to detect, it is simply skipped."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='native,80'):
+        assert nc._cuda_arch_flags({80}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
+
+
+def test_cuda_arch_flags_skips_unparseable():
+    """An entry that is not an architecture at all is warned about and skipped, never interpolated."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='garbage,80'):
+        with pytest.warns(UserWarning, match='unparseable'):
+            assert nc._cuda_arch_flags({80}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
 
 
 def test_cuda_arch_flags_feature_suffix():
     """An architecture token with a feature suffix (e.g. '90a') is emitted verbatim; only its numeric
     part is matched against the supported set, so int() never chokes on the letter."""
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='90a'):
-        assert nc._cuda_arch_flags({90}) == ['-arch=native', '-gencode', 'arch=compute_90a,code=sm_90a']
+        assert nc._cuda_arch_flags({90}, allow_native=False) == ['-gencode', 'arch=compute_90a,code=sm_90a']
 
 
 def test_cuda_arch_flags_no_native_uses_explicit():
@@ -119,15 +184,6 @@ def test_cuda_arch_flags_no_native_no_arch_errors():
                 nc._cuda_arch_flags(None, allow_native=False)
 
 
-def test_lib_subdir(tmp_path):
-    """_lib_subdir prefers lib64, falls back to lib (used by the HIP/ROCm path)."""
-    os.makedirs(tmp_path / 'lib64')
-    assert nc._lib_subdir(str(tmp_path)) == str(tmp_path / 'lib64')
-    root2 = tmp_path / 'r2'
-    os.makedirs(root2 / 'lib')
-    assert nc._lib_subdir(str(root2)) == str(root2 / 'lib')
-
-
 # ---------------------------------------------------------------------------
 # Per-environment resolution
 # ---------------------------------------------------------------------------
@@ -141,8 +197,10 @@ def test_every_library_environment_resolves_or_errors_clearly(env):
     try:
         nc._resolve_environment(env, spec)
     except cgx.CompilerConfigurationError:
-        pass  # acceptable: e.g. MPI wrapper or ROCm not installed on this machine
+        return  # acceptable: e.g. MPI wrapper or ROCm not installed on this machine
     # Resolution must not have crashed with anything else, and any produced fragments are strings.
+    # This says little on its own (it is vacuously true for an empty spec); the tests below pin the
+    # actual resolved content per shape -- bare name, library filename, and multi-token flag string.
     for bucket in (spec.includes, spec.libs, spec.libdirs, spec.link_flags, spec.compile_flags):
         assert all(isinstance(x, str) for x in bucket)
 
@@ -162,6 +220,14 @@ def test_resolve_drops_deferred_cmake_vars():
     spec = nc._LinkSpec()
     nc._resolve_environment(env, spec)
     assert not any('${' in x for x in spec.libs + spec.link_flags + spec.compile_flags + spec.includes)
+
+
+def test_resolve_unbalanced_flag_gives_clear_error():
+    """A malformed flag string (unbalanced quote) must surface as CompilerConfigurationError, not a
+    bare shlex ValueError -- the resolver's contract is that anything it cannot handle raises clearly."""
+    env = _make_env(name='BadFlags', cmake_compile_flags=['-DMSG="unterminated'])
+    with pytest.raises(cgx.CompilerConfigurationError, match='BadFlags'):
+        nc._resolve_environment(env, nc._LinkSpec())
 
 
 def test_resolve_cmake_files_rejected():
@@ -190,8 +256,80 @@ def test_resolve_mpi_missing_wrapper_errors_clearly():
 # ---------------------------------------------------------------------------
 
 
-def _blas_loadable():
-    return any(ctypes.util.find_library(n) for n in ('openblas', 'blas', 'cblas', 'mkl_rt', 'mkl_rt.1'))
+def _blas_buildable():
+    """A BLAS library is loadable AND its dev headers are on the compiler's include path.
+
+    The BLAS matmul test forces the OpenBLAS expansion, which ``#include``s cblas.h/lapacke.h. Gating
+    on the .so alone would turn a headers-missing host into a hard CompilationError (which the test's
+    CompilerConfigurationError guard does not catch) instead of a clean skip. Ask the preprocessor
+    rather than guessing include paths.
+    """
+    if not any(ctypes.util.find_library(n) for n in ('openblas', 'blas', 'cblas', 'mkl_rt', 'mkl_rt.1')):
+        return False
+    for header in ('cblas.h', 'lapacke.h'):
+        probe = subprocess.run(['cc', '-E', '-x', 'c', '-'],
+                               input=f'#include <{header}>\n',
+                               capture_output=True,
+                               text=True)
+        if probe.returncode != 0:
+            return False
+    return True
+
+
+def test_unknown_build_mode_raises(tmp_path):
+    """A typo'd compiler.build_mode must raise a clear error, not silently fall back to cmake."""
+
+    @dace.program
+    def inc(a: dace.float64[8]):
+        a[:] = a + 1.0
+
+    sdfg = inc.to_sdfg()
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'build_mode', value='cmakee'):
+        with pytest.raises(cgx.CompilerConfigurationError, match='build_mode'):
+            sdfg.compile()
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_native_rejects_hip_backend(tmp_path):
+    """Native mode is CUDA-only: a HIP/ROCm backend must raise a clear error, not crash downstream
+    on a half-wired code path."""
+    from dace.transformation.interstate import GPUTransformSDFG
+
+    @dace.program
+    def inc(a: dace.float64[16]):
+        a[:] = a + 1.0
+
+    sdfg = inc.to_sdfg()
+    sdfg.apply_transformations(GPUTransformSDFG)
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'cuda', 'backend', value='hip'):
+        with set_temporary('compiler', 'build_mode', value='native'):
+            with pytest.raises(cgx.CompilerConfigurationError, match='HIP'):
+                sdfg.compile()
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_cmake_build_still_works(tmp_path):
+    """The default cmake backend (extracted into its own function) still builds + runs -- guards the
+    refactor that split configure_and_compile into native/cmake dispatch."""
+
+    @dace.program
+    def axpy_cmake(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+        c[:] = 2.0 * a + b
+
+    a = np.random.rand(32)
+    b = np.random.rand(32)
+    c = np.zeros(32)
+    sdfg = axpy_cmake.to_sdfg()
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'build_mode', value='cmake'):
+        csdfg = sdfg.compile()
+    lib = str(csdfg._lib._library_filename)
+    stub = os.path.join(os.path.dirname(lib), 'libdacestub_' + os.path.basename(lib)[3:])
+    assert os.path.isfile(lib) and os.path.isfile(stub)
+    csdfg(a=a, b=b, c=c)
+    assert np.allclose(c, 2.0 * a + b)
 
 
 @pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
@@ -217,27 +355,93 @@ def test_native_build_plain_cpu(tmp_path):
     assert np.allclose(c, 2.0 * a + b)
 
 
-@pytest.mark.skipif(os.name != 'posix' or not _blas_loadable(), reason='no BLAS available')
+@pytest.mark.skipif(os.name != 'posix' or not _blas_buildable(), reason='no BLAS + dev headers available')
 def test_native_build_blas_matmul(tmp_path):
-    """A BLAS library node (matmul) builds + runs correctly under native mode."""
+    """A real BLAS library node (matmul) builds + runs correctly under native mode.
+
+    ``blas.default_implementation`` MUST be forced: with the stock config the matmul expands to
+    ExpandGemmPure (plain generated loops, no environment at all), so the test would pass without
+    ever resolving or linking a BLAS library -- i.e. providing zero coverage of the very link path
+    it exists to protect.
+    """
+    import dace.libraries.blas as blas
     n = 48
+    previous = blas.default_implementation
+    blas.default_implementation = 'OpenBLAS'
+    try:
+
+        @dace.program
+        def mm(x: dace.float64[n, n], y: dace.float64[n, n], z: dace.float64[n, n]):
+            z[:] = x @ y
+
+        x = np.random.rand(n, n)
+        y = np.random.rand(n, n)
+        z = np.zeros((n, n))
+        sdfg = mm.to_sdfg()
+        sdfg.build_folder = str(tmp_path / 'cache')
+        with set_temporary('compiler', 'build_mode', value='native'):
+            try:
+                csdfg = sdfg.compile()
+            except cgx.CompilerConfigurationError as ex:
+                pytest.skip(f'native BLAS resolution unavailable here: {ex}')
+        csdfg(x=x, y=y, z=z)
+        assert np.allclose(z, x @ y)
+    finally:
+        blas.default_implementation = previous
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_native_incremental_rebuild_and_invalidation(tmp_path):
+    """The staleness machinery must reuse everything on an identical rebuild and rebuild when an
+    input actually changes -- neither half was covered, since every other test builds exactly once.
+
+    ``configure_and_compile`` is driven directly on one program folder: calling ``sdfg.compile()``
+    twice would rename the SDFG (it is still loaded) and build a different program instead.
+    """
+    from dace.codegen import codegen, compiler
 
     @dace.program
-    def mm(x: dace.float64[n, n], y: dace.float64[n, n], z: dace.float64[n, n]):
-        z[:] = x @ y
+    def incr(a: dace.float64[16]):
+        a[:] = a + 1.0
 
-    x = np.random.rand(n, n)
-    y = np.random.rand(n, n)
-    z = np.zeros((n, n))
-    sdfg = mm.to_sdfg()
-    sdfg.build_folder = str(tmp_path / 'cache')
+    sdfg = incr.to_sdfg()
+    program_folder = compiler.generate_program_folder(sdfg, codegen.generate_code(sdfg), str(tmp_path / 'prog'))
+    build = os.path.join(program_folder, 'build')
+
+    def build_products():
+        """Objects + the program library. The loader stub is excluded on purpose: it is built from a
+        fixed dacestub.cpp with fixed flags, so it is correctly unaffected by source/flag changes."""
+        artifacts = glob.glob(os.path.join(build, '*.o')) + glob.glob(os.path.join(build, 'lib*.so'))
+        return [p for p in artifacts if 'dacestub' not in os.path.basename(p)]
+
     with set_temporary('compiler', 'build_mode', value='native'):
-        try:
-            csdfg = sdfg.compile()
-        except cgx.CompilerConfigurationError as ex:
-            pytest.skip(f'native BLAS resolution unavailable here: {ex}')
-    csdfg(x=x, y=y, z=z)
-    assert np.allclose(z, x @ y)
+        compiler.configure_and_compile(program_folder)
+        products = build_products()
+        assert products, 'native build produced no objects/library'
+        stamps = {p: os.path.getmtime(p) for p in products}
+
+        # (a) identical inputs -> the fast path fires: nothing is recompiled or relinked.
+        compiler.configure_and_compile(program_folder)
+        for product, stamp in stamps.items():
+            assert os.path.getmtime(product) == stamp, f'{os.path.basename(product)} rebuilt on a no-op build'
+
+        # (b) a changed header must invalidate the objects (touch the generated include, not a repo
+        # file, so the test never mutates the source tree).
+        generated_header = glob.glob(os.path.join(program_folder, 'include', '*.h'))
+        assert generated_header, 'expected a generated include header'
+        os.utime(generated_header[0], (time.time() + 1, time.time() + 1))
+        compiler.configure_and_compile(program_folder)
+        objects = [p for p in stamps if p.endswith('.o')]
+        for obj in objects:
+            assert os.path.getmtime(obj) > stamps[obj], f'{os.path.basename(obj)} not rebuilt after a header change'
+
+    # (c) changed flags must invalidate too: the .cmd sidecar records the exact command.
+    after_header = {p: os.path.getmtime(p) for p in products}
+    with set_temporary('compiler', 'build_mode', value='native'):
+        with set_temporary('compiler', 'build_type', value='Debug'):
+            compiler.configure_and_compile(program_folder)
+    for product, stamp in after_header.items():
+        assert os.path.getmtime(product) > stamp, f'{os.path.basename(product)} not rebuilt after a flag change'
 
 
 @pytest.mark.gpu
@@ -272,7 +476,7 @@ if __name__ == '__main__':
     test_classify_library()
     test_is_deferred()
     test_cuda_arch_flags_auto()
-    test_cuda_arch_flags_explicit_additional()
+    test_cuda_arch_flags_ignores_cuda_arch_when_gpu_detected()
     test_cuda_arch_flags_skips_unsupported()
     test_cuda_arch_flags_feature_suffix()
     test_cuda_arch_flags_no_native_uses_explicit()

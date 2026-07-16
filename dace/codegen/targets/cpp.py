@@ -63,7 +63,8 @@ def const_scalar_by_value() -> bool:
     generator always binds by reference, so its output stays byte-identical. The two forms are
     semantically identical -- which is faster is a backend artifact (see the config description),
     so it is a knob rather than a hardcoded choice."""
-    return (readable_cpu_codegen_active() and Config.get('compiler', 'cpu', 'const_scalar_abi') == 'by_value')
+    return (readable_cpu_codegen_active()
+            and Config.get('compiler', 'cpu', 'codegen_params', 'const_scalar_abi') == 'by_value')
 
 
 def copy_expr(
