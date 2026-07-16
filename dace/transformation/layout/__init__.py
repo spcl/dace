@@ -3,6 +3,7 @@
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 from dace.transformation.layout.split_dimensions import SplitDimensions
 from dace.transformation.layout.unblock_dimensions import UnblockDimensions
+from dace.transformation.layout.untile_loops_and_blocks import UntileLoopsAndBlocks
 from dace.transformation.layout.pad_dimensions import PadDimensions
 from dace.transformation.layout.block_aware_map_tiling import BlockAwareMapTiling
 from dace.transformation.layout.normalize_schedule import NormalizeScheduleForLayout, normalize_schedule_for_layout

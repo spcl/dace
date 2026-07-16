@@ -20,6 +20,7 @@ import warnings
 
 from dace import SDFG, data
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
+from dace.transformation.layout.untile_loops_and_blocks import UntileLoopsAndBlocks
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 from dace.transformation.passes.remove_views import RemoveViews
@@ -56,6 +57,14 @@ def prepare_for_layout(sdfg: SDFG, target: str = 'cpu', validate: bool = True) -
     :param validate: validate after each major step.
     :return: the same ``sdfg``, normalized.
     """
+    # 0. Untile+unblock any manually-tiled nest whose body reaches an array through matching
+    #    block/inner tile indices (``A[..., int_floor(i, K), ii]``), returning array AND schedule
+    #    to packed-C together. This MUST run before ``canonicalize`` -- canonicalize runs the plain
+    #    ``UntileLoops``, which would collapse the tile loop (or refuse and leave it) before the
+    #    array-unblock coordination can see the loop and the blocked array together. A strict no-op
+    #    on any nest that is not blocked+tiled.
+    UntileLoopsAndBlocks().apply_pass(sdfg, {})
+
     # 1. Canonicalize: front-stage RemoveViews cleans views, loop nests are
     #    normalized (Truemper), einsum/reduce are lifted, and LoopToMap stages
     #    parallelize. This is the "parallelize first" step.
