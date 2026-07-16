@@ -12,7 +12,7 @@ CPU instance, so these changes also apply inside ``__global__`` kernels.
 """
 import ast
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import numpy
 from pygments.lexers import CppLexer
@@ -97,7 +97,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # (= per output file), so an array used on both the host (.cpp) and a device kernel (.cu)
         # gets its definition in each file. Index and size helpers share the set (names never
         # collide: ``A_idx`` vs ``A_size``).
-        self._emitted_functions: Dict[int, Set[str]] = {}
+        self._emitted_functions: Dict[Union[int, str], Set[str]] = {}
         # (base-name, signature) -> emitted function name, so one shape reuses a function while
         # two same-named arrays of different shape (e.g. a connector-derived ``_out`` that is 1-D
         # in one inlined SDFG and 2-D in another) get distinct helpers, not a colliding name with
@@ -524,7 +524,16 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # post-pass). A device (.cu) file is generated through a delegating GPU codegen that sets
         # ``calling_codegen`` to itself, so its streams keep the per-stream emitted-set and their own
         # copy, exactly as before.
-        file_key = id(self) if self.calling_codegen is self else id(function_stream)
+        #
+        # ``_current_tu_key`` (not a bare ``id(self)``) names the host file being generated RIGHT NOW.
+        # It equals ``id(self)`` -- the frame .cpp -- for the whole host build unless
+        # ``split_nsdfg_translation_units`` is on, in which case ``_generate_NestedSDFG`` re-points it
+        # at the nest's own buffer while that nest is generated. Without that, a helper already emitted
+        # into the frame TU (say ``A_idx``) would be seen as emitted and SKIPPED in a split nest's TU
+        # that also indexes ``A``, leaving that TU referencing an undefined ``A_idx``. Keying on
+        # ``id(function_stream)`` instead is NOT the fix: many host streams feed the one frame TU, and
+        # that is exactly the duplicate-definition bug the file-owner key exists to prevent.
+        file_key = self._current_tu_key if self.calling_codegen is self else id(function_stream)
         emitted = self._emitted_functions.setdefault(file_key, set())
         for registry in (self._index_functions, self._size_functions):
             for name, defn in registry.items():

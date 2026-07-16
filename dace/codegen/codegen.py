@@ -222,6 +222,19 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Per-nest translation units: wrap each top-level map-nest / loop region of the root SDFG in its
+    # own ``no_inline`` nested SDFG, which the CPU code generator then emits to its own .cpp (the
+    # ``do_split`` path in ``_generate_NestedSDFG``). Structural and codegen-agnostic, so it serves the
+    # legacy and readable generators alike -- but it must run BEFORE the readable generator's
+    # InlineSDFG sweep below, which would otherwise inline the nests straight back (``no_inline``
+    # stops that, and this ordering keeps the intent explicit). After ``expand_library_nodes`` so an
+    # expanded library node is inside the nest it belongs to, not left behind at the top level.
+    if config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units'):
+        from dace.transformation.passes.outline_top_level_nests import outline_top_level_nests
+        outline_top_level_nests(sdfg)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+
     # Experimental readable generator: flatten nested SDFGs (so the connector-free + index-function
     # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
     # const/constexpr and inline tasklet connectors. After library expansion so post-expansion

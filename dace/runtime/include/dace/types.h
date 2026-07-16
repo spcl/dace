@@ -13,10 +13,24 @@
 #undef __out
 #define DACE_EXPORTED extern "C" __declspec(dllexport)
 #define DACE_PRAGMA(x) __pragma(x)
+// A symbol is not exported from a DLL unless it is explicitly dllexport'ed, so
+// "hidden" is already the default and the attribute has no MSVC equivalent.
+#define DACE_HIDDEN
 #else
 #define DACE_ALIGN(N) __attribute__((aligned(N)))
 #define DACE_EXPORTED extern "C"
 #define DACE_PRAGMA(x) _Pragma(#x)
+// Internal linkage-visibility for a definition that is shared ACROSS generated
+// translation units but must not appear in the shared library's public ABI --
+// specifically a nested-SDFG function emitted to its own .cpp under
+// ``compiler.cpu.codegen_params.split_nsdfg_translation_units``. The function
+// keeps EXTERNAL linkage (so the static linker resolves the call from the frame
+// object), while hidden visibility keeps it out of the dynamic symbol table and
+// lets the linker/ThinLTO re-inline it. Applied per-declaration on purpose: a
+// global -fvisibility=hidden would also hide __dace_init_* / __dace_exit_* (only
+// ``extern "C"`` via DACE_EXPORTED on Linux, not dllexport-annotated) and break
+// loading the program.
+#define DACE_HIDDEN __attribute__((visibility("hidden")))
 #endif
 
 // Portable full-unroll hint for fixed-width (constexpr-bounded) lane loops in

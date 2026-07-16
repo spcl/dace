@@ -509,9 +509,22 @@ def _cmake_configure_and_build(program_folder,
     """
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+    # Prefer the Ninja generator when it is available: the default generator on Linux is Make, whose
+    # per-directory dependency graph serializes more of the build than Ninja's global one. This matters
+    # most together with ``split_nsdfg_translation_units``, which exists to turn one big translation
+    # unit into several that can then compile concurrently. Absence of ninja is NOT an error -- fall
+    # back to the default generator, which builds the same sources with the same flags.
+    # Not on Windows: the ``-A x64`` platform flag above is a Visual Studio generator option and CMake
+    # rejects it for Ninja, so Windows keeps its existing generator untouched.
+    use_ninja = os.name != 'nt' and shutil.which('ninja') is not None
+    if not use_ninja and Config.get_bool('debugprint'):
+        print('ninja not found on PATH; using the default CMake generator')
+
     cmake_command = [
         "cmake",
         "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
+        '-G Ninja' if use_ninja else "",
         '"' + os.path.join(dace_path, "codegen") + '"',
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
@@ -584,9 +597,14 @@ def _cmake_configure_and_build(program_folder,
     with open(cmake_filename, "w") as fp:
         fp.write(cmake_command)
 
-    # Compile and link
+    # Compile and link. ``cmake --build .`` drives whichever generator was configured (Ninja included),
+    # so the invocation does not branch on the generator. ``--parallel`` is what actually bounds the
+    # build: Make would otherwise be serial, and Ninja would otherwise use every core -- neither is what
+    # we want on a shared machine. See ``compiler.build_jobs``.
+    build_jobs = max(1, int(Config.get('compiler', 'build_jobs')))
     try:
-        _run_liveoutput("cmake --build . --config %s" % (Config.get('compiler', 'build_type')),
+        _run_liveoutput("cmake --build . --config %s --parallel %d" %
+                        (Config.get('compiler', 'build_type'), build_jobs),
                         shell=True,
                         cwd=build_folder,
                         output_stream=output_stream,

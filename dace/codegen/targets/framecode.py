@@ -129,17 +129,29 @@ class DaCeCodeGenerator(object):
             else:
                 callsite_stream.write("constexpr %s %s = %s;\n" % (csttype.dtype.ctype, cstname, sym2cpp(cstval)), sdfg)
 
-    def generate_fileheader(self, sdfg: SDFG, global_stream: CodeIOStream, backend: str = 'frame'):
+    def generate_fileheader(self,
+                            sdfg: SDFG,
+                            global_stream: CodeIOStream,
+                            backend: str = 'frame',
+                            include_hash: bool = True):
         """ Generate a header in every output file that includes custom types
             and constants.
 
             :param sdfg: The input SDFG.
             :param global_stream: Stream to write to (global).
             :param backend: Whose backend this header belongs to.
+            :param include_hash: Whether to include ``include/hash.h``. Only meaningful for the
+                                 ``frame`` backend, and only the frame code actually uses the
+                                 ``__HASH_<name>`` macro it defines (to name an instrumentation
+                                 report). The include is written with a path relative to the frame's
+                                 own directory (``src/<target>/``), so a file emitted one level
+                                 deeper -- a split nested-SDFG translation unit under
+                                 ``src/cpu/nsdfg/`` -- must pass False and would otherwise fail to
+                                 resolve the include.
         """
         from dace.codegen.targets.cpp import mangle_dace_state_struct_name  # Avoid circular import
         # Hash file include
-        if backend == 'frame':
+        if backend == 'frame' and include_hash:
             global_stream.write('#include "../../include/hash.h"\n', sdfg)
 
         #########################################################

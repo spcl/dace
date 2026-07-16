@@ -193,6 +193,27 @@ required:
                     Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
                     anything it cannot resolve without cmake.
 
+            build_jobs:
+                type: int
+                default: 4
+                title: Parallel compile jobs for the CMake build
+                description: >
+                    How many source files the CMake build may compile concurrently
+                    (passed as ``cmake --build . --parallel <N>``). Applies to
+                    ``build_mode: cmake``.
+
+                    Deliberately a SMALL default rather than the core count: builds
+                    often share a machine, and each concurrent C++ compile of a
+                    generated file can take a lot of memory, so an unbounded build is
+                    a good way to run a box out of RAM. Raise it on a machine you own.
+
+                    This is what makes
+                    ``compiler.cpu.codegen_params.split_nsdfg_translation_units``
+                    pay off: that knob turns one huge translation unit into several,
+                    and this one lets them compile at the same time. With the Ninja
+                    generator (used automatically when ``ninja`` is on PATH) the bound
+                    is also what keeps Ninja from defaulting to every core.
+
             allow_shadowing:
                 type: bool
                 default: true
@@ -453,6 +474,48 @@ required:
                                     faster / 18 slower in rust#82834; ``!noalias`` has even DISABLED
                                     vectorization via GVN load-PRE in llvm#38583), which is why it is a
                                     knob and not a hardcode. ``restrict`` reproduces today's output.
+                            split_nsdfg_translation_units:
+                                type: bool
+                                default: false
+                                title: Emit each top-level nested SDFG as its own translation unit
+                                description: >
+                                    Applies to: legacy AND experimental_readable.
+
+                                    Split codegen output so that each TOP-LEVEL nested SDFG becomes its
+                                    own ``.cpp``. When on, ``OutlineTopLevelNests`` first wraps every
+                                    top-level map-nest / loop region of the root SDFG in a ``no_inline``
+                                    nested SDFG, and each such nest is emitted to
+                                    ``src/cpu/nsdfg/<label>.cpp`` instead of being written into the one
+                                    frame ``.cpp``. The frame keeps a forward declaration and the call.
+
+                                    This is a BUILD-PARALLELISM tactic, not a codegen-quality one: one
+                                    huge TU is compiled by exactly one core, so a big SDFG serializes
+                                    the build. N translation units let the CMake Ninja generator (used
+                                    automatically when ``ninja`` is on PATH) compile them concurrently.
+
+                                    The nest function is called across the TU boundary as a normal
+                                    IN-BINARY function -- forward-declared, external linkage, and
+                                    ``DACE_HIDDEN`` (hidden visibility) so it stays out of the shared
+                                    library's public ABI. It is NOT a separate ``.so`` and is NOT
+                                    ``dlopen``ed; the static linker resolves the cross-object call.
+                                    (Unrelated to ``NestedSDFG.ext_sdfg_path``, which is a runtime lazy
+                                    LOADER and does not touch codegen.)
+
+                                    COST: splitting puts the nest body behind a TU boundary, so the
+                                    compiler can no longer inline it into the frame or specialize it on
+                                    the call site. Recover that with ThinLTO -- add ``-flto=thin`` to
+                                    ``compiler.cpu.args`` and to ``compiler.linker.args``, which keeps
+                                    the cross-TU inlining while staying parallel and bounded in memory.
+                                    NEVER use plain ``-flto`` (monolithic LTO): it merges every TU into
+                                    one serial link-time module, which both destroys the parallelism
+                                    this knob buys and can exhaust RAM on a small machine. ThinLTO is
+                                    strictly OPT-IN and CORRECTNESS DOES NOT DEPEND ON IT -- it only
+                                    affects whether the cross-TU call is re-inlined.
+
+                                    Default ``false`` reproduces today's output BYTE-IDENTICALLY for
+                                    both generators: every split path is gated on this key, so when it
+                                    is off the nest bodies are written inline into the single frame
+                                    ``.cpp`` exactly as before.
                             index_fn_qualifier:
                                 type: str
                                 default: inline_constexpr
