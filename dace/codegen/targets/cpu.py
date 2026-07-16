@@ -2388,24 +2388,31 @@ class CPUCodeGen(TargetCodeGenerator):
         code_already_generated = False
         if unique_functions and not inline:
             hash = node.sdfg.hash_sdfg()
+            # Dedup is per OUTPUT FILE, not per whole build: _current_tu_key names the TU being emitted
+            # right now (id(self) -- the frame .cpp -- unless split_nsdfg_translation_units re-points it
+            # at a nest's own .cpp). Keying on it means an inner nest shared by two split top-level nests
+            # is RE-EMITTED into each of their TUs (as an ``inline`` definition, which is ODR-legal across
+            # TUs) instead of being emitted into the first and only CALLED -- with no definition -- from
+            # the second, which would not link. With the flag off _current_tu_key is invariantly
+            # id(self), so this reduces to the old single-key behaviour and the output stays byte-identical.
             if unique_functions_hash:
                 # Use hashing to check whether this Nested SDFG has been already generated. If that is the case,
                 # use the saved name to call it, otherwise save the hash and the associated name
-                if hash in self._generated_nested_sdfg:
+                if (self._current_tu_key, hash) in self._generated_nested_sdfg:
                     code_already_generated = True
-                    sdfg_label = self._generated_nested_sdfg[hash]
+                    sdfg_label = self._generated_nested_sdfg[(self._current_tu_key, hash)]
                 else:
-                    self._generated_nested_sdfg[hash] = sdfg_label
+                    self._generated_nested_sdfg[(self._current_tu_key, hash)] = sdfg_label
             else:
                 # Use the SDFG label to check if this has been already code generated.
                 # Check the hash of the formerly generated SDFG to check that we are not
                 # generating different SDFGs with the same name
-                if sdfg_label in self._generated_nested_sdfg:
+                if (self._current_tu_key, sdfg_label) in self._generated_nested_sdfg:
                     code_already_generated = True
-                    if hash != self._generated_nested_sdfg[sdfg_label]:
+                    if hash != self._generated_nested_sdfg[(self._current_tu_key, sdfg_label)]:
                         raise ValueError(f'Different Nested SDFGs have the same unique name: {sdfg_label}')
                 else:
-                    self._generated_nested_sdfg[sdfg_label] = hash
+                    self._generated_nested_sdfg[(self._current_tu_key, sdfg_label)] = hash
 
         #########################################
         # Take care of nested SDFG I/O (arguments)
