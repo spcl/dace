@@ -139,7 +139,7 @@ def test_every_library_environment_resolves_or_errors_clearly(env):
     CompilerConfigurationError -- never an unrelated exception."""
     spec = nc._LinkSpec()
     try:
-        nc._resolve_environment(env, spec, dict(os.environ))
+        nc._resolve_environment(env, spec)
     except cgx.CompilerConfigurationError:
         pass  # acceptable: e.g. MPI wrapper or ROCm not installed on this machine
     # Resolution must not have crashed with anything else, and any produced fragments are strings.
@@ -151,7 +151,7 @@ def test_resolve_cublas_bare_name():
     """cuBLAS declares ``cmake_libraries = ['cublas']`` -- native must turn it into ``-lcublas``
     (the ``-L`` for the toolkit is added separately when a CUDA target is present)."""
     spec = nc._LinkSpec()
-    nc._resolve_environment(blas_envs.cuBLAS, spec, dict(os.environ))
+    nc._resolve_environment(blas_envs.cuBLAS, spec)
     assert 'cublas' in spec.libs
 
 
@@ -160,7 +160,7 @@ def test_resolve_drops_deferred_cmake_vars():
     leak the unexpanded token onto the link line."""
     env = _make_env(cmake_libraries=['${MPI_CXX_LIBRARIES}'], cmake_compile_flags=['-I${MPI_CXX_HEADER_DIR}'])
     spec = nc._LinkSpec()
-    nc._resolve_environment(env, spec, dict(os.environ))
+    nc._resolve_environment(env, spec)
     assert not any('${' in x for x in spec.libs + spec.link_flags + spec.compile_flags + spec.includes)
 
 
@@ -168,21 +168,21 @@ def test_resolve_cmake_files_rejected():
     """An environment shipping a ``.cmake`` script cannot be honored without CMake."""
     env = _make_env(name='NeedsCMake', cmake_files=['find_thing.cmake'])
     with pytest.raises(cgx.CompilerConfigurationError, match='CMake files'):
-        nc._resolve_environment(env, nc._LinkSpec(), dict(os.environ))
+        nc._resolve_environment(env, nc._LinkSpec())
 
 
 def test_resolve_unknown_package_rejected():
     """An environment needing an unimplemented ``find_package`` must raise, not silently drop it."""
     env = _make_env(name='NeedsFindPackage', cmake_packages=['SomeExoticPackage'])
     with pytest.raises(cgx.CompilerConfigurationError, match='find_package'):
-        nc._resolve_environment(env, nc._LinkSpec(), dict(os.environ))
+        nc._resolve_environment(env, nc._LinkSpec())
 
 
 def test_resolve_mpi_missing_wrapper_errors_clearly():
     """MPI resolves through the wrapper compiler; a missing wrapper must give an actionable error."""
     with set_temporary('compiler', 'mpi', 'executable', value='/nonexistent/mpicxx-xyz'):
         with pytest.raises(cgx.CompilerConfigurationError, match='MPI'):
-            nc._resolve_environment(mpi_envs.MPI, nc._LinkSpec(), dict(os.environ))
+            nc._resolve_environment(mpi_envs.MPI, nc._LinkSpec())
 
 
 # ---------------------------------------------------------------------------
