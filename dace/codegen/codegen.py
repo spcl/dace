@@ -232,6 +232,14 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
         sdfg.validate()
 
+        # The readable ``<arr>_idx`` / ``<arr>_size`` helpers are ``constexpr``; when they are reached
+        # from device code, nvcc needs ``--expt-relaxed-constexpr`` to evaluate a host/device constexpr
+        # in a constant context. Ensure it is on the CUDA flags (idempotent) so a GPU build under the
+        # readable generator compiles without a manual config edit.
+        cuda_args = config.Config.get('compiler', 'cuda', 'args')
+        if '--expt-relaxed-constexpr' not in cuda_args:
+            config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
+
     frame = framecode.DaCeCodeGenerator(sdfg)
 
     # Test for undefined symbols in SDFG arguments
