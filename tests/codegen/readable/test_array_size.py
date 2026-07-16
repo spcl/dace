@@ -226,7 +226,9 @@ def test_ipow_size_helper(require_experimental):
     code = experimental_code(build, 'ipowsize_inspect')
     definition = size_helper_definition(code, 'T')
     assert 'constexpr' in definition and 'long long N' in definition, definition
-    assert '(N * N)' in definition, definition
+    # RelaxIntegerPowers lowers ``N**2`` to ``ipow(N, 2)``; ``ipow`` is a constexpr runtime helper, so
+    # the constexpr size function may call it directly (see dace/runtime/include/dace/math.h).
+    assert 'ipow(N, 2)' in definition, definition
     assert 'new double DACE_ALIGN(64)[T_size(N)]' in allocation_line(code, 'T')
 
 
@@ -274,8 +276,8 @@ def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):
     # distinct arities -- no collision.
     inner_def = size_helper_definition(code, 'inner_T')
     outer_def = size_helper_definition(code, 'T')
-    assert '(N * N)' in inner_def, inner_def
-    assert '(M * N)' in outer_def, outer_def
+    assert 'ipow(N, 2)' in inner_def, inner_def  # N**2 -> ipow (constexpr)
+    assert '(M * N)' in outer_def, outer_def  # distinct symbols -> plain product, no power
     assert 'inner_T_size(N)' in allocation_line(code, 'inner_T')
     assert 'T_size(M, N)' in allocation_line(code, 'T')
 

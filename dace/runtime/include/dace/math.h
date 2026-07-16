@@ -668,10 +668,15 @@ static DACE_CONSTEXPR DACE_HDFI unsigned int pow(const unsigned int& a,
   return result;
 }
 
-// Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``.
+// Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``. ``DACE_CONSTEXPR`` (the loop body is
+// constant-expression-legal since C++14, as the ``pow`` overloads above show) lets the readable
+// codegen's ``constexpr``/``consteval`` ``<arr>_idx`` / ``<arr>_size`` helpers call ``ipow`` directly
+// (RelaxIntegerPowers lowers integer powers in shapes/strides to ``ipow``); a non-constexpr callee
+// there is -Winvalid-constexpr and not a constant expression. Additive: runtime call sites are
+// unchanged.
 template <typename T,
           typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
-DACE_HDFI T ipow(const T a, const unsigned int b) {
+DACE_CONSTEXPR DACE_HDFI T ipow(const T a, const unsigned int b) {
   T result = T(1);
   for (unsigned int i = 0; i < b; ++i) result *= a;
   return result;
@@ -681,7 +686,7 @@ DACE_HDFI T ipow(const T a, const unsigned int b) {
 // compile-time exponent >= 1 (the constant-power path emits a literal 1 for exponent 0).
 template <typename T,
           typename std::enable_if<!std::is_constructible<T, int>::value>::type* = nullptr>
-DACE_HDFI T ipow(const T a, const unsigned int b) {
+DACE_CONSTEXPR DACE_HDFI T ipow(const T a, const unsigned int b) {
   T result = a;
   for (unsigned int i = 1; i < b; ++i) result *= a;
   return result;
