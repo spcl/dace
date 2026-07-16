@@ -114,6 +114,25 @@ def _symbol_fallbacks(arglist, arg_names, symbol_names):
     return fallbacks
 
 
+def _ndarray_device(desc) -> str:
+    """DLPack device annotation for an array argument's storage.
+
+    Only ``GPU_Global`` is device memory from the caller's perspective;
+    everything else (including ``CPU_Pinned``, which numpy reports as a CPU
+    DLPack device) binds as host memory. The configured backend is consulted
+    at codegen time; only ``'auto'`` falls back to ``get_gpu_backend()``,
+    whose hardware probe is lru-cached (and so blind to config changes) -
+    and it runs only when a GPU array actually exists.
+    """
+    if desc.storage == dtypes.StorageType.GPU_Global:
+        backend = Config.get('compiler', 'cuda', 'backend')
+        if backend in (None, '', 'auto'):
+            from dace.codegen import common
+            backend = common.get_gpu_backend()
+        return 'nb::device::cuda' if backend == 'cuda' else 'nb::device::rocm'
+    return 'nb::device::cpu'
+
+
 def _has_gpu_code(sdfg) -> bool:
     """Same detection as the ctypes ``CompiledSDFG``, evaluated at codegen time."""
     for _, _, desc in sdfg.arrays_recursive():
@@ -238,14 +257,15 @@ def _argument_binding(arglist, binding_order=None, optional_symbols=None):
             # The ndarray scalar type may differ from the cast target: a vector
             # dtype binds as its base scalar, but the kernel pointer stays dace::vec*.
             nb_scalar = _ndarray_scalar_ctype(desc.dtype)
+            device = _ndarray_device(desc)
             if desc.optional is False:
-                params_by_name[name] = f'nb::ndarray<{nb_scalar}, nb::device::cpu> {name}'
+                params_by_name[name] = f'nb::ndarray<{nb_scalar}, {device}> {name}'
                 call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
             else:
                 # Nullable array: None becomes a null pointer. .none() is
                 # required - nanobind rejects None by default.
-                params_by_name[name] = f'std::optional<nb::ndarray<{nb_scalar}, nb::device::cpu>> {name}'
+                params_by_name[name] = f'std::optional<nb::ndarray<{nb_scalar}, {device}>> {name}'
                 call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
 

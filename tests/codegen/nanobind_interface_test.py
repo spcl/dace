@@ -3,6 +3,7 @@
 import sys
 
 import numpy as np
+import pytest
 
 import dace
 from dace.config import set_temporary
@@ -1260,6 +1261,67 @@ def test_nanobind_interface_optional_struct_array_input():
         out = np.zeros(1, dtype=np.int32)
         csdfg(a=None, out=out)
         assert out[0] == -1  # None arrived as a null pointer
+
+
+def test_nanobind_interface_gpu_array_binding():
+    """A GPU_Global array binds as a device ndarray (cuda/rocm per the
+    configured backend); CPU arrays, scalars and container arrays stay on
+    nb::device::cpu."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    def build():
+        sdfg = dace.SDFG('gpu_array_probe')
+        sdfg.add_array('A', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+        sdfg.arrays['A'].optional = False
+        sdfg.add_array('B', [10], dace.float64)
+        sdfg.arrays['B'].optional = False
+        # Nullable GPU array: the device annotation applies inside the optional.
+        sdfg.add_array('C', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+        sdfg.arrays['C'].optional = True
+        return sdfg
+
+    with set_temporary('compiler', 'cuda', 'backend', value='cuda'):
+        code = generate_bindings_code(build())
+    assert 'nb::ndarray<double, nb::device::cuda> A' in code
+    assert 'nb::ndarray<double, nb::device::cpu> B' in code
+    assert 'std::optional<nb::ndarray<double, nb::device::cuda>> C' in code
+
+    with set_temporary('compiler', 'cuda', 'backend', value='hip'):
+        code = generate_bindings_code(build())
+    assert 'nb::ndarray<double, nb::device::rocm> A' in code
+    assert 'nb::ndarray<double, nb::device::cpu> B' in code
+
+
+@pytest.mark.gpu
+def test_nanobind_interface_gpu_arrays():
+    """E2E: CuPy arrays pass directly to GPU-storage parameters; a host numpy
+    array for a GPU parameter is rejected at dispatch."""
+    import cupy as cp
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        # The explicit GPU_Global annotations keep the *arguments* on the
+        # device - apply_gpu_transformations alone would leave them on the
+        # host and insert copies, binding CPU parameters.
+        @dace.program
+        def gpu_axpy_nanobind(A: dace.float64[N] @ dace.StorageType.GPU_Global,
+                              B: dace.float64[N] @ dace.StorageType.GPU_Global):
+            B[:] = A + B
+
+        sdfg = gpu_axpy_nanobind.to_sdfg()
+        sdfg.apply_gpu_transformations()
+        csdfg = sdfg.compile()
+
+        n = 32
+        a = cp.random.rand(n)
+        b = cp.random.rand(n)
+        expected = cp.asnumpy(a + b)
+        csdfg(A=a, B=b, N=np.int32(n))
+        assert np.allclose(cp.asnumpy(b), expected)
+
+        with pytest.raises(TypeError):
+            csdfg(A=np.random.rand(n), B=b, N=np.int32(n))
 
 
 def test_nanobind_interface_strict_scalar_cast_binding():
