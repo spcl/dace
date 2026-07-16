@@ -742,29 +742,21 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         state.add_edge(t, out_conn, cond_access, None, dace.Memlet(expr=f"{cond_name}[{cond_subset}]"))
         return cond_name, cond_access
 
-    def _promote_gather_indices(self, sdfg: dace.SDFG, def_edge, rhs: str) -> str:
-        """Rewrite gather reads ``w[idx[i], k]`` in ``rhs`` to ``w[_gidx, k]`` by promoting each
-        NESTED array-read index ``idx[i]`` to a fresh interstate integer symbol assigned on
-        ``def_edge`` -- the pre-existing interstate edge that defined the cond value (``w_index =
-        w[idx[i], k]``), which dominates the ITE states the lift is building. The staged read
-        then carries a symbolic-indexed subset -- the representation a body gather uses and the
-        tile machinery vectorizes -- instead of a nested subscript no plain memlet can express.
-
-        Returns ``rhs`` unchanged when it contains no nested (indirect) array subscript.
-        """
-        if def_edge is None:
-            return rhs
+    def _nested_gather_subscripts(self, sdfg: dace.SDFG, rhs: str) -> Dict[str, "sympy.Basic"]:
+        """The unique NESTED array subscripts in ``rhs`` -- an ``arr[...]`` read sitting
+        inside another array subscript's index (``w[idx[i], k]`` -> the ``idx[i]`` under
+        ``w``), i.e. a gather index -- keyed by printed form (so a repeated ``idx[i]``
+        collapses to one). Empty when ``rhs`` reads no gather. Such a read cannot be
+        expressed as a plain memlet subset; it must be promoted to an interstate symbol
+        (:meth:`_promote_gather_indices`) before staging, else codegen degenerates to a
+        bare-pointer access."""
         arrays = set(sdfg.arrays.keys())
         try:
             expr = symbolic.SymExpr(rhs)
             base = expr.expr if isinstance(expr, symbolic.SymExpr) else expr
         except Exception:
-            return rhs
+            return {}
         printer = symbolic.DaceSympyPrinter(arrays)
-        # A NESTED array read -- an ``arr[...]`` subscript sitting inside another array
-        # subscript's index (``w[idx[i], k]`` -> the ``idx[i]`` under ``w``) -- is a gather
-        # index. Collect the unique ones structurally (sympy ``Subscript`` nodes), dedup by
-        # their printed form so a repeated ``idx[i]`` promotes to a single symbol.
         nested: Dict[str, sympy.Basic] = {}
         for node in sympy.preorder_traversal(base):
             if isinstance(node, symbolic.Subscript) and str(node.args[0]) in arrays:
@@ -772,18 +764,61 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
                     for sub in sympy.preorder_traversal(index_arg):
                         if isinstance(sub, symbolic.Subscript) and str(sub.args[0]) in arrays:
                             nested.setdefault(printer.doprint(sub), sub)
-        if not nested:
+        return nested
+
+    def _has_nested_subscript(self, sdfg: dace.SDFG, rhs: str) -> bool:
+        """Whether ``rhs`` still carries an un-promotable nested gather subscript. The
+        caller refuses to lift such a guard (a plain memlet cannot express it), rather
+        than emit a bare-pointer read that miscompiles."""
+        return bool(self._nested_gather_subscripts(sdfg, rhs))
+
+    def _promote_gather_indices(self, sdfg: dace.SDFG, def_edges, rhs: str) -> str:
+        """Rewrite gather reads ``w[idx[i], k]`` in ``rhs`` to ``w[_gidx, k]`` by promoting
+        each NESTED array-read index ``idx[i]`` to a fresh interstate integer symbol. The
+        staged read then carries a symbolic-indexed subset -- the representation a body
+        gather uses and the tile machinery vectorizes -- instead of a nested subscript no
+        plain memlet can express.
+
+        ``def_edges`` is EVERY interstate edge into the state where the promoted symbol must
+        be live (the state's whole in-edge set). The ``_gidx = idx[i]`` assignment is planted
+        on ALL of them, so the symbol is defined on every path reaching that state, not just
+        one -- a merge state with several predecessors would otherwise read an unbound
+        ``_gidx`` on the paths that skipped the single edge.
+
+        Returns ``rhs`` UNCHANGED (leaving the nested subscript for the caller to detect and
+        refuse) when: it has no gather; ``def_edges`` is empty (nothing to hoist onto -- e.g.
+        the state is a CFG start block); or a gather index reads a symbol not in scope to
+        assign there (not a registered SDFG symbol)."""
+        edges = [e for e in (def_edges or []) if e is not None]
+        nested = self._nested_gather_subscripts(sdfg, rhs)
+        if not nested or not edges:
             return rhs
+        arrays = set(sdfg.arrays.keys())
+        expr = symbolic.SymExpr(rhs)
+        base = expr.expr if isinstance(expr, symbolic.SymExpr) else expr
+        printer = symbolic.DaceSympyPrinter(arrays)
         replace: Dict[sympy.Basic, sympy.Symbol] = {}
         for index_text, sub in nested.items():
             index_array = str(sub.args[0])
+            # The index expression's non-array free symbols (e.g. the loop iterator) must be
+            # in scope to assign on ``def_edges``; if any is not a registered SDFG symbol,
+            # do NOT promote this index -- leave the nested subscript so the caller refuses
+            # the lift rather than plant an out-of-scope ``_gidx = idx[i]`` assignment.
+            index_syms = set()
+            for index_arg in sub.args[1:]:
+                index_syms |= {str(s) for s in index_arg.free_symbols}
+            if any((s not in sdfg.symbols and s not in arrays) for s in index_syms):
+                continue
             gidx = 0
             while f'_gidx_{gidx}' in sdfg.symbols or f'_gidx_{gidx}' in sdfg.arrays:
                 gidx += 1
             gsym = f'_gidx_{gidx}'
             sdfg.add_symbol(gsym, sdfg.arrays[index_array].dtype)
-            def_edge.data.assignments[gsym] = index_text
+            for de in edges:
+                de.data.assignments[gsym] = index_text
             replace[sub] = symbolic.pystr_to_symbolic(gsym)
+        if not replace:
+            return rhs
         return printer.doprint(base.xreplace(replace))
 
     def _inline_interstate_scalar_symbols(self, sdfg: dace.SDFG, rhs_text: str, exclude: set) -> Tuple[str, dict]:
@@ -933,7 +968,11 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # interstate INTEGER symbol (``_gidx = idx[i]`` on the edge feeding this state), so the
         # staged read becomes a symbolic-indexed memlet ``w[_gidx, k]`` -- the same shape a body
         # gather carries, which the tile machinery vectorizes. No-op when the RHS is not indirect.
-        rhs = self._promote_gather_indices(sdfg, def_edge, rhs)
+        rhs = self._promote_gather_indices(sdfg, [def_edge], rhs)
+        # An un-promotable gather (no def edge, or an out-of-scope index) cannot be staged as a
+        # memlet -- refuse the lift rather than emit a bare-pointer read that miscompiles.
+        if self._has_nested_subscript(sdfg, rhs):
+            return None
 
         # Collect arrays the RHS reads. Subscript ``c[i]``'s ``free_symbols`` = indices
         # only, so ``free_symbols_and_functions`` misses the array head —
@@ -1071,12 +1110,17 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # A GATHER read in the guard (``w[idx[i], k] > K``) is a NESTED subscript no plain
         # memlet can express; string-rebuilt at the wiring below it degenerates to a bare
         # pointer read (``w > K`` -> "invalid operands 'double*' and 'double'"). Promote each
-        # nested index ``idx[i]`` to a fresh interstate integer symbol on the edge feeding this
-        # merge state (its single predecessor dominates it), so ``w`` stages through the
-        # symbolic-indexed memlet ``w[_gidx, k]`` the tiler vectorizes -- mirroring the
-        # interstate recipe (line ~936). No-op when the guard reads no nested subscript.
-        merge_in_edges = state.parent_graph.in_edges(state)
-        expanded = self._promote_gather_indices(sdfg, merge_in_edges[0] if merge_in_edges else None, expanded)
+        # nested index ``idx[i]`` to a fresh interstate integer symbol on EVERY edge feeding
+        # this merge state (so ``_gidx`` is defined on every path, not just one), so ``w``
+        # stages through the symbolic-indexed memlet ``w[_gidx, k]`` the tiler vectorizes --
+        # mirroring the interstate recipe (line ~936). No-op when the guard reads no gather.
+        expanded = self._promote_gather_indices(sdfg, state.parent_graph.in_edges(state), expanded)
+        # If a gather index survives (no dominating edge to hoist onto -- a CFG start block --
+        # or an out-of-scope index symbol), the guard cannot be represented as a memlet;
+        # refuse the lift (the caller keeps it as free-symbol text) rather than emit a
+        # bare-pointer read that miscompiles.
+        if self._has_nested_subscript(sdfg, expanded):
+            return None
         # Union both accessors: ``symbolic.arrays`` catches a bracketed read (``A[i]``)
         # array-head ``free_symbols`` misses; ``free_symbols_and_functions`` catches a
         # BARE array ref (``A`` as current-lane element, the shape the ConditionalBlock

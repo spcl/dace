@@ -533,10 +533,15 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 mx.in_connectors = {('IN_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
                 mx.out_connectors = {('OUT_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
 
-                # Create memlets through map
+                # Create memlets through map. A connector-less edge must be an empty-memlet
+                # dependency edge -- a data edge to/from the wrapped tasklet/nested SDFG always
+                # carries a named connector, so routing a non-empty memlet with no IN_/OUT_
+                # connector would silently drop its data path; assert the invariant to fail loud.
                 for e in in_edges:
                     state.remove_edge(e)
                     if e.dst_conn is None:
+                        assert e.data is None or e.data.is_empty(), \
+                            f'connector-less in-edge into {gcode.label} carries a non-empty memlet {e.data}'
                         state.add_edge(e.src, e.src_conn, me, None, e.data)
                         state.add_edge(me, None, e.dst, e.dst_conn, dc(e.data))
                     else:
@@ -545,6 +550,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 for e in out_edges:
                     state.remove_edge(e)
                     if e.src_conn is None:
+                        assert e.data is None or e.data.is_empty(), \
+                            f'connector-less out-edge from {gcode.label} carries a non-empty memlet {e.data}'
                         state.add_edge(e.src, e.src_conn, mx, None, e.data)
                         state.add_edge(mx, None, e.dst, e.dst_conn, dc(e.data))
                     else:

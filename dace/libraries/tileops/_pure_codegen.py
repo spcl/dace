@@ -11,6 +11,8 @@ and uses :func:`tile_offset` to flatten the tile transient's index
 import numbers
 from typing import Sequence
 
+import sympy
+
 
 def constant_trip_count(width) -> bool:
     """True iff ``width`` is a compile-time-constant integer loop bound.
@@ -243,7 +245,6 @@ def _strides_match_packed(shape, strides, order):
     :returns: ``True`` iff the layout is exactly packed in the requested order.
     """
     import dace
-    import sympy
     if len(shape) != len(strides):
         return False
     if order == "C":

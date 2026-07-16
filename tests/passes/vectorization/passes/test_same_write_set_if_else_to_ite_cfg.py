@@ -549,18 +549,20 @@ def test_promote_gather_indices_rewrites_nested_subscript():
     sdfg = dace.SDFG("gather_cond")
     sdfg.add_array("w", [n, n], dace.float64)
     sdfg.add_array("idx", [n], dace.int64)
+    sdfg.add_symbol("i", dace.int64)  # index symbols must be in scope to hoist idx[i] onto the edge
+    sdfg.add_symbol("k", dace.int64)
     s0 = sdfg.add_state("s0", is_start_block=True)
     s1 = sdfg.add_state("s1")
     edge = sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={"w_index": "w[idx[i], k]"}))
 
     p = SameWriteSetIfElseToITECFG()
-    new_rhs = p._promote_gather_indices(sdfg, edge, "w[idx[i], k]")
+    new_rhs = p._promote_gather_indices(sdfg, [edge], "w[idx[i], k]")
     assert new_rhs == "w[_gidx_0, k]", new_rhs
     # The nested index was promoted to a fresh int symbol defined on the edge.
     assert edge.data.assignments.get("_gidx_0") == "idx[i]"
     assert "_gidx_0" in sdfg.symbols and sdfg.symbols["_gidx_0"] == dace.int64
     # No-op on an affine (non-gather) read -- the subset has no nested subscript.
-    assert p._promote_gather_indices(sdfg, edge, "w[i, k]") == "w[i, k]"
+    assert p._promote_gather_indices(sdfg, [edge], "w[i, k]") == "w[i, k]"
 
 
 def test_promote_gather_indices_noop_without_edge():

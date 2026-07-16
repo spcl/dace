@@ -369,3 +369,80 @@ def test_pass_mixed_cond_numerical_correctness():
                 csdfg(a=a, b=b, c=c)
                 expected = cv + 1.0 if bv > av else cv
                 np.testing.assert_allclose(c[0], expected, err_msg=f"a={av} b={bv} c={cv}")
+
+
+# ---------------------------------------------------------------------------
+# Gather-index promotion (``_promote_gather_indices``) -- code-review findings.
+# A guard reading a gather (``w[idx[i], k] > K``) carries a nested subscript no
+# plain memlet can express; the lift promotes each nested index ``idx[i]`` to a
+# fresh interstate symbol ``_gidx`` assigned on the edge(s) feeding the merge
+# state, so the staged read becomes ``w[_gidx, k]``.
+# ---------------------------------------------------------------------------
+
+
+def _gather_merge_two_preds_sdfg():
+    """SDFG whose merge state has TWO interstate predecessors, plus arrays ``w``
+    (gathered), ``idx`` (index), and a registered loop-iterator symbol ``i``."""
+    sdfg = dace.SDFG("gather_two_preds")
+    sdfg.add_array("w", (8, 8), dace.float64)
+    sdfg.add_array("idx", (8, ), dace.int64)
+    sdfg.add_symbol("i", dace.int64)
+    start = sdfg.add_state("start", is_start_block=True)
+    p1 = sdfg.add_state("p1")
+    p2 = sdfg.add_state("p2")
+    merge = sdfg.add_state("merge")
+    sdfg.add_edge(start, p1, dace.InterstateEdge(condition="i < 4"))
+    sdfg.add_edge(start, p2, dace.InterstateEdge(condition="i >= 4"))
+    sdfg.add_edge(p1, merge, dace.InterstateEdge())
+    sdfg.add_edge(p2, merge, dace.InterstateEdge())
+    return sdfg, merge
+
+
+def test_promote_gather_indices_defines_symbol_on_every_predecessor():
+    """Finding 1: the promoted ``_gidx`` must be assigned on EVERY edge into the
+    merge state -- a merge with several predecessors would otherwise read an unbound
+    ``_gidx`` on the path that skipped the single (``[0]``) edge."""
+    sdfg, merge = _gather_merge_two_preds_sdfg()
+    in_edges = list(merge.parent_graph.in_edges(merge))
+    assert len(in_edges) == 2
+
+    out = SameWriteSetIfElseToITECFG()._promote_gather_indices(sdfg, in_edges, "w[idx[i], 0] > 0.0")
+
+    assert "idx[" not in out and "_gidx_0" in out, f"gather index not promoted: {out!r}"
+    assigned = [("_gidx_0" in (e.data.assignments or {})) for e in in_edges]
+    assert all(assigned), f"_gidx_0 must be assigned on all predecessors, got {assigned}"
+
+
+def test_promote_gather_indices_refuses_without_a_def_edge():
+    """Finding 2: with no edge to hoist the assignment onto (a CFG start block), the
+    nested subscript survives unchanged and ``_has_nested_subscript`` flags it so the
+    caller refuses the lift instead of emitting a bare-pointer read."""
+    sdfg, _merge = _gather_merge_two_preds_sdfg()
+    p = SameWriteSetIfElseToITECFG()
+    rhs = "w[idx[i], 0] > 0.0"
+
+    out = p._promote_gather_indices(sdfg, [], rhs)
+
+    assert out == rhs, "no def edge -> promotion must be a no-op"
+    assert p._has_nested_subscript(sdfg, out), "surviving gather must be flagged so the caller refuses"
+
+
+def test_promote_gather_indices_refuses_out_of_scope_index_symbol():
+    """Finding 5: an index symbol that is not a registered SDFG symbol is not in scope
+    to assign ``_gidx = idx[i]`` on the edge; the promotion must leave the nested
+    subscript (so the caller refuses) rather than plant an out-of-scope assignment."""
+    sdfg = dace.SDFG("gather_oos")
+    sdfg.add_array("w", (8, 8), dace.float64)
+    sdfg.add_array("idx", (8, ), dace.int64)
+    # 'i' intentionally NOT registered as an SDFG symbol -> out of scope.
+    s0 = sdfg.add_state("s0", is_start_block=True)
+    s1 = sdfg.add_state("s1")
+    sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    edge = list(sdfg.out_edges(s0))[0]
+    p = SameWriteSetIfElseToITECFG()
+    rhs = "w[idx[i], 0] > 0.0"
+
+    out = p._promote_gather_indices(sdfg, [edge], rhs)
+
+    assert out == rhs and p._has_nested_subscript(sdfg, out)
+    assert "_gidx_0" not in (edge.data.assignments or {}), "must not plant an out-of-scope assignment"
