@@ -20,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -48,6 +48,9 @@ class DaCeCodeGenerator(object):
                                                  bool]]] = collections.defaultdict(list)
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
+        # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
+        # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
+        self._structured_cfg: Dict[int, bool] = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
@@ -430,6 +433,87 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             # Footer
             callsite_stream.write('}', sdfg)
+
+    def _readable_cpu_active(self) -> bool:
+        """The readable experimental CPU code generator is selected (``compiler.cpu.implementation``)."""
+        return config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable'
+
+    def _structured_control_flow(self, sdfg: SDFG) -> bool:
+        """Whether ``sdfg``'s control flow can only emit gotos that never cross a state-body
+        declaration: every region is a strict line graph -- each block has at most one out-edge and
+        that edge is UNCONDITIONAL -- with no ``UnstructuredControlFlow`` region. Branching is then
+        carried by ``ConditionalBlock`` (its branch bodies each ``{ }``-scoped) and loops by
+        ``LoopRegion``, so the emitted state machine only falls through between siblings.
+
+        This is STRICTER than ``control_flow.py``'s ``contains_irreducible`` on purpose: a block with a
+        single CONDITIONAL out-edge has ``out_degree == 1`` yet ``control_flow.py`` emits it via the
+        ``exit_on_else`` path as ``if (cond) { goto __state_dst; } else { goto __state_exit_<cfg>; }``.
+        That ``goto __state_exit`` jumps forward over every following sibling state, so if any crossed
+        state had its C scope elided and declared something, the jump would cross an initialization
+        (ill-formed C++). Rejecting conditional out-edges removes that hazard. An unstructured region
+        (raw multi-edge goto branching) is likewise rejected. Cached per ``cfg_id``. When False, the
+        experimental state-scope elision is disabled and every state keeps its scope (matching legacy).
+        """
+        key = sdfg.cfg_id
+        cached = self._structured_cfg.get(key)
+        if cached is not None:
+            return cached
+        result = True
+        for region in sdfg.all_control_flow_regions():
+            if isinstance(region, UnstructuredControlFlow):
+                result = False
+                break
+            # Only real ControlFlowRegions carry a block graph (a ConditionalBlock holds branch
+            # regions, each itself visited and checked). A block is safe only with <=1 out-edge AND,
+            # if it has one, an unconditional edge (a conditional edge emits a crossing goto -- above).
+            if isinstance(region, ControlFlowRegion):
+                for node in region.nodes():
+                    out_edges = region.out_edges(node)
+                    if len(out_edges) > 1 or (out_edges and not out_edges[0].data.is_unconditional()):
+                        result = False
+                        break
+                if not result:
+                    break
+        self._structured_cfg[key] = result
+        return result
+
+    def state_needs_brace(self, state: SDFGState) -> bool:
+        """Whether a non-empty state's body must be wrapped in its own ``{ ... }`` C scope.
+
+        Always True for the legacy generator, so its output is byte-identical. The experimental readable
+        generator drops the scope only when the state provably declares NOTHING at its own (state-body)
+        scope, so no inter-state ``goto`` can cross an initialization.
+
+        ``to_allocate`` is necessary but NOT a complete inventory of state-scope declarations -- the
+        shared tasklet path also emits, directly at state-body scope (``cpu.py`` ``outer_stream_begin``,
+        not via ``to_allocate``): inter-tasklet ``code->code`` register temporaries (``T tmp;`` -- for a
+        non-trivially-constructible type a goto cannot cross it) and node-level instrumentation timers.
+        Rather than enumerate every such source, this is a default-deny positive whitelist: elide only
+        when every top-level node is a map scope (``MapEntry``/``MapExit``, whose loops brace their own
+        bodies and whose scope transients allocate inside those loops) or an ``AccessNode`` (no decl).
+        Any other top-level node -- a state-level tasklet, nested SDFG, library node, reduction, etc. --
+        or any node-level instrumentation keeps the scope. Combined with ``_structured_control_flow``
+        (no crossing goto) and ``to_allocate`` empty (no tracked transient), the elided state is
+        guaranteed declaration-free.
+        """
+        if not self._readable_cpu_active():
+            return True
+        if state.instrument != dtypes.InstrumentationType.No_Instrumentation:
+            return True
+        if not self._structured_control_flow(state.sdfg):
+            return True
+        if self.to_allocate.get(state):
+            return True
+        none_instr = dtypes.InstrumentationType.No_Instrumentation
+        scope = state.scope_dict()
+        for node in state.nodes():
+            if scope[node] is not None:
+                continue  # nested inside a map -> that scope braces it (and its declarations)
+            if not isinstance(node, (nodes.MapEntry, nodes.MapExit, nodes.AccessNode)):
+                return True  # a top-level tasklet / nested SDFG / library node may declare at state scope
+            if vars(node).get('instrument', none_instr) != none_instr:
+                return True  # an instrumented top-level map declares timers at state scope
+        return False
 
     def generate_state(self,
                        sdfg: SDFG,
