@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+import ast
 from copy import deepcopy
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
 import functools
 import itertools
 import warnings
@@ -55,6 +56,98 @@ def is_loop_region_variable(name: str, sdfg: SDFG) -> bool:
     declaration is retyped by ``loop_index_type``; every other interstate symbol keeps its inferred
     type (retyping an arbitrary interstate assignment target would change semantics, not spelling)."""
     return any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions())
+
+
+def decl_placement() -> str:
+    """Where a declaration is emitted relative to its first use, per ``codegen_params.decl_placement``:
+    ``eager`` (the default -- every declaration at the top of its scope, the legacy placement) or
+    ``late`` (each declaration moved as close to its first use as it is provably sound to move it)."""
+    return Config.get('compiler', 'cpu', 'codegen_params', 'decl_placement')
+
+
+def scalar_init_style() -> str:
+    """Whether a mutable scalar's declaration and its first write are emitted as one binding, per
+    ``codegen_params.scalar_init_style``: ``split`` (the default -- ``T x;`` then ``x = expr;``) or
+    ``fused`` (``T x = expr;``, the declaration IS the first write)."""
+    return Config.get('compiler', 'cpu', 'codegen_params', 'scalar_init_style')
+
+
+def counter_init_assigns_only(loop: LoopRegion) -> bool:
+    """Whether ``loop``'s init statement is exactly ``<loop_variable> = <expr>``, the one shape a
+    declared-in-place counter can be spelled as (``T i = <expr>``). Any other init (a tuple target, a
+    compound statement, an augmented assignment, or one that initialises a DIFFERENT name) has no such
+    spelling, so the counter keeps its hoisted declaration."""
+    code = loop.init_statement.code
+    if not isinstance(code, list) or len(code) != 1:
+        return False
+    stmt = code[0]
+    return (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)
+            and stmt.targets[0].id == loop.loop_variable)
+
+
+def counter_used_outside_loop(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Whether ``name`` is read or written anywhere outside ``loop``. Declaring the counter in the
+    loop's own ``for``-init clause scopes it to the loop, so its value stops being observable after the
+    loop closes -- exactly what a use outside would need. DaCe permits such a use (a LoopRegion leaks
+    its counter's final value to subsequent blocks), so this must be checked, not assumed.
+
+    Every block of the SDFG is enumerated individually, hence a REGION is asked only for the symbols it
+    uses on itself (``with_contents=False`` -- its condition / init / update); its contents arrive as
+    their own blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)``
+    returns the empty set, which would silently hide every real use.
+    """
+    inside = {id(loop)} | {id(block) for block in loop.all_control_flow_blocks()}
+    for block in sdfg.all_control_flow_blocks():
+        if id(block) in inside:
+            continue
+        with_contents = not isinstance(block, AbstractControlFlowRegion)
+        if name in block.used_symbols(all_symbols=True, with_contents=with_contents):
+            return True
+    inside_edges = {id(edge) for edge in loop.all_interstate_edges()}
+    for edge in sdfg.all_interstate_edges():
+        if id(edge) in inside_edges:
+            continue
+        if name in edge.data.free_symbols or name in edge.data.assignments:
+            return True
+    # A descriptor whose shape/strides mention the counter is materialised outside the loop.
+    for desc in sdfg.arrays.values():
+        if name in {str(s) for s in desc.free_symbols}:
+            return True
+    return False
+
+
+def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> Optional[str]:
+    """The C++ type to declare interstate symbol ``name`` with INSIDE its own loop's ``for``-init clause
+    (``for (long long i = 0; ...)``), or ``None`` to keep the hoisted ``long long i;`` declaration that
+    every LoopRegion counter gets today.
+
+    ``late`` only: this is the ``decl_placement`` knob applied to a loop counter, whose hoisted
+    declaration is the single furthest-from-use declaration the generator emits -- it sits at the top of
+    the function no matter how deep the loop is. Moving it into the init clause is sound only when the
+    counter is genuinely loop-local:
+
+    - exactly ONE LoopRegion owns the name. Two loops sharing a counter share the one hoisted
+      declaration; giving each its own is a bigger change than a placement knob should make.
+    - the loop is not ``inverted``. An inverted loop emits its init BEFORE the ``do``/``while`` brace,
+      so a declaration there is not scoped to the loop and could collide with a sibling.
+    - the init statement is a plain ``i = <expr>`` (see :func:`counter_init_assigns_only`).
+    - nothing outside the loop uses the counter (see :func:`counter_used_outside_loop`).
+
+    Applies to both generators (the loop emitter is shared). ``eager`` returns ``None`` throughout, so
+    output stays byte-for-byte what it is today.
+    """
+    if decl_placement() != 'late':
+        return None
+    owners = [
+        cfr for cfr in sdfg.all_control_flow_regions()
+        if isinstance(cfr, LoopRegion) and cfr.loop_variable == name and cfr.init_statement is not None
+    ]
+    if len(owners) != 1:
+        return None
+    loop = owners[0]
+    if loop.inverted or not counter_init_assigns_only(loop) or counter_used_outside_loop(name, loop, sdfg):
+        return None
+    return loop_region_index_ctype() or dtype.ctype
 
 
 def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
@@ -3223,6 +3316,16 @@ class CPUCodeGen(TargetCodeGenerator):
         # follows the same spelling so the counter's other uses (condition, body indexing) name that
         # type without introducing a cast. ``auto`` (the default) leaves the declaration untouched, so
         # legacy output stays byte-identical. Every non-counter interstate symbol is unaffected.
+        # ``decl_placement = late`` moves a loop-local counter's declaration into its own loop's
+        # for-init clause -- the loop emitter reads the recorded ctype and spells ``for (T i = ...)``.
+        # Nothing is written here in that case: this hoisted declaration IS what the knob removes. The
+        # defined type is still registered, exactly as the hoisted declaration would, so the counter's
+        # uses inside the loop resolve identically (by the gate, it has no uses outside).
+        local_ctype = loop_local_counter_ctype(name, dtype, sdfg)
+        if local_ctype is not None:
+            self._frame.loop_local_counters[(sdfg.cfg_id, name)] = local_ctype
+            self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, local_ctype)
+            return
         override = loop_region_index_ctype()
         if override is not None and is_loop_region_variable(name, sdfg):
             callsite_stream.write('%s %s;\n' % (override, name), sdfg)

@@ -139,7 +139,7 @@ def test_ssa_on_with_late_placement_runs(require_experimental):
     def build_and_run():
         with use_implementation(EXPERIMENTAL), \
              set_temporary('compiler', 'cpu', 'codegen_params', 'ssa_loop_scalars', value='on'), \
-             set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_decl_placement', value='late'):
+             set_temporary('compiler', 'cpu', 'codegen_params', 'decl_placement', value='late'):
             csdfg = reassign_scalar_sdfg('b_mixed').compile()
             out = np.zeros(1, dtype=np.float64)
             csdfg(A=A.copy(), out=out)

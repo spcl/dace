@@ -644,33 +644,88 @@ required:
                                     non-unit-tasklet scope) falls back to ``indexed`` for that construct
                                     rather than emitting a walk. ``indexed`` reproduces today's output
                                     byte-for-byte.
-                            scalar_decl_placement:
+                            decl_placement:
                                 type: str
                                 default: eager
-                                title: Mutable scope-scalar declaration placement
+                                title: Declaration placement (declare near use)
                                 description: >
-                                    Applies to: experimental_readable ONLY (legacy hoists every scope
-                                    transient's declaration to its scope top and ignores this key, so its
-                                    output stays byte-identical for every value).
+                                    Applies to: legacy AND experimental_readable for LOOP COUNTERS (the
+                                    loop emitter is shared); experimental_readable ONLY for SCALARS
+                                    (legacy hoists every scope transient's declaration to its scope top
+                                    and ignores this key for them). ``eager`` reproduces today's output
+                                    byte-for-byte for BOTH generators.
 
-                                    Where a MUTABLE scope-lifetime value scalar (a ``dace.data.Scalar``
+                                    Where a declaration is emitted relative to its first use: ``eager``
+                                    (the default) declares everything at the top of its scope, as the
+                                    legacy generator does; ``late`` moves each declaration as close to its
+                                    first use as it is PROVABLY SOUND to move it. Two constructs are
+                                    covered, and each has its own soundness gate -- anything that does not
+                                    pass its gate keeps the eager declaration, so ``late`` is a
+                                    best-effort form, never a promise that nothing is hoisted.
+
+                                    LOOP COUNTERS. A ``LoopRegion`` counter is declared at the top of the
+                                    generated function today (``long long i;``, then ``for (i = 0; ...)``)
+                                    no matter how deep its loop is -- the furthest-from-use declaration
+                                    the generator emits. ``late`` declares it in the loop's own for-init
+                                    clause instead, ``for (long long i = 0; ...)``, which also scopes it
+                                    to the loop. Sound only when the counter is genuinely loop-local:
+                                    exactly ONE LoopRegion owns the name, the loop is not ``inverted``
+                                    (an inverted loop emits its init BEFORE the loop brace, where a
+                                    declaration is not loop-scoped), the init statement is a plain
+                                    ``i = <expr>``, and NOTHING outside the loop uses the counter -- DaCe
+                                    permits a subsequent block to read a counter's final value, which
+                                    for-init scoping would break, so it is checked rather than assumed.
+                                    Map induction variables are NOT covered here: they already default to
+                                    a for-init declaration, and ``loop_decl_style`` is their axis.
+
+                                    SCALARS. A MUTABLE scope-lifetime value scalar (a ``dace.data.Scalar``
                                     transient that is reassigned, so it is not the ``const T x = expr;``
                                     write-once form the ``MarkConstInit`` path already declares at its
-                                    definition) is declared: ``eager`` (the default) emits ``T x;`` at the
-                                    top of its scope, as the legacy generator does; ``late`` defers it to
-                                    the line immediately before the first tasklet that uses ``x`` -- a
-                                    shorter live range and a declaration next to its first write.
+                                    definition) is deferred to the line immediately before the first
+                                    tasklet that uses it. Sound only for a plain transient value scalar
+                                    whose every access lives in ONE scope and is a direct-child tasklet of
+                                    that scope, so the deferred declaration lands in the same brace as --
+                                    and before -- every use. Any other shape (a write-once const scalar, a
+                                    len-1 array, a heap/device/GPU-global scalar, a scalar crossing states
+                                    or map/nested-SDFG/copy boundaries, or one used across scopes) stays
+                                    eager. NOTE that this gate is narrow enough that most scalars a
+                                    front-end emits do not meet it: one inside a map scope, or one live
+                                    across states, keeps its eager declaration.
 
-                                    Move-to-first-use is applied ONLY where it is provably sound: a plain
-                                    transient value scalar whose every access lives in ONE scope and is a
-                                    direct-child tasklet of that scope (so the deferred declaration lands
-                                    in the same brace as -- and before -- every use). Any other shape (a
-                                    write-once const scalar, a len-1 array, a heap/device/GPU-global
-                                    scalar, a scalar crossing states or map/nested-SDFG/copy boundaries, or
-                                    one used across scopes) keeps the eager declaration for that scalar.
                                     This is a READABILITY / live-range form, not a speed lever -- the
-                                    backend sinks a dead declaration to first use regardless. ``eager``
-                                    reproduces today's output byte-for-byte.
+                                    backend sinks a dead declaration to first use regardless.
+                            scalar_init_style:
+                                type: str
+                                default: split
+                                title: Mutable scalar declaration / first-write fusion
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy always declares a scope
+                                    transient at its scope top, separately from every write, and ignores
+                                    this key -- its output stays byte-identical for every value).
+
+                                    Whether a MUTABLE scalar's declaration and its FIRST write are emitted
+                                    as one binding: ``split`` (the default) emits the legacy pair,
+                                    ``T x;`` at the scope top and ``x = expr;`` where the write happens;
+                                    ``fused`` emits ``T x = expr;`` -- the declaration IS the first write.
+
+                                    This is the mutable counterpart of the ``const T x = expr;`` binding
+                                    that write-once scalars already get from ``MarkConstInit``; a scalar
+                                    that is reassigned cannot be ``const``, but its first write can still
+                                    define it. Later writes stay plain ``x = expr;``.
+
+                                    Fusion is decided at EMISSION, not predicted: a declaration folded
+                                    into a tasklet that turns out to need its own ``{ ... }`` block would
+                                    be scoped to that block and invisible to later readers, and whether a
+                                    tasklet is emitted brace-free is not known until its body has been
+                                    lowered. So a candidate whose first-use tasklet is braced (or whose
+                                    statement does not spell the write) falls back to a plain ``T x;``
+                                    line immediately ahead of that tasklet rather than being fused. The
+                                    declaration is therefore always emitted, exactly once.
+
+                                    Candidates are gated as in ``decl_placement`` (a plain transient value
+                                    scalar whose every access is a direct-child tasklet of ONE scope, live
+                                    in a single state, never read before it is written), minus ``setzero``
+                                    scalars, whose ``T x = 0;`` init already IS a fused declaration.
                             ssa_loop_scalars:
                                 type: str
                                 default: 'off'
