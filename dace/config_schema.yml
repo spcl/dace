@@ -355,24 +355,49 @@ required:
                             write-once data. This flag also governs GPU-kernel tasklets,
                             which are emitted through the shared CPU generator instance.
 
-                    const_scalar_abi:
-                        type: str
-                        default: by_ref
-                        title: Read-only scalar calling convention (readable codegen)
+                    codegen_params:
+                        type: dict
+                        title: CPU codegen parameters
                         description: >
-                            How the experimental readable CPU generator binds a READ-ONLY scalar:
-                            ``by_ref`` emits ``const T& x`` (the legacy convention -- forming the
-                            reference never copies), ``by_value`` emits ``const T x`` (a copy).
-                            The two are semantically identical; which one is faster is a BACKEND
-                            artifact, not a general rule. Measured example: on Neoverse-V2, clang
-                            vectorizes the ``by_ref`` form of a masked sum-reduction to predicated
-                            loads plus an UNPREDICATED ``fadd``, but the ``by_value`` form (a
-                            distinct local copy in the inlined IR shifts the autovectorizer's cost
-                            model) to a MERGING-PREDICATED ``fadd``, which issues on fewer FP
-                            pipelines -- ~17% slower there. Elsewhere a small by-value scalar is
-                            usually the canonical fast choice, hence the knob. Default ``by_ref``
-                            matches legacy. Ignored by the legacy generator, which always binds by
-                            reference.
+                            Tuning knobs for the CPU code generators. Each names a source-level form
+                            that is SEMANTICALLY NEUTRAL but can move backend decisions -- the
+                            published mean coefficient of variation across semantically-equivalent
+                            loop forms is ~17% for clang ("compiler instability", Gong et al.
+                            OOPSLA'18), and the sign of any given knob is target-, compiler- and
+                            kernel-dependent. So none of these is hardcoded: every default reproduces
+                            the legacy generator's existing output, and each knob exists to be SWEPT
+                            and MEASURED per target rather than argued from first principles.
+
+                            EVERY key here MUST state which generator(s) it affects, on an
+                            ``Applies to:`` line -- ``legacy``, ``experimental_readable``, or both
+                            (see ``compiler.cpu.implementation``). A knob that names only
+                            ``experimental_readable`` is a no-op under ``legacy``, whose output stays
+                            byte-identical.
+                        required:
+                            const_scalar_abi:
+                                type: str
+                                default: by_ref
+                                title: Read-only scalar calling convention
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy always binds by
+                                    reference and ignores this key).
+
+                                    How the readable generator binds a READ-ONLY scalar: ``by_ref``
+                                    emits ``const T& x`` (the legacy convention -- forming the
+                                    reference never copies), ``by_value`` emits ``const T x`` (a
+                                    copy). Semantically identical, and the faster one is NOT fixed:
+                                    LLVM #121262 is the same axis with the REFERENCE winning, while
+                                    Lemire measured by-reference 4.5x SLOWER on an aliasing-bound
+                                    loop. Measured here: on Neoverse-V2 + clang the two forms lower a
+                                    masked sum-reduction differently (``ld1w p/z`` + ``sel`` +
+                                    unpredicated ``fadd`` vs ``ldr z`` + merging-predicated ``fadd``),
+                                    correlating with ~17%. NOTE: Arm's Neoverse-V2 optimization guide
+                                    (Table 3-25) lists identical latency/throughput/pipelines for ALL
+                                    FADD forms, so that delta is NOT explained by published
+                                    instruction costs -- the mechanism is OPEN (a predicate-pipe
+                                    dependency in the accumulate chain is the leading candidate) and
+                                    code layout has not been excluded. Default ``by_ref`` matches
+                                    legacy.
 
             #############################################
             # GPU (CUDA/HIP) compiler
