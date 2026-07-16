@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for the shared map-loop style knobs ``compiler.cpu.codegen_params.loop_index_type`` and
-    ``loop_bound_cmp``. Both live in the shared cpu.py emitter, so they affect the legacy generator
-    too -- their defaults must therefore reproduce today's loop verbatim. """
+""" Tests for the shared map-loop style knobs ``compiler.cpu.codegen_params.loop_index_type``,
+    ``loop_bound_cmp`` and ``loop_decl_style``. All live in the shared cpu.py emitter, so they affect
+    the legacy generator too -- their defaults must therefore reproduce today's loop verbatim. """
 import numpy
 import pytest
 
@@ -19,15 +19,16 @@ def double_it(A: dace.float64[N], B: dace.float64[N]):
 
 @dace.program
 def strided(A: dace.float64[N], B: dace.float64[N]):
-    for i in dace.map[0:N:2]:  # non-unit stride: `!=` is unsound here and must fall back
+    for i in dace.map[0:N:2]:  # non-unit stride: a naive `!=` bound is stepped over (see ne test)
         B[i] = A[i] * 2.0
 
 
-def generate(program, implementation='legacy', loop_index_type='auto', loop_bound_cmp='lt'):
+def generate(program, implementation='legacy', loop_index_type='auto', loop_bound_cmp='lt', loop_decl_style='for_init'):
     sdfg = program.to_sdfg(simplify=True)
     with set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
          set_temporary('compiler', 'cpu', 'codegen_params', 'loop_index_type', value=loop_index_type), \
-         set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value=loop_bound_cmp):
+         set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value=loop_bound_cmp), \
+         set_temporary('compiler', 'cpu', 'codegen_params', 'loop_decl_style', value=loop_decl_style):
         return '\n'.join(obj.code for obj in sdfg.generate_code() if obj.language == 'cpp')
 
 
@@ -82,6 +83,70 @@ def test_every_combination_runs_correctly(loop_index_type, loop_bound_cmp):
         B = numpy.zeros(32)
         double_it(A=A, B=B, N=32)
         assert numpy.allclose(B, A * 2.0)
+
+
+def sequential_map_sdfg(name='seq_map', nmaps=1):
+    """Sequential maps (no OpenMP pragma), all using the parameter name `i` so sibling scoping is
+    exercised. `dace.map` schedules CPU_Multicore, which cannot hoist -- see the OpenMP test."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [N], dace.float64)
+    outs = ['B', 'C'][:nmaps]
+    for o in outs:
+        sdfg.add_array(o, [N], dace.float64)
+    state = sdfg.add_state()
+    for k, o in enumerate(outs):
+        entry, exit_node = state.add_map('m%d' % k, dict(i='0:N'), schedule=dace.dtypes.ScheduleType.Sequential)
+        tasklet = state.add_tasklet('t%d' % k, {'a'}, {'b'}, 'b = a * 2.0')
+        state.add_memlet_path(state.add_read('A'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i]'))
+        state.add_memlet_path(tasklet, exit_node, state.add_write(o), src_conn='b', memlet=dace.Memlet('%s[i]' % o))
+    sdfg.validate()
+    return sdfg
+
+
+def generate_sdfg(sdfg, implementation='legacy', loop_decl_style='for_init'):
+    with set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
+         set_temporary('compiler', 'cpu', 'codegen_params', 'loop_decl_style', value=loop_decl_style):
+        return '\n'.join(obj.code for obj in sdfg.generate_code() if obj.language == 'cpp')
+
+
+@pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
+def test_loop_decl_style_hoisted_on_a_sequential_map(implementation):
+    code = generate_sdfg(sequential_map_sdfg(), implementation, loop_decl_style='hoisted')
+    assert any(line.startswith('for (;') for line in loop_lines(code)), loop_lines(code)
+    # The declaration moved ahead of the loop (emitted lines carry trailing ////__DACE debug comments).
+    assert any(stripped.startswith('auto i = 0;')
+               for stripped in (l.strip() for l in code.splitlines())), 'hoisted declaration not emitted'
+
+
+@pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
+def test_loop_decl_style_for_init_is_the_default(implementation):
+    lines = loop_lines(generate_sdfg(sequential_map_sdfg(), implementation))
+    assert any(line.startswith('for (auto i = ') for line in lines), lines
+    assert not any(line.startswith('for (;') for line in lines), lines
+
+
+def test_openmp_map_never_hoists():
+    """An OpenMP pragma must be immediately followed by a canonical loop whose init declares the
+    induction variable; hoisting it is rejected outright ("loop nest expected"). So a CPU_Multicore
+    map keeps for_init even when the knob asks for hoisted."""
+    lines = loop_lines(generate(double_it, loop_decl_style='hoisted'))  # dace.map => CPU_Multicore
+    assert any(line.startswith('for (auto i = ') for line in lines), lines
+    assert not any(line.startswith('for (;') for line in lines), lines
+
+
+@pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
+def test_hoisted_sibling_maps_do_not_collide(implementation):
+    """Two sequential sibling maps both named `i`: hoisted declarations must stay bounded by each
+    map's scope, or the second is a redefinition. Compiling is the proof."""
+    sdfg = sequential_map_sdfg('seq_siblings_%s' % implementation, nmaps=2)
+    with set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
+         set_temporary('compiler', 'cpu', 'codegen_params', 'loop_decl_style', value='hoisted'):
+        A = numpy.random.default_rng(0).random(24)
+        B = numpy.zeros(24)
+        C = numpy.zeros(24)
+        sdfg(A=A, B=B, C=C, N=24)
+        assert numpy.allclose(B, A * 2.0)
+        assert numpy.allclose(C, A * 2.0)
 
 
 @pytest.mark.parametrize('n', [31, 32])
