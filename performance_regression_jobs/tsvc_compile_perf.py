@@ -27,8 +27,6 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-import dace  # noqa: F401  (imported so a broken dace fails here, not deep in a subprocess)
-
 import engine
 import tsvc2_perf
 import tsvc2_5_perf
@@ -64,7 +62,8 @@ def process_kernel(kernel_name, args, rank, corpus):
         if remaining <= 0:
             continue
         print(f'[{kernel_name}] {lane}: {remaining} compile sample(s)')
-        ok, payload = engine.run_isolated(_compile_job, (kernel_name, pipeline, remaining, corpus), timeout=args.timeout)
+        ok, payload = engine.run_isolated(_compile_job, (kernel_name, pipeline, remaining, corpus),
+                                          timeout=args.timeout)
         if ok:
             engine.append_compile_results(kdir, lane, payload, have)
         else:
