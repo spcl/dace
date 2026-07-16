@@ -133,12 +133,87 @@ Every row is a candidate `codegen_params` axis, and a candidate NestForge varian
 | `[[clang::trivial_abi]]` | Register vs stack-temporary passing; up to **1.6%** whole-program ([libc++ doc](https://libcxx.llvm.org/DesignDocs/UniquePtrTrivialAbi.html)) |
 | Accumulator width (`int`→`long`) | TBAA disproves aliasing → store sinks out of the loop ([Godbolt's blog](https://xania.org/202512/15-aliasing-in-general)) |
 | Wrapping a scalar in a 1-member struct | Kills 128-bit SLP merge despite identical layout ([llvm#54646](https://github.com/llvm/llvm-project/issues/54646)) |
+| Index integer width (`int` vs `long long`) | Selects clang's per-row `memcpy` idiom — itself **2.6×** slower (7.5 vs 19.7 GiB/s); direction disagrees across compilers (see §5) |
+| Templating/overloading a helper on a type | **Nothing** — GCC's identical-code folding collapses instantiations onto one body (`jmp <v2>`) |
 | Making an operand compile-time-constant | GCC drops to **scalar branching** on TSVC S276 where the unknown-parameter form vectorizes ([TACO'19](https://ora.ox.ac.uk/objects/uuid:eac7b135-e92b-48dc-a1f7-4de66a441390/files/szg64tk95s)) — *more* information made it *worse* |
 | `-fno-semantic-interposition` | **5–27%** on CPython, zero source change ([Fedora](https://fedoraproject.org/wiki/Changes/PythonNoSemanticInterposition)) |
+| Fill/memset literal type (`0` vs `'\0'`) | **29×** (1.0 → 29.1 B/cyc): deduction makes the value type differ from the iterator type, so libstdc++'s `__fill_a` memset specialization is never selected ([Downs](https://travisdowns.github.io/blog/2020/01/20/zero.html)) — the *performance* twin of §5's silent-int32 correctness bug |
+| Index extension `sext` vs `zext` | LLVM promotes GEP indices to register width and defaults to `sext` "for safety"; on x86-64 `sext` is an extra instruction, `zext` folds into the load — LLVM tells frontends to emit `zext` when the range is known ([LLVM Perf Tips](https://llvm.org/docs/Frontend/PerformanceTips.html)) |
+| Non-constant-size `memcpy` from a copy loop | LoopIdiomRecognize forms a `memcpy` libcall that **no later pass can undo**; for small copies the call is slower than the loop it replaced ([llvm#87440](https://github.com/llvm/llvm-project/issues/87440)) |
+| `__builtin_expect` / `[[likely]]` | Silently rot on code change and regress; LLVM shipped a **MisExpect diagnostic** because of it ([LLVM MisExpect](https://llvm.org/docs/MisExpect.html)) |
 
 ---
 
-## 5. Rules this imposes on a code generator
+## 5. Our second case: the index type (`codegen_params.index_ctype`)
+
+The `<array>_idx` helpers had `long long` hardcoded. The obvious-looking fix — template the helper on
+the index type, or overload it for both — is the one we measured and **rejected**. Two findings, both
+independent of the timings, killed it:
+
+**Identical Code Folding makes the templated design a no-op.** GCC folds the instantiations back onto
+a single body, so the "let each call site pick" design generates one function and a jump to it:
+
+```asm
+0000000000401a30 <stencil3d_v3_c32>:
+  401a30:  endbr64
+  401a34:  jmp    401850 <stencil3d_v2_c32>   ; the whole "variant"
+```
+
+**C++ argument deduction picks the type behind your back, silently.** Our generator emits
+`for (auto i = 0; ...)` — so `i` is `int` and every call site is *already* int32. A templated helper
+deduces 32-bit math there and **wraps** with no diagnostic: `4000000000` came back `-294967296`. An
+explicit knob cannot do that; a deduced one does it by default.
+
+**The headline number was a red herring, and chasing it would have been the actual bug.** The −60%
+that started this was not index math at all: 64-bit indices trip clang's per-row `memcpy` idiom, and
+*that idiom is itself a 2.6× pessimization* (7.5 vs 19.7 GiB/s). int32 was fast only by accidentally
+defeating it. Tuning the index type here would have "fixed" a symptom of a lowering choice that
+deserves its own knob. (Why glibc `memcpy` stalls at 1–3 KiB/call is open.)
+
+So: **int64 default, int32 opt-in, never auto-selected.** Most kernels sit inside a 0.5–6% noise
+floor, and the deltas clearing it disagree on sign (gcc/gather −26% *for* int32; clang/stencil +12%
+*against*) — §1's ordinary draw again, not a discovery.
+
+The safety bound is the part worth remembering, because the intuition is wrong: **int32 overflows on
+the ELEMENT count, not the byte size.** An `int8` array wraps at **2 GiB** of data — reachable today,
+silent, and unprovable by the generator for a symbolic shape.
+
+| element type | overflows at |
+|---|---|
+| int8 | **2 GiB** |
+| float32 | 8 GiB |
+| float64 | 16 GiB |
+
+Incidental trap found on the way: `INDEX_CTYPE` is `long long`, but `dace.int64.ctype` is `int64_t`
+(= `long`) — *distinct* C++ types on LP64. Any overload set spanning both is ambiguous or silently
+truncating. This is why `index_ctype` emits `int`/`long long` literally and matches the call sites.
+
+Two follow-ups worth recording, one open and one new:
+
+- **The 1–3 KiB `memcpy` stall stays OPEN — resist the obvious story.** The tempting explanation is
+  glibc's `x86_rep_movsb_threshold` (default 2048, dead center of the window). It is a real, verified
+  tunable, but it is the wrong tool: it is x86-only (§2's measurements are Neoverse-V2), it predicts a
+  *crossover* not the *plateau* we saw on both sides, and an Arm glibc engineer's own numbers show
+  `rep movsb` ~3× *slower* than AVX `memcpy` across 4–64 KiB — i.e. above where it is supposed to win.
+  Shipping it would repeat the retracted Neoverse pipe mistake: a plausible vendor-sourced story that
+  the vendor's own data contradicts. What *is* corroborated is that LoopIdiomRecognize's non-constant
+  `memcpy` is a **one-way door** — no later pass undoes it — so a small per-row copy pays a full
+  libcall ([llvm#87440](https://github.com/llvm/llvm-project/issues/87440); the mechanism, not a
+  number: the source's "much slower" is unquantified).
+- **The real index knob may be signedness/extension, not width.** LLVM's own frontend guide tells code
+  generators that GEP indices default to `sext` "for safety", that on x86-64 `sext` costs an extra
+  instruction while `zext` folds into the load, and — decisively — *"if your source language provides
+  information about the range of the index, you may wish to manually extend indices … using a zext"*
+  ([LLVM Performance Tips](https://llvm.org/docs/Frontend/PerformanceTips.html); GCC agrees the *sign*,
+  not the width, gates promotion —
+  [Walfridsson](http://kristerw.blogspot.com/2016/02/how-undefined-signed-overflow-enables.html)). We
+  already hold exactly that information: canonicalization assumes symbols are nonnegative. So the next
+  index axis to try is an unsigned/`zext`-friendly index form, not a wider one — filed as a candidate,
+  not yet built.
+
+---
+
+## 6. Rules this imposes on a code generator
 
 1. **Match a known-good ABI; don't reason from first principles.** Lemire and #121262 disagree about
    which binding wins — both are right, on different targets. There is no rule to derive.
@@ -151,10 +226,17 @@ Every row is a candidate `codegen_params` axis, and a candidate NestForge varian
    effect and occasionally a soundness one.
 5. **Don't promise no-alias on data you declared may-alias.** That is a miscompile, not a win — which
    is why `may_alias` arrays are fused *without* `__restrict__`.
+6. **A knob the compiler can re-derive is not a knob.** Identical Code Folding collapsed every
+   templated index variant onto one body. If the choice is expressible in the type system, the
+   backend owns it, and the "variant" is a jump instruction.
+7. **Never let a correctness-relevant type be *deduced*.** Deduction has no diagnostic: our call sites
+   say `auto i = 0`, so a templated helper picks int32 and wraps at 2**31 silently. State it.
+8. **Chase the mechanism before the number.** The −60% index-type headline was clang's memcpy idiom,
+   not index math — tuning the knob would have papered over a 2.6× lowering pessimization.
 
 ---
 
-## 6. Further reading
+## 7. Further reading
 
 **Framing**
 - Gong et al., [Compiler stability](https://iacoma.cs.uiuc.edu/iacoma-papers/oopsla18.pdf) (OOPSLA'18) — the 16.9% number.
@@ -165,6 +247,45 @@ Every row is a candidate `codegen_params` axis, and a candidate NestForge varian
 
 **Cost models / IR shape** — [Pohl MASCOTS'19](https://www.cosenza.eu/papers/PohlMASCOTS19.pdf) · [goSLP](https://arxiv.org/pdf/1804.08733) · [uiCA](https://arxiv.org/abs/2107.14210) · [rust#82834](https://github.com/rust-lang/rust/pull/82834) · [llvm.assume](https://discourse.llvm.org/t/llvm-assume-blocks-optimization/71609)
 
+**Idiom recognition + deduction** — [Downs, *Sometimes zero is too much zero*](https://travisdowns.github.io/blog/2020/01/20/zero.html) (the 29× `std::fill`) · [llvm#87440](https://github.com/llvm/llvm-project/issues/87440) (LoopIdiom `memcpy` is a one-way door) · [LLVM Frontend Performance Tips](https://llvm.org/docs/Frontend/PerformanceTips.html) (emit `zext`, add range info) · [Walfridsson, undefined signed overflow](http://kristerw.blogspot.com/2016/02/how-undefined-signed-overflow-enables.html) (sign, not width, gates promotion) · [LLVM MisExpect](https://llvm.org/docs/MisExpect.html)
+
+**Vectorization surveys** — Siso et al. TACO'19 (above) · [Sakib et al. 2025](https://arxiv.org/abs/2502.11906) — 6 compilers × 2 ISAs, only 46–56% of TSVC2 vectorizes, and near-identical loops (s4112 vs s4115) get opposite decisions
+
 **SVE / Neoverse V2** — [Arm Neoverse V2 SWOG](https://documentation-service.arm.com/static/668bc0a369e89f01e39c4668) (Tables 3-1, 3-25; §4.17) **— read before repeating any pipe claim** · [de Smalen, Optimizing Code for Scalable Vector Architectures](https://llvm.org/devmtg/2021-11/slides/2021-OptimizingCodeForScalableVectorArchitectures.pdf) (LLVM Dev'21) · [GCC PR115531](https://www.mail-archive.com/gcc-bugs@gcc.gnu.org/msg818483.html) · [predicate-pipe dependency](https://www.mail-archive.com/gcc-patches@gcc.gnu.org/msg373383.html) · [A Critical Look at SVE2](https://gist.github.com/zingaburga/805669eb891c820bd220418ee3f0d6bd) — why a V2 result does not generalize to "SVE"
 
 **Methodology** — [STABILIZER](https://people.cs.umass.edu/~emery/pubs/stabilizer-asplos13.pdf) · [Beyls, Ameliorating Measurement Bias](https://llvm.org/devmtg/2016-03/Presentations/Beyls2016_AmelioratingMeasurmentBias.pdf)
+
+---
+
+## 8. Candidate knobs already located in the generator
+
+An audit of `experimental_cpu.py` and the `cpu.py` / `cpp.py` emitters it overrides found ten more
+hardcoded style points, each a place the generator picks one C++ spelling over a semantically-equal
+one. This is the implementation backlog for future `codegen_params` keys — ranked by (plausible
+effect × emittability × low legacy risk). Two are shipped (`const_scalar_abi`, `index_ctype`); the
+rest are located but not built. **`affects: both`** means the site is in the shared emitter and the
+knob's default MUST reproduce legacy byte-for-byte (§6 rule 3); **`experimental`** = zero legacy risk.
+
+| Proposed key | Values | Site | Affects | Mechanism (hypothesis) | Cost |
+|---|---|---|---|---|---|
+| `heap_ptr_restrict` | restrict (def) / none | `experimental_cpu.py:476` | experimental | Alias analysis → vectorization; the doc's #1 bimodal axis (rust#82834) | trivial |
+| `index_fn_qualifier` | hdfi_constexpr (def) / always_inline / static_inline | `experimental_cpu.py:41` | experimental | Guarantees the `_idx` call inlines so the vectorizer/idiom-recognizer sees `p[i*S+j]` | trivial |
+| `loop_index_type` | auto (def) / int64 / int32 | `cpu.py:2609` | **both** | Index/accumulator width → TBAA disproves aliasing → store sinks out of loop; no-wrap/SCEV legality | moderate |
+| `loop_bound_cmp` | lt (def) / le / ne | `cpu.py:2609` | **both** | `!=` with unknown-sign step forces a termination proof; `<` is SCEV-friendly | trivial |
+| `array_access_form` | index_fn (def) / row_pointer | `experimental_cpu.py:67` | experimental | Strength reduction + the §5 per-row `memcpy` idiom; row-pointers change what alias analysis sees | structural |
+| `heap_alignment` | 64 (def) / 32 / none | `cpu.py:1997`, `experimental_cpu.py:497` | **both** | Aligned (`movaps`) vs unaligned (`movups`) selection + the vectorizer's alignment assumption | moderate |
+| `omp_simd_clause` | off (def) / on | `cpu.py:2502` | **both** | Forces the vectorizer AND asserts no loop-carried dep — a *soundness* edge (opt-in only) | moderate |
+| `loop_bound_hoist` | inline (def) / hoisted | `cpu.py:2609` | **both** | LICM; usually nil, matters only when a compound bound defeats hoisting | trivial |
+| `const_scalar_binding` | fused_const (def) / mutable_decl | `experimental_cpu.py:691` | experimental | `const` binding + decl placement → regalloc/lifetime; **weak** — §2 doubts `const` is causal | moderate |
+| `size_fn_qualifier` | consteval (def) / constexpr | `experimental_cpu.py:44` | experimental | UNKNOWN — both fold at compile time; expected compile-time-only | trivial |
+
+Best "free to expose, low risk" first picks: `heap_ptr_restrict`, `index_fn_qualifier`, `loop_bound_cmp`.
+Highest mechanism but structural: `array_access_form` (row-pointer) — the one grounded in §5's own
+memcpy-idiom finding. Note `loop_index_type` and `index_ctype` are *distinct* axes: the former types
+the loop induction variable (shared emitter, legacy-affecting), the latter the helper body.
+
+Judged NOT worth a knob (no mechanism, semantics-adjacent, or data-driven not style): brace/scope
+elision and single-line tasklet collapse (lifetime/readability only); OpenMP `schedule`/`collapse(n)`/
+`num_threads` (already driven by map properties, not a hardcoded spelling); reduction infix-vs-helper
+(bit-exactness constraint, not neutral); `i += skip` vs `i = i + skip` (identical IR); the
+`{(T)(expr)}` len-1 cast (suppresses `-Wnarrowing`, a correctness concern).
