@@ -17,7 +17,7 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
 
-from conftest import EXPERIMENTAL, use_implementation, generated_code, run_isolated, assert_outputs_equivalent
+from tests.codegen.readable.conftest import EXPERIMENTAL, use_implementation, generated_code, run_isolated, assert_outputs_equivalent
 
 N = dace.symbol("N")
 

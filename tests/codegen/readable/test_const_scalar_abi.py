@@ -18,7 +18,7 @@ import pytest
 import dace
 from dace.config import set_temporary
 
-from conftest import LEGACY, EXPERIMENTAL, use_implementation, generated_code, run_isolated, experimental_available
+from tests.codegen.readable.conftest import LEGACY, EXPERIMENTAL, use_implementation, generated_code, run_isolated, experimental_available
 
 N = dace.symbol("N")
 #: The scalar's declaration in the generated nested-SDFG signature.
