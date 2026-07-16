@@ -449,6 +449,102 @@ def test_seed_spares_source_oriented_plain_init():
     assert np.allclose(out, bias + src), f'seeding would have dropped bias; got {out}'
 
 
+def _build_nsdfg_accumulating_connector_sdfg(n: int) -> dace.SDFG:
+    """Hand-crafted outer SDFG whose NestedSDFG body WCR-*accumulates* into its own
+    write-only output connector over a per-iteration DYNAMIC subrange.
+
+    The shape is the post-canonicalize residue of the ICON-style
+    ``for i: for k in range(beg, end): out[i, k] += 1.0`` (a nest whose inner bounds
+    derive from the outer iterator): the ``i`` map body becomes a NestedSDFG whose
+    ``acc`` output connector is an ``[n]`` array bound to ``out[i, 0:n]``, and the
+    inner per-element ``acc[k] (+)= 1.0`` only ever touches ``k in [i, i+2)``.
+
+    The shape stands on its own without depending on any other pass producing it.
+    """
+    inner = dace.SDFG('acc_body')
+    inner.add_array('acc', [n], dace.float64)
+    istate = inner.add_state('s', is_start_block=True)
+    ime, imx = istate.add_map('k', dict(k='i:i+2'))
+    t = istate.add_tasklet('one', {}, {'_r'}, '_r = 1.0')
+    aw = istate.add_write('acc')
+    istate.add_edge(ime, None, t, None, dace.Memlet())
+    istate.add_memlet_path(t, imx, aw, src_conn='_r', memlet=dace.Memlet(data='acc', subset='k',
+                                                                        wcr='lambda a, b: a + b'))
+
+    sdfg = dace.SDFG(f'nsdfg_accumulating_connector_n{n}')
+    sdfg.add_array('out', [n, n], dace.float64)
+    state = sdfg.add_state('s', is_start_block=True)
+    me, mx = state.add_map('m', dict(i=f'0:{n - 1}'))
+    nnode = state.add_nested_sdfg(inner, {}, {'acc'}, symbol_mapping=dict(i='i'))
+    out_w = state.add_write('out')
+    state.add_edge(me, None, nnode, None, dace.Memlet())
+    state.add_memlet_path(nnode,
+                          mx,
+                          out_w,
+                          src_conn='acc',
+                          memlet=dace.Memlet(data='out', subset=f'i, 0:{n}', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+    return sdfg
+
+
+def _accumulating_connector_oracle(n: int) -> np.ndarray:
+    exp = np.zeros((n, n))
+    for i in range(n - 1):
+        for k in range(i, i + 2):
+            exp[i, k] += 1.0
+    return exp
+
+
+def test_skips_rewrite_when_nsdfg_wcr_accumulates_into_its_output_connector():
+    """``NormalizeWCRSource`` must not re-home an output connector that the body
+    WCR-*accumulates* into onto a whole-array ``_wcr_priv`` buffer.
+
+    The rewrite copies the WHOLE private buffer out to the consumer, which is only
+    sound when the producer PLAIN-writes every element of it. Here the body instead
+    folds into the connector (``acc[k] (+)= 1.0``) over a per-iteration dynamic
+    subrange, so the buffer IS an accumulator -- and the pass seeds only the WCR
+    *destination*, never the private buffer. Codegen emits it as a bare per-iteration
+    ``new double[...]`` (uninitialized), so the body accumulates into garbage and the
+    whole-buffer copy folds every slot -- including the ones no iteration wrote --
+    into the target.
+
+    In the ICON compound nest this silently miscompiled ``for k in range(beg, end):
+    out[i, k, 0] += 1.0`` into an ``out[i] += sum(out[:i])`` prefix sum, because
+    ``delete[]``/``new[]`` of the same size hands the same block back with the previous
+    iteration's total still in it. That numeric symptom is allocator-dependent, so this
+    test pins the deterministic *structural* contract instead (the end-to-end value gate
+    is ``tests/canonicalize/canonicalize_compound_nest_test.py``): the accumulating
+    connector keeps its direct ``NestedSDFG -> MapExit`` WCR edge, so the inner
+    per-element WCR accumulates straight onto the target -- which is already correct.
+    """
+    from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
+
+    n = 4
+    sdfg = _build_nsdfg_accumulating_connector_sdfg(n)
+    assert 'NestedSDFG' in _wcr_source_classes(sdfg), 'fixture should have NSDFG-source WCR'
+
+    NormalizeWCRSource().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    # Structural: the accumulating connector must keep its direct NestedSDFG-sourced WCR
+    # edge, and no WHOLE-ARRAY private buffer may be minted for it -- that buffer is
+    # precisely the miscompile. The body's own inner ``acc[k] (+)= 1.0`` tasklet edge is
+    # still normalized onto a scalar ``_wcr_priv`` (the rewrite this pass exists for), so
+    # only multi-element buffers are disqualifying.
+    assert 'NestedSDFG' in _wcr_source_classes(sdfg), 'accumulating connector must keep its direct WCR edge'
+    wide = [
+        nm for sd in sdfg.all_sdfgs_recursive() for nm, d in sd.arrays.items()
+        if nm.startswith('_wcr_priv') and d.total_size != 1
+    ]
+    assert not wide, f'accumulating output connector must not be re-homed onto a whole-array buffer; got {wide}'
+
+    # Value-preservation: the refused shape still computes the right answer, bit-exact.
+    out = np.zeros((n, n))
+    sdfg(out=out)
+    exp = _accumulating_connector_oracle(n)
+    assert np.array_equal(out, exp), f'refused shape must stay value-preserving; got\n{out}\nwant\n{exp}'
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

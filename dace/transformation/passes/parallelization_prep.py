@@ -543,8 +543,11 @@ class BestEffortLoopPeeling(ppl.Pass):
         direction each can run away in (the middle singleton is clamped in
         :meth:`_split_loop_at`, and either range segment is simply empty in its other direction):
 
-        - ``before`` = [start, x-1], emitted as ``i < x``, REPLACES the original end bound -- an
-          ``x > end`` runs it past the loop's last iteration. Needs ``x <= end``.
+        - ``before`` = [start, x-1], emitted as ``i < x``, REPLACES the original end bound -- it
+          overruns only when it runs an iteration ABOVE ``end``, i.e. when ``x - 1 > end``. Safe for
+          ``x <= end + 1`` (at ``x == end + 1`` ``before`` is exactly the whole loop and the middle
+          singleton and ``after`` are empty). Proven against that true bound; the emitted fallback
+          guard stays the conservative ``x <= end`` (stricter, so always safe) when it is not proven.
         - ``after`` = [x+1, end], entered at ``i = x + 1`` -- an ``x < start`` re-runs the
           iterations below the start. Needs ``start <= x``.
 
@@ -558,11 +561,42 @@ class BestEffortLoopPeeling(ppl.Pass):
         if start is None or end is None:
             return None  # bounds unreadable -> membership cannot even be stated
         relations = set()
-        if symbolic.simplify(x - start) != 0 and not self._provably_nonneg(end - x):
+        if symbolic.simplify(x - start) != 0 and not self._nonneg_in_loop(loop, end + 1 - x, start, end):
             relations.add(sympy.LessThan(x, end))  # a `before` segment exists -> it must not overrun
-        if symbolic.simplify(x - end) != 0 and not self._provably_nonneg(x - start):
+        if symbolic.simplify(x - end) != 0 and not self._nonneg_in_loop(loop, x - start, start, end):
             relations.add(sympy.LessThan(start, x))  # an `after` segment exists -> it must not underrun
         return frozenset(relations)
+
+    def _nonneg_in_loop(self, loop: LoopRegion, expr, start, end) -> bool:
+        """Whether ``expr >= 0`` holds -- either unconditionally
+        (:meth:`_provably_nonneg`) or under the same large-trip-count assumption
+        :meth:`_nonneg_assuming_large_modulus` already encodes: a symbolic loop
+        being peeled/split by ``k <= peel_limit`` iterations presupposes it runs
+        more than ``peel_limit`` times, so its trip count ``end - start + 1``
+        exceeds ``peel_limit``.
+
+        A near-boundary split point ``x`` carving off ``c <= peel_limit`` tail
+        iterations has ``x - start = trip - 1 - c``, non-negative once
+        ``trip > peel_limit`` -- so its range-membership is statically true and
+        needs no ``if start <= x`` runtime guard (the ext_peel_multi_back back-peel
+        at ``x = LEN_1D - 2``: ``x - start = LEN_1D - 2 = trip - 2 >= 0`` for
+        ``trip = LEN_1D > peel_limit``). Applying the assumption with the trip
+        count as the modulus (and NO wrap offsets, so no offset facts are relied
+        on) proves only such affine-in-trip boundary points; a point leaning on a
+        free offset (``N - K``) is left guarded. A non-affine floor/ceil point
+        (``N // 2``) falls through to :meth:`_provably_nonneg_symbolic`, which
+        bounds it from the nonnegative-symbol contract."""
+        if self._provably_nonneg(expr):
+            return True
+        import sympy
+        trip = symbolic.simplify(end - start + 1)
+        if isinstance(trip, sympy.Symbol) and self._nonneg_assuming_large_modulus(expr, trip) is not None:
+            return True
+        # Floor/ceil-of-a-nonnegative-bound split points (``x = int_floor(N, 2)``) are not affine in
+        # the trip count, so the large-modulus path leaves them guarded; the symbolic nonnegativity
+        # prover discharges them from the canonicalization nonnegative-symbol contract + floor/ceil
+        # bounds. See :meth:`_provably_nonneg_symbolic`.
+        return self._provably_nonneg_symbolic(expr)
 
     def _specialize_index_set_split(self, sdfg: SDFG, loop: LoopRegion, x, relations) -> None:
         """Replace ``loop`` with ``if (start <= x <= end) { index-set split } else { original loop }``.
@@ -588,6 +622,19 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
 
+    def _inner_loop_variables(self, loop: LoopRegion) -> set:
+        """Iterator names bound by a ``LoopRegion`` nested strictly inside ``loop``.
+
+        A split point that names one of these is not loop-invariant at ``loop``'s level: it is only
+        defined per-iteration deeper in the nest, so embedding it in ``loop``'s segment bounds is
+        out of scope. The reference stays hidden while the inner loop shares the name (the symbol
+        table still ``defines`` it), then leaks the instant ``UniqueLoopIterators`` gives that inner
+        loop a fresh unique name -- exactly the durbin ``_loop_it_1`` codegen failure."""
+        return {
+            r.loop_variable
+            for r in loop.all_control_flow_regions() if r is not loop and isinstance(r, LoopRegion) and r.loop_variable
+        }
+
     def _best_split_for(self, loop: LoopRegion, sdfg: SDFG):
         """The ``if i == x`` guard value whose index-set split unblocks the most maps
         for ``loop`` (probed on an isolated copy), or ``None`` if splitting does not
@@ -602,6 +649,15 @@ class BestEffortLoopPeeling(ppl.Pass):
         for x in self._broadcast_conflict_split_points(loop):
             if x not in candidates:
                 candidates.append(x)
+        # A split point is baked into ``loop``'s segment bounds (see :meth:`_split_loop_at`), so it
+        # must be in scope at ``loop``'s own level. Drop any candidate naming an iterator an INNER
+        # loop binds -- a value that varies per inner iteration is undefined where the outer segments
+        # test it (durbin's broadcast conflict ``y[k] == y[i]`` solves to ``x = i``, the inner loop
+        # variable). Splitting there embeds the inner name into the outer bounds, valid only by
+        # accident until ``UniqueLoopIterators`` renames the inner loop and the reference dangles as a
+        # free symbol (``SDFG.arglist`` -> ``KeyError``). See :meth:`_inner_loop_variables`.
+        inner = self._inner_loop_variables(loop)
+        candidates = [x for x in candidates if inner.isdisjoint(str(s) for s in x.free_symbols)]
         if not candidates:
             return None
         try:
@@ -680,6 +736,52 @@ class BestEffortLoopPeeling(ppl.Pass):
         simplified (the deciding differences of a range bound reduce to numbers)."""
         s = symbolic.simplify(x)
         return s.is_number and s >= 0
+
+    @staticmethod
+    def _provably_nonneg_symbolic(x) -> bool:
+        """Whether ``x`` is provably ``>= 0`` for EVERY value of its free symbols, given the
+        canonicalization contract that those symbols are nonnegative -- the symbolic superset of
+        :meth:`_provably_nonneg`, which only decides concrete numbers.
+
+        This discharges the range-membership relations of an index-set split whose split point is
+        a floor/ceil of a nonnegative loop bound -- the archetype being the ``a[N // 2]`` broadcast
+        conflict of ``s1113``, split at ``x = int_floor(N, 2)``. Both membership sides
+        (``0 <= int_floor(N, 2)`` and ``int_floor(N, 2) <= N``) hold for all ``N >= 0``, so the
+        guard is redundant and the split applies unconditionally.
+
+        Sound because every step only ever REPLACES a subterm by a valid bound that makes the whole
+        smaller, then asks sympy whether the weakened expression is still nonnegative:
+
+        - Free symbols are re-asserted nonnegative (the canonicalization contract, already runtime
+          guarded), and ``int_floor``/``int_ceil`` are rewritten to sympy's ``floor``/``ceiling``
+          so its own sign reasoning applies. If that alone proves it, done.
+        - Otherwise relax each rounding atom to the extreme that MINIMIZES the (affine) expression:
+          ``floor(t) in [t - 1, t]`` and ``ceiling(t) in [t, t + 1]``, so a term with a negative
+          coefficient takes the upper bound and one with a nonnegative coefficient the lower. If the
+          resulting bound is nonnegative, so is ``x``. A non-numeric coefficient (nonlinear in the
+          atom) is unprovable here -> ``False`` (conservative: the guard stays)."""
+        import sympy
+        s = symbolic.simplify(x)
+        if s.is_number:
+            return bool(s >= 0)
+        nonneg = {sym: sympy.Symbol(sym.name, nonnegative=True, integer=bool(sym.is_integer)) for sym in s.free_symbols}
+        e = s.replace(lambda t: isinstance(t, symbolic.int_floor), lambda t: sympy.floor(t.args[0] / t.args[1]))
+        e = e.replace(lambda t: isinstance(t, symbolic.int_ceil), lambda t: sympy.ceiling(t.args[0] / t.args[1]))
+        e = e.subs(nonneg)
+        if e.is_nonnegative is True:
+            return True
+        bounds = {sympy.floor: (lambda a: a - 1, lambda a: a), sympy.ceiling: (lambda a: a, lambda a: a + 1)}
+        atoms = list(e.atoms(sympy.floor, sympy.ceiling))
+        if not atoms:
+            return False
+        relaxed = {}
+        for a in atoms:
+            c = e.coeff(a, 1)
+            if not c.is_number:
+                return False  # nonlinear in the rounding atom -> cannot bound
+            low, high = bounds[a.func]
+            relaxed[a] = high(a.args[0]) if c < 0 else low(a.args[0])
+        return symbolic.simplify(e.subs(relaxed)).is_nonnegative is True
 
     def _nonneg_assuming_large_modulus(self, x, m, offsets=frozenset()):
         """Prove ``x >= 0`` given the modulus ``m`` is at least ``peel_limit + 1`` and

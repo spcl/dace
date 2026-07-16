@@ -168,6 +168,41 @@ class NormalizeWCRSource(ppl.Pass):
             return False
         return bool(self._enclosing_map_params(state, e, scope) & subsyms)
 
+    def _folds_into_multi_element_connector(self, src: nodes.NestedSDFG, src_conn: str,
+                                            priv_desc: data.Data) -> bool:
+        """True if ``src``'s body WCR-accumulates into a MULTI-ELEMENT output connector
+        ``src_conn`` instead of plain-writing it -- i.e. the connector is itself an array
+        accumulator that the body only partially folds into.
+
+        Such a connector must not be re-homed onto a whole-array ``_wcr_priv`` buffer (see
+        the refusal comment in :meth:`_rewrite_state`).
+
+        Single-element buffers are excluded, mirroring the scoping of the sibling guard
+        :func:`~dace.transformation.passes.privatize_scatter_reduction.data_dependent_scatter_wcr_edge`:
+        a fold into the *only* element of a scalar partial covers it completely, so the
+        whole-buffer copy reads back exactly what the body produced. That is the legitimate
+        reduction-partial shape this pass exists to create (``acc[0] = sum(src)``, where the
+        outer WCR does the folding and codegen would otherwise drop it). Only a multi-element
+        buffer can be left partly unwritten by an affine ``oc[k] (+)=`` over a subrange.
+
+        Checked on BOTH memlet orientations, mirroring :meth:`_plain_written`: on
+        ``e.data.data`` (the usual per-element ``tasklet -[oc[k] (+)=]-> MapExit`` shape,
+        whose WCR sits on an edge that never touches an AccessNode) and on ``e.dst.data``
+        (a source-oriented copy carries the memlet under the *reader's* name yet still
+        writes ``oc``). Subsets are deliberately not consulted: propagation reports MAY-write
+        over-approximations (the ``MapExit -> AccessNode(oc)`` edge covers ``0:N`` even when
+        the body only touches ``beg:end``), so the presence of the WCR is the decisive fact.
+        """
+        if isinstance(priv_desc, data.Scalar):
+            return False
+        for ist in src.sdfg.all_states():
+            for e in ist.edges():
+                if e.data is None or e.data.wcr is None:
+                    continue
+                if e.data.data == src_conn or (isinstance(e.dst, nodes.AccessNode) and e.dst.data == src_conn):
+                    return True
+        return False
+
     def _rewrite_state(self, sdfg: SDFG, state: SDFGState) -> Tuple[int, List[Tuple[str, str, bool, SDFGState]]]:
         """Rewrite WCR edges whose source is a Tasklet or NestedSDFG.
 
@@ -222,6 +257,25 @@ class NormalizeWCRSource(ppl.Pass):
             if inner is None:
                 continue
             priv_desc = self._make_private_desc(inner)
+            # The rewrite copies the WHOLE private buffer out to the consumer, so it is sound
+            # only if ``src`` PLAIN-writes it -- the invariant this module's docstring states
+            # ("the ``_wcr_priv`` buffer is not the accumulator; it is plain-written by
+            # ``src``, so it needs no seed"). A body that instead WCR-folds into a MULTI-
+            # ELEMENT output connector breaks it: the buffer then IS an accumulator, yet the
+            # pass seeds only the WCR *destination*, never the private buffer, and codegen
+            # emits the latter as a bare per-iteration ``new double[...]`` -- uninitialized.
+            # So the body folds into garbage and the whole-buffer copy writes back every
+            # slot, including the ones this iteration never touched. With ``new[]`` /
+            # ``delete[]`` handing the same block back each iteration, that garbage is the
+            # PREVIOUS iteration's total: a per-iteration ``out[i, k] += 1`` silently becomes
+            # an ``out[i] += sum(out[:i])`` prefix sum.
+            # ``is_data_dependent_scatter_sink`` above only catches the runtime-indexed
+            # scatter flavour of this; an affine ``oc[k] (+)=`` over a per-iteration dynamic
+            # subrange (ICON-style ``for k in range(beg, end)``) is the same hazard. Refuse:
+            # the WCR stays on the direct edge and the inner per-element WCR keeps
+            # accumulating straight onto the target, which is already correct.
+            if isinstance(src, nodes.NestedSDFG) and self._folds_into_multi_element_connector(src, src_conn, priv_desc):
+                continue
             # Skip when the private buffer's shape depends on symbols not defined at this
             # SDFG's scope -- e.g. a triangular reduction whose output extent is ``i+1``
             # in an enclosing loop variable. Materializing the buffer (and its memlets) at

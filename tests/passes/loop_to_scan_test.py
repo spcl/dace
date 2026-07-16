@@ -1667,6 +1667,69 @@ def test_symbolic_stride_scan_value_exact(k):
     assert np.allclose(got, exp), f'value mismatch at K={k}: max diff {np.abs(got - exp).max():.2e}'
 
 
+@dace.program
+def _forward_shift_half_scan(a: dace.float64[N], b: dace.float64[N]):
+    """TSVC ``s173_d_single``: ``a[i + N//2] = a[i] + b[i]`` over ``i in [0, N//2)``.
+    The matcher reads this as a residue-class scan of stride ``N//2`` (write minus read
+    offset), but the write region ``a[N//2 .. 2*(N//2))`` is DISJOINT from the read region
+    ``a[0 .. N//2)`` -- the iteration span equals the stride, so it is unconditionally
+    DOALL and the ``stride >= 1`` guard is provably redundant (empty loop when the stride
+    is 0). ``N`` is a runtime symbol of unknown value; the caller sizes both arrays ``N``."""
+    for i in range(N // 2):
+        a[i + (N // 2)] = a[i] + b[i]
+
+
+def test_forward_shift_half_scan_drops_provable_stride_guard():
+    """The s173 forward-shift-by-half shape has a SYMBOLIC apparent stride ``N//2`` whose
+    sign is not provably positive, yet the iteration span never exceeds that stride, so the
+    loop carries no recurrence and is unconditionally DOALL. The stride guard must be
+    discharged statically: no ``if stride>=1: scan else: seq`` conditional, no pinned
+    sequential fallback, and no residue-class ``Scan`` -- the loop becomes a BARE MAP.
+
+    The bare form must be a Map and NOT an unconditional Scan: the proof discharges the
+    ``stride <= 0`` case by "the span is then ``<= 0``, so the loop is empty", which is
+    vacuous for a Map but not for a Scan, whose runtime aborts on ``stride <= 0`` before
+    looking at the element count (see ``test_forward_shift_half_scan_value_exact`` at N=0/1).
+
+    Contrast the true symbolic recurrence ``a[i]=a[i-K]+x[i]``
+    (``test_symbolic_stride_scan_specializes_if_scan_else_seq``), where the span CAN exceed
+    the stride, the recurrence is real, and the guard correctly STAYS."""
+    sdfg = _forward_shift_half_scan.to_sdfg(simplify=True)
+    LoopToScan().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    cbs = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)]
+    assert not cbs, f'provable-DOALL guard must be dropped; found {len(cbs)} specialization conditional(s)'
+    assert _num_loops(sdfg) == 0, 'the sequential loop (and its pinned fallback) must be gone'
+    assert _num_scan_nodes(sdfg) == 0, 'a bare Map must be emitted, never an unconditional Scan (aborts at stride<=0)'
+    maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)]
+    assert len(maps) == 1, f'expected exactly one unconditional Map, got {len(maps)}'
+    pinned = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.pinned_sequential]
+    assert not pinned, 'no pinned sequential fallback may survive once the guard is discharged'
+
+
+@pytest.mark.parametrize('n', [0, 1, 2, 3, 8, 15, 64])
+def test_forward_shift_half_scan_value_exact(n):
+    """Bit-exact vs the sequential loop across sizes, including the empty ``N=0/1`` cases
+    where the discharged stride (``N//2 == 0``) would have failed the ``>= 1`` guard. The
+    loop runs zero iterations there, so the bare Map is vacuously correct -- these are the
+    cases that make the closure sound, and the ones that ABORT if the bare form is lowered
+    to an unconditional residue-class Scan instead of a Map."""
+    sdfg = _forward_shift_half_scan.to_sdfg(simplify=True)
+    LoopToScan().apply_pass(sdfg, {})
+
+    rng = np.random.default_rng(200 + n)
+    a0 = rng.standard_normal(max(n, 1))
+    b = rng.standard_normal(max(n, 1))
+    got = a0.copy()
+    sdfg(a=got, b=b, N=n)
+
+    exp = a0.copy()
+    for i in range(n // 2):
+        exp[i + (n // 2)] = exp[i] + b[i]
+    assert np.allclose(got, exp), f'value mismatch at N={n}: max diff {np.abs(got - exp).max():.2e}'
+
+
 def _carried_writes_in_loops(sdfg, name):
     """Count AccessNodes of ``name`` that are WRITTEN (have an in-edge) inside any
     LoopRegion body -- i.e. a surviving sequential recurrence write."""
