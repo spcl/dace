@@ -504,14 +504,17 @@ required:
                                     ``i <= end`` (same range, without the ``+ 1`` add), ``ne`` emits
                                     ``i != end + 1``.
 
-                                    ``ne`` is only emitted when the stride is provably 1; with any other
-                                    stride the counter can step OVER the bound and the loop would never
-                                    terminate, so it silently falls back to ``lt`` rather than emit an
-                                    infinite loop. Even when legal, ``ne`` forces the optimizer to prove
-                                    termination before it may vectorize or unroll, where ``<`` hands SCEV
-                                    a trip count directly -- so ``ne`` is the pessimistic end of this
-                                    axis and exists to be measured, not recommended. ``lt`` reproduces
-                                    today's output byte-for-byte.
+                                    ``ne`` supports any stride. A naive ``i != end + 1`` is correct only
+                                    when the stride divides the range -- otherwise the counter steps
+                                    OVER that bound, never compares equal, and the loop does not
+                                    terminate. So for a non-unit stride the bound is normalised to the
+                                    first value the counter actually LANDS on at or past the end,
+                                    ``begin + int_ceil(end + 1 - begin, skip) * skip``, which it is
+                                    guaranteed to hit exactly. Even so, ``ne`` forces the optimizer to
+                                    prove termination before it may vectorize or unroll, where ``<``
+                                    hands SCEV a trip count directly -- so ``ne`` is the pessimistic end
+                                    of this axis and exists to be measured, not recommended. ``lt``
+                                    reproduces today's output byte-for-byte.
 
             #############################################
             # GPU (CUDA/HIP) compiler

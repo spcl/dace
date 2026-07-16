@@ -38,19 +38,24 @@ def loop_index_ctype() -> str:
     return LOOP_INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')]
 
 
-def loop_exit_test(end, skip) -> Tuple[str, str]:
+def loop_exit_test(begin, end, skip) -> Tuple[str, str]:
     """The ``(comparison, bound)`` of a map loop's exit test, per ``codegen_params.loop_bound_cmp``.
 
-    Every spelling covers the identical iteration space ``[begin, end]``. ``ne`` is emitted ONLY for a
-    provably unit stride: with any other stride the counter can step OVER the bound, so ``i != end+1``
-    would never fire and the loop would not terminate -- a non-unit stride silently falls back to
-    ``lt`` rather than emit an infinite loop.
+    Every spelling covers the identical iteration space ``[begin, end]`` at stride ``skip``.
+
+    ``ne`` supports any stride. A naive ``i != end + 1`` is only correct when the stride divides the
+    range -- otherwise the counter steps OVER that bound, never compares equal, and the loop does not
+    terminate. So for a non-unit stride the bound is normalised to the first value the counter
+    actually LANDS on at or past the end, ``begin + int_ceil(end + 1 - begin, skip) * skip``, which the
+    induction variable is guaranteed to hit exactly.
     """
     mode = Config.get('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp')
     if mode == 'le':
         return '<=', sym2cpp(end)
-    if mode == 'ne' and symbolic.pystr_to_symbolic(skip) == 1:
-        return '!=', sym2cpp(end + 1)
+    if mode == 'ne':
+        if symbolic.pystr_to_symbolic(skip) == 1:
+            return '!=', sym2cpp(end + 1)
+        return '!=', sym2cpp(begin + symbolic.int_ceil(end + 1 - begin, skip) * skip)
     return '<', sym2cpp(end + 1)
 
 
@@ -2630,7 +2635,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
 
-                comparison, bound = loop_exit_test(end, skip)
+                comparison, bound = loop_exit_test(begin, end, skip)
                 result.write(
                     "for (%s %s = %s; %s %s %s; %s += %s) {\n" %
                     (loop_index_ctype(), var, cpp.sym2cpp(begin), var, comparison, bound, var, cpp.sym2cpp(skip)),
