@@ -164,6 +164,17 @@ class ZipArrays(ppl.Pass):
                         conn_field[e.src_conn] = e.data.data
                 if not conn_field:
                     continue
+                # The rewrite below parses the body as PYTHON. A CPP tasklet must not reach it: C that
+                # happens to also be valid Python (``b = a``) would be parsed, unparsed and stored
+                # back as a Python CodeBlock -- silently changing the tasklet's language -- and C that
+                # is not would raise an opaque SyntaxError. Refuse explicitly instead. (Only the
+                # heterogeneous-struct path rewrites tasklet code at all; the homogeneous path leaves
+                # tasklets untouched and is unaffected.)
+                if node.code.language != dace.dtypes.Language.Python:
+                    raise NotImplementedError(
+                        f"ZipArrays: the heterogeneous-struct path rewrites tasklet code as Python, so the "
+                        f"{node.code.language.name} tasklet '{node.label}' is unsupported. Use the "
+                        f"struct-free homogeneous path (equal field dtypes), which does not touch tasklet code.")
                 tree = ast.parse(node.code.as_string)
                 StructMemberRewriter(conn_field).visit(tree)
                 ast.fix_missing_locations(tree)

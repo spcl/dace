@@ -242,6 +242,12 @@ class ShuffleElements(ppl.Pass):
                         yield node.sdfg, conn
 
     def _guard_no_interstate(self, sdfg, arr) -> None:
+        """Refuse if the array is read anywhere on an interstate edge -- the pass does not rewrite
+        those, so the reference would keep the un-shuffled indexing.
+
+        Both sides of the edge are checked. Scanning only the assignments' right-hand sides let an
+        array referenced in a branch CONDITION (``if A[0] < 1``) slip past the guard AND the rewrite,
+        silently reading a shuffled array with an un-shuffled index."""
         token = re.compile(rf"\b{re.escape(arr)}\b")
         for edge in sdfg.all_interstate_edges():
             for k, v in edge.data.assignments.items():
@@ -249,3 +255,8 @@ class ShuffleElements(ppl.Pass):
                     raise NotImplementedError(
                         f"ShuffleElements: '{arr}' is referenced in an interstate edge assignment ('{k} = {v}'); "
                         f"shuffling interstate-referenced arrays is not supported.")
+            condition = edge.data.condition
+            if condition is not None and token.search(condition.as_string):
+                raise NotImplementedError(
+                    f"ShuffleElements: '{arr}' is referenced in an interstate edge condition "
+                    f"('{condition.as_string}'); shuffling interstate-referenced arrays is not supported.")
