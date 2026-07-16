@@ -25,7 +25,7 @@ from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import CPUCodeGen, hoist_loop_decls
+from dace.codegen.targets.cpu import CPUCodeGen, hoist_loop_decls, map_schedule_is_sequential
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.sdfg import nodes
@@ -81,6 +81,32 @@ def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: Li
     return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
 
 
+def loop_access_form() -> str:
+    """How arrays indexed at a sequential loop counter are accessed, per
+    ``compiler.cpu.codegen_params.loop_access_form``: ``indexed`` (the default, recompute the flat
+    index each iteration) or ``ptr_increment`` (walk a base pointer). ``indexed`` reproduces today's
+    output byte-for-byte; ``ptr_increment`` only ever applies where a walk is provably equivalent (see
+    :meth:`ExperimentalCPUCodeGen.build_walk_plan`), otherwise it falls back to ``indexed``."""
+    return Config.get('compiler', 'cpu', 'codegen_params', 'loop_access_form')
+
+
+def index_expr_nodes(slicenode: ast.AST) -> List[ast.AST]:
+    """The per-dimension index AST expressions of a subscript's slice (a tuple's elements, else the
+    single expression)."""
+    node = slicenode
+    if isinstance(node, ast.Index):  # py<3.9 compatibility
+        node = node.value
+    if isinstance(node, ast.Tuple):
+        return list(node.elts)
+    return [node]
+
+
+def subscript_index_strings(slicenode: ast.AST) -> List[str]:
+    """The per-dimension index expressions of a subscript's slice as source strings. Shared by the
+    walk-plan builder and the readable rewriter so both key an access on the identical strings."""
+    return [ast.unparse(e) for e in index_expr_nodes(slicenode)]
+
+
 # NOTE: not registered with the target registry -- it is selected explicitly by
 # ``dace.codegen.codegen.generate_code`` when ``compiler.cpu.implementation`` is
 # ``experimental_readable``. Registering it would cause double instantiation.
@@ -110,6 +136,16 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # Per-native-tasklet cache: id(node) -> {connector_name: cpp_access}. An entry means the
         # connector is accessed directly (scalar index / base pointer) instead of via a copy-in/out.
         self._cpp_inline: Dict[int, Dict[str, str]] = {}
+        # ptr_increment (loop_access_form) support. ``_map_scope_stack`` is the chain of currently-open
+        # MapEntry nodes (pushed before the base MapEntry emitter runs, popped after the matching
+        # MapExit), so the scope-preamble / -postamble hooks and the readable rewriter can find the map
+        # whose body they are inside. ``_walk_plans`` memoizes id(map) -> walk plan ({} when a pointer
+        # walk is not provably equivalent). The two ``_walk_emitted_*`` sets guard the once-per-map
+        # emission of the pointer declarations and increments.
+        self._map_scope_stack: List[nodes.MapEntry] = []
+        self._walk_plans: Dict[int, dict] = {}
+        self._walk_emitted_decls: Set[int] = set()
+        self._walk_emitted_incs: Set[int] = set()
 
     # -- map scope ------------------------------------------------------------
 
@@ -125,6 +161,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return True
         if hoist_loop_decls(node):  # declares the induction variables ahead of the loop headers
             return True
+        if self.walk_plan_for(sdfg, state_dfg, node):  # declares the walking base pointers ahead of the loop
+            return True
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:  # declares the thread id
             return True
         if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:  # declares timers
@@ -139,6 +177,208 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                         for _op, _ct, _dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node))):
             return True
         return False
+
+    # -- ptr_increment: walking base pointers for a sequential map -------------
+
+    def _generate_MapEntry(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
+        # Compute (and memoize) the walk plan BEFORE the base emitter runs, so ``map_scope_needs_brace``
+        # -- which the base calls -- sees it, and push this map so the scope hooks below can find it.
+        self.walk_plan_for(sdfg, cfg.state(state_id), node)
+        self._map_scope_stack.append(node)
+        super()._generate_MapEntry(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+
+    def _generate_MapExit(self, sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream):
+        super()._generate_MapExit(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        # Pop the matching entry pushed in _generate_MapEntry and drop its plan (ids are reused once a
+        # map is freed, so do not let a stale plan linger).
+        if self._map_scope_stack:
+            entry = self._map_scope_stack.pop()
+            self._walk_plans.pop(id(entry.map), None)
+            self._walk_emitted_decls.discard(id(entry.map))
+            self._walk_emitted_incs.discard(id(entry.map))
+
+    def generate_scope_preamble(self, sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream):
+        super().generate_scope_preamble(sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream)
+        # ``outer_stream`` here is the code position just after the map's encapsulating brace and before
+        # its loop headers: exactly where the walking base pointers must be declared.
+        plan = self._current_walk_plan()
+        if not plan:
+            return
+        key = id(self._map_scope_stack[-1].map)
+        if key in self._walk_emitted_decls:
+            return
+        self._walk_emitted_decls.add(key)
+        for decl in plan['decls']:
+            outer_stream.write(decl + '\n', sdfg)
+
+    def generate_scope_postamble(self, sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream):
+        super().generate_scope_postamble(sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream)
+        # ``inner_stream`` here is the end of the loop body (before the closing brace): where each
+        # walking pointer is advanced by its per-iteration stride.
+        plan = self._current_walk_plan()
+        if not plan:
+            return
+        key = id(self._map_scope_stack[-1].map)
+        if key in self._walk_emitted_incs:
+            return
+        self._walk_emitted_incs.add(key)
+        for inc in plan['incs']:
+            inner_stream.write(inc + '\n', sdfg)
+
+    def _current_walk_plan(self) -> Optional[dict]:
+        """The (non-empty) walk plan of the map currently being emitted, or None."""
+        if not self._map_scope_stack:
+            return None
+        plan = self._walk_plans.get(id(self._map_scope_stack[-1].map))
+        return plan or None
+
+    def current_walk_accesses(self) -> Optional[Dict[tuple, str]]:
+        """``{(array_name, index_string_tuple): pointer_name}`` for the map currently being emitted, or
+        None. The readable rewriter consults this to replace a walked access with ``(*pointer)``."""
+        plan = self._current_walk_plan()
+        return plan['accesses'] if plan else None
+
+    def walk_plan_for(self, sdfg, state_dfg, node: nodes.MapEntry) -> dict:
+        """Memoized :meth:`build_walk_plan` for map ``node`` (keyed on the map object's id)."""
+        cached = self._walk_plans.get(id(node.map))
+        if cached is not None:
+            return cached
+        plan = self.build_walk_plan(sdfg, state_dfg, node)
+        self._walk_plans[id(node.map)] = plan
+        return plan
+
+    def build_walk_plan(self, sdfg, state_dfg, node: nodes.MapEntry) -> dict:
+        """A plan to walk this map's array accesses with incrementing base pointers, or ``{}`` to keep
+        the indexed form. A plan is built ONLY where the walk is provably equivalent to the indexed
+        access -- otherwise (any shape that cannot be walked with a single simple pointer) it returns
+        ``{}`` and the construct stays indexed. See the ``loop_access_form`` schema entry.
+
+        The plan is ``{'accesses': {(name, idx_tuple): pointer}, 'decls': [str], 'incs': [str]}``.
+        """
+        if loop_access_form() != 'ptr_increment':
+            return {}
+        # SEQUENTIAL only (reuse the hoisted-declaration gate): an OpenMP map keeps the canonical
+        # indexed loop its parallel-for pragma requires.
+        if not map_schedule_is_sequential(node):
+            return {}
+        if node.map.unroll:
+            return {}
+        # A single 1-D loop: the per-iteration pointer stride is defined against one counter.
+        if len(node.map.range) != 1 or len(node.map.params) != 1:
+            return {}
+        if dynamic_map_inputs(state_dfg, node):
+            return {}
+        # Exactly one Python tasklet in the scope (no nested maps, extra tasklets, or scope transients).
+        scope_nodes = list(state_dfg.scope_subgraph(node, include_entry=False, include_exit=False).nodes())
+        if len(scope_nodes) != 1 or not isinstance(scope_nodes[0], nodes.Tasklet):
+            return {}
+        tasklet = scope_nodes[0]
+        if tasklet.language != dtypes.Language.Python:
+            return {}
+        # A WCR write must go through the atomic resolve path, never a plain ``*p =``.
+        exit_node = state_dfg.exit_node(node)
+        for edge in list(state_dfg.all_edges(tasklet)) + list(state_dfg.all_edges(exit_node)):
+            if edge.data is not None and edge.data.wcr is not None:
+                return {}
+
+        var = node.map.params[0]
+        begin, _end, skip = node.map.range[0]
+        loop_sym = symbolic.pystr_to_symbolic(var)
+        skip_sym = symbolic.pystr_to_symbolic(str(skip))
+        begin_sym = symbolic.pystr_to_symbolic(str(begin))
+
+        stmts = tasklet.code.code
+        if isinstance(stmts, str):
+            try:
+                body = ast.parse(stmts).body
+            except SyntaxError:
+                return {}
+        else:
+            body = list(stmts)
+
+        # Collect every array subscript; bail (whole construct falls back) on any array reference that
+        # is not a plain affine subscript in the loop counter -- a bare (unsubscripted) array, a
+        # gather / call inside an index, or a subscript whose arity does not match the descriptor.
+        records: List[tuple] = []  # (name, idx_tuple, desc)
+        if not all(self._scan_walkable(stmt, sdfg, records) for stmt in body):
+            return {}
+        if not records:
+            return {}
+
+        accesses: Dict[tuple, str] = {}
+        decls: List[str] = []
+        incs: List[str] = []
+        used_names: Set[str] = set()
+        for name, idx_tuple, desc in records:
+            key = (name, idx_tuple)
+            if key in accesses:
+                continue  # an identical access shares its cursor
+            flat = self._flat_index(idx_tuple, desc)
+            per_iter = symbolic.pystr_to_symbolic(flat.subs(loop_sym, loop_sym + skip_sym) - flat).simplify()
+            if loop_sym in per_iter.free_symbols:
+                return {}  # non-affine in the loop counter -> not a simple walk
+            ptrname = self.ptr(name, desc, sdfg)
+            try:
+                defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
+            except KeyError:
+                return {}  # base pointer not yet in scope (e.g. a scope transient) -> keep indexed
+            if defined_type != DefinedType.Pointer:
+                return {}
+            pointer = self._unique_walk_name(name, used_names)
+            accesses[key] = pointer
+            base_off = sym2cpp(flat.subs(loop_sym, begin_sym))
+            start = ptrname if base_off == '0' else '%s + (%s)' % (ptrname, base_off)
+            decls.append('%s* %s = %s;' % (desc.dtype.ctype, pointer, start))
+            step = sym2cpp(per_iter)
+            if step != '0':
+                incs.append('%s += %s;' % (pointer, step))
+        return {'accesses': accesses, 'decls': decls, 'incs': incs}
+
+    def _flat_index(self, idx_tuple, desc):
+        """The flat element offset (index . strides + offset . strides) of a subscript, as a symbolic
+        expression -- exactly what the ``<array>_idx`` helper computes, but as a Python expression so
+        the base offset and per-iteration stride fall out by substitution."""
+        strides = [symbolic.pystr_to_symbolic(str(s)) for s in desc.strides]
+        offset = [symbolic.pystr_to_symbolic(str(o)) for o in desc.offset]
+        flat = sum(symbolic.pystr_to_symbolic(idx_tuple[i]) * strides[i] for i in range(len(strides)))
+        flat += sum(offset[i] * strides[i] for i in range(len(strides)))
+        return symbolic.pystr_to_symbolic(flat)
+
+    def _scan_walkable(self, astnode, sdfg, records: List[tuple]) -> bool:
+        """Walk ``astnode`` recording every plain-array subscript into ``records``; return False the
+        moment an array is referenced in a way a simple pointer walk cannot express."""
+        if isinstance(astnode, ast.Subscript):
+            base = rname(astnode)
+            desc = sdfg.arrays.get(base)
+            if isinstance(desc, dt.Array) and not isinstance(desc, dt.View):
+                # A plain-array subscript: its index expressions must be affine (no nested subscript /
+                # call = no gather / indirection), and match the descriptor's rank.
+                for idx in index_expr_nodes(astnode.slice):
+                    if any(isinstance(sub, (ast.Subscript, ast.Call)) for sub in ast.walk(idx)):
+                        return False
+                idx_tuple = tuple(subscript_index_strings(astnode.slice))
+                if len(idx_tuple) != len(desc.shape):
+                    return False
+                records.append((base, idx_tuple, desc))
+                return True  # indices are plain symbols; nothing further to walk inside
+            # Non-array subscript (a connector / constant): scan its children normally.
+        elif isinstance(astnode, ast.Name):
+            desc = sdfg.arrays.get(astnode.id)
+            if isinstance(desc, dt.Array) and not isinstance(desc, dt.View):
+                return False  # a bare (unsubscripted) array reference cannot be a single walked element
+            return True
+        return all(self._scan_walkable(child, sdfg, records) for child in ast.iter_child_nodes(astnode))
+
+    def _unique_walk_name(self, data_name: str, used: Set[str]) -> str:
+        """A collision-free C++ name for a walking base pointer over ``data_name``."""
+        base = '__walk_' + re.sub(r'\W', '_', data_name)
+        name = base
+        k = 1
+        while name in used:
+            name = '%s_%d' % (base, k)
+            k += 1
+        used.add(name)
+        return name
 
     # -- tasklet lowering hooks ------------------------------------------------
 
@@ -680,6 +920,15 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
     def _bare_access(self, node: ast.AST) -> Optional[str]:
         """ C++ access string for a direct (inlined) access to an SDFG array. """
         name = rname(node)
+        # ptr_increment: an access this map's walk plan covers is emitted as a pointer dereference
+        # ``(*__walk_X)`` rather than a recomputed ``X[X_idx(..)]``. Checked before array_index_access
+        # so a fully-walked array never registers an (unused) ``<array>_idx`` helper.
+        if isinstance(node, ast.Subscript):
+            walk = self.codegen.current_walk_accesses()
+            if walk is not None:
+                pointer = walk.get((name, tuple(self._index_list(node.slice))))
+                if pointer is not None:
+                    return '(*%s)' % pointer
         desc = self.sdfg.arrays[name]
         info = self.codegen.array_index_access(self.sdfg, desc, name)
         if info is None:
@@ -752,9 +1001,4 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         return super().visit_Name(node)
 
     def _index_list(self, slicenode: ast.AST) -> List[str]:
-        node = slicenode
-        if isinstance(node, ast.Index):  # py<3.9 compatibility
-            node = node.value
-        if isinstance(node, ast.Tuple):
-            return [ast.unparse(e) for e in node.elts]
-        return [ast.unparse(node)]
+        return subscript_index_strings(slicenode)
