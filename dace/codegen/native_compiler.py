@@ -324,21 +324,27 @@ _ARCH_TOKEN = re.compile(r'(?:sm_|compute_)?(\d+)([a-z]?)')
 
 
 def _cuda_arch_flags(supported: Optional[set], allow_native: bool = True) -> List[str]:
-    """CUDA ``-arch`` / ``-gencode`` flags: target the local GPU with ``-arch=native`` (nvcc's
-    built-in detection, matching CMake's get_cuda_arch.cpp), plus one ``-gencode`` per *additional*
-    architecture in ``compiler.cuda.cuda_arch`` the toolkit still supports.
+    """CUDA ``-arch`` / ``-gencode`` flags, targeting what the CMake build targets.
 
-    ``cuda_arch`` is documented as extra architectures excluding the local one, so the local GPU is
-    handled by ``-arch=native`` regardless of it; an arch the toolkit dropped is skipped (with a
-    warning) rather than failing the compile. Each entry is normalized before use: an ``sm_``/
-    ``compute_`` prefix is stripped and an ``auto``/``native`` entry is ignored (already covered by
-    ``-arch=native``), since interpolating such a token raw would emit an unbuildable
-    ``arch=compute_sm_90``. A feature suffix (e.g. ``90a``) is preserved in the emitted flag while
-    only the number is matched against the supported set. When ``allow_native`` is false (no local
-    GPU) the configured architectures are the only targets, and an empty result raises rather than
-    producing an unbuildable command.
+    CMake compiles for the locally detected GPU and consults ``compiler.cuda.cuda_arch`` *only* when
+    that detection fails -- ``DACE_CUDA_ARCHITECTURES_DEFAULT`` is read in the else-branch alone (see
+    ``CMakeLists.txt``, "Default CUDA architectures in case native not found"). Native mirrors that:
+    ``-arch=native`` lets nvcc detect the local GPU, and the configured architectures serve as the
+    fallback for a host without one. Compiling them *in addition* would emit architectures the cmake
+    build never produces -- a fatter binary and a slower compile -- so despite the config describing
+    cuda_arch as "additional" (wording cmake has never honored), parity with the cmake artifact wins.
+
+    Each fallback entry is normalized: an ``sm_``/``compute_`` prefix is stripped, an ``auto``/
+    ``native`` entry is skipped, and a feature suffix (e.g. ``90a``) is preserved in the emitted flag
+    while only the number is matched against the toolkit's supported set -- an architecture the
+    toolkit dropped is skipped with a warning rather than failing the compile. Anything unparseable
+    is warned about and skipped instead of being interpolated into an unbuildable
+    ``arch=compute_sm_90``. An empty result raises rather than emitting no target at all.
     """
-    flags = ['-arch=native'] if allow_native else []
+    if allow_native:
+        return ['-arch=native']
+
+    flags: List[str] = []
     for arch in Config.get('compiler', 'cuda', 'cuda_arch').strip().lower().split(','):
         arch = arch.strip()
         if not arch or arch in ('auto', 'native'):

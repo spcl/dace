@@ -101,25 +101,29 @@ def test_is_deferred():
 
 
 def test_cuda_arch_flags_auto():
-    """The local GPU is always targeted via ``-arch=native``, with no extra archs for auto/empty."""
+    """The local GPU is targeted via ``-arch=native``, nvcc's own detection."""
     for value in ('auto', 'native', ''):
         with set_temporary('compiler', 'cuda', 'cuda_arch', value=value):
             assert nc._cuda_arch_flags(None) == ['-arch=native']
 
 
-def test_cuda_arch_flags_explicit_additional():
-    """Explicit architectures are appended as additional ``-gencode`` targets on top of native."""
+def test_cuda_arch_flags_ignores_cuda_arch_when_gpu_detected():
+    """cuda_arch is a FALLBACK, not an addition -- matching what CMake targets.
+
+    CMake reads DACE_CUDA_ARCHITECTURES_DEFAULT only when local detection fails, so compiling the
+    configured archs on top of the detected one would emit architectures the cmake build never
+    produces (a fatter binary and a slower compile). With the shipped default of '60' that would
+    silently double the arch count of every native GPU build on a toolkit that still supports sm_60.
+    """
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='80,90'):
-        assert nc._cuda_arch_flags({80, 90}) == [
-            '-arch=native', '-gencode', 'arch=compute_80,code=sm_80', '-gencode', 'arch=compute_90,code=sm_90'
-        ]
+        assert nc._cuda_arch_flags({80, 90}) == ['-arch=native']
 
 
 def test_cuda_arch_flags_skips_unsupported():
     """An architecture the toolkit dropped (e.g. sm_60 on CUDA 13) is skipped, not fatal -- so a
-    stale cuda_arch default never breaks the build; the local GPU is still covered by native."""
-    with set_temporary('compiler', 'cuda', 'cuda_arch', value='60'):
-        assert nc._cuda_arch_flags({80, 89}) == ['-arch=native']
+    stale cuda_arch default never breaks a fallback build."""
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='60,80'):
+        assert nc._cuda_arch_flags({80, 89}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
 
 
 def test_cuda_build_type_flags_are_nvcc_safe():
@@ -136,30 +140,30 @@ def test_cuda_arch_flags_normalizes_prefixed_tokens():
     """'sm_90'/'compute_80' are canonical nvcc spellings; interpolating them raw would emit the
     unbuildable 'arch=compute_sm_90,code=sm_sm_90', so the prefix must be stripped first."""
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='sm_90'):
-        assert nc._cuda_arch_flags({90}) == ['-arch=native', '-gencode', 'arch=compute_90,code=sm_90']
+        assert nc._cuda_arch_flags({90}, allow_native=False) == ['-gencode', 'arch=compute_90,code=sm_90']
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='compute_80'):
-        assert nc._cuda_arch_flags({80}) == ['-arch=native', '-gencode', 'arch=compute_80,code=sm_80']
+        assert nc._cuda_arch_flags({80}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
 
 
 def test_cuda_arch_flags_ignores_native_token_in_list():
-    """A 'native' entry mixed into the list is already covered by -arch=native; emitting it as a
-    -gencode would produce 'arch=compute_native'."""
+    """A 'native' entry inside the fallback list cannot be emitted as a -gencode: it would produce
+    'arch=compute_native'. On a host with no GPU to detect, it is simply skipped."""
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='native,80'):
-        assert nc._cuda_arch_flags({80}) == ['-arch=native', '-gencode', 'arch=compute_80,code=sm_80']
+        assert nc._cuda_arch_flags({80}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
 
 
 def test_cuda_arch_flags_skips_unparseable():
     """An entry that is not an architecture at all is warned about and skipped, never interpolated."""
-    with set_temporary('compiler', 'cuda', 'cuda_arch', value='garbage'):
+    with set_temporary('compiler', 'cuda', 'cuda_arch', value='garbage,80'):
         with pytest.warns(UserWarning, match='unparseable'):
-            assert nc._cuda_arch_flags({80}) == ['-arch=native']
+            assert nc._cuda_arch_flags({80}, allow_native=False) == ['-gencode', 'arch=compute_80,code=sm_80']
 
 
 def test_cuda_arch_flags_feature_suffix():
     """An architecture token with a feature suffix (e.g. '90a') is emitted verbatim; only its numeric
     part is matched against the supported set, so int() never chokes on the letter."""
     with set_temporary('compiler', 'cuda', 'cuda_arch', value='90a'):
-        assert nc._cuda_arch_flags({90}) == ['-arch=native', '-gencode', 'arch=compute_90a,code=sm_90a']
+        assert nc._cuda_arch_flags({90}, allow_native=False) == ['-gencode', 'arch=compute_90a,code=sm_90a']
 
 
 def test_cuda_arch_flags_no_native_uses_explicit():
@@ -447,7 +451,7 @@ if __name__ == '__main__':
     test_classify_library()
     test_is_deferred()
     test_cuda_arch_flags_auto()
-    test_cuda_arch_flags_explicit_additional()
+    test_cuda_arch_flags_ignores_cuda_arch_when_gpu_detected()
     test_cuda_arch_flags_skips_unsupported()
     test_cuda_arch_flags_feature_suffix()
     test_cuda_arch_flags_no_native_uses_explicit()
