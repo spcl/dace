@@ -1068,6 +1068,15 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # fires once the recipe has committed to producing a lift, so a fall-through return
         # leaves the SDFG pristine for the caller's next recipe).
         expanded, inlined_syms = self._inline_interstate_scalar_symbols(sdfg, cond_text, exclude=set())
+        # A GATHER read in the guard (``w[idx[i], k] > K``) is a NESTED subscript no plain
+        # memlet can express; string-rebuilt at the wiring below it degenerates to a bare
+        # pointer read (``w > K`` -> "invalid operands 'double*' and 'double'"). Promote each
+        # nested index ``idx[i]`` to a fresh interstate integer symbol on the edge feeding this
+        # merge state (its single predecessor dominates it), so ``w`` stages through the
+        # symbolic-indexed memlet ``w[_gidx, k]`` the tiler vectorizes -- mirroring the
+        # interstate recipe (line ~936). No-op when the guard reads no nested subscript.
+        merge_in_edges = state.parent_graph.in_edges(state)
+        expanded = self._promote_gather_indices(sdfg, merge_in_edges[0] if merge_in_edges else None, expanded)
         # Union both accessors: ``symbolic.arrays`` catches a bracketed read (``A[i]``)
         # array-head ``free_symbols`` misses; ``free_symbols_and_functions`` catches a
         # BARE array ref (``A`` as current-lane element, the shape the ConditionalBlock

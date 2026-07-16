@@ -523,20 +523,33 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                 # Store in/out edges in lists so that they don't get corrupted when they are removed from the graph.
                 in_edges = list(state.in_edges(gcode))
                 out_edges = list(state.out_edges(gcode))
-                me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges}
-                me.out_connectors = {('OUT_' + e.dst_conn): None for e in in_edges}
-                mx.in_connectors = {('IN_' + e.src_conn): None for e in out_edges}
-                mx.out_connectors = {('OUT_' + e.src_conn): None for e in out_edges}
+                # A connector-less edge (``dst_conn`` / ``src_conn`` is None -- an
+                # empty-memlet dependency edge, e.g. sequencing a reduction-init
+                # tasklet) passes through the wrapping map as a dependency edge with
+                # no connector; only named edges get IN_/OUT_ connectors (``'IN_' +
+                # None`` would crash).
+                me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+                me.out_connectors = {('OUT_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
+                mx.in_connectors = {('IN_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
+                mx.out_connectors = {('OUT_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
 
                 # Create memlets through map
                 for e in in_edges:
                     state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, me, 'IN_' + e.dst_conn, e.data)
-                    state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, dc(e.data))
+                    if e.dst_conn is None:
+                        state.add_edge(e.src, e.src_conn, me, None, e.data)
+                        state.add_edge(me, None, e.dst, e.dst_conn, dc(e.data))
+                    else:
+                        state.add_edge(e.src, e.src_conn, me, 'IN_' + e.dst_conn, e.data)
+                        state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, dc(e.data))
                 for e in out_edges:
                     state.remove_edge(e)
-                    state.add_edge(e.src, e.src_conn, mx, 'IN_' + e.src_conn, e.data)
-                    state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, dc(e.data))
+                    if e.src_conn is None:
+                        state.add_edge(e.src, e.src_conn, mx, None, e.data)
+                        state.add_edge(mx, None, e.dst, e.dst_conn, dc(e.data))
+                    else:
+                        state.add_edge(e.src, e.src_conn, mx, 'IN_' + e.src_conn, e.data)
+                        state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, dc(e.data))
 
                 # Map without inputs
                 if len(in_edges) == 0:

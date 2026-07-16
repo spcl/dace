@@ -33,12 +33,9 @@ class LaneIdScheme:
 
     :cvar LEGACY_SUFFIX: Legacy 1D infix ``_laneid_``. Reserved for substring searches in callers
         pre-dating Option B; new code should use :meth:`is_lane_fanned` or :meth:`parse`.
-    :cvar SUFFIX: Alias of :attr:`LEGACY_SUFFIX` (back-compat for callers reading
-        ``LaneIdScheme.SUFFIX`` directly).
     """
 
     LEGACY_SUFFIX = "_laneid_"
-    SUFFIX = LEGACY_SUFFIX
 
     # Trailing-chunk matcher anchored to end of string (chunked form).
     _CHUNK_TAIL_RE = re.compile(r"_lane(\d+)id_(\d+)$")
