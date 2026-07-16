@@ -17,10 +17,41 @@ Both phases run by default and land in ONE merged TSV. Every phase runs the same
 
 ## Scripts
 
+- **`./run_local_job.sh`** — THE job. Compiles all FOUR variants of every kernel
+  (`cmake-oldcpu`, `cmake-newcpu`, `native-oldcpu`, `native-newcpu` = `{compiler.build_mode}` ×
+  `{legacy, experimental_readable}`), times each with **25 reps reporting the MEDIAN** on **8
+  threads**, then plots the headline speedup:
+
+      speedup = median(cmake-oldcpu) / median(cmake-newcpu)      (>1 => the new codegen is faster)
+
+  → `local_compare.tsv` + `plots/speedup_cmake_newcpu_vs_oldcpu.{png,pdf}`.
+  Cold-builds by default (`KEEP_CACHE=1` to reuse the `/dev/shm` build cache).
 - `./run_local.sh` — RUNTIME + readability comparison over npbench/polybench/tsvc2/tsvc2_5 →
   `perfresults_local.tsv` + `codegen_metrics_local.csv`.
 - `./run_local_buildperf.sh` — codegen-time + compile-time + generated-size + readability, INLINE
   per row, plus runtime, CPU-only → `buildperfresults_local.tsv`.
+
+### `run_local_job.sh` knobs
+
+| var | default | meaning |
+|-----|---------|---------|
+| `THREADS` | `8` | OpenMP threads |
+| `REPS` | `25` | timed reps per variant (reduced by **median**) |
+| `PRESET` | `paper` | `paper` (full sizes) or `S` (small) |
+| `CORPUS` | `both` | `npbench` \| `polybench` \| `both` |
+| `ONLY` / `KERNELS` | _(none)_ | substring filter / explicit comma-separated list |
+| `CXX` | `g++` | host compiler |
+| `CPP_STD` | `20` | C++ standard digits |
+| `CONST_SCALAR_ABI` | `by_ref` | read-only scalar binding: `by_ref` (legacy ABI) or `by_value` |
+| `KEEP_CACHE` | `0` | `1` reuses the build cache (skips the cold rebuild) |
+| `TIMEOUT` | `900` | per-variant subprocess timeout (s) |
+
+```bash
+cd local
+./run_local_job.sh                        # 4 variants, 25 reps median, 8 threads, paper, + speedup plot
+ONLY=atax REPS=5 PRESET=S ./run_local_job.sh   # quick single-kernel check
+CONST_SCALAR_ABI=by_value ./run_local_job.sh   # measure the const-value scalar binding instead
+```
 
 ## Usage
 
