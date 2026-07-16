@@ -17,6 +17,7 @@ concrete ``-I`` / ``-l`` / absolute path (cuBLAS, MKL, OpenBLAS, ...) is passed 
 that would need real CMake -- an unknown ``find_package``, an environment shipping ``.cmake`` files,
 or an unexpanded ``${...}`` -- raises a clear error telling the user to switch to ``build_mode=cmake``.
 """
+import functools
 import os
 import re
 import shlex
@@ -104,16 +105,12 @@ def _search_for(fname: str, roots: List[str]) -> Optional[str]:
     return None
 
 
-def _cuda_paths() -> tuple:
-    """Return ``(nvcc, include_dirs, lib_dirs)`` for the CUDA toolkit, or raise a clear error.
-
-    Locates nvcc (``compiler.cuda.path``/``$CUDA_HOME``/``$CUDA_PATH``/``which``), then finds the
-    directories actually containing the CUDA runtime + math libraries and their headers by search --
-    this is what ``find_package(CUDAToolkit)`` does, and unlike a fixed ``<root>/lib64`` it works for
-    the HPC SDK (where the math libraries live under a separate ``math_libs`` tree). ``libcudart.so``
-    / ``cuda_runtime.h`` are mandatory; the rest are added only when found.
+@functools.lru_cache(maxsize=None)
+def _cuda_paths_cached(root: Optional[str], path_env: str) -> tuple:
+    """Filesystem search for the CUDA toolkit. Cached because the toolkit does not move within a run;
+    the inputs that determine the result (the config/env root hint and ``$PATH`` used by ``which``)
+    are the cache key, so a later config/PATH change still re-resolves.
     """
-    root = (Config.get('compiler', 'cuda', 'path') or os.environ.get('CUDA_HOME') or os.environ.get('CUDA_PATH'))
     nvcc = None
     if root:
         cand = os.path.join(root, 'bin', 'nvcc')
@@ -136,6 +133,19 @@ def _cuda_paths() -> tuple:
             f'Native build found nvcc at {nvcc} but could not locate libcudart.so / cuda_runtime.h. '
             f'Set compiler.cuda.path to the toolkit root, or use compiler.build_mode=cmake.')
     return nvcc, inc_dirs, lib_dirs
+
+
+def _cuda_paths() -> tuple:
+    """Return ``(nvcc, include_dirs, lib_dirs)`` for the CUDA toolkit, or raise a clear error.
+
+    Locates nvcc (``compiler.cuda.path``/``$CUDA_HOME``/``$CUDA_PATH``/``which``), then finds the
+    directories actually containing the CUDA runtime + math libraries and their headers by search --
+    this is what ``find_package(CUDAToolkit)`` does, and unlike a fixed ``<root>/lib64`` it works for
+    the HPC SDK (where the math libraries live under a separate ``math_libs`` tree). The search is
+    cached (see :func:`_cuda_paths_cached`).
+    """
+    root = (Config.get('compiler', 'cuda', 'path') or os.environ.get('CUDA_HOME') or os.environ.get('CUDA_PATH'))
+    return _cuda_paths_cached(root, os.environ.get('PATH', ''))
 
 
 def _lib_subdir(root: str) -> str:
@@ -162,37 +172,47 @@ def _resolve_rocm_root() -> str:
     return cand
 
 
-def _resolve_mpi(spec: _LinkSpec, build_env: dict) -> None:
-    """Fill ``spec`` with MPI include/lib flags by querying the MPI wrapper compiler.
+@functools.lru_cache(maxsize=None)
+def _mpi_flags(mpicxx: str, path_env: str) -> tuple:
+    """Query the MPI wrapper compiler for its include/lib flags, as
+    ``(includes, libdirs, libs, compile_flags, link_flags)`` tuples (or raise).
 
     OpenMPI answers ``--showme:{incdirs,libdirs,libs}``; MPICH answers ``-compile_info`` /
-    ``-link_info`` with full flag strings.
+    ``-link_info`` with full flag strings. Cached per wrapper (keyed also on ``$PATH``): the answer is
+    fixed for a given toolchain and the subprocess launches are not free when many SDFGs are built.
     """
-    mpicxx = Config.get('compiler', 'mpi', 'executable') or 'mpicxx'
 
     def run(args: List[str]) -> Optional[str]:
         try:
-            out = subprocess.run([mpicxx] + args, capture_output=True, text=True, env=build_env)
+            out = subprocess.run([mpicxx] + args, capture_output=True, text=True)
         except OSError:
             return None
         return out.stdout.strip() if out.returncode == 0 else None
 
     incdirs, libdirs, libs = run(['--showme:incdirs']), run(['--showme:libdirs']), run(['--showme:libs'])
     if incdirs is not None and libdirs is not None and libs is not None:
-        spec.includes += incdirs.split()
-        spec.libdirs += libdirs.split()
-        spec.libs += libs.split()
-        return
+        return tuple(incdirs.split()), tuple(libdirs.split()), tuple(libs.split()), (), ()
 
     compile_info, link_info = run(['-compile_info']), run(['-link_info'])
     if compile_info is not None and link_info is not None:
-        spec.compile_flags += [t for t in shlex.split(compile_info) if t.startswith('-I')]
-        spec.link_flags += [t for t in shlex.split(link_info) if t.startswith(('-l', '-L', '-Wl', '/'))]
-        return
+        cflags = tuple(t for t in shlex.split(compile_info) if t.startswith('-I'))
+        lflags = tuple(t for t in shlex.split(link_info) if t.startswith(('-l', '-L', '-Wl', '/')))
+        return (), (), (), cflags, lflags
 
     raise cgx.CompilerConfigurationError(
         f"Native build cannot query the MPI compiler wrapper '{mpicxx}'. Set compiler.mpi.executable "
         f"or use compiler.build_mode=cmake.")
+
+
+def _resolve_mpi(spec: _LinkSpec) -> None:
+    """Fill ``spec`` with MPI include/lib flags from the (cached) MPI wrapper query."""
+    mpicxx = Config.get('compiler', 'mpi', 'executable') or 'mpicxx'
+    includes, libdirs, libs, compile_flags, link_flags = _mpi_flags(mpicxx, os.environ.get('PATH', ''))
+    spec.includes += includes
+    spec.libdirs += libdirs
+    spec.libs += libs
+    spec.compile_flags += compile_flags
+    spec.link_flags += link_flags
 
 
 def _classify_library(spec: _LinkSpec, lib: str) -> None:
@@ -208,7 +228,19 @@ def _classify_library(spec: _LinkSpec, lib: str) -> None:
         spec.libs.append(lib)
 
 
-def _resolve_environment(env, spec: _LinkSpec, build_env: dict) -> None:
+def _env_class_attr(env, name: str, default):
+    """Read a class attribute across the environment's MRO without ``getattr``/``hasattr``.
+
+    ``vars(env)`` sees only the class's *own* dict, so an attribute defined on a base environment
+    would be missed; walking ``__mro__`` honors inheritance while still avoiding ``getattr``.
+    """
+    for klass in env.__mro__:
+        if name in vars(klass):
+            return vars(klass)[name]
+    return default
+
+
+def _resolve_environment(env, spec: _LinkSpec) -> None:
     """Resolve one collected environment into ``spec``, or raise if it needs real CMake."""
     name = env.__name__
 
@@ -222,7 +254,7 @@ def _resolve_environment(env, spec: _LinkSpec, build_env: dict) -> None:
     # BLAS/LAPACK vendor selection only picks concrete libs that arrive via cmake_libraries().
     for pkg in _get_or_eval(env.cmake_packages):
         if pkg == 'MPI':
-            _resolve_mpi(spec, build_env)
+            _resolve_mpi(spec)
         elif pkg in ('CUDA', 'CUDAToolkit', 'Threads', 'OpenMP', 'BLAS', 'LAPACK'):
             continue
         else:
@@ -264,7 +296,7 @@ def _collect_auxiliary_sources(environments) -> List[str]:
     out: List[str] = []
     for env in environments:
         env_dir = os.path.dirname(env._dace_file_path)
-        for src in _get_or_eval(vars(env).get('auxiliary_sources', [])):
+        for src in _get_or_eval(_env_class_attr(env, 'auxiliary_sources', [])):
             out.append(src if os.path.isabs(src) else os.path.join(env_dir, src))
     return out
 
@@ -274,28 +306,33 @@ def _collect_auxiliary_sources(environments) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
-def _nvcc_supported_arches(nvcc: str, build_env: dict) -> Optional[set]:
+@functools.lru_cache(maxsize=None)
+def _nvcc_supported_arches(nvcc: str) -> Optional[frozenset]:
     """The set of ``sm_XX`` numbers ``nvcc`` can target, from ``--list-gpu-arch``; ``None`` if the
     probe fails (then no filtering is applied). Lets us drop archs a newer toolkit dropped -- e.g.
-    CUDA 13 no longer builds ``sm_60`` -- so a stale ``compiler.cuda.cuda_arch`` cannot fail the build."""
+    CUDA 13 no longer builds ``sm_60`` -- so a stale ``compiler.cuda.cuda_arch`` cannot fail the build.
+
+    Cached per nvcc binary: the toolkit's arch list is fixed, and the probe is a subprocess launch."""
     try:
-        out = subprocess.run([nvcc, '--list-gpu-arch'], capture_output=True, text=True, env=build_env)
+        out = subprocess.run([nvcc, '--list-gpu-arch'], capture_output=True, text=True)
     except OSError:
         return None
     if out.returncode != 0:
         return None
-    return {int(m) for m in re.findall(r'compute_(\d+)', out.stdout)}
+    return frozenset(int(m) for m in re.findall(r'compute_(\d+)', out.stdout))
 
 
-def _can_use_arch_native(nvcc: str, build_env: dict) -> bool:
+@functools.lru_cache(maxsize=None)
+def _can_use_arch_native(nvcc: str) -> bool:
     """Whether ``nvcc -arch=native`` can resolve a local GPU. Native detection queries the driver, so
     it fails on a host without a visible CUDA device (e.g. a GPU-less build node); there we must fall
-    back to the explicitly configured architectures instead of emitting an unbuildable command."""
+    back to the explicitly configured architectures instead of emitting an unbuildable command.
+
+    Cached per nvcc binary: the local GPU visibility is fixed for a run, and the probe compiles."""
     try:
         out = subprocess.run([nvcc, '-arch=native', '--dryrun', '-x', 'cu', '-c', os.devnull, '-o', os.devnull],
                              capture_output=True,
-                             text=True,
-                             env=build_env)
+                             text=True)
     except OSError:
         return False
     return out.returncode == 0
@@ -343,7 +380,15 @@ def _newest_mtime(directory: str) -> float:
     return newest
 
 
-def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, build_env: dict, run) -> Optional[List[str]]:
+@functools.lru_cache(maxsize=None)
+def _static_tree_mtime(directory: str) -> float:
+    """Cached :func:`_newest_mtime` for a tree that does not change within a run (the DaCe runtime
+    headers). Avoids re-walking hundreds of headers on every build; use the uncached version for the
+    per-program generated include dir, which codegen rewrites."""
+    return _newest_mtime(directory)
+
+
+def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, run) -> Optional[List[str]]:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it in the user cache dir.
 
     The DaCe runtime umbrella header dominates the compile time of a small kernel (~1s of parsing +
@@ -360,7 +405,7 @@ def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, build_env
         pch_dir = os.path.join(os.path.expanduser('~/.cache/dace/native_pch'), key)
         header = os.path.join(pch_dir, 'dace_prewarm.h')
         gch = header + '.gch'
-        if not (os.path.isfile(gch) and os.path.getmtime(gch) >= _newest_mtime(runtime_inc)):
+        if not (os.path.isfile(gch) and os.path.getmtime(gch) >= _static_tree_mtime(runtime_inc)):
             os.makedirs(pch_dir, exist_ok=True)
             if not os.path.isfile(header):
                 with open(header, 'w') as f:
@@ -473,7 +518,7 @@ def build_native(program_folder: str,
         spec.libs.append('amdhip64')
 
     for env in environments:
-        _resolve_environment(env, spec, build_env)
+        _resolve_environment(env, spec)
 
     # Per-target extra libraries from config (compiler.<target>.libs).
     target_libs: List[str] = []
@@ -489,6 +534,11 @@ def build_native(program_folder: str,
     std = Config.get('compiler', 'cpp_standard')
     cpu_args = shlex.split(Config.get('compiler', 'cpu', 'args'))
     build_type_flags = _BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
+    # Base flags shared by the host compile and the PCH. ``-fPIC`` is added unconditionally (the
+    # artifact is a shared library; CMake supplies PIC via a target property independent of cpu.args,
+    # so a user cpu.args without it must still link) and ``-pthread`` matches CMake's Threads::Threads
+    # on the compile line, not just the link line.
+    host_base_flags = [f'-std=c++{std}', '-fopenmp', '-fPIC', '-pthread'] + cpu_args + build_type_flags
     defines = [f'-DDACE_BINARY_DIR="{build_folder}"']
     if has_gpu:
         defines.append('-DWITH_CUDA')
@@ -499,8 +549,7 @@ def build_native(program_folder: str,
     # --- compile ------------------------------------------------------------
     cuda_arch_flags: List[str] = []
     if has_gpu and not is_hip:
-        cuda_arch_flags = _cuda_arch_flags(_nvcc_supported_arches(nvcc, build_env),
-                                           allow_native=_can_use_arch_native(nvcc, build_env))
+        cuda_arch_flags = _cuda_arch_flags(_nvcc_supported_arches(nvcc), allow_native=_can_use_arch_native(nvcc))
     ccbin = (['-ccbin', _cxx()] if Config.get('compiler', 'cpu', 'executable') else [])
 
     # Precompile the DaCe runtime header once (per compiler+flags) to speed up host translation
@@ -511,15 +560,15 @@ def build_native(program_folder: str,
     generated_prefix = src_folder + os.sep
     host_pch: List[str] = []
     if any(kind == 'host' and src.startswith(generated_prefix) for kind, src, _ in compile_jobs):
-        pch_flags = [f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags
+        pch_flags = list(host_base_flags)
         if has_gpu:
             pch_flags += ['-DWITH_CUDA'] + (['-DWITH_HIP'] if is_hip else [])
-        host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, build_env, run) or []
+        host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, run) or []
 
     # An object is stale if it predates its source, predates any header it may include, or was built
     # by a different command (changed flags/defines/build_type). CMake tracks header deps and
     # reconfigures on flag changes; approximating both here keeps a stale object from being linked.
-    newest_header = max(_newest_mtime(runtime_inc), _newest_mtime(generated_inc))
+    newest_header = max(_static_tree_mtime(runtime_inc), _newest_mtime(generated_inc))
 
     def obj_current(obj: str, src: str, cmd: List[str]) -> bool:
         if not os.path.isfile(obj):
@@ -540,8 +589,8 @@ def build_native(program_folder: str,
     for kind, src, obj in compile_jobs:
         if kind == 'host':
             pch = host_pch if src.startswith(generated_prefix) else []
-            cmd = ([_cxx(), f'-std=c++{std}', '-fopenmp'] + cpu_args + build_type_flags + defines + pch + includes +
-                   spec.compile_flags + ['-c', src, '-o', obj])
+            cmd = ([_cxx()] + host_base_flags + defines + pch + includes + spec.compile_flags +
+                   ['-c', src, '-o', obj])
         elif kind == 'cuda':
             cmd = ([nvcc, '-std=c++17'] + ccbin + ['--compiler-options', '-fPIC'] + cuda_arch_flags +
                    shlex.split(Config.get('compiler', 'cuda', 'args')) + defines + includes + ['-dc', src, '-o', obj])
@@ -598,7 +647,14 @@ def build_native(program_folder: str,
         link_cmd += ['-lcudadevrt', '-lcudart']
     link_cmd += target_libs
     link_cmd += shlex.split(Config.get('compiler', 'linker', 'args') or '')
-    run(link_cmd)
+    # Relink only when an input object/archive is newer than the library or the link command itself
+    # changed (a lib/flag edit that leaves the objects untouched). The ``.cmd`` sidecar records the
+    # exact command, mirroring the per-object staleness check.
+    link_inputs = host_objs + hip_objs + ([cuda_archive] if cuda_archive else [])
+    if not (up_to_date(lib_path, *link_inputs) and identical_file_exists(lib_path + '.cmd', ' '.join(link_cmd))):
+        run(link_cmd)
+        with open(lib_path + '.cmd', 'w') as f:
+            f.write(' '.join(link_cmd))
 
     # --- loader stub (rebuilt only when missing; dacestub.cpp never changes) -
     stub_path = os.path.join(build_folder, f'libdacestub_{program_name}.{lib_ext}')

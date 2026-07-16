@@ -448,7 +448,11 @@ def configure_and_compile(
 
     # Build the shared library either directly (native) or through CMake (default). Both write it to
     # the same development-mode location that the shared tail below expects.
-    if Config.get('compiler', 'build_mode') == 'native':
+    build_mode = Config.get('compiler', 'build_mode').strip().lower()
+    if build_mode not in ('cmake', 'native'):
+        raise cgx.CompilerConfigurationError(
+            f"Unknown compiler.build_mode {Config.get('compiler', 'build_mode')!r}; expected 'cmake' or 'native'.")
+    if build_mode == 'native':
         from dace.codegen import native_compiler
         native_compiler.build_native(program_folder=program_folder,
                                      program_name=program_name,
