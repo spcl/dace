@@ -291,5 +291,24 @@ def test_memset_tasklet_rejects_gpu_storage_from_host_scope():
         sdfg.expand_library_nodes()
 
 
+def test_memset_pure_strided_map_matches_array():
+    """A ``pure`` memset over a strided subset must give the mapped tasklet the same collapsed
+    extent as the wrapper array descriptor. Regression: ``map_lengths`` was recomputed from
+    ``out_subset.size()`` instead of the collapsed shape used for the array, so the map bounds
+    could diverge from the array rank/extent."""
+    sdfg = _make_memset_sdfg(None, (9, ), "0:9:3", gpu=False, name="memset_strided_cpu")
+    sdfg.validate()
+    sdfg.expand_library_nodes()
+    sdfg.validate()  # a diverged map/array would fail validation here
+    exe = sdfg.compile()
+
+    B = np.ones((9, ), dtype=np.float64)
+    exe(B=B)
+
+    expected = np.ones((9, ), dtype=np.float64)
+    expected[0:9:3] = 0  # indices 0, 3, 6
+    np.testing.assert_array_equal(B, expected)
+
+
 if __name__ == "__main__":
     pytest.main([__file__])

@@ -28,7 +28,9 @@ def _make_memset_skeleton(node: "MemsetLibraryNode",
     sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
     state = sdfg.add_state(f"{node.label}_state")
-    map_lengths = [s for s in out_subset.size() if s != 1]
+    # Reuse the collapsed shape used for the array descriptor above as the single source of
+    # truth for the map bounds, so the map rank and extents cannot diverge from the array.
+    map_lengths = out_shape_collapsed
 
     return sdfg, state, out_name, out, map_lengths
 

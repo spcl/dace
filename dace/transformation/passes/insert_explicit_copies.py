@@ -112,6 +112,11 @@ class InsertExplicitCopies(ppl.Pass):
             if (src_desc.storage not in self._STANDARD_STORAGES or dst_desc.storage not in self._STANDARD_STORAGES):
                 continue
 
+            # A dtype-converting copy is a cast, not a byte move: CopyLibraryNode (memcpy)
+            # cannot express it, so leave it for tasklet lowering (mirrors _lift_staging_edge).
+            if src_desc.dtype != dst_desc.dtype:
+                continue
+
             src_name = src_node.data
             dst_name = dst_node.data
 

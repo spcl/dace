@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 from dace import nodes
 from dace.memlet import Memlet
+from dace.sdfg import utils as sdutils
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
 
@@ -45,12 +46,21 @@ def _count_direct_copy_edges(sdfg):
 
 
 def _assert_no_other_subset(sdfg: dace.SDFG) -> None:
-    """Assert no memlet in any state or nested SDFG still carries an ``other_subset`` after copy-node insertion."""
+    """Assert no data-movement memlet still carries an ``other_subset`` after copy-node insertion.
+
+    View-defining (alias) edges are excluded: they reference the underlying buffer rather than
+    moving data, so ``InsertExplicitCopies`` correctly leaves them direct with ``other_subset``
+    intact (mirrors the pass's own view-edge skip); a copy would change the SDFG's semantics.
+    """
     for nsdfg in sdfg.all_sdfgs_recursive():
         for state in nsdfg.states():
             for edge in state.edges():
                 memlet = edge.data
                 if memlet.is_empty():
+                    continue
+                if any(
+                        isinstance(an, nodes.AccessNode) and isinstance(nsdfg.arrays[an.data], dace.data.View)
+                        and sdutils.get_view_edge(state, an) is edge for an in (edge.src, edge.dst)):
                     continue
                 assert memlet.other_subset is None, (
                     f"Memlet on edge {edge.src}->{edge.dst} in SDFG '{nsdfg.name}' still "
@@ -934,6 +944,25 @@ def test_polybench_correlation():
 def test_polybench_covariance():
     """``InsertExplicitCopies`` preserves covariance output versus the untransformed reference."""
     _run_and_compare(covariance, _init_covariance, ["cov"], {"N": 32, "M": 28}, "covariance")
+
+
+def test_iec_skips_dtype_converting_copy():
+    """A direct copy between different dtypes is a cast, not a byte move: the pass must leave it
+    for tasklet lowering rather than insert a ``CopyLibraryNode`` (memcpy), which cannot convert.
+    Regression: the direct-copy path lacked the dtype guard its staging path already has."""
+    cpu = dace.StorageType.CPU_Heap
+    sdfg = dace.SDFG("iec_dtype_convert")
+    sdfg.add_array("A", [64], dace.float32, cpu)
+    sdfg.add_array("B", [64], dace.float64, cpu)
+    st = sdfg.add_state("s")
+    a = st.add_access("A")
+    b = st.add_access("B")
+    st.add_edge(a, None, b, None, Memlet("A[0:64]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a dtype-converting copy must not be lowered to CopyLibraryNode"
+    assert _count_direct_copy_edges(sdfg) == 1, "the dtype-converting edge must be left in place"
 
 
 if __name__ == "__main__":
