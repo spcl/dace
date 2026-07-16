@@ -12,10 +12,10 @@ import warnings
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
-    from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
 
 CallHookType = Callable[['SDFG'], None]
-CompiledCallHookType = Callable[['CompiledSDFG', Tuple[Any, ...]], None]
+CompiledCallHookType = Callable[['CompiledSDFGProtocol', Tuple[Any, ...]], None]
 GeneratorType = Generator[Any, None, None]
 
 # Global list of hooks
@@ -168,7 +168,7 @@ def on_compiled_sdfg_call(*,
     .. code-block:: python
 
         @contextmanager
-        def time_compiled_sdfg(csdfg: dace.codegen.compiled_sdfg.CompiledSDFG, *args, **kwargs):
+        def time_compiled_sdfg(csdfg: dace.codegen.compiled_sdfg.CompiledSDFGProtocol, *args, **kwargs):
             start = time.time()
             yield
             end = time.time()
@@ -262,11 +262,11 @@ class invoke_compiled_sdfg_call_hooks(contextlib.AbstractContextManager):
 
     __slots__ = ('compiled_sdfg', 'args', 'exit_stack')
 
-    def __init__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]) -> None:
-        self.compiled_sdfg: 'CompiledSDFG' = compiled_sdfg
+    def __init__(self, compiled_sdfg: 'CompiledSDFGProtocol', args: Tuple[Any, ...]) -> None:
+        self.compiled_sdfg: 'CompiledSDFGProtocol' = compiled_sdfg
         self.args: Tuple[Any, ...] = args
 
-    def __enter__(self) -> 'CompiledSDFG':
+    def __enter__(self) -> 'CompiledSDFGProtocol':
         if _COMPILED_SDFG_CALL_HOOKS:
             compiled_sdfg = self.compiled_sdfg
             self.exit_stack = stack = ExitStack().__enter__()

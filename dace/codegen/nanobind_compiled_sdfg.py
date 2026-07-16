@@ -39,6 +39,9 @@ class NanobindCompiledSDFG:
     three-step interface (``construct_arguments()`` / ``fast_call()`` /
     ``convert_return_values()``) is not provided, because the argument
     processing already happens in compiled code — there is one fast path.
+    Both classes satisfy (structurally, without inheriting)
+    :class:`~dace.codegen.compiled_sdfg.CompiledSDFGProtocol` — the surface
+    interface-agnostic code may rely on.
 
     :param sdfg: The ``SDFG`` this wrapper was compiled from; used to evaluate
                  return-array shapes and exposed via the ``sdfg`` property.

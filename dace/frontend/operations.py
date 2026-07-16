@@ -17,7 +17,7 @@ from typing import Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
-    from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
 
 
 class CompiledSDFGProfiler:
@@ -52,7 +52,7 @@ class CompiledSDFGProfiler:
         self.report = report.InstrumentationReport(None)
 
     @contextmanager
-    def __call__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+    def __call__(self, compiled_sdfg: 'CompiledSDFGProtocol', args: Tuple[Any, ...]):
         from dace.codegen.instrumentation import report  # Avoid import loop
 
         # zeros to overwrite start time, followed by indices for each repetition

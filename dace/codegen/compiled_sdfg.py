@@ -5,7 +5,7 @@ import os
 import re
 import shutil
 import subprocess
-from typing import Any, Callable, Dict, List, Tuple, Optional, Type, Union, Sequence
+from typing import (Any, Callable, Dict, List, Tuple, Optional, Protocol, Type, Union, Sequence, runtime_checkable)
 import warnings
 import tempfile
 import pickle
@@ -17,6 +17,72 @@ import numpy as np
 from dace import data as dt, dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
+
+
+@runtime_checkable
+class CompiledSDFGProtocol(Protocol):
+    """The interface a compiled SDFG object provides, regardless of backend.
+
+    Both the ctypes :class:`CompiledSDFG` and the nanobind
+    ``NanobindCompiledSDFG`` satisfy this protocol structurally (neither
+    inherits it); interface-agnostic code - ``SDFG.__call__``,
+    ``DaceProgram``, hooks, the profiler - should annotate against it and
+    use only these members. Backend internals (ctypes: ``_cfunc``,
+    ``_libhandle``, ``fast_call``, ...; nanobind: ``_handle``) are
+    deliberately absent: code that needs them is backend-specific and must
+    branch explicitly.
+
+    Where the concrete signatures diverge, the protocol declares the
+    narrower ctypes form (``get_workspace_sizes`` takes no arguments there;
+    the nanobind version accepting per-call symbols is a compatible
+    superset) or the loosest common return type (``initialize`` returns the
+    state handle on ctypes and ``None`` on nanobind; ``get_state_struct``
+    returns a ``ctypes.Structure`` vs an address).
+
+    :note: ``isinstance`` checks (via ``runtime_checkable``) verify member
+           *presence* only - the behavioral contract is carried by the test
+           suites that run against both backends.
+    """
+
+    #: When True, calls skip the program execution. The profiler toggles
+    #: this around its replay loop, so it must be writable.
+    do_not_execute: bool
+
+    @property
+    def sdfg(self) -> Any:  # dace.SDFG
+        ...
+
+    @property
+    def filename(self) -> str:
+        ...
+
+    @property
+    def has_gpu_code(self) -> bool:
+        ...
+
+    def __call__(self, *args: Any, **kwargs: Any) -> Any:
+        ...
+
+    def safe_call(self, *args: Any, **kwargs: Any) -> Any:
+        ...
+
+    def initialize(self, *args: Any, **kwargs: Any) -> Any:
+        ...
+
+    def finalize(self) -> None:
+        ...
+
+    def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
+        ...
+
+    def get_state_struct(self) -> Any:
+        ...
+
+    def get_workspace_sizes(self) -> Dict[dtypes.StorageType, int]:
+        ...
+
+    def set_workspace(self, storage: dtypes.StorageType, workspace: Any) -> None:
+        ...
 
 
 class ReloadableDLL(object):
