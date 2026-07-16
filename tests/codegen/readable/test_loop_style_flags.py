@@ -64,13 +64,13 @@ def test_loop_bound_cmp_ne_on_unit_stride():
     assert any('!=' in line for line in lines), lines
 
 
-def test_loop_bound_cmp_ne_falls_back_on_non_unit_stride():
-    """`i != end + 1` never fires when the stride steps over the bound -- that would be an infinite
-    loop, so a non-unit stride must fall back to `<`."""
+def test_loop_bound_cmp_ne_supports_non_unit_stride():
+    """`ne` handles any stride by normalising the bound to a value the counter actually lands on --
+    a naive `i != end + 1` would be stepped over and never terminate."""
     lines = loop_lines(generate(strided, loop_bound_cmp='ne'))
     assert lines, 'no loop emitted'
-    assert not any('!=' in line for line in lines), lines
-    assert any(' < ' in line for line in lines), lines
+    assert any('!=' in line for line in lines), lines
+    assert any('int_ceil' in line for line in lines), lines
 
 
 @pytest.mark.parametrize('loop_index_type', ['auto', 'int64', 'int32'])
@@ -84,16 +84,20 @@ def test_every_combination_runs_correctly(loop_index_type, loop_bound_cmp):
         assert numpy.allclose(B, A * 2.0)
 
 
-def test_strided_ne_terminates_and_is_correct():
-    """The fallback is a correctness guard, not cosmetics: without it this hangs."""
-    with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value='ne'):
-        A = numpy.random.default_rng(0).random(31)
-        B = numpy.zeros(31)
-        strided(A=A, B=B, N=31)
+@pytest.mark.parametrize('n', [31, 32])
+@pytest.mark.parametrize('loop_bound_cmp', ['lt', 'le', 'ne'])
+def test_strided_terminates_and_is_correct(loop_bound_cmp, n):
+    """The normalised `ne` bound is a correctness guard, not cosmetics: a naive `i != end + 1` steps
+    over the bound and hangs. Both an odd and an even extent are covered, so the stride divides the
+    range in one case and not the other."""
+    with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value=loop_bound_cmp):
+        A = numpy.random.default_rng(0).random(n)
+        B = numpy.zeros(n)
+        strided(A=A, B=B, N=n)
         assert numpy.allclose(B[::2], A[::2] * 2.0)
 
 
 if __name__ == '__main__':
     test_defaults_emit_the_historical_loop('legacy')
-    test_loop_bound_cmp_ne_falls_back_on_non_unit_stride()
-    test_strided_ne_terminates_and_is_correct()
+    test_loop_bound_cmp_ne_supports_non_unit_stride()
+    test_strided_terminates_and_is_correct('ne', 31)
