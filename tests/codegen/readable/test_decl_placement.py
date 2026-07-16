@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for ``compiler.cpu.codegen_params.scalar_decl_placement`` (FEATURE A).
+"""Tests for ``compiler.cpu.codegen_params.decl_placement`` (FEATURE A).
 
 ``eager`` (the default) declares a mutable scope-lifetime value scalar as ``T x;`` at the top of its
 scope, exactly as the legacy generator does. ``late`` defers that declaration to the line immediately
@@ -81,7 +81,7 @@ def parallel_map_sdfg(name):
 
 def readable_code(sdfg, placement):
     with use_implementation(EXPERIMENTAL), \
-         set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_decl_placement', value=placement):
+         set_temporary('compiler', 'cpu', 'codegen_params', 'decl_placement', value=placement):
         return generated_code(sdfg)
 
 
@@ -132,7 +132,7 @@ def test_legacy_byte_identical_across_placement():
     def legacy(placement):
         sdfg = reassign_scalar_sdfg('a_leg')
         with use_implementation(LEGACY), \
-             set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_decl_placement', value=placement):
+             set_temporary('compiler', 'cpu', 'codegen_params', 'decl_placement', value=placement):
             return generated_code(sdfg)
 
     assert legacy('eager') == legacy('late')
@@ -156,7 +156,7 @@ def test_compiles_and_runs_bit_identical(require_experimental, placement):
 
         def build_and_run():
             with use_implementation(impl), \
-                 set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_decl_placement', value=decl_placement):
+                 set_temporary('compiler', 'cpu', 'codegen_params', 'decl_placement', value=decl_placement):
                 csdfg = reassign_scalar_sdfg('a_run').compile()
                 out = np.zeros(2, dtype=np.float64)
                 csdfg(A=A.copy(), out=out)
@@ -167,7 +167,103 @@ def test_compiles_and_runs_bit_identical(require_experimental, placement):
     legacy = run(LEGACY)
     experimental = run(EXPERIMENTAL, placement)
     assert np.allclose(legacy['out'], [A[0] + EXPECTED_S, A[0] * EXPECTED_PRE_FACTOR])
-    assert_outputs_equivalent(legacy, experimental, 'cpu', label=f'scalar_decl_placement={placement}')
+    assert_outputs_equivalent(legacy, experimental, 'cpu', label=f'decl_placement={placement}')
+
+
+N = dace.symbol('N')
+
+
+@dace.program
+def accumulate(A: dace.float64[N, 8], B: dace.float64[N]):
+    """A carried-dependency accumulator: the shape every hand-built fixture in this file misses. ``s``
+    is live across THREE states (init / loop body / write-out) and ``k`` is a LoopRegion counter."""
+    for i in dace.map[0:N]:
+        s = 0.0
+        for k in range(8):
+            s = s + A[i, k]
+        B[i] = s
+
+
+def test_multistate_scalar_stays_eager(require_experimental):
+    """REGRESSION: a scalar live across states must keep its eager declaration.
+
+    The allocator hands ``allocate_array`` the FIRST state a scalar appears in even when it allocates
+    the scalar at SDFG scope, so ``dfg`` being an ``SDFGState`` proves nothing about where the
+    declaration lands. Deferring on that signal put ``double s;`` inside the init state's brace while
+    the loop body and the write-out state still read it -- ``error: 's' was not declared in this scope``.
+    """
+    code = readable_code(accumulate.to_sdfg(simplify=True), 'late')
+    # The declaration must precede the brace of the state that initializes it, not sit inside it.
+    decl = code.index('double s;')
+    init = code.index('s = 0.0')
+    assert decl < code.index('{', decl) < init, code[decl - 200:init + 40]
+
+
+def test_late_declares_loop_counter_in_for_init(require_experimental):
+    """A loop-local LoopRegion counter is hoisted to the top of the function under ``eager`` and
+    declared in its own for-init clause under ``late``."""
+    sdfg = accumulate.to_sdfg(simplify=True)
+    eager, late = readable_code(sdfg, 'eager'), readable_code(sdfg, 'late')
+
+    assert 'int64_t k;' in eager and 'for (k = 0;' in eager
+    assert 'int64_t k;' not in late, late
+    assert 'for (int64_t k = 0;' in late, late
+
+
+def test_counter_used_after_loop_stays_hoisted(require_experimental):
+    """A counter read AFTER its loop cannot move into the for-init clause: that scoping would put the
+    read out of scope. DaCe permits such a read, so the gate must check it rather than assume."""
+    sdfg = dace.SDFG('after_loop')
+    sdfg.add_array('out', [1], dace.float64)
+    loop = dace.sdfg.state.LoopRegion('lp', 'j < 5', 'j', 'j = 0', 'j = j + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state('body', is_start_block=True)
+    # A state AFTER the loop that reads the counter's final value.
+    after = sdfg.add_state_after(loop, 'after')
+    t = after.add_tasklet('use', {}, {'o'}, 'o = j')
+    after.add_edge(t, 'o', after.add_write('out'), None, dace.Memlet('out[0]'))
+    sdfg.validate()
+
+    late = readable_code(sdfg, 'late')
+    assert 'j;' in late, late
+    assert 'for (int64_t j = 0;' not in late and 'for (long long j = 0;' not in late, late
+
+
+@pytest.mark.parametrize('placement', ['eager', 'late'])
+def test_accumulator_compiles_and_runs(require_experimental, placement):
+    """Both placements compile and match legacy on the accumulator -- the shape that caught the bug."""
+    rng = np.random.default_rng(0)
+    A = rng.random((4, 8))
+
+    def run(impl, decl='eager'):
+
+        def build_and_run():
+            with use_implementation(impl), \
+                 set_temporary('compiler', 'cpu', 'codegen_params', 'decl_placement', value=decl):
+                csdfg = accumulate.to_sdfg(simplify=True).compile()
+                B = np.zeros(4)
+                csdfg(A=A.copy(), B=B, N=4)
+                return {'B': B}
+
+        return run_isolated(build_and_run)
+
+    legacy = run(LEGACY)
+    experimental = run(EXPERIMENTAL, placement)
+    assert np.allclose(legacy['B'], A.sum(axis=1))
+    assert_outputs_equivalent(legacy, experimental, 'cpu', label=f'decl_placement={placement}')
+
+
+def test_legacy_loop_counter_honors_late():
+    """The counter half of the knob is shared: legacy also declares a loop-local counter in its
+    for-init clause under ``late`` (the scalar half remains experimental-only)."""
+
+    def legacy(placement):
+        with use_implementation(LEGACY), \
+             set_temporary('compiler', 'cpu', 'codegen_params', 'decl_placement', value=placement):
+            return generated_code(accumulate.to_sdfg(simplify=True))
+
+    assert 'int64_t k;' in legacy('eager')
+    assert 'for (int64_t k = 0;' in legacy('late')
 
 
 if __name__ == '__main__':
