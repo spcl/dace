@@ -31,12 +31,23 @@ from dace.config import Config
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode
 from dace.sdfg import nodes
 
+from tests.codegen.readable.conftest import EXPERIMENTAL, LEGACY
+
 N, M, K = (dace.symbol(s) for s in ('N', 'M', 'K'))
 
 
 @dace.program
 def mm(A: dace.float64[M, K], B: dace.float64[K, N], C: dace.float64[M, N]):
     C[:] = A @ B
+
+
+@pytest.fixture(autouse=True)
+def restore_implementation():
+    """``_set_impl`` writes the GLOBAL config, so without this every test in this module would leak its
+    selection into the rest of the suite (there is no other fixture restoring it)."""
+    old = Config.get('compiler', 'cpu', 'implementation')
+    yield
+    Config.set('compiler', 'cpu', 'implementation', value=old)
 
 
 def _set_impl(impl):
@@ -57,8 +68,7 @@ def _build_ternary(name):
     sdfg.add_array('arr2', [8], dace.float64)
     st = sdfg.add_state('main')
     me, mx = st.add_map('m', dict(i='0:8'))
-    t = st.add_tasklet('tern', {'_inp'}, {'_out'}, '_out = (i < 2) ? 0.0 : _inp;',
-                       language=dace.dtypes.Language.CPP)
+    t = st.add_tasklet('tern', {'_inp'}, {'_out'}, '_out = (i < 2) ? 0.0 : _inp;', language=dace.dtypes.Language.CPP)
     ra = st.add_access('arr')
     wb = st.add_access('arr2')
     st.add_memlet_path(ra, me, t, dst_conn='_inp', memlet=dace.Memlet('arr[i]'))
@@ -158,11 +168,17 @@ def _gemm_equiv(blas_impl, gpu=False):
     cl = copy.deepcopy(base_c)
     _build_gemm('legacy', blas_impl, 'mm_%s_leg' % blas_impl.lower(), gpu).compile()(A=copy.deepcopy(a),
                                                                                      B=copy.deepcopy(b),
-                                                                                     C=cl, M=6, K=5, N=7)
+                                                                                     C=cl,
+                                                                                     M=6,
+                                                                                     K=5,
+                                                                                     N=7)
     ce = copy.deepcopy(base_c)
-    _build_gemm('experimental', blas_impl, 'mm_%s_exp' % blas_impl.lower(), gpu).compile()(A=copy.deepcopy(a),
-                                                                                           B=copy.deepcopy(b),
-                                                                                           C=ce, M=6, K=5, N=7)
+    _build_gemm(EXPERIMENTAL, blas_impl, 'mm_%s_exp' % blas_impl.lower(), gpu).compile()(A=copy.deepcopy(a),
+                                                                                         B=copy.deepcopy(b),
+                                                                                         C=ce,
+                                                                                         M=6,
+                                                                                         K=5,
+                                                                                         N=7)
     assert np.array_equal(cl, ce), '%s: experimental output differs from legacy' % blas_impl
     return cl
 
@@ -173,16 +189,16 @@ def _gemm_equiv(blas_impl, gpu=False):
 def test_cpp_ternary_scalar_inline():
     # Bit-exact legacy vs experimental.
     base = dict(arr=np.arange(8, dtype=np.float64) + 1.0, arr2=np.zeros(8))
-    _set_impl('legacy')
+    _set_impl(LEGACY)
     leg = copy.deepcopy(base)
     _build_ternary('tern_legacy').compile()(**leg)
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     exp = copy.deepcopy(base)
     _build_ternary('tern_experimental').compile()(**exp)
     assert np.array_equal(leg['arr2'], exp['arr2'])
 
     # Scalar connectors inlined via <array>_idx, with no copy-in temporary.
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     code = _build_ternary('tern_codegen').generate_code()[0].clean_code
     assert 'arr[arr_idx(' in code
     assert 'arr2[arr2_idx(' in code
@@ -192,12 +208,12 @@ def test_cpp_ternary_scalar_inline():
 def test_cpp_pointer_and_scalar_unit():
     # Inspect the generated experimental body: pointer connectors stay base
     # pointers, the scalar connector becomes an <array>_idx access, no copy-ins.
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     code = _build_ptr_scalar('ptrscalar_codegen').generate_code()[0].clean_code
     bodies = [l for l in code.splitlines() if '_k' in l and 'for' in l]
     assert bodies, 'tasklet body not found in generated code'
     body = bodies[0]
-    assert 's[s_idx(' in body, body                       # scalar connector inlined
+    assert 's[s_idx(' in body, body  # scalar connector inlined
     assert 'src[_k]' in body and 'dst[_k]' in body, body  # pointer connectors -> base pointers
     assert 'src_idx' not in code and 'dst_idx' not in code, 'pointer connector wrongly indexed'
     assert 'double* _src' not in code and 'double *_src' not in code, 'pointer copy-in emitted'
@@ -206,10 +222,10 @@ def test_cpp_pointer_and_scalar_unit():
     # Bit-exact legacy vs experimental.
     src = np.arange(4, dtype=np.float64) + 1.0
     sc = np.array([10.0])
-    _set_impl('legacy')
+    _set_impl(LEGACY)
     leg_dst = np.zeros(4)
     _build_ptr_scalar('ptrscalar_legacy').compile()(src=copy.deepcopy(src), dst=leg_dst, s=copy.deepcopy(sc))
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     exp_dst = np.zeros(4)
     _build_ptr_scalar('ptrscalar_experimental').compile()(src=copy.deepcopy(src), dst=exp_dst, s=copy.deepcopy(sc))
     assert np.array_equal(leg_dst, exp_dst)
@@ -217,7 +233,7 @@ def test_cpp_pointer_and_scalar_unit():
 
 def test_memset_pointer_connector():
     # The memset output pointer connector stays a base pointer.
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     code = _build_memset('memset_codegen').generate_code()[0].clean_code
     calls = [l.strip() for l in code.splitlines() if l.strip().startswith('memset(')]
     assert calls, 'no memset call emitted'
@@ -228,10 +244,10 @@ def test_memset_pointer_connector():
 
     # Bit-exact legacy vs experimental.
     base = dict(out=np.arange(8, dtype=np.float64) + 1.0)
-    _set_impl('legacy')
+    _set_impl(LEGACY)
     leg = copy.deepcopy(base)
     _build_memset('memset_legacy').compile()(**leg)
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     exp = copy.deepcopy(base)
     _build_memset('memset_experimental').compile()(**exp)
     assert np.array_equal(leg['out'], exp['out'])
@@ -266,7 +282,7 @@ def test_index_functions_defined_in_every_file():
     # only one file, leaving the other with an undefined `<array>_idx`.
     if shutil.which('nvcc') is None:
         pytest.skip('nvcc not available (no CUDA backend for the .cu file)')
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     try:
         programs = _build_mixed_cpu_gpu('idx_mixed').generate_code()
     except (CompilationError, CompilerConfigurationError) as e:
@@ -276,15 +292,15 @@ def test_index_functions_defined_in_every_file():
     for prog in programs:
         code = prog.clean_code
         missing = _called_index_functions(code) - _defined_index_functions(code)
-        assert not missing, 'file %r calls undefined index functions %s' % (getattr(prog, 'title', '?'), missing)
+        assert not missing, 'file %r calls undefined index functions %s' % (prog.title, missing)
 
-    # F2 regression guard: definitions are re-emitted per output file, so at least
-    # one index function is defined in more than one file. A global dedup (the bug)
-    # would define each index function exactly once across all files.
-    defs_per_file = [_defined_index_functions(p.clean_code) for p in programs]
-    all_defs = set().union(*defs_per_file) if defs_per_file else set()
-    reemitted = {name for name in all_defs if sum(1 for d in defs_per_file if name in d) >= 2}
-    assert reemitted, 'no index function was re-emitted across output files (per-stream flush regressed)'
+    # NOTE: this deliberately does NOT assert that some index function is re-emitted across two files.
+    # Device code carries no ``<array>_idx`` helpers at all (the .cu file defines none), so the .cpp and
+    # the .cu can never share one and such an assertion is unsatisfiable here rather than a regression
+    # guard. The per-file re-emission mechanism is guarded where it is actually observable -- across the
+    # per-nest host TUs -- by ``test_split_readable_index_helpers_are_per_tu`` in
+    # tests/codegen/split_nsdfg_translation_units_test.py, which asserts every TU that USES ``A_idx``
+    # also DEFINES it exactly once.
 
 
 def test_gemm_pure_naive():
@@ -300,8 +316,8 @@ def test_gemm_openblas_pointers():
     if 'OpenBLAS' not in blas.Gemm.implementations:
         pytest.skip('OpenBLAS Gemm implementation not registered')
 
-    _set_impl('experimental')
-    code = _build_gemm('experimental', 'OpenBLAS', 'mm_ob_codegen').generate_code()[0].clean_code
+    _set_impl(EXPERIMENTAL)
+    code = _build_gemm(EXPERIMENTAL, 'OpenBLAS', 'mm_ob_codegen').generate_code()[0].clean_code
     calls = [l.strip() for l in code.splitlines() if 'cblas_dgemm' in l]
     assert calls, 'no cblas_dgemm call emitted'
     call = calls[0]
@@ -327,9 +343,9 @@ def test_gemm_cublas_gpu():
     if 'cuBLAS' not in blas.Gemm.implementations:
         pytest.skip('cuBLAS Gemm implementation not registered')
 
-    _set_impl('experimental')
+    _set_impl(EXPERIMENTAL)
     try:
-        code = _join_code(_build_gemm('experimental', 'cuBLAS', 'mm_cub_codegen', gpu=True).generate_code())
+        code = _join_code(_build_gemm(EXPERIMENTAL, 'cuBLAS', 'mm_cub_codegen', gpu=True).generate_code())
     except (CompilationError, CompilerConfigurationError) as e:
         pytest.skip('cuBLAS codegen unavailable: %s' % e)
     match = re.search(r'cublas\w*[Gg]emm\w*\([^;]*\);', code, re.DOTALL)

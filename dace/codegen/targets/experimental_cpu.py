@@ -25,7 +25,8 @@ from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import CPUCodeGen, hoist_loop_decls, map_schedule_is_sequential
+from dace.codegen.targets.cpu import (CPUCodeGen, decl_placement, hoist_loop_decls, map_schedule_is_sequential,
+                                      scalar_init_style)
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.sdfg import nodes
@@ -80,13 +81,6 @@ def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: Li
     """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function."""
     call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
     return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
-
-
-def scalar_decl_placement() -> str:
-    """Where a mutable scope-lifetime value scalar is declared, per
-    ``compiler.cpu.codegen_params.scalar_decl_placement``: ``eager`` (the default, ``T x;`` at scope
-    top -- the legacy placement) or ``late`` (the declaration is deferred to just before its first use)."""
-    return Config.get('compiler', 'cpu', 'codegen_params', 'scalar_decl_placement')
 
 
 def loop_access_form() -> str:
@@ -154,7 +148,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._walk_plans: Dict[int, dict] = {}
         self._walk_emitted_decls: Set[int] = set()
         self._walk_emitted_incs: Set[int] = set()
-        # scalar_decl_placement = late: a mutable scope-lifetime value scalar whose ``T x;`` declaration
+        # decl_placement = late: a mutable scope-lifetime value scalar whose ``T x;`` declaration
         # was deferred by allocate_array is held here until the first tasklet that uses it is emitted
         # (see late_declarable_scalar / emit_pending_late_decls). ptrname -> declaration info. Empty in
         # the default ``eager`` mode, so the emit hook is a no-op and the output stays byte-identical.
@@ -440,9 +434,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if isinstance(node, nodes.Tasklet) and node.language == dtypes.Language.CPP:
             state_dfg = cfg.nodes()[state_id]
             self._cpp_inline[id(node)] = self._compute_cpp_inline(sdfg, state_dfg, node)
-        # scalar_decl_placement = late: flush any deferred ``T x;`` declaration this tasklet is the first
-        # to use, so it lands immediately before the tasklet body (no-op in the default eager mode).
-        self.emit_pending_late_decls(sdfg, cfg, state_id, node, callsite_stream)
         super()._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen)
         # Flush any index / size helpers registered while lowering this tasklet body.
         self._flush_generated_functions(function_stream, cfg, state_id, node)
@@ -476,8 +467,17 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             # whatever token the caller writes next (e.g. the map's closing brace).
             line = re.sub(r'[ \t]*////__(DACE:|CODEGEN;).*', '', inner_body).strip()
             if line:
+                # This is the ONLY point that knows both that the tasklet is emitted brace-free at the
+                # enclosing scope AND what its statement reads, which is exactly what a fused
+                # declaration needs: `T x = expr;` is only in scope for later readers if this line is
+                # not wrapped in a brace of its own.
+                line = self.fuse_pending_decl(node, line)
+                self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
                 callsite_stream.write('%s  // %s\n' % (line, node.label), cfg, state_id, node)
                 return
+        # Braced (or multi-statement) body: a declaration folded into it would be scoped to that brace,
+        # so any pending declaration is emitted as its own line ahead of the block instead.
+        self.emit_pending_late_decls(cfg, state_id, node, callsite_stream)
         callsite_stream.write('{  // %s' % node.label, cfg, state_id, node)
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
@@ -681,7 +681,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             self._dispatcher.defined_vars.add(self.ptr(node.data, nodedesc, sdfg), DefinedType.Pointer,
                                               dtypes.pointer(nodedesc.dtype).ctype)
             return
-        # scalar_decl_placement = late: a MUTABLE scope-lifetime value scalar (not the const write-once
+        # decl_placement = late: a MUTABLE scope-lifetime value scalar (not the const write-once
         # form above) whose declaration is provably safe to move keeps its `T x;` out of the scope
         # preamble; it is registered now (so reads resolve) and the declaration is emitted just before
         # its first-use tasklet (emit_pending_late_decls). Eager mode / any non-deferrable scalar falls
@@ -807,7 +807,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     # -- readable array indexing ----------------------------------------------
 
-    # -- late scalar declarations (scalar_decl_placement = late) ----------------
+    # -- late scalar declarations (decl_placement = late) ----------------
 
     def defer_scalar_declaration(self, sdfg, dfg, node, desc) -> bool:
         """Register a mutable scope scalar as a deferred (late) declaration and return True, or return
@@ -827,18 +827,24 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # exactly as the eager declaration would (there are none in emission order -- the scope preamble
         # precedes every tasklet -- but the registration must exist before the first use is emitted).
         self._dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, desc.dtype.ctype)
-        tasklet_ids = {id(t) for t in scope_tasklets}
+        state: SDFGState = dfg
+        # Tasklets that WRITE the scalar: only one of those can carry a fused ``T x = expr;`` binding.
+        # A ``setzero`` scalar is never fused -- its ``T x = 0;`` init is the declaration already.
+        writers = {id(edge.src) for an in state.data_nodes() if an.data == node.data for edge in state.in_edges(an)}
         self._late_pending[ptrname] = {
             'ctype': desc.dtype.ctype,
             'ptrname': ptrname,
             'setzero': setzero,
-            'tasklets': tasklet_ids,
+            'tasklets': {id(t)
+                         for t in scope_tasklets},
+            'writers': writers,
+            'fusable': scalar_init_style() == 'fused' and not setzero,
         }
         return True
 
     def late_declarable_scalar(self, sdfg, dfg, node, desc) -> Optional[Tuple[Set[nodes.Tasklet], bool]]:
         """Whether ``desc`` (the scalar being allocated at ``node`` in state ``dfg``) may have its
-        declaration deferred to first use, per ``scalar_decl_placement``. Returns ``(neighbor_tasklets,
+        declaration deferred to first use, per ``decl_placement``. Returns ``(neighbor_tasklets,
         setzero)`` when deferrable, else ``None`` (keep the eager declaration).
 
         Sound only for a plain transient VALUE scalar (never a view/reference/stream, a const write-once
@@ -846,7 +852,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         direct-child tasklet of ONE scope. That single-scope, tasklet-only shape guarantees the
         first-use tasklet is emitted into the same brace the eager declaration would occupy, so the
         deferred ``T x;`` precedes -- and is visible to -- every use. Anything else falls back to eager."""
-        if scalar_decl_placement() != 'late':
+        # Both knobs need the eager ``T x;`` skipped and re-emitted at first use: ``late`` re-emits it as
+        # its own line there, ``fused`` folds it into the first write. ``fused`` therefore implies late
+        # placement for a candidate it cannot fuse (a braced first-use tasklet) -- the declaration still
+        # has to land somewhere, and first-use is the nearest correct place.
+        if decl_placement() != 'late' and scalar_init_style() != 'fused':
             return None
         # A plain mutable value scalar only. const_init scalars take the `const T x = expr;` path above;
         # GPU-global scalars are device pointers, and heap/persistent ones do not live in a plain brace.
@@ -858,8 +868,6 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         if desc.storage not in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap):
             return None
-        # The allocation must be at a single state's scope (``dfg`` is that SDFGState). A scalar spanning
-        # states is allocated at SDFG scope (``dfg is None`` here) and is left eager.
         if not isinstance(dfg, SDFGState):
             return None
         state: SDFGState = dfg
@@ -867,22 +875,47 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         access_nodes = [n for n in state.data_nodes() if n.data == name]
         if not access_nodes:
             return None
-        scope_dict = state.scope_dict()
-        # Only a scalar living at STATE top level (outside every map). Restricting to ``None`` keeps the
-        # deferred declaration in the state's own brace -- the same brace the eager declaration occupies
-        # -- and leaves anything inside a map scope (parallel or sequential) completely untouched.
-        if any(scope_dict[n] is not None for n in access_nodes):
+        # ``dfg`` proves NOTHING about where the declaration lands: the allocator passes the FIRST state
+        # a scalar appears in even when it allocates at SDFG scope (framecode's ``to_allocate`` entry
+        # carries ``first_state_instance``, not the allocation scope). So a scalar live across states
+        # arrives here with a state in hand, and deferring it into that state's brace puts the
+        # declaration out of scope of every use in the other states. Establish single-state-ness here.
+        if any(other is not state and any(n.root_data == name for n in other.data_nodes()) for other in sdfg.states()):
             return None
+        # Named on an interstate edge or in a loop / conditional-block condition: read outside any
+        # state's brace, so the declaration has to stay at SDFG scope.
+        if any(name in edge.data.free_symbols for edge in sdfg.all_interstate_edges()):
+            return None
+        if any(name in cfr.used_symbols(all_symbols=True, with_contents=False)
+               for cfr in sdfg.all_control_flow_regions()):
+            return None
+        scope_dict = state.scope_dict()
+        # Every access must live in ONE scope -- state top level (``None``) or one map's body. That is
+        # the brace the eager declaration occupies too: a map's scope transients are declared inside its
+        # innermost loop body, exactly where its tasklets are emitted, so a declaration deferred within
+        # that scope lands in the same brace and is re-entered per iteration exactly as the eager one is.
+        # A scalar spread over two scopes has no single brace that dominates every use.
+        scopes = {scope_dict[n] for n in access_nodes}
+        if len(scopes) != 1:
+            return None
+        scope = scopes.pop()
         neighbor_tasklets: Set[nodes.Tasklet] = set()
         has_write = False
         for an in access_nodes:
             if state.in_degree(an) > 0:
                 has_write = True
+            elif state.out_degree(an) > 0:
+                # Read from a source this state never wrote: the value comes from a PREVIOUS execution
+                # of the state. An eager declaration at scope top persists across executions and carries
+                # it; a deferred one inside the state's brace is re-declared each time the state runs
+                # (the brace sits inside the loop), so the carried value would silently become
+                # uninitialized. Not a deferral target.
+                return None
             for edge in state.all_edges(an):
                 other = edge.dst if edge.src is an else edge.src
-                # Every reader/writer must be a plain tasklet at state scope; a copy / map / nested
+                # Every reader/writer must be a plain tasklet in the SAME scope; a copy / map / nested
                 # SDFG / library-node neighbour is not the single-brace direct-child shape we require.
-                if not isinstance(other, nodes.Tasklet) or scope_dict[other] is not None:
+                if not isinstance(other, nodes.Tasklet) or scope_dict[other] is not scope:
                     return None
                 neighbor_tasklets.add(other)
         # A mutable transient must be written before it is read; without a write there is no first-use
@@ -891,10 +924,28 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         return neighbor_tasklets, node.setzero
 
-    def emit_pending_late_decls(self, sdfg, cfg, state_id, tasklet, callsite_stream) -> None:
-        """Emit the deferred ``T x;`` declaration of every late scalar this ``tasklet`` is the first to
-        use, immediately before the tasklet body. A no-op (and byte-identical) unless
-        ``scalar_decl_placement`` is ``late`` and a declaration is still pending."""
+    def fuse_pending_decl(self, tasklet, line: str) -> str:
+        """Fold a pending declaration into ``line``, the brace-free single statement of ``tasklet``,
+        turning ``x = expr;`` into ``T x = expr;`` -- the declaration IS the first write. Returns the
+        line unchanged (leaving the declaration pending, to be emitted on its own) unless
+        ``scalar_init_style`` is ``fused`` and this line is genuinely that scalar's first write.
+
+        The write must be spelled by this line: the scalar is deferred on the strength of its DATAFLOW
+        (see ``late_declarable_scalar``), but only the emitted text proves the statement really is
+        ``x = ...`` and not, say, a read of ``x`` feeding another store."""
+        for ptrname, info in list(self._late_pending.items()):
+            if not info['fusable'] or id(tasklet) not in info['writers']:
+                continue
+            if not re.match(r'%s\s*=[^=]' % re.escape(ptrname), line):
+                continue
+            del self._late_pending[ptrname]
+            return '%s %s' % (info['ctype'], line)
+        return line
+
+    def emit_pending_late_decls(self, cfg, state_id, tasklet, callsite_stream) -> None:
+        """Emit the deferred ``T x;`` declaration of every scalar this ``tasklet`` is the first to use,
+        immediately before the tasklet body. A no-op (and byte-identical) unless a declaration was
+        deferred (``decl_placement = late`` / ``scalar_init_style = fused``) and is still pending."""
         if not self._late_pending:
             return
         for ptrname, info in list(self._late_pending.items()):

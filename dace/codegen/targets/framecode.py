@@ -47,6 +47,11 @@ class DaCeCodeGenerator(object):
                                       List[Tuple[SDFG, Optional[SDFGState], Optional[nodes.AccessNode], bool, bool,
                                                  bool]]] = collections.defaultdict(list)
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
+        # (cfg_id, symbol) -> ctype, for each loop counter whose hoisted declaration was SKIPPED because
+        # ``codegen_params.decl_placement`` is ``late`` and the counter is loop-local. The loop emitter
+        # declares it in the for-init clause instead. Keyed by cfg_id: two SDFGs may each own a counter
+        # of the same name, and only one of them may qualify. Empty under the default ``eager``.
+        self.loop_local_counters: Dict[Tuple[int, str], str] = {}
         self.fsyms: Dict[int, Set[str]] = {}
         # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.

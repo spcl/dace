@@ -102,6 +102,14 @@ def _loop_region_to_code(region: LoopRegion, dispatch_state: Callable[[SDFGState
     if loop.init_statement:
         init = unparse_interstate_edge(loop.init_statement.code[0], sdfg, codegen=codegen, symbols=lsyms)
         init = init.strip(';')
+        # ``decl_placement = late``: a loop-local counter is declared HERE, in the init clause, instead
+        # of being hoisted to the top of the generated function. The gate that put it in this map also
+        # established that the init is a plain ``i = <expr>`` and that the loop is not inverted, so this
+        # only ever runs for the `for (init; cond; update)` form below, where the clause scopes the
+        # counter to the loop. Absent under the default ``eager``, leaving `init` untouched.
+        counter_ctype = codegen.loop_local_counters.get((sdfg.cfg_id, loop.loop_variable))
+        if counter_ctype is not None:
+            init = f'{counter_ctype} {init}'
     else:
         init = ''
 
