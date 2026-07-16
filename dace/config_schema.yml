@@ -151,11 +151,14 @@ required:
 
             build_type:
                 type: str
-                default: RelWithDebInfo
+                default: Release
                 title: Build configuration
                 description: >
-                    Configuration type for CMake build (can be Debug, Release,
-                    RelWithDebInfo, or MinSizeRel).
+                    Configuration type for the build (can be Debug, Release,
+                    RelWithDebInfo, or MinSizeRel). These flags are appended after
+                    compiler.cpu.args, so the build type has the last word on the
+                    optimization level: RelWithDebInfo compiles at -O2 even though
+                    compiler.cpu.args asks for -O3.
 
             build_mode:
                 type: str
