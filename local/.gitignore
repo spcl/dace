@@ -1,0 +1,4 @@
+# generated run outputs (per-phase + merged TSVs, readability CSV, plots)
+*.tsv
+*.csv
+plots/

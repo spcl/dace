@@ -385,6 +385,23 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1, time_budget_s=None):
 _ENV_BUILD_FLAGS_CACHE = {}
 
 
+def _resolve_library_path(soname):
+    """Absolute path of a bare soname / filename (``liblapacke.so.3``) searched across the linker's
+    library dirs (``LIBRARY_PATH``, ``LD_LIBRARY_PATH``, and the standard multiarch/lib dirs), or None.
+    Used to turn a resolved soname in an environment's ``cmake_libraries`` into a linkable path when it
+    is not a plain ``-l`` name and has no dev ``.so`` symlink."""
+    base = os.path.basename(soname)
+    dirs = []
+    for var in ('LIBRARY_PATH', 'LD_LIBRARY_PATH'):
+        dirs += [d for d in os.environ.get(var, '').split(os.pathsep) if d]
+    dirs += ['/usr/lib/x86_64-linux-gnu', '/usr/lib64', '/usr/lib', '/lib/x86_64-linux-gnu', '/lib']
+    for d in dirs:
+        candidate = os.path.join(d, base)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def _environment_build_flags(folder):
     """``(-I include dirs, link args)`` for the SDFG's library-node environments.
 
@@ -435,7 +452,23 @@ def _environment_build_flags(folder):
             lib = (lib or '').strip()
             if not _live(lib):
                 continue
-            link.append(lib if (os.path.isabs(lib) or lib.startswith(('-l', '-L', '-Wl'))) else f'-l{lib}')
+            if os.path.isabs(lib) or lib.startswith(('-l', '-L', '-Wl')):
+                link.append(lib)
+            elif re.search(r'\.(so|a|dylib)(\.\d+)*$', lib):
+                # A resolved soname / filename (e.g. "liblapacke.so.3", as ctypes.util.find_library
+                # returns on Debian/Ubuntu) is NOT a ``-l`` link NAME -- ``-lliblapacke.so.3`` is not
+                # found. Resolve it to an absolute path against the linker's library dirs (handles a
+                # missing dev ``.so`` symlink, e.g. cblas); else fall back to ``-l<stem>`` (strip the
+                # "lib" prefix and the ".so[.N]" suffix). On daint a single-lib OpenBLAS is a clean
+                # "openblas" name and takes the plain ``-l`` path below, so this is a no-op there.
+                resolved = _resolve_library_path(lib)
+                if resolved:
+                    link.append(resolved)
+                else:
+                    stem = re.sub(r'^lib', '', re.sub(r'\.(so|a|dylib)(\.\d+)*$', '', os.path.basename(lib)))
+                    link.append(f'-l{stem}')
+            else:
+                link.append(f'-l{lib}')
         for lf in _get_or_eval(env.cmake_link_flags):
             if _live(lf):
                 link.append(lf)
