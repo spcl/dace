@@ -72,10 +72,13 @@ def _is_pure_copy_tasklet(t: nodes.Node) -> bool:
 def state_runs_on_gpu(state: dace.SDFGState) -> bool:
     """True iff ``state``'s compute is scheduled on the GPU, i.e. it carries a GPU map. Such a state
     must be timed with CUDA events: a host ``Timer`` around it brackets only the asynchronous kernel
-    launch, not the kernel."""
+    launch, not the kernel.
+
+    Recurses into nested SDFGs: ``state.nodes()`` is flat, so a GPU map inside a NestedSDFG would
+    otherwise read as host work and get the wall-clock timer."""
     return any(
         isinstance(node, nodes.MapEntry) and node.map.schedule in dace.dtypes.GPU_SCHEDULES
-        for node in state.nodes())
+        for node, _ in state.all_nodes_recursive())
 
 
 def instrumentation_for(state: dace.SDFGState) -> dace.InstrumentationType:
@@ -192,7 +195,15 @@ def _report_total_ms(report) -> Optional[float]:
 def time_compute(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5, warmup: int = 1) -> Optional[float]:
     """Run ``run(sdfg)`` ``reps`` times and return the median compute-region time (ms) from the
     instrumentation report (``None`` if the SDFG carries no timers). ``sdfg`` must already be
-    instrumented (see :class:`InsertLayoutTiming`)."""
+    instrumented (see :class:`InsertLayoutTiming`).
+
+    The no-timer case MUST short-circuit: ``get_latest_report`` reads the newest report in
+    ``build_folder/perf``, and the build folder is keyed on the SDFG NAME -- every candidate in a
+    layout sweep shares one. An uninstrumented SDFG writes no report, so falling through would read
+    the PREVIOUS candidate's report and silently return its time as this one's.
+    """
+    if not any(state.instrument != dace.InstrumentationType.No_Instrumentation for state in sdfg.states()):
+        return None
     for _ in range(warmup):
         run(sdfg)
     samples: List[float] = []

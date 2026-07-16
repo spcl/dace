@@ -167,6 +167,51 @@ def test_barrier_relayout_states_is_idempotent():
         assert len(barriers) <= 1
 
 
+def test_time_compute_returns_none_for_uninstrumented_sdfg_not_a_stale_report():
+    """get_latest_report reads the newest report in build_folder/perf, and the build folder is keyed
+    on the SDFG NAME -- which every candidate of a sweep shares. An uninstrumented SDFG must report
+    None, NOT the previous candidate's timing."""
+    instrumented = _permuted()
+    assert InsertLayoutTiming().apply_pass(instrumented, {}) == 1
+    _N = 8
+    A = numpy.random.rand(_N, _N)
+
+    def run(sdfg):
+        C = numpy.zeros((_N, _N))
+        sdfg(A=A.copy(), C=C, N=_N)
+        return C
+
+    first = time_compute(instrumented, run, reps=2, warmup=1)
+    assert first is not None and first >= 0.0  # a report now exists in this name's perf dir
+
+    # Same program name, deliberately NOT instrumented -> must be None, not `first`.
+    bare = _permuted()
+    assert not any(s.instrument != dace.InstrumentationType.No_Instrumentation for s in bare.states())
+    assert time_compute(bare, run, reps=2, warmup=1) is None
+
+
+def test_state_runs_on_gpu_sees_nested_sdfg_maps():
+    """A GPU map inside a NestedSDFG must still mark the state as GPU: state.nodes() is flat, so a
+    non-recursive scan would call it host work and pick the wall-clock timer."""
+    inner = dace.SDFG("inner_gpu")
+    inner.add_array("a", [16], dace.float64)
+    istate = inner.add_state("i", is_start_block=True)
+    istate.add_mapped_tasklet("m", {"k": "0:16"}, {"__i": dace.Memlet("a[k]")}, "__o = __i * 2.0",
+                              {"__o": dace.Memlet("a[k]")}, schedule=dace.ScheduleType.GPU_Device,
+                              external_edges=True)
+
+    outer = dace.SDFG("outer_host")
+    outer.add_array("a", [16], dace.float64)
+    ostate = outer.add_state("o", is_start_block=True)
+    nsdfg = ostate.add_nested_sdfg(inner, {"a"}, {"a"})
+    ostate.add_edge(ostate.add_read("a"), None, nsdfg, "a", dace.Memlet("a[0:16]"))
+    ostate.add_edge(nsdfg, "a", ostate.add_write("a"), None, dace.Memlet("a[0:16]"))
+
+    assert not any(isinstance(n, dace.sdfg.nodes.MapEntry) for n in ostate.nodes())  # nothing at top level
+    assert state_runs_on_gpu(ostate), "nested GPU map not seen"
+    assert instrumentation_for(ostate) == dace.InstrumentationType.GPU_Events
+
+
 if __name__ == "__main__":
     test_is_copy_state_classifies_relayout_vs_compute()
     test_insert_timing_instruments_compute_only()
@@ -177,4 +222,6 @@ if __name__ == "__main__":
     test_instrument_is_chosen_per_device()
     test_barrier_survives_gpu_transform_and_only_compute_is_timed()
     test_barrier_relayout_states_is_idempotent()
+    test_time_compute_returns_none_for_uninstrumented_sdfg_not_a_stale_report()
+    test_state_runs_on_gpu_sees_nested_sdfg_maps()
     print("timing tests PASS")
