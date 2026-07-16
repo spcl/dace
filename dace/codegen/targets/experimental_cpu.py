@@ -14,6 +14,8 @@ import ast
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
+import numpy
+import sympy
 from pygments.lexers import CppLexer
 from pygments.token import Token
 
@@ -47,6 +49,16 @@ def size_qualifier(is_constant: bool) -> str:
         return INDEX_FUNCTION_QUALIFIER
     standard = int(str(Config.get('compiler', 'cpp_standard')).strip())
     return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else INDEX_FUNCTION_QUALIFIER
+
+
+def constexpr_body(expr) -> str:
+    """C++ body for a ``constexpr``/``consteval`` ``_idx``/``_size`` helper. RelaxIntegerPowers rewrites
+    integer powers ``x**k`` in shapes/strides/offsets to ``dace::math::ipow(x, k)``, which ``sym2cpp``
+    emits as a non-``constexpr`` ``ipow`` call (``-Winvalid-constexpr``, and not a real constant
+    expression). Rewriting each ``ipow`` back to a SymPy ``Pow`` lets the printer lower it to the
+    repeated-multiply form ``((N * N))`` -- value-identical, and a genuine constant expression. Only the
+    readable ``_idx``/``_size`` helper bodies take this path."""
+    return sym2cpp(expr.rewrite(sympy.Pow))
 
 
 def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: List[str]) -> str:
@@ -233,6 +245,17 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         copy (WCR, stream/view/reference data, or a conflicting inout name) are
         omitted from the map.
         """
+        # A body that is (or contains) a preprocessor-directive line cannot have its connectors
+        # inlined. ``ExpandReduceOpenMP`` is exactly this shape: a
+        # ``#pragma omp parallel for reduction(op:_out[0])`` loop whose body is
+        # ``_out[0] = op(_out[0], _in[..])``. Two things break: (a) the pygments C++ lexer folds a
+        # ``#pragma`` line into a single preprocessor token, so a connector named inside the clause is
+        # NOT a rewritable ``Token.Name`` -- it survives verbatim and references an undeclared name;
+        # and (b) a pointer-base inline (``&x`` for a scalar sink) textually substituted into the
+        # existing ``_out[0]`` subscript mis-parses as ``&x[0]`` (== ``&(x[0])``, subscripting the
+        # scalar). Keep the classic connector copy-in/out for the whole tasklet (as legacy does).
+        if re.search(r'(?m)^[ \t]*#', node.code.as_string):
+            return {}
         in_map: Dict[str, str] = {}
         out_map: Dict[str, str] = {}
         in_edges: Dict[str, object] = {}
@@ -405,11 +428,18 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         return '%s = new %s DACE_ALIGN(64)[%s];\n' % (alloc_name, ctype, count)
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
-        # Emit each registered index / size helper once per stream. Cross-stream duplicates within
-        # one output file (a non-inline nested-SDFG function shares the file) are collapsed later by
-        # ``deduplicate_functions`` in the compiler post-pass, so no include guards are needed; the
-        # .cu device file has its own stream and its own copy, as required.
-        emitted = self._emitted_functions.setdefault(id(function_stream), set())
+        # Emit each registered index / size helper once per OUTPUT FILE. A non-inline nested-SDFG
+        # function has its own function stream but shares the host .cpp translation unit with every
+        # other host stream, so keying the emitted-set on the individual stream re-emits an identical
+        # ``<name>_idx`` definition per stream -> a C++ redefinition in that one TU. Key on the
+        # output-file owner instead: during host codegen ``calling_codegen is self`` (one key for the
+        # whole .cpp, so each helper is emitted exactly once and ``o.code`` is duplicate-free on its own
+        # -- a consumer that writes the file itself no longer needs the ``deduplicate_functions``
+        # post-pass). A device (.cu) file is generated through a delegating GPU codegen that sets
+        # ``calling_codegen`` to itself, so its streams keep the per-stream emitted-set and their own
+        # copy, exactly as before.
+        file_key = id(self) if self.calling_codegen is self else id(function_stream)
+        emitted = self._emitted_functions.setdefault(file_key, set())
         for registry in (self._index_functions, self._size_functions):
             for name, defn in registry.items():
                 if name in emitted:
@@ -485,7 +515,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
         params = ['%s %s' % (INDEX_CTYPE, str(d)) for d in dim_syms]
         params += ['%s %s' % (INDEX_CTYPE, s) for s in extra_names]
-        body = sym2cpp(flatexpr)
+        body = constexpr_body(flatexpr)
         self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (INDEX_FUNCTION_QUALIFIER, INDEX_CTYPE, fnname,
                                                                          ', '.join(params), body)
         return fnname, extra_names
@@ -525,7 +555,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
         qualifier = size_qualifier(is_constant)
         params = ['%s %s' % (INDEX_CTYPE, s) for s in call_args]
-        body = sym2cpp(total)
+        body = constexpr_body(total)
         self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, INDEX_CTYPE, fnname,
                                                                         ', '.join(params), body)
         return fnname, call_args
@@ -540,6 +570,16 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
 
     def _is_bare_data(self, name: str) -> bool:
         return name not in self.memlets and name not in self.constants and name in self.sdfg.arrays
+
+    def _scalar_constant_name(self, name: str) -> Optional[str]:
+        """``name`` if it is a 0-dimensional (scalar) SDFG constant, else None. MarkConstInit promotes a
+        write-once scalar transient to such a constant, which framecode emits as a bare ``constexpr T
+        name = v;`` (not ``T name[1]``). A subscript ``name[0]`` on it must lower to the bare ``name`` --
+        routing it through the classic ``_subscript_expr`` trips on the scalar's empty (``()``) stride
+        list (``Missing dimensions in expression (expected one, got 0)``)."""
+        if name in self.constants and numpy.ndim(self.constants[name]) == 0:
+            return name
+        return None
 
     def _bare_access(self, node: ast.AST) -> Optional[str]:
         """ C++ access string for a direct (inlined) access to an SDFG array. """
@@ -589,6 +629,11 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         target = rname(node)
+        # A subscript on a 0-d scalar SDFG constant (emitted as a bare ``constexpr T c = v;``) lowers to
+        # the bare name; the classic ``_subscript_expr`` would raise on its empty stride list.
+        bare_const = self._scalar_constant_name(target)
+        if bare_const is not None:
+            return ast.copy_location(ast.Name(id=bare_const), node)
         # Connectors and SDFG constants keep the classic lowering.
         if not self._is_bare_data(target):
             return super().visit_Subscript(node)
