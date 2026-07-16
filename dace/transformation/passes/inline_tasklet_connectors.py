@@ -1,42 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Pass that rewrites tasklets to access their arrays directly instead of through
-copy-in / copy-out connector temporaries. Used by the experimental (readable)
-code generator.
+Rewrites Python tasklet bodies to access their arrays directly instead of through copy-in / copy-out
+connector temporaries, for the experimental (readable) code generator. An eligible connector
+(``__in1``) becomes a direct subscript on the array (``A[__i0, __i1]``); connectors and memlet edges
+stay intact (data-flow / scheduling / allocation unchanged), and the generator derives which
+connectors were inlined from the rewritten body. The per-dimension index is the memlet subset's lower
+bound, linearized with the descriptor's strides / offset exactly as the classic path, so the flat
+index matches the legacy copy -- only the presentation (a named ``<array>_idx(...)``) differs.
 
-For every eligible connector of a tasklet, the connector reference in the body
-is replaced by a direct access to the underlying array (e.g. ``__in1`` becomes
-``A[__i0, __i1]``) and the array name is added to the tasklet's
-``ignored_symbols`` (so it is not treated as an undefined free symbol). The
-connectors and their memlet edges are kept intact, so data-flow, scheduling, and
-allocation are unchanged.
-
-The per-dimension access index is the *lower bound* of the connector's memlet
-subset in the outer array's coordinate system -- the same quantity
-``expand_nested_sdfg_inputs`` uses as its offset ("offset = lower bound of the
-narrowed subset"). For a single-element access every dimension is a point
-(``lo == hi``), so ``ranges[d][0]`` per dimension is the exact multi-dimensional
-index. The code generator then linearizes it with the descriptor's strides and
-``offset`` exactly as the classic path does (``cpp_offset_expr``), so the flat
-index is identical to the legacy connector copy -- only the presentation (a
-named ``<array>_idx(...)`` function) differs.
-
-No marker is stored on the tasklet: the readable code generator derives which
-connectors were inlined from the rewritten body -- a connector whose name no
-longer appears in the body needs no copy-in / copy-out.
-
-Connectors that cannot be rewritten safely are left untouched (they keep the
-classic connector-based lowering), so the pass is always correctness-preserving:
-
-* Write-conflict (WCR) outputs are left alone -- they must go through the
-  atomic ``write_and_resolve`` path.
-* Non-single-element accesses (vector / pointer connectors, e.g. a whole row
-  passed to a library call) are left alone.
-* Only Python tasklet bodies are rewritten here. C++ / library tasklet bodies are
-  handled at code-generation time (``ExperimentalCPUCodeGen.rewrite_cpp_tasklet_body``),
-  which tokenizes with the pygments C++ lexer so string / char literals and comments
-  are never touched; this pass leaves them in classic connector form.
-* Reference-set, stream push/pop, and non-Array/Scalar data are left alone.
+Correctness-preserving: these keep the classic connector lowering -- WCR outputs, non-single-element
+(vector / pointer) accesses, reference-set / stream / non-Array-or-Scalar data. Only Python bodies are
+rewritten here; C++ / library bodies are handled at code-gen time (``rewrite_cpp_tasklet_body``).
 """
 import ast
 import warnings
@@ -100,16 +74,20 @@ class InlineTaskletConnectors(ppl.Pass):
         if not isinstance(far, nodes.AccessNode):
             return None
         desc = osdfg.arrays[memlet.data]
-        # Only plain arrays/scalars; never streams, references, structures, or
-        # container-arrays (whose element addressing is not the plain flat index).
-        # An ArrayView IS a plain-flat pointer into its source (``source + offset``,
-        # its own strides), so it is inlined like any Array -- ``V[V_idx(...)]``.
-        if not isinstance(desc, (dt.Array, dt.Scalar)):
-            return None
-        if isinstance(desc, (dt.Reference, dt.ContainerArray)):
+        # Only plain arrays/scalars; never streams, references, structures, or container-arrays
+        # (whose element addressing is not the plain flat index). An ArrayView is a plain-flat pointer
+        # into its source, so it is inlined like any Array. dt.Reference stays excluded explicitly:
+        # ArrayReference subclasses Array, so it would otherwise pass the first test.
+        if not isinstance(desc, (dt.Array, dt.Scalar)) or isinstance(desc, (dt.Reference, dt.ContainerArray)):
             return None
         # WCR outputs must go through the atomic resolve path.
         if is_output and memlet.wcr is not None:
+            return None
+        # A scalar that another pass has promoted to an SDFG constant (e.g. MarkConstInit's
+        # constexpr_static) is emitted inline as that constant; rewriting a read of it to
+        # ``<name>[<idx>]`` would subscript a 0-stride scalar the classic lowering cannot express.
+        # Leave it classic -- the connector copy-in reads the constant directly.
+        if memlet.data in osdfg.constants:
             return None
         # Dynamic (data-dependent) accesses keep the classic lowering.
         if memlet.dynamic:
@@ -155,11 +133,8 @@ class InlineTaskletConnectors(ppl.Pass):
         if not accesses:
             return False
 
-        # Only Python tasklet bodies are rewritten. C++ (and other) tasklet
-        # bodies are emitted verbatim by the code generator -- there is no
-        # subscript-flattening step for them -- so an inlined ``A[i, j]`` would
-        # be emitted literally (a comma-operator bug) and non-unit strides would
-        # be ignored. Such tasklets keep their classic connector copy-in/out.
+        # Only Python bodies are rewritten. A C++/other body is emitted verbatim (no subscript
+        # flattening), so an inlined ``A[i, j]`` would become a comma-operator bug -- keep it classic.
         if node.language != dtypes.Language.Python:
             return False
         new_code, inlined = self._rewrite_python(node, accesses)
@@ -172,10 +147,9 @@ class InlineTaskletConnectors(ppl.Pass):
         return True
 
     def _rewrite_python(self, node: nodes.Tasklet, accesses: Dict[str, Tuple[str, List[str]]]) -> Tuple[str, Set[str]]:
-        try:
-            tree = ast.parse(node.code.as_string)
-        except SyntaxError:
-            return node.code.as_string, set()
+        # ``as_string`` unparses the tasklet's already-parsed AST, so it is always valid Python;
+        # any unexpected failure is still caught by apply_pass and the tasklet left classic.
+        tree = ast.parse(node.code.as_string)
         inliner = _ConnectorInliner(accesses)
         new_tree = inliner.visit(tree)
         ast.fix_missing_locations(new_tree)
@@ -223,19 +197,21 @@ class _ConnectorInliner(ast.NodeTransformer):
             sl = ast.Tuple(elts=elts, ctx=ast.Load())
         return ast.Subscript(value=ast.Name(id=data, ctx=ast.Load()), slice=sl, ctx=ast.Load())
 
+    def _replace(self, name: str, node: ast.AST) -> ast.AST:
+        """Replaces an inlined connector ``name`` with its direct ``data[indices]`` access."""
+        data, indices = self.accesses[name]
+        self.inlined.add(name)
+        return ast.copy_location(self._make_access(data, indices), node)
+
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         # A subscripted inlined connector (e.g. pointer-to-scalar ``conn[0]``):
         # replace the whole thing with the direct access.
         base = node.value
         if isinstance(base, ast.Name) and base.id in self.accesses:
-            data, indices = self.accesses[base.id]
-            self.inlined.add(base.id)
-            return ast.copy_location(self._make_access(data, indices), node)
+            return self._replace(base.id, node)
         return self.generic_visit(node)
 
     def visit_Name(self, node: ast.Name) -> ast.AST:
         if node.id in self.accesses:
-            data, indices = self.accesses[node.id]
-            self.inlined.add(node.id)
-            return ast.copy_location(self._make_access(data, indices), node)
+            return self._replace(node.id, node)
         return node

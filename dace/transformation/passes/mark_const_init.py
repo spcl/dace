@@ -35,28 +35,21 @@ CONST_FILL_UNROLL_LIMIT = 16
 @transformation.explicit_cf_compatible
 class MarkConstInit(ppl.Pass):
     """
-    Detects transient data descriptors that are initialized (once, or collectively by several element-wise constant
-    writes) and thereafter only read, and marks them so that code generation may emit them as ``const``/``constexpr``.
+    Detects transient descriptors that are initialized (once, or collectively by several element-wise constant writes)
+    and thereafter only read, and classifies them so the readable code generator can emit them as ``const``/
+    ``constexpr``. Two cases:
 
-    For each such descriptor the pass distinguishes two cases:
+    * All writers are pure constant producers (assignment tasklets with no data inputs). A small static-extent
+      constant-fill map is unrolled to this element-wise pattern first (:meth:`_unroll_constant_fill_maps`). Classified
+      ``constexpr_static``: a compile-time initializer is built from the ``{subset -> value}`` map (unwritten elements
+      zero-filled), promoted to an SDFG constant, and the now-dead writes are removed. The descriptor stays in
+      ``sdfg.arrays`` -- the code generator skips its allocation.
+    * A single writer depends on other data. Classified ``const_runtime``; only the ``const_init`` flag is set and the
+      dataflow is left untouched.
 
-    * Every writer is a pure constant producer (an assignment tasklet with no data inputs, e.g. ``out = 0``). A small
-      static-extent constant-fill MAP (``for i: arr[i] = <f(i)>``) is first fully unrolled into exactly this pattern
-      (see :meth:`_unroll_constant_fill_maps`), so a uniform fill and an index-dependent one share the same path. This
-      covers both a single write and an element-wise pattern such as ``arr[0]=0; arr[1]=1; arr[2]=2; arr[3]=3`` whose
-      writes collectively initialize the array (possibly spread across several states or access nodes). The descriptor
-      is classified as ``constexpr_static``: a compile-time initializer
-      is built from the collected ``{subset -> value}`` map (zero-filling any unwritten elements), promoted to an SDFG
-      constant (so that ``generate_constants`` emits a ``constexpr`` initializer), and every now-dead init write is
-      removed from the dataflow. The descriptor itself is intentionally left in ``sdfg.arrays`` -- allocation is skipped
-      by the code generator based on the flags set here.
-    * A single writer depends on other data (has data in-edges). The descriptor is classified as ``const_runtime`` and
-      only the flags are set; the dataflow is left untouched.
-
-    All writes must be proven to happen strictly before every read (control-flow reachability across states, dataflow
-    reachability within a state). Overlapping/conflicting writes, symbolic shapes, non-affine subsets, multi-writes that
-    include a runtime value, or any case where the ordering cannot be proven are left unmarked. The pass is conservative
-    (soundness over coverage) and idempotent.
+    All writes must be proven strictly before every read (cross-state reachability, in-state dataflow order). Anything
+    unprovable -- overlapping writes, symbolic shapes, non-affine subsets, a multi-write mixing in a runtime value -- is
+    left unmarked. The pass is conservative (soundness over coverage) and idempotent.
     """
 
     CATEGORY: str = 'Optimization'
@@ -80,11 +73,8 @@ class MarkConstInit(ppl.Pass):
         :return: A dictionary mapping each SDFG's ``cfg_id`` to a dictionary of ``{descriptor name: classification}``
                  for the descriptors that were marked, or ``None`` if nothing was marked.
         """
-        # Step 0: fully unroll static-extent constant-fill maps (``for i: arr[i] = <f(i)>``) into
-        # per-element writes, so a single uniform ``map -> tasklet -> array`` fill and an
-        # index-dependent fill collapse into the SAME element-wise tasklet pattern the classifier
-        # already handles -- no map-exit producer special case, and a fill of a compile-time-computable
-        # index expression (``arr[i] = i*i``) becomes constant once the index is substituted.
+        # Step 0: unroll static-extent constant-fill maps into per-element writes, so uniform and
+        # index-dependent fills both reduce to the element-wise tasklet pattern the classifier handles.
         if self._unroll_constant_fill_maps(top_sdfg):
             # The unroll changed the graph, so the analyses this pass consumes are stale: recompute
             # them on the mutated SDFG before classifying.
@@ -98,21 +88,17 @@ class MarkConstInit(ppl.Pass):
         state_reach_all = pipeline_results[StateReachability.__name__]
 
         result: Dict[int, Dict[str, str]] = {}
-        promoted_constexpr = False
         for sdfg in top_sdfg.all_sdfgs_recursive():
             # Defensive ``.get`` (never ``[cfg_id]``): a missing/aliased cfg_id yields an empty mapping instead of a
             # KeyError on nested SDFGs.
             access_nodes = access_nodes_all.get(sdfg.cfg_id, {})
             state_reach = state_reach_all.get(sdfg.cfg_id, {})
-            marked, promoted = self._process_sdfg(sdfg, access_nodes, access_sets, state_reach)
-            promoted_constexpr = promoted_constexpr or promoted
+            marked = self._process_sdfg(sdfg, access_nodes, access_sets, state_reach)
             if marked:
                 result[sdfg.cfg_id] = marked
 
-        # Removing dead writes changed the dataflow: make sure the result is still a valid SDFG.
-        if promoted_constexpr:
-            top_sdfg.validate()
-
+        # No self-validate here: constexpr_static removes dead writes, but codegen.py validates the
+        # SDFG right after this pass runs, so a re-validate would be redundant.
         return result or None
 
     def report(self, pass_retval: Optional[Dict[int, Dict[str, str]]]) -> Optional[str]:
@@ -124,15 +110,9 @@ class MarkConstInit(ppl.Pass):
     # ---------------------------------------------------------------------------------------------------------------
 
     def _unroll_constant_fill_maps(self, top_sdfg: SDFG) -> bool:
-        """Fully unrolls every static-extent constant-fill map into per-element tasklet writes.
-
-        A constant-fill map is a top-level (unnested) map, with a compile-time-constant range of at
-        most ``CONST_FILL_UNROLL_LIMIT`` iterations, whose body reads no data (only the map index and
-        constants flow in) and writes only transient arrays -- the ``map entry -depedge- tasklet
-        -mapexit-> array`` shape. Unrolling it via :class:`MapUnroll` (which substitutes each index
-        literal into the body) turns it into the element-wise ``arr[0]=..; arr[1]=..`` pattern the
-        classifier already collects, so a uniform fill and an index-dependent fill (``arr[i]=i*i``,
-        constant once ``i`` is a literal) go through one path with no map-producer special case.
+        """Fully unrolls every static-extent constant-fill map (:meth:`_is_constant_fill_map`) into
+        per-element tasklet writes via :class:`MapUnroll`, so the classifier sees the element-wise
+        ``arr[0]=..; arr[1]=..`` pattern rather than a map producer.
 
         :return: True if any map was unrolled (the caller then recomputes its stale analyses).
         """
@@ -145,8 +125,8 @@ class MarkConstInit(ppl.Pass):
                     and self._is_constant_fill_map(sdfg, state, node)
                 ]
                 for map_entry in targets:
-                    if map_entry not in state.nodes():
-                        continue  # defensive: an earlier unroll in this state removed it
+                    # Each target is a distinct top-level map in its own scope, so unrolling one
+                    # never removes another -- no re-presence check is needed here.
                     MapUnroll.apply_to(sdfg, verify=False, save=False, annotate=False, map_entry=map_entry)
                     changed = True
         return changed
@@ -192,9 +172,8 @@ class MarkConstInit(ppl.Pass):
     def _process_sdfg(self, sdfg: SDFG, access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode],
                                                                                       Set[nd.AccessNode]]]],
                       access_sets: Dict[Any, Tuple[Set[str], Set[str]]],
-                      state_reach: Dict[SDFGState, Set[SDFGState]]) -> Tuple[Dict[str, str], bool]:
+                      state_reach: Dict[SDFGState, Set[SDFGState]]) -> Dict[str, str]:
         marked: Dict[str, str] = {}
-        promoted = False
         symbolic_refs = self._symbolic_data_refs(sdfg)
 
         # Block-level write states per descriptor, restricted to states this SDFG owns (nested-SDFG-safe -- no cfg_id
@@ -208,7 +187,9 @@ class MarkConstInit(ppl.Pass):
         for name, desc in list(sdfg.arrays.items()):
             if not self._is_candidate(desc):
                 continue
-            if desc.const_init:  # Idempotency: never reclassify an already-marked descriptor.
+            # Idempotency: never reclassify an already-marked descriptor (const_runtime flag set, or
+            # already promoted to a constexpr_static constant).
+            if vars(desc).get('const_init') or name in sdfg.constants_prop:
                 continue
 
             classification = self._classify(sdfg, name, desc, access_nodes.get(name, {}), write_states.get(name, set()),
@@ -220,31 +201,25 @@ class MarkConstInit(ppl.Pass):
             if kind == 'constexpr_static':
                 if not self._apply_constexpr_static(sdfg, name, desc, info):
                     continue
-                promoted = True
-
-            desc.const_init = True
-            desc.const_init_kind = kind
+            else:
+                # const_runtime: flag the scalar/array so the readable generator fuses its single
+                # write into a `const T x = expr;` binding. constexpr_static needs no flag -- it is
+                # an SDFG constant, which the allocator skips.
+                desc.const_init = True
             marked[name] = kind
 
-        return marked, promoted
+        return marked
 
     def _is_candidate(self, desc: dt.Data) -> bool:
-        if not isinstance(desc, (dt.Scalar, dt.Array)):
-            return False
-        # Exclude anything that is not a plain array/scalar transient.
-        if isinstance(desc, (dt.View, dt.Reference, dt.Stream, dt.Structure, dt.ContainerArray)):
-            return False
-        return desc.transient
+        # A plain transient array/scalar only -- never a view, reference, stream, structure, or
+        # container-array (whose element addressing is not the plain flat index).
+        return (isinstance(desc, (dt.Scalar, dt.Array)) and desc.transient
+                and not isinstance(desc, (dt.View, dt.Reference, dt.Stream, dt.Structure, dt.ContainerArray)))
 
     def _symbolic_data_refs(self, sdfg: SDFG) -> Set[str]:
-        """Names of data descriptors that are referenced symbolically (interstate edges or control-flow conditions).
-
-        Interstate edges never write arrays (they only read arrays and assign to symbols), but an array read in an
-        edge's condition or assignment expression is a live use that ``FindAccessNodes`` does not see (it only tracks
-        access nodes). Any descriptor read this way is therefore treated conservatively and left unmarked, so that such
-        a use is never mistaken for a dead/absent read. Both ``free_symbols`` (which subtracts only assignment-LHS
-        symbols, never array names) and ``read_symbols`` (which folds subscripted array reads via ``symbolic.arrays``)
-        are unioned for robustness; this mirrors how ``AccessSets`` folds interstate-edge reads.
+        """Names of descriptors read symbolically in an interstate edge or control-flow condition. Such
+        reads are live uses invisible to ``FindAccessNodes`` (access-node only), so any descriptor named
+        here is left unmarked -- soundness: a symbolic read must never be mistaken for a dead/absent one.
         """
         anames = set(sdfg.arrays.keys())
         refs: Set[str] = set()
@@ -298,18 +273,11 @@ class MarkConstInit(ppl.Pass):
                 if kind == WRITER_RUNTIME:
                     any_runtime = True
                     records.append((subset, None))
-                    # A ``const_runtime`` binding is emitted by fusing the single write
-                    # into ``const T x = expr;`` at the write site. That is only possible
-                    # when the producer is a tasklet single-assignment; a copy / library /
-                    # map-exit producer (e.g. ``dace::CopyND(&a, &x, 1)``) has no fuseable
-                    # statement, so such a scalar must keep its classic mutable declaration.
-                    #
-                    # It is also only safe when that tasklet emits BRACE-FREE: if any of its
-                    # connectors (a code->code register input, a whole-subset/dynamic input, or
-                    # a WCR/dynamic output) keeps the classic copy-in/out, the tasklet is wrapped
-                    # in a ``{ }`` block and the ``const T x = ...;`` binding is scoped inside it
-                    # -- every read elsewhere would reference an undeclared identifier. Only mark
-                    # ``const_runtime`` when InlineTaskletConnectors will inline every connector.
+                    # ``const_runtime`` fuses the single write into ``const T x = expr;`` at the write
+                    # site. Sound only when the producer is a single-assignment tasklet that emits
+                    # BRACE-FREE: a copy/library/map-exit producer has no fuseable statement, and a
+                    # tasklet with any non-inlined connector is wrapped in ``{ }`` -- which would trap
+                    # the binding so reads elsewhere hit an undeclared identifier. Require both.
                     if not (isinstance(edge.src, nd.Tasklet) and self._single_assignment_to(edge.src, edge.src_conn)
                             and tasklet_emits_brace_free(sdfg, state, edge.src)):
                         runtime_fuseable = False
@@ -354,12 +322,9 @@ class MarkConstInit(ppl.Pass):
     def _all_writes_before_reads(self, write_sites: List[Tuple[SDFGState, nd.AccessNode]],
                                  read_sites: List[Tuple[SDFGState, nd.AccessNode]],
                                  state_reach: Dict[SDFGState, Set[SDFGState]]) -> bool:
-        """True if every write node is ordered strictly before every read node.
-
-        Cross-state: a write in ``sw`` precedes a read in ``sr`` iff ``sr`` is reachable from ``sw`` and ``sw`` is not
-        reachable from ``sr`` (strict program-order domination; a cycle/loop back to ``sw`` fails the check). Same-state:
-        the read node must be the write node itself or reachable from it in the state's dataflow.
-        """
+        """True if every write is strictly before every read. Cross-state: ``sr`` reachable from ``sw``
+        but not vice versa (strict program-order domination -- a loop back to ``sw`` fails). Same-state:
+        the read node is the write node or reachable from it in dataflow."""
         bfs_cache: Dict[nd.AccessNode, Set[nd.AccessNode]] = {}
         for sr, read_node in read_sites:
             for sw, write_node in write_sites:
@@ -432,14 +397,10 @@ class MarkConstInit(ppl.Pass):
 
     def _write_encloses_reads(self, write_site: Tuple[SDFGState, nd.AccessNode],
                               read_sites: List[Tuple[SDFGState, nd.AccessNode]]) -> bool:
-        """True if the (single) write's scope encloses every read, so a ``const``
-        binding fused at the write site is visible -- in-order -- at each read.
-
-        Each SDFG state is emitted as its own ``{ }`` block, so a binding in one state is
-        NOT visible in another: every read must be in the write's state. Within that state
-        the write's enclosing map scope (``None`` = state top level, which encloses the
-        whole state incl. its nested maps) must be an ancestor of, or equal to, each
-        read's scope."""
+        """True if the single write's scope encloses every read, so a ``const`` binding fused at the
+        write site is visible in-order at each read. Each state is its own ``{ }`` block, so every read
+        must be in the write's state and its map scope must be an ancestor of (or equal to) each read's
+        scope (``None`` = state top level, which encloses the whole state)."""
         state, write_node = write_site
         scope = state.scope_dict()
         write_scope = scope.get(write_node)
@@ -483,9 +444,7 @@ class MarkConstInit(ppl.Pass):
         memlet = edge.data
         if memlet.data == name and memlet.subset is not None:
             return memlet.subset
-        if memlet.dst_subset is not None:
-            return memlet.dst_subset
-        return memlet.subset
+        return memlet.dst_subset if memlet.dst_subset is not None else memlet.subset
 
     def _apply_constexpr_static(self, sdfg: SDFG, name: str, desc: dt.Data, info: Dict[str, Any]) -> bool:
         # The initializer was fully materialized during classification; here we only promote it and drop the dead

@@ -205,14 +205,14 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         # parallel chunk-map variant to its serial sibling so a nested transfer opens no OpenMP region.
         if isinstance(node, CopyLibraryNode) and device == dtypes.DeviceType.CPU:
             if sequential:
-                impl = select_copy_implementation(node, state, state.sdfg)
+                impl = select_copy_implementation(node, state)
                 node.implementation = 'MemcpyCPU' if impl == 'MemcpyParallelCPU' else impl
             else:
                 node.implementation = 'Auto'
             continue
         if isinstance(node, MemsetLibraryNode) and device == dtypes.DeviceType.CPU:
             if sequential:
-                impl = select_memset_implementation(node, state, state.sdfg)
+                impl = select_memset_implementation(node, state)
                 node.implementation = 'CPU' if impl == 'ParallelCPU' else impl
             else:
                 node.implementation = 'Auto'

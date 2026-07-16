@@ -213,3 +213,40 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
             raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+
+
+def validate_level1_vector_to_scalar(node, sdfg, state, op_name: str):
+    """Shared validation for BLAS Level-1 nodes whose shape is
+    ``vector -> scalar`` (``ASUM``, ``NRM2``, ``IAMAX``, ``DOT``, ...).
+
+    Every such node takes one rank-1 input and writes a single-element
+    output; the only thing that differs across the operations is the
+    error-message name and the post-validation work the caller does
+    with the descriptor / stride / length.  Returns the same canonical
+    tuple every per-op ``validate`` was constructing by hand.
+
+    :param node: the library node being validated.
+    :param sdfg: parent SDFG.
+    :param state: parent state.
+    :param op_name: short operation name used in error messages
+        (``"ASUM"``, ``"NRM2"``, ...).
+    :returns: ``((desc_x, stride_x), desc_res, n)``.
+    :raises ValueError: arity / rank / output-size mismatches.
+    """
+    import copy as _copy
+    in_edges = state.in_edges(node)
+    out_edges = state.out_edges(node)
+    if len(in_edges) != 1 or len(out_edges) != 1:
+        raise ValueError(f"{op_name} expects one input and one output")
+    in_memlet = in_edges[0].data
+    desc_x = sdfg.arrays[in_memlet.data]
+    desc_res = sdfg.arrays[out_edges[0].data.data]
+    squeezed = _copy.deepcopy(in_memlet.subset)
+    sqdims = squeezed.squeeze()
+    if len(squeezed.size()) != 1:
+        raise ValueError(f"{op_name} only supported on 1-D arrays")
+    stride_x = desc_x.strides[sqdims[0]]
+    n = squeezed.num_elements()
+    if out_edges[0].data.subset.num_elements() != 1:
+        raise ValueError(f"Output of {op_name} must be a single element")
+    return (desc_x, stride_x), desc_res, n

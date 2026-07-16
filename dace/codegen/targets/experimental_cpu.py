@@ -1,30 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Experimental "readable" CPU code generator.
+Experimental "readable" CPU code generator (``compiler.cpu.implementation = experimental_readable``).
 
-Selected by ``compiler.cpu.implementation = experimental``. It subclasses the
-classic :class:`~dace.codegen.targets.cpu.CPUCodeGen` and changes only how
-tasklets and array accesses are emitted, producing human-readable C++:
-
-* Every array access goes through a generated ``static DACE_HDFI constexpr``
-  ``<array>_idx(...)`` index function, so the linear-offset arithmetic appears
-  once (per array) instead of being inlined at every access site.
-* Tasklets whose connectors were inlined by
-  :class:`~dace.transformation.passes.inline_tasklet_connectors.InlineTaskletConnectors`
-  access their arrays directly, with no copy-in / copy-out temporaries.
-* Write-once data marked by
-  :class:`~dace.transformation.passes.mark_const_init.MarkConstInit` is emitted
-  as ``const`` / ``constexpr``.
-
-The two SDFG passes run once, before code generation, in
-``dace.codegen.codegen.generate_code`` (gated on the same flag). Because the GPU
-(CUDA) code generator emits its device tasklets through the shared CPU
-generator instance, these changes also apply inside ``__global__`` kernels.
+Subclasses :class:`~dace.codegen.targets.cpu.CPUCodeGen` and changes only how tasklets and array
+accesses are emitted: array accesses go through a generated ``<array>_idx(...)`` index function
+(the offset arithmetic appears once per array); tasklets whose connectors were inlined by
+``InlineTaskletConnectors`` access arrays directly (no copy-in/out temporaries); and write-once data
+marked by ``MarkConstInit`` is emitted as ``const``/``constexpr``. Both passes run before codegen in
+``dace.codegen.codegen.generate_code``. The GPU generator emits device tasklets through the shared
+CPU instance, so these changes also apply inside ``__global__`` kernels.
 """
 import ast
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
+import numpy
 from pygments.lexers import CppLexer
 from pygments.token import Token
 
@@ -43,77 +33,57 @@ from dace.sdfg.utils import dynamic_map_inputs
 
 # The C++ integer type used for computed flat indices.
 INDEX_CTYPE = 'long long'
-# Qualifier for the generated index functions: host+device callable, inlined,
-# and usable in constant expressions.
+# Qualifier for the generated ``<array>_idx`` and symbolic ``<array>_size`` helpers: host+device
+# callable, inlined, usable in constant expressions.
 INDEX_FUNCTION_QUALIFIER = 'static DACE_HDFI constexpr'
-# Qualifier for a symbolic ``<array>_size`` helper: same as the index functions
-# (a runtime-evaluated ``constexpr`` over the size's free symbols).
-SIZE_FUNCTION_QUALIFIER = INDEX_FUNCTION_QUALIFIER
-# Qualifier for a constant ``<array>_size`` helper: ``consteval`` forces the fixed
-# allocation extent to fold at compile time. Only under C++20 -- ``consteval`` is not a
-# keyword before it, and every ``_size`` helper is ``DACE_HDFI`` and flushed to every
-# stream that uses the array (including the ``.cu``, compiled at the CPU standard), so a
-# constant size falls back to plain ``constexpr`` on C++17 (see size_qualifier).
+# Qualifier for a CONSTANT ``<array>_size`` helper: ``consteval`` forces the fixed extent to fold at
+# compile time (a C++20 keyword, so size_qualifier falls back to ``constexpr`` before C++20).
 SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
 
 
 def size_qualifier(is_constant: bool) -> str:
-    """The qualifier for a ``<array>_size`` helper.
-
-    A constant size gets ``consteval`` (forcing the extent to fold at compile time) only when the
-    configured C++ standard is C++20 or later; on C++17 it degrades to ``constexpr``, which folds
-    just as well in the constant contexts these helpers are used in (array bounds, allocation
-    sizes) and is a valid keyword. A symbolic size is always ``constexpr``.
-    """
+    """Qualifier for an ``<array>_size`` helper: ``consteval`` for a constant extent under C++20+
+    (folds it at compile time), else ``constexpr`` (the same qualifier as the index functions)."""
     if not is_constant:
-        return SIZE_FUNCTION_QUALIFIER
-    try:
-        standard = int(str(Config.get('compiler', 'cpp_standard')).strip())
-    except (TypeError, ValueError):
-        standard = 0
-    return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else SIZE_FUNCTION_QUALIFIER
-# Alignment (bytes) for CPU heap arrays allocated via std::aligned_alloc (matches
-# the classic generator's DACE_ALIGN(64)).
-HEAP_ALIGNMENT = 64
+        return INDEX_FUNCTION_QUALIFIER
+    standard = int(str(Config.get('compiler', 'cpp_standard')).strip())
+    return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else INDEX_FUNCTION_QUALIFIER
+
+
+def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: List[str]) -> str:
+    """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function."""
+    call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
+    return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
 
 
 # NOTE: not registered with the target registry -- it is selected explicitly by
 # ``dace.codegen.codegen.generate_code`` when ``compiler.cpu.implementation`` is
-# ``experimental``. Registering it would cause double instantiation.
+# ``experimental_readable``. Registering it would cause double instantiation.
 class ExperimentalCPUCodeGen(CPUCodeGen):
     """ Human-readable CPU/GPU-kernel code generator (see module docstring). """
 
     def __init__(self, frame, sdfg):
         super().__init__(frame, sdfg)
-        # Index-function name -> full C++ definition (deduplicated).
+        # Helper name -> full C++ definition (deduplicated), for the ``<array>_idx`` index
+        # functions and the ``<array>_size`` allocation-extent helpers respectively.
         self._index_functions: Dict[str, str] = {}
-        # Size-helper name -> full C++ definition (deduplicated). An <array>_size()
-        # helper returns the array's total_size; see _register_size_function.
         self._size_functions: Dict[str, str] = {}
-        # id(function_stream) -> index / size helper names already flushed to THAT
-        # stream. Dedup is per stream (= per generated output file), so an array
-        # accessed on both the host (.cpp) and inside a device kernel (.cu) gets
-        # its `A_idx` definition in each file rather than only the first one. Index
-        # and size helpers share this set (their names never collide: `A_idx` vs
-        # `A_size`).
+        # id(function_stream) -> helper names already flushed to THAT stream. Dedup is per stream
+        # (= per output file), so an array used on both the host (.cpp) and a device kernel (.cu)
+        # gets its definition in each file. Index and size helpers share the set (names never
+        # collide: ``A_idx`` vs ``A_size``).
         self._emitted_functions: Dict[int, Set[str]] = {}
-        # (base-name, signature) -> emitted function name, and its inverse, so
-        # the SAME array shape reuses one function while different shapes that
-        # happen to share a (connector-derived) name -- e.g. ``_out`` as a 1-D
-        # array in one nested SDFG and a 2-D array in another -- get distinct
-        # functions instead of a name collision (wrong arity / wrong strides).
+        # (base-name, signature) -> emitted function name, so one shape reuses a function while
+        # two same-named arrays of different shape (e.g. a connector-derived ``_out`` that is 1-D
+        # in one inlined SDFG and 2-D in another) get distinct helpers, not a colliding name with
+        # wrong arity / strides. A plain name collision is disambiguated against _index_functions /
+        # _size_functions (the emitted-name sets), so no separate name->sig maps are kept.
         self._index_sig_to_name: Dict[tuple, str] = {}
-        self._index_name_to_sig: Dict[str, tuple] = {}
-        # Same dedup for size helpers, keyed on (base-name, size-expression) so two
-        # same-named arrays with different total_size expressions get distinct
-        # helpers instead of an arity / return collision.
         self._size_sig_to_name: Dict[tuple, str] = {}
-        self._size_name_to_sig: Dict[str, tuple] = {}
         # Per-tasklet cache of identifiers appearing in the (rewritten) body.
         self._body_identifiers: Dict[int, Set[str]] = {}
-        # Per-native-tasklet cache: id(node) -> {connector_name: cpp_access}. An
-        # entry means the connector is accessed directly (scalar index / base
-        # pointer) instead of through a copy-in / copy-out temporary.
+        # Per-native-tasklet cache: id(node) -> {connector_name: cpp_access}. An entry means the
+        # connector is accessed directly (scalar index / base pointer) instead of via a copy-in/out.
         self._cpp_inline: Dict[int, Dict[str, str]] = {}
 
     # -- map scope ------------------------------------------------------------
@@ -132,12 +102,14 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return True
         if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:  # declares timers
             return True
-        # An OpenMP ``declare reduction`` directive is emitted ahead of the loop pragma and is
-        # bound by this scope; leaking it out would redefine it across sibling maps.
+        # Complex-type OpenMP tree reductions prepend a ``#pragma omp declare reduction`` bound by
+        # this scope; keep the brace so the directive does not leak to the enclosing scope and clash
+        # across sibling maps. (Real-type reductions need only a ``reduction(op:var)`` clause on the
+        # pragma, which is self-contained, so they do not force the brace.)
         if (node.map.schedule == dtypes.ScheduleType.CPU_Multicore
                 and Config.get_bool('compiler', 'emit_tree_reductions')
                 and any(declare is not None
-                        for _op, _target, _dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node))):
+                        for _op, _ct, _dname, declare in self._collect_omp_reductions(sdfg, state_dfg, node))):
             return True
         return False
 
@@ -172,12 +144,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return cached
         code = node.code.as_string if node.code else ''
         if node.language == dtypes.Language.Python:
-            try:
-                tree = ast.parse(code)
-                ids = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
-            except SyntaxError:
-                # Fall back to "everything is used" (classic lowering) on parse failure.
-                ids = set(node.in_connectors.keys()) | set(node.out_connectors.keys())
+            # ``as_string`` unparses the tasklet's already-parsed AST, so it is always valid Python.
+            ids = {n.id for n in ast.walk(ast.parse(code)) if isinstance(n, ast.Name)}
         else:
             ids = set(re.findall(r'[A-Za-z_]\w*', code))
         self._body_identifiers[key] = ids
@@ -233,17 +201,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         callsite_stream.write('}', cfg, state_id, node)
 
     def _single_statement_body(self, node) -> bool:
-        """True if ``node`` is a Python tasklet whose body is exactly one assignment
-        (so, once its connectors are inlined, it is a single array-store statement
-        with no locally declared variable to keep in scope)."""
+        """True if ``node`` is a Python tasklet whose body is exactly one assignment (so, once its
+        connectors are inlined, it is a single array-store statement with no local to keep in scope)."""
         if not isinstance(node, nodes.Tasklet) or node.language != dtypes.Language.Python:
             return False
-        stmts = node.code.code
+        stmts = node.code.code  # a Python CodeBlock always holds a parsed statement list
         if isinstance(stmts, str):
-            try:
-                stmts = ast.parse(stmts).body
-            except SyntaxError:
-                return False
+            stmts = ast.parse(stmts).body
         return len(stmts) == 1 and isinstance(stmts[0], (ast.Assign, ast.AugAssign))
 
     # -- native (C++/library) tasklet connector inlining -----------------------
@@ -256,11 +220,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         connector names appearing inside string / char literals or comments are
         left untouched (they are not ``Token.Name`` tokens).
         """
-        body = type(node).__properties__["code"].to_string(node.code)
-        inline = self._cpp_inline.get(id(node))
-        if inline is None:
-            inline = self._compute_cpp_inline(sdfg, state_dfg, node)
-            self._cpp_inline[id(node)] = inline
+        body = node.code.as_string
+        # _generate_Tasklet always fills _cpp_inline for a CPP tasklet before the base generator
+        # reaches this hook, so read it (empty map -> nothing to inline, emit the body verbatim).
+        inline = self._cpp_inline.get(id(node)) or {}
         if not inline:
             return body
         out: List[str] = []
@@ -280,6 +243,17 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         copy (WCR, stream/view/reference data, or a conflicting inout name) are
         omitted from the map.
         """
+        # A body that is (or contains) a preprocessor-directive line cannot have its connectors
+        # inlined. ``ExpandReduceOpenMP`` is exactly this shape: a
+        # ``#pragma omp parallel for reduction(op:_out[0])`` loop whose body is
+        # ``_out[0] = op(_out[0], _in[..])``. Two things break: (a) the pygments C++ lexer folds a
+        # ``#pragma`` line into a single preprocessor token, so a connector named inside the clause is
+        # NOT a rewritable ``Token.Name`` -- it survives verbatim and references an undeclared name;
+        # and (b) a pointer-base inline (``&x`` for a scalar sink) textually substituted into the
+        # existing ``_out[0]`` subscript mis-parses as ``&x[0]`` (== ``&(x[0])``, subscripting the
+        # scalar). Keep the classic connector copy-in/out for the whole tasklet (as legacy does).
+        if re.search(r'(?m)^[ \t]*#', node.code.as_string):
+            return {}
         in_map: Dict[str, str] = {}
         out_map: Dict[str, str] = {}
         in_edges: Dict[str, object] = {}
@@ -396,8 +370,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         ptrname, fnname, ndim, extra = info
         if len(indices) != ndim:
             return None
-        call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
-        return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
+        return format_index_access(ptrname, fnname, indices, extra)
 
     def allocate_array(self,
                        sdfg,
@@ -410,11 +383,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                        declaration_stream,
                        allocation_stream,
                        allocate_nested_data: bool = True):
-        # constexpr_static const-init data is promoted to an SDFG constant by
-        # MarkConstInit and emitted once by generate_constants; skip its runtime
-        # allocation to avoid a redefinition.
-        if nodedesc.const_init and nodedesc.const_init_kind == 'constexpr_static':
-            return
+        # (constexpr_static data was promoted to an SDFG constant by MarkConstInit; framecode's
+        # allocation planner already skips names in sdfg.constants_prop, so nothing to do here.)
         # A single-write ('const_runtime') scope-local value scalar is emitted as
         # `const T x = expr;` fused at its (single) write site (see
         # ReadableKeywordRemover.visit_Assign), so skip the mutable `T x;`
@@ -443,31 +413,31 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                         sdfg: Optional['SDFG'] = None,
                         nodedesc: Optional[dt.Data] = None,
                         data_name: Optional[str] = None) -> str:
-        # dace::aligned_alloc<T>(count, alignment) (dace/alloc.h) instead of aligned
-        # new[] (which would be a new[]/delete[] alignment mismatch); the wrapper
-        # hides the (T*) cast, sizeof, and the alignment round-up. Use the
-        # descriptor's alignment when set, else HEAP_ALIGNMENT. The count is routed
-        # through a generated <array>_size(...) helper when worthwhile (see
-        # _register_size_function), else the classic sym2cpp'd string.
-        align = alignment or HEAP_ALIGNMENT
-        count = self._array_size_access(sdfg, nodedesc, data_name, arrsize)
-        return '%s = dace::aligned_alloc<%s>(%s, %d);\n' % (alloc_name, ctype, count, align)
-
-    def heap_free_stmt(self, alloc_name: str, is_array: bool) -> str:
-        # Memory from dace::aligned_alloc is released with dace::free.
-        return 'dace::free(%s);\n' % alloc_name
+        # Same aligned ``new[]`` as the base generator (paired with the base ``delete[]``), but
+        # route the element count through a generated ``<array>_size(...)`` helper when worthwhile
+        # (see _register_size_function) so the allocation extent reads as a named function; fall back
+        # to the classic ``sym2cpp(total_size)`` string (``arrsize``) otherwise.
+        count = arrsize
+        if sdfg is not None and nodedesc is not None and data_name is not None:
+            registered = self._register_size_function(data_name, nodedesc)
+            if registered is not None:
+                fnname, call_args = registered
+                count = '%s(%s)' % (fnname, ', '.join(call_args))
+        return '%s = new %s DACE_ALIGN(64)[%s];\n' % (alloc_name, ctype, count)
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
-        # Emit each registered index / size helper (a single-line ``static`` free
-        # function) once per stream. A non-inline nested-SDFG function has its own
-        # function stream that lands in the SAME output file as the outer stream, so
-        # the same helper can still be written more than once per file; those
-        # cross-stream duplicates are collapsed by ``deduplicate_functions`` in the
-        # compiler post-pass (a line-level dedup), so no include-guard macros are
-        # needed here. A different file (the .cu device code) has its own stream and
-        # therefore its own copy, exactly as required. Index and size helpers share
-        # the per-stream emitted set (their names never collide).
-        emitted = self._emitted_functions.setdefault(id(function_stream), set())
+        # Emit each registered index / size helper once per OUTPUT FILE. A non-inline nested-SDFG
+        # function has its own function stream but shares the host .cpp translation unit with every
+        # other host stream, so keying the emitted-set on the individual stream re-emits an identical
+        # ``<name>_idx`` definition per stream -> a C++ redefinition in that one TU. Key on the
+        # output-file owner instead: during host codegen ``calling_codegen is self`` (one key for the
+        # whole .cpp, so each helper is emitted exactly once and ``o.code`` is duplicate-free on its own
+        # -- a consumer that writes the file itself no longer needs the ``deduplicate_functions``
+        # post-pass). A device (.cu) file is generated through a delegating GPU codegen that sets
+        # ``calling_codegen`` to itself, so its streams keep the per-stream emitted-set and their own
+        # copy, exactly as before.
+        file_key = id(self) if self.calling_codegen is self else id(function_stream)
+        emitted = self._emitted_functions.setdefault(file_key, set())
         for registry in (self._index_functions, self._size_functions):
             for name, defn in registry.items():
                 if name in emitted:
@@ -478,35 +448,23 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     # -- readable array indexing ----------------------------------------------
 
     def _is_const_scalar(self, desc) -> bool:
-        """A single-write (``const_runtime``) scope-local scalar emitted as a
-        ``const T x = expr;`` binding: the mutable ``T x;`` declaration is skipped and
-        the single write becomes the const binding. Restricted to scope-lifetime CPU
-        value scalars (declared as ``T x;`` by the base generator) so the binding is
-        declared in exactly the scope its reads live in; a device / persistent scalar
-        keeps the classic allocation."""
-        return (isinstance(desc, dt.Scalar) and desc.const_init and desc.const_init_kind == 'const_runtime'
+        """A single-write (``const_runtime``) scope-local scalar emitted as a fused
+        ``const T x = expr;`` binding. Restricted to scope-lifetime CPU value scalars so the binding
+        is declared in exactly the scope its reads live in; a device/persistent scalar stays classic."""
+        return (isinstance(desc, dt.Scalar) and vars(desc).get('const_init')
                 and desc.lifetime == dtypes.AllocationLifetime.Scope and desc.storage
                 in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap))
 
     def _is_const_len1_array(self, desc) -> bool:
-        """A single-write (``const_runtime``) single-element STACK array emitted as
-        ``const T x[1] = {expr};`` fused at its write site (the length-1 → scalar pass
-        turns most of these into scalars first; this covers any that survive as arrays,
-        e.g. outside that pass). Restricted to a Register array -- a stack ``T x[1]``,
-        detectable by its resolved storage; a heap (``T* x = alloc``) or device
-        single-element array keeps the classic allocation."""
-        return (isinstance(desc, dt.Array) and not isinstance(desc, dt.View) and desc.const_init
-                and desc.const_init_kind == 'const_runtime' and desc.lifetime == dtypes.AllocationLifetime.Scope
-                and desc.storage == dtypes.StorageType.Register and len(desc.shape) >= 1
-                and all(d == 1 for d in desc.shape))
+        """A single-write (``const_runtime``) single-element STACK (Register) array emitted as a fused
+        ``const T x[1] = {expr};`` binding. A heap or device single-element array stays classic."""
+        return (isinstance(desc, dt.Array) and not isinstance(desc, dt.View) and vars(desc).get('const_init')
+                and desc.lifetime == dtypes.AllocationLifetime.Scope and desc.storage == dtypes.StorageType.Register
+                and len(desc.shape) >= 1 and all(d == 1 for d in desc.shape))
 
     def array_index_access(self, sdfg, desc, data_name: str):
-        """
-        Registers (once) the ``<array>_idx`` index function for ``data_name`` and
-        returns ``(ptrname, fnname, ndim, extra_syms)``, or None if this access is
-        a plain C++ value (a scalar represented by value, not a pointer). The
-        caller fills in the per-dimension index expressions.
-        """
+        """Registers (once) the ``<array>_idx`` index function for ``data_name`` and returns
+        ``(ptrname, fnname, ndim, extra_syms)``, or None if the access is a plain by-value scalar."""
         ptrname = self.ptr(data_name, desc, sdfg)
         if self._is_value_scalar(ptrname, desc):
             return None  # scalar is a plain C++ value; use the bare name
@@ -515,32 +473,21 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         return (ptrname, fnname, ndim, extra_syms)
 
     def _is_value_scalar(self, ptrname: str, desc) -> bool:
-        """
-        Whether ``ptrname`` is a plain C++ value (accessed as ``x``) rather than a
-        pointer (accessed as ``x[...]``). Keyed on the emitted ``DefinedType``,
-        because a ``Scalar`` that is heap-, device-, or persistently allocated is a
-        pointer, while a register scalar is a value. Consults both the defined and
-        declared registries so a pointer-registered scalar is never mistaken for a
-        value; only when genuinely undeclared is the descriptor storage used.
-        """
+        """Whether ``ptrname`` is a plain C++ value (``x``) rather than a pointer (``x[...]``), keyed
+        on the emitted ``DefinedType`` (a heap/device/persistent Scalar is a pointer, a register one a
+        value). Consults both registries; only a genuinely undeclared name falls back to storage."""
         for registry in (self._dispatcher.defined_vars, self._dispatcher.declared_arrays):
-            try:
+            if registry.has(ptrname):
                 defined_type, _ = registry.get(ptrname)
                 return defined_type == DefinedType.Scalar
-            except KeyError:
-                continue
         # Genuinely undeclared: a GPU-global Scalar is a device pointer accessed as
         # x[...]; any other Scalar is allocated by value (see CPUCodeGen.allocate_array).
         return isinstance(desc, dt.Scalar) and desc.storage != dtypes.StorageType.GPU_Global
 
     def _register_index_function(self, data_name: str, desc):
-        """
-        Registers (once per distinct descriptor signature) the index function for
-        ``data_name`` and returns ``(function_name, extra_symbol_names)``. The
-        function is named ``<name>_idx``; a second array that shares the name but
-        has a different shape/strides gets a disambiguated name so its call arity
-        and offset math match its declaration.
-        """
+        """Registers (once per distinct descriptor signature) the ``<name>_idx`` index function for
+        ``data_name`` and returns ``(function_name, extra_symbol_names)``; a same-named array of
+        different shape/strides is given a disambiguated name so arity and offset math still match."""
         ndim = len(desc.shape)
         dim_syms = [symbolic.symbol('__d%d' % i) for i in range(ndim)]
         strides = [symbolic.pystr_to_symbolic(str(s)) for s in desc.strides]
@@ -558,10 +505,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return self._index_sig_to_name[key], extra_names
 
         fnname = base + '_idx'
-        if fnname in self._index_name_to_sig and self._index_name_to_sig[fnname] != sig:
+        # A same-name/different-signature collision (the exact-match case returned above): the base
+        # name is already an emitted definition, so disambiguate.
+        if fnname in self._index_functions:
             fnname = '%s_%dd_%d_idx' % (base, ndim, len(self._index_sig_to_name))
         self._index_sig_to_name[key] = fnname
-        self._index_name_to_sig[fnname] = sig
 
         params = ['%s %s' % (INDEX_CTYPE, str(d)) for d in dim_syms]
         params += ['%s %s' % (INDEX_CTYPE, s) for s in extra_names]
@@ -572,44 +520,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     # -- readable array size --------------------------------------------------
 
-    def _array_size_access(self, sdfg, desc, data_name: Optional[str], fallback: str) -> str:
-        """
-        C++ expression for an array's allocation element count: ``<array>_size(...)``
-        when a size helper is worthwhile, else ``fallback`` (the classic
-        ``sym2cpp(total_size)`` string).
-
-        :param sdfg: Owning SDFG (only the descriptor is consulted).
-        :param desc: The array's data descriptor.
-        :param data_name: The array name used to build the helper name.
-        :param fallback: Pre-computed ``sym2cpp(total_size)`` used when no helper is
-                         emitted (or when called without descriptor context).
-        :return: The count expression to place in the allocation statement.
-        """
-        if sdfg is None or desc is None or data_name is None:
-            return fallback
-        registered = self._register_size_function(data_name, desc)
-        if registered is None:
-            return fallback
-        fnname, call_args = registered
-        return '%s(%s)' % (fnname, ', '.join(call_args))
-
     def _register_size_function(self, data_name: str, desc) -> Optional[Tuple[str, List[str]]]:
-        """
-        Registers (once per distinct name + size expression) the ``<array>_size``
-        helper for ``desc.total_size`` and returns ``(function_name, call_args)``, or
-        ``None`` when a helper is not worthwhile.
+        """Registers (once per distinct name + size expression) the ``<array>_size`` helper for
+        ``desc.total_size`` and returns ``(function_name, call_args)``, or ``None`` when not
+        worthwhile.
 
-        Threshold (readability): a helper is emitted only when ``total_size`` is a
-        constant or a compound symbolic expression. A bare single symbol (``N``) is
-        skipped -- wrapping it as ``A_size(N) { return N; }`` is no readability win.
-        A constant folds (via SymPy) to a single literal and gets a nullary
-        ``consteval`` helper (``A_size()``) that names the fixed allocation extent as
-        a compile-time constant; a compound symbolic size (``N*M``, ``N**2``) gets a
-        ``constexpr`` helper over its sorted free symbols (``A_size(N, M)``).
-
-        :param data_name: The array name (its non-word chars become underscores).
-        :param desc: The array's data descriptor.
-        :return: ``(function_name, call_args)`` for the call site, or ``None``.
+        Readability threshold: only a constant or compound symbolic ``total_size`` gets a helper -- a
+        bare single symbol (``N``) is skipped (``A_size(N){return N;}`` is no win). A constant folds to
+        a nullary ``consteval`` helper; a compound symbolic size gets a ``constexpr`` helper over its
+        sorted free symbols (``A_size(N, M)``).
         """
         total = symbolic.pystr_to_symbolic(str(desc.total_size))
         # A bare single symbol carries no readability benefit; keep the plain name.
@@ -626,10 +545,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return self._size_sig_to_name[key], call_args
 
         fnname = base + '_size'
-        if fnname in self._size_name_to_sig and self._size_name_to_sig[fnname] != sig:
+        # A same-name/different-signature collision (exact-match returned above): the base name is
+        # already an emitted definition, so disambiguate.
+        if fnname in self._size_functions:
             fnname = '%s_%d_size' % (base, len(self._size_sig_to_name))
         self._size_sig_to_name[key] = fnname
-        self._size_name_to_sig[fnname] = sig
 
         qualifier = size_qualifier(is_constant)
         params = ['%s %s' % (INDEX_CTYPE, s) for s in call_args]
@@ -649,6 +569,16 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
     def _is_bare_data(self, name: str) -> bool:
         return name not in self.memlets and name not in self.constants and name in self.sdfg.arrays
 
+    def _scalar_constant_name(self, name: str) -> Optional[str]:
+        """``name`` if it is a 0-dimensional (scalar) SDFG constant, else None. MarkConstInit promotes a
+        write-once scalar transient to such a constant, which framecode emits as a bare ``constexpr T
+        name = v;`` (not ``T name[1]``). A subscript ``name[0]`` on it must lower to the bare ``name`` --
+        routing it through the classic ``_subscript_expr`` trips on the scalar's empty (``()``) stride
+        list (``Missing dimensions in expression (expected one, got 0)``)."""
+        if name in self.constants and numpy.ndim(self.constants[name]) == 0:
+            return name
+        return None
+
     def _bare_access(self, node: ast.AST) -> Optional[str]:
         """ C++ access string for a direct (inlined) access to an SDFG array. """
         name = rname(node)
@@ -663,8 +593,7 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
         indices = self._index_list(node.slice)
         if len(indices) != ndim:
             return None
-        call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra_syms)
-        return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
+        return format_index_access(ptrname, fnname, indices, extra_syms)
 
     def visit_Assign(self, node: ast.Assign) -> ast.AST:
         target_node = node.targets[-1]
@@ -688,16 +617,24 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             # scope, and MarkConstInit proved it is the only write and precedes reads.
             newnode = ast.Name(id='const %s %s = %s;' % (desc.dtype.ctype, lhs, rhs))
         elif self.codegen._is_const_len1_array(desc):
-            # Single-write single-element stack array -> `const T x[1] = {expr};`; reads
-            # keep their `x[x_idx(0)]` form (== x[0]).
+            # Single-write single-element stack array -> `const T x[1] = {(T)(expr)};`; reads keep their
+            # `x[x_idx(0)]` form (== x[0]). The explicit `(T)` cast matches legacy's implicit narrowing on
+            # a plain `x[0] = expr;` assignment (e.g. a float sink of a double-returning ``sqrt``); without
+            # it the braced list-initializer would raise -Wnarrowing where legacy is silent.
             name = self.codegen.ptr(target, desc, self.sdfg)
-            newnode = ast.Name(id='const %s %s[1] = {%s};' % (desc.dtype.ctype, name, rhs))
+            ctype = desc.dtype.ctype
+            newnode = ast.Name(id='const %s %s[1] = {(%s)(%s)};' % (ctype, name, ctype, rhs))
         else:
             newnode = ast.Name(id='%s = %s;' % (lhs, rhs))
         return self._replace_assignment(newnode, node)
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         target = rname(node)
+        # A subscript on a 0-d scalar SDFG constant (emitted as a bare ``constexpr T c = v;``) lowers to
+        # the bare name; the classic ``_subscript_expr`` would raise on its empty stride list.
+        bare_const = self._scalar_constant_name(target)
+        if bare_const is not None:
+            return ast.copy_location(ast.Name(id=bare_const), node)
         # Connectors and SDFG constants keep the classic lowering.
         if not self._is_bare_data(target):
             return super().visit_Subscript(node)

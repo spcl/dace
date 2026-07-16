@@ -10,7 +10,10 @@ from dace.transformation.passes.mark_const_init import MarkConstInit
 
 
 def _run(sdfg: dace.SDFG):
-    return Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+    # MarkConstInit's own return value is ``{cfg_id: {name: classification}}`` (the source of truth for
+    # the classification); the pipeline nests it under the pass name, so unwrap it here.
+    res = Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+    return (res or {}).get('MarkConstInit')
 
 
 def _tasklets(state):
@@ -37,11 +40,10 @@ def test_scalar_constant_single_write():
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['a']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('a') == 'constexpr_static'
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 0
     # The runtime write (tasklet + write access node) must be gone.
@@ -70,11 +72,10 @@ def test_array_full_constant_write():
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['A']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('A') == 'constexpr_static'
     assert 'A' in sdfg.constants
     assert np.array_equal(sdfg.constants['A'], np.full(10, 3.0))
     # The initializing map must be gone from s1.
@@ -101,11 +102,10 @@ def test_array_partial_constant_write():
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['A']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('A') == 'constexpr_static'
     assert 'A' in sdfg.constants
     expected = np.zeros(10, dtype=np.float64)
     expected[1:9] = 5.0
@@ -134,11 +134,11 @@ def test_scalar_runtime_single_write():
     s.add_edge(a_node, None, use_t, 'inp', dace.Memlet('a[0]'))
     s.add_edge(use_t, 'out', b_write, None, dace.Memlet('B[0]'))
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['a']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'const_runtime'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('a') == 'const_runtime'
+    assert vars(sdfg.arrays['a']).get('const_init') is True
     assert 'a' not in sdfg.constants
     # Dataflow must be untouched: producer + consumer tasklets and the access node stay.
     assert len(_tasklets(s)) == 2
@@ -168,12 +168,12 @@ def test_array_double_write_not_marked():
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
     sdfg.add_edge(s2, s3, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['A']
-    assert desc.const_init is False
-    assert desc.const_init_kind == 'none'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert 'A' not in kinds
     assert 'A' not in sdfg.constants
+    assert not vars(sdfg.arrays['A']).get('const_init')
     # Both writes must be preserved.
     assert _tasklets(s1) != []
     assert _tasklets(s2) != []
@@ -208,12 +208,12 @@ def test_interstate_edge_read_not_marked():
     sdfg.add_edge(s1, s2, dace.InterstateEdge(assignments={'k': 'a'}))
     sdfg.add_edge(s2, s3, dace.InterstateEdge(condition='k < 10'))
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['a']
-    assert desc.const_init is False
-    assert desc.const_init_kind == 'none'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert 'a' not in kinds
     assert 'a' not in sdfg.constants
+    assert not vars(sdfg.arrays['a']).get('const_init')
     # Dataflow untouched: the writing tasklet and access node remain.
     assert len(_tasklets(s1)) == 1
     assert any(n.data == 'a' for n in s1.data_nodes())
@@ -234,11 +234,10 @@ def test_same_state_separable_marked():
     s.add_edge(a_node, None, use_t, 'inp', dace.Memlet('a[0]'))
     s.add_edge(use_t, 'out', b_write, None, dace.Memlet('B[0]'))
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['a']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('a') == 'constexpr_static'
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 4
     # The init tasklet is removed, but the access node is kept (it still feeds the reader).
@@ -265,12 +264,12 @@ def test_same_state_non_separable_not_marked():
     a_write = s.add_access('a')
     s.add_edge(init_t, 'out', a_write, None, dace.Memlet('a[0]'))
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['a']
-    assert desc.const_init is False
-    assert desc.const_init_kind == 'none'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert 'a' not in kinds
     assert 'a' not in sdfg.constants
+    assert not vars(sdfg.arrays['a']).get('const_init')
     # Dataflow untouched.
     assert init_t in s.nodes()
     assert a_write in s.nodes()
@@ -305,11 +304,11 @@ def test_nested_sdfg_no_crash_and_marks():
     state.add_edge(nsdfg_node, 'a_out', b_write, None, dace.Memlet('B[0:10]'))
 
     # Must not raise (this shape previously KeyErrored in ScalarWriteShadowScopes).
-    _run(sdfg)
+    res = _run(sdfg)
 
-    tdesc = nsdfg.arrays['t']
-    assert tdesc.const_init is True
-    assert tdesc.const_init_kind == 'constexpr_static'
+    # The transient lives in the nested SDFG, so its classification is keyed by ``nsdfg.cfg_id``.
+    kinds = (res or {}).get(nsdfg.cfg_id, {})
+    assert kinds.get('t') == 'constexpr_static'
     assert 't' in nsdfg.constants
     assert np.array_equal(nsdfg.constants['t'], np.full(10, 2.0))
     assert _tasklets(ns1) == []
@@ -341,11 +340,10 @@ def test_multiwrite_elementwise_one_state_marked():
     _read_array_in_state(s2, 'arr', 4)
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['arr']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('arr') == 'constexpr_static'
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'arr'] == []
@@ -373,11 +371,10 @@ def test_multiwrite_elementwise_spread_states_marked():
     _read_array_in_state(s_read, 'arr', 4)
     sdfg.add_edge(prev, s_read, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['arr']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('arr') == 'constexpr_static'
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
     for sk in init_states:
         assert _tasklets(sk) == []
@@ -399,11 +396,10 @@ def test_multiwrite_different_access_nodes_marked():
     _read_array_in_state(s2, 'arr', 4)
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['arr']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('arr') == 'constexpr_static'
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 1, 2, 3], dtype=np.int32))
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'arr'] == []
@@ -431,12 +427,12 @@ def test_multiwrite_read_before_write_not_marked():
     sdfg.add_edge(s0, s1, dace.InterstateEdge())
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['arr']
-    assert desc.const_init is False
-    assert desc.const_init_kind == 'none'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert 'arr' not in kinds
     assert 'arr' not in sdfg.constants
+    assert not vars(sdfg.arrays['arr']).get('const_init')
     # Dataflow untouched.
     assert t0 in s0.nodes()
     assert t2 in s2.nodes()
@@ -458,11 +454,10 @@ def test_multiwrite_partial_elementwise_marked():
     _read_array_in_state(s2, 'arr', 4)
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['arr']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('arr') == 'constexpr_static'
     assert np.array_equal(sdfg.constants['arr'], np.array([0, 7, 8, 0], dtype=np.int32))
     assert _tasklets(s1) == []
 
@@ -489,12 +484,12 @@ def test_multiwrite_overlapping_not_marked():
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
     sdfg.add_edge(s2, s3, dace.InterstateEdge())
 
-    _run(sdfg)
+    res = _run(sdfg)
 
-    desc = sdfg.arrays['arr']
-    assert desc.const_init is False
-    assert desc.const_init_kind == 'none'
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert 'arr' not in kinds
     assert 'arr' not in sdfg.constants
+    assert not vars(sdfg.arrays['arr']).get('const_init')
     assert t1 in s1.nodes()
     assert t2 in s2.nodes()
 
@@ -518,19 +513,18 @@ def test_idempotency():
 
     sdfg.add_edge(s1, s2, dace.InterstateEdge())
 
-    _run(sdfg)
-    desc = sdfg.arrays['A']
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('A') == 'constexpr_static'
+    assert 'A' in sdfg.constants
     first_value = np.copy(sdfg.constants['A'])
     num_nodes_s1 = len(s1.nodes())
 
-    # Second run must not change anything: MarkConstInit itself marks nothing (its key is absent from the
-    # pipeline's result, which still contains the dependency analyses).
+    # Second run must not change anything: MarkConstInit marks nothing (already an SDFG constant), so its
+    # own return value is None and 'A' is absent from the classification.
     second_result = _run(sdfg)
-    assert second_result is None or 'MarkConstInit' not in second_result
-    assert desc.const_init is True
-    assert desc.const_init_kind == 'constexpr_static'
+    assert 'A' not in (second_result or {}).get(sdfg.cfg_id, {})
+    assert 'A' in sdfg.constants
     assert np.array_equal(sdfg.constants['A'], first_value)
     assert len(s1.nodes()) == num_nodes_s1
 

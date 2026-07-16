@@ -188,19 +188,14 @@ def configure_dace_process():
                 args = f'{args} {flag}'
         dace.Config.set('compiler', 'cpu', 'args', value=args)
 
-    # LAPACK link injection for the LAPACK-library-node kernels (cholesky2 ->
-    # LAPACKE_spotrf, contour_integral -> LAPACKE_zgetrf/zgetrs). DaCe's LAPACK
-    # nodes need LAPACKE on the link line; on a cluster where LAPACK is a
-    # spack/module install off the default search path the link fails with
-    # `undefined reference to LAPACKE_*`. Point DACE_PERF_LAPACK_LIBDIR at that lib
-    # dir (the SLURM job sets it) to force-link LAPACKE/LAPACK with a matching
-    # rpath. Unset (a workstation with system LAPACK on the default path) this is a
-    # no-op, so nothing else's link is disturbed.
-    lapack_dir = os.environ.get('DACE_PERF_LAPACK_LIBDIR')
-    if lapack_dir and '-llapacke' not in dace.Config.get('compiler', 'cpu', 'args'):
-        args = dace.Config.get('compiler', 'cpu', 'args')
-        link = f'-L{lapack_dir} -Wl,-rpath,{lapack_dir} -llapacke -llapack'
-        dace.Config.set('compiler', 'cpu', 'args', value=f'{args} {link}')
+    # NOTE: no LAPACK/BLAS link is force-injected here. Both build paths link the LAPACK/BLAS libs
+    # from the SDFG's OWN environments -- CMake via get_environment_flags, the direct compile via
+    # _environment_build_flags -- so a single-library OpenBLAS (which bundles LAPACKE, used by
+    # cholesky2 -> LAPACKE_spotrf, contour_integral -> LAPACKE_zgetrf/zgetrs) resolves LAPACKE_*
+    # exactly as it resolves cblas_*, with libopenblas found at runtime via LD_LIBRARY_PATH (the
+    # SLURM jobs set it). The old DACE_PERF_LAPACK_LIBDIR ``-llapacke -llapack`` injection was a
+    # workaround for the direct compile not collecting env libs, and force-linked names that don't
+    # exist for a single-lib OpenBLAS (`cannot find -llapacke`); it is no longer needed.
 
 
 # --------------------------------------------------------------------------
@@ -385,11 +380,76 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1, time_budget_s=None):
     return _flatten_durations(sdfg.get_latest_report().durations)[warmup:warmup + measured]
 
 
+#: Process-level memo for :func:`_environment_build_flags`, keyed by the frozenset of environment
+#: names. The resolved flags are process-stable, so each distinct env mix is discovered once.
+_ENV_BUILD_FLAGS_CACHE = {}
+
+
+def _environment_build_flags(folder):
+    """``(-I include dirs, link args)`` for the SDFG's library-node environments.
+
+    Reads the program folder's ``dace_environments.csv`` -- the SAME environment list CMake
+    (:func:`dace.codegen.compiler.get_environment_flags`) and DaCe's native backend
+    (``native_compiler._resolve_environment``) resolve -- so the direct compile links exactly what
+    those do, rather than hardcoding include dirs or force-linking ``-llapacke``. Per environment:
+    ``cmake_includes`` plus the environment's own dir when it ships a header (so ``cblas.h`` and the
+    relative ``"../include/dace_blas.h"`` resolve) become ``-I``; ``cmake_libraries`` (absolute .so
+    paths such as libopenblas -- which bundles LAPACKE -- or bare sonames) and non-deferred
+    ``cmake_link_flags`` become link args. Unexpanded CMake ``${...}`` fragments (reference-BLAS
+    FindLAPACK vars) are skipped: the perf lanes force concrete OpenBLAS/cuBLAS impls that arrive as
+    real paths. Returns ``([], [])`` if the CSV is absent (no library nodes)."""
+    import dace
+    from dace.codegen.compiler import _get_or_eval
+    csv = os.path.join(folder, 'dace_environments.csv')
+    if not os.path.isfile(csv):
+        return [], []
+    with open(csv) as f:
+        names = frozenset(ln.strip() for ln in f if ln.strip())
+    # Cache by environment-name SET: the resolved include dirs (env source dirs + the OpenBLAS install
+    # include) and link libraries are folder-independent and process-stable, so a sweep compiling many
+    # kernels that share the same envs (~all use OpenBLAS/OpenMP) resolves the paths ONCE instead of
+    # re-importing environments and re-running OpenBLAS discovery (find_library / lib-dir scan) on
+    # every single compile. Keyed on the frozenset so kernels with a different env mix cache separately.
+    cached = _ENV_BUILD_FLAGS_CACHE.get(names)
+    if cached is not None:
+        return cached
+    envs = dace.library.get_environments_and_dependencies(names)
+    _live = lambda x: bool(x) and '$' not in x  # drop unexpanded CMake ${...} fragments
+    inc, link = [], []
+    for env in envs:
+        for i in _get_or_eval(env.cmake_includes):
+            if _live(i):
+                inc.append(f'-I{i}')
+        # A header stored beside the environment (e.g. blas/include/dace_blas.h, referenced from the
+        # frame as "../include/dace_blas.h") means the environment's own dir is an include root.
+        env_dir = os.path.dirname(env._dace_file_path)
+        headers = _get_or_eval(env.headers)
+        for group in (headers.values() if isinstance(headers, dict) else [headers]):
+            for h in group:
+                if os.path.isabs(h):
+                    inc.append(f'-I{os.path.dirname(h)}')
+                elif os.path.isfile(os.path.join(env_dir, h)):
+                    inc.append(f'-I{env_dir}')
+                    break
+        for lib in _get_or_eval(env.cmake_libraries):
+            lib = (lib or '').strip()
+            if not _live(lib):
+                continue
+            link.append(lib if (os.path.isabs(lib) or lib.startswith(('-l', '-L', '-Wl'))) else f'-l{lib}')
+        for lf in _get_or_eval(env.cmake_link_flags):
+            if _live(lf):
+                link.append(lf)
+    result = (list(dict.fromkeys(inc)), list(dict.fromkeys(link)))  # de-dup, preserve order
+    _ENV_BUILD_FLAGS_CACHE[names] = result
+    return result
+
+
 def _direct_compile_cmd(sdfg, folder):
     """Our OWN compiler command line (not sdfg.compile() / CMake) to build the
     generated frame into a .so: the configured C++ compiler + its OPT flags,
     the generated include/ + DaCe's runtime include, -fopenmp for the parallel
-    maps, every src/cpu/*.cpp. Mirrors how nest-forge owns its build."""
+    maps, every src/cpu/*.cpp, plus the include/link flags of the SDFG's library
+    environments (:func:`_environment_build_flags`). Mirrors nest-forge's owned build."""
     import dace
     cxx = dace.Config.get('compiler', 'cpu', 'executable') or shutil.which('g++') or 'g++'
     args = (dace.Config.get('compiler', 'cpu', 'args') or '').split()
@@ -397,6 +457,12 @@ def _direct_compile_cmd(sdfg, folder):
     srcs = sorted(glob.glob(os.path.join(folder, 'src', 'cpu', '*.cpp')))
     runtime_inc = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include')
     inc = [f"-I{os.path.join(folder, 'include')}", f'-I{runtime_inc}']
+    # Include dirs + link libraries for the library nodes this SDFG uses (BLAS/LAPACK/...), collected
+    # from the SDFG's OWN environments -- the SAME list CMake and DaCe's native backend resolve. This
+    # is why a library header ("../include/dace_blas.h") and its lib (libopenblas, which bundles
+    # LAPACKE) both resolve here without hardcoding an include list or force-linking -llapacke.
+    env_inc, env_link = _environment_build_flags(folder)
+    inc += env_inc
     so = os.path.join(folder, f'lib{sdfg.name}.so')
     # Don't pin a low standard (DaCe codegen may use newer C++); assume the toolchain supports >=23.
     std = os.environ.get('DACE_PERF_CXX_STD', 'c++23')
@@ -404,7 +470,7 @@ def _direct_compile_cmd(sdfg, folder):
     # libomp/libgomp on LD_LIBRARY_PATH; see native_harness.openmp_rpath_flags).
     import native_harness as nh
     return [cxx, *args, f'-std={std}', '-fPIC', '-shared', '-fopenmp', *nh.openmp_rpath_flags(cxx),
-            *inc, *srcs, '-o', so], srcs
+            *inc, *srcs, *env_link, '-o', so], srcs
 
 
 def compile_sdfg_timed(sdfg):

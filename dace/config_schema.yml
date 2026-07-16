@@ -178,6 +178,18 @@ required:
                     Configuration type for CMake build (can be Debug, Release,
                     RelWithDebInfo, or MinSizeRel).
 
+            build_mode:
+                type: str
+                default: cmake
+                title: Build system
+                description: >
+                    How generated code is compiled. "cmake" (default) writes a
+                    CMakeLists project and runs cmake configure + build. "native"
+                    emits the g++/nvcc/link commands directly and runs them via
+                    subprocess, skipping cmake configure overhead. "native" is
+                    Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
+                    anything it cannot resolve without cmake.
+
             allow_shadowing:
                 type: bool
                 default: true
@@ -336,7 +348,7 @@ required:
                         description: >
                             Selects the CPU code generator. ``legacy`` uses the classic
                             connector-based tasklet codegen (copy-in / compute / copy-out
-                            blocks). ``experimental`` emits human-readable code: one
+                            blocks). ``experimental_readable`` emits human-readable code: one
                             ``static constexpr``/``consteval`` ``<array>_idx(...)`` index
                             function per array, connector-free tasklets that access arrays
                             directly, and ``const``/``constexpr`` initialization for

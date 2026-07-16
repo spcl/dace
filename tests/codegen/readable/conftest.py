@@ -34,6 +34,13 @@ os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
+# Pin a single OpenMP thread so parallel reductions accumulate in a deterministic order. The
+# suite compares the legacy and experimental generators BIT-EXACTLY on CPU; with more than one
+# thread a reduction's summation order is non-deterministic and the two runs (both multi-threaded)
+# would differ by rounding on FP-heavy kernels -- a thread-scheduling artifact, not a code-generator
+# difference. ``setdefault`` defers to an externally-provided value.
+os.environ.setdefault("OMP_NUM_THREADS", "1")
+
 import numpy as np
 import pytest
 
@@ -42,7 +49,7 @@ from dace.config import Config, set_temporary
 
 #: The two CPU code generators under test.
 LEGACY = "legacy"
-EXPERIMENTAL = "experimental"
+EXPERIMENTAL = "experimental_readable"
 #: Config path selecting the CPU generator implementation.
 IMPLEMENTATION_KEY = ("compiler", "cpu", "implementation")
 
@@ -224,9 +231,9 @@ def assert_outputs_equivalent(legacy, experimental, target, label=""):
                            f"max|diff|={max_abs_diff(lv, ev):.3e}")
         else:
             rtol, atol = tolerance_for(lv.dtype)
-            assert np.allclose(lv, ev, rtol=rtol, atol=atol, equal_nan=True), (
-                f"{label}/{name}: experimental GPU codegen diverges from legacy, "
-                f"max|diff|={max_abs_diff(lv, ev):.3e}")
+            assert np.allclose(lv, ev, rtol=rtol, atol=atol,
+                               equal_nan=True), (f"{label}/{name}: experimental GPU codegen diverges from legacy, "
+                                                 f"max|diff|={max_abs_diff(lv, ev):.3e}")
 
 
 # --------------------------------------------------------------------------- #
