@@ -73,8 +73,7 @@ def test_scalar_constexpr_no_memset():
     sdfg, code = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_exp')
     lines = code.splitlines()
     # A write-once scalar is promoted to a length-1 constexpr array: constexpr double s[1] = {3.0};
-    assert any('constexpr' in l and 's[1]' in l and '3' in l
-               for l in lines), 'scalar not emitted const/constexpr'
+    assert any('constexpr' in l and 's[1]' in l and '3' in l for l in lines), 'scalar not emitted const/constexpr'
     _no_redundant_init(code, ' s[')
     # correctness
     sdfg_l = _scalar_const_sdfg('sc_leg')
@@ -127,8 +126,36 @@ def test_array_constexpr_partial_zerofill():
     assert np.allclose(bl[[1, 2]], be[[1, 2]]), 'written region differs from legacy'
 
 
+def _scalar_constant_subscript_sdfg(name):
+    """A 0-d scalar SDFG constant read via a subscript ``C[0]`` in a tasklet body. MarkConstInit
+    promotes a write-once scalar to exactly such a constant (emitted as bare ``constexpr T C = v;``),
+    so a subscript on it must lower to the bare name -- the classic path trips on the scalar's empty
+    stride list (``Missing dimensions in expression (expected one, got 0)``)."""
+    from dace import data as dt
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('out', [4], dace.float64)
+    sdfg.add_constant('C', np.float64(3.0), dt.Scalar(dace.float64))
+    st = sdfg.add_state('main')
+    me, mx = st.add_map('m', dict(i='0:4'))
+    t = st.add_tasklet('r', {}, {'o'}, 'o = C[0]', language=dace.Language.Python)
+    oacc = st.add_access('out')
+    st.add_edge(me, None, t, None, dace.Memlet())
+    st.add_memlet_path(t, mx, oacc, src_conn='o', memlet=dace.Memlet('out[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_scalar_constant_subscript_lowered_to_bare_name():
+    # Before the fix, generate_code raises SyntaxError('Missing dimensions ... got 0').
+    _sdfg, code = _gen(_scalar_constant_subscript_sdfg, 'experimental_readable', 'sc_exp')
+    assert 'constexpr double C = 3.0;' in code, 'scalar constant not emitted as bare constexpr'
+    assert 'C[' not in code, 'scalar-constant subscript survived (should lower to bare name)'
+    assert '= C;' in code, 'read did not lower to the bare name'
+
+
 if __name__ == '__main__':
     test_scalar_constexpr_no_memset()
     test_array_constexpr_full_no_memset()
     test_array_constexpr_partial_zerofill()
+    test_scalar_constant_subscript_lowered_to_bare_name()
     print('ok')

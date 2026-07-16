@@ -230,6 +230,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         from dace.transformation.pass_pipeline import Pipeline
         from dace.transformation.passes.mark_const_init import MarkConstInit
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+        from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
         from dace.transformation.interstate.sdfg_nesting import InlineSDFG
         from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
         sdfg.apply_transformations_repeated(InlineSDFG)
@@ -239,6 +240,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
         Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
+        # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
+        # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
+        CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
         sdfg.validate()
 
     # Lower ``base ** exp`` to ``ipow`` (exact integer power) wherever the exponent is a
