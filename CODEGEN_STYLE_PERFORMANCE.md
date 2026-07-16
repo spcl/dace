@@ -141,6 +141,10 @@ Every row is a candidate `codegen_params` axis, and a candidate NestForge varian
 | Index extension `sext` vs `zext` | LLVM promotes GEP indices to register width and defaults to `sext` "for safety"; on x86-64 `sext` is an extra instruction, `zext` folds into the load — LLVM tells frontends to emit `zext` when the range is known ([LLVM Perf Tips](https://llvm.org/docs/Frontend/PerformanceTips.html)) |
 | Non-constant-size `memcpy` from a copy loop | LoopIdiomRecognize forms a `memcpy` libcall that **no later pass can undo**; for small copies the call is slower than the loop it replaced ([llvm#87440](https://github.com/llvm/llvm-project/issues/87440)) |
 | `__builtin_expect` / `[[likely]]` | Silently rot on code change and regress; LLVM shipped a **MisExpect diagnostic** because of it ([LLVM MisExpect](https://llvm.org/docs/MisExpect.html)) |
+| Non-temporal / streaming stores | **Bimodal, sign flips by thread count on the *same* kernel**: STREAM Triad ~20–40% *slower* on 1 thread (NT-store buffer occupancy > L2 prefetcher), ~33–50% *faster* all-core (saves the write-allocate read) ([McCalpin](https://sites.utexas.edu/jdm4372/2018/01/01/notes-on-non-temporal-aka-streaming-stores/)) |
+| `schedule(dynamic,1)` vs `static` | **5×** slower on a small-iteration loop — even one that is genuinely irregular (57% CV) — from per-chunk hand-off overhead ([Eleliemy/Ciorba](https://arxiv.org/abs/1809.03188)) |
+| Explicit `#pragma unroll` factor | Loses when the bottleneck is the FP/vector unit; the unrolled body evicts the µop-cache/loopback buffer and spills → *slower*, and can slow neighbouring code ([llvm#42332](https://github.com/llvm/llvm-project/issues/42332)) |
+| Divide/modulo by a runtime var vs a constant | **12× measured (Zen 4, §6)**: a constant divisor becomes a Granlund–Montgomery magic-number multiply that vectorizes; a runtime divisor is a scalar `div` ([our reproducer](samples/codegen/style_levers/)) |
 
 ---
 
@@ -213,7 +217,56 @@ Two follow-ups worth recording, one open and one new:
 
 ---
 
-## 6. Rules this imposes on a code generator
+## 6. Measured on our own hardware (Zen 4)
+
+We built standalone reproducers for a set of candidate pessimization levers on an AMD Ryzen 7 8845HS
+(Zen 4, AVX-512), g++ 15.2 and clang++ 21.1, `-O3 -march=native`. Every variant carries a
+byte-identical twin of its fast form and asserts bit-identical output. Reproducers live in
+[`samples/codegen/style_levers/`](samples/codegen/style_levers/).
+
+**Noise floor, stated first.** Intra-run twin (identical code, different symbol, same process):
+0.94–1.13×. Inter-run (same binary, 7 invocations): FAST-form median spread ~10–18% — matching §1's
+16.9%. **Reportable threshold: ~1.2×.** Everything below is an ordinary draw.
+
+**The organizing principle — and it is the useful result.** Most candidate levers *collapsed to
+noise*, and they collapsed the same way: **the compiler re-derives the fast form whenever a runtime
+guard can recover it.** We watched it happen four times, with disassembly:
+
+| Candidate lever | How the compiler erased it | Pass |
+|---|---|---|
+| data-dependent branch vs branchless | if-converted to `cmov` | SimplifyCFG / early-if |
+| laundered runtime stride vs unit stride | emitted a `cmp $0x1` version guard, then the fast loop | loop versioning (SCEV) |
+| divide by a by-reference value | cloned a constant-divisor specialization | IPA-CP `.constprop` |
+| `std::pow(x,2.0)` vs `x*x` | folded pow→mul | `expand_builtin_pow` / SimplifyLibCalls |
+
+This is §7 rule 6 ("a knob the compiler can re-derive is not a knob") observed live. It gives the
+**selection criterion for a real lever, and for NestForge's worst/best variants**: a lever survives
+only when the fast form is **not recoverable by a runtime guard**. Don't spend variants on
+alias/predictability/stride axes — the backend erases them.
+
+**The three that survived** (each non-recoverable by construction):
+
+| Lever (worst → best) | Δ g++ | Δ clang++ | Mechanism | Emittable in DaCe |
+|---|---|---|---|---|
+| modulo/divide by a runtime var vs a constant | **12.0–12.6×** | **9.2–11.7×** | constant divisor → Granlund–Montgomery magic-number multiply (vectorizes); runtime → scalar `div` | `sym2cpp` already picks the fast form for a constant extent — the slow form is laundering a known constant through a symbol |
+| elementwise op as an out-of-line call vs an inlined tasklet | **6.3–6.5×** | **7.3–8.0×** | a TU boundary blocks the inliner → no LoopVectorize/LICM across it | real DaCe choice: inlined tasklet vs a library-node call |
+| reduce into a memory location vs a local accumulator | **4.3×** | 1.13× (clang versions it) | aliasing blocks LICM scalar promotion → no reduction PHI → no vectorization | **DaCe already emits the slow form today** for `__state->`-resident accumulators (`cpu.py:2385-2389`) |
+
+Two things to carry forward. First, the reduce-into-memory lever is not hypothetical: DaCe hard-codes
+its slow side for persistent/external reduction targets, so a real vectorizable reduction is being
+left on the table wherever the accumulator lives in the state struct — worth its own look (it is a
+`reduction(op:var)`-clause / local-temp fix, not a style knob). Second, clang recovers that same lever
+with a runtime alias check (→1.13×), so even among the survivors the **sign and magnitude are
+compiler-dependent** — §1 again.
+
+**What did NOT reproduce.** The per-row `memcpy` idiom (§5's 2.6× lead from a different box) came out
+**inside the noise floor on Zen 4** — the idiom fires (we see `call memcpy@plt`), but a 64-byte glibc
+`memcpy` here is fast. So the 2.6× is **microarch/glibc-specific**, and §5's "why glibc stalls at
+1–3 KiB/call is open" correctly stays open — it is not even observable on this hardware.
+
+---
+
+## 7. Rules this imposes on a code generator
 
 1. **Match a known-good ABI; don't reason from first principles.** Lemire and #121262 disagree about
    which binding wins — both are right, on different targets. There is no rule to derive.
@@ -236,7 +289,7 @@ Two follow-ups worth recording, one open and one new:
 
 ---
 
-## 7. Further reading
+## 8. Further reading
 
 **Framing**
 - Gong et al., [Compiler stability](https://iacoma.cs.uiuc.edu/iacoma-papers/oopsla18.pdf) (OOPSLA'18) — the 16.9% number.
@@ -251,13 +304,17 @@ Two follow-ups worth recording, one open and one new:
 
 **Vectorization surveys** — Siso et al. TACO'19 (above) · [Sakib et al. 2025](https://arxiv.org/abs/2502.11906) — 6 compilers × 2 ISAs, only 46–56% of TSVC2 vectorizes, and near-identical loops (s4112 vs s4115) get opposite decisions
 
+**Pragmas / memory hints** — [McCalpin, non-temporal stores](https://sites.utexas.edu/jdm4372/2018/01/01/notes-on-non-temporal-aka-streaming-stores/) (bimodal, sign flips by thread count) · [Eleliemy/Ciorba, OpenMP scheduling](https://arxiv.org/abs/1809.03188) (dynamic,1 → 5×) · [llvm#42332](https://github.com/llvm/llvm-project/issues/42332) (excessive unrolling) · [Burnus/Geva/Prince, vectorizer pragmas](https://gcc.gcc.gnu.narkive.com/lR8PtMw5/vectorizer-pragmas) (`omp simd` "the user rules" — overrides the cost model). REFUTED: array-`reduction`-is-slow is thread-creation overhead, not the copy ([Fortran Discourse](https://fortran-lang.discourse.group/t/openmp-efficiency-in-reduction-in-large-array/4892))
+
+**Register pressure / branch shape** — [Shipilëv, FPU spills](https://shipilev.net/jvm/anatomy-quarks/20-fpu-spills/) (spill cost anchor, 37%) · [Lemire, mispredicted branches](https://lemire.me/blog/2019/10/15/mispredicted-branches-can-multiply-your-running-times/) (~5×) · [Algorithmica, binary search](https://en.algorithmica.org/hpc/data-structures/binary-search/) (branchless sign flips by size) · [Wennborg, switch lowering](https://llvm.org/devmtg/2015-10/slides/Wennborg-SwitchLowering.pdf) (whole-program effect sub-noise). REFUTED: alignment `movaps`-vs-`movups` is [a ~2% myth](https://lemire.me/blog/2012/05/31/data-alignment-for-speed-myth-or-reality/) on modern x86; the real mechanism is cache-line-split avoidance
+
 **SVE / Neoverse V2** — [Arm Neoverse V2 SWOG](https://documentation-service.arm.com/static/668bc0a369e89f01e39c4668) (Tables 3-1, 3-25; §4.17) **— read before repeating any pipe claim** · [de Smalen, Optimizing Code for Scalable Vector Architectures](https://llvm.org/devmtg/2021-11/slides/2021-OptimizingCodeForScalableVectorArchitectures.pdf) (LLVM Dev'21) · [GCC PR115531](https://www.mail-archive.com/gcc-bugs@gcc.gnu.org/msg818483.html) · [predicate-pipe dependency](https://www.mail-archive.com/gcc-patches@gcc.gnu.org/msg373383.html) · [A Critical Look at SVE2](https://gist.github.com/zingaburga/805669eb891c820bd220418ee3f0d6bd) — why a V2 result does not generalize to "SVE"
 
 **Methodology** — [STABILIZER](https://people.cs.umass.edu/~emery/pubs/stabilizer-asplos13.pdf) · [Beyls, Ameliorating Measurement Bias](https://llvm.org/devmtg/2016-03/Presentations/Beyls2016_AmelioratingMeasurmentBias.pdf)
 
 ---
 
-## 8. Candidate knobs already located in the generator
+## 9. Candidate knobs already located in the generator
 
 An audit of `experimental_cpu.py` and the `cpu.py` / `cpp.py` emitters it overrides found ten more
 hardcoded style points, each a place the generator picks one C++ spelling over a semantically-equal
@@ -273,7 +330,7 @@ knob's default MUST reproduce legacy byte-for-byte (§6 rule 3); **`experimental
 | `loop_index_type` | auto (def) / int64 / int32 | `cpu.py:2609` | **both** | Index/accumulator width → TBAA disproves aliasing → store sinks out of loop; no-wrap/SCEV legality | moderate |
 | `loop_bound_cmp` | lt (def) / le / ne | `cpu.py:2609` | **both** | `!=` with unknown-sign step forces a termination proof; `<` is SCEV-friendly | trivial |
 | `array_access_form` | index_fn (def) / row_pointer | `experimental_cpu.py:67` | experimental | Strength reduction + the §5 per-row `memcpy` idiom; row-pointers change what alias analysis sees | structural |
-| `heap_alignment` | 64 (def) / 32 / none | `cpu.py:1997`, `experimental_cpu.py:497` | **both** | Aligned (`movaps`) vs unaligned (`movups`) selection + the vectorizer's alignment assumption | moderate |
+| `heap_alignment` | 64 (def) / 32 / none | `cpu.py:1997`, `experimental_cpu.py:497` | **both** | NOT `movaps` vs `movups` (that is ~2% on modern x86, [a myth](https://lemire.me/blog/2012/05/31/data-alignment-for-speed-myth-or-reality/)): the real effect is cache-line-split avoidance + the vectorizer's alignment peel — expect ~0 except on split-prone access, and the peel/versioning is a cost | moderate |
 | `omp_simd_clause` | off (def) / on | `cpu.py:2502` | **both** | Forces the vectorizer AND asserts no loop-carried dep — a *soundness* edge (opt-in only) | moderate |
 | `loop_bound_hoist` | inline (def) / hoisted | `cpu.py:2609` | **both** | LICM; usually nil, matters only when a compound bound defeats hoisting | trivial |
 | `const_scalar_binding` | fused_const (def) / mutable_decl | `experimental_cpu.py:691` | experimental | `const` binding + decl placement → regalloc/lifetime; **weak** — §2 doubts `const` is causal | moderate |
@@ -288,4 +345,9 @@ Judged NOT worth a knob (no mechanism, semantics-adjacent, or data-driven not st
 elision and single-line tasklet collapse (lifetime/readability only); OpenMP `schedule`/`collapse(n)`/
 `num_threads` (already driven by map properties, not a hardcoded spelling); reduction infix-vs-helper
 (bit-exactness constraint, not neutral); `i += skip` vs `i = i + skip` (identical IR); the
-`{(T)(expr)}` len-1 cast (suppresses `-Wnarrowing`, a correctness concern).
+`{(T)(expr)}` len-1 cast (suppresses `-Wnarrowing`, a correctness concern); and **branch vs
+branchless/`select`** for a data-dependent conditional — that is a *vectorization-legality transform*
+the vectorizer already owns (predication is how a masked loop becomes vectorizable), not a free
+post-hoc codegen spelling, so it is not a `codegen_params` knob. (Its measured behavior is real —
+~5× on genuinely unpredictable, un-if-convertible branches, sign-flipping by working-set size — but
+the compiler if-converts the common case away, per §6.)
