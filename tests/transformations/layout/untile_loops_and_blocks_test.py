@@ -71,6 +71,41 @@ def tiled_blocked(A: dace.float64[N // K, K], B: dace.float64[N]):
             A[i // K, ii] = B[i + ii] * 2.0
 
 
+@dace.program
+def tiled_blocked_offset_start(A: dace.float64[N // K, K], B: dace.float64[N]):
+    # Same blocked+tiled shape, but the outer loop starts at 1 -- NOT a multiple of K.
+    for i in range(1, N, K):
+        for ii in range(0, K):
+            A[i // K, ii] = B[i + ii] * 2.0
+
+
+def test_blocked_untile_refuses_a_start_that_is_not_a_multiple_of_the_tile():
+    """The case-A fold rewrites the unblocked element ``int_floor(i,K)*K + ii`` to ``k``, which is
+    the original element only when ``int_floor(i,K)*K == i`` -- i.e. when the outer start is a
+    multiple of K. With start=1, K=4 the first blocked access reads logical element
+    int_floor(1,4)*4+0 = 0 while the untiled one would read k=1: every element shifts by
+    (start mod K), silently and bit-inexactly. The pass must REFUSE and leave the SDFG untouched
+    rather than miscompile."""
+    sdfg = tiled_blocked_offset_start.to_sdfg(simplify=True)
+    assert len(sdfg.arrays['A'].shape) == 2  # blocked
+    assert len(loop_vars(sdfg)) == 2  # tiled
+
+    UntileLoopsAndBlocks().apply_pass(sdfg, {})
+
+    # refused: nothing untiled, nothing unblocked, no half-applied rewrite
+    assert len(sdfg.arrays['A'].shape) == 2, 'A must stay blocked -- the fold is invalid for this start'
+    assert len(loop_vars(sdfg)) == 2, 'loop must stay tiled -- the fold is invalid for this start'
+    sdfg.validate()
+
+
+def test_blocked_untile_still_applies_for_a_multiple_start():
+    """The guard must not over-refuse: the ordinary start=0 blocked nest still untiles+unblocks."""
+    sdfg = tiled_blocked.to_sdfg(simplify=True)
+    UntileLoopsAndBlocks().apply_pass(sdfg, {})
+    assert len(sdfg.arrays['A'].shape) == 1, 'A should have been unblocked for a start of 0'
+    assert len(loop_vars(sdfg)) == 1, 'loop should have been untiled for a start of 0'
+
+
 def test_untile_loops_alone_leaves_array_blocked_gap():
     """(a) Plain ``UntileLoops`` alone does NOT unblock the array -- it refuses the whole nest
     because the split ``A[int_floor(i, K), ii]`` subset fails its combined-access audit. The
