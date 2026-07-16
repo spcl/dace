@@ -219,18 +219,27 @@ class ShuffleElements(ppl.Pass):
             edge.src_conn = "OUT_" + shuffled
 
     def _nested_targets(self, sdfg, arr):
-        """Yield ``(nested_sdfg, inner_connector_name)`` for every nested SDFG ``arr`` flows into."""
+        """Yield ``(nested_sdfg, inner_connector_name)`` for every nested SDFG ``arr`` flows into,
+        each inner array exactly ONCE. An array passed to a nested SDFG as both input and output --
+        the standard in-place read-write representation -- uses the same inner name on the in-edge
+        (``dst_conn``) and the out-edge (``src_conn``); yielding it twice would compose sigma^{-1}
+        onto the inner body memlets twice, giving ``A'[sigma^{-1}(sigma^{-1}(e))]``."""
+        seen = set()
         for state in sdfg.all_states():
             for node in state.nodes():
-                if isinstance(node, nd.NestedSDFG):
-                    for ie in state.in_edges(node):
-                        if ie.data is not None and ie.data.data == arr and len(node.sdfg.arrays[ie.dst_conn].shape) \
-                                == len(sdfg.arrays[arr].shape):
-                            yield node.sdfg, ie.dst_conn
-                    for oe in state.out_edges(node):
-                        if oe.data is not None and oe.data.data == arr and len(node.sdfg.arrays[oe.src_conn].shape) \
-                                == len(sdfg.arrays[arr].shape):
-                            yield node.sdfg, oe.src_conn
+                if not isinstance(node, nd.NestedSDFG):
+                    continue
+                boundary = ([(ie, ie.dst_conn) for ie in state.in_edges(node)] +
+                            [(oe, oe.src_conn) for oe in state.out_edges(node)])
+                for edge, conn in boundary:
+                    if edge.data is None or edge.data.data != arr or conn is None:
+                        continue
+                    if len(node.sdfg.arrays[conn].shape) != len(sdfg.arrays[arr].shape):
+                        continue
+                    key = (id(node.sdfg), conn)
+                    if key not in seen:
+                        seen.add(key)
+                        yield node.sdfg, conn
 
     def _guard_no_interstate(self, sdfg, arr) -> None:
         token = re.compile(rf"\b{re.escape(arr)}\b")

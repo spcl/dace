@@ -339,13 +339,19 @@ class SplitDimensions(ppl.Pass):
                         # Update other subset
                         raise Exception("TODO: Support for Other subsets - I hate other subsets")
             for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
-                    if arr_name in in_map:
-                        self._replace_memlets_recursive(node.sdfg, in_map[arr_name], masks, factors)
-                    out_map = {oe.data.data: oe.src_conn for oe in state.out_edges(node)}
-                    if arr_name in out_map:
-                        self._replace_memlets_recursive(node.sdfg, out_map[arr_name], masks, factors)
+                if not isinstance(node, dace.nodes.NestedSDFG):
+                    continue
+                # A read-write array appears on an in-edge AND an out-edge with the same inner name;
+                # rewrite that inner body ONCE (twice would split the already-split indices again).
+                inner_names = set()
+                for ie in state.in_edges(node):
+                    if ie.data is not None and ie.data.data == arr_name:
+                        inner_names.add(ie.dst_conn)
+                for oe in state.out_edges(node):
+                    if oe.data is not None and oe.data.data == arr_name:
+                        inner_names.add(oe.src_conn)
+                for inner in inner_names:
+                    self._replace_memlets_recursive(node.sdfg, inner, masks, factors)
 
     def _extract_indices(self, expr: str, name: str):
         # Find the part inside name[ ... ]

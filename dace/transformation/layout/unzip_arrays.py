@@ -107,8 +107,15 @@ class UnzipArrays(ppl.Pass):
                                find_new_name=False)
 
         # Fused array flowing whole into a nested SDFG: split the connector into F field connectors.
+        # A read-write array crosses on an in-edge AND an out-edge with the same inner name: the inner
+        # descriptor is unzipped ONCE (unzipping it again crashes -- the fused inner array is gone),
+        # but BOTH boundary edges are rewired to the field connectors.
+        unzipped_inner = set()
         for boundary in list(self._nested_boundaries(sdfg, fused)):
-            self._split_nested(sdfg, boundary, fused, fields, axis)
+            _, node, _, conn, _ = boundary
+            key = (id(node.sdfg), conn)
+            self._split_nested(sdfg, boundary, fused, fields, axis, unzip_inner=key not in unzipped_inner)
+            unzipped_inner.add(key)
 
         # A single fused access node fanning multiple fields through a map: split the map's fused
         # connector into one (IN/OUT) pair per field so each field gets its own reservoir edge.
@@ -226,13 +233,16 @@ class UnzipArrays(ppl.Pass):
                         if oe.data is not None and oe.data.data == fused:
                             yield state, node, oe, oe.src_conn, False
 
-    def _split_nested(self, sdfg, boundary, fused, fields, axis):
+    def _split_nested(self, sdfg, boundary, fused, fields, axis, unzip_inner=True):
         state, node, edge, conn, is_input = boundary
         nsdfg = node.sdfg
         inner_fields = [f"{conn}_{k}" for k in range(len(fields))]
 
-        # Recurse: unzip the inner fused array first (it has the same [*S, F] shape/field axis).
-        self._unzip_homogeneous(nsdfg, conn, inner_fields, nsdfg.arrays[conn], axis)
+        # Recurse: unzip the inner fused array first (it has the same [*S, F] shape/field axis). Only
+        # ONCE per inner array -- a read-write array's out-edge boundary reuses the fields the in-edge
+        # already created, since the fused inner descriptor no longer exists to unzip again.
+        if unzip_inner:
+            self._unzip_homogeneous(nsdfg, conn, inner_fields, nsdfg.arrays[conn], axis)
 
         outer_node = edge.src if is_input else edge.dst
         state.remove_edge(edge)

@@ -487,7 +487,14 @@ class SplitArray(ppl.Pass):
                     for edge in ns.edges():
                         mapped_data, new_subset = self._get_corresponding_array(edge, split_map, access_mapping)
                         if mapped_data != edge.data.data:
-                            edge.data = dace.memlet.Memlet(data=mapped_data, subset=new_subset)
+                            # Same as the static case below: keep wcr/other_subset/dynamic, or a
+                            # reduction silently becomes an overwrite.
+                            edge.data = dace.memlet.Memlet(data=mapped_data,
+                                                           subset=new_subset,
+                                                           other_subset=copy.deepcopy(edge.data.other_subset),
+                                                           wcr=edge.data.wcr,
+                                                           wcr_nonatomic=edge.data.wcr_nonatomic,
+                                                           dynamic=edge.data.dynamic)
 
                 SplitArray.c += 1
             else:
@@ -495,7 +502,17 @@ class SplitArray(ppl.Pass):
                 for edge in state.edges():
                     mapped_data, new_subset = self._get_corresponding_array(edge, split_map)
                     if mapped_data != edge.data.data:
-                        edge.data = dace.memlet.Memlet(data=mapped_data, subset=new_subset)
+                        # Rebuild, carrying everything the old memlet held: dropping wcr would turn a
+                        # reduction into a plain overwrite (a WCR collapsing a full dimension is
+                        # exactly the legal case), and dropping other_subset/dynamic breaks copies
+                        # and dynamic-range edges. other_subset is deep-copied -- a subset object is
+                        # never shared between edges.
+                        edge.data = dace.memlet.Memlet(data=mapped_data,
+                                                       subset=new_subset,
+                                                       other_subset=copy.deepcopy(edge.data.other_subset),
+                                                       wcr=edge.data.wcr,
+                                                       wcr_nonatomic=edge.data.wcr_nonatomic,
+                                                       dynamic=edge.data.dynamic)
 
     # ------------------------------------------------------------------ #
     #  Phase 3b: Rewrite interstate-edge symbolic expressions
