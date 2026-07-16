@@ -678,11 +678,15 @@ def build_native(program_folder: str,
     # time for anything outside ldconfig (MKL via MKLROOT, a module-installed MPI). A link flag may
     # be an absolute library file (rpath its directory) or an absolute directory carried as the
     # value of a separate '-L' token (rpath it as-is).
-    rpath_dirs = deduplicate(libdirs + [
-        os.path.dirname(f) if os.path.isfile(f) else f for f in spec.link_flags
-        if os.path.isabs(f) and (os.path.isfile(f) or os.path.isdir(f))
-    ])
-    link_cmd += [f'-Wl,-rpath,{d}' for d in rpath_dirs if d]
+    rpath_dirs = list(libdirs)
+    for flag in spec.link_flags:
+        if not os.path.isabs(flag):
+            continue
+        if os.path.isfile(flag):
+            rpath_dirs.append(os.path.dirname(flag))
+        elif os.path.isdir(flag):
+            rpath_dirs.append(flag)
+    link_cmd += [f'-Wl,-rpath,{d}' for d in deduplicate(rpath_dirs) if d]
     # The CUDA runtime is placed last so libraries that depend on it (e.g. cublas) precede it.
     # ``cudadevrt`` resolves the device-link registration symbols from separable compilation.
     if has_gpu:
