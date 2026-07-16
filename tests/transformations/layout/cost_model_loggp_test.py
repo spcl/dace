@@ -7,7 +7,7 @@ import pytest
 
 from dace.transformation.layout.cost_model.loggp import (LogGP, Fit, gap_from_bandwidth, lines_touched,
                                                          message_time, achievable_rate, memory_time,
-                                                         fit_message_size, validate)
+                                                         bandwidth_delay_product, regime, fit_message_size, validate)
 
 
 def _dram(L=95e-9, g=4e-9, bw_sat=100e9, bw_core=40e9, line=64):
@@ -105,6 +105,38 @@ def test_validate_flags_each_inconsistency():
     assert any("exceeds hardware peak" in r for r in validate(over_peak, over_fit, 102.4e9, over_peak.concurrency))
 
 
+def test_bandwidth_delay_product_is_the_saturation_threshold():
+    """BDP = L / (line * G) = L * BW / line: the outstanding requests needed to fill the pipe."""
+    p = _dram(L=95e-9, bw_sat=100e9, line=64)
+    assert bandwidth_delay_product(p) == pytest.approx(95e-9 * 100e9 / 64)  # ~148
+    assert bandwidth_delay_product(p) == pytest.approx(p.L / (p.line_bytes * p.G))
+
+
+def test_regime_flips_at_the_bandwidth_delay_product():
+    """Below the BDP the level is latency-bound, at or above it is bandwidth-bound -- that comparison
+    is how you see which regime a workload is in."""
+    p = _dram(L=95e-9, bw_sat=100e9, line=64)
+    bdp = bandwidth_delay_product(p)
+    assert regime(p, bdp * 0.9) == "latency"
+    assert regime(p, bdp) == "bandwidth"
+    assert regime(p, bdp * 2) == "bandwidth"
+    # a single core (~24 outstanding) cannot saturate DRAM: it is latency-bound, which is why the
+    # model assumes many cores.
+    assert regime(p, p.concurrency) == "latency"
+    assert p.concurrency < bdp
+
+
+def test_regime_matches_which_term_of_achievable_rate_binds():
+    """bandwidth-bound iff achievable_rate hits the 1/G ceiling; latency-bound iff it is
+    concurrency*line/L."""
+    p = _dram(L=95e-9, g=4e-9, bw_sat=100e9, line=64)
+    for conc in (10.0, 148.0, 500.0):
+        latency_branch = conc * p.line_bytes / p.L
+        bandwidth_branch = 1.0 / p.G
+        expected = "bandwidth" if bandwidth_branch <= latency_branch else "latency"
+        assert regime(p, conc) == expected
+
+
 def test_memory_time_ranks_layouts_by_block_count():
     """A layout that touches fewer blocks per iteration is predicted faster, on one kernel/device."""
     p = _dram()
@@ -143,6 +175,9 @@ if __name__ == "__main__":
     test_fit_rejects_degenerate_input()
     test_validate_accepts_a_consistent_parametrization()
     test_validate_flags_each_inconsistency()
+    test_bandwidth_delay_product_is_the_saturation_threshold()
+    test_regime_flips_at_the_bandwidth_delay_product()
+    test_regime_matches_which_term_of_achievable_rate_binds()
     test_memory_time_ranks_layouts_by_block_count()
     test_layout_ranking_is_invariant_to_the_regime()
     print("loggp tests PASS")

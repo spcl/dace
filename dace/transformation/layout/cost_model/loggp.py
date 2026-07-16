@@ -78,6 +78,31 @@ def achievable_rate(p: LogGP) -> float:
     return min(bandwidth_bound, latency_bound)
 
 
+def bandwidth_delay_product(p: LogGP) -> float:
+    """Messages that must be OUTSTANDING to saturate the channels: ``L / (line * G)`` (= ``L * BW /
+    line``). Little's Law -- to keep a pipe of latency ``L`` and bandwidth ``1/G`` full you need this
+    many block requests in flight at once. It is the threshold that separates the two regimes.
+
+    Example (DRAM L=95ns, BW=100GB/s, 64B line): ~148 requests. A single CPU core tracks ~24
+    outstanding misses, so one core CANNOT saturate DRAM -- it is latency-bound, which is exactly why
+    the model assumes multiple cores. A GPU keeps thousands of accesses in flight, so it clears the
+    threshold easily and is bandwidth-bound.
+    """
+    return p.L / (p.line_bytes * p.G)
+
+
+def regime(p: LogGP, available_concurrency: float) -> str:
+    """``"bandwidth"`` if the available outstanding-request concurrency reaches the bandwidth-delay
+    product (latency is fully hidden, the channels are the limit), else ``"latency"``.
+
+    ``available_concurrency`` is how many INDEPENDENT block requests the workload can keep in flight:
+    the hardware's outstanding-miss budget for a parallel nest, or ~1 for a dependency-serialized loop
+    (a pointer chase, a scan). Equivalent to asking which term of :func:`achievable_rate` binds --
+    ``concurrency * line / L < 1/G`` is the latency-bound branch.
+    """
+    return "bandwidth" if available_concurrency >= bandwidth_delay_product(p) else "latency"
+
+
 def memory_time(blocks_per_iter: float, total_iters: float, p: LogGP) -> float:
     """Predicted memory time (seconds) of a kernel from its block-transaction count.
 

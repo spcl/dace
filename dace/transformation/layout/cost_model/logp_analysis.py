@@ -31,11 +31,19 @@ import sympy as sp
 
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
 from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
-from dace.transformation.layout.cost_model.loggp import LogGP, achievable_rate
+from dace.transformation.layout.cost_model.loggp import LogGP, achievable_rate, regime, bandwidth_delay_product
 
 # Storage that counts as LOCAL (free for now): registers and GPU shared memory are "my memory".
 LOCAL_STORAGE: FrozenSet[dace.dtypes.StorageType] = frozenset(
     {dace.dtypes.StorageType.Register, dace.dtypes.StorageType.GPU_Shared})
+
+# Schedules whose iterations run concurrently, so the nest exposes memory-level parallelism.
+PARALLEL_SCHEDULES: FrozenSet[dace.dtypes.ScheduleType] = frozenset({
+    dace.dtypes.ScheduleType.CPU_Multicore,
+    dace.dtypes.ScheduleType.GPU_Device,
+    dace.dtypes.ScheduleType.GPU_ThreadBlock,
+    dace.dtypes.ScheduleType.Default,
+})
 
 
 @dataclass(frozen=True)
@@ -53,9 +61,26 @@ class LoopNestLogP:
     total_iters: sp.Basic
     arrays: Dict[str, ArrayLogP]
     p: LogGP
+    concurrency: float  # independent block requests the nest can keep in flight (its exposed MLP)
 
     def _globals(self) -> List[ArrayLogP]:
         return [a for a in self.arrays.values() if not a.is_local]
+
+    def regime(self) -> str:
+        """``"bandwidth"`` or ``"latency"`` -- which bound the nest hits, by comparing the concurrency
+        it exposes against the bandwidth-delay product. This is how you SEE whether a nest is latency-
+        or bandwidth-bound: a parallel nest keeps enough requests in flight to fill the channels
+        (bandwidth-bound), a dependency-serialized loop keeps ~1 and cannot hide the latency."""
+        return regime(self.p, self.concurrency)
+
+    def bandwidth_delay_product(self) -> float:
+        """Outstanding requests needed to saturate; the threshold ``concurrency`` is compared to."""
+        return bandwidth_delay_product(self.p)
+
+    def total_time(self) -> sp.Basic:
+        """The regime-appropriate total: the overlapped (bandwidth) time when the nest saturates the
+        channels, the serialized (latency) time when it cannot hide the latency."""
+        return self.total_time_overlapped() if self.regime() == "bandwidth" else self.total_time_serialized()
 
     def latency_per_iter(self) -> sp.Basic:
         """Latency term per iteration: one round trip ``L`` per new block message, summed over the
@@ -111,18 +136,53 @@ def _loop_ranges(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> List[
     return [{p: r for p, r in zip(e.map.params, e.map.range)} for e in entries]
 
 
+def exposed_concurrency(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, p: LogGP) -> float:
+    """Estimate how many INDEPENDENT block requests the nest can keep in flight -- its exposed MLP,
+    which decides the regime.
+
+    Heuristic from the schedule: if any map in the nest runs its iterations concurrently (a parallel
+    schedule), the nest exposes iteration-level parallelism, and under the model's assumption of many
+    cores / many warps it reaches saturation -- returned as ``inf``, so the regime is bandwidth-bound.
+    If EVERY map is ``Sequential``, the frontend did not parallelize it -- usually a loop-carried
+    dependency -- so it is serialized to one request at a time, like a pointer chase, and is
+    latency-bound.
+
+    This is deliberately coarse: ``G`` is already the SATURATED, all-core bandwidth, so a parallel
+    nest running at that rate is by construction at or above the bandwidth-delay product. The nuances
+    it skips (a single core tracks only ~24 outstanding misses and CANNOT saturate DRAM alone; a tiny
+    parallel nest has too few iterations to fill the pipe) are reached by passing ``concurrency``
+    explicitly -- e.g. ``p.concurrency`` for the single-core view, or a measured device MLP.
+    """
+    scope_dict = state.scope_dict()
+    schedules = [map_entry.map.schedule]
+    for node, _ in state.all_nodes_recursive():
+        if isinstance(node, dace.nodes.MapEntry) and node is not map_entry:
+            cur = scope_dict.get(node)
+            while cur is not None and cur is not map_entry:
+                cur = scope_dict.get(cur)
+            if cur is map_entry:
+                schedules.append(node.map.schedule)
+    parallel = any(s in PARALLEL_SCHEDULES for s in schedules)
+    return float("inf") if parallel else 1.0
+
+
 def analyze_loop_nest(state: dace.SDFGState,
                       map_entry: dace.nodes.MapEntry,
                       p: LogGP,
                       block_bytes: int,
-                      local_arrays: FrozenSet[str] = frozenset()) -> LoopNestLogP:
+                      local_arrays: FrozenSet[str] = frozenset(),
+                      concurrency: float = None) -> LoopNestLogP:
     """LogP cost of the perfectly-nested map scope rooted at ``map_entry``.
 
     :param p: the measured LogGP parameters (L, G, ...) for the memory level.
     :param block_bytes: the transfer granularity in BYTES (64 for a CPU line, 32 for a GPU sector).
     :param local_arrays: array names to force-treat as local (free) beyond the storage-type rule.
+    :param concurrency: override the exposed-MLP estimate (the outstanding requests the nest can keep
+                        in flight); defaults to :func:`exposed_concurrency`.
     """
     sdfg = state.sdfg
+    if concurrency is None:
+        concurrency = exposed_concurrency(state, map_entry, p)
     loop_ranges = _loop_ranges(state, map_entry)
     subsets = get_access_subsets(state, map_entry)
 
@@ -152,4 +212,4 @@ def analyze_loop_nest(state: dace.SDFGState,
         bytes_moved = messages * block_bytes  # whole blocks cross the channels
         arrays[name] = ArrayLogP(name, False, messages, bytes_moved)
 
-    return LoopNestLogP(total_iters=sp.simplify(total_iters), arrays=arrays, p=p)
+    return LoopNestLogP(total_iters=sp.simplify(total_iters), arrays=arrays, p=p, concurrency=concurrency)

@@ -116,6 +116,44 @@ is **proportional to the block count**. Two consequences:
    layout change is a change in message count. (`loggp.memory_time` and the ranking-invariance test
    pin this.)
 
+## Latency-bound or bandwidth-bound?
+
+A nest is **bandwidth-bound** when it keeps enough block requests in flight to fill the channels, and
+**latency-bound** when it cannot and each access waits out the full `L`. The threshold is the
+**bandwidth-delay product** (Little's Law):
+
+```
+  BDP = L / (line_bytes * G) = L * BW_saturated / line_bytes        # requests needed in flight
+```
+
+Compare it to the concurrency the nest actually exposes:
+
+```
+  regime = "bandwidth" if exposed_concurrency >= BDP else "latency"
+```
+
+which is the same as asking which term of `achievable_rate = min(1/G, concurrency*line/L)` binds.
+
+For the example DRAM (L=95 ns, 100 GB/s, 64 B line) the BDP is ~148 requests. Consequences the model
+then makes concrete:
+
+- A **single CPU core** tracks ~24 outstanding misses — below 148, so one core is **latency-bound** and
+  cannot saturate DRAM. This is why the model assumes many cores, and why `G` is measured with all of
+  them.
+- A **GPU** keeps thousands of accesses in flight — far above 148, so a parallel kernel is
+  **bandwidth-bound**.
+- A **dependency-serialized loop** (a pointer chase, a scan) has one request outstanding at a time —
+  **latency-bound** regardless of the device.
+
+`analyze_loop_nest` estimates the exposed concurrency from the schedule: any parallel map saturates
+(the multi-core / many-warp assumption, returned as `inf` → bandwidth-bound), a fully `Sequential`
+nest is serialized to 1 → latency-bound. A caller who knows the true MLP passes `concurrency=`
+explicitly — `p.concurrency` for the single-core view, `1` for a dependency chain, a measured device
+value otherwise. `LoopNestLogP.regime()` reports the verdict, `bandwidth_delay_product()` the
+threshold, and `total_time()` returns the matching total (overlapped when bandwidth-bound, serialized
+when latency-bound). The layout ranking is the same either way; the regime only sets the absolute
+time.
+
 ## API
 
 ```python

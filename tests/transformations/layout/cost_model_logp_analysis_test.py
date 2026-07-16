@@ -86,6 +86,48 @@ def test_serialized_exceeds_overlapped():
     assert _at(cost.total_time_serialized()) > 10 * _at(cost.total_time_overlapped())
 
 
+def test_regime_from_the_schedule():
+    """A parallel map saturates the channels (bandwidth-bound); a Sequential map is serialized to one
+    request at a time (latency-bound). This is how the analysis reports which bound a nest hits."""
+    import dace as _dace
+    sdfg = _dace.SDFG("reg")
+    sdfg.add_array("A", [N, N], _dace.float64)
+    sdfg.add_array("C", [N, N], _dace.float64)
+
+    def cost_for(schedule):
+        st = sdfg.add_state(f"s_{schedule}", is_start_block=(schedule == _dace.ScheduleType.GPU_Device))
+        me, mx = st.add_map(f"m_{schedule}", {"i": "0:N", "j": "0:N"}, schedule=schedule)
+        t = st.add_tasklet(f"t_{schedule}", {"a"}, {"c"}, "c = a * 2.0")
+        st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=_dace.Memlet("A[i,j]"))
+        st.add_memlet_path(t, mx, st.add_write("C"), src_conn="c", memlet=_dace.Memlet("C[i,j]"))
+        return analyze_loop_nest(st, me, P, block_bytes=64)
+
+    assert cost_for(_dace.ScheduleType.GPU_Device).regime() == "bandwidth"
+    assert cost_for(_dace.ScheduleType.CPU_Multicore).regime() == "bandwidth"
+    assert cost_for(_dace.ScheduleType.Sequential).regime() == "latency"
+
+
+def test_concurrency_override_controls_the_regime():
+    """A caller who knows the true MLP overrides the estimate: a parallel schedule with a
+    dependency-limited concurrency of 1 (a pointer chase) is latency-bound; a single CPU core cannot
+    saturate DRAM either."""
+    _, st, me = _build((N, 1))
+    assert analyze_loop_nest(st, me, P, block_bytes=64, concurrency=1.0).regime() == "latency"
+    assert analyze_loop_nest(st, me, P, block_bytes=64, concurrency=P.concurrency).regime() == "latency"
+    assert analyze_loop_nest(st, me, P, block_bytes=64, concurrency=float("inf")).regime() == "bandwidth"
+
+
+def test_total_time_follows_the_regime():
+    """total_time picks the branch the regime dictates: the overlapped (bandwidth) time when the nest
+    saturates, the serialized (latency) upper bound when it cannot hide the latency."""
+    _, st, me = _build((N, 1))
+    bw = analyze_loop_nest(st, me, P, block_bytes=64, concurrency=float("inf"))
+    lat = analyze_loop_nest(st, me, P, block_bytes=64, concurrency=1.0)
+    assert _at(bw.total_time()) == __import__("pytest").approx(_at(bw.total_time_overlapped()))
+    assert _at(lat.total_time()) == __import__("pytest").approx(_at(lat.total_time_serialized()))
+    assert _at(lat.total_time()) > _at(bw.total_time())  # latency-bound is the slower, exposed bound
+
+
 def test_gpu_sector_granularity_changes_the_message_count():
     """block_bytes is the granularity: a 32B GPU sector (4 fp64) shares fewer elements than a 64B
     line (8 fp64), so contiguous access issues more messages -- higher latency term."""
@@ -101,5 +143,8 @@ if __name__ == "__main__":
     test_layout_change_moves_the_predicted_cost()
     test_local_memory_is_free()
     test_serialized_exceeds_overlapped()
+    test_regime_from_the_schedule()
+    test_concurrency_override_controls_the_regime()
+    test_total_time_follows_the_regime()
     test_gpu_sector_granularity_changes_the_message_count()
     print("logp_analysis tests PASS")
