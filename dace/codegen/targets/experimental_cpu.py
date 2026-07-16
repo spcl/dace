@@ -548,14 +548,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         """A single-write (``const_runtime``) scope-local scalar emitted as a fused
         ``const T x = expr;`` binding. Restricted to scope-lifetime CPU value scalars so the binding
         is declared in exactly the scope its reads live in; a device/persistent scalar stays classic."""
-        return (isinstance(desc, dt.Scalar) and vars(desc).get('const_init')
-                and desc.lifetime == dtypes.AllocationLifetime.Scope and desc.storage
-                in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap))
+        return (isinstance(desc, dt.Scalar) and desc.const_init and desc.lifetime == dtypes.AllocationLifetime.Scope and
+                desc.storage in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap))
 
     def _is_const_len1_array(self, desc) -> bool:
         """A single-write (``const_runtime``) single-element STACK (Register) array emitted as a fused
         ``const T x[1] = {expr};`` binding. A heap or device single-element array stays classic."""
-        return (isinstance(desc, dt.Array) and not isinstance(desc, dt.View) and vars(desc).get('const_init')
+        return (isinstance(desc, dt.Array) and not isinstance(desc, dt.View) and desc.const_init
                 and desc.lifetime == dtypes.AllocationLifetime.Scope and desc.storage == dtypes.StorageType.Register
                 and len(desc.shape) >= 1 and all(d == 1 for d in desc.shape))
 
