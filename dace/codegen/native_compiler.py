@@ -534,11 +534,11 @@ def build_native(program_folder: str,
     std = Config.get('compiler', 'cpp_standard')
     cpu_args = shlex.split(Config.get('compiler', 'cpu', 'args'))
     build_type_flags = _BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
-    # Base flags shared by the host compile and the PCH. ``-fPIC`` is added unconditionally (the
-    # artifact is a shared library; CMake supplies PIC via a target property independent of cpu.args,
-    # so a user cpu.args without it must still link) and ``-pthread`` matches CMake's Threads::Threads
-    # on the compile line, not just the link line.
-    host_base_flags = [f'-std=c++{std}', '-fopenmp', '-fPIC', '-pthread'] + cpu_args + build_type_flags
+    # Base flags shared by the host compile and the PCH. ``-fPIC`` is appended LAST so it always wins
+    # over any -fno-pic/-fPIE a user put in cpu.args or a build_type flag (the last -f code-model
+    # option wins) -- the artifact is always a shared library, and the distro toolchain default may be
+    # -fPIE. ``-pthread`` matches CMake's Threads::Threads on the compile line, not just the link line.
+    host_base_flags = [f'-std=c++{std}', '-fopenmp', '-pthread'] + cpu_args + build_type_flags + ['-fPIC']
     defines = [f'-DDACE_BINARY_DIR="{build_folder}"']
     if has_gpu:
         defines.append('-DWITH_CUDA')
@@ -592,13 +592,16 @@ def build_native(program_folder: str,
             cmd = ([_cxx()] + host_base_flags + defines + pch + includes + spec.compile_flags +
                    ['-c', src, '-o', obj])
         elif kind == 'cuda':
-            cmd = ([nvcc, '-std=c++17'] + ccbin + ['--compiler-options', '-fPIC'] + cuda_arch_flags +
-                   shlex.split(Config.get('compiler', 'cuda', 'args')) + defines + includes + ['-dc', src, '-o', obj])
+            # host-side ``-fPIC`` (via --compiler-options) placed after cuda.args so it wins if a user
+            # passed a conflicting host code-model flag through.
+            cmd = ([nvcc, '-std=c++17'] + ccbin + cuda_arch_flags +
+                   shlex.split(Config.get('compiler', 'cuda', 'args')) + ['--compiler-options', '-fPIC'] + defines +
+                   includes + ['-dc', src, '-o', obj])
         else:  # hip  (AMD path -- structurally validated; unvalidated on this NVIDIA host)
             amdclang = shutil.which('amdclang++') or os.path.join(rocm_root, 'llvm', 'bin', 'amdclang++')
-            cmd = (
-                [amdclang, '-x', 'hip', f'-std=c++{std}', '--offload-arch=native', '-fPIC', '-D__HIP_PLATFORM_AMD__'] +
-                shlex.split(Config.get('compiler', 'cuda', 'hip_args')) + defines + includes + ['-c', src, '-o', obj])
+            cmd = ([amdclang, '-x', 'hip', f'-std=c++{std}', '--offload-arch=native', '-D__HIP_PLATFORM_AMD__'] +
+                   shlex.split(Config.get('compiler', 'cuda', 'hip_args')) + ['-fPIC'] + defines + includes +
+                   ['-c', src, '-o', obj])
         if not obj_current(obj, src, cmd):
             compile_units.append((obj, cmd))
 
