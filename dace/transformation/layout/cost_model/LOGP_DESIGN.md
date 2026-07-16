@@ -14,6 +14,33 @@ prefetching blurs that boundary, so the same numbers are an approximation there.
 (L, G) is measured on both, but the message abstraction is exact for GPU coalescing and heuristic for
 CPU cache behaviour.
 
+## From classic LogP to a loop nest
+
+Classic LogP models a parallel machine as processors that exchange fixed-size messages over a
+network. The mapping onto a loop nest reading memory is direct — a memory request is a message to
+"another rank", where a rank is a memory partition rather than a processor:
+
+| LogP / LogGP | network meaning | this analysis (memory) |
+|---|---|---|
+| message | a fixed-size packet | a block request — one cache line (CPU) or coalesced sector (GPU) |
+| "another rank" | a remote processor's memory | global memory; a local (register/shared) access is not a message and is free |
+| `L` | wire latency of a message | round-trip latency of one block (request + reply), measured by pointer chase |
+| `o` | CPU send/receive occupancy | local issue cost — 0 for now (deferred with the SRAM task) |
+| `g` | minimum gap between messages | minimum gap between a core's requests (1 / its request rate) |
+| `G` (LogGP) | per-byte cost of a long message | per-byte channel gap `1/BW`, measured by the triad |
+| `P` | number of processors | the parallel iterations / cores / warps the nest exposes |
+
+The loop nest is the "program" each rank runs: every iteration issues the block requests its memlets
+imply, and the nest's cost is the sum of those messages priced by `L` and `G`. A layout transform
+does not change what the nest computes or how many bytes it needs — it changes how those bytes pack
+into blocks, i.e. how many messages the same computation sends. That is the entire lever, and it is
+why a message-based model is the right abstraction for layout.
+
+The two LogP capacity ideas carry over unchanged. The gap `g` and the parameter `P` say how many
+messages can be outstanding at once; the ratio `L/g` (LogP's `⌈L/g⌉`) is how many a single core keeps
+in flight. Whether that is enough to hide the latency — the classic overlap question — is exactly the
+latency-bound / bandwidth-bound test below.
+
 ## The framing
 
 - **Local memory is free.** Registers and GPU shared memory are "my memory"; their access cost is a
@@ -203,6 +230,15 @@ the granularity — 64 for a CPU line, 32 for a GPU sector — so one function s
   read-modify-write of the same array is not double-counted, and a partial-line write's
   read-for-ownership traffic (the 1.33-1.5x STREAM undercount) is a hardware-accounting factor folded
   into `G`, not modelled per access.
+- **Split-index accesses are not scored.** `SplitDimensions` (Block) rewrites an access into
+  split-index form, `A[i, int_floor(j, 8), j % 8]`; the `int_floor`/`%` subscripts are not affine
+  range begins, so `blocks_touched` cannot reduce them and the analysis raises on such an SDFG. A
+  blocked layout is scored today by giving the analysis the blocked STRIDES on the original access
+  (the physical layout the transform materialises), not by running it on the post-`SplitDimensions`
+  graph. `PermuteDimensions` and `PadDimensions`, which keep affine accesses, are scored directly.
+- **Indirect (gather/scatter) accesses are not yet scored.** An `A[idx[i]]` access is data-dependent,
+  not affine; the "unstructured access is many messages" case needs the indirection-aware count and
+  is future work.
 
 ## Worked example
 
@@ -216,3 +252,14 @@ DRAM `L = 95 ns`, `G = 1/100 GB/s`:
 
 B and C stay contiguous in both; only A's layout changes, and the analysis attributes the whole 3.3x
 difference to A's messages — which is the layout signal a `Permute` search consumes.
+
+## Scoring an actual transform
+
+The same signal comes out when a real transform runs, not just when strides are set by hand. Take
+`C[i,j] = A[i,j] + B[j,i]` — `B` is read transposed, so its inner access is strided and it costs ~1
+block per iteration. `PermuteDimensions(permute_map={"B": [1, 0]}, add_permute_maps=True)` relays `B`
+into the transposed physical order; the compute map then reads a contiguous `permuted_B`, and the
+analysis reports its message count dropping from ~1.0 to ~0.125 — the 8x the relayout was for.
+`PadDimensions` grows a dimension but leaves the innermost stride 1, so a contiguous access stays
+~0.125 (pad buys alignment, not a lower message count) — the model does not credit a pad that moved
+nothing relevant. Both are pinned in `cost_model_transformations_test.py`.
