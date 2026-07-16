@@ -127,16 +127,23 @@ class UnblockDimensions(ppl.Pass):
                        find_new_name=False)
 
     def _nested_targets(self, sdfg: dace.SDFG, arr_name: str):
-        """Yield ``(nested_sdfg, inner_name)`` for every nested SDFG ``arr_name`` flows into."""
+        """Yield ``(nested_sdfg, inner_name)`` for every nested SDFG ``arr_name`` flows into, each
+        inner array ONCE. A read-write array uses the same inner name on its in-edge and out-edge;
+        yielding it twice would unblock the inner descriptor / memlets a second time."""
+        seen = set()
         for state in sdfg.all_states():
             for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    for ie in state.in_edges(node):
-                        if ie.data.data == arr_name:
-                            yield node.sdfg, ie.dst_conn
-                    for oe in state.out_edges(node):
-                        if oe.data.data == arr_name:
-                            yield node.sdfg, oe.src_conn
+                if not isinstance(node, dace.nodes.NestedSDFG):
+                    continue
+                boundary = ([(ie, ie.dst_conn) for ie in state.in_edges(node)] +
+                            [(oe, oe.src_conn) for oe in state.out_edges(node)])
+                for edge, conn in boundary:
+                    if edge.data is None or edge.data.data != arr_name or conn is None:
+                        continue
+                    key = (id(node.sdfg), conn)
+                    if key not in seen:
+                        seen.add(key)
+                        yield node.sdfg, conn
 
     def _replace_array_recursive(self, sdfg: dace.SDFG, arr_name: str, new_shape: List):
         self._replace_array(sdfg, arr_name, new_shape)

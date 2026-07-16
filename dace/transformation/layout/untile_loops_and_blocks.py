@@ -339,6 +339,18 @@ class UntileLoopsAndBlocks(ppl.Pass):
         if inner is None:
             return False
 
+        # The case-A fold (ii -> k - i, then i -> 0) rewrites the unblocked element
+        # ``int_floor(i, K) * K + ii`` to ``k``. That IS the original element only when
+        # ``int_floor(i, K) * K == i`` -- i.e. when the outer start is a multiple of K, which is how
+        # the outer loop steps by K. With a start such as 1 and K=4 the first blocked access reads
+        # logical element int_floor(1,4)*4 + 0 = 0 while the untiled one reads k = 1: every element
+        # shifts by (start mod K), silently. Refuse instead, and refuse BEFORE the unblock below
+        # mutates anything. The pure-combined (unblocked) case-A path needs no such guard -- its
+        # element genuinely is i + ii = k for any start.
+        if blocked_arrays and case == 'A':
+            if symbolic.simplify(sympy.Mod(outer_start_sym, K_expr)) != 0:
+                return False
+
         # Coordinated unblock: merge each detected (block, inner) array dimension back to the flat
         # logical dimension BEFORE the untile substitution, so the resulting combined subset
         # ``int_floor(i, K) * K + ii`` folds to ``k`` alongside the schedule. Refuse (no-op) if the

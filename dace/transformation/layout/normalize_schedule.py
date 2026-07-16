@@ -23,6 +23,7 @@ import sympy
 import dace
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
+from dace.transformation.layout.block_aware_map_tiling import provably_indivisible
 
 
 @dataclass
@@ -85,10 +86,14 @@ class NormalizeScheduleForLayout(ppl.Pass):
                 if widths is None or self._already_tiled(me, widths):
                     continue
                 tile_sizes = tuple(widths[p] for p in me.map.params)
+                # The widths are detected PER MAP, so the caller's instance-wide divides_evenly
+                # assertion cannot hold for all of them: a map whose extent provably is not a
+                # multiple of its own detected width would have its remainder dropped.
+                divides = self._divides_evenly and not provably_indivisible(me, tile_sizes)
                 MapTiling.apply_to(sdfg,
                                    options={
                                        'tile_sizes': tile_sizes,
-                                       'divides_evenly': self._divides_evenly
+                                       'divides_evenly': divides
                                    },
                                    map_entry=me)
                 count += 1

@@ -164,9 +164,23 @@ def results_csv(results_dir):
 
 
 def append_rows(results_dir, rows):
+    """Append this kernel's rows, refusing to write into a file whose columns are not FIELDS.
+
+    csv.DictWriter writes values positionally and does not check them against the header already on
+    disk, so appending to a results file written by an older column set silently shifts every field
+    (a codegen_bytes landing under compile_total_ms, a run_ms under correct) -- the tables then report
+    numbers that are confidently wrong, and the correctness audit calls a fine kernel miscompiled.
+    Fail loudly instead; the fix is to move the stale file aside.
+    """
     path = results_csv(results_dir)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    exists = os.path.isfile(path)
+    exists = os.path.isfile(path) and os.path.getsize(path) > 0
+    if exists:
+        with open(path, newline='') as fp:
+            header = next(csv.reader(fp), [])
+        if tuple(header) != FIELDS:
+            raise SystemExit(f'{path} has columns {tuple(header)} but this job writes {FIELDS}; appending would '
+                             f'misalign every row. Move the stale file aside and re-run.')
     with open(path, 'a', newline='') as fp:
         writer = csv.DictWriter(fp, fieldnames=FIELDS)
         if not exists:
@@ -179,6 +193,18 @@ def num(row, key):
         return float(row[key])
     except (ValueError, KeyError, TypeError):
         return None
+
+
+def ratio(numerator, denominator):
+    """``numerator / denominator``, or None when either is missing or the divisor is zero.
+
+    Deliberately not a truthiness test: a measured 0.0 is data, not absence, and ``if a and b``
+    would silently drop it from the aggregate instead of counting it (or reporting it as
+    unmeasurable). Only a genuinely absent value (None) or a zero divisor yields None.
+    """
+    if numerator is None or denominator is None or denominator == 0.0:
+        return None
+    return numerator / denominator
 
 
 def write_tables(results_dir):
@@ -237,8 +263,8 @@ def write_tables(results_dir):
             continue
         both_ok = leg['correct'] == '1' and exp['correct'] == '1'
         rl, re_ = num(leg, 'run_ms'), num(exp, 'run_ms')
-        sx = rl / re_ if (rl and re_ and both_ok) else None
-        if sx:
+        sx = ratio(rl, re_) if both_ok else None
+        if sx is not None:
             speedups.append(sx)
         lines.append(f"| {kernel} | {leg['run_ms']} | {exp['run_ms']} | "
                      f"{sx:.3f} | {'yes' if both_ok else 'NO'} |" if sx is not None else
@@ -251,8 +277,9 @@ def write_tables(results_dir):
             cm = cells[kernel].get(('cmake', impl))
             nat = cells[kernel].get(('native', impl))
             bc, bn = (num(cm, 'build_ms') if cm else None), (num(nat, 'build_ms') if nat else None)
-            if bc and bn:
-                vals.append(bc / bn)
+            sx = ratio(bc, bn)
+            if sx is not None:
+                vals.append(sx)
         return vals
 
     if speedups:
@@ -266,8 +293,9 @@ def write_tables(results_dir):
     for kernel in sorted(cells):
         leg, exp = cells[kernel].get(('cmake', 'legacy')), cells[kernel].get(('cmake', 'experimental_readable'))
         bl, be = (num(leg, 'codegen_bytes') if leg else None), (num(exp, 'codegen_bytes') if exp else None)
-        if bl and be:
-            size_ratios.append(be / bl)
+        sx = ratio(be, bl)
+        if sx is not None:
+            size_ratios.append(sx)
     if size_ratios:
         lines.append(f'**codegen size experimental vs legacy**: geomean {statistics.geometric_mean(size_ratios):.3f}x '
                      f'over {len(size_ratios)} kernels (<1 = readable generator emits less C++).')
@@ -301,6 +329,13 @@ def main():
     ap.add_argument('--compile-reps', type=int, default=3, help='cold-compile samples per cell (default: 3)')
     ap.add_argument('--run-reps', type=int, default=10, help='runtime samples per cell (default: 10)')
     args = ap.parse_args()
+
+    # Every cell reports min() over its samples, so a zero rep count would die on an empty sequence
+    # deep inside the isolated subprocess rather than here.
+    if args.compile_reps < 1:
+        ap.error('--compile-reps must be >= 1 (each cell reports the minimum over its samples)')
+    if args.run_reps < 1:
+        ap.error('--run-reps must be >= 1')
 
     if args.list_kernels:
         print('\n'.join(base.kernel_list(args)))

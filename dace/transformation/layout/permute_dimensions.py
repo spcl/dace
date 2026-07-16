@@ -267,6 +267,110 @@ class PermuteDimensions(ppl.Pass):
         inverse_perm = [inverse_map[i] for i in sorted(inverse_map)]
         return inverse_perm
 
+    def _note_copy_side(self, sides: Dict, edge, permute_indices: List[int]) -> None:
+        """Record that this edge -- which we just relaid out -- is an operand of a ``CopyLibraryNode``.
+
+        A copy is elementwise: it moves logical index ``(i, j)`` to ``(i, j)``. Relaying out ONE of
+        its operands makes it transposing, and a plain copy cannot express that."""
+        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+
+        if isinstance(edge.dst, CopyLibraryNode):
+            sides.setdefault(edge.dst, {})['in'] = list(permute_indices)
+        if isinstance(edge.src, CopyLibraryNode):
+            sides.setdefault(edge.src, {})['out'] = list(permute_indices)
+
+    def _spanned_dims(self, memlet) -> int:
+        """How many dimensions the memlet actually SPANS (extent > 1). Zero means a unit element."""
+        if memlet is None or not isinstance(memlet.subset, dace.subsets.Range):
+            return 0
+        return sum(1 for begin, end, _ in memlet.subset.ranges if dace.symbolic.simplify(end - begin) != 0)
+
+    def _covers_full_array(self, memlet, desc) -> bool:
+        """True iff the memlet spans the WHOLE array (every dimension, full extent, unit step)."""
+        if memlet is None or not isinstance(memlet.subset, dace.subsets.Range):
+            return False
+        ranges = memlet.subset.ranges
+        if len(ranges) != len(desc.shape):
+            return False
+        for (begin, end, step), size in zip(ranges, desc.shape):
+            if dace.symbolic.simplify(begin) != 0:
+                return False
+            if dace.symbolic.simplify(end - (size - 1)) != 0:
+                return False
+            if dace.symbolic.simplify(step - 1) != 0:
+                return False
+        return True
+
+    def _retranspose_copies(self, state: dace.SDFGState, sides: Dict) -> None:
+        """Replace every copy we made transposing with a ``TensorTranspose`` carrying the permutation.
+
+        This MUST happen here, in the pass that applied the permutation, because the permutation is
+        not recoverable afterwards: for a square array declared with one symbol (``A[N, N]``) the two
+        operands of the copy end up with identical shapes, identical strides and identical subsets,
+        so nothing downstream can tell an elementwise copy from a transposing one. Left as a plain
+        copy it silently produces ``C = A^T`` instead of ``C = A``.
+
+        Axes: with ``out = transpose(in, axes)`` and ``out_sizes[k] == in_sizes[axes[k]]``, relaying
+        out the INPUT by ``P`` gives ``in_sizes[m] = original[P[m]]``, so ``axes = P^-1``; relaying
+        out the OUTPUT by ``P`` gives ``axes = P``.
+        """
+        from dace.libraries.linalg import TensorTranspose
+        from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+
+        for copy_node, permuted in sides.items():
+            if 'in' in permuted and 'out' in permuted:
+                if permuted['in'] == permuted['out']:
+                    continue  # both operands moved the same way -- still elementwise
+                raise NotImplementedError(
+                    f"PermuteDimensions: the two operands of copy '{copy_node.label}' were permuted "
+                    f"differently ({permuted['in']} vs {permuted['out']}); composing the two "
+                    f"permutations into one transpose is not supported.")
+            axes = (self._inverse_permute_indices(permuted['in']) if 'in' in permuted else list(permuted['out']))
+            in_edge = next((e for e in state.in_edges(copy_node) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME),
+                           None)
+            out_edge = next(
+                (e for e in state.out_edges(copy_node) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME), None)
+            if in_edge is None or out_edge is None:
+                continue
+
+            # Exactly two copy shapes are valid under a layout change:
+            #
+            #   * a UNIT-ELEMENT copy (every dimension degenerate) -- one element maps through the
+            #     whole algebra trivially, whatever the permutation does to the strides around it, so
+            #     it needs no transpose;
+            #   * a FULL-array copy -- the array IS the region, so the permutation of the array is
+            #     exactly the transpose of the copy.
+            #
+            # Every other SUBSET copy is invalid: it needs the permutation induced on the dimensions
+            # it happens to span, and a whole-array TensorTranspose cannot express that (its validate
+            # reads the array DESCRIPTORS, not the memlet subsets, so it would move data the copy
+            # never touched). Copying half of one dimension into another half is not a permutation of
+            # the array at all.
+            if max(self._spanned_dims(in_edge.data), self._spanned_dims(out_edge.data)) == 0:
+                continue  # unit element
+
+            in_desc = state.sdfg.arrays[in_edge.data.data]
+            out_desc = state.sdfg.arrays[out_edge.data.data]
+            if not (self._covers_full_array(in_edge.data, in_desc) and self._covers_full_array(out_edge.data, out_desc)):
+                raise NotImplementedError(
+                    f"PermuteDimensions: copy '{copy_node.label}' was made transposing by the layout "
+                    f"change, but it copies a SUB-REGION ({in_edge.data.subset} -> "
+                    f"{out_edge.data.subset}). Only a full-array copy (which the permutation IS) or a "
+                    f"unit-element copy (which maps trivially) can be relaid out; any other subset "
+                    f"needs the permutation induced on the dimensions it spans, which a whole-array "
+                    f"TensorTranspose cannot express.")
+
+            # No implementation is set: choosing the library lowering is not a transform's job.
+            transpose = TensorTranspose(f"{copy_node.label}_transpose", axes=axes)
+            state.add_node(transpose)
+            state.add_edge(in_edge.src, in_edge.src_conn, transpose, "_inp_tensor",
+                           dace.Memlet.from_memlet(in_edge.data))
+            state.add_edge(transpose, "_out_tensor", out_edge.dst, out_edge.dst_conn,
+                           dace.Memlet.from_memlet(out_edge.data))
+            state.remove_edge(in_edge)
+            state.remove_edge(out_edge)
+            state.remove_node(copy_node)
+
     def _permute_index(self, root: dace.SDFG, sdfg: dace.SDFG, permute_map: Dict[str, List[int]],
                        add_permute_maps: bool):
         # If top-level SDFG, namely the root is equal to the sdfg, we might need to add a transpose state and maps to
@@ -473,6 +577,7 @@ class PermuteDimensions(ppl.Pass):
         for state in sdfg.all_states():
             if sdfg == root and (state in permute_states_to_skip):
                 continue
+            permuted_copy_sides = {}
             for node in state.nodes():
                 # Replace array access with the new Name (can be identity if we have not added permute maps)
                 if isinstance(node, dace.nodes.AccessNode):
@@ -503,6 +608,11 @@ class PermuteDimensions(ppl.Pass):
                     for i in range(len(permute_indices)):
                         new_subset.append(edge.data.subset[permute_indices[i]])
                     edge.data.subset = dace.subsets.Range(new_subset)
+
+                    # Record a copy whose operand we just relaid out (see _retranspose_copies).
+                    self._note_copy_side(permuted_copy_sides, edge, permute_indices)
+
+            self._retranspose_copies(state, permuted_copy_sides)
 
         # Go through all interstate edges
         for edge in sdfg.all_interstate_edges():

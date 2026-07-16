@@ -64,13 +64,19 @@ class PadDimensions(ppl.Pass):
         self._grow(sdfg, arr_name, pads)
         for state in sdfg.all_states():
             for node in state.nodes():
-                if isinstance(node, dace.nodes.NestedSDFG):
-                    in_map = {ie.data.data: ie.dst_conn for ie in state.in_edges(node)}
-                    if arr_name in in_map:
-                        self._grow_recursive(node.sdfg, in_map[arr_name], pads)
-                    out_map = {oe.data.data: oe.src_conn for oe in state.out_edges(node)}
-                    if arr_name in out_map:
-                        self._grow_recursive(node.sdfg, out_map[arr_name], pads)
+                if not isinstance(node, dace.nodes.NestedSDFG):
+                    continue
+                # An array passed read-write appears on both an in-edge and an out-edge with the SAME
+                # inner name; grow that inner descriptor ONCE (growing it twice doubles the pad).
+                inner_names = set()
+                for ie in state.in_edges(node):
+                    if ie.data is not None and ie.data.data == arr_name:
+                        inner_names.add(ie.dst_conn)
+                for oe in state.out_edges(node):
+                    if oe.data is not None and oe.data.data == arr_name:
+                        inner_names.add(oe.src_conn)
+                for inner in inner_names:
+                    self._grow_recursive(node.sdfg, inner, pads)
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         for arr_name, pads in self._pad_map.items():

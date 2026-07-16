@@ -14,9 +14,27 @@ normalization, so the layout's index arithmetic aligns with the schedule.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
+import sympy
+
 import dace
+from dace import symbolic
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.dataflow.tiling import MapTiling
+
+
+def provably_indivisible(map_entry: dace.nodes.MapEntry, tile_sizes: Tuple[int, ...]) -> bool:
+    """True iff some tiled dimension's extent is a KNOWN constant that its tile does not divide.
+
+    ``divides_evenly`` is an assertion the caller makes about the extents; passing it to a map where
+    it is false makes ``MapTiling`` drop the remainder iterations. Only a PROOF counts here: a
+    symbolic extent returns False, because the caller may have padded it to a multiple and refusing
+    would defeat the tiling."""
+    for (begin, end, _), tile in zip(map_entry.map.range, tile_sizes):
+        extent = symbolic.simplify(symbolic.pystr_to_symbolic(end) - symbolic.pystr_to_symbolic(begin) + 1)
+        remainder = symbolic.simplify(sympy.Mod(extent, tile))
+        if remainder.is_number and remainder != 0:
+            return True
+    return False
 
 
 @dataclass
@@ -27,7 +45,13 @@ class BlockAwareMapTiling(ppl.Pass):
                        map whose parameter count equals ``len(tile_sizes)``.
     :param divides_evenly: pass through to ``MapTiling`` -- ``True`` when the extents are known to be
                            multiples of the tile sizes (e.g. after ``PadDimensions``), giving a clean
-                           ``0:N:b`` outer range with no remainder tile.
+                           ``0:N:b`` outer range with no remainder tile. It is an ASSERTION by the
+                           caller, and it is applied to every map this pass tiles -- which is only
+                           safe where it holds. A map whose extent is PROVABLY not a multiple (a
+                           constant extent of 10 against a tile of 8) has the assertion overridden to
+                           ``False`` for that map, so its remainder is handled instead of dropped; a
+                           symbolic extent the caller padded is trusted, since it cannot be proven
+                           either way and refusing it would defeat the point of the pass.
     """
 
     def __init__(self, tile_sizes: Tuple[int, ...], divides_evenly: bool = False):
@@ -50,10 +74,12 @@ class BlockAwareMapTiling(ppl.Pass):
                 and len(n.map.params) == len(self._tile_sizes)
             ]
             for me in top_maps:
+                # Per map: never assert divides_evenly on a map that provably does not.
+                divides = self._divides_evenly and not provably_indivisible(me, self._tile_sizes)
                 MapTiling.apply_to(sdfg,
                                    options={
                                        'tile_sizes': self._tile_sizes,
-                                       'divides_evenly': self._divides_evenly
+                                       'divides_evenly': divides
                                    },
                                    map_entry=me)
                 count += 1
