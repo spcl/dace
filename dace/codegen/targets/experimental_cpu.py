@@ -15,7 +15,6 @@ import re
 from typing import Dict, List, Optional, Set, Tuple
 
 import numpy
-import sympy
 from pygments.lexers import CppLexer
 from pygments.token import Token
 
@@ -50,15 +49,6 @@ def size_qualifier(is_constant: bool) -> str:
     standard = int(str(Config.get('compiler', 'cpp_standard')).strip())
     return SIZE_CONSTEVAL_QUALIFIER if standard >= 20 else INDEX_FUNCTION_QUALIFIER
 
-
-def constexpr_body(expr) -> str:
-    """C++ body for a ``constexpr``/``consteval`` ``_idx``/``_size`` helper. RelaxIntegerPowers rewrites
-    integer powers ``x**k`` in shapes/strides/offsets to ``dace::math::ipow(x, k)``, which ``sym2cpp``
-    emits as a non-``constexpr`` ``ipow`` call (``-Winvalid-constexpr``, and not a real constant
-    expression). Rewriting each ``ipow`` back to a SymPy ``Pow`` lets the printer lower it to the
-    repeated-multiply form ``((N * N))`` -- value-identical, and a genuine constant expression. Only the
-    readable ``_idx``/``_size`` helper bodies take this path."""
-    return sym2cpp(expr.rewrite(sympy.Pow))
 
 
 def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: List[str]) -> str:
@@ -515,7 +505,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
         params = ['%s %s' % (INDEX_CTYPE, str(d)) for d in dim_syms]
         params += ['%s %s' % (INDEX_CTYPE, s) for s in extra_names]
-        body = constexpr_body(flatexpr)
+        body = sym2cpp(flatexpr)
         self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (INDEX_FUNCTION_QUALIFIER, INDEX_CTYPE, fnname,
                                                                          ', '.join(params), body)
         return fnname, extra_names
@@ -555,7 +545,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
         qualifier = size_qualifier(is_constant)
         params = ['%s %s' % (INDEX_CTYPE, s) for s in call_args]
-        body = constexpr_body(total)
+        body = sym2cpp(total)
         self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, INDEX_CTYPE, fnname,
                                                                         ', '.join(params), body)
         return fnname, call_args
