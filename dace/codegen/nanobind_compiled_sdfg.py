@@ -91,6 +91,10 @@ class NanobindCompiledSDFG:
         self._callback_keepalive: List[Any] = []
         self._callback_refs: List[Any] = []
 
+        # No return arrays to allocate and no callbacks to wrap: unless hooks
+        # are registered, a call needs no Python-side processing at all.
+        self._simple_call: bool = not self._return_values and not self._callback_args
+
     @property
     def sdfg(self) -> "dace.SDFG":
         return self._sdfg
@@ -121,15 +125,21 @@ class NanobindCompiledSDFG:
         the result is ``None``. Passing a ``__return*`` buffer explicitly is
         refused unless ``compiler.nanobind_allow_return_override`` is enabled.
         """
-        # Reading the private hook list directly keeps the no-hook fast path at
-        # a single truthiness check (entering the invoking context manager
-        # would construct an object per call).
+        # Fast path - no return arrays, no callbacks, no hooks: hand the
+        # arguments straight to the compiled dispatcher. (Reading the private
+        # hook list directly keeps this at a single truthiness check; entering
+        # the invoking context manager would construct an object per call.)
+        if self._simple_call and not hooks._COMPILED_SDFG_CALL_HOOKS:
+            if self.do_not_execute is False:
+                self._handle(*args, **kwargs)
+            return None
+
         hooks_active = bool(hooks._COMPILED_SDFG_CALL_HOOKS)
 
-        # Positional arguments must be mapped to names whenever something
-        # downstream needs values by name: return-shape evaluation, callback
-        # wrapping, and the hook invocation (hooks receive the kwargs).
-        if args and (self._return_values or self._callback_args or hooks_active):
+        # Something downstream needs values by name (return-shape evaluation,
+        # callback wrapping, or the hook invocation - hooks receive the
+        # kwargs), so map positional arguments to their names.
+        if args:
             if len(args) > len(self._arg_names):
                 raise TypeError(f'Too many positional arguments (got {len(args)}, '
                                 f'expected at most {len(self._arg_names)}).')
@@ -137,17 +147,16 @@ class NanobindCompiledSDFG:
                 if name in kwargs:
                     raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
                 kwargs[name] = value
-            args = ()
 
         if self._callback_args:
             self._process_callbacks(kwargs)
 
-        # Early exit: no return values, no need to do more processing.
+        # No return values (a hook or a callback brought us here): run and exit.
         if not self._return_values:
             if hooks_active:
                 self._call_handle_with_hooks(kwargs)
             elif self.do_not_execute is False:
-                self._handle(*args, **kwargs)
+                self._handle(**kwargs)
             return None
 
         # NOTE: Return shapes are evaluated here in Python, so symbols they

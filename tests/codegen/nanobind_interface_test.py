@@ -1296,7 +1296,7 @@ def test_nanobind_interface_gpu_array_binding():
 def test_nanobind_interface_gpu_arrays():
     """E2E: CuPy arrays pass directly to GPU-storage parameters; a host numpy
     array for a GPU parameter is rejected at dispatch."""
-    import cupy as cp
+    cp = pytest.importorskip('cupy')
 
     with set_temporary('compiler', 'interface', value='nanobind'):
         N = dace.symbol('N')
