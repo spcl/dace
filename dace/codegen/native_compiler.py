@@ -192,6 +192,23 @@ def _resolve_mpi(spec: _LinkSpec) -> None:
     spec.link_flags += link_flags
 
 
+def _resolve_library_path(soname: str) -> Optional[str]:
+    """Absolute path of a bare soname / filename (``liblapacke.so.3``) searched across the linker's
+    library dirs (``LIBRARY_PATH``, ``LD_LIBRARY_PATH``, then the standard multiarch/lib dirs), or
+    None. Lets a soname be linked by path when it is not a plain ``-l`` name and has no dev ``.so``
+    symlink to fall back on."""
+    base = os.path.basename(soname)
+    dirs = []
+    for var in ('LIBRARY_PATH', 'LD_LIBRARY_PATH'):
+        dirs += [d for d in os.environ.get(var, '').split(os.pathsep) if d]
+    dirs += ['/usr/lib/x86_64-linux-gnu', '/usr/lib64', '/usr/lib', '/lib/x86_64-linux-gnu', '/lib']
+    for directory in dirs:
+        candidate = os.path.join(directory, base)
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def _classify_library(spec: _LinkSpec, lib: str) -> None:
     """Route one ``cmake_libraries`` entry onto the link line."""
     lib = lib.strip()
@@ -201,7 +218,17 @@ def _classify_library(spec: _LinkSpec, lib: str) -> None:
         spec.link_flags.append(lib)
     elif os.path.isabs(lib):  # absolute path to a .so/.a (MKL, OpenBLAS, reference libs)
         spec.link_flags.append(lib)
-    else:  # bare soname/name -- e.g. "cublas", "mkl_rt"
+    elif re.search(r'\.(so|a|dylib)(\.\d+)*$', lib):
+        # A resolved soname / filename -- "liblapacke.so.3", as ctypes.util.find_library returns on
+        # Debian/Ubuntu -- is NOT a ``-l`` link NAME: ``-lliblapacke.so.3`` is unfindable. Link its
+        # absolute path when it can be located (also covers a missing dev ``.so`` symlink), else
+        # reduce it to the ``-l`` stem (strip the "lib" prefix and the ".so[.N]" suffix).
+        resolved = _resolve_library_path(lib)
+        if resolved:
+            spec.link_flags.append(resolved)
+        else:
+            spec.libs.append(re.sub(r'^lib', '', re.sub(r'\.(so|a|dylib)(\.\d+)*$', '', os.path.basename(lib))))
+    else:  # bare link name -- e.g. "cublas", "mkl_rt", "openblas"
         spec.libs.append(lib)
 
 
