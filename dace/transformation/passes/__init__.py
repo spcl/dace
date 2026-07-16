@@ -19,6 +19,7 @@ from .simplify_induction_variables import SimplifyInductionVariables
 from .symbol_propagation import SymbolPropagation
 from .transient_reuse import TransientReuse
 from .offset_loop_and_maps import OffsetLoopsAndMaps
+from .outline_top_level_nests import OutlineTopLevelNests, outline_top_level_nests
 from .eliminate_branches import EliminateBranches
 from .util import available_passes
 from .canonicalize import CanonicalizationPipeline, canonicalize
