@@ -16,11 +16,12 @@ the invariant; timing is not asserted."""
 import numpy
 
 from dace.transformation.layout.brute_force import sweep, best
-from tests.transformations.layout.kernels import (e1_matrix_add, e6_indirect_stencil, k01_stream_triad,
-                                                  k02_transpose_blocked, k03_complex_conjugate_zip, k05_spmv,
-                                                  k06_gather_accumulate_scatter, k07_icon_stencil, k08_mesh_scatter,
-                                                  k09_particle_field_affinity, k10_omen_windowed_contraction,
-                                                  k13_conv1x1_channel_layouts, k14_eytzinger_search)
+from tests.transformations.layout.kernels import (atax, bicg, e1_matrix_add, e6_indirect_stencil, icon_one_loop,
+                                                  icon_zekinh, k01_stream_triad, k02_transpose_blocked,
+                                                  k03_complex_conjugate_zip, k05_spmv, k06_gather_accumulate_scatter,
+                                                  k07_icon_stencil, k08_mesh_scatter, k09_particle_field_affinity,
+                                                  k10_omen_windowed_contraction, k13_conv1x1_channel_layouts,
+                                                  k14_eytzinger_search)
 
 
 def _subset(program, candidate_dict, pick):
@@ -43,6 +44,36 @@ def _assert_all_correct(candidates, run, reference):
     assert all(r.correct for r in results), [(r.name, r.error) for r in results]
     assert best(results) is not None
     return results
+
+
+def test_atax_permute():
+    inp = atax.make_inputs(32, 32)
+    cand_dict = atax.candidates()
+    cands = _subset(atax.atax, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, atax.run_closure(inp, 32, 32), atax.oracle(inp["A"], inp["x"]))
+
+
+def test_bicg_permute():
+    inp = bicg.make_inputs(32, 30)
+    cand_dict = bicg.candidates()
+    cands = _subset(bicg.bicg, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, bicg.run_closure(inp, 32, 30), bicg.oracle(inp["A"], inp["p"], inp["r"]))
+
+
+def test_icon_zekinh_double_indirect_permute():
+    inp = icon_zekinh.make_inputs(2, 8, 6)
+    cand_dict = icon_zekinh.candidates()
+    cands = _subset(icon_zekinh.zekinh, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, icon_zekinh.run_closure(inp, 2, 8, 6),
+                        icon_zekinh.oracle(inp["e_bln"], inp["edge_idx"], inp["edge_blk"], inp["z_kin_hor_e"]))
+
+
+def test_icon_one_loop_vertical_permute():
+    inp = icon_one_loop.make_inputs(2, 16, 8)
+    cand_dict = icon_one_loop.candidates()
+    cands = _subset(icon_one_loop.one_loop, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, icon_one_loop.run_closure(inp, 2, 16, 8),
+                        icon_one_loop.oracle(inp["vn"], inp["wgtfac_e"], inp["vt"]))
 
 
 def test_e1_matrix_add_permute_and_block():
@@ -148,6 +179,10 @@ def test_k14_eytzinger_search_shuffle():
 
 
 if __name__ == "__main__":
+    test_atax_permute()
+    test_bicg_permute()
+    test_icon_zekinh_double_indirect_permute()
+    test_icon_one_loop_vertical_permute()
     test_e1_matrix_add_permute_and_block()
     test_k05_spmv_ell_pad_block_permute()
     test_k08_mesh_scatter_pad_permute_shuffle()
