@@ -31,14 +31,28 @@ from dace.frontend.python.astutils import rname
 from dace.sdfg import nodes
 from dace.sdfg.utils import dynamic_map_inputs
 
-# The C++ integer type used for computed flat indices.
-INDEX_CTYPE = 'long long'
+#: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. ``int`` (not
+#: ``int32_t``) and ``long long`` (not ``int64_t``) are spelled out deliberately: ``int`` is exactly
+#: what the generated loops declare (``for (auto i = 0; ...)``), so an int32 helper takes its indices
+#: with no conversion at all, and ``long long`` preserves the historical signature byte-for-byte.
+INDEX_CTYPES = {'int64': 'long long', 'int32': 'int'}
 # Qualifier for the generated ``<array>_idx`` and symbolic ``<array>_size`` helpers: host+device
 # callable, inlined, usable in constant expressions.
 INDEX_FUNCTION_QUALIFIER = 'static DACE_HDFI constexpr'
 # Qualifier for a CONSTANT ``<array>_size`` helper: ``consteval`` forces the fixed extent to fold at
 # compile time (a C++20 keyword, so size_qualifier falls back to ``constexpr`` before C++20).
 SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
+
+
+def index_ctype() -> str:
+    """The C++ integer type the ``<array>_idx`` / ``<array>_size`` helpers compute in, per
+    ``compiler.cpu.codegen_params.index_ctype``.
+
+    ``int32`` is UNSAFE past 2**31 ELEMENTS and is never selected automatically -- the bound is on the
+    element count, not the byte size, so an int8 array overflows at only 2 GiB (a float64 one at 16
+    GiB). The generator cannot prove an SDFG stays under that for symbolic shapes, so this stays an
+    opt-in knob whose default (``int64``) reproduces the historical signature exactly."""
+    return INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'index_ctype')]
 
 
 def size_qualifier(is_constant: bool) -> str:
@@ -568,10 +582,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             fnname = '%s_%dd_%d_idx' % (base, ndim, len(self._index_sig_to_name))
         self._index_sig_to_name[key] = fnname
 
-        params = ['%s %s' % (INDEX_CTYPE, str(d)) for d in dim_syms]
-        params += ['%s %s' % (INDEX_CTYPE, s) for s in extra_names]
+        ctype = index_ctype()
+        params = ['%s %s' % (ctype, str(d)) for d in dim_syms]
+        params += ['%s %s' % (ctype, s) for s in extra_names]
         body = sym2cpp(flatexpr)
-        self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (INDEX_FUNCTION_QUALIFIER, INDEX_CTYPE, fnname,
+        self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (INDEX_FUNCTION_QUALIFIER, ctype, fnname,
                                                                          ', '.join(params), body)
         return fnname, extra_names
 
@@ -609,9 +624,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._size_sig_to_name[key] = fnname
 
         qualifier = size_qualifier(is_constant)
-        params = ['%s %s' % (INDEX_CTYPE, s) for s in call_args]
+        ctype = index_ctype()
+        params = ['%s %s' % (ctype, s) for s in call_args]
         body = sym2cpp(total)
-        self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, INDEX_CTYPE, fnname,
+        self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, ctype, fnname,
                                                                         ', '.join(params), body)
         return fnname, call_args
 

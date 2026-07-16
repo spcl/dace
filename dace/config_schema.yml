@@ -398,6 +398,39 @@ required:
                                     dependency in the accumulate chain is the leading candidate) and
                                     code layout has not been excluded. Default ``by_ref`` matches
                                     legacy.
+                            index_ctype:
+                                type: str
+                                default: int64
+                                title: Index-function integer type
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy inlines its offset
+                                    arithmetic instead of emitting ``<array>_idx`` helpers, so it has
+                                    no index type to pick and ignores this key).
+
+                                    The integer type the generated ``<array>_idx`` / ``<array>_size``
+                                    helpers compute a flat index in: ``int64`` emits ``long long``
+                                    (the default, and byte-identical to the historical signature),
+                                    ``int32`` emits ``int``.
+
+                                    UNSAFE ABOVE 2**31: ``int32`` silently WRAPS past 2147483647, and
+                                    the bound is on the ELEMENT COUNT, not the byte size -- an int8
+                                    array overflows at just 2 GiB of data (float32 at 8 GiB, float64
+                                    at 16 GiB). It is therefore never selected automatically: the
+                                    generator cannot prove a symbolic shape stays under the bound, and
+                                    an overflow here corrupts data with no diagnostic. Set it only for
+                                    an SDFG whose extents you know.
+
+                                    Do not expect a win by default. Measured on x86-64 (Zen 4), most
+                                    kernels land inside a 0.5-6% noise floor, and the deltas that do
+                                    clear it point OPPOSITE ways (gcc/gather -26% for int32, but
+                                    clang/stencil +12% against it) -- a knob to sweep, not a default to
+                                    flip. It is also NOT an ABI axis: templating or overloading the
+                                    helpers on the index type was measured and rejected, because GCC's
+                                    identical-code folding collapses the instantiations back onto one
+                                    body (``<stencil3d_v3_c32>: jmp <stencil3d_v2_c32>``) while C++
+                                    argument deduction silently picks 32-bit math from the generated
+                                    ``for (auto i = 0; ...)`` call sites -- an explicit knob cannot do
+                                    that behind your back.
 
             #############################################
             # GPU (CUDA/HIP) compiler
