@@ -29,6 +29,7 @@ from dace.codegen.targets.cpu import CPUCodeGen, hoist_loop_decls, map_schedule_
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.sdfg import nodes
+from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 
 #: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. ``int`` (not
@@ -79,6 +80,13 @@ def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: Li
     """C++ ``ptr[fn(idx.., extra..)]`` access through a registered ``<array>_idx`` index function."""
     call_args = [sym2cpp(symbolic.pystr_to_symbolic(ix)) for ix in indices] + list(extra)
     return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
+
+
+def scalar_decl_placement() -> str:
+    """Where a mutable scope-lifetime value scalar is declared, per
+    ``compiler.cpu.codegen_params.scalar_decl_placement``: ``eager`` (the default, ``T x;`` at scope
+    top -- the legacy placement) or ``late`` (the declaration is deferred to just before its first use)."""
+    return Config.get('compiler', 'cpu', 'codegen_params', 'scalar_decl_placement')
 
 
 def loop_access_form() -> str:
@@ -146,6 +154,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._walk_plans: Dict[int, dict] = {}
         self._walk_emitted_decls: Set[int] = set()
         self._walk_emitted_incs: Set[int] = set()
+        # scalar_decl_placement = late: a mutable scope-lifetime value scalar whose ``T x;`` declaration
+        # was deferred by allocate_array is held here until the first tasklet that uses it is emitted
+        # (see late_declarable_scalar / emit_pending_late_decls). ptrname -> declaration info. Empty in
+        # the default ``eager`` mode, so the emit hook is a no-op and the output stays byte-identical.
+        self._late_pending: Dict[str, dict] = {}
 
     # -- map scope ------------------------------------------------------------
 
@@ -427,6 +440,9 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if isinstance(node, nodes.Tasklet) and node.language == dtypes.Language.CPP:
             state_dfg = cfg.nodes()[state_id]
             self._cpp_inline[id(node)] = self._compute_cpp_inline(sdfg, state_dfg, node)
+        # scalar_decl_placement = late: flush any deferred ``T x;`` declaration this tasklet is the first
+        # to use, so it lands immediately before the tasklet body (no-op in the default eager mode).
+        self.emit_pending_late_decls(sdfg, cfg, state_id, node, callsite_stream)
         super()._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream, codegen)
         # Flush any index / size helpers registered while lowering this tasklet body.
         self._flush_generated_functions(function_stream, cfg, state_id, node)
@@ -665,6 +681,13 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             self._dispatcher.defined_vars.add(self.ptr(node.data, nodedesc, sdfg), DefinedType.Pointer,
                                               dtypes.pointer(nodedesc.dtype).ctype)
             return
+        # scalar_decl_placement = late: a MUTABLE scope-lifetime value scalar (not the const write-once
+        # form above) whose declaration is provably safe to move keeps its `T x;` out of the scope
+        # preamble; it is registered now (so reads resolve) and the declaration is emitted just before
+        # its first-use tasklet (emit_pending_late_decls). Eager mode / any non-deferrable scalar falls
+        # through to the base declaration below unchanged.
+        if self.defer_scalar_declaration(sdfg, dfg, node, nodedesc):
+            return
         super().allocate_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream,
                                allocation_stream, allocate_nested_data)
         # heap_alloc_stmt (invoked inside super) may have registered an
@@ -783,6 +806,103 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                 emitted.add(name)
 
     # -- readable array indexing ----------------------------------------------
+
+    # -- late scalar declarations (scalar_decl_placement = late) ----------------
+
+    def defer_scalar_declaration(self, sdfg, dfg, node, desc) -> bool:
+        """Register a mutable scope scalar as a deferred (late) declaration and return True, or return
+        False to leave it to the base eager declaration.
+
+        Deferral moves ``T x;`` out of the scope preamble and re-emits it just before the first tasklet
+        that uses ``x``, giving a shorter live range. It is applied ONLY where provably sound: an eager
+        ``T x;`` and a deferred one are visible to exactly the same uses only when every use lives in the
+        one scope the deferred declaration lands in, as a direct-child tasklet of it. See
+        ``late_declarable_scalar`` for the full gate. Returns False in the default ``eager`` mode."""
+        placement = self.late_declarable_scalar(sdfg, dfg, node, desc)
+        if placement is None:
+            return False
+        scope_tasklets, setzero = placement
+        ptrname = self.ptr(node.data, desc, sdfg)
+        # Register the read/write type now so accesses between here and the deferred declaration resolve
+        # exactly as the eager declaration would (there are none in emission order -- the scope preamble
+        # precedes every tasklet -- but the registration must exist before the first use is emitted).
+        self._dispatcher.defined_vars.add(ptrname, DefinedType.Scalar, desc.dtype.ctype)
+        tasklet_ids = {id(t) for t in scope_tasklets}
+        self._late_pending[ptrname] = {
+            'ctype': desc.dtype.ctype,
+            'ptrname': ptrname,
+            'setzero': setzero,
+            'tasklets': tasklet_ids,
+        }
+        return True
+
+    def late_declarable_scalar(self, sdfg, dfg, node, desc) -> Optional[Tuple[Set[nodes.Tasklet], bool]]:
+        """Whether ``desc`` (the scalar being allocated at ``node`` in state ``dfg``) may have its
+        declaration deferred to first use, per ``scalar_decl_placement``. Returns ``(neighbor_tasklets,
+        setzero)`` when deferrable, else ``None`` (keep the eager declaration).
+
+        Sound only for a plain transient VALUE scalar (never a view/reference/stream, a const write-once
+        scalar, a len-1 array, or a heap/device/GPU-global scalar) whose EVERY access in the state is a
+        direct-child tasklet of ONE scope. That single-scope, tasklet-only shape guarantees the
+        first-use tasklet is emitted into the same brace the eager declaration would occupy, so the
+        deferred ``T x;`` precedes -- and is visible to -- every use. Anything else falls back to eager."""
+        if scalar_decl_placement() != 'late':
+            return None
+        # A plain mutable value scalar only. const_init scalars take the `const T x = expr;` path above;
+        # GPU-global scalars are device pointers, and heap/persistent ones do not live in a plain brace.
+        if not isinstance(desc, dt.Scalar) or isinstance(desc, (dt.View, dt.Reference, dt.Stream)):
+            return None
+        if not desc.transient or desc.const_init or node.data in sdfg.constants_prop:
+            return None
+        if desc.lifetime != dtypes.AllocationLifetime.Scope:
+            return None
+        if desc.storage not in (dtypes.StorageType.Register, dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap):
+            return None
+        # The allocation must be at a single state's scope (``dfg`` is that SDFGState). A scalar spanning
+        # states is allocated at SDFG scope (``dfg is None`` here) and is left eager.
+        if not isinstance(dfg, SDFGState):
+            return None
+        state: SDFGState = dfg
+        name = node.data
+        access_nodes = [n for n in state.data_nodes() if n.data == name]
+        if not access_nodes:
+            return None
+        scope_dict = state.scope_dict()
+        # Only a scalar living at STATE top level (outside every map). Restricting to ``None`` keeps the
+        # deferred declaration in the state's own brace -- the same brace the eager declaration occupies
+        # -- and leaves anything inside a map scope (parallel or sequential) completely untouched.
+        if any(scope_dict[n] is not None for n in access_nodes):
+            return None
+        neighbor_tasklets: Set[nodes.Tasklet] = set()
+        has_write = False
+        for an in access_nodes:
+            if state.in_degree(an) > 0:
+                has_write = True
+            for edge in state.all_edges(an):
+                other = edge.dst if edge.src is an else edge.src
+                # Every reader/writer must be a plain tasklet at state scope; a copy / map / nested
+                # SDFG / library-node neighbour is not the single-brace direct-child shape we require.
+                if not isinstance(other, nodes.Tasklet) or scope_dict[other] is not None:
+                    return None
+                neighbor_tasklets.add(other)
+        # A mutable transient must be written before it is read; without a write there is no first-use
+        # point that dominates the reads, so it is not a safe deferral target.
+        if not has_write or not neighbor_tasklets:
+            return None
+        return neighbor_tasklets, node.setzero
+
+    def emit_pending_late_decls(self, sdfg, cfg, state_id, tasklet, callsite_stream) -> None:
+        """Emit the deferred ``T x;`` declaration of every late scalar this ``tasklet`` is the first to
+        use, immediately before the tasklet body. A no-op (and byte-identical) unless
+        ``scalar_decl_placement`` is ``late`` and a declaration is still pending."""
+        if not self._late_pending:
+            return
+        for ptrname, info in list(self._late_pending.items()):
+            if id(tasklet) not in info['tasklets']:
+                continue
+            zero = ' = 0' if info['setzero'] else ''
+            callsite_stream.write('%s %s%s;' % (info['ctype'], info['ptrname'], zero), cfg, state_id, tasklet)
+            del self._late_pending[ptrname]
 
     def _is_const_scalar(self, desc) -> bool:
         """A single-write (``const_runtime``) scope-local scalar emitted as a fused
