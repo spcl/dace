@@ -189,7 +189,7 @@ class MarkConstInit(ppl.Pass):
                 continue
             # Idempotency: never reclassify an already-marked descriptor (const_runtime flag set, or
             # already promoted to a constexpr_static constant).
-            if vars(desc).get('const_init') or name in sdfg.constants_prop:
+            if desc.const_init or name in sdfg.constants_prop:
                 continue
 
             classification = self._classify(sdfg, name, desc, access_nodes.get(name, {}), write_states.get(name, set()),
