@@ -122,6 +122,16 @@ def test_cuda_arch_flags_skips_unsupported():
         assert nc._cuda_arch_flags({80, 89}) == ['-arch=native']
 
 
+def test_cuda_build_type_flags_are_nvcc_safe():
+    """nvcc must never be handed the host's ``-Os``: it rejects it outright with
+    ``nvcc fatal : 's': expected a number``, so MinSizeRel maps to -O1 for CUDA. That is why the CUDA
+    build-type table is separate from the host one -- do not merge them back together."""
+    assert set(nc._CUDA_BUILD_TYPE_FLAGS) == set(nc._BUILD_TYPE_FLAGS), 'every build_type needs CUDA flags'
+    for build_type, flags in nc._CUDA_BUILD_TYPE_FLAGS.items():
+        assert '-Os' not in flags, f'{build_type} would pass -Os to nvcc, which is fatal'
+    assert nc._CUDA_BUILD_TYPE_FLAGS['MinSizeRel'] == ['-O1', '-DNDEBUG']
+
+
 def test_cuda_arch_flags_normalizes_prefixed_tokens():
     """'sm_90'/'compute_80' are canonical nvcc spellings; interpolating them raw would emit the
     unbuildable 'arch=compute_sm_90,code=sm_sm_90', so the prefix must be stripped first."""

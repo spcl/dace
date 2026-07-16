@@ -42,6 +42,17 @@ _BUILD_TYPE_FLAGS = {
     'MinSizeRel': ['-Os', '-DNDEBUG'],
 }
 
+#: The same, for nvcc (``CMAKE_CUDA_FLAGS_<CONFIG>``). Deliberately a separate table rather than
+#: reusing the host one: nvcc rejects ``-Os`` outright (``nvcc fatal : 's': expected a number``), so
+#: MinSizeRel must map to ``-O1``, and CMake's CUDA defaults differ from its host defaults for
+#: exactly this reason.
+_CUDA_BUILD_TYPE_FLAGS = {
+    'Debug': ['-g'],
+    'Release': ['-O3', '-DNDEBUG'],
+    'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
+    'MinSizeRel': ['-O1', '-DNDEBUG'],
+}
+
 #: Target names whose sources are GPU device code (compiled by nvcc, not g++). Native mode is
 #: CUDA-only; a HIP/ROCm backend is rejected early with a clear error (use compiler.build_mode=cmake).
 _GPU_TARGETS = ('cuda', 'experimental_cuda')
@@ -533,6 +544,7 @@ def build_native(program_folder: str,
     std = Config.get('compiler', 'cpp_standard')
     cpu_args = shlex.split(Config.get('compiler', 'cpu', 'args'))
     build_type_flags = _BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
+    cuda_build_type_flags = _CUDA_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
     # Base flags shared by the host compile and the PCH. ``-fPIC`` is appended LAST so it always wins
     # over any -fno-pic/-fPIE a user put in cpu.args or a build_type flag (the last -f code-model
     # option wins) -- the artifact is always a shared library, and the distro toolchain default may be
@@ -606,14 +618,14 @@ def build_native(program_folder: str,
             cmd = ([_cxx()] + host_base_flags + defines + pch + includes + spec.compile_flags + depfile +
                    ['-c', src, '-o', obj])
         else:  # cuda
-            # build_type_flags go straight on the nvcc line, exactly as CMake applies
+            # The CUDA build-type flags go straight on the nvcc line, as CMake applies
             # CMAKE_CUDA_FLAGS_<CONFIG>: without them the device TU builds unoptimized and, worse,
             # without -DNDEBUG, leaving asserts live that the cmake build compiles out.
             # Host-side flags are forwarded via ``-Xcompiler``: ``-fPIC`` (after cuda.args so it wins
             # over any conflicting host code-model flag) and ``-fopenmp`` so host-side OpenMP in the
             # generated .cu links against libgomp like the .cpp TUs do.
             cmd = ([nvcc, '-std=c++17'] + ccbin + cuda_arch_flags +
-                   shlex.split(Config.get('compiler', 'cuda', 'args')) + build_type_flags +
+                   shlex.split(Config.get('compiler', 'cuda', 'args')) + cuda_build_type_flags +
                    ['-Xcompiler', '-fPIC,-fopenmp'] + defines + includes + depfile + ['-dc', src, '-o', obj])
         if not obj_current(obj, cmd):
             compile_units.append((obj, cmd))
@@ -656,13 +668,20 @@ def build_native(program_folder: str,
     link_cmd += ['-pthread']
     libdirs = deduplicate(spec.libdirs)
     link_cmd += ['-L' + d for d in libdirs]
-    link_cmd += deduplicate(spec.link_flags)
+    # NOT deduplicated: link flags are positional. An environment may legitimately repeat a token --
+    # MKL's ScaLAPACK line wraps each archive in its own -Wl,--whole-archive/-Wl,--no-whole-archive
+    # pair -- and dropping the second pair would silently stop whole-archiving that library.
+    link_cmd += spec.link_flags
     link_cmd += ['-l' + lib for lib in deduplicate(spec.libs)]
-    # RPATH every directory we link out of, including the directories of absolute-path libraries
-    # (MKL via MKLROOT, a module-installed MPI). -L alone only satisfies the linker: without RUNPATH
-    # the loader cannot find a library outside ldconfig and the stub's dlopen fails at run time.
-    # CMake embeds a build-tree RPATH for exactly these, and an rpath to a standard dir is harmless.
-    rpath_dirs = deduplicate(libdirs + [os.path.dirname(f) for f in spec.link_flags if os.path.isabs(f)])
+    # RPATH every directory we link out of, so the loader can find those libraries without
+    # LD_LIBRARY_PATH: -L alone only satisfies the linker, and the stub's dlopen would fail at run
+    # time for anything outside ldconfig (MKL via MKLROOT, a module-installed MPI). A link flag may
+    # be an absolute library file (rpath its directory) or an absolute directory carried as the
+    # value of a separate '-L' token (rpath it as-is).
+    rpath_dirs = deduplicate(libdirs + [
+        os.path.dirname(f) if os.path.isfile(f) else f for f in spec.link_flags
+        if os.path.isabs(f) and (os.path.isfile(f) or os.path.isdir(f))
+    ])
     link_cmd += [f'-Wl,-rpath,{d}' for d in rpath_dirs if d]
     # The CUDA runtime is placed last so libraries that depend on it (e.g. cublas) precede it.
     # ``cudadevrt`` resolves the device-link registration symbols from separable compilation.
