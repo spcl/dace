@@ -44,6 +44,17 @@ INDEX_FUNCTION_QUALIFIER = 'static DACE_HDFI constexpr'
 SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
 
 
+def index_function_qualifier() -> str:
+    """Qualifier for the generated ``<array>_idx`` / ``<array>_size`` helpers, per
+    ``compiler.cpu.codegen_params.index_fn_qualifier``. ``inline_constexpr`` is the default
+    (``static DACE_HDFI constexpr`` -- the backend inlines these tiny functions at -O2); ``always_inline``
+    additionally forces inlining, which only matters where a helper is otherwise left out of line and
+    an un-inlined access would block vectorization."""
+    if Config.get('compiler', 'cpu', 'codegen_params', 'index_fn_qualifier') == 'always_inline':
+        return 'static __attribute__((always_inline)) inline constexpr'
+    return INDEX_FUNCTION_QUALIFIER
+
+
 def index_ctype() -> str:
     """The C++ integer type the ``<array>_idx`` / ``<array>_size`` helpers compute in, per
     ``compiler.cpu.codegen_params.index_ctype``.
@@ -467,13 +478,17 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def array_pointer_declarator(self, name: str, nodedesc: dt.Data) -> str:
         """``T* __restrict__ name`` for a heap-allocated array pointer.
 
-        ``__restrict__`` is dropped only for a ``may_alias`` descriptor -- the same condition
+        ``__restrict__`` is dropped for a ``may_alias`` descriptor -- the same condition
         ``Array.as_arg`` and ``CPUCodeGen.generate_nsdfg_arguments`` already use to decide the
         qualifier on kernel/nested-SDFG arguments. ``may_alias`` marks an array that is deliberately
         reachable through a second pointer in the same function, so promising no-alias for it would
-        be a miscompile rather than a readability win.
+        be a miscompile rather than a readability win. It is also dropped when
+        ``compiler.cpu.codegen_params.heap_ptr_restrict`` is ``none`` (the qualifier is a bimodal
+        knob; ``restrict``, the default, is the faster bet but not universally so).
         """
-        restrict = '' if nodedesc.may_alias else '__restrict__ '
+        emit_restrict = (not nodedesc.may_alias
+                         and Config.get('compiler', 'cpu', 'codegen_params', 'heap_ptr_restrict') == 'restrict')
+        restrict = '__restrict__ ' if emit_restrict else ''
         return '%s* %s%s' % (nodedesc.dtype.ctype, restrict, name)
 
     def heap_alloc_stmt(self,
@@ -586,7 +601,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         params = ['%s %s' % (ctype, str(d)) for d in dim_syms]
         params += ['%s %s' % (ctype, s) for s in extra_names]
         body = sym2cpp(flatexpr)
-        self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (INDEX_FUNCTION_QUALIFIER, ctype, fnname,
+        self._index_functions[fnname] = '%s %s %s(%s) { return %s; }' % (index_function_qualifier(), ctype, fnname,
                                                                          ', '.join(params), body)
         return fnname, extra_names
 
@@ -627,8 +642,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         ctype = index_ctype()
         params = ['%s %s' % (ctype, s) for s in call_args]
         body = sym2cpp(total)
-        self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, ctype, fnname,
-                                                                        ', '.join(params), body)
+        self._size_functions[fnname] = '%s %s %s(%s) { return %s; }' % (qualifier, ctype, fnname, ', '.join(params),
+                                                                        body)
         return fnname, call_args
 
 

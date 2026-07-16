@@ -431,6 +431,45 @@ required:
                                     argument deduction silently picks 32-bit math from the generated
                                     ``for (auto i = 0; ...)`` call sites -- an explicit knob cannot do
                                     that behind your back.
+                            heap_ptr_restrict:
+                                type: str
+                                default: restrict
+                                title: __restrict__ on heap array pointers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy does not emit the
+                                    fused ``T* ptr = alloc`` declaration this qualifies).
+
+                                    Whether a heap-allocated array pointer is declared
+                                    ``T* __restrict__ p`` (``restrict``, the default) or ``T* p``
+                                    (``none``). ``restrict`` promises the pointer does not alias, which
+                                    is what lets the vectorizer prove independence -- the default and
+                                    the faster bet. It is NEVER applied to a ``may_alias`` descriptor
+                                    regardless of this key: that array is deliberately reachable through
+                                    a second pointer, so promising no-alias would be a miscompile, not a
+                                    win. The effect is genuinely BIMODAL when it does apply (46 tests
+                                    faster / 18 slower in rust#82834; ``!noalias`` has even DISABLED
+                                    vectorization via GVN load-PRE in llvm#38583), which is why it is a
+                                    knob and not a hardcode. ``restrict`` reproduces today's output.
+                            index_fn_qualifier:
+                                type: str
+                                default: inline_constexpr
+                                title: Qualifier on generated index/size helpers
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy inlines its offset
+                                    arithmetic and emits no ``<array>_idx`` / ``<array>_size`` helpers).
+
+                                    The linkage/inlining qualifier on the generated index and size
+                                    helpers. ``inline_constexpr`` (the default) emits
+                                    ``static DACE_HDFI constexpr`` -- ``inline`` is a hint the backend
+                                    already honours for these tiny functions at -O2, so they are inlined
+                                    and the access reads as ``p[i*S+j]`` to the vectorizer.
+                                    ``always_inline`` additionally attaches
+                                    ``__attribute__((always_inline))`` to FORCE inlining regardless of
+                                    the inliner's cost model -- useful only where a helper is (wrongly)
+                                    left out of line, which pins a vectorization precondition. Inlining
+                                    is the precondition for every downstream idiom/vectorization
+                                    decision, so leaving these helpers un-inlined is the failure mode
+                                    this guards against. ``inline_constexpr`` reproduces today's output.
 
             #############################################
             # GPU (CUDA/HIP) compiler
