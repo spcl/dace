@@ -64,7 +64,7 @@ for impl in ('legacy', 'experimental'):
     with set_temporary('compiler', 'cpu', 'implementation', value=impl):
         s = npbench.fresh_sdfg(desc); s.simplify()
         s.apply_transformations_repeated(LoopToMap); s.apply_transformations_repeated(MapFusion)
-        ConvertLengthOneArraysToScalars(single_element=True, transient_only=True).apply_pass(s, {})
+        ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(s, {})
         s.simplify()
         s.name = f'cavity_flow_{impl}'
         code = '\n'.join((o.clean_code or o.code) for o in s.generate_code() if o.language == 'cpp')

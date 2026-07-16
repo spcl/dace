@@ -9,18 +9,18 @@
 #SBATCH --gpus-per-node=4        # phase 3 binds one Hopper GPU; the node's 4 are reserved so the
                                  # allocation is exclusive.  TODO: drop on a CPU-only partition.
 #SBATCH --hint=nomultithread     # Grace Neoverse-V2 has no SMT (1 thread/core)
-#SBATCH --time=24:00:00          # 5 sweeps x 4 corpora x 2 codegens -- generous on purpose
+#SBATCH --time=03:00:00          # ~1.4x the observed 2h07m full run (job 4219591)
 #SBATCH --partition=normal       # TODO: set to your daint.alps partition
 #SBATCH --account=g34            # daint.alps account
 #SBATCH --output=readable_perf_%j.out
 #SBATCH --error=readable_perf_%j.err
-#SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace-readable/cpu_codegen_perf_jobs  # TODO: set scratch path
+#SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/cpu_codegen_perf_jobs  # TODO: set scratch path
 #
 # THE readable-codegen perf job: every phase of the legacy-vs-experimental C++/CUDA codegen
 # comparison, on ONE node, in ONE submission, into ONE merged TSV.
 #
 # Every phase runs the SAME pipeline -- dace + simplify + LoopToMap + MapFusion +
-# ConvertLengthOneArraysToScalars(single_element=True, transient_only=True) -- and measures
+# ConvertLengthOneArraysToScalars(transient_only=True) -- and measures
 # only AFTER it; the ONLY thing that varies within a phase is the code generator
 # (compiler.cpu.implementation = legacy | experimental). Phases, in execution order:
 #
@@ -72,9 +72,7 @@
 # `preexec_fn`, no trap/signal handler on SIGCHLD, no `setsid`/`stdbuf`-style shims around the
 # python process, and no nested `srun` inside the build. Plain srun only.
 
-set -euo pipefail
-
-REPO_ROOT="/capstor/scratch/cscs/ybudanaz/aarch64/dace-readable"   # TODO: set to the synced repo root
+REPO_ROOT="/capstor/scratch/cscs/ybudanaz/aarch64/dace"   # TODO: set to the synced repo root
 cd "$REPO_ROOT/cpu_codegen_perf_jobs"
 
 CODEGEN="${CODEGEN:-both}"
@@ -125,7 +123,7 @@ alias python=python3.11
 spack load gcc@16.1.0
 spack load llvm@22.1.5
 spack load cmake
-spack load openblas
+spack load openblas threads=pthreads
 spack load cuda        # phase 3 only, but loading once up front keeps PATH/LD_LIBRARY_PATH
 spack load cutensor    # identical across phases (a no-op for the CPU ones)
 
@@ -133,7 +131,7 @@ spack load cutensor    # identical across phases (a no-op for the CPU ones)
 # LD_LIBRARY_PATH, and the install sits off the ldconfig cache -- without this, MatMul/potrf
 # report "OpenBLAS not installed" and expand to a naive pure loop. Also lets any LAPACK-node
 # kernel link via DACE_PERF_LAPACK_LIBDIR (engine.configure_dace_process).
-export OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+export OPENBLAS_DIR="$(spack location -i openblas threads=pthreads 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"
@@ -197,7 +195,7 @@ run_cpu_phase() {
     # engine.configure_dace_process reads DACE_PERF_CXX -> compiler.cpu.executable; the runners
     # read it back for the `cxx` column, so the label can never disagree with the compiler used.
     export DACE_PERF_CXX="$cxx"
-    export OMP_NUM_THREADS="$threads"
+    export OMP_NUM_THREADS="$threads" OPENBLAS_NUM_THREADS="$threads"
     export OMP_PROC_BIND=close   # keep each rank's thread(s) within its own socket
     export OMP_PLACES=cores
 
@@ -235,7 +233,7 @@ run_gpu_phase() {
     export DACE_compiler_cuda_args="-Xptxas -O3 -Xcompiler -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter"
     export CUDAHOSTCXX="$cxx"
     export DACE_PERF_CXX="$cxx"
-    export OMP_NUM_THREADS="$SOCKET_CORES"   # host-side OpenMP for any map left on the host
+    export OMP_NUM_THREADS="$SOCKET_CORES" OPENBLAS_NUM_THREADS="$SOCKET_CORES"   # host-side OpenMP for any map left on the host
     export OMP_PROC_BIND=close
     export OMP_PLACES=cores
 

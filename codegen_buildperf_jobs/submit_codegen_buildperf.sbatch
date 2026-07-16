@@ -8,12 +8,12 @@
 #SBATCH --cpus-per-task=72       # one Grace CPU (72 Neoverse-V2 cores) per rank; 4 x 72 = 288
                                  # = the whole node. CPU-only job: no --gpus-per-node.
 #SBATCH --hint=nomultithread     # Grace Neoverse-V2 has no SMT (1 thread/core)
-#SBATCH --time=24:00:00          # 4 sweeps x 4 corpora x 2 codegens (build + perf) -- generous
+#SBATCH --time=06:00:00          # compile-reps heavy, no prior reference -- safe margin
 #SBATCH --partition=normal       # TODO: set to your CPU-only daint.alps partition
 #SBATCH --account=g34            # TODO: set to your daint.alps account
 #SBATCH --output=codegen_buildperf_%j.out
 #SBATCH --error=codegen_buildperf_%j.err
-#SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace-readable/codegen_buildperf_jobs  # TODO: scratch path
+#SBATCH --chdir=/capstor/scratch/cscs/ybudanaz/aarch64/dace/codegen_buildperf_jobs  # TODO: scratch path
 #
 # THE codegen build-and-perf job: every phase of the legacy-vs-experimental readable C++
 # codegen comparison, CPU-only, on ONE node, in ONE submission, into ONE merged TSV. It
@@ -23,7 +23,7 @@
 # INLINE in the same row), plus single-core and multi-core RUNTIME.
 #
 # Every phase runs the SAME pipeline -- dace + simplify + LoopToMap + MapFusion +
-# ConvertLengthOneArraysToScalars(single_element=True, transient_only=True) -- and measures
+# ConvertLengthOneArraysToScalars(transient_only=True) -- and measures
 # only AFTER it; the ONLY thing that varies is the code generator
 # (compiler.cpu.implementation = legacy | experimental). Phases, in execution order:
 #
@@ -74,7 +74,7 @@
 
 set -euo pipefail
 
-REPO_ROOT="/capstor/scratch/cscs/ybudanaz/aarch64/dace-readable"   # TODO: set to the synced repo root
+REPO_ROOT="/capstor/scratch/cscs/ybudanaz/aarch64/dace"   # TODO: set to the synced repo root
 cd "$REPO_ROOT/codegen_buildperf_jobs"
 
 CODEGEN="${CODEGEN:-both}"
@@ -129,7 +129,7 @@ alias python=python3.11
 spack load gcc@16.1.0     # provides g++
 spack load llvm@22.1.5    # provides clang++
 spack load cmake
-spack load openblas
+spack load openblas threads=pthreads
 
 # Fail fast if either host compiler did not land on PATH (a wrong spack version pin, or the
 # module not installed on the node) -- otherwise DACE_PERF_CXX=g++/clang++ fails per-kernel later.
@@ -141,7 +141,7 @@ echo "toolchain: g++=$(command -v g++) clang++=$(command -v clang++)"
 # LD_LIBRARY_PATH, and the install sits off the ldconfig cache -- without this, MatMul/potrf
 # report "OpenBLAS not installed" and expand to a naive pure loop. Also lets any LAPACK-node
 # kernel link via DACE_PERF_LAPACK_LIBDIR (engine.configure_dace_process).
-export OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+export OPENBLAS_DIR="$(spack location -i openblas threads=pthreads 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"
@@ -188,7 +188,7 @@ run_cpu_phase() {
     # engine.configure_dace_process reads DACE_PERF_CXX -> compiler.cpu.executable; the runners
     # read it back for the `cxx` column, so the label can never disagree with the compiler used.
     export DACE_PERF_CXX="$cxx"
-    export OMP_NUM_THREADS="$threads"
+    export OMP_NUM_THREADS="$threads" OPENBLAS_NUM_THREADS="$threads"
     export OMP_PROC_BIND=close   # keep each rank's thread(s) within its own socket
     export OMP_PLACES=cores
 

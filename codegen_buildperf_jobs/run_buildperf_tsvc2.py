@@ -119,7 +119,7 @@ def pipelined_sdfg(program, name):
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
     sdfg = engine.pipeline_parallel(sdfg, DEVICE)
-    ConvertLengthOneArraysToScalars(single_element=True, transient_only=True).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
     return sdfg
 
 

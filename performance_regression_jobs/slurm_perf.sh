@@ -34,7 +34,7 @@ RESULTS_DIR="${RESULTS_DIR:-results/$EXPERIMENT}"
 
 # MPI anti-hang (must match run_perf.py's own os.environ.setdefault block) +
 # threading. Exported so every rank / spawned subprocess inherits them.
-export OMP_NUM_THREADS="72"        # one Grace CPU's worth of cores per rank
+export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72"        # one Grace CPU's worth of cores per rank
 export OMP_PROC_BIND="close"       # pin OpenMP threads, packed within the rank's socket
 export OMP_PLACES="cores"          # one OpenMP place per physical core
 export MPI4PY_RC_INITIALIZE="0"
@@ -53,7 +53,7 @@ alias python=python3.11
 spack load gcc@16.1.0
 spack load llvm@22.1.5
 spack load cmake
-spack load openblas
+spack load openblas threads=pthreads
 spack load cuda
 spack load cutensor
 
@@ -81,7 +81,7 @@ fi
 # (dace/libraries/blas/environments/openblas.py) needs BOTH the OPENBLAS_DIR env var it now checks
 # AND the lib dir on LD_LIBRARY_PATH. Without them MatMul/potrf report "OpenBLAS not installed" and
 # expand to a naive pure loop (~25x slower); with them gemm/k2mm/k3mm/cholesky route to cblas_dgemm.
-export OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+export OPENBLAS_DIR="$(spack location -i openblas threads=pthreads 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"
