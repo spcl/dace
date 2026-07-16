@@ -85,15 +85,16 @@ def test_gemm_to_tensordot_leaves_lowering_unset():
     assert _tds(sdfg)[0][0].implementation is None
 
 
-def test_rewrite_copy_pass_leaves_transpose_unset_then_select_sets_it():
-    """RewriteCopyForLayout (the pass that inserts a standalone TensorTranspose) must also leave the
-    lowering unset, and select_layout_lowering must then set it."""
+def test_permute_leaves_its_transpose_unset_then_select_sets_it():
+    """PermuteDimensions replaces a copy it made transposing with a TensorTranspose (it is the pass
+    that knows the permutation), and it must leave the LOWERING unset -- choosing the library
+    expansion is select_layout_lowering's job, not a transform's."""
     sdfg = elementwise_copy.to_sdfg(simplify=True)
     prepare_for_layout(sdfg, validate=False)
     PermuteDimensions(permute_map={"A": [1, 0]}, add_permute_maps=True).apply_pass(sdfg, {})
-    assert RewriteCopyForLayout().apply_pass(sdfg, {}) == 1
+    assert RewriteCopyForLayout().apply_pass(sdfg, {}) == 0  # the permute already converted it
     tt = _tts(sdfg)[0][0]
-    assert tt.implementation is None  # pass did not choose a lowering
+    assert tt.implementation is None  # the transform did not choose a lowering
     assert select_layout_lowering(sdfg, "cpu") == 1
     assert tt.implementation == "pure"
 
