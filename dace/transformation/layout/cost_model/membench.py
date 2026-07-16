@@ -1,0 +1,119 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Build and drive the memory microbenchmarks in ``membench.c``.
+
+The C side self-times a window and returns nanoseconds, so the ctypes call overhead sits outside the
+measurement. This module owns the build, the window statistics, and the environment gate.
+
+Statistic is the MIN over windows, never the mean: interference (interrupts, DVFS, a page fault, the
+iGPU driving the panel off the same DRAM) only ever ADDS time, so the distribution is right-skewed
+and the minimum is the noise-free estimator. The spread across windows is reported alongside, so a
+number taken on a contended box cannot be silently trusted.
+"""
+import ctypes
+import os
+import subprocess
+from dataclasses import dataclass
+from typing import List, Optional
+
+SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "membench.c")
+
+# -fno-tree-loop-distribute-patterns: without it -O3 rewrites a serial copy loop into a memcpy call,
+# whose strategy flips at glibc's non-temporal threshold -- the benchmark would then measure glibc's
+# choices. No -ffast-math: it buys nothing for a memory-bound kernel and perturbs the triad.
+CFLAGS = ["-O3", "-march=native", "-fno-tree-loop-distribute-patterns", "-fopenmp", "-shared", "-fPIC"]
+
+
+@dataclass(frozen=True)
+class Sample:
+    """One measurement: the MIN over accepted windows, qualified by the spread across them."""
+    value: float  # ns/hop for the chase, hardware bytes/s for the triad
+    spread: float  # (max - min) / min over accepted windows
+    windows: int  # accepted (fault-free) windows
+
+
+def build(cc: Optional[str] = None, out_dir: Optional[str] = None) -> ctypes.CDLL:
+    """Compile ``membench.c`` to a shared object and load it. Cached by the caller if desired."""
+    cc = cc or os.environ.get("CC", "cc")
+    out_dir = out_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), "build")
+    os.makedirs(out_dir, exist_ok=True)
+    out = os.path.join(out_dir, "libmembench.so")
+    subprocess.run([cc, *CFLAGS, SOURCE, "-o", out], check=True, capture_output=True, text=True)
+    lib = ctypes.CDLL(out)
+
+    lib.chase_setup.restype = ctypes.c_void_p
+    lib.chase_setup.argtypes = [ctypes.c_size_t, ctypes.c_size_t, ctypes.c_uint, ctypes.c_uint]
+    lib.chase_verify.restype = ctypes.c_int
+    lib.chase_verify.argtypes = [ctypes.c_void_p]
+    lib.chase_flush.restype = None
+    lib.chase_flush.argtypes = [ctypes.c_void_p]
+    lib.chase_run_timed.restype = ctypes.c_uint64
+    lib.chase_run_timed.argtypes = [
+        ctypes.c_void_p, ctypes.c_uint64,
+        ctypes.POINTER(ctypes.c_uint64),
+        ctypes.POINTER(ctypes.c_uint64)
+    ]
+    lib.chase_teardown.restype = None
+    lib.chase_teardown.argtypes = [ctypes.c_void_p]
+    lib.triad_run_timed.restype = None
+    lib.triad_run_timed.argtypes = [
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double),
+        ctypes.POINTER(ctypes.c_double), ctypes.c_double, ctypes.c_size_t,
+        ctypes.POINTER(ctypes.c_uint64)
+    ]
+    return lib
+
+
+def transparent_hugepages_enabled() -> bool:
+    """Whether THP can back the arena. ``madvise`` is advisory: if THP is ``never`` the arena falls
+    back to 4 KiB pages, a 512 MiB random chase then exceeds the L2 DTLB, and L carries a page-walk
+    term that has nothing to do with the memory level being measured."""
+    try:
+        with open("/sys/kernel/mm/transparent_hugepage/enabled") as handle:
+            return "[never]" not in handle.read()
+    except OSError:
+        return False
+
+
+def anon_hugepage_bytes() -> int:
+    """AnonHugePages currently backing this process, from smaps_rollup."""
+    try:
+        with open("/proc/self/smaps_rollup") as handle:
+            for line in handle:
+                if line.startswith("AnonHugePages:"):
+                    return int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return 0
+
+
+def load_average() -> float:
+    return os.getloadavg()[0]
+
+
+def available_bytes() -> int:
+    with open("/proc/meminfo") as handle:
+        for line in handle:
+            if line.startswith("MemAvailable:"):
+                return int(line.split()[1]) * 1024
+    return 0
+
+
+def check_environment(arena_bytes: int, max_load: float = 0.5) -> List[str]:
+    """Reasons this machine cannot produce a trustworthy number RIGHT NOW; empty means go.
+
+    A measurement is not a test: on a loaded box the numbers are plausible and wrong, which is worse
+    than no number at all. The caller refuses to record rather than reporting a qualified guess.
+    """
+    reasons = []
+    load = load_average()
+    if load > max_load:
+        reasons.append(f"load average {load:.2f} > {max_load} (a contended box inflates every sample)")
+    available = available_bytes()
+    if available < 4 * arena_bytes:
+        reasons.append(f"MemAvailable {available / 2**30:.2f} GiB < 4x arena "
+                       f"({4 * arena_bytes / 2**30:.2f} GiB): risks reclaim/swap inside a window")
+    if not transparent_hugepages_enabled():
+        reasons.append("transparent hugepages are 'never': the arena would use 4 KiB pages and L "
+                       "would carry a TLB page-walk term")
+    return reasons
