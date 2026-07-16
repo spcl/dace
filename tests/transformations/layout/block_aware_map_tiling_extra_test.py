@@ -274,3 +274,25 @@ if __name__ == "__main__":
     test_non_dividing_factor_uses_remainder_guard()
     test_idempotent_when_tile_equals_extent()
     print("block-aware map tiling extra tests PASS")
+
+def test_divides_evenly_is_not_asserted_on_a_map_that_provably_is_not():
+    """divides_evenly is a caller ASSERTION applied to every map this pass tiles. A map whose extent
+    is a known constant the tile does not divide (10 vs 8) would have its remainder DROPPED by
+    MapTiling. The assertion is overridden to False for such a map; a symbolic extent the caller
+    padded is still trusted, since it cannot be proven either way."""
+    import dace
+    from dace.transformation.layout.block_aware_map_tiling import provably_indivisible
+
+    N = dace.symbol("N")
+
+    def map_entry(ranges):
+        sdfg = dace.SDFG("g")
+        state = sdfg.add_state("s", is_start_block=True)
+        me, _ = state.add_map("m", ranges)
+        return me
+
+    assert provably_indivisible(map_entry({"i": "0:10"}), (8, )) is True  # proof: 10 % 8 == 2
+    assert provably_indivisible(map_entry({"i": "0:16"}), (8, )) is False  # proof: divides
+    assert provably_indivisible(map_entry({"i": "0:N"}), (8, )) is False  # unprovable -> trust caller
+    # any indivisible dimension is enough
+    assert provably_indivisible(map_entry({"i": "0:16", "j": "0:10"}), (8, 8)) is True
