@@ -53,16 +53,20 @@ def hoist_loop_decls(node: nodes.MapEntry) -> bool:
     return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
 
 
-def loop_exit_test(begin, end, skip) -> Tuple[str, str]:
+def loop_exit_test(begin, end, skip, node: nodes.MapEntry) -> Tuple[str, str]:
     """The ``(comparison, bound)`` of a map loop's exit test, per ``codegen_params.loop_bound_cmp``.
 
     Every spelling covers the identical iteration space ``[begin, end]`` at stride ``skip``.
 
-    ``ne`` supports any stride. A naive ``i != end + 1`` is only correct when the stride divides the
-    range -- otherwise the counter steps OVER that bound, never compares equal, and the loop does not
-    terminate. So for a non-unit stride the bound is normalised to the first value the counter
-    actually LANDS on at or past the end, ``begin + int_ceil(end + 1 - begin, skip) * skip``, which the
-    induction variable is guaranteed to hit exactly.
+    ``ne`` supports any stride on a SEQUENTIAL loop. A naive ``i != end + 1`` is only correct when the
+    stride divides the range -- otherwise the counter steps OVER that bound, never compares equal, and
+    the loop does not terminate. So for a non-unit stride the bound is normalised to the first value
+    the counter actually LANDS on at or past the end, ``begin + int_ceil(end + 1 - begin, skip) *
+    skip``, which the induction variable is guaranteed to hit exactly.
+
+    On an OpenMP-scheduled map, ``ne`` is legal ONLY with a stride the compiler can see is +/-1: the
+    canonical loop form the pragma requires rejects ``!=`` otherwise (``g++``: "increment is not
+    constant 1 or -1 for '!=' condition"). A non-unit / symbolic stride there falls back to ``<``.
     """
     mode = Config.get('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp')
     if mode == 'le':
@@ -70,7 +74,9 @@ def loop_exit_test(begin, end, skip) -> Tuple[str, str]:
     if mode == 'ne':
         if symbolic.pystr_to_symbolic(skip) == 1:
             return '!=', sym2cpp(end + 1)
-        return '!=', sym2cpp(begin + symbolic.int_ceil(end + 1 - begin, skip) * skip)
+        openmp = node.map.schedule in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+        if not openmp:
+            return '!=', sym2cpp(begin + symbolic.int_ceil(end + 1 - begin, skip) * skip)
     return '<', sym2cpp(end + 1)
 
 
@@ -2779,7 +2785,7 @@ class CPUCodeGen(TargetCodeGenerator):
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
 
-                comparison, bound = loop_exit_test(begin, end, skip)
+                comparison, bound = loop_exit_test(begin, end, skip, node)
                 init = '%s %s = %s' % (loop_index_ctype(), var, cpp.sym2cpp(begin))
                 if hoist_loop_decls(node):
                     # Declared ahead of the loop, so it outlives it -- the map's encapsulating scope is

@@ -66,9 +66,13 @@ def test_loop_bound_cmp_ne_on_unit_stride():
 
 
 def test_loop_bound_cmp_ne_supports_non_unit_stride():
-    """`ne` handles any stride by normalising the bound to a value the counter actually lands on --
-    a naive `i != end + 1` would be stepped over and never terminate."""
-    lines = loop_lines(generate(strided, loop_bound_cmp='ne'))
+    """On a SEQUENTIAL strided map, `ne` normalises the bound to a value the counter actually lands on
+    (a naive `i != end + 1` would be stepped over and never terminate). Sequential because on an
+    OpenMP map a non-unit `!=` is illegal and falls back to `<` -- see test_openmp_strided_map."""
+    sdfg = sequential_strided_sdfg()
+    with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value='ne'):
+        code = '\n'.join(o.code for o in sdfg.generate_code() if o.language == 'cpp')
+    lines = loop_lines(code)
     assert lines, 'no loop emitted'
     assert any('!=' in line for line in lines), lines
     assert any('int_ceil' in line for line in lines), lines
@@ -147,6 +151,57 @@ def test_hoisted_sibling_maps_do_not_collide(implementation):
         sdfg(A=A, B=B, C=C, N=24)
         assert numpy.allclose(B, A * 2.0)
         assert numpy.allclose(C, A * 2.0)
+
+
+def sequential_strided_sdfg(name='seq_strided'):
+    """A SEQUENTIAL map with a non-unit stride -- the case where `ne` normalises the bound via
+    int_ceil and emits `i != <bound>; i += 2` (legal because there is no OpenMP canonical-form
+    constraint on a sequential loop)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', dict(i='0:N:2'), schedule=dace.dtypes.ScheduleType.Sequential)
+    tasklet = state.add_tasklet('t', {'a'}, {'b'}, 'b = a * 2.0')
+    state.add_memlet_path(state.add_read('A'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def openmp_strided_sdfg(name='omp_strided'):
+    """A CPU_Multicore map with a non-unit stride -- the case where `ne` would emit `i != <bound>`
+    under `#pragma omp parallel for`, which the OpenMP canonical form rejects for a non-unit stride
+    ('increment is not constant 1 or -1'). The frontend's strided maps get a non-OMP schedule, so this
+    is built directly to force the OpenMP path."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', dict(i='0:N:2'), schedule=dace.dtypes.ScheduleType.CPU_Multicore)
+    tasklet = state.add_tasklet('t', {'a'}, {'b'}, 'b = a * 2.0')
+    state.add_memlet_path(state.add_read('A'), entry, tasklet, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('B'), src_conn='b', memlet=dace.Memlet('B[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize('loop_bound_cmp', ['lt', 'le', 'ne'])
+def test_openmp_strided_map_compiles_and_runs(loop_bound_cmp):
+    """`ne` on an OpenMP-scheduled non-unit-stride map must fall back to `<`: `i != <bound>; i += 2`
+    is rejected by the OpenMP canonical loop form, so this would otherwise fail to compile."""
+    sdfg = openmp_strided_sdfg('omp_strided_%s' % loop_bound_cmp)
+    with set_temporary('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp', value=loop_bound_cmp):
+        code = '\n'.join(o.code for o in sdfg.generate_code() if o.language == 'cpp')
+        # If the pragma is present, the loop must not use `!=` with the non-unit stride.
+        for line in code.splitlines():
+            stripped = line.strip()
+            if stripped.startswith('for (') and 'i += 2' in stripped:
+                assert '!=' not in stripped, stripped
+        A = numpy.random.default_rng(0).random(30)
+        B = numpy.zeros(30)
+        sdfg(A=A, B=B, N=30)
+        assert numpy.allclose(B[::2], A[::2] * 2.0)
 
 
 @pytest.mark.parametrize('n', [31, 32])
