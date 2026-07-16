@@ -608,6 +608,42 @@ required:
                                     expected"). A CPU_Multicore / CPU_Persistent map therefore keeps
                                     ``for_init`` regardless of this key. ``for_init`` reproduces today's
                                     output byte-for-byte.
+                            loop_access_form:
+                                type: str
+                                default: indexed
+                                title: Sequential-loop array access form
+                                description: >
+                                    Applies to: experimental_readable ONLY (legacy emits no readable
+                                    ``<array>_idx`` access path to rewrite, so it ignores this key and
+                                    stays byte-identical for every value).
+
+                                    How arrays indexed at the loop counter are accessed inside a
+                                    SEQUENTIAL map loop: ``indexed`` (the default) recomputes the flat
+                                    index every iteration -- ``C[C_idx(i)] = A[A_idx(i)] + B[B_idx(i)]``;
+                                    ``ptr_increment`` walks each such array with a base pointer advanced
+                                    by its constant per-iteration stride --
+                                    ``T* pC = C; ...; for (...) { *pC = *pA + *pB; pC += 1; pA += 1; }``.
+                                    Both cover the identical memory accesses in the identical order.
+
+                                    This is a READABILITY / variant-space form, NOT a speed lever: the
+                                    backend canonicalizes the two directions into one (indvars raises a
+                                    pointer recurrence to a subscript, LSR lowers a subscript back to a
+                                    walking GEP, and x86-64 scaled-index addressing makes the index math
+                                    free), so no speedup is claimed or expected -- it exists to emit a
+                                    visibly different but equivalent form.
+
+                                    SEQUENTIAL constructs only, and gated exactly as the hoisted
+                                    declaration is: an OpenMP (``CPU_Multicore`` / ``CPU_Persistent``)
+                                    map keeps the canonical indexed loop the parallel-for pragma requires
+                                    (a walking pointer is a loop-carried dependency the parallelism
+                                    forbids), so it is unaffected. It is applied only where a simple
+                                    pointer walk is provably equivalent -- a single 1-D sequential map
+                                    whose one tasklet indexes plain arrays affinely in the loop counter,
+                                    with no WCR. Any other shape (a multi-dimensional or mixed-variable
+                                    index, an indirect/gather or non-affine subscript, a WCR output, a
+                                    non-unit-tasklet scope) falls back to ``indexed`` for that construct
+                                    rather than emitting a walk. ``indexed`` reproduces today's output
+                                    byte-for-byte.
 
             #############################################
             # GPU (CUDA/HIP) compiler

@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from copy import deepcopy
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import ControlFlowRegion, SDFGState, StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
 import functools
 import itertools
 import warnings
@@ -39,6 +39,33 @@ def loop_index_ctype() -> str:
     return LOOP_INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')]
 
 
+def loop_region_index_ctype() -> Optional[str]:
+    """Declared-type override for a sequential ``LoopRegion`` counter, per
+    ``codegen_params.loop_index_type``. ``auto`` (the default) returns ``None`` -- keep the counter's
+    inferred type, so the emitted declaration is byte-for-byte what it was before the knob existed.
+    ``int32`` / ``int64`` return ``int`` / ``long long`` (the same spellings the map-loop emitter uses
+    via ``LOOP_INDEX_CTYPES``), applied to the hoisted declaration a LoopRegion counter is given ahead
+    of its loop. A LoopRegion is inherently sequential, so there is no OpenMP gate here."""
+    ctype = LOOP_INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')]
+    return None if ctype == 'auto' else ctype
+
+
+def is_loop_region_variable(name: str, sdfg: SDFG) -> bool:
+    """Whether ``name`` is the loop counter of some ``LoopRegion`` in ``sdfg``. Only such a counter's
+    declaration is retyped by ``loop_index_type``; every other interstate symbol keeps its inferred
+    type (retyping an arbitrary interstate assignment target would change semantics, not spelling)."""
+    return any(isinstance(cfr, LoopRegion) and cfr.loop_variable == name for cfr in sdfg.all_control_flow_regions())
+
+
+def map_schedule_is_sequential(node: nodes.MapEntry) -> bool:
+    """Whether this map emits a plain sequential loop rather than an OpenMP ``parallel for``. The gate
+    shared by every knob that rewrites the loop into a non-canonical form (hoisted declaration, walking
+    pointer): an OpenMP pragma must be immediately followed by a CANONICAL indexed loop, and a
+    loop-carried rewrite is exactly what a ``parallel for`` forbids, so those knobs apply to sequential
+    (non-``CPU_Multicore`` / non-``CPU_Persistent``) maps only."""
+    return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+
+
 def hoist_loop_decls(node: nodes.MapEntry) -> bool:
     """Whether this map's induction variables are declared ahead of their loops (``T i = begin; for (;
     ...)``) instead of in the for-statement's init clause, per ``codegen_params.loop_decl_style``.
@@ -50,7 +77,7 @@ def hoist_loop_decls(node: nodes.MapEntry) -> bool:
     """
     if Config.get('compiler', 'cpu', 'codegen_params', 'loop_decl_style') != 'hoisted':
         return False
-    return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+    return map_schedule_is_sequential(node)
 
 
 def loop_exit_test(begin, end, skip, node: nodes.MapEntry) -> Tuple[str, str]:
@@ -3175,6 +3202,16 @@ class CPUCodeGen(TargetCodeGenerator):
 
     def emit_interstate_variable_declaration(self, name: str, dtype: dtypes.typeclass, callsite_stream: CodeIOStream,
                                              sdfg: SDFG):
+        # ``loop_index_type`` (int32/int64) retypes ONLY a LoopRegion counter's hoisted declaration --
+        # ``int i;`` / ``long long i;`` in place of the inferred type. The registered defined-type
+        # follows the same spelling so the counter's other uses (condition, body indexing) name that
+        # type without introducing a cast. ``auto`` (the default) leaves the declaration untouched, so
+        # legacy output stays byte-identical. Every non-counter interstate symbol is unaffected.
+        override = loop_region_index_ctype()
+        if override is not None and is_loop_region_variable(name, sdfg):
+            callsite_stream.write('%s %s;\n' % (override, name), sdfg)
+            self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, override)
+            return
         isvar = data.Scalar(dtype)
         callsite_stream.write('%s;\n' % (isvar.as_arg(with_types=True, name=name)), sdfg)
         self._frame.dispatcher.defined_vars.add(name, DefinedType.Scalar, dtype.ctype)
