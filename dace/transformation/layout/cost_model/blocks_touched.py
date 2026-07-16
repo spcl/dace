@@ -22,6 +22,17 @@ of scope.
 The block size is a parameter, so one function serves both devices: 64 B cache line on the CPU, 32 B
 sector for GPU global-memory coalescing. It is given in ELEMENTS (block bytes / dtype bytes), matching
 the element strides.
+
+ACCURACY: the per-dimension fraction is a CONTINUOUS approximation of the integer block count -- it
+uses ``(extent - 1) * stride / block`` where the true count applies ``ceil`` at block granularity.
+Checked against a brute-force traversal oracle, it converges to the exact block-transaction count as
+extents grow (2D row-major -> 1/8, transpose -> 1), but OVERCOUNTS for small tiles: a contiguous 4x4
+fp64 tile is 16 contiguous elements = 2 blocks, yet the independent per-dimension fractions cannot see
+that the inner runs combine into one contiguous span, and report ~4. The RANKING is preserved
+(contiguous always scores below scattered), so choosing a layout is sound; absolute transaction counts
+for sub-block tiles are not exact. The exact streaming/coalescing count over the innermost contiguous
+run is the next refinement, and ``tests/.../cost_model_blocks_touched_test.py`` carries the oracle it
+must match.
 """
 from typing import Dict, List
 

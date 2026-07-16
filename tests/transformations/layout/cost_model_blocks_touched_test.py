@@ -5,6 +5,8 @@ The invariant these pin: the metric must SEE a layout change. A contiguous-inner
 less than a strided one (Permute), and a contiguous tile must cost less than a scattered one even
 when the reuse is on a non-innermost loop (Block/AoSoA). The second is the one the old
 innermost-only fraction could not express."""
+import itertools
+
 import dace
 import sympy as sp
 
@@ -13,6 +15,37 @@ from dace.transformation.layout.cost_model.access_subsets import get_access_subs
 
 N = dace.symbol("N")
 T = dace.symbol("T")
+
+
+def _brute_force_avg_blocks(extents, strides, block_size):
+    """Ground truth: enumerate the nest in traversal order and count block-index CHANGES between
+    consecutive iterations (+1 for the first) -- one new block message per change under the
+    streaming/coalescing model."""
+    total = 1
+    count = 0
+    prev = None
+    for idx in itertools.product(*[range(e) for e in extents]):
+        block = sum(i * s for i, s in zip(idx, strides)) // block_size
+        if prev is not None and block != prev:
+            total += 1
+        prev = block
+        count += 1
+    return total / count
+
+
+def _formula_avg_blocks(extents, strides, block_size):
+    sdfg = dace.SDFG("bt_oracle")
+    shape = [dace.symbol(f"E{i}") for i in range(len(extents))]
+    sdfg.add_array("A", shape, dace.float64, strides=strides)
+    sdfg.add_array("B", shape, dace.float64)
+    st = sdfg.add_state("s", is_start_block=True)
+    me, mx = st.add_map("m", {f"i{d}": f"0:{extents[d]}" for d in range(len(extents))})
+    t = st.add_tasklet("t", {"a"}, {"b"}, "b = a")
+    sub = ",".join(f"i{d}" for d in range(len(extents)))
+    st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet(f"A[{sub}]"))
+    st.add_memlet_path(t, mx, st.add_write("B"), src_conn="b", memlet=dace.Memlet(f"B[{sub}]"))
+    lr = [{p: r for p, r in zip(me.map.params, me.map.range)}]
+    return float(sp.simplify(average_blocks_touched(st, lr, get_access_subsets(st, me), block_size)["A"]))
 
 
 def _blocks_2d(strides, block_size=8):
@@ -91,10 +124,54 @@ def test_extent_uses_integer_floor_not_c_division():
     assert abs(float(sp.simplify(value).subs(N, 4096)) - 1.0 / 4.0) < 0.02
 
 
+def test_formula_ranks_layouts_the_same_as_the_brute_force_oracle():
+    """The load-bearing property: the formula must ORDER layouts the same way the exact traversal
+    count does. Absolute values need not match (the continuous fraction overcounts sub-block tiles),
+    but a layout the oracle calls cheaper must never come out more expensive."""
+    cases = [
+        ((16, 16), (16, 1)),  # 2D row-major
+        ((16, 16), (1, 16)),  # 2D col-major
+        ((8, 8, 4, 4), (128, 16, 4, 1)),  # 4D contiguous tile
+        ((8, 8, 4, 4), (128, 16, 64, 1)),  # 4D scattered tile
+        ((32,), (1,)),  # 1D contiguous
+        ((32,), (3,)),  # 1D strided
+    ]
+    block = 8
+    brute = [_brute_force_avg_blocks(e, s, block) for e, s in cases]
+    formula = [_formula_avg_blocks(e, s, block) for e, s in cases]
+    # Every ordered pair must agree in direction (allowing ties within a small tolerance).
+    for a in range(len(cases)):
+        for b in range(len(cases)):
+            if brute[a] < brute[b] - 1e-6:
+                assert formula[a] <= formula[b] + 1e-6, (cases[a], cases[b], brute, formula)
+
+
+def test_formula_converges_to_the_oracle_for_large_extents():
+    """The continuous fraction is asymptotically exact: as extents grow the ceil() rounding it omits
+    becomes negligible, so the 2D row-major formula approaches the true 1/8."""
+    formula = float(_blocks_2d((N, 1)).subs(N, 8192))
+    brute_limit = 1.0 / 8.0
+    assert abs(formula - brute_limit) < 0.005
+
+
+def test_formula_overcounts_small_tiles_ranking_still_holds():
+    """The known, documented inaccuracy: a contiguous 4x4 tile is 16 contiguous elements = 2 blocks
+    (oracle 0.125), but the per-dimension fraction reports ~0.25. Pinned so the limitation is not
+    mistaken for exactness -- and so a future exact rewrite has a target."""
+    extents, strides = (8, 8, 4, 4), (128, 16, 4, 1)
+    assert abs(_brute_force_avg_blocks(extents, strides, 8) - 0.125) < 1e-6  # the truth
+    assert _formula_avg_blocks(extents, strides, 8) > 0.2  # the overcount
+    # but still below the scattered tile -- ranking intact
+    assert _formula_avg_blocks(extents, strides, 8) < _formula_avg_blocks((8, 8, 4, 4), (128, 16, 64, 1), 8)
+
+
 if __name__ == "__main__":
     test_contiguous_inner_reaches_one_over_block_size()
     test_permute_is_creditable_in_2d()
     test_block_size_scales_the_reuse()
     test_outer_tile_reuse_is_credited()
     test_extent_uses_integer_floor_not_c_division()
+    test_formula_ranks_layouts_the_same_as_the_brute_force_oracle()
+    test_formula_converges_to_the_oracle_for_large_extents()
+    test_formula_overcounts_small_tiles_ranking_still_holds()
     print("blocks_touched tests PASS")

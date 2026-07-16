@@ -78,6 +78,30 @@ def achievable_rate(p: LogGP) -> float:
     return min(bandwidth_bound, latency_bound)
 
 
+def memory_time(blocks_per_iter: float, total_iters: float, p: LogGP) -> float:
+    """Predicted memory time (seconds) of a kernel from its block-transaction count.
+
+    This is where the latency model MEETS the layout: ``blocks_per_iter`` (from
+    :func:`~dace.transformation.layout.cost_model.blocks_touched.average_blocks_touched`) is the only
+    term a layout transformation moves, and the total time is the block-message traffic divided by
+    the rate the hardware sustains.
+
+        time = blocks_per_iter * total_iters * line_bytes / achievable_rate
+
+    The consequence -- the answer to "can a latency model rank layouts": ``total_iters``,
+    ``line_bytes`` and ``achievable_rate`` are the SAME for every layout of one kernel on one device,
+    so the predicted time is proportional to ``blocks_per_iter``. The layout ranking is therefore
+    carried entirely by the block count and is INVARIANT to whether the kernel runs latency-bound or
+    bandwidth-bound -- both regimes scale the block count by the same per-block constant. A latency
+    model explains layout performance precisely because a layout change is a change in the number of
+    block messages. (This assumes the achievable rate itself does not depend on the layout; a badly
+    scattered access that cannot sustain concurrency drops to the latency-bound branch and is penalised
+    a second time -- a refinement, noted, not yet modelled.)
+    """
+    total_bytes = blocks_per_iter * total_iters * p.line_bytes
+    return total_bytes / achievable_rate(p)
+
+
 @dataclass(frozen=True)
 class Fit:
     """A least-squares ``T(n) = alpha + beta * n`` over the message-size sweep."""

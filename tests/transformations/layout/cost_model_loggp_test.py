@@ -6,7 +6,8 @@ import math
 import pytest
 
 from dace.transformation.layout.cost_model.loggp import (LogGP, Fit, gap_from_bandwidth, lines_touched,
-                                                         message_time, achievable_rate, fit_message_size, validate)
+                                                         message_time, achievable_rate, memory_time,
+                                                         fit_message_size, validate)
 
 
 def _dram(L=95e-9, g=4e-9, bw_sat=100e9, bw_core=40e9, line=64):
@@ -104,6 +105,35 @@ def test_validate_flags_each_inconsistency():
     assert any("exceeds hardware peak" in r for r in validate(over_peak, over_fit, 102.4e9, over_peak.concurrency))
 
 
+def test_memory_time_ranks_layouts_by_block_count():
+    """A layout that touches fewer blocks per iteration is predicted faster, on one kernel/device."""
+    p = _dram()
+    total_iters = 4096 * 4096
+    contiguous = memory_time(blocks_per_iter=1.0 / 8.0, total_iters=total_iters, p=p)  # ~1/8
+    transposed = memory_time(blocks_per_iter=1.0, total_iters=total_iters, p=p)  # ~1
+    assert transposed > contiguous
+    assert transposed / contiguous == pytest.approx(8.0, rel=1e-9)  # time is proportional to blocks
+
+
+def test_layout_ranking_is_invariant_to_the_regime():
+    """The point of the latency model: because total_iters, line, and the achievable rate are the
+    same for every layout of one kernel, predicted time is PROPORTIONAL to the block count -- so the
+    ranking is identical whether the kernel is latency-bound or bandwidth-bound. A latency model can
+    rank layouts because a layout change IS a change in block-message count."""
+    total_iters = 1_000_000
+    layouts = {"contig": 1.0 / 8.0, "blocked": 1.0 / 2.0, "transpose": 1.0}
+
+    bandwidth_bound = _dram(L=95e-9, g=0.5e-9, bw_sat=100e9)  # concurrency 190 -> 1/G limits
+    latency_bound = _dram(L=95e-9, g=90e-9, bw_sat=100e9)  # concurrency ~1 -> concurrency/L limits
+    assert achievable_rate(bandwidth_bound) == pytest.approx(1.0 / bandwidth_bound.G)
+    assert achievable_rate(latency_bound) < 1.0 / latency_bound.G  # genuinely different regimes
+
+    def order(p):
+        return sorted(layouts, key=lambda name: memory_time(layouts[name], total_iters, p))
+
+    assert order(bandwidth_bound) == order(latency_bound) == ["contig", "blocked", "transpose"]
+
+
 if __name__ == "__main__":
     test_lines_touched_rounds_up_to_granularity()
     test_message_time_first_line_is_latency_rest_streams()
@@ -113,4 +143,6 @@ if __name__ == "__main__":
     test_fit_rejects_degenerate_input()
     test_validate_accepts_a_consistent_parametrization()
     test_validate_flags_each_inconsistency()
+    test_memory_time_ranks_layouts_by_block_count()
+    test_layout_ranking_is_invariant_to_the_regime()
     print("loggp tests PASS")
