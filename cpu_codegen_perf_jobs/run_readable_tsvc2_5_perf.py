@@ -89,8 +89,17 @@ def set_implementation(codegen):
     codegen reads (compiler.cpu.implementation). Also mirrored into the environment so
     any nested spawn inherits the same selection."""
     import dace
-    dace.Config.set('compiler', 'cpu', 'implementation', value=codegen)
-    os.environ['DACE_compiler_cpu_implementation'] = codegen
+    value = codegen
+    if codegen == 'experimental':
+        # The readable generator's flag value was renamed 'experimental' -> 'experimental_readable';
+        # probe which this dace build recognizes so the readable path activates against either tree.
+        from dace.codegen.targets import cpp
+        value = 'experimental_readable'
+        dace.Config.set('compiler', 'cpu', 'implementation', value=value)
+        if not cpp.readable_cpu_codegen_active():
+            value = 'experimental'
+    dace.Config.set('compiler', 'cpu', 'implementation', value=value)
+    os.environ['DACE_compiler_cpu_implementation'] = value
 
 
 def sdfg_name(name, preset, codegen):
@@ -107,7 +116,7 @@ def pipelined_sdfg(program, name):
     sdfg = program.to_sdfg(simplify=True)
     sdfg.name = name
     sdfg = engine.pipeline_parallel(sdfg, DEVICE)
-    ConvertLengthOneArraysToScalars(single_element=True, transient_only=True).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
     return sdfg
 
 

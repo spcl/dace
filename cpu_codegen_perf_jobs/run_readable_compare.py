@@ -122,8 +122,17 @@ def set_implementation(codegen):
     any nested spawn). The experimental generator now auto-runs clang-format,
     duplicate-``#include`` collapse and clang-tidy with no config flag; clang-tidy is
     suppressed for the timed compile via :func:`compile_without_tidy` instead."""
-    dace.Config.set('compiler', 'cpu', 'implementation', value=codegen)
-    os.environ['DACE_compiler_cpu_implementation'] = codegen
+    value = codegen
+    if codegen == 'experimental':
+        # The readable generator's flag value was renamed 'experimental' -> 'experimental_readable';
+        # probe which this dace build recognizes so the readable path activates against either tree.
+        from dace.codegen.targets import cpp
+        value = 'experimental_readable'
+        dace.Config.set('compiler', 'cpu', 'implementation', value=value)
+        if not cpp.readable_cpu_codegen_active():
+            value = 'experimental'
+    dace.Config.set('compiler', 'cpu', 'implementation', value=value)
+    os.environ['DACE_compiler_cpu_implementation'] = value
 
 
 def compile_without_tidy(sdfg):

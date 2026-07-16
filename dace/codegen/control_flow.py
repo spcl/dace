@@ -216,9 +216,15 @@ def control_flow_region_to_code(region: AbstractControlFlowRegion,
         expr += '__state_{}_{}:;\n'.format(region.cfg_id, re.sub(r'\s+', '_', node.label))
         if isinstance(node, SDFGState):
             if node.number_of_nodes() > 0:
-                expr += '{\n'
-                expr += dispatch_state(node)
-                expr += '\n}\n'
+                # dispatch_state returns the state body as a string (its declarations stream into a
+                # local buffer), so it is generated first and the C scope wrapped around it only when
+                # needed. Legacy always wraps (byte-identical); the readable generator drops the scope
+                # for a state that declares nothing into it -- see DaCeCodeGenerator.state_needs_brace.
+                body = dispatch_state(node)
+                if codegen.state_needs_brace(node):
+                    expr += '{\n' + body + '\n}\n'
+                else:
+                    expr += body
             else:
                 # Dispatch empty state in any case in order to register that the state was dispatched.
                 expr += dispatch_state(node)

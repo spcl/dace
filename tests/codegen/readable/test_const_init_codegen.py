@@ -6,9 +6,7 @@ as a ``const``/``constexpr`` initializer and that NO redundant runtime
 initialization (``memset`` / ``new`` / ``= {0}`` allocation) is emitted for it,
 and that results stay bit-exact vs legacy.
 """
-import copy
 import numpy as np
-import pytest
 import dace
 from dace.config import Config
 
@@ -72,11 +70,10 @@ def _no_redundant_init(code, arrname):
 
 
 def test_scalar_constexpr_no_memset():
-    sdfg, code = _gen(_scalar_const_sdfg, 'experimental', 'sc_exp')
+    sdfg, code = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_exp')
     lines = code.splitlines()
     # A write-once scalar is promoted to a length-1 constexpr array: constexpr double s[1] = {3.0};
-    assert any('constexpr' in l and 's[1]' in l and '3' in l
-               for l in lines), 'scalar not emitted const/constexpr'
+    assert any('constexpr' in l and 's[1]' in l and '3' in l for l in lines), 'scalar not emitted const/constexpr'
     _no_redundant_init(code, ' s[')
     # correctness
     sdfg_l = _scalar_const_sdfg('sc_leg')
@@ -84,7 +81,7 @@ def test_scalar_constexpr_no_memset():
     A = np.random.rand(8)
     bl, be = np.zeros(8), np.zeros(8)
     sdfg_l.compile()(A=A.copy(), B=bl, N=8)
-    Config.set('compiler', 'cpu', 'implementation', value='experimental')
+    Config.set('compiler', 'cpu', 'implementation', value='experimental_readable')
     sdfg.compile()(A=A.copy(), B=be, N=8)
     assert np.array_equal(bl, be) and np.allclose(be, A * 3.0)
 
@@ -92,7 +89,7 @@ def test_scalar_constexpr_no_memset():
 def test_array_constexpr_full_no_memset():
     vals = {0: '0.0', 1: '1.0', 2: '2.0', 3: '3.0'}
     fac = lambda name: _array_const_sdfg(name, (4, ), vals)
-    sdfg, code = _gen(fac, 'experimental', 'ac_exp')
+    sdfg, code = _gen(fac, 'experimental_readable', 'ac_exp')
     assert any('constexpr' in l and 'arr[' in l and '= {' in l for l in code.splitlines()), \
         'array not emitted constexpr initializer'
     _no_redundant_init(code, 'arr[')
@@ -101,7 +98,7 @@ def test_array_constexpr_full_no_memset():
     A = np.random.rand(4)
     bl, be = np.zeros(4), np.zeros(4)
     fac('ac_leg').compile()(A=A.copy(), B=bl)
-    Config.set('compiler', 'cpu', 'implementation', value='experimental')
+    Config.set('compiler', 'cpu', 'implementation', value='experimental_readable')
     sdfg.compile()(A=A.copy(), B=be)
     assert np.array_equal(bl, be) and np.allclose(be, A + np.array([0., 1., 2., 3.]))
 
@@ -110,7 +107,7 @@ def test_array_constexpr_partial_zerofill():
     # Only indices 1,2 written -> unwritten 0,3 must be zero-filled in the constexpr.
     vals = {1: '5.0', 2: '6.0'}
     fac = lambda name: _array_const_sdfg(name, (4, ), vals)
-    sdfg, code = _gen(fac, 'experimental', 'ap_exp')
+    sdfg, code = _gen(fac, 'experimental_readable', 'ap_exp')
     lines = [l for l in code.splitlines() if 'constexpr' in l and 'arr[' in l and '= {' in l]
     assert lines, 'partial-init array not constexpr'
     _no_redundant_init(code, 'arr[')
@@ -120,7 +117,7 @@ def test_array_constexpr_partial_zerofill():
     # and only compare the WRITTEN region against legacy.
     A = np.zeros(4)
     be = np.zeros(4)
-    Config.set('compiler', 'cpu', 'implementation', value='experimental')
+    Config.set('compiler', 'cpu', 'implementation', value='experimental_readable')
     sdfg.compile()(A=A.copy(), B=be)
     assert np.allclose(be, np.array([0., 5., 6., 0.])), f'zero-fill wrong: {be}'
     bl = np.zeros(4)
@@ -129,8 +126,36 @@ def test_array_constexpr_partial_zerofill():
     assert np.allclose(bl[[1, 2]], be[[1, 2]]), 'written region differs from legacy'
 
 
+def _scalar_constant_subscript_sdfg(name):
+    """A 0-d scalar SDFG constant read via a subscript ``C[0]`` in a tasklet body. MarkConstInit
+    promotes a write-once scalar to exactly such a constant (emitted as bare ``constexpr T C = v;``),
+    so a subscript on it must lower to the bare name -- the classic path trips on the scalar's empty
+    stride list (``Missing dimensions in expression (expected one, got 0)``)."""
+    from dace import data as dt
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('out', [4], dace.float64)
+    sdfg.add_constant('C', np.float64(3.0), dt.Scalar(dace.float64))
+    st = sdfg.add_state('main')
+    me, mx = st.add_map('m', dict(i='0:4'))
+    t = st.add_tasklet('r', {}, {'o'}, 'o = C[0]', language=dace.Language.Python)
+    oacc = st.add_access('out')
+    st.add_edge(me, None, t, None, dace.Memlet())
+    st.add_memlet_path(t, mx, oacc, src_conn='o', memlet=dace.Memlet('out[i]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_scalar_constant_subscript_lowered_to_bare_name():
+    # Before the fix, generate_code raises SyntaxError('Missing dimensions ... got 0').
+    _sdfg, code = _gen(_scalar_constant_subscript_sdfg, 'experimental_readable', 'sc_exp')
+    assert 'constexpr double C = 3.0;' in code, 'scalar constant not emitted as bare constexpr'
+    assert 'C[' not in code, 'scalar-constant subscript survived (should lower to bare name)'
+    assert '= C;' in code, 'read did not lower to the bare name'
+
+
 if __name__ == '__main__':
     test_scalar_constexpr_no_memset()
     test_array_constexpr_full_no_memset()
     test_array_constexpr_partial_zerofill()
+    test_scalar_constant_subscript_lowered_to_bare_name()
     print('ok')

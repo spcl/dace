@@ -27,48 +27,43 @@ from dace.codegen.target import make_absolute
 T = TypeVar('T')
 
 
-def deduplicate_includes(code: str) -> str:
+def deduplicate_lines(code: str, is_candidate: Callable[[str], bool]) -> str:
     """
-    Removes repeated ``#include`` directives (keeping the first occurrence of
-    each) for readability. Used by the experimental readable code generator.
+    Order-preserving de-duplication: drops a line only when ``is_candidate(line.strip())``
+    is true AND that stripped line was already kept. Every other line passes through
+    untouched (raw, keepends). Used by the experimental readable code generator.
     """
     seen: Set[str] = set()
     out: List[str] = []
     for line in code.splitlines(keepends=True):
         stripped = line.strip()
-        if stripped.startswith('#include'):
+        if is_candidate(stripped):
             if stripped in seen:
                 continue
             seen.add(stripped)
         out.append(line)
     return ''.join(out)
+
+
+def deduplicate_includes(code: str) -> str:
+    """Removes repeated ``#include`` directives (keeping the first occurrence of each)."""
+    return deduplicate_lines(code, lambda s: s.startswith('#include'))
 
 
 def deduplicate_functions(code: str) -> str:
     """
-    Removes repeated single-line index / size helper definitions (keeping the first)
-    emitted by the experimental readable code generator. Each helper is a file-scope
-    ``static`` free function on one line, e.g.
+    Removes repeated single-line index / size helper definitions (keeping the first).
+    Each helper is a file-scope ``static`` free function on one line, e.g.
     ``static DACE_HDFI constexpr long long A_idx(...) { return ...; }``. A non-inline
-    nested-SDFG function has its own function stream that shares the output file with
-    the outer stream, so the identical definition can appear more than once; C++
-    forbids the redefinition. Matching is conservative -- only single-line ``static``
-    definitions naming an ``*_idx`` / ``*_size`` helper are considered, and a line is
-    dropped only when byte-identical to one already kept, so call sites (which carry
-    distinct index arguments) and any other code are never touched.
+    nested-SDFG function has its own function stream that shares the output file with the
+    outer stream, so the identical definition can appear more than once; C++ forbids the
+    redefinition. Matching is conservative -- only single-line ``static`` definitions naming
+    an ``*_idx`` / ``*_size`` helper are considered, and a line is dropped only when
+    byte-identical to one already kept, so call sites and other code are never touched.
     """
-    seen: Set[str] = set()
-    out: List[str] = []
-    for line in code.splitlines(keepends=True):
-        stripped = line.strip()
-        is_helper = (stripped.startswith('static ') and ('_idx(' in stripped or '_size(' in stripped)
-                     and 'return' in stripped and stripped.endswith('}'))
-        if is_helper:
-            if stripped in seen:
-                continue
-            seen.add(stripped)
-        out.append(line)
-    return ''.join(out)
+    return deduplicate_lines(
+        code,
+        lambda s: s.startswith('static ') and ('_idx(' in s or '_size(' in s) and 'return' in s and s.endswith('}'))
 
 
 def split_leading_includes(lines: List[str]) -> Tuple[List[str], List[str]]:
@@ -88,37 +83,12 @@ def split_leading_includes(lines: List[str]) -> Tuple[List[str], List[str]]:
     return lines[:split], lines[split:]
 
 
-# Readability fixes that are safe to apply to generated code. Anything whose fix depends on types
-# or on a variable's full use-set is NOT safe here, because this runs with the includes stripped
-# (see apply_clang_tidy) -- clang-tidy then rewrites on a half-parse. Exclusions below: identifier
-# renaming (would rewrite every name), magic-number / cognitive-complexity / identifier-length
-# noise, and uppercase-literal-suffix.
-#
-# ``readability-non-const-parameter`` is excluded because its const inference is
-# UNSOUND on generated code, and would silently miscompile: a pointer argument
-# that is only forwarded to a nested-SDFG device function -- e.g. a scatter
-# accumulator (``histu``/``histw`` in npbench ``azimint_hist``) passed to a
-# ``DACE_DFI`` that writes through it -- looks locally unmodified, so clang-tidy
-# rewrites the parameter to ``const T*``. That then clashes with the callee's
-# non-const (written) parameter and nvcc rejects the ``const T*`` -> ``T*``
-# argument. With the leading ``#include`` block stripped (see apply_clang_tidy)
-# clang-tidy also cannot always see the callee's signature to rule this out. The
-# code generator already qualifies every parameter correctly (see
-# ``dace.sdfg.utils.get_constant_data`` for kernel arguments and
-# ``emit_memlet_reference`` for nested-SDFG arguments), so tidy must not
-# second-guess it.
-# The whole ``modernize-*`` family is excluded. Its fixes are type-dependent, and this runs with
-# the includes stripped (above), so clang-tidy resolves neither the external types nor the full
-# use-set of a variable -- it then rewrites confidently and wrongly. Two observed miscompiles in
-# the CUDA block-reduction emitted by ``ExperimentalCUDACodeGen``:
-#   * ``modernize-use-using`` turned ``typedef cub::BlockReduce<double, 128, ...> __brt;`` into
-#     ``using __brt = ;`` -- an EMPTY type, because ``cub::BlockReduce`` is undeclared here.
-#   * ``modernize-loop-convert`` turned ``for (int __bk = 0; __bk < 1; ++__bk)`` into
-#     ``for (double& __bk : __bpart)``, but ``__bk`` is also the write-back INDEX
-#     (``reduce_atomic(gpu_S + ((0) + __bk), ...)``), so the value landed where an index was
-#     expected: "error: expression must have integral or unscoped enum type". The check normally
-#     refuses when the index escapes subscripting; stripped headers degrade that analysis.
-# ``modernize-*`` is purely cosmetic on generated code, so it is not worth the miscompile risk.
+# Only readability-* fixes safe on include-stripped code (apply_clang_tidy strips the header block,
+# so a fix depending on types or a variable's full use-set rewrites on a half-parse). Excluded:
+# identifier naming/length, magic-numbers, cognitive-complexity, uppercase-suffix (noise);
+# non-const-parameter (const-qualifies a pointer only forwarded to a nested-SDFG writer -> const vs
+# non-const clash nvcc rejects); and modernize-* (type-dependent -> miscompiled the CUDA
+# block-reduction: an empty ``using`` alias and a reduction index turned into a range-for value).
 CLANG_TIDY_CHECKS = ('readability-*,'
                      '-readability-identifier-naming,-readability-identifier-length,-readability-magic-numbers,'
                      '-readability-function-cognitive-complexity,-readability-uppercase-literal-suffix,'
@@ -251,7 +221,7 @@ def generate_program_folder(
 
         # The experimental (readable) code generator produces human-oriented code;
         # collapse duplicate headers and format by default for readability.
-        readable = Config.get('compiler', 'cpu', 'implementation') == 'experimental'
+        readable = Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable'
 
         if readable:
             clean_code = deduplicate_includes(clean_code)
@@ -467,6 +437,76 @@ def configure_and_compile(
         elif '/MT' not in os.environ['_CL_']:
             os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
 
+    # Resolve the environments the SDFG uses (shared by both build backends).
+    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
+        environments = set(l.strip() for l in f)
+    environments = dace.library.get_environments_and_dependencies(environments)
+
+    # Strip this process's MPI-rank identity from the build subprocesses so the compiler and the
+    # children it spawns never hang joining the outer MPI/PMI job (see _build_subprocess_env).
+    build_env = _build_subprocess_env()
+
+    # Build the shared library either directly (native) or through CMake (default). Both write it to
+    # the same development-mode location that the shared tail below expects.
+    build_mode = Config.get('compiler', 'build_mode').strip().lower()
+    if build_mode not in ('cmake', 'native'):
+        raise cgx.CompilerConfigurationError(
+            f"Unknown compiler.build_mode {Config.get('compiler', 'build_mode')!r}; expected 'cmake' or 'native'.")
+    if build_mode == 'native':
+        from dace.codegen import native_compiler
+        native_compiler.build_native(program_folder=program_folder,
+                                     program_name=program_name,
+                                     files=files,
+                                     targets=targets,
+                                     environments=environments,
+                                     build_folder=build_folder,
+                                     build_env=build_env,
+                                     output_stream=output_stream)
+    else:
+        _cmake_configure_and_build(program_folder=program_folder,
+                                   program_name=program_name,
+                                   src_folder=src_folder,
+                                   build_folder=build_folder,
+                                   files=files,
+                                   targets=targets,
+                                   environments=environments,
+                                   build_env=build_env,
+                                   output_stream=output_stream)
+
+    # Get the names of the library files that were generated.
+    #  Currently we are still in the `development` folder mode.
+    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
+    libstub_path = _get_stub_library_path(lib_path)
+
+    # In production mode, we are now deleting what we need and relocating it.
+    if folder_mode == "production":
+        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
+        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
+        program_folder = pathlib.Path(program_folder)
+        # TODO: Find out where `sample/` are generated and suppress their generation.
+        for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
+            if (program_folder / to_delete).is_dir():
+                shutil.rmtree(os.path.join(program_folder, to_delete))
+            else:
+                (program_folder / to_delete).unlink()
+
+    return lib_path
+
+
+def _cmake_configure_and_build(program_folder,
+                               program_name,
+                               src_folder,
+                               build_folder,
+                               files,
+                               targets,
+                               environments,
+                               build_env,
+                               output_stream=None) -> None:
+    """Configure and build a prepared program folder with CMake (the default ``build_mode``).
+
+    Writes the shared library + loader stub into ``<build_folder>``; the caller
+    (:func:`configure_and_compile`) locates them afterwards.
+    """
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cmake_command = [
@@ -478,12 +518,6 @@ def configure_and_compile(
         "-DDACE_PROGRAM_NAME={}".format(program_name),
         "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
     ]
-
-    # Get required environments are retrieve the CMake information
-    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
-        environments = set(l.strip() for l in f)
-
-    environments = dace.library.get_environments_and_dependencies(environments)
 
     environment_flags, cmake_link_flags = get_environment_flags(environments)
     cmake_command += sorted(environment_flags)
@@ -527,10 +561,6 @@ def configure_and_compile(
 
     cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
 
-    # Strip this process's MPI-rank identity from the build subprocesses so CMake and the
-    # children it spawns never hang joining the outer MPI/PMI job (see _build_subprocess_env).
-    build_env = _build_subprocess_env()
-
     ##############################################
     # Configure
     try:
@@ -567,25 +597,6 @@ def configure_and_compile(
             raise cgx.CompilationError('Compiler failure')
         else:
             raise cgx.CompilationError('Compiler failure:\n' + ex.output)
-
-    # Get the names of the library files that were generated.
-    #  Currently we are still in the `development` folder mode.
-    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
-    libstub_path = _get_stub_library_path(lib_path)
-
-    # In production mode, we are now deleting what we need and relocating it.
-    if folder_mode == "production":
-        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
-        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
-        program_folder = pathlib.Path(program_folder)
-        # TODO: Find out where `sample/` are generated and suppress their generation.
-        for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
-            if (program_folder / to_delete).is_dir():
-                shutil.rmtree(os.path.join(program_folder, to_delete))
-            else:
-                (program_folder / to_delete).unlink()
-
-    return lib_path
 
 
 def get_program_handle(

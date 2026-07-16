@@ -18,9 +18,18 @@ claimed win — the win is in generated lines-of-code / readability.
 | `run_readable_perf.py` | npbench+polybench sweep driver: per (kernel × codegen) → codegen time, cold compile time, best-of-N runtime, correctness (experimental compared against legacy). CPU **and** GPU (`--target`). Self-partitions across MPI ranks via `SLURM_PROCID` / `SLURM_NTASKS`. |
 | `run_readable_tsvc2_perf.py` | the same, for the TSVC2 corpus (CPU only). |
 | `run_readable_tsvc2_5_perf.py` | the same, for the TSVC2.5 corpus (CPU only). |
-| `run_readable_compare.py` | codegen A/B on generated sources (readability / LoC side). |
-| `run_cavity_compare.py` | `cavity_flow`-only: legacy vs experimental, compiled with **both g++ and clang++**, single-core (S preset) — reports codegen / compile / runtime + speedup + LoC. |
-| `plot_codegen_perf.py` | figures from the merged TSV (filters on `phase` / `cxx`). |
+| `readability_metrics.py` | lizard/local readability metrics (`nloc`, `max_nesting`, `tokens`, `tokens_per_stmt`, `max_ccn`) over generated `.cpp`/`.cu`; writes the `--csv` that feeds FIGURE B. |
+| `plot_codegen_perf.py` | the two figures from the merged TSV (+ the metrics CSV); groups by `phase` / `cxx`. |
+
+**Standalone tools (NOT part of the one SLURM job).** These use a *different* stack — the
+in-tree `tests/corpus/*` + `run_full_corpus_sweep`, not the sibling `performance_regression_jobs`
+harness — and a *different* TSV schema, so they are neither merged into `$OUT` nor read by
+`plot_codegen_perf.py`. Keep or retire them independently of the job:
+
+| file | what |
+|------|------|
+| `run_readable_compare.py` | self-contained legacy-vs-experimental perf+quality driver over the in-tree corpora (+ optional CloudSC). Emits its OWN schema (`kernel corpus mode codegen threads codegen_ms compile_ms tidy_ms runtime_ms loc code_bytes tidy correct error`) and prints a readability-vs-cost summary; breaks out the clang-tidy cost (`tidy_ms`) and reads LoC straight from the generated frame. |
+| `run_cavity_compare.py` | `cavity_flow`-only: legacy vs experimental, compiled with **both g++ and clang++**, single-core (S preset) — reports codegen / compile / runtime + speedup + LoC. Uses this folder's `run_readable_perf` helpers + the sibling harness. |
 
 Reuses the sibling `../performance_regression_jobs` harness (`engine.py` +
 `npbench_polybench_perf.py`) for kernel discovery, dataset presets, isolated
@@ -63,7 +72,37 @@ sbatch submit_daint_readable.sbatch
 # knobs (all optional):
 sbatch --export=ALL,REPS=3,CODEGEN=experimental,OUT=quick.tsv submit_daint_readable.sbatch
 sbatch --export=ALL,CPU_CXX_LIST="g++" submit_daint_readable.sbatch   # skip the clang++ sweeps
+sbatch --export=ALL,CPP_STANDARD=17 submit_daint_readable.sbatch      # constexpr instead of consteval
 ```
+
+Extra knobs: `CPP_STANDARD` (default `20`) and `METRICS_CSV` (default `codegen_metrics.csv`).
+
+### C++ standard
+
+`CPP_STANDARD` is pinned from one place onto BOTH builds a lane measures: DaCe's CMake build
+(`compiler.cpp_standard`, the runtime/correctness binaries) and `engine.compile_sdfg_timed`'s
+direct compile (`DACE_PERF_CXX_STD`, the `codegen_ms`/`compile_ms` numbers). Left unset these two
+default to *different* standards (c++20 vs c++23), which would compare compile time and runtime at
+mismatched standards. The readable generator emits `consteval` size/index helpers under **C++20+**
+and degrades to `constexpr` under **C++17**, so `CPP_STANDARD=17` exercises the constexpr path.
+
+### Plots
+
+After the job, `submit_daint_readable.sbatch` harvests the generated CPU frames (from the
+node-local `/dev/shm/dace_perf_jobs_<uid>_rank*` build roots) into `$METRICS_CSV` and prints the
+plot command. Produce the two figures with:
+
+```bash
+python3 plot_codegen_perf.py --tsv perfresults.tsv --metrics-csv codegen_metrics.csv --out-dir plots
+```
+
+- **FIGURE A** `plots/runtime_<phase>.{png,pdf}` — total-runtime comparison, legacy vs experimental,
+  one figure per phase with a panel per host compiler: `runtime_multi_core` is g++ vs clang++ CPU
+  (before/after), `runtime_gpu` is the GPU lane, `runtime_single_core` is the quick S signal.
+- **FIGURE B** `plots/build_and_quality.{png,pdf}` — stacked codegen+compile time, generated LoC,
+  and the readability panel (`nloc` + `max_nesting` headline, `tokens_per_stmt` normalized,
+  `max_ccn` control). The LoC/readability panels need `--metrics-csv` (or `--srcdir <sources>`);
+  without either they are skipped and only the build-time panel is drawn.
 
 Every `#SBATCH --account` / `--partition` / `--chdir` and the `REPO_ROOT` / venv /
 spack lines are marked `TODO` — set them to your daint.alps account and synced repo

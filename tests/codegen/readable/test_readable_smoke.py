@@ -52,7 +52,7 @@ def _equivalence(prog, args):
     a_leg = copy.deepcopy(base)
     _build(prog, 'legacy', '%s_legacy' % prog.name)(**a_leg)
     a_exp = copy.deepcopy(base)
-    _build(prog, 'experimental', '%s_experimental' % prog.name)(**a_exp)
+    _build(prog, 'experimental_readable', '%s_experimental' % prog.name)(**a_exp)
     for key in a_leg:
         v1, v2 = a_leg[key], a_exp[key]
         if isinstance(v1, np.ndarray):
@@ -81,7 +81,7 @@ def test_transient():
 
 def test_const_init_constexpr():
     # Constant-shape write-once array is promoted to a constexpr initializer.
-    sdfg_e = _const_sdfg('experimental')
+    sdfg_e = _const_sdfg('experimental_readable')
     code = sdfg_e.generate_code()[0].clean_code
     assert any('constexpr' in l and 'tbl[' in l and '= {' in l for l in code.splitlines())
     # No runtime allocation of the promoted array.

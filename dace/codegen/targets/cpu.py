@@ -6,6 +6,8 @@ import functools
 import itertools
 import warnings
 
+import numpy as np
+
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.codegen import cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
@@ -48,6 +50,126 @@ def gpu_block_reduction_write_slot(subset, base, length):
         if int(offset) < 0 or int(offset) >= length:
             return None
     return offset
+
+
+def collect_gpu_block_reductions(sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry, block_dims, frame) -> list:
+    """Scalar/array map-exit WCR accumulators under ``scope_entry`` that fold via ``cub::BlockReduce``
+    + one atomic per block -- the GPU mirror of an OpenMP ``reduction(op:var)`` clause. Shared by both
+    the legacy and the experimental CUDA code generators so the two emit one tree reduction.
+
+    Each thread accumulates into a private register partial and cub folds the partials, so thread 0
+    commits a single atomic (versus one contended atomic per thread). A scalar accumulator is one slot
+    (``m == 1``); a length-``m`` reduced subset is folded element-wise by the drain loop.
+
+    The guard is deliberately narrow: a single, loop-invariant, compile-time-length 1-D span (a
+    param-dependent subset is a scatter, not a reduction), a scalar (non-vector) built-in op with a
+    known identity element, and compile-time-constant block dimensions (cub templates on them). Anything
+    else keeps the per-thread atomic fallback.
+
+    :return: one field dict per qualifying accumulator, consumed by :func:`register_gpu_block_reduction`
+             and :func:`drain_gpu_block_reduction`.
+    """
+    out: list = []
+    try:
+        map_exit = state.exit_node(scope_entry)
+    except (KeyError, StopIteration):
+        return out
+    # cub::BlockReduce templates on the block dimensions, which must be compile-time constants.
+    if any(symbolic.issymbolic(b, sdfg.constants) for b in block_dims):
+        return out
+    # cub reduces over the whole block and must be told each dimension; the 1-D BlockReduce<T, N> form
+    # mis-maps threads whenever the block is 2-D/3-D (it assumes threadIdx.y == threadIdx.z == 0).
+    block_x, block_y, block_z = (int(block_dims[0]), int(block_dims[1]), int(block_dims[2]))
+    map_params = set(scope_entry.map.params)
+    seen_targets: Set[str] = set()
+    for i, iedge in enumerate(state.in_edges(map_exit)):
+        if iedge.data is None or iedge.data.wcr is None:
+            continue
+        acc_desc = sdfg.arrays.get(iedge.data.data)
+        subset = iedge.data.subset
+        if acc_desc is None or iedge.data.data in seen_targets or subset is None:
+            continue
+        # cub, the identity literal and ``_wcr_fixed::reduce_atomic`` all want a scalar ctype.
+        if isinstance(acc_desc.dtype, dtypes.vector):
+            continue
+        if len(subset) != 1 or subset.ranges[0][2] != 1:
+            continue
+        base, end, _ = subset.ranges[0]
+        try:
+            m = int(end - base) + 1
+        except (TypeError, ValueError):
+            continue  # symbolic length: cannot size the register partial / drain loop
+        # Loop-invariant target: not indexed by this map's iteration variables.
+        if any(str(s) in map_params for s in subset.free_symbols):
+            continue
+        redtype = operations.detect_reduction_type(iedge.data.wcr)
+        identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
+        if redtype == dtypes.ReductionType.Custom or identity is None:
+            continue  # only built-in ops with a known identity element
+        seen_targets.add(iedge.data.data)
+        ctype = acc_desc.dtype.ctype
+        partial = f'__bpart_{state.block_id}_{state.node_id(scope_entry)}_{i}'
+        # Emit integers as integers: routing a 64-bit extreme (e.g. a Min identity of INT64_MAX)
+        # through ``float`` rounds to 2**63 and overflows the cast.
+        if np.issubdtype(acc_desc.dtype.type, np.integer):
+            identity_literal = f'{ctype}({int(identity)})'
+        else:
+            identity_literal = f'{ctype}({float(identity)!r})'
+        out.append({
+            'acc_ptr': cpp.ptr(iedge.data.data, acc_desc, sdfg, frame),
+            'partial': partial,
+            'ctype': ctype,
+            'credtype': 'dace::ReductionType::' + str(redtype).split('.')[-1],
+            'identity': identity_literal,
+            'block_x': block_x,
+            'block_y': block_y,
+            'block_z': block_z,
+            'm': m,
+            'base': base,
+            'data': iedge.data.data,
+        })
+    return out
+
+
+def register_gpu_block_reduction(red: dict, covered: dict) -> str:
+    """Declare the per-thread register partial and identity-init it, and mark the accumulator
+    ``covered`` so :meth:`CPUCodeGen.write_and_resolve_expr` redirects its per-thread WCR writes into
+    the partial instead of emitting an atomic. Emit the returned C before the bounds guard so
+    out-of-range threads still carry the identity into the barrier fold. Caveman: make partial, mark it.
+    """
+    covered[red['data']] = {
+        'partial': red['partial'],
+        'credtype': red['credtype'],
+        'ctype': red['ctype'],
+        'base': red['base'],
+        'm': red['m'],
+    }
+    return (f"{red['ctype']} {red['partial']}[{red['m']}];\n"
+            f"for (int __bi = 0; __bi < {red['m']}; ++__bi) {red['partial']}[__bi] = {red['identity']};")
+
+
+def drain_gpu_block_reduction(red: dict, idstr: str, covered: dict) -> str:
+    """For each of the ``m`` reduced elements, ``cub::BlockReduce`` over each thread's register partial,
+    then one ``reduce_atomic`` from thread 0 into that accumulator element; then un-cover it. Emit the
+    returned C after the bounds guard closes so every thread reaches the barrier-using cub call; the
+    ``__syncthreads`` between iterations lets the single shared ``TempStorage`` be reused. Caveman: fold
+    block, one atomic.
+    """
+    covered.pop(red['data'], None)
+    functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
+    base_cpp = sym2cpp(red['base'])
+    return ('{{\n'
+            'typedef cub::BlockReduce<{ctype}, {block_x}, cub::BLOCK_REDUCE_WARP_REDUCTIONS, {block_y}, {block_z}> '
+            '__brt_{id};\n'
+            '__shared__ typename __brt_{id}::TempStorage __brs_{id};\n'
+            'for (int __bk_{id} = 0; __bk_{id} < {m}; ++__bk_{id}) {{\n'
+            '    {ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}[__bk_{id}], {functor}());\n'
+            '    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{\n'
+            '        {functor}::reduce_atomic({acc_ptr} + (({base_cpp}) + __bk_{id}), __bres_{id});\n'
+            '    }}\n'
+            '    __syncthreads();\n'
+            '}}\n'
+            '}}'.format(id=idstr, functor=functor, base_cpp=base_cpp, **red))
 
 
 def replace_float_literals(expr: str) -> str:
@@ -1149,18 +1271,19 @@ class CPUCodeGen(TargetCodeGenerator):
         atomic = "" if (nc or _omp_covered) else "_atomic"
         wcr_desc = sdfg.arrays[memlet.data]
         ptrname = self.ptr(memlet.data, wcr_desc, sdfg)
-        # Resolve the target's defined type from declared_arrays first, falling
-        # back to defined_vars (mirrors the non-WCR out-memlet branch in
-        # process_out_memlets). A reduction target that was hoisted/inlined out of
-        # its allocating scope (e.g. an inlined pure-Reduce output) is declared at
-        # a broader scope but no longer on the live defined_vars stack at the write
-        # site; declared_arrays still carries its Pointer type.
-        is_global = wcr_desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
-                                          dtypes.AllocationLifetime.External)
-        try:
-            defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
-        except KeyError:
-            defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+        # Readable path inlines pure-Reduce outputs out of their allocating scope, so the target may
+        # be declared at a broader scope but absent from the live defined_vars stack at the write
+        # site; resolve from declared_arrays first, falling back to defined_vars. Legacy never inlines
+        # reductions, so it keeps the original defined_vars lookup -- byte-identical to before.
+        if cpp.readable_cpu_codegen_active():
+            is_global = wcr_desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
+                                              dtypes.AllocationLifetime.External)
+            try:
+                defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+            except KeyError:
+                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+        else:
+            defined_type, _ = self._dispatcher.defined_vars.get(ptrname)
         if isinstance(indices, str):
             ptr = '%s + %s' % (cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self), indices)
         else:
@@ -1587,26 +1710,22 @@ class CPUCodeGen(TargetCodeGenerator):
     # Dynamically-called node dispatchers
 
     def tasklet_body_comment(self, node: nodes.Tasklet) -> str:
-        """Comment emitted above a tasklet's unparsed body (overridable so the
-        readable code generator can drop it -- it already annotates each tasklet
-        line with a trailing ``// <label>``)."""
+        """Comment above a tasklet's unparsed body (overridable; the readable generator drops it)."""
         return "// Tasklet code (%s)\n" % node.label
 
     def tasklet_body_open_marker(self, node: nodes.Tasklet) -> str:
-        """Separator emitted just before a tasklet's unparsed body (overridable so
-        the readable code generator can drop the visual separators)."""
+        """Separator before a tasklet's unparsed body (overridable; the readable generator drops it)."""
         return "\n    ///////////////////\n"
 
     def tasklet_body_close_marker(self, node: nodes.Tasklet) -> str:
-        """Separator emitted just after a tasklet's unparsed body."""
+        """Separator after a tasklet's unparsed body."""
         return "    ///////////////////\n\n"
 
     def emit_tasklet_body_block(self, callsite_stream: CodeIOStream, cfg: ControlFlowRegion, state_id: int,
                                 node: nodes.Tasklet, inner_body: str, postamble: str, has_locals: bool) -> None:
-        """Emit a tasklet's body wrapped in its own C++ scope block. Overridable so
-        the readable code generator can collapse a connector-free, single-statement
-        tasklet onto one brace-free line. ``has_locals`` is True when copy-in/out
-        temporaries or code->code locals were declared (then the block is required)."""
+        """Emit a tasklet body in its own C++ scope block (overridable; the readable generator collapses
+        a connector-free single-statement tasklet onto one brace-free line). ``has_locals`` is True when
+        copy-in/out or code->code locals were declared, forcing the block."""
         callsite_stream.write('{', cfg, state_id, node)
         callsite_stream.write(inner_body, cfg, state_id, node)
         callsite_stream.write(postamble)
@@ -1835,22 +1954,13 @@ class CPUCodeGen(TargetCodeGenerator):
                             toplevel_schedule, self)
 
     def make_keyword_remover(self, sdfg, memlets):
-        """
-        Returns the AST transformer used to lower a Python tasklet body to C++.
-        Overridden by the experimental (readable) code generator to also inline
-        direct array accesses. Kept as a hook so ``cpp.unparse_tasklet`` does not
-        hard-code the transformer class.
-        """
+        """AST transformer used to lower a Python tasklet body to C++. A hook so ``cpp.unparse_tasklet``
+        does not hard-code the class; the readable generator overrides it to also inline array accesses."""
         return cpp.DaCeKeywordRemover(sdfg, memlets, sdfg.constants, self)
 
     def _connector_needs_copy(self, node, conn):
-        """
-        Whether a tasklet connector needs a copy-in / copy-out temporary. Always
-        True for the classic code generator. The experimental (readable) code
-        generator returns False for connectors that the InlineTaskletConnectors
-        pass has rewritten out of the body (direct array access), so no temporary
-        is emitted for them.
-        """
+        """Whether a tasklet connector needs a copy-in/out temporary. Always True here; the readable
+        generator returns False for connectors InlineTaskletConnectors rewrote into direct accesses."""
         return True
 
     def heap_alloc_stmt(self,
@@ -1861,22 +1971,9 @@ class CPUCodeGen(TargetCodeGenerator):
                         sdfg: Optional[SDFG] = None,
                         nodedesc: Optional[data.Data] = None,
                         data_name: Optional[str] = None) -> str:
-        """
-        C++ statement allocating a CPU heap array (``alignment`` is the descriptor's
-        alignment in bytes, 0 = compiler default). Classic generator uses aligned
-        ``new[]``; the experimental (readable) generator overrides this to use
-        ``std::aligned_alloc`` (paired with ``std::free`` in heap_free_stmt).
-
-        :param alloc_name: Name of the pointer variable receiving the allocation.
-        :param ctype: Element C++ type.
-        :param arrsize: Pre-``sym2cpp``'d element-count expression.
-        :param alignment: Requested alignment in bytes (0 = compiler default).
-        :param sdfg: Owning SDFG (unused here; the experimental override reads it to
-                     build an ``<array>_size`` helper for the count).
-        :param nodedesc: Array descriptor (unused here; see ``sdfg``).
-        :param data_name: Array name (unused here; see ``sdfg``).
-        :return: The C++ allocation statement.
-        """
+        """C++ statement allocating a CPU heap array with aligned ``new[]`` (paired with the
+        ``delete[]`` in heap_free_stmt). The trailing ``sdfg``/``nodedesc``/``data_name`` are unused
+        here; the readable generator overrides this to route the count through an ``<array>_size`` helper."""
         return "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, ctype, arrsize)
 
     def heap_free_stmt(self, alloc_name: str, is_array: bool) -> str:
@@ -1884,13 +1981,8 @@ class CPUCodeGen(TargetCodeGenerator):
         return ("delete[] %s;\n" if is_array else "delete %s;\n") % alloc_name
 
     def rewrite_cpp_tasklet_body(self, node, sdfg, state_dfg):
-        """
-        Returns the C++ body of a native (C++/library) tasklet as it should be
-        emitted. The classic code generator emits it verbatim; the experimental
-        (readable) code generator overrides this to inline connector accesses
-        (direct array / base-pointer expressions), removing copy-in / copy-out
-        temporaries.
-        """
+        """C++ body of a native (C++/library) tasklet as it should be emitted. Verbatim here; the
+        readable generator overrides this to inline connector accesses (direct array/base-pointer)."""
         return type(node).__properties__["code"].to_string(node.code)
 
     def define_out_memlet(self, sdfg: SDFG, cfg: ControlFlowRegion, state_dfg: StateSubgraphView, state_id: int,
@@ -1913,13 +2005,12 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = self.ptr(edge.data.data, desc, sdfg)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                # A shared transient is declared at SDFG scope (in
-                # ``declared_arrays``) but its ``define_var`` runs in the
-                # allocating state's scope, which is popped before a
-                # pointer-write in a later state / nested control-flow region.
-                # Resolve via ``declared_arrays`` first -- mirroring the normal
-                # write path in ``process_out_memlets`` -- and only fall back to
-                # ``defined_vars`` so the SDFG-scope pointer still resolves.
+                # A shared transient is declared at SDFG scope (in ``declared_arrays``) but its
+                # ``define_var`` runs in the allocating state's scope, which is popped before a
+                # pointer-write in a later state / nested control-flow region. Resolve via
+                # ``declared_arrays`` first -- mirroring the normal write path in
+                # ``process_out_memlets`` -- and only fall back to ``defined_vars`` so the
+                # SDFG-scope pointer still resolves.
                 try:
                     defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                 except KeyError:
@@ -2766,23 +2857,10 @@ class CPUCodeGen(TargetCodeGenerator):
     # Methods for subclasses to override
 
     def map_scope_needs_brace(self, sdfg: SDFG, state_dfg: SDFGState, node: nodes.MapEntry) -> bool:
-        """Whether the map's encapsulating C scope (``{ ... }``) must be emitted.
-
-        The scope bounds what is declared directly inside it, ahead of the loop headers: dynamic
-        map inputs, the scope preamble, instrumentation locals and OpenMP ``declare reduction``
-        directives. It does NOT bound the map's scope-lifetime transients --
-        ``allocate_arrays_in_scope`` runs after the loop headers, so those are scoped by the
-        innermost loop body.
-
-        Always True here, so this generator's output is unchanged. The experimental ("readable")
-        generator overrides it to drop braces that bound nothing, since its connector-free tasklets
-        leave most map scopes empty and the braces then only add nesting.
-
-        :param sdfg: The SDFG being generated.
-        :param state_dfg: The state containing ``node``.
-        :param node: The map entry whose scope is being emitted.
-        :return: True if the ``{``/``}`` pair must be emitted.
-        """
+        """Whether the map's encapsulating C scope (``{ ... }``) must be emitted. It bounds only what is
+        declared ahead of the loop headers (dynamic map inputs, scope preamble, instrumentation locals,
+        OpenMP ``declare reduction``), not scope-lifetime transients (scoped by the innermost loop body).
+        Always True here; the readable generator overrides it to drop braces that bound nothing."""
         return True
 
     def generate_scope_preamble(self, sdfg, dfg_scope, state_id, function_stream, outer_stream, inner_stream):

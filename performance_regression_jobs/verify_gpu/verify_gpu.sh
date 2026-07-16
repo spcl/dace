@@ -23,7 +23,7 @@ set -uo pipefail
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 # --- MPI anti-hang + threading (mirror slurm_perf.sh) ---
-export OMP_NUM_THREADS="72"
+export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72"
 export OMP_PROC_BIND="close"
 export OMP_PLACES="cores"
 export MPI4PY_RC_INITIALIZE="0"
@@ -39,7 +39,7 @@ source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 spack load gcc@16.1.0
 spack load llvm@22.1.5
 spack load cmake
-spack load openblas
+spack load openblas threads=pthreads
 spack load cuda
 spack load cutensor
 

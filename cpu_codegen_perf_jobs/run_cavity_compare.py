@@ -49,7 +49,15 @@ CODEGENS = ('legacy', 'experimental')
 
 def generated_loc(codegen):
     """Non-blank line count of the generated CPU .cpp for one codegen lane."""
-    with set_temporary('compiler', 'cpu', 'implementation', value=codegen):
+    value = codegen
+    if codegen == 'experimental':
+        # Flag value renamed 'experimental' -> 'experimental_readable'; probe which this build wants.
+        from dace.codegen.targets import cpp as cpp_target
+        value = 'experimental_readable'
+        Config.set('compiler', 'cpu', 'implementation', value=value)
+        if not cpp_target.readable_cpu_codegen_active():
+            value = 'experimental'
+    with set_temporary('compiler', 'cpu', 'implementation', value=value):
         info = base.load_bench_info(KERNEL)
         params = info['parameters']['S']
         program, _arrays, _params = base.build_program_and_data(KERNEL, info, params)
@@ -75,7 +83,10 @@ def measure(codegen, cxx, reps):
         times = engine.time_sdfg(sdfg, kwargs, reps)
         return dict(codegen_ms=codegen_ms, compile_ms=cxx_ms, runtime_ms=(min(times) if times else None))
 
-    return engine.run_isolated(work, timeout=900)
+    # run_isolated returns (ok, payload_or_error); main() wants the payload dict (or None on a
+    # crash/timeout), so unpack here rather than leak the tuple into the table formatting.
+    ok, payload = engine.run_isolated(work, timeout=900)
+    return payload if ok else None
 
 
 def main():

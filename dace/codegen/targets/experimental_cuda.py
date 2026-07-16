@@ -2,7 +2,6 @@
 """Experimental CUDA code generator: emits kernels, streams, and host glue for GPU SDFGs."""
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
-import numpy as np
 
 import dace
 from dace import data as dt, Memlet
@@ -13,8 +12,6 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.scope import get_node_schedule
 from dace.sdfg.state import ControlFlowRegion, StateSubgraphView
-
-from dace.frontend import operations
 
 from dace.codegen import common
 from dace.codegen.codeobject import CodeObject
@@ -619,121 +616,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             result += f' + gridDim.x * gridDim.y * blockIdx.z'
         return result
 
-    def collect_gpu_block_reductions(self, sdfg: SDFG, state: SDFGState, scope_entry: nodes.MapEntry,
-                                     block_dims: List) -> List[Dict[str, Any]]:
-        """Find scalar thread-block-map-exit WCR accumulators under ``scope_entry`` that fold via
-        one ``cub::BlockReduce`` + one atomic per block -- the GPU mirror of an OpenMP
-        ``reduction(op:var)`` clause.
-
-        Each thread accumulates into a private register partial and cub folds the partials, so
-        thread 0 commits a single atomic (versus one contended atomic per thread). The register
-        accumulate replaces the per-thread atomic via
-        :attr:`CPUCodeGen._gpu_block_reduction_covered`, working whether a thread writes the
-        accumulator once or many times (a sequential tile).
-
-        The guard is deliberately narrow: a single-element, loop-invariant accumulator (a
-        param-dependent subset is a scatter, not a reduction), a built-in op with a known
-        identity element, and a compile-time-constant thread count (cub templates on it).
-        Anything not matching keeps the per-thread atomic fallback.
-
-        :return: one field dict per qualifying accumulator, consumed by
-                 :meth:`emit_gpu_block_reduction` and registered in the covered map.
-        """
-        out: List[Dict[str, Any]] = []
-        try:
-            map_exit = state.exit_node(scope_entry)
-        except (KeyError, StopIteration):
-            return out
-        # cub::BlockReduce templates on the block dimensions, which must be compile-time constants.
-        if any(symbolic.issymbolic(b, sdfg.constants) for b in block_dims):
-            return out
-        # block_dims is always the 3D (x, y, z) launch shape; cub reduces over the whole block and
-        # must be told each dimension (the 1-D BlockReduce<T, N> form mis-maps threads whenever
-        # the block is 2-D/3-D, since it assumes threadIdx.y == threadIdx.z == 0).
-        block_x, block_y, block_z = (int(block_dims[0]), int(block_dims[1]), int(block_dims[2]))
-        map_params = set(scope_entry.map.params)
-        seen_targets: Set[str] = set()
-        for i, iedge in enumerate(state.in_edges(map_exit)):
-            if iedge.data is None or iedge.data.wcr is None:
-                continue
-            # The reduced range must be a single contiguous 1-D span of the accumulator: a scalar
-            # (``m == 1``, GPU atomic on the one slot) or a length-``m`` subset (folded element-wise
-            # by the drain loop). Multi-dimensional or strided targets keep the atomic fallback.
-            acc_desc = sdfg.arrays.get(iedge.data.data)
-            subset = iedge.data.subset
-            if acc_desc is None or iedge.data.data in seen_targets or subset is None:
-                continue
-            # cub, the identity literal and ``_wcr_fixed::reduce_atomic`` all want a scalar ctype.
-            if isinstance(acc_desc.dtype, dtypes.vector):
-                continue
-            if len(subset) != 1 or subset.ranges[0][2] != 1:
-                continue
-            base, end, _ = subset.ranges[0]
-            try:
-                m = int(end - base) + 1
-            except (TypeError, ValueError):
-                continue  # symbolic length: cannot size the register partial / drain loop
-            # Loop-invariant target: not indexed by this map's iteration variables.
-            if any(str(s) in map_params for s in subset.free_symbols):
-                continue
-            redtype = operations.detect_reduction_type(iedge.data.wcr)
-            identity = dtypes.reduction_identity(acc_desc.dtype, redtype)
-            if redtype == dtypes.ReductionType.Custom or identity is None:
-                continue  # only built-in ops with a known identity element
-            seen_targets.add(iedge.data.data)
-            ctype = acc_desc.dtype.ctype
-            partial = f'__bpart_{state.block_id}_{state.node_id(scope_entry)}_{i}'
-            # Format the identity as a typed literal. Routing it through ``float`` loses precision
-            # for 64-bit integer extremes (e.g. a Min identity of INT64_MAX rounds to 2**63 and
-            # overflows the cast), so emit integers as integers.
-            if np.issubdtype(acc_desc.dtype.type, np.integer):
-                identity_literal = f'{ctype}({int(identity)})'
-            else:
-                identity_literal = f'{ctype}({float(identity)!r})'
-            out.append({
-                'acc_ptr': ptr(iedge.data.data, acc_desc, sdfg, self._frame),
-                'partial': partial,
-                'ctype': ctype,
-                'credtype': 'dace::ReductionType::' + str(redtype).split('.')[-1],
-                'identity': identity_literal,
-                'block_x': block_x,
-                'block_y': block_y,
-                'block_z': block_z,
-                'm': m,
-                'base': base,
-                'data': iedge.data.data,
-            })
-        return out
-
-    def emit_gpu_block_reduction(self, red: Dict[str, Any], idstr: str, cfg: ControlFlowRegion, state_id: int,
-                                 node: nodes.Node, stream: CodeIOStream) -> None:
-        """Emit the thread-block fold for one reduction: for each of the ``m`` reduced elements,
-        ``cub::BlockReduce`` over each thread's register partial, then one ``reduce_atomic`` from
-        thread 0 into that accumulator element.
-
-        Emitted after the bounds guard closes so every thread reaches the (barrier-using) cub call;
-        out-of-range threads carry the identity set at scope entry. The ``__syncthreads`` between
-        iterations lets the single shared ``TempStorage`` be reused for the next element.
-
-        :param red: a field dict produced by :meth:`collect_gpu_block_reductions`.
-        :param idstr: a per-reduction unique suffix for the emitted cub type/storage names.
-        """
-        functor = 'dace::_wcr_fixed<{credtype}, {ctype}>'.format(**red)
-        base_cpp = sym2cpp(red['base'])
-        stream.write(
-            '{{\n'
-            'typedef cub::BlockReduce<{ctype}, {block_x}, cub::BLOCK_REDUCE_WARP_REDUCTIONS, {block_y}, {block_z}> '
-            '__brt_{id};\n'
-            '__shared__ typename __brt_{id}::TempStorage __brs_{id};\n'
-            'for (int __bk_{id} = 0; __bk_{id} < {m}; ++__bk_{id}) {{\n'
-            '    {ctype} __bres_{id} = __brt_{id}(__brs_{id}).Reduce({partial}[__bk_{id}], {functor}());\n'
-            '    if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{\n'
-            '        {functor}::reduce_atomic({acc_ptr} + (({base_cpp}) + __bk_{id}), __bres_{id});\n'
-            '    }}\n'
-            '    __syncthreads();\n'
-            '}}\n'
-            '}}'.format(id=idstr, functor=functor, base_cpp=base_cpp, **red), cfg, state_id, node)
-
     def declare_array(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int,
                       node: nodes.AccessNode, nodedesc: dt.Data, function_stream: CodeIOStream,
                       declaration_stream: CodeIOStream):
@@ -990,12 +872,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 {file_header}
 
-DACE_EXPORTED int __dace_init_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state{params});
-DACE_EXPORTED int __dace_exit_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_init_experimental_cuda({sdfg_state_name} *__state{params});
+DACE_EXPORTED int __dace_exit_experimental_cuda({sdfg_state_name} *__state);
 
 {other_globalcode}
 
-int __dace_init_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state{params}) {{
+int __dace_init_experimental_cuda({sdfg_state_name} *__state{params}) {{
     int count;
 
     // Check that we are able to run {backend} code
@@ -1033,7 +915,7 @@ int __dace_init_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state{params}
     return 0;
 }}
 
-int __dace_exit_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state) {{
+int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
     {exitcode}
 
     // Synchronize and check for CUDA errors
@@ -1057,7 +939,6 @@ int __dace_exit_experimental_cuda_{sdfg_name}({sdfg_state_name} *__state) {{
 {localcode}
 """.format(params=params_comma,
            sdfg_state_name=mangle_dace_state_struct_name(self._global_sdfg),
-           sdfg_name=self._global_sdfg.name,
            initcode=initcode.getvalue(),
            exitcode=exitcode.getvalue(),
            other_globalcode=self._globalcode.getvalue(),

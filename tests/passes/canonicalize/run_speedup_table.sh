@@ -28,6 +28,7 @@ cd "$repo_root"
 
 PYTHON="${PYTHON:-python}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-4}"     # python harness defaults to 4 if unset
+export OPENBLAS_NUM_THREADS="${OPENBLAS_NUM_THREADS:-$OMP_NUM_THREADS}"  # BLAS pool = OMP pool
 out_dir="${OUT_DIR:-$here/perf_results}"
 markdown="${MARKDOWN:-$out_dir/speedup_table.md}"
 csv="${CSV:-$out_dir/speedup.csv}"

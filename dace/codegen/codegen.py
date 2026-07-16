@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-import warnings
 from typing import List
 
 import dace
@@ -58,20 +57,14 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
             allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = 42;\n")
 
     # allocate the array args using calloc
-    readable = config.Config.get('compiler', 'cpu', 'implementation') == 'experimental'
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
             from dace.codegen.targets import cpp
             dims_mul = cpp.sym2cpp(functools.reduce(lambda a, b: a * b, arg.shape, 1))
             basetype = str(arg.dtype)
-            lhs = "    " + str(arg.as_arg(name=argname, with_types=True))
-            if readable:
-                allocations += lhs + " = dace::calloc<" + basetype + ">(" + dims_mul + ");\n"
-                deallocations += "    dace::free(" + argname + ");\n"
-            else:
-                allocations += (lhs + " = (" + basetype + "*) calloc(" + dims_mul + ", sizeof(" + basetype + ")" +
-                                ");\n")
-                deallocations += "    free(" + argname + ");\n"
+            allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = (" + basetype + "*) calloc(" +
+                            dims_mul + ", sizeof(" + basetype + ")" + ");\n")
+            deallocations += "    free(" + argname + ");\n"
 
     return f'''#include <cstdlib>
 #include "../include/{sdfg.name}.h"
@@ -229,6 +222,29 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
+    # Experimental readable generator: flatten nested SDFGs (so the connector-free + index-function
+    # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
+    # const/constexpr and inline tasklet connectors. After library expansion so post-expansion
+    # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
+    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
+        from dace.transformation.pass_pipeline import Pipeline
+        from dace.transformation.passes.mark_const_init import MarkConstInit
+        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
+        from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
+        from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+        from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+        sdfg.apply_transformations_repeated(InlineSDFG)
+        sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+        infer_types.infer_connector_types(sdfg)
+        infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
+        Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+        InlineTaskletConnectors().apply_pass(sdfg, {})
+        # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
+        # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
+        CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
+        sdfg.validate()
+
     # Lower ``base ** exp`` to ``ipow`` (exact integer power) wherever the exponent is a
     # provable non-negative integer -- array sizes, subscripts, loop bounds and interstate
     # edges. Runs here, right before codegen, rather than in ``simplify``: a size is "just a
@@ -237,48 +253,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # R**(K-1)``) before the opaque ``ipow`` freezes the form.
     from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
     RelaxIntegerPowers().apply_pass(sdfg, {})
-
-    # Experimental readable code generator: mark write-once data const/constexpr,
-    # then rewrite tasklet connectors into direct array accesses. Runs after
-    # library expansion so post-expansion (e.g. BLAS/cuBLAS) tasklets are seen.
-    # Both CPU and GPU-kernel tasklets are affected, since the CUDA generator
-    # emits device tasklets through the shared CPU generator instance.
-    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental':
-        from dace.transformation.pass_pipeline import Pipeline
-        from dace.transformation.passes.mark_const_init import MarkConstInit
-        from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
-        from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-        from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
-        from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
-        # Flatten nested SDFGs (library-node expansions and user NSDFGs) so the
-        # connector-free + index-function lowering applies uniformly instead of
-        # stopping at NSDFG connector boundaries. Runs after library expansion:
-        # inline single-state NSDFGs (including those nested in maps), widen the
-        # inputs of any remaining top-level NSDFGs, then inline the multistate
-        # ones. Best-effort -- inlining is a readability optimization, so on
-        # failure the nested form is kept (still correct).
-        try:
-            sdfg.apply_transformations_repeated(InlineSDFG)
-            sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, options=dict(top_level_only=True))
-            sdfg.apply_transformations_repeated(InlineMultistateSDFG)
-        except Exception as ex:  # noqa: BLE001
-            warnings.warn(f'readable-codegen NSDFG inlining skipped: {type(ex).__name__}: {ex}')
-        # Re-infer connector types / schedules after inlining -- always, even if a
-        # best-effort inlining step raised partway, so codegen sees consistent types.
-        infer_types.infer_connector_types(sdfg)
-        infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # const-init is a pure optimization (const/constexpr for write-once data);
-        # if its analysis raises, fall back to normal allocation -- never crash
-        # codegen over an optimization.
-        try:
-            Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
-        except Exception as ex:  # noqa: BLE001
-            warnings.warn(f'MarkConstInit (const-init) skipped: {type(ex).__name__}: {ex}')
-        # Connector inlining is also best-effort; a failure keeps classic connectors.
-        try:
-            InlineTaskletConnectors().apply_pass(sdfg, {})
-        except Exception as ex:  # noqa: BLE001
-            warnings.warn(f'InlineTaskletConnectors skipped: {type(ex).__name__}: {ex}')
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
@@ -298,7 +272,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     # The experimental readable CPU generator is opt-in and selected explicitly
     # (it is not registered with the target registry), so it wins over any 'cpu'
     # extension picked above.
-    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental':
+    if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
         from dace.codegen.targets import experimental_cpu
         default_target = experimental_cpu.ExperimentalCPUCodeGen
     targets = {'cpu': default_target(frame, sdfg)}

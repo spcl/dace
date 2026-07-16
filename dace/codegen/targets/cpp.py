@@ -51,15 +51,8 @@ def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
     return type_name
 
 
-
 def readable_cpu_codegen_active() -> bool:
-    """True when the experimental ("readable") CPU generator is selected.
-
-    Gates the readable-only emission decisions that live in this shared module, so the legacy
-    generator's output stays byte-identical (verified by generating the legacy code before and
-    after and diffing).
-    """
-    return Config.get('compiler', 'cpu', 'implementation') == 'experimental'
+    return Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable'
 
 
 def copy_expr(
@@ -351,9 +344,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
-            # A read-only scalar is passed by const VALUE (a copy: ``const T x``) rather than by
-            # const reference. Gated on the experimental CPU generator: it is a calling-convention
-            # change, and the legacy generator's output must stay byte-identical.
+            # A read-only scalar is passed by const value (``const T x``) instead of const reference,
+            # under the experimental readable generator only (legacy output must stay byte-identical).
             ref = '' if (is_write is False and readable_cpu_codegen_active()) else '&'
         else:
             # constexpr arrays
@@ -372,11 +364,8 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                 typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
         typedef = defined_ctype if is_scalar else (defined_ctype + '* __restrict__')
-        # A read-only scalar is passed by const VALUE (a copy: ``const T x``) rather than by
-        # const reference -- a nested SDFG never writes a scalar argument (a written value stays a
-        # length-1 array). Gated on the experimental CPU generator: it is a calling-convention
-        # change, and the legacy generator's output must stay byte-identical. A written scalar
-        # keeps its reference either way.
+        # Same const-value calling convention as above (a nested SDFG never writes a scalar argument);
+        # a written scalar keeps its reference either way.
         const_by_value = (is_scalar and is_write is False and not isinstance(desc, data.Structure)
                           and readable_cpu_codegen_active())
         if is_write is False and not isinstance(desc, data.Structure):
@@ -1429,8 +1418,6 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
     state_dfg: SDFGState = dfg.graph if not isinstance(dfg, SDFGState) else dfg
     if hasattr(node, "_cuda_stream") or is_devicelevel_gpu(sdfg, state_dfg, node):
         return
-    if common.no_sync_emission():
-        return
     # Resolve the (cfg, state_id) pair to whichever region directly owns the
     # state, so ``callsite_stream.write`` -> ``cfg.state(state_id)`` lands on
     # an SDFGState.
@@ -1479,7 +1466,7 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
                 ptrname = f'({ptrname} - {sym2cpp(desc.start_offset)})'
             callsite_stream.write(f'DACE_GPU_CHECK({backend}FreeAsync({ptrname}, {cudastream}));\n', cfg, state_id,
                                   scope_exit)
-            if Config.get_bool('compiler', 'cuda', 'syncdebug') and not common.no_sync_emission():
+            if Config.get_bool('compiler', 'cuda', 'syncdebug'):
                 callsite_stream.write(f'DACE_GPU_CHECK({backend}DeviceSynchronize());')
             to_remove.add((sd, name))
 

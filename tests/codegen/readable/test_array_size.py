@@ -4,7 +4,7 @@ helpers.
 
 Under ``compiler.cpu.implementation = experimental`` a heap array whose
 ``total_size`` is symbolic or a compound expression is allocated as
-``dace::aligned_alloc<T>(<array>_size(...), align)``, where the generated
+an aligned ``new[]`` over ``<array>_size(...)``, where the generated
 ``<array>_size`` helper returns that size. Constant sizes get a nullary
 ``T_size()`` helper (``consteval`` under C++20, ``constexpr`` under C++17); compound symbolic sizes get a ``constexpr``
 helper over the sorted free symbols (``T_size(M, N)``); a bare single symbol
@@ -15,7 +15,7 @@ Each kernel is compiled + run under both the ``legacy`` and ``experimental``
 generators on identical (``copy.deepcopy``'d) inputs; the outputs must be
 bit-exact, which proves the routed size expression matches the classic
 ``sym2cpp(total_size)``. A few cases additionally inspect the generated C++ (the
-helper definition and the ``aligned_alloc`` call). CPU kernels run in a forked
+helper definition and the aligned ``new[]`` call). CPU kernels run in a forked
 child (repo rule) via :func:`conftest.run_isolated`.
 """
 import copy
@@ -187,15 +187,10 @@ def size_helper_definition(code: str, array: str) -> str:
 
 
 def allocation_line(code: str, array: str) -> str:
-    """The ``aligned_alloc`` statement for ``array`` (matched at a word boundary).
-
-    :param code: Generated C++.
-    :param array: Array base name.
-    :return: The stripped allocation line.
-    """
+    """The aligned ``new[]`` allocation statement for ``array`` (matched at a word boundary)."""
     pattern = re.compile(r'(?<!\w)%s = ' % re.escape(array))
-    lines = [line.strip() for line in code.splitlines() if 'aligned_alloc' in line and pattern.search(line)]
-    assert lines, 'experimental codegen emitted no aligned_alloc for %s' % array
+    lines = [line.strip() for line in code.splitlines() if 'DACE_ALIGN' in line and pattern.search(line)]
+    assert lines, 'experimental codegen emitted no aligned allocation for %s' % array
     return lines[0]
 
 
@@ -216,7 +211,7 @@ def test_symbolic_size_helper(require_experimental):
     assert 'constexpr' in definition, definition
     assert 'long long M' in definition and 'long long N' in definition, definition
     assert '(M * N)' in definition, definition
-    assert 'dace::aligned_alloc<double>(T_size(M, N), 64)' in allocation_line(code, 'T')
+    assert 'new double DACE_ALIGN(64)[T_size(M, N)]' in allocation_line(code, 'T')
 
 
 def test_ipow_size_helper(require_experimental):
@@ -231,8 +226,8 @@ def test_ipow_size_helper(require_experimental):
     code = experimental_code(build, 'ipowsize_inspect')
     definition = size_helper_definition(code, 'T')
     assert 'constexpr' in definition and 'long long N' in definition, definition
-    assert 'ipow(N, 2)' in definition, definition
-    assert 'dace::aligned_alloc<double>(T_size(N), 64)' in allocation_line(code, 'T')
+    assert '(N * N)' in definition, definition
+    assert 'new double DACE_ALIGN(64)[T_size(N)]' in allocation_line(code, 'T')
 
 
 def test_constant_size_helper(require_experimental):
@@ -249,7 +244,7 @@ def test_constant_size_helper(require_experimental):
     expected_qual = 'consteval' if int(str(Config.get('compiler', 'cpp_standard')).strip()) >= 20 else 'constexpr'
     assert expected_qual in definition, definition
     assert 'T_size()' in definition and 'return 200;' in definition, definition
-    assert 'dace::aligned_alloc<double>(T_size(), 64)' in allocation_line(code, 'T')
+    assert 'new double DACE_ALIGN(64)[T_size()]' in allocation_line(code, 'T')
 
 
 def test_bare_single_symbol_not_wrapped(require_experimental):
@@ -263,7 +258,7 @@ def test_bare_single_symbol_not_wrapped(require_experimental):
 
     code = experimental_code(build, 'baresize_inspect')
     assert 'T_size' not in code, 'a bare single-symbol size must not be wrapped in a helper'
-    assert 'dace::aligned_alloc<double>(N, 64)' in allocation_line(code, 'T')
+    assert 'new double DACE_ALIGN(64)[N]' in allocation_line(code, 'T')
 
 
 def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):
@@ -275,11 +270,11 @@ def test_distinct_size_helpers_across_nested_sdfgs(require_experimental):
     assert np.array_equal(experimental['B'][0], base['A'][0])
 
     code = experimental_code(build, 'nestedsize_inspect')
-    # The inner (N*N -> ipow) and outer (N*M) sizes yield distinct helpers with
+    # The inner (N*N) and outer (N*M) sizes yield distinct helpers with
     # distinct arities -- no collision.
     inner_def = size_helper_definition(code, 'inner_T')
     outer_def = size_helper_definition(code, 'T')
-    assert 'ipow(N, 2)' in inner_def, inner_def
+    assert '(N * N)' in inner_def, inner_def
     assert '(M * N)' in outer_def, outer_def
     assert 'inner_T_size(N)' in allocation_line(code, 'inner_T')
     assert 'T_size(M, N)' in allocation_line(code, 'T')
