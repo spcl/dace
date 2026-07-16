@@ -57,29 +57,37 @@ def time_cpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
 
 
 def time_gpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
-    """Median GPU time (seconds) of ``fn`` measured with CUDA events on a SINGLE stream.
+    """Median GPU time (seconds) of ``fn`` measured with CUDA events on the DEFAULT stream.
 
-    Assumes ``fn`` launches its work on one stream: a start and stop event are recorded on that
-    stream around each call and the stop event is synchronized (a stream-scoped wait, not a
-    whole-device ``deviceSynchronize``). ``cupy`` reports the elapsed time in milliseconds; it is
-    converted to seconds so the unit matches :func:`time_cpu`.
+    A start and stop event are recorded on the default (legacy) stream around each call and the stop
+    event is synchronized (a stream-scoped wait, not a whole-device ``deviceSynchronize``). This
+    assumes ``fn`` launches its work on that SAME single stream -- so a GPU sweep compiles with
+    ``compiler.cuda.max_concurrent_streams = -1`` (dace emits the legacy default stream), which the
+    timer shares. Recording on a fresh non-default stream would NOT bracket dace's kernels (dace does
+    not run on cupy's current stream), so the events are taken on the default stream deliberately.
+    ``cupy`` reports milliseconds; converted to seconds so the unit matches :func:`time_cpu`.
+
+    Like :func:`time_cpu` this times the WHOLE call: ``fn`` re-enters ``SDFG.__call__`` (argument
+    marshalling, cache lookup) and dace synchronizes before returning, and all of that CPU time sits
+    between the start and stop markers on the stream. For a small kernel the result is therefore
+    launch-overhead dominated (measurably: a 48x32 add reports ~290ms, ~1.0x the wall clock) and only
+    ranks layouts whose cost differences exceed that overhead. To measure the compute region alone,
+    pass ``dace.transformation.layout.timing.compute_region_timer`` as :func:`sweep`'s ``timer``.
     """
     import cupy  # only needed on the GPU path; keep the module importable without a GPU
 
-    stream = cupy.cuda.Stream(non_blocking=False)
     start = cupy.cuda.Event()
     stop = cupy.cuda.Event()
     samples = []
-    with stream:
-        for _ in range(warmup):
-            fn()
-        stream.synchronize()
-        for _ in range(reps):
-            start.record(stream)
-            fn()
-            stop.record(stream)
-            stop.synchronize()  # wait on the stop EVENT, single stream
-            samples.append(cupy.cuda.get_elapsed_time(start, stop) * 1e-3)
+    for _ in range(warmup):
+        fn()
+    cupy.cuda.get_current_stream().synchronize()
+    for _ in range(reps):
+        start.record()  # default stream
+        fn()
+        stop.record()  # default stream
+        stop.synchronize()  # wait on the stop EVENT, single stream
+        samples.append(cupy.cuda.get_elapsed_time(start, stop) * 1e-3)
     samples.sort()
     return samples[len(samples) // 2]
 
