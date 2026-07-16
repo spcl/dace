@@ -1251,6 +1251,8 @@ def test_nanobind_interface_strict_scalar_cast_runtime():
         off = widen_off_prog.to_sdfg().compile()
         result = off(2)  # Python int -> double (widening), accepted
         assert np.isclose(result[0], 3.0)
+        result = off(np.float64(2.0))  # exact-width numpy scalar, accepted
+        assert np.isclose(result[0], 3.0)
 
         # On: the same widening is rejected. A distinct SDFG name keeps the
         # .dacecache entry separate from the off build (the cache key is the SDFG
@@ -1264,6 +1266,13 @@ def test_nanobind_interface_strict_scalar_cast_runtime():
             on = widen_on_prog.to_sdfg().compile()
             with pytest.raises(Exception):
                 on(2)  # Python int -> double rejected under .noconvert()
+            # .noconvert() also disables the __index__ path, so numpy scalars
+            # are rejected even at the exact width: strict means built-in
+            # Python scalar types only.
+            with pytest.raises(Exception):
+                on(np.float64(2.0))
+            result = on(2.0)  # a genuine Python float still passes
+            assert np.isclose(result[0], 3.0)
 
 
 if __name__ == '__main__':

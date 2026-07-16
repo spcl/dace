@@ -266,7 +266,10 @@ def _argument_binding(arglist, binding_order=None, optional_symbols=None):
         elif isinstance(desc, dt.Scalar):
             # `.noconvert()` (strict option on) makes nanobind reject even a safe
             # widening scalar cast (e.g. int -> double). A lossy cast (float ->
-            # int) is rejected by nanobind regardless.
+            # int) is rejected by nanobind regardless. `.noconvert()` also
+            # disables the `__index__` path, so it rejects every numpy scalar,
+            # even at the exact width (numpy.int32 -> int32_t): strict means
+            # built-in Python scalar types only.
             params_by_name[name] = f'{ctype} {name}'
             call_args.append(name)
             nb_args_by_name[name] = (f'nb::arg("{name}").noconvert()' if strict_scalar else f'nb::arg("{name}")')
