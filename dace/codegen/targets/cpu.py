@@ -781,10 +781,15 @@ class CPUCodeGen(TargetCodeGenerator):
 
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
 
-            if not declared:
+            # A generator may fuse the declaration into the allocation, turning the pair into one
+            # definition statement; the base never does, so `declarator` is None here and the
+            # declaration/allocation split below is unchanged.
+            declarator = self.fused_heap_declarator(sdfg, name, nodedesc, arrsize, declared, declaration_stream,
+                                                    allocation_stream)
+            if not declared and declarator is None:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
             allocation_stream.write(
-                self.heap_alloc_stmt(alloc_name,
+                self.heap_alloc_stmt(alloc_name if declarator is None else declarator,
                                      nodedesc.dtype.ctype,
                                      cpp.sym2cpp(arrsize),
                                      nodedesc.alignment,
@@ -1963,6 +1968,18 @@ class CPUCodeGen(TargetCodeGenerator):
         generator returns False for connectors InlineTaskletConnectors rewrote into direct accesses."""
         return True
 
+    def fused_heap_declarator(self, sdfg: SDFG, name: str, nodedesc: data.Data, arrsize, declared: bool,
+                              declaration_stream: CodeIOStream, allocation_stream: CodeIOStream) -> Optional[str]:
+        """Declarator that fuses the heap declaration into the allocation statement, or None to keep
+        the classic split ``T *name;`` + ``name = new T[...];`` pair.
+
+        Returning a declarator (e.g. ``T* __restrict__ name``) makes :meth:`heap_alloc_stmt` emit a
+        single definition instead of an assignment to a previously-declared pointer. The base
+        generator never fuses -- its output is the reference the readable generator is compared
+        against -- so this returns None; :class:`~dace.codegen.targets.experimental_cpu.
+        ExperimentalCPUCodeGen` overrides it and documents when fusing is sound."""
+        return None
+
     def heap_alloc_stmt(self,
                         alloc_name: str,
                         ctype: str,
@@ -1972,8 +1989,11 @@ class CPUCodeGen(TargetCodeGenerator):
                         nodedesc: Optional[data.Data] = None,
                         data_name: Optional[str] = None) -> str:
         """C++ statement allocating a CPU heap array with aligned ``new[]`` (paired with the
-        ``delete[]`` in heap_free_stmt). The trailing ``sdfg``/``nodedesc``/``data_name`` are unused
-        here; the readable generator overrides this to route the count through an ``<array>_size`` helper."""
+        ``delete[]`` in heap_free_stmt). ``alloc_name`` is the assignment target: either a plain
+        pointer name (the classic split form) or a full declarator (see fused_heap_declarator), in
+        which case the emitted statement is a definition. The trailing ``sdfg``/``nodedesc``/
+        ``data_name`` are unused here; the readable generator overrides this to route the count
+        through an ``<array>_size`` helper."""
         return "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, ctype, arrsize)
 
     def heap_free_stmt(self, alloc_name: str, is_array: bool) -> str:
