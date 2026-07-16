@@ -7,6 +7,7 @@ import warnings
 from dace import SDFG, Memlet, dtypes
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
+from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.subsets import Range
 
 
@@ -167,8 +168,14 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
 
         # In code, assert that we allocate _and_ deallocate on the heap
         code = program_objects[0].clean_code
-        assert code.find("A = new double") > 0, "A is allocated on the heap."
-        assert code.find("delete[] A") > 0, "A is deallocated from the heap."
+        # Consult the active cpp_standard: C++ >= 17 emits the aligned
+        # new/delete forms, earlier standards the plain ones.
+        if _use_aligned_operator_new():
+            assert "A = new (std::align_val_t(64)) double" in code, "A is allocated on the heap."
+            assert "::operator delete[](A, std::align_val_t(64))" in code, "A is deallocated from the heap."
+        else:
+            assert "A = new double" in code, "A is allocated on the heap."
+            assert "delete[] A" in code, "A is deallocated from the heap."
 
 
 if __name__ == '__main__':
