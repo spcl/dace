@@ -96,11 +96,10 @@ class GemmToTensorDot(ppl.Pass):
     ``TensorDot`` so its operand layout is visible to the layout passes. Ineligible Gemms are left
     in place. Runs inside / after ``prepare_for_layout``.
 
-    :param implementation: the ``TensorDot`` implementation to set (``"pure"`` on CPU).
+    The ``TensorDot`` is inserted WITHOUT an implementation -- the transform does not choose a
+    library lowering. ``select_layout_lowering`` (or the caller) assigns a device-appropriate
+    expansion at compile time.
     """
-
-    def __init__(self, implementation: str = "pure"):
-        self._impl = implementation
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
@@ -137,7 +136,6 @@ class GemmToTensorDot(ppl.Pass):
         right_axes = [1] if node.transB else [0]
 
         td = TensorDot(f"{node.label}_tensordot", left_axes=left_axes, right_axes=right_axes)
-        td.implementation = self._impl
         state.add_node(td)
         state.add_edge(a_edge.src, a_edge.src_conn, td, "_left_tensor", dace.Memlet.from_memlet(a_edge.data))
         state.add_edge(b_edge.src, b_edge.src_conn, td, "_right_tensor", dace.Memlet.from_memlet(b_edge.data))
@@ -188,11 +186,10 @@ class RewriteCopyForLayout(ppl.Pass):
     permutation. Same-layout copies and rank-changing reshapes are left untouched. Run AFTER the
     layout change (the copy becomes transposing only once one side is relaid out).
 
-    :param implementation: the ``TensorTranspose`` implementation to set (``"pure"`` on CPU).
+    The ``TensorTranspose`` is inserted WITHOUT an implementation -- the transform does not choose a
+    library lowering. ``select_layout_lowering`` (or the node default) assigns a device-appropriate
+    expansion at compile time.
     """
-
-    def __init__(self, implementation: str = "pure"):
-        self._impl = implementation
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
@@ -220,7 +217,6 @@ class RewriteCopyForLayout(ppl.Pass):
             return 0
 
         tt = TensorTranspose(f"{node.label}_transpose", axes=axes)
-        tt.implementation = self._impl
         state.add_node(tt)
         state.add_edge(in_edge.src, in_edge.src_conn, tt, "_inp_tensor", dace.Memlet.from_memlet(in_edge.data))
         state.add_edge(tt, "_out_tensor", out_edge.dst, out_edge.dst_conn, dace.Memlet.from_memlet(out_edge.data))

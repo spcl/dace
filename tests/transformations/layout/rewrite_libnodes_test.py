@@ -10,6 +10,7 @@ import dace
 
 from dace.transformation.layout.rewrite_libnodes import (transform_einsum, remap_contracted_axes, GemmToTensorDot,
                                                          permute_reduce, block_scan_stride)
+from dace.transformation.layout.select_lowering import select_layout_lowering
 from dace.libraries.blas.nodes.gemm import Gemm
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.libraries.standard.nodes.scan import Scan, ScanOp
@@ -75,6 +76,7 @@ def test_gemm_to_tensordot_matmul_bitexact():
     assert GemmToTensorDot().apply_pass(sdfg, {}) == 1
     assert not _has(st, "Gemm") and _has(st, "TensorDot")
     sdfg.validate()
+    assert select_layout_lowering(sdfg, "cpu") == 1  # transform left lowering unset; pick it here
 
     M, K, Nn = 4, 5, 6
     A = numpy.random.rand(M, K)
@@ -88,6 +90,7 @@ def test_gemm_to_tensordot_transA():
     sdfg, st = _gemm_sdfg("mm_ta", transA=True)
     assert GemmToTensorDot().apply_pass(sdfg, {}) == 1
     sdfg.validate()
+    select_layout_lowering(sdfg, "cpu")
 
     M, K, Nn = 4, 5, 6
     A = numpy.random.rand(K, M)  # stored transposed
@@ -101,6 +104,7 @@ def test_gemm_to_tensordot_transB():
     sdfg, st = _gemm_sdfg("mm_tb", transB=True)
     assert GemmToTensorDot().apply_pass(sdfg, {}) == 1
     sdfg.validate()
+    select_layout_lowering(sdfg, "cpu")
 
     M, K, Nn = 4, 5, 6
     A = numpy.random.rand(M, K)

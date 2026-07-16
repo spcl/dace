@@ -214,8 +214,9 @@ class PermuteDimensions(ppl.Pass):
         Adds a transpose that copies data from the original layout to the permuted layout
         using the TensorTranspose library node.
 
-        For GPU arrays, the cuTENSOR implementation is used (cutensorPermute).
-        For CPU arrays, the pure (map-based) implementation is used.
+        The node is inserted WITHOUT an implementation: the transform does not choose a library
+        lowering. The device-appropriate expansion (``pure`` map on CPU, ``cuTENSOR`` on GPU) is
+        selected later, at compile time, by ``select_layout_lowering`` / the node default.
         """
         if self._use_permute_libnodes:
             from dace.libraries.linalg import TensorTranspose
@@ -226,10 +227,7 @@ class PermuteDimensions(ppl.Pass):
             assert len(old_shape) == len(new_shape), \
                 f"Old shape {old_shape} and new shape {new_shape} must have the same length"
 
-            impl = "pure"
-
             tnode = TensorTranspose(f"permute_{old_name}_to_{new_name}", axes=permute_indices)
-            tnode.implementation = impl
             state.add_node(tnode)
 
             state.add_edge(old_access, None, tnode, "_inp_tensor",

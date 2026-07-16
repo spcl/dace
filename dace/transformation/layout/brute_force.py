@@ -15,6 +15,9 @@ This module is the reusable engine:
     over the layout passes.
   * :func:`time_cpu` is a median-of-reps wall-clock timer (best-effort; timing on a shared/loaded
     host is noisy -- correctness is the invariant, speed is advisory).
+  * :func:`time_gpu` is the GPU peer: it records CUDA start/stop events on a SINGLE stream around
+    each call and synchronizes on the stop event (not the whole device). :func:`sweep` picks the
+    timer from its ``device`` argument.
 
 The caller supplies a ``run`` closure that binds fresh inputs, executes a compiled SDFG, and returns
 the outputs to compare, plus the reference outputs; the engine owns the compile/verify/time/rank
@@ -53,6 +56,34 @@ def time_cpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
     return samples[len(samples) // 2]
 
 
+def time_gpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
+    """Median GPU time (seconds) of ``fn`` measured with CUDA events on a SINGLE stream.
+
+    Assumes ``fn`` launches its work on one stream: a start and stop event are recorded on that
+    stream around each call and the stop event is synchronized (a stream-scoped wait, not a
+    whole-device ``deviceSynchronize``). ``cupy`` reports the elapsed time in milliseconds; it is
+    converted to seconds so the unit matches :func:`time_cpu`.
+    """
+    import cupy  # only needed on the GPU path; keep the module importable without a GPU
+
+    stream = cupy.cuda.Stream(non_blocking=False)
+    start = cupy.cuda.Event()
+    stop = cupy.cuda.Event()
+    samples = []
+    with stream:
+        for _ in range(warmup):
+            fn()
+        stream.synchronize()
+        for _ in range(reps):
+            start.record(stream)
+            fn()
+            stop.record(stream)
+            stop.synchronize()  # wait on the stop EVENT, single stream
+            samples.append(cupy.cuda.get_elapsed_time(start, stop) * 1e-3)
+    samples.sort()
+    return samples[len(samples) // 2]
+
+
 def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
           run: Callable[[dace.SDFG], Dict[str, numpy.ndarray]],
           reference: Dict[str, numpy.ndarray],
@@ -60,6 +91,7 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
           reps: int = 5,
           warmup: int = 1,
           do_time: bool = True,
+          device: str = "cpu",
           timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None) -> List[SweepResult]:
     """Compile, run, verify and (optionally) time each candidate; return results ranked.
 
@@ -70,22 +102,31 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
     :param reference: the numpy-oracle outputs, ``{output_name: array}``.
     :param compare: elementwise correctness predicate (default ``numpy.allclose``).
     :param do_time: time each CORRECT candidate (never an incorrect one).
+    :param device: ``"cpu"`` or ``"gpu"``. Selects the device-appropriate library lowering for any
+                   layout-inserted node (via :func:`select_layout_lowering`) and, when ``timer`` is
+                   not given, the matching wall-clock (:func:`time_cpu`) or CUDA-event
+                   (:func:`time_gpu`) timer.
     :param timer: ``timer(sdfg, run, reps, warmup) -> time`` for a correct candidate. ``None`` =
-                  whole-call wall clock (:func:`time_cpu`); pass
+                  the ``device``-selected whole-call timer; pass
                   ``dace.transformation.layout.timing.compute_region_timer`` to time only the compute
                   region (excluding the relayout copies). One timer is used for the whole sweep, so
                   its unit is consistent and the ranking is valid.
     :returns: results, correct-first then ascending time.
     """
+    from dace.transformation.layout.select_lowering import select_layout_lowering
+
+    default_timer = time_gpu if device == "gpu" else time_cpu
     results: List[SweepResult] = []
     for name, make in candidates.items():
         try:
             sdfg = make()
+            select_layout_lowering(sdfg, device)  # the transforms left lowering unset; choose it here
             out = run(sdfg)
             correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
             t = None
             if do_time and correct:
-                t = timer(sdfg, run, reps, warmup) if timer is not None else time_cpu(lambda: run(sdfg), reps, warmup)
+                t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(lambda: run(sdfg), reps,
+                                                                                            warmup)
             results.append(SweepResult(name, correct, t))
         except Exception as ex:  # a candidate that fails to build/compile/run is simply not viable
             results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}"))
