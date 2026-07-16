@@ -470,6 +470,48 @@ required:
                                     is the precondition for every downstream idiom/vectorization
                                     decision, so leaving these helpers un-inlined is the failure mode
                                     this guards against. ``inline_constexpr`` reproduces today's output.
+                            loop_index_type:
+                                type: str
+                                default: auto
+                                title: Map-loop induction variable type
+                                description: >
+                                    Applies to: legacy AND experimental_readable (both emit map loops
+                                    through the same emitter in cpu.py).
+
+                                    The declared type of a map loop's induction variable. ``auto`` (the
+                                    default) deduces it from the lower bound -- for the usual ``0`` that
+                                    makes it ``int``, i.e. 32-bit index math. ``int64`` emits
+                                    ``long long`` and ``int32`` emits ``int`` explicitly.
+
+                                    Widening the induction variable can let TBAA disprove aliasing so a
+                                    store sinks out of the loop, and it changes the no-wrap facts SCEV
+                                    and the vectorizer rely on -- but a wider counter is also more
+                                    register pressure and, on a 32-bit-safe loop, pure cost. The sign is
+                                    not fixed; sweep it. This is DISTINCT from ``index_ctype``, which
+                                    types the generated helper bodies, not the loop variable; if the two
+                                    disagree the loop index converts at the call. ``auto`` reproduces
+                                    today's output byte-for-byte, so legacy is unaffected by default.
+                            loop_bound_cmp:
+                                type: str
+                                default: lt
+                                title: Map-loop bound comparison
+                                description: >
+                                    Applies to: legacy AND experimental_readable (shared map-loop
+                                    emitter).
+
+                                    How a map loop's exit test is spelled, for the identical iteration
+                                    space: ``lt`` emits ``i < end + 1`` (the default), ``le`` emits
+                                    ``i <= end`` (same range, without the ``+ 1`` add), ``ne`` emits
+                                    ``i != end + 1``.
+
+                                    ``ne`` is only emitted when the stride is provably 1; with any other
+                                    stride the counter can step OVER the bound and the loop would never
+                                    terminate, so it silently falls back to ``lt`` rather than emit an
+                                    infinite loop. Even when legal, ``ne`` forces the optimizer to prove
+                                    termination before it may vectorize or unroll, where ``<`` hands SCEV
+                                    a trip count directly -- so ``ne`` is the pessimistic end of this
+                                    axis and exists to be measured, not recommended. ``lt`` reproduces
+                                    today's output byte-for-byte.
 
             #############################################
             # GPU (CUDA/HIP) compiler

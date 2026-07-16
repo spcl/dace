@@ -28,6 +28,31 @@ import re
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
 
+#: C++ spelling of each ``codegen_params.loop_index_type`` value. ``auto`` deduces from the lower
+#: bound (for the usual ``0`` that is ``int``); the others state the width outright.
+LOOP_INDEX_CTYPES = {'auto': 'auto', 'int64': 'long long', 'int32': 'int'}
+
+
+def loop_index_ctype() -> str:
+    """Declared type of a map loop's induction variable, per ``codegen_params.loop_index_type``."""
+    return LOOP_INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')]
+
+
+def loop_exit_test(end, skip) -> Tuple[str, str]:
+    """The ``(comparison, bound)`` of a map loop's exit test, per ``codegen_params.loop_bound_cmp``.
+
+    Every spelling covers the identical iteration space ``[begin, end]``. ``ne`` is emitted ONLY for a
+    provably unit stride: with any other stride the counter can step OVER the bound, so ``i != end+1``
+    would never fire and the loop would not terminate -- a non-unit stride silently falls back to
+    ``lt`` rather than emit an infinite loop.
+    """
+    mode = Config.get('compiler', 'cpu', 'codegen_params', 'loop_bound_cmp')
+    if mode == 'le':
+        return '<=', sym2cpp(end)
+    if mode == 'ne' and symbolic.pystr_to_symbolic(skip) == 1:
+        return '!=', sym2cpp(end + 1)
+    return '<', sym2cpp(end + 1)
+
 
 def gpu_block_reduction_write_slot(subset, base, length):
     """Register-partial slot for a write to a GPU thread-block tree-reduction accumulator.
@@ -2605,9 +2630,10 @@ class CPUCodeGen(TargetCodeGenerator):
                         unroll_pragma += f" {node.map.unroll_factor}"
                     result.write(unroll_pragma, cfg, state_id, node)
 
+                comparison, bound = loop_exit_test(end, skip)
                 result.write(
-                    "for (auto %s = %s; %s < %s; %s += %s) {\n" %
-                    (var, cpp.sym2cpp(begin), var, cpp.sym2cpp(end + 1), var, cpp.sym2cpp(skip)),
+                    "for (%s %s = %s; %s %s %s; %s += %s) {\n" %
+                    (loop_index_ctype(), var, cpp.sym2cpp(begin), var, comparison, bound, var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,
