@@ -11,7 +11,7 @@ import numpy
 import pytest
 
 import dace
-from dace.transformation.layout.brute_force import sweep, best, time_cpu, time_gpu
+from dace.transformation.layout.brute_force import sweep, best, time_cpu, time_gpu, single_default_stream
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 cupy = pytest.importorskip("cupy")
@@ -54,9 +54,8 @@ def test_gpu_sweep_permute_times_and_verifies():
 
     candidates = {f"permute_A_{''.join(map(str, p))}": _gpu_candidate(p) for p in ((0, 1), (1, 0))}
 
-    # One stream for the whole program so the default-stream events bracket dace's kernels.
-    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
-        results = sweep(candidates, run, reference, device="gpu", reps=3, warmup=1)
+    # No manual stream config: sweep(device="gpu") enters single_default_stream itself.
+    results = sweep(candidates, run, reference, device="gpu", reps=3, warmup=1)
 
     assert all(r.correct for r in results), [(r.name, r.error) for r in results]
     winner = best(results)
@@ -70,9 +69,9 @@ def test_time_gpu_records_on_the_stream_dace_runs_on():
 
     dace does not launch on cupy's current stream, so events taken on a FRESH non-default stream
     would bracket no dace work and report ~0. Recorded on the default stream -- the one dace emits
-    under ``max_concurrent_streams = -1`` -- the single-stream event window spans the same whole call
-    the wall clock sees (both include dace's per-call marshalling), so the two agree to within a
-    small factor. This pins the contract in :func:`time_gpu`'s docstring."""
+    under ``single_default_stream`` -- the single-stream event window spans the same whole call the
+    wall clock sees (both include dace's per-call marshalling), so the two agree to within a small
+    factor. This pins the contract in :func:`time_gpu`'s docstring."""
     if cupy.cuda.runtime.getDeviceCount() < 1:
         pytest.skip("no CUDA device")
 
@@ -84,7 +83,7 @@ def test_time_gpu_records_on_the_stream_dace_runs_on():
         sdfg(A=a, C=c)
         return c
 
-    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
+    with single_default_stream():  # compile on the single default stream the timer records on
         sdfg = _gpu_candidate((1, 0))()
         assert numpy.allclose(run(sdfg), host_a + 1.0)  # compile + correctness before timing
         t_gpu = time_gpu(lambda: run(sdfg), reps=3, warmup=1)

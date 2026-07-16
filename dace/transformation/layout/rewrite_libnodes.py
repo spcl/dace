@@ -97,8 +97,12 @@ class GemmToTensorDot(ppl.Pass):
     in place. Runs inside / after ``prepare_for_layout``.
 
     The ``TensorDot`` is inserted WITHOUT an implementation -- the transform does not choose a
-    library lowering. ``select_layout_lowering`` (or the caller) assigns a device-appropriate
-    expansion at compile time.
+    library lowering. Unlike ``TensorTranspose`` (node default ``pure``), ``TensorDot`` has NO usable
+    default implementation, so an SDFG this pass produces is NOT compilable until a lowering is
+    chosen: ``select_layout_lowering(sdfg, device)`` MUST run before compile (compiling without it
+    raises a misleading ``KeyError`` for the linalg config's BLAS default, which is not a TensorDot
+    implementation). ``select_layout_lowering`` is the required finalizer for this pass; the sweep
+    runs it automatically.
     """
 
     def modifies(self) -> ppl.Modifies:

@@ -88,9 +88,54 @@ def test_sweep_build_failure_is_not_viable():
     assert best(results) is None
 
 
+def test_sweep_timing_failure_does_not_demote_correct():
+    """A timer that raises (e.g. cupy absent, no device) must NOT flip a verified-correct candidate
+    to incorrect: timing is advisory. best() still returns it; the timing error is kept in metadata."""
+    _N = 8
+    A = numpy.random.rand(_N, _N)
+    reference = {"C": A * 2.0 + 1.0}
+
+    def make():
+        sdfg = ew2d.to_sdfg(simplify=True)
+        return sdfg
+
+    def run(sdfg):
+        C = numpy.zeros((_N, _N))
+        sdfg(A=A.copy(), C=C, N=_N)
+        return {"C": C}
+
+    def raising_timer(sdfg, run_, reps, warmup):
+        raise ModuleNotFoundError("No module named 'cupy'")
+
+    results = sweep({"id": make}, run, reference, do_time=True, timer=raising_timer)
+    assert results[0].correct is True  # verified despite the timer blowing up
+    assert results[0].time is None
+    assert "ModuleNotFoundError" in results[0].metadata.get("timing_error", "")
+    assert best(results) is not None and best(results).correct
+
+
+def test_sweep_bad_device_rejected():
+    """sweep validates device up front rather than swallowing it per-candidate."""
+    import pytest
+    with pytest.raises(ValueError):
+        sweep({}, lambda s: {}, {}, device="tpu")
+
+
+def test_single_default_stream_forces_minus_one():
+    """The 1-stream mode is ALWAYS -1 (legacy default stream) inside the context, restored after."""
+    from dace.transformation.layout.brute_force import single_default_stream
+    before = dace.Config.get("compiler", "cuda", "max_concurrent_streams")
+    with single_default_stream():
+        assert dace.Config.get("compiler", "cuda", "max_concurrent_streams") == -1
+    assert dace.Config.get("compiler", "cuda", "max_concurrent_streams") == before
+
+
 if __name__ == "__main__":
     test_time_cpu_returns_positive()
     test_sweep_permutation_candidates_all_verify()
     test_sweep_flags_and_ranks()
     test_sweep_build_failure_is_not_viable()
+    test_sweep_timing_failure_does_not_demote_correct()
+    test_sweep_bad_device_rejected()
+    test_single_default_stream_forces_minus_one()
     print("brute_force tests PASS")

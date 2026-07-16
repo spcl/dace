@@ -23,6 +23,7 @@ The caller supplies a ``run`` closure that binds fresh inputs, executes a compil
 the outputs to compare, plus the reference outputs; the engine owns the compile/verify/time/rank
 loop. Timing never runs for an incorrect candidate.
 """
+import contextlib
 import itertools
 import time as _time
 from dataclasses import dataclass, field
@@ -57,14 +58,17 @@ def time_cpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
 
 
 def time_gpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
-    """Median GPU time (seconds) of ``fn`` measured with CUDA events on the DEFAULT stream.
+    """Median GPU time (seconds) of ``fn`` measured with CUDA events on cupy's CURRENT stream.
 
-    A start and stop event are recorded on the default (legacy) stream around each call and the stop
+    The events are recorded with no stream argument, i.e. on cupy's current stream, which is the
+    null/default stream unless the caller is inside a ``with stream:`` context -- do NOT wrap this in
+    one. A start and stop event are recorded on that stream around each call and the stop
     event is synchronized (a stream-scoped wait, not a whole-device ``deviceSynchronize``). This
-    assumes ``fn`` launches its work on that SAME single stream -- so a GPU sweep compiles with
-    ``compiler.cuda.max_concurrent_streams = -1`` (dace emits the legacy default stream), which the
-    timer shares. Recording on a fresh non-default stream would NOT bracket dace's kernels (dace does
-    not run on cupy's current stream), so the events are taken on the default stream deliberately.
+    assumes ``fn`` launches its work on that SAME single stream -- so the SDFG must be COMPILED inside
+    :func:`single_default_stream` (dace emits the legacy default stream), which the timer shares;
+    :func:`sweep` does this for ``device="gpu"``. Recording on a fresh non-default stream would NOT
+    bracket dace's kernels (dace does not run on cupy's current stream), so the events are taken on
+    the default stream deliberately.
     ``cupy`` reports milliseconds; converted to seconds so the unit matches :func:`time_cpu`.
 
     Like :func:`time_cpu` this times the WHOLE call: ``fn`` re-enters ``SDFG.__call__`` (argument
@@ -83,13 +87,33 @@ def time_gpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
         fn()
     cupy.cuda.get_current_stream().synchronize()
     for _ in range(reps):
-        start.record()  # default stream
+        start.record()  # cupy's CURRENT stream -- the null/default stream when no stream context is active
         fn()
-        stop.record()  # default stream
+        stop.record()  # same current stream, so start/stop bracket dace's default-stream kernels
         stop.synchronize()  # wait on the stop EVENT, single stream
         samples.append(cupy.cuda.get_elapsed_time(start, stop) * 1e-3)
     samples.sort()
     return samples[len(samples) // 2]
+
+
+@contextlib.contextmanager
+def single_default_stream():
+    """Compile GPU code onto ONE stream -- the legacy default stream.
+
+    dace's default (``compiler.cuda.max_concurrent_streams = 0``) spreads kernels across many
+    streams; the default-stream CUDA events :func:`time_gpu` records would then miss the work on the
+    other streams and under-report. Setting ``max_concurrent_streams = -1`` makes dace emit the
+    single legacy default stream the timer records on. The value is read at CODE-GENERATION time, so
+    the SDFG must be COMPILED inside this context (in the sweep, ``run`` compiles on its first call,
+    which is why the whole candidate loop is wrapped). :func:`sweep` enters it automatically for
+    ``device="gpu"``; a direct :func:`time_gpu` caller must compile inside it too.
+
+    .. note:: dace's build cache keys on the SDFG, not on this config, so a same-named SDFG compiled
+       earlier under a different stream setting can be reused stale -- clean ``.dacecache`` between
+       runs that change the stream mode.
+    """
+    with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
+        yield
 
 
 def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
@@ -113,7 +137,8 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
     :param device: ``"cpu"`` or ``"gpu"``. Selects the device-appropriate library lowering for any
                    layout-inserted node (via :func:`select_layout_lowering`) and, when ``timer`` is
                    not given, the matching wall-clock (:func:`time_cpu`) or CUDA-event
-                   (:func:`time_gpu`) timer.
+                   (:func:`time_gpu`) timer. ``"gpu"`` also compiles the whole sweep inside
+                   :func:`single_default_stream` so the timer's single-stream assumption holds.
     :param timer: ``timer(sdfg, run, reps, warmup) -> time`` for a correct candidate. ``None`` =
                   the ``device``-selected whole-call timer; pass
                   ``dace.transformation.layout.timing.compute_region_timer`` to time only the compute
@@ -121,23 +146,34 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
                   its unit is consistent and the ranking is valid.
     :returns: results, correct-first then ascending time.
     """
+    if device not in ("cpu", "gpu"):
+        raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
     from dace.transformation.layout.select_lowering import select_layout_lowering
 
     default_timer = time_gpu if device == "gpu" else time_cpu
+    stream_ctx = single_default_stream() if device == "gpu" else contextlib.nullcontext()
     results: List[SweepResult] = []
-    for name, make in candidates.items():
-        try:
-            sdfg = make()
-            select_layout_lowering(sdfg, device)  # the transforms left lowering unset; choose it here
-            out = run(sdfg)
-            correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
+    with stream_ctx:  # GPU: force the single default stream at compile time (run() compiles)
+        for name, make in candidates.items():
+            try:
+                sdfg = make()
+                select_layout_lowering(sdfg, device)  # the transforms left lowering unset; choose it here
+                out = run(sdfg)
+                correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
+            except Exception as ex:  # a candidate that fails to build/compile/run is simply not viable
+                results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}"))
+                continue
+            # Timing is ADVISORY and runs in its own guard: a timer failure (e.g. cupy absent, no
+            # device) must never demote an already-verified-correct candidate to incorrect.
             t = None
+            metadata = {}
             if do_time and correct:
-                t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(lambda: run(sdfg), reps,
-                                                                                            warmup)
-            results.append(SweepResult(name, correct, t))
-        except Exception as ex:  # a candidate that fails to build/compile/run is simply not viable
-            results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}"))
+                try:
+                    t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
+                        lambda: run(sdfg), reps, warmup)
+                except Exception as ex:
+                    metadata["timing_error"] = f"{type(ex).__name__}: {ex}"
+            results.append(SweepResult(name, correct, t, metadata=metadata))
     results.sort(key=lambda r: (not r.correct, r.time if r.time is not None else float('inf')))
     return results
 
