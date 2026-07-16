@@ -44,7 +44,7 @@ python3 codegen_variants/codegen_variants_perf.py --tables-only     # rebuild th
 ```
 
 `native` mode and the cmake variants both need `nvcc` + `g++` (+ `cmake` for the cmake variants)
-on `PATH`; the slurm script sets the same toolchain env as `slurm_native_vs_cmake.sh`.
+on `PATH`; the slurm script sets the same toolchain env as `slurm_npbench_polybench_compile.sh`.
 
 ## Output
 

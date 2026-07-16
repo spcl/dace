@@ -45,8 +45,8 @@ import sys
 import time
 
 # The performance_regression_jobs framework is a flat directory of standalone job scripts
-# (not an installed package); this job lives one level down, so add the parent to the path
-# exactly as native_vs_cmake does.
+# (not an installed package); this job lives one level down, so add the parent to the path the
+# same way the sibling jobs do.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dace.config import set_temporary
