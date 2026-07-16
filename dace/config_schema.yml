@@ -515,6 +515,33 @@ required:
                                     hands SCEV a trip count directly -- so ``ne`` is the pessimistic end
                                     of this axis and exists to be measured, not recommended. ``lt``
                                     reproduces today's output byte-for-byte.
+                            loop_decl_style:
+                                type: str
+                                default: for_init
+                                title: Map-loop induction variable declaration placement
+                                description: >
+                                    Applies to: legacy AND experimental_readable (shared map-loop
+                                    emitter).
+
+                                    Where a map loop's induction variable is declared, for the identical
+                                    loop: ``for_init`` (the default) declares it in the for-statement's
+                                    init clause, ``for (auto i = 0; ...)``; ``hoisted`` declares it ahead
+                                    of the loop, ``auto i = 0; for (; ...)``.
+
+                                    The variable's lifetime is the only difference: hoisted, it outlives
+                                    the loop, which is what makes this a style axis at all -- a longer
+                                    live range is a different input to register allocation. It also means
+                                    two sibling maps sharing a parameter name would collide, so hoisting
+                                    forces the map's encapsulating scope to be emitted (that brace is
+                                    exactly what bounds a declaration made ahead of the loop headers).
+
+                                    Applies to SEQUENTIAL maps only. An OpenMP pragma must be
+                                    immediately followed by a CANONICAL loop whose init clause declares
+                                    the induction variable, so hoisting it leaves the pragma facing a
+                                    declaration and the compiler rejects it outright ("loop nest
+                                    expected"). A CPU_Multicore / CPU_Persistent map therefore keeps
+                                    ``for_init`` regardless of this key. ``for_init`` reproduces today's
+                                    output byte-for-byte.
 
             #############################################
             # GPU (CUDA/HIP) compiler

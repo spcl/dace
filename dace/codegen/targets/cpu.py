@@ -38,6 +38,20 @@ def loop_index_ctype() -> str:
     return LOOP_INDEX_CTYPES[Config.get('compiler', 'cpu', 'codegen_params', 'loop_index_type')]
 
 
+def hoist_loop_decls(node: nodes.MapEntry) -> bool:
+    """Whether this map's induction variables are declared ahead of their loops (``T i = begin; for (;
+    ...)``) instead of in the for-statement's init clause, per ``codegen_params.loop_decl_style``.
+
+    Never for an OpenMP-scheduled map: the pragma must be immediately followed by a CANONICAL loop
+    whose init clause declares the induction variable, so hoisting leaves the pragma facing a
+    declaration and the compiler rejects it ("loop nest expected"). The knob therefore applies to
+    sequential maps only.
+    """
+    if Config.get('compiler', 'cpu', 'codegen_params', 'loop_decl_style') != 'hoisted':
+        return False
+    return node.map.schedule not in (dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent)
+
+
 def loop_exit_test(begin, end, skip) -> Tuple[str, str]:
     """The ``(comparison, bound)`` of a map loop's exit test, per ``codegen_params.loop_bound_cmp``.
 
@@ -2636,9 +2650,14 @@ class CPUCodeGen(TargetCodeGenerator):
                     result.write(unroll_pragma, cfg, state_id, node)
 
                 comparison, bound = loop_exit_test(begin, end, skip)
+                init = '%s %s = %s' % (loop_index_ctype(), var, cpp.sym2cpp(begin))
+                if hoist_loop_decls(node):
+                    # Declared ahead of the loop, so it outlives it -- the map's encapsulating scope is
+                    # what bounds it (experimental keeps that brace when hoisting).
+                    result.write('%s;\n' % init, cfg, state_id, node)
+                    init = ''
                 result.write(
-                    "for (%s %s = %s; %s %s %s; %s += %s) {\n" %
-                    (loop_index_ctype(), var, cpp.sym2cpp(begin), var, comparison, bound, var, cpp.sym2cpp(skip)),
+                    "for (%s; %s %s %s; %s += %s) {\n" % (init, var, comparison, bound, var, cpp.sym2cpp(skip)),
                     cfg,
                     state_id,
                     node,

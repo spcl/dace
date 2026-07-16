@@ -25,7 +25,7 @@ from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import CPUCodeGen
+from dace.codegen.targets.cpu import CPUCodeGen, hoist_loop_decls
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.sdfg import nodes
@@ -122,6 +122,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         only add nesting. Keep the scope for every construct that does declare into it.
         """
         if dynamic_map_inputs(state_dfg, node):  # emit memlet_definition declarations
+            return True
+        if hoist_loop_decls(node):  # declares the induction variables ahead of the loop headers
             return True
         if node.map.schedule == dtypes.ScheduleType.CPU_Persistent:  # declares the thread id
             return True
