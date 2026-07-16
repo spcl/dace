@@ -20,8 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion,
-                             UnstructuredControlFlow)
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, UnstructuredControlFlow)
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -517,15 +516,23 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             return True
         if self.to_allocate.get(state):
             return True
-        none_instr = dtypes.InstrumentationType.No_Instrumentation
         scope = state.scope_dict()
         for node in state.nodes():
             if scope[node] is not None:
                 continue  # nested inside a map -> that scope braces it (and its declarations)
-            if not isinstance(node, (nodes.MapEntry, nodes.MapExit, nodes.AccessNode)):
+            # An instrumented node declares its timers at state scope, so the brace must bound them.
+            # Read each property directly and against ITS OWN enum: a Property is stored under a
+            # mangled ``_name``, so a ``vars(node).get('instrument')`` lookup silently returns the
+            # default and never fires; and an AccessNode's ``instrument`` is a DataInstrumentationType,
+            # which never compares equal to an InstrumentationType member of the same name.
+            if isinstance(node, (nodes.MapEntry, nodes.MapExit)):
+                if node.map.instrument != dtypes.InstrumentationType.No_Instrumentation:
+                    return True
+            elif isinstance(node, nodes.AccessNode):
+                if node.instrument != dtypes.DataInstrumentationType.No_Instrumentation:
+                    return True
+            else:
                 return True  # a top-level tasklet / nested SDFG / library node may declare at state scope
-            if vars(node).get('instrument', none_instr) != none_instr:
-                return True  # an instrumented top-level map declares timers at state scope
         return False
 
     def generate_state(self,
