@@ -251,6 +251,35 @@ def test_sdfg_valued_callee():
     assert not _nodes_of_type(tree, tn.FunctionCallScope)
 
 
+def test_compiletime_constant_arguments():
+    # Mirrors tests/python_frontend/constant_and_keyword_args_test.py::
+    # test_constant_proper_use: dace.compiletime arguments specialize the
+    # caller and propagate through nested-program calls.
+    import numpy as np
+
+    @dace.program
+    def callee(scal: dace.compiletime, scal2: dace.compiletime, arr):
+        a_bool = scal == 1
+        if a_bool:
+            arr[:] = arr[:] + scal2
+
+    @dace.program
+    def prog(arr, scal: dace.compiletime):
+        arr[:] = arr[:] * scal
+        callee(scal, 3.0, arr)
+
+    arr = np.ones((12, ), np.float64)
+    tree = nextgen.parse_program(prog, arr, 2)
+    # Fully specialized: no callbacks, and the dead branch (scal == 1 is
+    # False) leaves no conditional computation behind
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert len(_nodes_of_type(tree, tn.FunctionCallScope)) == 1
+
+    result = np.ones((12, ), np.float64)
+    tree.as_sdfg()(arr=result)
+    assert np.allclose(result, 2.0)
+
+
 if __name__ == '__main__':
     test_bare_call_inlines()
     test_return_value_binding()
@@ -263,3 +292,4 @@ if __name__ == '__main__':
     test_two_level_inlining()
     test_nested_callee_calls_callee()
     test_sdfg_valued_callee()
+    test_compiletime_constant_arguments()
