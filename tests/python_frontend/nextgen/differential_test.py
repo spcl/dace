@@ -120,6 +120,19 @@ def prog_early_return(A: dace.float64[N]):
     return 2.0
 
 
+def _read_box(box):
+    return box['value']
+
+
+@dace.program
+def prog_detected_callable(A: dace.float64[N]):
+    # A detected Python callable executed through a callback; the callable is
+    # resolved from the tree's constants at execution time.
+    box = {'value': 41.5}
+    y: dace.float64 = _read_box(box)
+    A[0] = y
+
+
 @dace.program
 def prog_pyobject_multi(A: dace.float64[N]):
     # A batched callback with multiple outputs, one of them an opaque Python
@@ -148,6 +161,7 @@ CORPUS = [
     pytest.param(prog_break, 0, id='break'),
     pytest.param(prog_early_return, 0, id='early_return'),
     pytest.param(prog_pyobject_multi, 1, id='pyobject_multi'),
+    pytest.param(prog_detected_callable, 1, id='detected_callable'),
 ]
 
 
@@ -259,6 +273,10 @@ EXECUTION_CORPUS = [
                  _while_inputs,
                  lambda a: {'A': np.concatenate(([41.5], a['A'][1:]))},
                  id='pyobject_multi'),
+    pytest.param(prog_detected_callable,
+                 _while_inputs,
+                 lambda a: {'A': np.concatenate(([41.5], a['A'][1:]))},
+                 id='detected_callable'),
 ]
 
 

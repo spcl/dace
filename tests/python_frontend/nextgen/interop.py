@@ -118,7 +118,9 @@ def callback_arguments(root: tn.ScheduleTreeRoot) -> Dict[str, object]:
     result: Dict[str, object] = {}
     for node in root.preorder_traversal():
         if isinstance(node, tn.PythonCallbackNode) and node.outlined_function_name is not None:
-            environment: Dict[str, object] = {}
+            # The tree's constants carry every free global the callback code
+            # references (detected callables, modules, objects).
+            environment: Dict[str, object] = {name: value for name, (_, value) in root.constants.items()}
             exec(node.outlined_function_code.as_string, environment)
             result[node.outlined_function_name] = environment[node.outlined_function_name]
     return result

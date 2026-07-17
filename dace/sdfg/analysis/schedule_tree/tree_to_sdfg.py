@@ -7,7 +7,7 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final
 
-from dace import dtypes, symbolic
+from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
@@ -970,7 +970,14 @@ def from_schedule_tree(
     result.arg_names = copy.deepcopy(stree.arg_names)
     for key, container in stree.containers.items():
         result._arrays[key] = copy.deepcopy(container)
-    result.constants_prop = copy.deepcopy(stree.constants)
+    # Opaque Python-object constants (callback namespace entries) have no
+    # code-generatable representation and may not even be deep-copyable
+    # (modules, callables); they stay on the tree root only.
+    result.constants_prop = copy.deepcopy({
+        name: entry
+        for name, entry in stree.constants.items() if not (isinstance(entry, tuple) and isinstance(entry[0], data.Data)
+                                                           and isinstance(entry[0].dtype, dtypes.pyobject))
+    })
     result.callback_mapping = copy.deepcopy(stree.callback_mapping)
     # Frontend-produced trees store symbol *objects*; the SDFG symbol
     # repository stores their dtypes.

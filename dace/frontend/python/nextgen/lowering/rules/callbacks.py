@@ -16,6 +16,7 @@ The callback contract:
   ``__pystate`` serialization edge of the stable frontend's callback ABI.)
 """
 import ast
+import builtins
 import copy
 from typing import Optional
 
@@ -56,6 +57,7 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
     reconstituted = [_reconstitute_source(original, state) for original in statement.originals]
     code = '\n'.join(ast.unparse(original) for original in reconstituted)
     renamed = _rename_to_repository(reconstituted, source_to_repository)
+    _register_free_globals(renamed, set(input_names) | set(output_names), state)
 
     # Emission-time batching: if this scope's previous node is already a
     # callback, extend it instead of emitting a second one. Both statement
@@ -92,6 +94,7 @@ def _merge_into(previous: tn.PythonCallbackNode, reason: str, code: str, renamed
     merged_outputs.extend(name for name in output_names if name not in merged_outputs)
 
     previous_renamed = _outlined_body(previous)
+    _register_free_globals(renamed, set(merged_inputs) | set(merged_outputs), state)
     previous.code = CodeBlock(f'{previous.code.as_string}\n{code}')
     previous.reason = '; '.join(dict.fromkeys([previous.reason, reason]))
     previous.input_names = merged_inputs
@@ -154,6 +157,36 @@ def _declared_descriptor(name: str, statement: OpaqueStmt, state: LoweringState)
                 if descriptor is not None:
                     return descriptor
     return None
+
+
+def _register_free_globals(statements: list, bound: set, state: LoweringState) -> None:
+    """
+    Register the values of free global names referenced by a callback run as
+    named program constants, making the tree self-contained: callback code
+    executes with a namespace built from ``root.constants`` (detected
+    callables, modules, and other objects with no dataflow representation).
+    Opaque (pyobject-typed) constants never reach generated code — they exist
+    only for the callback execution namespace.
+    """
+    assigned = {
+        node.id
+        for statement in statements
+        for node in ast.walk(statement) if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+    }
+    for statement in statements:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Name) or not isinstance(node.ctx, ast.Load):
+                continue
+            name = node.id
+            if (name in bound or name in assigned or name in state.context.constants or name in state.context.containers
+                    or name in state.context.symbols or hasattr(builtins, name)):
+                continue
+            if name not in state.context.globals:
+                continue
+            # Always opaque: these constants exist only for the callback
+            # execution namespace and never reach generated code (typed
+            # constants of supported code go through closure_constants).
+            state.context.constants[name] = (data.Scalar(dtypes.pyobject()), state.context.globals[name])
 
 
 def _constant_reference(value: object, state: LoweringState) -> str:
