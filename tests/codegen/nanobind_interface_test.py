@@ -487,6 +487,46 @@ def test_nanobind_interface_symbol_inference_unsimplified():
         assert np.allclose(b, expected)
 
 
+def test_nanobind_interface_symbol_inference_stride_binding():
+    """A symbol appearing only in an array's strides is inferable too - DaCe
+    descriptor strides and DLPack (nb::ndarray::stride) both count elements."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    S = dace.symbol('S')
+    sdfg = dace.SDFG('sym_infer_stride_probe')
+    sdfg.add_array('A', [4], dace.float64, strides=[S], total_size=4 * S)
+    sdfg.arg_names = ['A']
+
+    code = generate_bindings_code(sdfg)
+    assert 'S__opt' in code
+    assert 'nb::arg("S") = nb::none()' in code
+    assert 'A.stride(0)' in code
+
+
+def test_nanobind_interface_symbol_inference_stride():
+    """E2E: a stride symbol is inferred from the passed array's actual stride."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        S = dace.symbol('S')
+        sdfg = dace.SDFG('sym_infer_stride_e2e')
+        sdfg.add_array('A', [4], dace.float64, strides=[S], total_size=4 * S)
+        sdfg.add_array('B', [4], dace.float64)
+        sdfg.arg_names = ['A', 'B']
+        state = sdfg.add_state()
+        state.add_mapped_tasklet('copy',
+                                 dict(i='0:4'),
+                                 dict(inp=dace.Memlet('A[i]')),
+                                 'out = inp',
+                                 dict(out=dace.Memlet('B[i]')),
+                                 external_edges=True)
+
+        csdfg = sdfg.compile()
+        base = np.arange(12.0)
+        a = base[::3]  # stride of 3 elements, shape (4,)
+        b = np.zeros(4)
+        csdfg(A=a, B=b)  # no S: inferred from A.stride(0)
+        assert np.allclose(b, base[::3])
+
+
 def test_nanobind_interface_symbol_inference_return_requires_symbol():
     """Symbolic-shaped returns require the symbol explicitly: their shapes are
     evaluated in Python, and inference happens only in compiled code (a
