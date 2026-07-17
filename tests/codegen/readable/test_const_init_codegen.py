@@ -69,6 +69,34 @@ def _no_redundant_init(code, arrname):
             assert 'memset' not in line, f'redundant memset of const {arrname}: {line}'
 
 
+def test_const_init_flag_off_keeps_the_runtime_write():
+    """``codegen_params.const_init = off`` takes MarkConstInit out of the readable pipeline.
+
+    Unlike most of this group, the default is ``on``: the pass already runs today, so ``on`` is what
+    reproduces today's output byte-for-byte and ``off`` is the deviation. With it off the write-once
+    scalar stays a mutable buffer written at runtime instead of a ``constexpr`` initializer, and the
+    result must be unchanged either way.
+    """
+    Config.set('compiler', 'cpu', 'codegen_params', 'const_init', value='off')
+    try:
+        sdfg_off, code_off = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_flag_off')
+    finally:
+        Config.set('compiler', 'cpu', 'codegen_params', 'const_init', value='on')
+    sdfg_on, code_on = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_flag_on')
+
+    assert not any('constexpr' in l and 's[1]' in l for l in code_off.splitlines()), \
+        'const_init=off still promoted the scalar to a constexpr'
+    assert any('constexpr' in l and 's[1]' in l for l in code_on.splitlines()), \
+        'const_init=on (the default) must still promote the scalar'
+
+    # Semantics are identical -- this key changes what is emitted, never what is computed.
+    A = np.random.rand(8)
+    b_off, b_on = np.zeros(8), np.zeros(8)
+    sdfg_off.compile()(A=A.copy(), B=b_off, N=8)
+    sdfg_on.compile()(A=A.copy(), B=b_on, N=8)
+    assert np.array_equal(b_off, b_on) and np.allclose(b_on, A * 3.0)
+
+
 def test_scalar_constexpr_no_memset():
     sdfg, code = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_exp')
     lines = code.splitlines()
