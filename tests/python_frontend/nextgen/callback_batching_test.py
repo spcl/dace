@@ -173,6 +173,24 @@ def test_pretyped_callback_target_stays_typed():
     assert str(tree.containers['box'].dtype) == 'pyobject'
 
 
+def test_annotated_callback_target_typed():
+    # Classic-parity: `y: dace.float64 = call(...)` types the callback result
+    # even when descriptor inference is unavailable.
+
+    def read_box(box):
+        return box['value']
+
+    @dace.program
+    def annotated_target(A: dace.float64[N]):
+        box = {'value': 1.0}
+        y: dace.float64 = read_box(box)
+        A[0] = y
+
+    tree = nextgen.parse_program(annotated_target)
+    assert str(tree.containers['y'].dtype) == 'double'
+    assert str(tree.containers['box'].dtype) == 'pyobject'
+
+
 def test_merged_reason_reports_both():
 
     @dace.program
@@ -196,6 +214,7 @@ if __name__ == '__main__':
     test_no_merge_across_scope_boundary()
     test_detected_callable_reconstitutes_callee_only()
     test_pretyped_callback_target_stays_typed()
+    test_annotated_callback_target_typed()
     test_outlined_fields_populated()
     test_outlined_body_uses_repository_names()
     test_callback_mapping_contains_outlined_names()

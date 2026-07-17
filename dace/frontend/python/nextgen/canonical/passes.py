@@ -198,8 +198,9 @@ class DesugarStatements(_BodyTransformer):
 
     - ``a = b = expr`` becomes ``a = expr; b = a``.
     - ``x += expr`` becomes ``x = x + expr``.
-    - ``x: T = expr`` becomes ``x = expr`` (the annotation is consumed by the
-      semantic stage through the preprocessed metadata, not the AST).
+    - ``x: T = expr`` becomes ``x = expr``, carrying the declared type on the
+      ``Assign`` node (``annotation`` attribute) as a descriptor hint for the
+      lowering stage.
     - ``for``/``while`` ``else`` clauses become explicit did-break flags.
     - Docstring expression statements are removed.
     """
@@ -233,7 +234,12 @@ class DesugarStatements(_BodyTransformer):
         if isinstance(statement, ast.AnnAssign):
             if statement.value is None:
                 return None
-            return _located(ast.Assign(targets=[statement.target], value=statement.value), statement)
+            assign = _located(ast.Assign(targets=[statement.target], value=statement.value), statement)
+            # Keep the declared type as a descriptor hint for the lowering
+            # stage (classic frontend semantics: annotations type the target,
+            # including results inference cannot see, e.g. callback returns).
+            assign.annotation = statement.annotation
+            return assign
         if isinstance(statement, (ast.For, ast.While)) and statement.orelse:
             return self._desugar_loop_else(statement)
         return self._recurse(statement)

@@ -43,9 +43,12 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
         if binding is not None and binding.kind == 'container':
             output_names.append(binding.container)
         else:
-            # The callback produces a Python object we cannot type: register an
-            # opaque scalar so later statements can bind and pass it through.
-            container_name = state.context.add_container(name, data.Scalar(dtypes.pyobject()))
+            # The callback produces a value inference cannot see: an
+            # annotation on the original statement types it; otherwise
+            # register an opaque scalar so later statements can bind and
+            # pass the Python object through.
+            descriptor = _declared_descriptor(name, statement, state) or data.Scalar(dtypes.pyobject())
+            container_name = state.context.add_container(name, descriptor)
             state.context.bind(name, container_name)
             output_names.append(container_name)
         source_to_repository[name] = output_names[-1]
@@ -137,6 +140,20 @@ def _outline(renamed: list,
     if register:
         state.emitter.root.callback_mapping[function_name] = function_name
     return function_code, call_code
+
+
+def _declared_descriptor(name: str, statement: OpaqueStmt, state: LoweringState) -> Optional[data.Data]:
+    """The annotation-declared descriptor of an output written by one of the
+    opaque statement's original assignments, or None."""
+    from dace.frontend.python.nextgen.lowering.rules.assign import annotation_descriptor
+    for original in statement.originals:
+        for node in ast.walk(original):
+            if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and node.targets[0].id == name):
+                descriptor = annotation_descriptor(getattr(node, 'annotation', None), state)
+                if descriptor is not None:
+                    return descriptor
+    return None
 
 
 def _constant_reference(value: object, state: LoweringState) -> str:

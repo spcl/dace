@@ -22,6 +22,8 @@ correct without SSA φ-resolution. Symbol promotion of compile-time scalars is
 a planned optimization pass, not a correctness requirement.
 """
 import ast
+import copy
+from typing import Optional
 
 from dace import data, dtypes, subsets
 from dace.memlet import Memlet
@@ -39,6 +41,12 @@ from dace.frontend.python.nextgen.semantics.inference import Inferred
 def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     target = statement.targets[0]
     value = statement.value
+
+    # Declared-type hint from a desugared annotated assignment: pre-bind the
+    # target container so every lowering path (including callbacks whose
+    # results inference cannot see) types it.
+    if isinstance(target, ast.Name):
+        apply_annotation_hint(target.id, statement, state)
 
     if isinstance(value, ast.Call):
         from dace.frontend.python.nextgen.lowering.rules import calls
@@ -133,6 +141,47 @@ def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringSta
                     memlet=Memlet(data=access.container, subset=access.subset),
                     src_desc=access.descriptor,
                     view_desc=view_descriptor))
+
+
+def apply_annotation_hint(target_name: str, statement: ast.stmt, state: LoweringState) -> None:
+    """
+    Pre-register an annotated assignment target (``y: dace.float64 = ...``)
+    with its declared descriptor. Applies only to names with no container
+    binding yet; unresolvable annotations are ignored (inference decides).
+    """
+    descriptor = annotation_descriptor(getattr(statement, 'annotation', None), state)
+    if descriptor is None:
+        return
+    binding = state.context.resolve(target_name)
+    if binding is not None and binding.kind == 'container':
+        return
+    container = state.context.add_container(target_name, descriptor)
+    state.context.bind(target_name, container)
+
+
+def annotation_descriptor(annotation: Optional[ast.expr], state: LoweringState) -> Optional[data.Data]:
+    """The data descriptor a type annotation declares, or None if the
+    annotation is absent or does not resolve to a typed descriptor."""
+    if annotation is None:
+        return None
+    if isinstance(annotation, ast.Constant):
+        value = annotation.value
+    else:
+        try:
+            value = astutils.evalnode(annotation, state.context.globals)
+        except Exception:
+            return None
+    try:
+        descriptor = data.create_datadescriptor(value)
+    except Exception:
+        return None
+    if not isinstance(descriptor, data.Data) or descriptor.dtype is None or descriptor.dtype.type is None:
+        return None
+    if isinstance(descriptor.dtype, dtypes.pyobject):
+        return None
+    descriptor = copy.deepcopy(descriptor)
+    descriptor.transient = True
+    return descriptor
 
 
 def prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringState,
