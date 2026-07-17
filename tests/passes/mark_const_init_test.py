@@ -20,6 +20,10 @@ def _tasklets(state):
     return [n for n in state.nodes() if isinstance(n, nd.Tasklet)]
 
 
+def _map_entries(state):
+    return [n for n in state.nodes() if isinstance(n, nd.MapEntry)]
+
+
 def test_scalar_constant_single_write():
     """A scalar written once by ``a = 0`` then read becomes a constexpr_static constant."""
     sdfg = dace.SDFG('scalar_const')
@@ -177,6 +181,12 @@ def test_array_double_write_not_marked():
     # Both writes must be preserved.
     assert _tasklets(s1) != []
     assert _tasklets(s2) != []
+    # ... and preserved AS THEY WERE. The pass speculatively unrolls a constant-fill map before it
+    # classifies, so a rejected target (here: A is written twice) must not leave the fill map
+    # flattened into per-element tasklets -- a pass that does not apply must not mutate. Asserting
+    # only on _tasklets() above cannot see this: the unroll leaves 10 tasklets behind, so the check
+    # passes either way.
+    assert _map_entries(s1) != [], 'rejected fill map was unrolled anyway'
 
 
 def test_interstate_edge_read_not_marked():
@@ -529,6 +539,65 @@ def test_idempotency():
     assert len(s1.nodes()) == num_nodes_s1
 
 
+def _gpu_fill_program():
+    """``@dace.program`` (NOT a hand-built SDFG -- the frontend shape is the point): a small
+    constant fill of a transient, then a read of it. After ``apply_gpu_transformations`` the fill is
+    a GPU_Device-scheduled map writing a GPU_Global transient."""
+
+    @dace.program
+    def constfill(A: dace.float64[8]):
+        w = np.zeros((8, ), dtype=np.float64)
+        for i in dace.map[0:8]:
+            w[i] = 2.0
+        for i in dace.map[0:8]:
+            A[i] = A[i] * w[i]
+
+    sdfg = constfill.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    sdfg.validate()  # Baseline: the GPU-transformed SDFG is valid BEFORE the pass runs.
+    return sdfg
+
+
+def test_gpu_constant_fill_map_keeps_its_schedule():
+    """The pass must not flatten a GPU_Device-scheduled fill map into host tasklets.
+
+    ``_unroll_constant_fill_maps`` unrolls a constant-fill map so the classifier sees element-wise
+    writes. On a GPU-transformed SDFG the map's GPU_Device schedule is what puts the write on the
+    device, so unrolling it strands host tasklets writing GPU_Global memory -- an invalid SDFG
+    (``Data container "w" is stored as StorageType.GPU_Global but accessed on host``).
+
+    Needs no GPU: ``apply_gpu_transformations`` is a pure SDFG rewrite and validation catches this.
+    """
+    sdfg = _gpu_fill_program()
+    _run(sdfg)
+    sdfg.validate()
+
+
+def test_gpu_rejected_fill_map_stays_valid():
+    """Same shape, but the fill target is written a second time, so the classifier REJECTS it.
+
+    This is the durbin failure: the speculative unroll has already destroyed the schedule by the
+    time the classifier declines to const-init, so the pass mutates without applying AND leaves the
+    SDFG invalid.
+    """
+
+    @dace.program
+    def refill(A: dace.float64[8]):
+        w = np.zeros((8, ), dtype=np.float64)
+        for i in dace.map[0:8]:
+            w[i] = 2.0
+        for i in dace.map[0:8]:
+            w[i] = w[i] + A[i]
+        for i in dace.map[0:8]:
+            A[i] = w[i]
+
+    sdfg = refill.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    sdfg.validate()
+    _run(sdfg)
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_scalar_constant_single_write()
     test_array_full_constant_write()
@@ -546,3 +615,5 @@ if __name__ == '__main__':
     test_multiwrite_partial_elementwise_marked()
     test_multiwrite_overlapping_not_marked()
     test_idempotency()
+    test_gpu_constant_fill_map_keeps_its_schedule()
+    test_gpu_rejected_fill_map_stays_valid()
