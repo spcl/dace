@@ -32,6 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 import numpy
 
 import dace
+from dace.transformation.layout.isolation import run_isolated
 
 
 @dataclass
@@ -128,14 +129,15 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
           do_time: bool = True,
           device: str = "cpu",
           timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None,
-          attempt_log: Optional[str] = None) -> List[SweepResult]:
+          attempt_log: Optional[str] = None,
+          isolate: bool = False) -> List[SweepResult]:
     """Compile, run, verify and (optionally) time each candidate; return results ranked.
 
-    Two phases, in the design's batch order: EVERY candidate is built, compiled and verified first;
-    only then are the verified ones timed back-to-back -- so no candidate is timed right after its
-    own compile burst (DVFS/cache state), and a timing failure late in the sweep cannot cost the
-    verification verdicts. ``attempt_log`` (a file path) records each candidate name before its
-    build and before its timing run, so a crashed campaign shows which candidate killed it.
+    Two phases, in the design's batch order: EVERY candidate is built and compiled first; only then
+    are candidates run/verified/timed -- so no candidate is timed right after its own compile burst
+    (DVFS/cache state), and gcc noise never lands inside the timing phase. ``attempt_log`` (a file
+    path) records each candidate name before its build and before its run, so a crashed campaign
+    shows which candidate killed it.
 
     :param candidates: ``{name: make_sdfg}`` -- each ``make_sdfg()`` returns a FRESH SDFG with that
                        candidate's global layout already applied.
@@ -156,10 +158,20 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
                   record the spread/contended trust signal (a timer may return
                   ``(time, metadata_dict)``; the dict lands in ``SweepResult.metadata``). One timer
                   is used for the whole sweep, so its unit is consistent and the ranking is valid.
+    :param isolate: run each candidate's verify+time in a forked child
+                    (:func:`~dace.transformation.layout.isolation.run_isolated`), so a SEGFAULT or
+                    runaway in generated code is recorded as a non-viable candidate instead of
+                    killing the campaign. Compilation stays in the parent (so the timing phase is
+                    still gcc-free and a compile failure is a normal error), and the OpenMP pool is
+                    torn down before each fork so a parallel kernel does not deadlock the child.
+                    CPU only -- a CUDA context cannot survive ``fork``, so ``isolate`` with
+                    ``device="gpu"`` is refused.
     :returns: results, correct-first then ascending time.
     """
     if device not in ("cpu", "gpu"):
         raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
+    if isolate and device == "gpu":
+        raise ValueError("sweep(isolate=True) is CPU-only: a CUDA context cannot survive os.fork")
     from dace.transformation.layout.select_lowering import select_layout_lowering
 
     def log_attempt(phase: str, name: str) -> None:
@@ -168,40 +180,89 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
                 f.write(f"{phase} {name}\n")
 
     default_timer = time_gpu if device == "gpu" else time_cpu
+
+    def verify_and_time(sdfg: dace.SDFG) -> Dict[str, Any]:
+        """Run, verify, and (if correct) time one already-compiled candidate. JSON-able so it can
+        run either in-process or inside a forked child (:func:`run_isolated`)."""
+        out = run(sdfg)
+        correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
+        verdict: Dict[str, Any] = {"correct": bool(correct), "time": None, "metadata": {}}
+        if do_time and correct:
+            try:
+                t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
+                    lambda: run(sdfg), reps, warmup)
+                if isinstance(t, (tuple, list)):  # a stats timer: (median, {"spread": ..., ...})
+                    t, timer_metadata = t
+                    verdict["metadata"].update(timer_metadata)
+                verdict["time"] = None if t is None else float(t)
+            except Exception as ex:  # timing is ADVISORY: a timer failure must not demote a correct candidate
+                verdict["metadata"]["timing_error"] = f"{type(ex).__name__}: {ex}"
+        return verdict
+
+    def fold(result: SweepResult, verdict: Dict[str, Any]) -> None:
+        if "error" in verdict:
+            result.error = verdict["error"]
+            return
+        result.correct = verdict["correct"]
+        result.time = verdict["time"]
+        result.metadata.update(verdict["metadata"])
+
     stream_ctx = single_default_stream() if device == "gpu" else contextlib.nullcontext()
     results: List[SweepResult] = []
     with stream_ctx:  # GPU: force the single default stream at compile time (run() compiles)
-        # Phase 1: build + compile + VERIFY every candidate (run() compiles on first call).
-        verified: List[Tuple[SweepResult, dace.SDFG]] = []
-        for order, (name, make) in enumerate(candidates.items()):
-            log_attempt("verify", name)
-            try:
-                sdfg = make()
-                select_layout_lowering(sdfg, device)  # the transforms left lowering unset; choose it here
-                out = run(sdfg)
-                correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
-            except Exception as ex:  # a candidate that fails to build/compile/run is simply not viable
-                results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}", order=order))
-                continue
-            result = SweepResult(name, correct, order=order)
-            results.append(result)
-            if correct:
-                verified.append((result, sdfg))
-        # Phase 2: time the verified candidates back-to-back. Timing is ADVISORY and runs in its
-        # own guard: a timer failure (e.g. cupy absent, no device) must never demote an
-        # already-verified-correct candidate to incorrect.
-        if do_time:
-            for result, sdfg in verified:
-                log_attempt("time", result.name)
+        if isolate:
+            # Compile in the PARENT (phase 1), then run+verify+time each candidate in a forked child
+            # (phase 2), so a segfault/runaway in generated code is a non-viable result, not a dead
+            # campaign. Verify and time share the child (the value cannot cross the fork boundary),
+            # but the gcc burst already happened in the parent, so the timing is still gcc-free.
+            staged: List[Tuple[SweepResult, dace.SDFG]] = []
+            for order, (name, make) in enumerate(candidates.items()):
+                log_attempt("compile", name)
                 try:
-                    t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
-                        lambda: run(sdfg), reps, warmup)
-                    if isinstance(t, tuple):  # a stats timer: (median, {"spread": ..., ...})
-                        t, timer_metadata = t
-                        result.metadata.update(timer_metadata)
-                    result.time = t
-                except Exception as ex:
-                    result.metadata["timing_error"] = f"{type(ex).__name__}: {ex}"
+                    sdfg = make()
+                    select_layout_lowering(sdfg, device)
+                    sdfg.compile()
+                except Exception as ex:  # a candidate that fails to build/compile is simply not viable
+                    results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}", order=order))
+                    continue
+                result = SweepResult(name, False, order=order)
+                results.append(result)
+                staged.append((result, sdfg))
+            for result, sdfg in staged:
+                log_attempt("run", result.name)
+                fold(result, run_isolated(lambda sdfg=sdfg: verify_and_time(sdfg)))
+        else:
+            # In-process, two batch phases: VERIFY every candidate by running it (run() compiles on
+            # first call), THEN time the verified ones back-to-back -- so no candidate is timed right
+            # after its own compile burst. A caller whose run closure fakes execution over a stub
+            # SDFG still works (no standalone compile is forced).
+            verified: List[Tuple[SweepResult, dace.SDFG]] = []
+            for order, (name, make) in enumerate(candidates.items()):
+                log_attempt("verify", name)
+                try:
+                    sdfg = make()
+                    select_layout_lowering(sdfg, device)  # the transforms left lowering unset; choose it here
+                    out = run(sdfg)
+                    correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
+                except Exception as ex:  # a candidate that fails to build/compile/run is simply not viable
+                    results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}", order=order))
+                    continue
+                result = SweepResult(name, correct, order=order)
+                results.append(result)
+                if correct:
+                    verified.append((result, sdfg))
+            if do_time:
+                for result, sdfg in verified:
+                    log_attempt("time", result.name)
+                    try:
+                        t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
+                            lambda: run(sdfg), reps, warmup)
+                        if isinstance(t, tuple):  # a stats timer: (median, {"spread": ..., ...})
+                            t, timer_metadata = t
+                            result.metadata.update(timer_metadata)
+                        result.time = t
+                    except Exception as ex:  # timing is ADVISORY: a failure must not demote a correct candidate
+                        result.metadata["timing_error"] = f"{type(ex).__name__}: {ex}"
     results.sort(key=lambda r: (not r.correct, r.time if r.time is not None else float('inf')))
     return results
 

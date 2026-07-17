@@ -119,10 +119,15 @@ quiet box. Cache results keyed by (nest content hash, layout, schedule).
   a pipe, timeout -> SIGKILL) — that is a crash guard, not parallelism: a segfaulting candidate
   must not kill the campaign. GPU runs cannot fork; the campaign resumes from the results log
   (attempt logged BEFORE it runs; arena init deterministic, so state reproduces).
-  *(2026-07-17 amendment: the child-spawn crash guard is DEFERRED — the parent process has an
-  initialized OpenMP runtime by the time candidates run, and fork() with live OpenMP threads can
-  deadlock the child; a safe design needs spawn + picklable candidate builders. The batch phases
-  and the attempt log ARE implemented in `sweep`; the log is the crash forensics meanwhile.)*
+  *(2026-07-17: the child-fork crash guard is now IMPLEMENTED — `sweep(isolate=True)` compiles each
+  candidate in the parent, then runs+verifies+times it in a forked child, so a segfault/runaway is a
+  non-viable result, not a dead campaign. The OpenMP-fork deadlock is solved the way nest-forge
+  solves it: `isolation.pause_openmp_pools()` calls OpenMP 5.0 `omp_pause_resource_all(soft)` on
+  every already-loaded runtime before the fork, tearing the thread pool down so the child's parallel
+  region does not block on the parent's now-absent pool threads — measured on libgomp (gcc's default)
+  as a genuine 16->1 tear-down. No spawn / pickling needed: fork shares the compiled `.so` and the
+  numpy arrays copy-on-write. CPU only — a CUDA context cannot survive fork, so `isolate` + GPU is
+  refused, and the GPU campaign relies on the attempt log as before.)*
   Sequential batch phases:
     1. **COLLECT**: generate all candidate SDFGs up front. **Candidate identity = `{nest}_{layout_tag}`
        — nothing else.** The canonical schedule is a FUNCTION of the layout (blocked -> the matched
@@ -321,11 +326,15 @@ findings are fixed with regression tests:
   silent shrinkage). `best()` widens ties to a noise window (default = the contended threshold)
   resolved by enumeration order, so the identity-first law is no longer dead for measured sweeps.
 - **sweep** runs in the design's batch order (compile+verify ALL candidates, then time the
-  verified back-to-back) and takes an `attempt_log`. The child-spawn crash guard below is
-  AMENDED, not implemented: the timed kernels are OpenMP-parallel, and forking a process whose
-  OpenMP runtime is already initialized can deadlock in the child; a spawn-based design needs
-  picklable candidate builders. Until then a segfaulting candidate still kills the campaign --
-  the attempt log names it. (This is the one review finding deferred rather than fixed.)
+  verified back-to-back) and takes an `attempt_log`. The child-fork crash guard is now
+  IMPLEMENTED as `sweep(isolate=True)` (`isolation.py`): the parent compiles each candidate, then
+  runs+verifies+times it in a forked child, so a segfault/runaway is a non-viable result rather
+  than a dead campaign. The OpenMP-fork deadlock (a live parent pool blocks the child's first
+  parallel region; libgomp installs no `pthread_atfork` handler) is solved by
+  `pause_openmp_pools()` calling `omp_pause_resource_all(soft)` on every already-loaded runtime
+  before the fork — the nest-forge pattern, ported (dace must not import nest-forge; the runtime
+  probe + fork are ~40 lines of stdlib). CPU only — a CUDA context cannot survive fork, so
+  `isolate` + GPU is refused.
 - **line_graph / kernel_per_state / relayout_boundary**: a bare access-node copy state counts as
   work and is refused (it was invisible to liveness); `kernel_per_state` runs to fixpoint over
   the states `state_fission` creates and raises honestly when fission drags the second nest along
