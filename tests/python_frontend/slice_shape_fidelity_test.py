@@ -1,32 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""
-Black-box shape + value fidelity matrix for numpy slice / index idioms through the
-DaCe Python frontend.
-
-A ``@dace.program`` that *returns* a slice exposes the frontend's inferred output
-shape as the shape of the returned ndarray, so ``result.shape`` is the real signal
-under test. Numpy is the oracle and every comparison is bit-exact
-(``np.array_equal``, never a tolerance / norm_error) -- the whole point is a
-silent-miscompile guard, not an approximation check. Integer (``arange``) data is
-used so bit-exactness is meaningful.
-
-Historic defect (2026-07, "dace singleton-slice squeeze"): length-1 slice axes were
-dropped, e.g. ``A[:, 1:2] -> (N,)`` instead of ``(N, 1)``. The values stayed correct
-once flattened; only the *shape* was wrong, which is exactly how ``x.T - x`` on a
-column-slice silently miscompiles. The length-1-slice cases are now fixed (the
-frontend keeps a slice's axis, matching numpy) and are asserted plainly.
-
-The idioms are split into two groups:
-
-* ``WORKS_TODAY``  -- shape and value match numpy; asserted plainly. Now holds every
-  length-1-slice idiom.
-* ``BROKEN_TODAY`` -- still diverges from numpy; marked ``xfail(strict=True)`` so this
-  file is green today yet fails loudly (XPASS) the moment it is fixed, the trigger to
-  promote it. Only the scalar-INDEX collapse remains here (``A[1, 2]`` yields dace's
-  ``(1,)`` scalar representation rather than numpy's 0-d ``()``) -- a distinct fix from
-  the slice squeeze.
-
-Membership was determined by running, not by guessing.
+"""Shape/value fidelity matrix for slice and index idioms through the DaCe Python frontend.
+Guards against the length-1-slice squeeze bug: e.g. A[:, 1:2] used to drop to (N,) instead of
+numpy's (N, 1). Numpy is the bit-exact oracle; BROKEN_TODAY (empty) holds any idiom that
+regresses, marked xfail(strict=True) so a fix shows up as XPASS.
 """
 from collections import namedtuple
 
@@ -35,8 +11,6 @@ import pytest
 
 import dace
 
-# A ``Case`` bundles an idiom's DaCe program, its numpy oracle, an input factory
-# and (for the broken group) the xfail reason. ``id`` names the parametrized case.
 Case = namedtuple("Case", ("id", "prog", "oracle", "make_input", "reason"))
 
 
@@ -53,10 +27,6 @@ def make_square():
     return np.arange(16, dtype=np.int64).reshape(4, 4)
 
 
-# --------------------------------------------------------------------------- #
-# DaCe programs -- one per idiom (the slice syntax is literal, so it cannot be
-# parametrized; each program simply returns the sliced view).
-# --------------------------------------------------------------------------- #
 @dace.program
 def take_row(A):
     return A[1, :]
@@ -137,13 +107,6 @@ def transpose_minus_self(A):
     return A.T - A
 
 
-# --------------------------------------------------------------------------- #
-# Idiom matrix.
-# --------------------------------------------------------------------------- #
-# Every length-1 SLICE now keeps its axis (numpy semantics), so what used to be BROKEN_TODAY is
-# asserted plainly here. The only survivor in BROKEN_TODAY is the scalar-INDEX collapse, a separate
-# concern (dace represents a scalar as shape (1,), not a 0-d), left xfail-strict until that path is
-# addressed.
 WORKS_TODAY = [
     Case("A[1, :]", take_row, lambda a: a[1, :], make_2d, None),
     Case("A[:, 1]", take_col, lambda a: a[:, 1], make_2d, None),
@@ -161,9 +124,6 @@ WORKS_TODAY = [
     Case("A[:, :, 1:2]", take_depth_slice_3d, lambda a: a[:, :, 1:2], make_3d, None),
 ]
 
-# Nothing is xfail any more: length-1 slices keep their axis, and the one place dace and numpy
-# still differ -- a scalar INDEX that is RETURNED -- is dace's return convention, asserted directly
-# below rather than treated as a defect.
 BROKEN_TODAY = []
 
 
@@ -188,21 +148,16 @@ def broken_params():
 
 @pytest.mark.parametrize("case", works_params())
 def test_slice_shape_works_today(case):
-    """Idioms whose shape + values already match numpy exactly."""
     run_case(case)
 
 
 @pytest.mark.parametrize("case", broken_params())
 def test_slice_shape_broken_today(case):
-    """Idioms that currently squeeze a length-1 axis (xfail-strict until fixed)."""
     run_case(case)
 
 
 def test_returned_scalar_index_is_dace_scalar_convention():
-    """A scalar INDEX (``A[1, 2]``) collapses to a scalar everywhere it is used, matching numpy.
-    When it is the program's RETURN value it surfaces as dace's scalar shape ``(1,)`` rather than
-    numpy's 0-d ``()`` -- the accepted scalar-return convention (a true 0-d would need dace-wide
-    0-d support). The value is still exact; only the returned rank differs by this one convention."""
+    """A[1, 2] returned collapses to dace's scalar shape (1,), not numpy's 0-d () -- accepted convention."""
     arr = make_2d()
     result = np.asarray(take_scalar(arr.copy()))
     assert result.shape == (1, ), f"returned scalar convention changed: got {result.shape}, expected (1,)"
@@ -210,13 +165,7 @@ def test_returned_scalar_index_is_dace_scalar_convention():
 
 
 def test_transpose_minus_self_square_int():
-    """Motivating regression: ``x.T - x`` on a square int matrix must be bit-exact.
-
-    Passes today because an already-2D square matrix has no length-1 axis to
-    squeeze; kept as a value-fidelity guard for the singleton-slice miscompile
-    class (a column slice ``A[:, 0:1]`` collapsed to ``(N,)`` turns ``x.T - x``
-    from an ``(N, N)`` matrix into an ``(N,)`` elementwise zero).
-    """
+    """x.T - x on a square int matrix: regression guard for the singleton-slice squeeze class."""
     arr = make_square()
     oracle = arr.T - arr
     result = np.asarray(transpose_minus_self(arr.copy()))

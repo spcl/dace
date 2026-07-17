@@ -22,10 +22,8 @@ class MemletExpr:
     subset: subsets.Range
     new_axes: List[int]
     arrdims: Dict[int, str]
-    #: Indices into ``subset`` of the dimensions that came from a slice (``k:k+1``) or a full range,
-    #: as opposed to a scalar index (``k``). Only these survive as axes -- a length-1 slice keeps its
-    #: dimension (numpy: ``A[:, 1:2]`` is 2-D), a scalar index collapses it. ``None`` means the
-    #: provenance was not tracked, in which case every singleton is squeezed (legacy behavior).
+    #: ``subset`` indices of dims from a slice/full-range (kept as axes) vs a scalar index (collapsed).
+    #: numpy: ``A[:, 1:2]`` keeps the axis, ``A[:, 1]`` drops it. ``None`` = untracked (squeeze all singletons).
     slice_dims: Optional[List[int]] = None
 
 
@@ -130,7 +128,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
             remaining_dims = len(ast_ndslice) - num_new_axes - idx - 1
             for j in range(idx, len(ndslice) - remaining_dims):
                 ndslice[j] = (0, array.shape[j] - 1, 1)
-                offsets.append(idx)  # an ellipsis expands to full ranges -- every one keeps its axis
+                offsets.append(idx)  # ellipsis full ranges keep their axis
                 idx += 1
                 new_idx += 1
         elif (dim is None or (isinstance(dim, ast.Constant) and dim.value is None)):
@@ -154,7 +152,7 @@ def _fill_missing_slices(das, ast_ndslice, array, indices):
                 rs = 1
 
             ndslice[idx] = (rb, re - 1, rs)
-            offsets.append(idx)  # a slice keeps its axis, even a length-1 one (numpy: A[1:2] is 1-D)
+            offsets.append(idx)  # a slice keeps its axis, even length-1
             idx += 1
             new_idx += 1
         elif (isinstance(dim, ast.Name) and dim.id in das and isinstance(das[dim.id], data.Array)):
@@ -259,11 +257,9 @@ def parse_memlet_subset(
         for i in range(1, len(subset_array)):
             subset = subset.compose(subset_array[i])
 
-        # ``offsets`` indexes ``subset`` 1:1 only for a single (non-nested) subscript. For A[i][j]
-        # the surviving-dim indices live in a narrowed space that no longer lines up with ``subset``,
-        # so leave the provenance untracked there (squeeze falls back to its legacy all-singletons).
+        # 1:1 with ``subset`` only for a single subscript; nested A[i][j] narrows the space, leave untracked.
         slice_dims = list(offsets) if len(ast_ndslices) == 1 else None
-    else:  # Use entire range -- every dimension is a full range and survives
+    else:  # entire range -- every dim survives
         subset = _ndslice_to_subset(ndslice)
         slice_dims = list(range(len(array.shape)))
 

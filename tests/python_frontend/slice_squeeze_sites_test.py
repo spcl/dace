@@ -1,21 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""One unit test per ``subsets.Range.squeeze()`` call site in the DaCe Python frontend.
-
-``squeeze()`` drops every size-1 dimension and cannot, on its own, tell a length-1 SLICE
-(``k:k+1``, whose axis must survive to match numpy) from a scalar INDEX (``k``, whose axis
-should collapse). Each frontend site that squeezes an access subset is therefore a candidate
-length-1-slice miscompile. This file pins one representative access per site so a regression at
-any single site is caught, and documents -- via ``xfail(strict=True)`` -- the sites that still
-diverge from numpy (those flip to XPASS, the trigger to promote, once fixed).
-
-Sites (in ``dace/frontend/python/newast.py``), from the 2026-07 squeeze-site audit:
-  * ``_add_read_slice``            -- returns a View sized from the squeezed subset.  FIXED.
-  * ``make_slice``                 -- sizes a slice transient (closure/global read).
-  * ``_add_assignment``            -- squeezes both sides of ``lhs[...] = rhs[...]`` to broadcast.
-  * ``_add_aug_assignment``        -- squeezes then UNSQUEEZES (balanced); a safe regression guard.
-  * ``add_indirection_subgraph``   -- squeezes to build the indirection map; size-1 dims are trivial
-                                      iterations (safe), guarded here so that stays true.
-The bit-exact value oracle is numpy; integer data makes equality meaningful.
+"""One test per ``Range.squeeze()`` call site in the frontend (newast.py). squeeze() drops
+every size-1 dim and can't tell a length-1 SLICE (axis must survive) from a scalar INDEX (axis
+collapses) -- each site is a candidate length-1-slice miscompile. ``_add_read_slice`` is fixed;
+``make_slice`` is xfail(strict=True) pending a fix; the others are safe balanced squeezes.
 """
 import numpy as np
 import pytest
@@ -29,9 +16,7 @@ def _2d():
     return np.arange(N * M, dtype=np.int64).reshape(N, M)
 
 
-# --------------------------------------------------------------------------- #
-# _add_read_slice (FIXED): a returned length-1 slice keeps its axis.
-# --------------------------------------------------------------------------- #
+# _add_read_slice: fixed.
 @dace.program
 def read_slice_view(A):
     return A[:, 1:2]
@@ -45,9 +30,7 @@ def test_add_read_slice_keeps_length1_axis():
     assert np.array_equal(got, oracle)
 
 
-# --------------------------------------------------------------------------- #
-# make_slice: a length-1 slice off a CLOSURE / global array.
-# --------------------------------------------------------------------------- #
+# make_slice: xfail below (see reason).
 _GLOBAL = np.arange(N * M, dtype=np.int64).reshape(N, M)
 
 
@@ -68,10 +51,7 @@ def test_make_slice_closure_keeps_length1_axis():
     assert np.array_equal(got, oracle)
 
 
-# --------------------------------------------------------------------------- #
-# _add_assignment: broadcasting a length-1 slice across an assignment target. This is a VALUE
-# check, not just shape -- the audit flagged this site as a silent miscompile.
-# --------------------------------------------------------------------------- #
+# _add_assignment: value-only check (no shape assert) -- broadcast risk site.
 @dace.program
 def assign_broadcast_from_slice(A: dace.int64[N, M], B: dace.int64[N, M]):
     A[:, :] = B[:, 1:2]
@@ -89,9 +69,7 @@ def test_add_assignment_broadcast_from_slice_is_value_exact():
     assert np.array_equal(got, oracle), f"broadcast-assign miscompile: got\n{got}\noracle\n{oracle}"
 
 
-# --------------------------------------------------------------------------- #
-# _add_aug_assignment (SAFE: squeeze + unsqueeze balanced) -- matching-rank slice aug-assign.
-# --------------------------------------------------------------------------- #
+# _add_aug_assignment: safe, squeeze+unsqueeze balance.
 @dace.program
 def aug_assign_matching_slice(A: dace.int64[N, M], B: dace.int64[N, M]):
     A[:, 1:2] += B[:, 1:2]
@@ -109,10 +87,7 @@ def test_add_aug_assignment_matching_slice_is_value_exact():
     assert np.array_equal(got, oracle)
 
 
-# --------------------------------------------------------------------------- #
-# add_indirection_subgraph (SAFE): a length-1 slice alongside an indirect index. The size-1 dim
-# is a trivial map iteration; the user-visible result must still match numpy.
-# --------------------------------------------------------------------------- #
+# add_indirection_subgraph: safe, size-1 dim is a trivial map iteration.
 @dace.program
 def indirect_with_slice(A: dace.int64[N, M], idx: dace.int64[N]):
     out = np.zeros((N, 1), dtype=np.int64)
