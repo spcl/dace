@@ -238,6 +238,48 @@ def test_start_block_loop_with_successors():
     assert all(sdfg.in_degree(n) == 1 and sdfg.out_degree(n) == 1 for n in middle)
 
 
+def test_unroll_loop_body_with_nested_sdfg():
+    """Unrolling a loop whose body holds a NestedSDFG must keep that nested SDFG's parent
+    pointers valid. Copying the body by deepcopy detaches the nested SDFG's ``parent_sdfg``
+    (the outer SDFG is outside the block's copy memo), so it has to be restored -- otherwise
+    validation fails with 'Parent SDFG not properly set for nested SDFG node'. The nested SDFG
+    reads the loop variable through its symbol mapping, so the per-iteration replace must reach
+    it too."""
+    sdfg = dace.SDFG("unroll_body_nsdfg")
+    sdfg.add_array("A", shape=(4, ), dtype=dace.int32)
+
+    loop = LoopRegion(label="counted",
+                      condition_expr=CodeBlock("i < 4"),
+                      loop_var="i",
+                      initialize_expr=CodeBlock("i = 0"),
+                      update_expr=CodeBlock("i = i + 1"),
+                      sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state(label="body", is_start_block=True)
+
+    # A nested SDFG that writes its loop-index value into a scalar output ``y``.
+    nsdfg = dace.SDFG("inner")
+    nsdfg.add_symbol("ii", dace.int32)
+    nsdfg.add_array("y", shape=(1, ), dtype=dace.int32)
+    inner = nsdfg.add_state("inner")
+    itk = inner.add_tasklet(name="w", inputs=set(), outputs={"_out"}, code="_out = ii")
+    inner.add_edge(itk, "_out", inner.add_access("y"), None, Memlet(expr="y[0]"))
+
+    nsdfg_node = body.add_nested_sdfg(nsdfg, set(), {"y"}, symbol_mapping={"ii": "i"})
+    body.add_edge(nsdfg_node, "y", body.add_access("A"), None, Memlet(expr="A[i]"))
+
+    sdfg.validate()
+    sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
+    sdfg.validate()  # would raise 'Parent SDFG not properly set' if the deepcopy left it detached
+
+    assert not [n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)]
+
+    import numpy as np
+    A = np.full(4, -1, dtype=np.int32)
+    sdfg(A=A)
+    assert np.array_equal(A, np.arange(4, dtype=np.int32)), A
+
+
 if __name__ == "__main__":
     test_if_block_inside_for()
     test_empty_loop()
@@ -247,3 +289,4 @@ if __name__ == "__main__":
     test_triang_elim()
     test_replace_dict_inner_loop()
     test_start_block_loop_with_successors()
+    test_unroll_loop_body_with_nested_sdfg()

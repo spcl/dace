@@ -5,11 +5,11 @@ import ast
 import copy
 from typing import List, Optional, Union
 
-from dace import sdfg as sd, symbolic, serialize, version
+from dace import sdfg as sd, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import InterstateEdge, utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -143,15 +143,30 @@ class LoopUnroll(xf.MultiStateTransformation):
         block_map = {}
 
         for block in loop.nodes():
-            # Using to/from JSON is faster for copying blocks than deep copying.
-            new_block = serialize.from_json(serialize.to_json(block),
-                                            context={
-                                                'sdfg': graph.sdfg,
-                                                'version': version.__version__,
-                                            })
+            # A deepcopy copies a block ~9x faster than a to/from JSON round-trip (measured on a
+            # CloudSC loop body: 0.38ms vs 3.37ms). ``ControlFlowBlock.__deepcopy__`` detaches the
+            # parent SDFG on the whole subtree, where the old JSON path carried it in via the
+            # deserialization context. Restore the two pointers deepcopy drops, before
+            # ``replace_dict`` dereferences them:
+            #  * every control-flow block's ``.sdfg``. ``all_control_flow_blocks`` (non-recursive)
+            #    reaches nested regions at any depth but stops at nested-SDFG boundaries, whose
+            #    states must keep pointing at their own SDFG.
+            #  * each DIRECT nested SDFG's ``parent_sdfg``: the block's own memo had no reference to
+            #    the outer SDFG, so ``SDFG.__deepcopy__`` nulled it (``parent`` and
+            #    ``parent_nsdfg_node`` survived via the memo). Deeper nested SDFGs, whose parents
+            #    were inside the memo, keep their own SDFG. Mirrors ``SDFGState.add_node``.
+            new_block = copy.deepcopy(block)
+            cfg_blocks = [new_block]
+            if isinstance(new_block, AbstractControlFlowRegion):
+                cfg_blocks.extend(new_block.all_control_flow_blocks())
+            for cfg_block in cfg_blocks:
+                cfg_block.sdfg = graph.sdfg
+                if isinstance(cfg_block, SDFGState):
+                    for nsdfg_node in cfg_block.nodes():
+                        if isinstance(nsdfg_node, NestedSDFG):
+                            nsdfg_node.sdfg.parent_sdfg = graph.sdfg
             assert block not in block_map
             block_map[block] = new_block
-            # The JSON copy is created with SDFG context, so replacement can run before insertion.
             new_block.replace_dict({loop.loop_variable: value})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 

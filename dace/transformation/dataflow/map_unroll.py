@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, symbolic, SDFG, __version__
+from dace import data as dt, symbolic, SDFG
 from dace.sdfg import InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
@@ -47,13 +47,6 @@ class MapUnroll(transformation.SingleStateTransformation):
         # Collect all nodes in this weakly connected component
         subgraph = sdutil.weakly_connected_component(state, map_entry)
 
-        # Save nested SDFGs to JSON, then deserialize them for every copy we
-        # need to make
-        nested_sdfgs = {}
-        for node in subgraph:
-            if isinstance(node, nodes.NestedSDFG):
-                nested_sdfgs[node.sdfg] = node.sdfg.to_json()
-
         # Check for local memories that need to be replicated
         local_memories = [
             name for name in sdutil.local_transients(sdfg, subgraph, entry_node=map_entry, include_nested=True)
@@ -75,19 +68,15 @@ class MapUnroll(transformation.SingleStateTransformation):
             # Copy all nodes
             for node in subgraph:
                 if isinstance(node, nodes.NestedSDFG):
-                    # Avoid deep-copying the nested SDFG
+                    # Copy the node without its nested SDFG (that is copied separately, once per
+                    # unroll iteration), then deepcopy the nested SDFG itself -- ~2x faster than a
+                    # to/from JSON round-trip even after amortizing the serialize over every copy.
                     nsdfg = node.sdfg
-                    # Don't copy the nested SDFG, as we will do this separately
                     node.sdfg = None
                     unrolled_node = copy.deepcopy(node)
                     node.sdfg = nsdfg
-                    # Deserialize into a new SDFG specific to this copy
-                    nsdfg_json = nested_sdfgs[nsdfg]
-                    name = nsdfg_json["attributes"]["name"]
-                    nsdfg_json["attributes"]["name"] += suffix
-                    nsdfg_json["dace_version"] = __version__
-                    unrolled_nsdfg = SDFG.from_json(nsdfg_json)
-                    nsdfg_json["attributes"]["name"] = name  # Reinstate
+                    unrolled_nsdfg = copy.deepcopy(nsdfg)
+                    unrolled_nsdfg.name = nsdfg.name + suffix
                     # Set all the references
                     unrolled_nsdfg.parent = state
                     unrolled_nsdfg.parent_sdfg = sdfg
@@ -135,7 +124,7 @@ class MapUnroll(transformation.SingleStateTransformation):
         state.remove_nodes_from(subgraph)
 
         # If we added a bunch of new nested SDFGs, reset the internal list
-        if len(nested_sdfgs) > 0:
+        if any(isinstance(node, nodes.NestedSDFG) for node in subgraph):
             sdfg.reset_cfg_list()
 
         # Remove local memories that were replicated
