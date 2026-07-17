@@ -385,6 +385,37 @@ def tile_main_map_step_is_widths(sdfg: SDFG, K: int, widths: Tuple[int, ...]) ->
     return None
 
 
+def no_strided_map_param_in_surviving_condition(sdfg: SDFG, K: int) -> Optional[str]:
+    """No STRIDED map still carries a conditional guarding one of its own params.
+
+    Striding rebinds a map's params from per-iteration index to TILE BASE, so a guard over one
+    (``if i + 1 < mid``, TSVC s276) is then evaluated ONCE per tile: lane 0 decides for all W
+    lanes. ``is_tile_eligible`` refuses such maps up front, but a pre-check proves nothing about
+    the post-state -- this is the post-condition, at the one place the rebinding happens.
+
+    Keyed on the ACTUAL STEP, not on ``TILE_MAIN_MARKER``: a map strided by any other route
+    (``FuseBranchedTailRemainder`` re-strides by label match alone) is covered too.
+
+    :param sdfg: the SDFG after striding.
+    :param K: number of tiled (innermost) dims.
+    :returns: an error string, or ``None`` when the invariant holds.
+    """
+    from dace.transformation.passes.vectorization.utils.map_predicates import (
+        map_body_has_tiled_param_dependent_branch)
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for node in state.nodes():
+                if not isinstance(node, MapEntry) or len(node.map.range) < K or len(node.map.params) < K:
+                    continue
+                if all(str(node.map.range[-K + d][2]) == '1' for d in range(K)):
+                    continue  # not strided: nothing was rebound to a tile base
+                if map_body_has_tiled_param_dependent_branch(state, node, tuple(node.map.params[-K:])):
+                    return (f"{sd.name}.{state.label}: strided map ``{node.map.label}`` still holds a "
+                            f"conditional guarding its own param -- that guard is evaluated once per "
+                            f"tile, not per lane")
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Helpers (private).
 # ---------------------------------------------------------------------------

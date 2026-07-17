@@ -16,6 +16,7 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
                                                                                    TILE_K1_TAIL_MARKER)
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, no_memlet_dim_mismatch,
+                                                                            no_strided_map_param_in_surviving_condition,
                                                                             tile_main_map_step_is_widths)
 from dace.transformation.passes.vectorization.utils.tile_dims import TileDimSpec
 
@@ -108,7 +109,7 @@ class StrideMapByTileWidths(ppl.Pass):
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n):
+            if not is_vectorizable_map(g, n, len(self.widths)):
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: keep step 1
                 continue
@@ -124,4 +125,6 @@ class StrideMapByTileWidths(ppl.Pass):
                          "memlet subset and other_subset have matching dimensionality")
         assert_invariant(tile_main_map_step_is_widths(sdfg, K, tuple(self.widths)), "StrideMapByTileWidths",
                          "TILE_MAIN map's last-K dim steps equal widths")
+        assert_invariant(no_strided_map_param_in_surviving_condition(sdfg, K), "StrideMapByTileWidths",
+                         "no strided map still guards its own param in a surviving conditional")
         return rewritten or None

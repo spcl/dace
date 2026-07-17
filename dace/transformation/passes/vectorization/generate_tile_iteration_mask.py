@@ -186,7 +186,7 @@ class GenerateTileIterationMask(ppl.Pass):
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, MapEntry) or not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n):
+            if not is_vectorizable_map(g, n, len(self.widths)):
                 continue
             if n.map.label.endswith(SCALAR_TAIL_MARKER):  # scalar_postamble tail: no mask
                 continue

@@ -1202,10 +1202,23 @@ class ControlGraphView(BlockGraphView, abc.ABC):
         return dtypes.deduplicate(res)
 
     def replace(self, name: str, new_name: str):
-        for n in self.nodes():
-            n.replace(name, new_name)
-        for e in self.edges():
-            e.data.replace(name, new_name)
+        # Route through ``replace_dict`` rather than hand-walking ``nodes()`` / ``edges()``. A control-flow
+        # region holds symbol references that are NOT reachable from either: a ``ConditionalBlock``'s branch
+        # CONDITIONS live in ``_branches``, and a nested ``LoopRegion``'s init / condition / update live in
+        # its own properties. Both classes override ``replace_dict`` to reach them; neither overrides
+        # ``replace``, so the hand-walk silently left those references naming the old symbol.
+        #
+        # ``replace_keys=True`` keeps this method a true RENAME, matching ``SDFG.replace`` and
+        # ``InterstateEdge.replace``, which both default to it: an interstate-edge assignment ``name = ...``
+        # must become ``new_name = ...``, or the edge would keep defining a symbol nobody reads any more.
+        # The hand-walk did this too (it called ``InterstateEdge.replace``, whose default is True), so this
+        # preserves the behaviour callers already depend on.
+        #
+        # A caller substituting a VALUE rather than renaming a symbol must NOT come through here -- pinning
+        # an iterator to ``N - 1`` would rewrite an assignment's key to ``N - 1``. Such callers use
+        # ``replace_dict(..., symrepl=..., replace_keys=False)`` directly; see ``TrivialLoopElimination``
+        # and ``LoopOverwriteElimination``.
+        self.replace_dict({name: new_name}, replace_keys=True)
 
     def replace_dict(self,
                      repl: Dict[str, str],
