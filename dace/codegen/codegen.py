@@ -250,6 +250,25 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         sdfg.apply_transformations_repeated(InlineMultistateSDFG)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # ``explicit_copy``: lift implicit copies (AccessNode -> AccessNode, View endpoints, map
+        # staging) to explicit CopyLibraryNodes, so ExpandAuto lowers each one on its merits -- a
+        # single-element copy to a plain ``=`` tasklet, a contiguous same-layout copy to
+        # ``std::memcpy`` -- instead of the ``dace::CopyND`` template the implicit path emits. After
+        # the inline sweep above, so copies that were inside nested SDFGs are seen too, and before
+        # the passes below, so they classify and connector-inline the explicit form.
+        #
+        # ``expand_library_nodes`` already ran further up, so nothing would expand what this inserts;
+        # expand it here, restricted BY PREDICATE to the copy nodes just added. The restriction is not
+        # cosmetic: the pass is shared, and its other callers (transformation/layout/prepare.py, the
+        # GPU-specialization pipeline) require the CopyLibraryNode to survive UNEXPANDED for
+        # RewriteCopyForLayout to turn into a TensorTranspose. Expanding belongs here, not in the pass.
+        if config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on':
+            from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+            from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
+            InsertExplicitCopies().apply_pass(sdfg, {})
+            sdfg.expand_library_nodes(predicate=lambda n: isinstance(n, CopyLibraryNode))
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
         # ``ssa_loop_scalars``: version a scalar reassigned several times in a scope/loop nest into
         # single-assignment names, so each write-once version below becomes a ``const T nx_0 = expr;``

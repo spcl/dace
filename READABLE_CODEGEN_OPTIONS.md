@@ -55,7 +55,7 @@ by-reference divisors all collapsed to noise and were rejected.
 
 ## 2. The keys
 
-Thirteen keys.
+Fourteen keys.
 
 | Key | Default | Applies to |
 |---|---|---|
@@ -66,6 +66,7 @@ Thirteen keys.
 | `loop_access_form` | `indexed` | readable only |
 | `scalar_init_style` | **`fused`** | readable only |
 | `const_init` | **`on`** | readable only |
+| `explicit_copy` | **`on`** | readable only |
 | `ssa_loop_scalars` | `off` | readable only |
 | `loop_index_type` | `auto` | **both** |
 | `loop_bound_cmp` | `lt` | **both** |
@@ -73,8 +74,10 @@ Thirteen keys.
 | `split_nsdfg_translation_units` | `false` | **both** |
 | `decl_placement` | `eager` | **both** for loop counters; readable only for scalars |
 
-Every default leaves LEGACY byte-identical. The two in bold do *not* reproduce legacy's spelling from
-the READABLE generator — see Invariant 2b.
+Every default leaves LEGACY byte-identical. The three in bold do *not* reproduce legacy's spelling
+from the READABLE generator — see Invariant 2b. `explicit_copy` is a special case of that: unlike
+`const_init`/`scalar_init_style`, whose passes already run, its pass does NOT run in codegen today, so
+`on` deliberately changes the readable generator's output (see §2.5).
 
 They group into four sub-designs.
 
@@ -185,6 +188,40 @@ emits no `<array>_idx` helper, so there is no access path to re-spell and it ign
   `CODEGEN_STYLE_PERFORMANCE.md` §7 documents a size-gated **runtime** lever here too: past a
   threshold, TU size changes backend decisions (inlining budgets, register allocation), so the split
   is not runtime-neutral. The description must stop claiming it is.
+
+  **Measured (16-core box, under ~load 11, cold cache).** The split's compile-time direction depends
+  entirely on per-nest body size versus the fixed per-TU cost of re-parsing `<dace/dace.h>`:
+
+  | Workload | Files | Compile off → on |
+  |---|---|---|
+  | 16 tiny nests (short arithmetic each) | 1 → 17 | 6.4s → 17.3s (**0.37×, a loss**) |
+  | 6 heavy nests (long chains each) | 1 → 7 | 7.8s → 6.9s (**1.14×, a win**) |
+
+  Both produce identical numbers to the single-TU build. The takeaway: splitting pays only once each
+  nest's own compile dominates the ~1s header re-parse it now pays per file; many small nests make it
+  strictly worse. A quiet machine widens the heavy-nest win (here 5 of 16 cores were busy).
+
+### 2.5 Copy lowering
+
+- **`explicit_copy`** (`on` | `off`, **default on**, readable only) — runs `InsertExplicitCopies`,
+  lifting each implicit copy (AccessNode→AccessNode, View endpoints, map staging) to a
+  `CopyLibraryNode`, then expands only those nodes. `ExpandAuto` then lowers each copy on its merits:
+  a single-element copy to a plain `=` tasklet (whose connectors the readable generator then inlines
+  like any other), a contiguous same-layout copy to `std::memcpy`. `off` leaves every copy on the
+  implicit `dace::CopyND` path.
+
+  **This default breaks the "new key reproduces today's output" rule, on purpose.** `const_init` and
+  `scalar_init_style` default to their non-legacy spelling but run passes that *already* run today;
+  `InsertExplicitCopies` does **not** run in `codegen.py` today, so `on` genuinely changes the
+  readable generator's output. The absolute invariant still holds: the gate lives inside the
+  `implementation == 'experimental_readable'` block, so **legacy stays byte-identical** for either
+  value (verified: identical SHA across `on`/`off`). Measured on a two-copy program, readable output
+  goes from 4×`dace::CopyND` / 0×`memcpy` (`off`) to 0×`dace::CopyND` / 2×`memcpy` (`on`).
+
+  The pass is **shared**: its other callers (`transformation/layout/prepare.py`, the
+  GPU-specialization pipeline) need the `CopyLibraryNode` left **unexpanded** so `RewriteCopyForLayout`
+  can turn it into a `TensorTranspose`. That is why the expansion lives in this key's block in
+  `codegen.py`, restricted by predicate to the copy nodes just inserted, and not in the pass itself.
 
 ---
 
