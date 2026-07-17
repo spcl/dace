@@ -28,12 +28,22 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 
 _RESULTS_CSV = 'results.csv'
 _STATUS_CSV = 'status.csv'
 _COMPILE_CSV = 'compile.csv'
+
+# A failing kernel stores its traceback in status.csv's `error` field; DaCe validation
+# tracebacks routinely blow past csv's 128 KB default field cap and make every later read
+# of that file raise `_csv.Error: field larger than field limit`, taking down table writing
+# for the whole corpus. Errors are truncated on write (see write_status), but the cap has to
+# be lifted too so the oversized files already on disk stay readable.
+csv.field_size_limit(min(2 ** 31 - 1, sys.maxsize))
+
+_MAX_STATUS_ERROR_CHARS = 8192
 
 
 # --------------------------------------------------------------------------
@@ -1004,6 +1014,11 @@ def write_status(kdir, pipeline, correct, error=''):
     if os.path.exists(path):
         with open(path, newline='') as f:
             rows = [r for r in csv.DictReader(f) if r['pipeline'] != pipeline]
+    error = str(error)
+    if len(error) > _MAX_STATUS_ERROR_CHARS:
+        # Keep the head (exception type + first frames) and the tail (the actual raise).
+        head, tail = _MAX_STATUS_ERROR_CHARS // 2, _MAX_STATUS_ERROR_CHARS // 2
+        error = f'{error[:head]}\n...[{len(error) - head - tail} chars truncated]...\n{error[-tail:]}'
     rows.append(dict(pipeline=pipeline, correct=correct, error=error))
     tmp = path + '.tmp'
     with open(tmp, 'w', newline='') as f:
