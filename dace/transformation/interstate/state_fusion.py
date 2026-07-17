@@ -121,6 +121,15 @@ class StateFusion(transformation.MultiStateTransformation):
                     return True
         return False
 
+    @staticmethod
+    def is_pystate_ordered(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+        """True if ``tasklet`` carries a ``__pystate`` token -- a data dependence kept ordered across fusion."""
+        for edge in state.all_edges(tasklet):
+            neighbor = edge.dst if edge.src is tasklet else edge.src
+            if isinstance(neighbor, nodes.AccessNode) and neighbor.data == '__pystate':
+                return True
+        return False
+
     def has_path(self, first_state: SDFGState, second_state: SDFGState,
                  match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], node_a: nodes.Node, node_b: nodes.Node) -> bool:
         """ Check for paths between the two states if they are fused. """
@@ -309,15 +318,14 @@ class StateFusion(transformation.MultiStateTransformation):
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
 
-            # A state carrying a side-effect node -- a Tasklet with side effects (a fusion barrier,
-            # a callback / I/O), or a side-effecting library node -- must never be fused: state
-            # fusion preserves only dataflow order, so an effect whose ordering is guaranteed by the
-            # interstate edge (not by a data dependence) would be reordered or run concurrently once
-            # the two states become one. Unconditional -- NOT gated on the resulting-CC count -- so a
-            # single-CC fusion cannot slip a side-effect node (e.g. a fusion barrier) through.
+            # A side-effect node (fusion barrier, I/O, side-effecting library node) must never be fused:
+            # fusion preserves only dataflow order. Exception: __pystate-ordered callbacks keep their order
+            # via that data dependence and are gated by frontend.dont_fuse_callbacks above.
             for state in (first_state, second_state):
                 for node in state.nodes():
                     if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
+                        if StateFusion.is_pystate_ordered(state, node):
+                            continue
                         return False
                     if isinstance(node, nodes.LibraryNode) and node.has_side_effects:
                         return False
