@@ -13,7 +13,7 @@ import numpy as np
 
 from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets, symbolic
 from dace.frontend.python import astutils
-from dace.sdfg import nodes as nd
+from dace.sdfg import nodes as nd, utils as sdutil
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.dataflow.map_unroll import MapUnroll
 from dace.transformation.passes.analysis.analysis import AccessSets, FindAccessNodes, StateReachability
@@ -144,7 +144,19 @@ class MarkConstInit(ppl.Pass):
 
     def _classify_probe(self, probe: SDFG) -> PayingTargets:
         """Runs the classifier over an already-unrolled throwaway copy and returns the
-        ``constexpr_static`` names, keyed by ``(cfg_id, name)``."""
+        ``constexpr_static`` names, keyed by ``(cfg_id, name)``.
+
+        ONLY ``constexpr_static`` counts, and the reason is not the obvious one. A fill map has no
+        data inputs, so a symbol-valued one (``beta = N * 2.0``) classifies ``runtime`` per element:
+        for N>1 that is a runtime multi-write and declined, so unrolling never pays. At N==1 it
+        unrolls to a single runtime write, which looks exactly like a ``const_runtime`` this gate
+        would then wrongly hold back -- but it cannot happen. ``const_runtime`` needs the write's
+        scope to ENCLOSE every read (:meth:`_write_encloses_reads`: each state is its own ``{ }``
+        block, so the reads must be in the write's state), while :meth:`_is_constant_fill_map` only
+        admits a fill whose consumer is NOT in its state (else MapUnroll drags the consumer into the
+        component it replicates). The two requirements are mutually exclusive, so unrolling a fill can
+        never produce a ``const_runtime``.
+        """
         access_nodes_all = FindAccessNodes().apply_pass(probe, {})
         access_sets = AccessSets().apply_pass(probe, {})
         state_reach_all = StateReachability().apply_pass(probe, {})
@@ -169,9 +181,9 @@ class MarkConstInit(ppl.Pass):
         declined target left flattened strands host tasklets writing GPU_Global memory (an invalid
         SDFG). A pass that does not apply must not mutate, so decide here and mutate only where it pays.
 
-        Only ``constexpr_static`` counts: it is the sole classification that needs the element-wise
-        form. A fill whose value comes from symbols classifies ``runtime`` per element, which as a
-        multi-write is declined anyway, so unrolling it could never have paid.
+        Only ``constexpr_static`` counts, and NOT merely because it is the classification that wants
+        the element-wise form: a ``const_runtime`` is unreachable through the unroll by construction.
+        See :meth:`_classify_probe` for the argument.
 
         Iterated to a FIXED POINT, because one probe is not enough. The first probe unrolls every
         candidate, but the real run unrolls only the paying subset -- two different graphs, which can
@@ -253,6 +265,18 @@ class MarkConstInit(ppl.Pass):
         body = state.scope_subgraph(map_entry, include_entry=False, include_exit=False).nodes()
         if any(isinstance(n, (nd.NestedSDFG, nd.LibraryNode)) for n in body):
             return False
+        # MapUnroll replicates the map's whole WEAKLY CONNECTED COMPONENT, not just the map. Anything
+        # else in that component is dragged along and duplicated per element -- above all a CONSUMER
+        # reading the filled array in this same state, which is what apply_gpu_transformations always
+        # produces by fusing the fill's state into its consumer's. Unrolling that duplicates the access
+        # node per element while keeping its original out-edge, so every copy claims to deliver the FULL
+        # array; the result is a broken graph ("Isolated node", "Dangling in-connector"). If the fill
+        # cannot be flattened on its own, it is not a candidate -- say so here rather than leaving a
+        # later classifier to decline it by luck.
+        own = set(state.scope_subgraph(map_entry, include_entry=True, include_exit=True).nodes())
+        own |= {e.dst for e in out_edges}
+        if set(sdutil.weakly_connected_component(state, map_entry).nodes()) - own:
+            return False
         # Constant, bounded iteration count.
         count = 1
         for begin, end, step in map_entry.map.range:
@@ -267,7 +291,19 @@ class MarkConstInit(ppl.Pass):
             count *= max(0, (hi - lo) // st + 1)
             if count == 0 or count > CONST_FILL_UNROLL_LIMIT:
                 return False
-        return True
+        # Last, let MapUnroll speak for itself rather than restating its rules here (top-level map,
+        # constant range, ...). ``apply_to`` passes verify=False, which SKIPS that check, so asking
+        # here is what makes its preconditions bind at all.
+        #
+        # permissive=True is deliberate and narrow. MapUnroll declines a GPU map by default because
+        # flattening a device map strands its body on the host, still touching GPU_Global memory --
+        # true of the transformation ALONE. Here it never stands alone: a map is only unrolled once
+        # :meth:`_paying_fill_targets` has proven its every target reaches ``constexpr_static``, and
+        # applying that promotes the fill to a compile-time constant and deletes the writes outright,
+        # so no host code survives to touch device memory. Unrolling a device map that does NOT pay
+        # would be exactly the bug the gate exists to prevent -- which is why the permission is granted
+        # here, behind that gate, and not in the transformation.
+        return MapUnroll.can_be_applied_to(sdfg, permissive=True, map_entry=map_entry)
 
     def _process_sdfg(self, sdfg: SDFG, access_nodes: Dict[str, Dict[SDFGState, Tuple[Set[nd.AccessNode],
                                                                                       Set[nd.AccessNode]]]],

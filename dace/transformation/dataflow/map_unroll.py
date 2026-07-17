@@ -1,5 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace import data as dt, symbolic, SDFG
+from dace import data as dt, dtypes, symbolic, SDFG
 from dace.sdfg import InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation
@@ -28,6 +28,15 @@ class MapUnroll(transformation.SingleStateTransformation):
         map_entry = self.map_entry
         # Must be top-level map
         if graph.scope_dict()[map_entry] is not None:
+            return False
+        # Not a GPU map, unless permissive. A device map IS the kernel launch, so replicating its body
+        # per iteration and eliminating the map strands that body on the host -- where it still reads
+        # and writes GPU_Global memory ("Data container X is stored as StorageType.GPU_Global but
+        # accessed on host"). This transformation cannot repair that on its own, so it declines by
+        # default. A caller that will DELETE the unrolled writes afterwards -- MarkConstInit promoting
+        # the fill to a compile-time constant, which leaves no host code behind at all -- knows
+        # something this check cannot, and passes permissive=True to say so.
+        if not permissive and map_entry.map.schedule in dtypes.GPU_SCHEDULES:
             return False
         # All map ranges must be constant
         try:

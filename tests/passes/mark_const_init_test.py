@@ -600,6 +600,53 @@ def test_partly_paying_fill_map_is_not_unrolled():
     sdfg.validate()
 
 
+def test_symbolic_fill_map_never_becomes_const_runtime():
+    """Unrolling a fill map can never produce a ``const_runtime``, so the unroll gate is right to
+    count only ``constexpr_static``.
+
+    It looks like it should. A fill map has no data inputs, so a symbol-valued one (``s = N * 2.0``)
+    classifies ``runtime`` per element; for N>1 that is a runtime multi-write and declined, but a
+    ONE-iteration fill unrolls to a single runtime write -- apparently exactly the
+    ``const T s = expr;`` binding, and apparently a shape the gate would wrongly hold back. It is not,
+    because two requirements are mutually exclusive:
+
+      * ``const_runtime`` needs the write's scope to ENCLOSE every read (_write_encloses_reads): each
+        state is its own ``{ }`` block, so the reads must live in the WRITE's state.
+      * The unroll needs the consumer NOT in the fill's state (_is_constant_fill_map), or MapUnroll
+        drags it into the component it replicates.
+
+    So the fill is either unrollable or const_runtime-able, never both. Both arrangements below are
+    unmarked, for those two different reasons.
+    """
+    sdfg = dace.SDFG('sym_fill')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+
+    s1 = sdfg.add_state('init')
+    # One iteration, value from a SYMBOL: not compile-time constant, but a single well-defined write.
+    s1.add_mapped_tasklet('fill',
+                          dict(i='0:1'), {},
+                          'out = N * 2.0',
+                          dict(out=dace.Memlet('s[0]')),
+                          external_edges=True)
+    s2 = sdfg.add_state('use')
+    r = s2.add_read('s')
+    t = s2.add_tasklet('use', {'inp'}, {'o'}, 'o = inp + 1.0')
+    s2.add_edge(r, None, t, 'inp', dace.Memlet('s[0]'))
+    s2.add_edge(t, 'o', s2.add_write('B'), None, dace.Memlet('B[0]'))
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    sdfg.validate()
+
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    # Consumer in another state -> unrollable, but then the const binding has no scope to live in.
+    assert 's' not in kinds, kinds
+    # The map is left alone: it does not pay, so it is not flattened.
+    assert _map_entries(s1) != [], 'a fill map that cannot pay was unrolled anyway'
+    sdfg.validate()
+
+
 def _same_state_fill_sdfg(name):
     """A constant fill whose CONSUMER lives in the same state, connected through one access node.
 
@@ -625,7 +672,8 @@ def _same_state_fill_sdfg(name):
     return sdfg
 
 
-@pytest.mark.xfail(strict=True, reason='MapUnroll cannot flatten a fill whose consumer shares its state: it '
+@pytest.mark.xfail(strict=True,
+                   reason='MapUnroll cannot flatten a fill whose consumer shares its state: it '
                    'duplicates the access node per element but keeps the original out-edge, so all N nodes '
                    'claim to deliver the FULL array to the consumer while each is written at one index. '
                    'const-init here needs the fill evaluated WITHOUT unrolling, not a looser classifier.')
@@ -654,20 +702,38 @@ def test_same_state_constant_fill_is_const_inited():
     sdfg.validate()
 
 
-def _gpu_fill_program():
-    """``@dace.program`` (NOT a hand-built SDFG -- the frontend shape is the point): a small
-    constant fill of a transient, then a read of it. After ``apply_gpu_transformations`` the fill is
-    a GPU_Device-scheduled map writing a GPU_Global transient."""
+# These two are @dace.program (NOT hand-built SDFGs -- the frontend shape is the point) and live at
+# MODULE scope deliberately: a @dace.program nested inside a function is parsed as a nested program,
+# which fails once another test in the session has put the frontend in a program context
+# ("Nested programs must be defined...", "'Expr' object has no attribute 'body'"). Those failures do
+# not reproduce when the file runs alone, only in the full suite.
 
-    @dace.program
-    def constfill(A: dace.float64[8]):
-        w = np.zeros((8, ), dtype=np.float64)
-        for i in dace.map[0:8]:
-            w[i] = 2.0
-        for i in dace.map[0:8]:
-            A[i] = A[i] * w[i]
 
-    sdfg = constfill.to_sdfg(simplify=True)
+@dace.program
+def gpu_constfill(A: dace.float64[8]):
+    """A small constant fill of a transient, then a read of it. After apply_gpu_transformations the
+    fill is a GPU_Device-scheduled map writing a GPU_Global transient."""
+    w = np.zeros((8, ), dtype=np.float64)
+    for i in dace.map[0:8]:
+        w[i] = 2.0
+    for i in dace.map[0:8]:
+        A[i] = A[i] * w[i]
+
+
+@dace.program
+def gpu_refill(A: dace.float64[8]):
+    """Same, but ``w`` is written a second time, so the classifier rejects it."""
+    w = np.zeros((8, ), dtype=np.float64)
+    for i in dace.map[0:8]:
+        w[i] = 2.0
+    for i in dace.map[0:8]:
+        w[i] = w[i] + A[i]
+    for i in dace.map[0:8]:
+        A[i] = w[i]
+
+
+def _gpu_fill_program(program):
+    sdfg = program.to_sdfg(simplify=True)
     sdfg.apply_gpu_transformations()
     sdfg.validate()  # Baseline: the GPU-transformed SDFG is valid BEFORE the pass runs.
     return sdfg
@@ -683,7 +749,7 @@ def test_gpu_constant_fill_map_keeps_its_schedule():
 
     Needs no GPU: ``apply_gpu_transformations`` is a pure SDFG rewrite and validation catches this.
     """
-    sdfg = _gpu_fill_program()
+    sdfg = _gpu_fill_program(gpu_constfill)
     _run(sdfg)
     sdfg.validate()
 
@@ -695,20 +761,7 @@ def test_gpu_rejected_fill_map_stays_valid():
     time the classifier declines to const-init, so the pass mutates without applying AND leaves the
     SDFG invalid.
     """
-
-    @dace.program
-    def refill(A: dace.float64[8]):
-        w = np.zeros((8, ), dtype=np.float64)
-        for i in dace.map[0:8]:
-            w[i] = 2.0
-        for i in dace.map[0:8]:
-            w[i] = w[i] + A[i]
-        for i in dace.map[0:8]:
-            A[i] = w[i]
-
-    sdfg = refill.to_sdfg(simplify=True)
-    sdfg.apply_gpu_transformations()
-    sdfg.validate()
+    sdfg = _gpu_fill_program(gpu_refill)
     _run(sdfg)
     sdfg.validate()
 
@@ -731,5 +784,6 @@ if __name__ == '__main__':
     test_multiwrite_overlapping_not_marked()
     test_idempotency()
     test_partly_paying_fill_map_is_not_unrolled()
+    test_symbolic_fill_map_never_becomes_const_runtime()
     test_gpu_constant_fill_map_keeps_its_schedule()
     test_gpu_rejected_fill_map_stays_valid()
