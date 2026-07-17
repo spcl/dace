@@ -36,6 +36,14 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
     CATEGORY: str = "Vectorization Preparation"
 
     vector_width = properties.Property(dtype=int, default=8, allow_none=False)
+    tiled_dims = properties.Property(
+        dtype=int,
+        default=1,
+        allow_none=False,
+        desc="Number of innermost dims the orchestrator will tile (``len(widths)``). Only forwarded "
+        "to the shared ``is_vectorizable_map`` gate, so this pass agrees with the tile passes on "
+        "which maps are candidates -- a map this pass declines to nest but a later pass strides is "
+        "exactly the desync that gate exists to prevent.")
     nest_provably_divisible = properties.Property(
         dtype=bool,
         default=False,
@@ -44,10 +52,11 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         "this: its provably-divisible interior still needs a NestedSDFG body "
         "for the tile iteration mask.")
 
-    def __init__(self, vector_width: int = 8, nest_provably_divisible: bool = False):
+    def __init__(self, vector_width: int = 8, nest_provably_divisible: bool = False, tiled_dims: int = 1):
         super().__init__()
         self.vector_width = vector_width
         self.nest_provably_divisible = nest_provably_divisible
+        self.tiled_dims = tiled_dims
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.States | ppl.Modifies.AccessNodes
@@ -148,7 +157,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
                 continue
             if not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n):
+            if not is_vectorizable_map(g, n, self.tiled_dims):
                 continue
             # Provably-divisible -> no remainder, leave un-nested (matches old
             # behaviour). ``nest_provably_divisible`` overrides: masked-tail interior

@@ -795,7 +795,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # traverse. A flat body without an NSDFG wrapper would leave the walker idle: the map
         # step strides to W but no per-tile body is produced → silently wrong numerics.
         # ``nest_provably_divisible=True`` disables the legacy single-dim divisibility skip.
-        passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True))
+        passes.append(NestInnermostMapBodyIntoNSDFG(nest_provably_divisible=True, tiled_dims=len(widths_t)))
         # Nesting a flat ``acc = sum(A)`` body pulls the accumulator WCR inside the body
         # NSDFG. ``NormalizeWCR`` (canonicalize's shared reduction-normalize, reused since the
         # vectorizer can run WITHOUT canonicalize) rewrites it to the boundary shape: the body
