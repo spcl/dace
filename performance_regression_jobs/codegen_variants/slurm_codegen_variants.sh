@@ -34,10 +34,12 @@ export PYTHONUSERBASE=/capstor/scratch/cscs/$USER/aarch64/python
 export PATH=$PYTHONUSERBASE/bin:$PATH
 source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 
+# gcc@16.1.0 +graphite: its g++ gives clang a modern libstdc++ (--gcc-install-dir), gfortran,
+# AND the Graphite -floop-parallelize-all the native-gcc-autopar lane needs.
 spack load gcc@16.1.0
-spack load llvm@22.1.5
+spack load llvm@22.1.5    # clang++ = DaCe codegen compiler + Polly for the native-clang-polly-autopar lane
 spack load cmake            # the cmake variants still run a real CMake configure+build
-spack load openblas threads=openmp
+spack load openblas
 spack load cuda
 
 # nvcc discovery (CUDA_HOME) + runtime lib paths (spack load sets PATH only).
@@ -47,7 +49,7 @@ if [ -n "$CUDA_HOME" ]; then
     export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
     export CPATH="$CUDA_HOME/include:${CPATH:-}"
 fi
-export OPENBLAS_DIR="$(spack location -i openblas threads=openmp 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+export OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"
@@ -64,6 +66,11 @@ COMPILE_REPS="${COMPILE_REPS:-3}"
 # native path -- no leftover binaries, objects, or precompiled headers from a prior
 # job on this node. ~/.cache is cleared too in case a pre-/dev/shm PCH lingers there.
 srun --ntasks-per-node=1 bash -c 'rm -rf /dev/shm/dace_perf_jobs_* /dev/shm/dace_native_pch_* ~/.cache/dace/native_pch' || true
+# Reset THIS job's results CSV so every full sweep starts clean: append_rows only ADDS rows and
+# write_tables keeps the newest row per (kernel, mode, impl) cell -- so a kernel that FAILS this
+# run (e.g. a missing BLAS header) would otherwise keep silently displaying its stale row from a
+# prior run. Removing the CSV makes a failed/incomplete kernel show as ABSENT, not stale.
+rm -f results/npbench_polybench/codegen_variants.csv
 
 # --distribution=block:block gives rank i a contiguous socket; --cpu-bind=cores pins it.
 srun --cpu-bind=verbose,cores --distribution=block:block \

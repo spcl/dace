@@ -24,10 +24,12 @@ export PYTHONUSERBASE=/capstor/scratch/cscs/$USER/aarch64/python
 export PATH=$PYTHONUSERBASE/bin:$PATH
 source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 export PYTHONPATH=/capstor/scratch/cscs/ybudanaz/aarch64/dace:${PYTHONPATH:-}
-spack load gcc@16.1.0
+# gcc@16.1.0 was removed from spack; DaCe compiles with clang++ (llvm@22, loaded below)
+# and resolves its libstdc++ from the system g++-14 toolchain via --gcc-install-dir
+# (native_harness.find_gcc_install_dir prefers the newest system g++).
 spack load cmake
-spack load openblas threads=openmp
-export OPENBLAS_DIR="$(spack location -i openblas threads=openmp 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+spack load openblas
+export OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"

@@ -144,17 +144,8 @@ def find_best_cpp_compiler():
     return find_compiler('clang++') or find_compiler('g++')
 
 
-def find_gcc_install_dir():
-    """Clang needs an explicit --gcc-install-dir to find libstdc++ headers.
-
-    Uses find_compiler('g++') -- the C++ compiler, not 'gcc' the C compiler --
-    since the two can be different versions with only one of them having a
-    matching libstdc++-dev headers package installed (observed concretely:
-    a gcc present as a C-only compiler with no matching libstdc++-dev, while
-    a different g++ on the same PATH was the actual complete C++ toolchain)."""
-    gxx = find_compiler('g++')
-    if not gxx:
-        return None
+def _gcc_install_dir_of(gxx):
+    """The libstdc++ 'install:' dir clang's --gcc-install-dir wants, for a given g++."""
     try:
         out = subprocess.run([gxx, '-print-search-dirs'], capture_output=True, text=True, timeout=10).stdout
     except Exception:
@@ -165,6 +156,44 @@ def find_gcc_install_dir():
             if os.path.isdir(path):
                 return path
     return None
+
+
+def find_gcc_install_dir():
+    """Clang needs an explicit --gcc-install-dir to find libstdc++ headers.
+
+    Uses g++ -- the C++ compiler, not 'gcc' the C compiler -- since the two can be
+    different versions with only one having matching libstdc++-dev headers (observed:
+    a C-only gcc with no libstdc++-dev, while a different g++ on PATH was the complete
+    toolchain).
+
+    Picks the HIGHEST-VERSION g++ available: DaCe codegen emits C++23, and clang resolves
+    its libstdc++ from THIS directory -- a stale one (e.g. a distro's ``/usr/bin/g++`` fixed
+    at gcc 7, whose libstdc++ lacks ``std::ranges::fold_left`` and other C++23 library
+    features) makes clang fail to compile the generated code even though clang itself is
+    modern. Candidates are the bare ``g++`` (a spack-loaded gcc puts its own, e.g. gcc 16,
+    here) plus any versioned system compilers (``g++-14``/``g++-13``/...); choosing the max
+    version means a loaded modern spack gcc wins, and on a box with only the ancient default
+    ``g++`` plus a newer ``g++-14`` the latter wins."""
+    best_dir, best_ver = None, (-1, -1)
+    seen = set()
+    for name in ['g++'] + [f'g++-{m}' for m in range(30, 6, -1)]:
+        gxx = find_compiler(name)
+        if not gxx:
+            continue
+        real = os.path.realpath(gxx)
+        if real in seen:
+            continue
+        seen.add(real)
+        try:
+            dump = subprocess.run([gxx, '-dumpversion'], capture_output=True, text=True, timeout=10).stdout.strip()
+            major = int(dump.split('.')[0])
+            minor = int(dump.split('.')[1]) if '.' in dump else 0
+        except Exception:
+            major, minor = 0, 0
+        d = _gcc_install_dir_of(gxx)
+        if d and (major, minor) > best_ver:
+            best_dir, best_ver = d, (major, minor)
+    return best_dir
 
 
 def needs_gcc_install_dir(cc):

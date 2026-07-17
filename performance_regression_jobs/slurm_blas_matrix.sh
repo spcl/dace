@@ -34,8 +34,8 @@ source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 export PYTHONPATH=/capstor/scratch/cscs/ybudanaz/aarch64/dace:${PYTHONPATH:-}
 
 spack load gcc@16.1.0
-spack load openblas threads=openmp
-export OPENBLAS_DIR="$(spack location -i openblas threads=openmp)"
+spack load openblas
+export OPENBLAS_DIR="$(spack location -i openblas)"
 export LD_LIBRARY_PATH="$OPENBLAS_DIR/lib:${LD_LIBRARY_PATH:-}"
 export CPATH="$OPENBLAS_DIR/include:${CPATH:-}"
 

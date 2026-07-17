@@ -53,8 +53,14 @@ import native_harness as nh
 
 #: experiment -> its dace + native lane sets (numpy is added per-corpus below).
 EXPERIMENTS = {
-    'canon_vs': dict(dace=['dace-autoopt', 'dace-canon', 'dace-parallel'], native=['compiler-seq', 'compiler-autopar']),
-    'vector_vs': dict(dace=['dace-canon-vec', 'dace-parallel-vec'], native=['compiler-seq', 'compiler-autopar']),
+    # Native multi-core baselines run BOTH auto-parallelizers explicitly -- Polly (clang) AND
+    # Graphite (gcc) -- rather than the single cxx-following 'compiler-autopar', so one job reports
+    # both regardless of --cxx (matches the tsvc corpora, which already run both). 'compiler-seq'
+    # stays the single-core, cxx-following reference.
+    'canon_vs': dict(dace=['dace-autoopt', 'dace-canon', 'dace-parallel'],
+                     native=['compiler-seq', 'native-clang-polly-autopar', 'native-gcc-autopar']),
+    'vector_vs': dict(dace=['dace-canon-vec', 'dace-parallel-vec'],
+                      native=['compiler-seq', 'native-clang-polly-autopar', 'native-gcc-autopar']),
 }
 
 #: base result-folder preset token. On GPU the '-gpu' suffix is what

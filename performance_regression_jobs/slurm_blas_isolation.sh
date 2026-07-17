@@ -32,7 +32,7 @@ source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 
 spack load gcc@16.1.0
 
-OMP_BLAS=$(spack location -i openblas threads=openmp)
+OMP_BLAS=$(spack location -i openblas)
 PTH_BLAS=$(spack location -i openblas threads=pthreads)
 
 gcc -O2 -fopenmp -o /dev/shm/iso_omp blas_isolation.c -I"$OMP_BLAS/include" -L"$OMP_BLAS/lib" \
