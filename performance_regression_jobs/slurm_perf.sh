@@ -155,3 +155,24 @@ srun --cpu-bind=verbose,cores --distribution=block:block $SRUN_GPU python3 run_p
 # One single-rank pass to (re)build the aggregate tables across every rank's output (device-agnostic:
 # it scans the tree, so a shared cpu+gpu results dir yields one summary.csv with both device rows).
 python3 run_perf.py --experiment "$EXPERIMENT" --corpus "$CORPUS" --tables-only --results-dir="$RESULTS_DIR"
+
+# Re-plot from the freshly-written tree (best-effort: a plotting failure must never fail a
+# measurement job). The plot scripts scan results/<experiment>/<corpus> and redraw every corpus
+# present, so the last job to finish yields the complete multi-panel figure. PLOT_ROOT is the
+# parent that CONTAINS the experiment dir (RESULTS_DIR defaults to results/$EXPERIMENT).
+PLOT_ROOT="$(dirname "$RESULTS_DIR")"
+case "$EXPERIMENT" in
+  canon_vs)
+    python3 plot_canon_vs.py --results-dir "$PLOT_ROOT" --out "$PLOT_ROOT/canon_vs.png" || echo "[plot] canon_vs failed"
+    python3 plot_speedup_scatter.py --results-dir "$PLOT_ROOT" --out-prefix "$PLOT_ROOT/speedup_scatter" || echo "[plot] speedup_scatter failed"
+    ;;
+  vector_vs)
+    python3 plot_vector_vs.py --results-dir "$PLOT_ROOT" --out "$PLOT_ROOT/vector_vs.png" || echo "[plot] vector_vs failed"
+    ;;
+esac
+# tsvc corpora also feed the native-baseline boxplot (both experiments write the same tree).
+case "$CORPUS" in
+  tsvc2|tsvc2_5)
+    python3 plot_tsvc_boxplot.py --results-dir "$PLOT_ROOT" --out "$PLOT_ROOT/tsvc_boxplot.png" || echo "[plot] tsvc_boxplot failed"
+    ;;
+esac
