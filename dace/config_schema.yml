@@ -726,6 +726,36 @@ required:
                                     scalar whose every access is a direct-child tasklet of ONE scope, live
                                     in a single state, never read before it is written), minus ``setzero``
                                     scalars, whose ``T x = 0;`` init already IS a fused declaration.
+                            const_init:
+                                type: str
+                                default: 'on'
+                                title: const/constexpr initialization of write-once data
+                                description: >
+                                    Applies to: experimental_readable ONLY (this runs an SDFG rewrite
+                                    inside the readable-generator pipeline in ``codegen.py``; legacy never
+                                    enters that block, so its output stays byte-identical for every value).
+
+                                    Whether a transient that is written once and thereafter only read is
+                                    classified for ``const``/``constexpr`` emission: ``on`` (the default)
+                                    runs :class:`~dace.transformation.passes.mark_const_init.MarkConstInit`;
+                                    ``off`` skips it, so every such transient stays a mutable buffer filled
+                                    at runtime.
+
+                                    NOTE the default is ``on``, not ``off`` as with ``ssa_loop_scalars``:
+                                    this pass ALREADY runs today, so ``on`` is what reproduces today's
+                                    output byte-for-byte. The key exists to take it OUT, which is what
+                                    makes the readable generator's two const forms separable from the rest
+                                    of the group when sweeping -- a compile-time fill (``constexpr T x[N] =
+                                    {...}``, promoted to an SDFG constant, its now-dead runtime writes
+                                    removed) and a single-runtime-write binding (``const T x = expr;``) are
+                                    both suppressed by ``off``.
+
+                                    This is NOT a pure spelling axis, unlike most of this group: a
+                                    ``constexpr_static`` fill deletes the initializing writes altogether,
+                                    so ``off`` emits strictly more work. It is a knob because ``const`` is
+                                    a promise to the backend whose value is not fixed -- it can unlock
+                                    constant folding and hoisting, or merely bloat the initializer.
+
                             ssa_loop_scalars:
                                 type: str
                                 default: 'off'

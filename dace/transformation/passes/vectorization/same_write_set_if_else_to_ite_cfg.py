@@ -39,12 +39,15 @@ def free_names_outside_subscript_indices(code: str) -> set:
     an index and as a genuine guard -- exactly the case that must be caught.
 
     :param code: the condition (or assignment RHS) source.
-    :returns: the names used outside subscript indices; empty if ``code`` does not parse.
+    :returns: the names used outside subscript indices, or ``None`` when ``code`` does not parse as
+        a Python expression (a ``Language.CPP`` guard, ``i < N && j > 0``). ``None`` is NOT an empty
+        set: callers gate correctness on this answer, so "no names" and "cannot tell" must not
+        collapse -- returning ``set()`` here reads as "constrains nothing" and admits the block.
     """
     try:
         tree = ast.parse(code, mode="eval")
     except SyntaxError:
-        return set()
+        return None
 
     names = set()
 
@@ -76,12 +79,25 @@ def enclosing_iteration_symbols(cb: ConditionalBlock) -> set:
     """
     params = set()
     for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
-        if isinstance(scope, dace.nodes.MapEntry):
-            params.update(scope.map.params)
-        else:
-            assert isinstance(scope, LoopRegion)
-            params.add(scope.loop_variable)
+        params |= scope_defined_symbols(scope)
     return params
+
+
+def scope_defined_symbols(scope) -> set:
+    """The symbols ``scope`` defines for the code inside it.
+
+    A ``LoopRegion`` defines its loop variable. A map defines its params AND the symbols bound by
+    its NON-PASS-THROUGH input connectors: a ``MapEntry`` connector named ``IN_x`` is one half of
+    the ``IN_x``/``OUT_x`` data pass-through pair, whereas any other in-connector is a dynamic
+    (symbolic) input, and its name is a symbol readable throughout the map body.
+
+    :param scope: an enclosing ``MapEntry`` or ``LoopRegion``.
+    :returns: the names the scope binds.
+    """
+    if isinstance(scope, dace.nodes.MapEntry):
+        return set(scope.map.params) | {c for c in scope.in_connectors if not c.startswith('IN_')}
+    assert isinstance(scope, LoopRegion)
+    return {scope.loop_variable}
 
 
 def condition_guards_iteration_symbol(cb: ConditionalBlock) -> bool:
@@ -96,45 +112,72 @@ def condition_guards_iteration_symbol(cb: ConditionalBlock) -> bool:
     :param cb: the candidate conditional block.
     :returns: ``True`` if the block must be refused.
     """
-    params = enclosing_iteration_symbols(cb)
-    if not params:
+    return condition_guards_symbols(cb, enclosing_iteration_symbols(cb))
+
+
+def condition_guards_symbols(cb: ConditionalBlock, symbols: set) -> bool:
+    """Whether some arm condition of ``cb`` constrains any name in ``symbols``.
+
+    FAILS CLOSED. Callers gate correctness on this (a guard over a tiled map param must not survive
+    into a tiled body), so a condition this cannot parse counts as constraining: "cannot prove
+    independent" is not "independent".
+
+    :param cb: the candidate conditional block.
+    :param symbols: the names whose constraint matters to the caller.
+    :returns: ``True`` if the block must be refused.
+    """
+    if not symbols:
         return False
 
     free_syms = set()
     for cond, _body in cb.branches:
         if cond is None:
             continue
-        free_syms |= free_names_outside_subscript_indices(cond.as_string)
+        names = free_names_outside_subscript_indices(cond.as_string)
+        if names is None:
+            return True
+        free_syms |= names
 
     # Widen through the interstate assignment chains reaching ``cb``: a symbol bound to an
     # expression over ``i`` carries the iteration symbol into the condition just as directly.
-    # Iterate to a fixed point -- a chain ``ip1 = j1; j1 = i + 1`` needs more than one sweep, and
-    # the edges may be visited in any order.
-    graph = cb.parent_graph
+    # Collect back-reachable edges at EVERY level, not just ``cb.parent_graph``: ``ip1 = i + 1`` is
+    # just as binding on the edge entering the enclosing LoopRegion as on one inside it, so after
+    # exhausting a graph, ascend and keep walking back from the region itself.
     edges = []
-    to_check = {cb}
-    seen = set()
-    while to_check:
-        node = to_check.pop()
-        if node in seen:
-            continue
-        seen.add(node)
-        for ie in graph.in_edges(node):
-            edges.append(ie)
-            to_check.add(ie.src)
+    node = cb
+    graph = cb.parent_graph
+    while graph is not None and not isinstance(graph, dace.SDFG):
+        to_check = {node}
+        seen = set()
+        while to_check:
+            cur = to_check.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            for ie in graph.in_edges(cur):
+                edges.append(ie)
+                to_check.add(ie.src)
+        node = graph
+        graph = graph.parent_graph
 
+    # Fixed point -- a chain ``ip1 = j1; j1 = i + 1`` needs more than one sweep, and the edges may
+    # be visited in any order.
     widened = True
     while widened:
         widened = False
         for ie in edges:
             for sym, rhs in ie.data.assignments.items():
-                if sym in free_syms:
-                    new = free_names_outside_subscript_indices(rhs) - free_syms
-                    if new:
-                        free_syms |= new
-                        widened = True
+                if sym not in free_syms:
+                    continue
+                names = free_names_outside_subscript_indices(rhs)
+                if names is None:
+                    return True
+                new = names - free_syms
+                if new:
+                    free_syms |= new
+                    widened = True
 
-    return bool(params & free_syms)
+    return bool(symbols & free_syms)
 
 
 def _wcr_apply_code(wcr_str: str, base_conn: str, acc_conn: str) -> str:

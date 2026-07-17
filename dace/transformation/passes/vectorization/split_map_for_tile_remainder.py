@@ -285,7 +285,7 @@ class SplitMapForTileRemainder(ppl.Pass):
         # Snapshot up front: splitting mutates the graph; must not re-split a
         # freshly replicated remainder map.
         eligible = [(n, g) for n, g in sdfg.all_nodes_recursive()
-                    if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState) and is_vectorizable_map(g, n)
+                    if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState) and is_vectorizable_map(g, n, len(self.widths))
                     and len(n.map.params) >= K and not n.map.label.endswith(TILE_MAIN_MARKER)
                     and not n.map.label.endswith(SCALAR_TAIL_MARKER) and not n.map.label.endswith(TILE_K1_TAIL_MARKER)]
         for n, g in eligible:

@@ -261,7 +261,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             PrivatizeScalars().apply_pass(sdfg, {})
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
+        # ``const_init``: classify write-once-then-read-only transients so they are emitted as
+        # ``constexpr T x[N] = {...}`` / ``const T x = expr;`` instead of a runtime-filled buffer.
+        # Default 'on' -- unlike ``ssa_loop_scalars`` above, this pass ALREADY runs today, so 'on' is
+        # the value that keeps the output byte-identical; 'off' takes it out.
+        if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
+            Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
         # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
         # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.

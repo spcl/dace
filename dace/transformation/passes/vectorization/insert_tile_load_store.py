@@ -377,7 +377,7 @@ class InsertTileLoadStore(ppl.Pass):
             if not isinstance(parent, SDFGState):
                 continue
             try:
-                if not is_vectorizable_map(parent, node):
+                if not is_vectorizable_map(parent, node, len(self.widths)):
                     continue
             except (StopIteration, ValueError):
                 continue

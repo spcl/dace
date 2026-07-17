@@ -162,7 +162,7 @@ class MarkTileDims(ppl.Pass):
                 continue
             if not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n):
+            if not is_vectorizable_map(g, n, len(self.widths)):
                 continue
             # GPU path: only tile maps running inside a GPU kernel (GPU_Device, or
             # nested under one). Host-map half2 __device__ tile ops won't compile.
