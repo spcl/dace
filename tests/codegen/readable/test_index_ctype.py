@@ -33,7 +33,7 @@ def index_signatures(code: str):
                       flags=re.MULTILINE)
 
 
-@pytest.mark.parametrize('index_ctype, expected', [('int64', 'long long'), ('int32', 'int')])
+@pytest.mark.parametrize('index_ctype, expected', [('int64', 'int64_t'), ('int32', 'int32_t')])
 def test_index_ctype_applied(index_ctype, expected):
     """ Every generated helper -- return type AND every parameter -- uses the configured type. """
     signatures = index_signatures(generate('experimental_readable', index_ctype))
@@ -68,8 +68,8 @@ def test_both_types_compile_and_run(index_ctype):
 
 
 if __name__ == '__main__':
-    test_index_ctype_applied('int64', 'long long')
-    test_index_ctype_applied('int32', 'int')
+    test_index_ctype_applied('int64', 'int64_t')
+    test_index_ctype_applied('int32', 'int32_t')
     test_int64_is_the_default()
     test_legacy_ignores_the_flag()
     test_both_types_compile_and_run('int64')
