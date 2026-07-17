@@ -120,6 +120,16 @@ def prog_early_return(A: dace.float64[N]):
     return 2.0
 
 
+@dace.program
+def prog_pyobject_multi(A: dace.float64[N]):
+    # A batched callback with multiple outputs, one of them an opaque Python
+    # object (box) and one typed by annotation (y): exercises the pyobject
+    # out-parameter slot of the callback ABI.
+    box = {'value': 41.5}
+    y: dace.float64 = box['value']
+    A[0] = y
+
+
 #: (program, nextgen callback budget). The budget is a hard ceiling recording
 #: current coverage; a failing budget means a lowering regression, a
 #: too-generous budget hides progress.
@@ -137,6 +147,7 @@ CORPUS = [
     pytest.param(prog_elif, 0, id='elif'),
     pytest.param(prog_break, 0, id='break'),
     pytest.param(prog_early_return, 0, id='early_return'),
+    pytest.param(prog_pyobject_multi, 1, id='pyobject_multi'),
 ]
 
 
@@ -244,6 +255,10 @@ EXECUTION_CORPUS = [
                  }),
                  lambda a: {'__return': 1.0},
                  id='early_return'),
+    pytest.param(prog_pyobject_multi,
+                 _while_inputs,
+                 lambda a: {'A': np.concatenate(([41.5], a['A'][1:]))},
+                 id='pyobject_multi'),
 ]
 
 

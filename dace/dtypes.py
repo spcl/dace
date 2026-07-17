@@ -597,6 +597,10 @@ class pointer(typeclass):
         """ Returns the ctypes version of the typeclass. """
         if isinstance(self._typeclass, struct):
             return ctypes.POINTER(self._typeclass.as_ctypes())
+        if isinstance(self._typeclass, pyobject):
+            # A PyObject* out-parameter slot (no FFI equivalent for the
+            # object itself)
+            return ctypes.POINTER(ctypes.py_object)
         return ctypes.POINTER(_FFI_CTYPES[self.type])
 
     def as_numpy_dtype(self):
@@ -852,6 +856,21 @@ def ptrtocupy(ptr, inner_ctype, shape):
     return cp.ndarray(shape=shape, dtype=inner_ctype, memptr=cp.cuda.MemoryPointer(umem, 0))
 
 
+class _PyObjectOutParameter:
+    """
+    A length-1 assignable view over a ``PyObject*`` callback out-parameter
+    slot. The trampoline's write-back (``v[:] = r``) stores the returned
+    object's pointer into the slot; the caller's ``refs`` keepalive list owns
+    the object's lifetime.
+    """
+
+    def __init__(self, slot):
+        self._slot = ctypes.cast(slot, ctypes.POINTER(ctypes.py_object))
+
+    def __setitem__(self, _, value):
+        self._slot[0] = value
+
+
 class callback(typeclass):
     """
     Looks like ``dace.callback([None, <some_native_type>], *types)``
@@ -1019,7 +1038,13 @@ class callback(typeclass):
             elif isinstance(arg, data.Scalar) and isinstance(arg.dtype, pyobject):
                 ret_arraypos.append(index + offset)
                 ret_types_and_sizes.append((ctypes.py_object, []))
-                ret_converters.append(lambda a, *args: a)
+                if self.is_scalar_function():
+                    # Returned by value as py_object; identity conversion
+                    ret_converters.append(lambda a, *args: a)
+                else:
+                    # Multi-output form: the object is written back through a
+                    # PyObject* out-parameter slot
+                    ret_converters.append(lambda a, *args: _PyObjectOutParameter(a))
             else:
                 if not self.is_scalar_function():
                     ret_arraypos.append(index + offset)
