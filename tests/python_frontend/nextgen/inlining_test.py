@@ -124,11 +124,12 @@ def test_early_return_inlines():
     tree = nextgen.parse_program(caller)
     scopes = _nodes_of_type(tree, tn.FunctionCallScope)
     assert len(scopes) == 1
-    # The early return lowers to a ReturnNode inside the branch (exit-scope
-    # semantics); the tail return falls off the scope end
-    returns = _nodes_of_type(tree, tn.ReturnNode)
-    assert len(returns) == 1
-    assert isinstance(returns[0].parent, tn.IfScope)
+    # Early returns are restructured into tail positions (the fall-through
+    # return moves into the else branch) and stripped: exiting the callee
+    # coincides with falling off the scope end, so no ReturnNode remains.
+    assert not _nodes_of_type(tree, tn.ReturnNode)
+    assert len(_nodes_of_type(tree, tn.IfScope)) == 1
+    assert len(_nodes_of_type(tree, tn.ElseScope)) == 1
     # Both returns materialize into the same return container
     return_names = [name for name in tree.containers if 'maybe_ret' in name]
     assert len(return_names) == 1

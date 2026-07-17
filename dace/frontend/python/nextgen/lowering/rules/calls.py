@@ -95,14 +95,22 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
         fallback_to_callback(statement, state, f'{unsupported} in nested dace program "{callee.name}"')
         return
 
+    # Restructure early returns into tail positions (statements following a
+    # returning branch move into the other branch), so exiting the callee
+    # coincides with falling off the scope end everywhere.
+    callee_body = _normalize_early_returns(callee_body)
+    if _has_non_tail_return(callee_body):
+        fallback_to_callback(statement, state,
+                             f'early return that cannot be restructured in nested dace program "{callee.name}"')
+        return
+
     return_prefix = state.context.fresh_name(f'__{callee.name}_ret')
     scope = tn.FunctionCallScope(call=tn.FrontendFunctionCall(callee_name=callee.name, arguments=argument_labels),
                                  children=[])
     with state.context.inline_scope(callee.f, parameter_bindings, callee_globals, return_prefix) as return_names:
         with state.emitter.scope(scope):
             state.lower_body(callee_body)
-        if scope.children and isinstance(scope.children[-1], tn.ReturnNode):
-            scope.children.pop()  # A tail return falls off the scope end
+        _strip_tail_returns(scope)  # Tail returns fall off the scope end
         returned = list(dict.fromkeys(return_names))
     _bind_call_results(target, returned, statement, state)
 
@@ -260,6 +268,74 @@ def _unsupported_return_shape(body: List[ast.stmt]) -> Optional[str]:
     if arities and 0 not in arities and not _always_returns(body):
         return 'control may fall through without returning'
     return None
+
+
+def _normalize_early_returns(body: List[ast.stmt]) -> List[ast.stmt]:
+    """
+    Restructure a canonical callee body so that every ``return`` sits in tail
+    position of its control path: statements following an if-statement in
+    which one branch always returns are hoisted into the other branch, and
+    statements following an unconditional return are dropped (dead code).
+    Returns inside loops cannot be restructured this way and are left in
+    place for :func:`_has_non_tail_return` to reject.
+    """
+    body = list(body)
+    for index, node in enumerate(body):
+        if isinstance(node, ast.Return):
+            return body[:index + 1]  # Anything after an unconditional return is dead
+        if isinstance(node, ast.If):
+            node.body = _normalize_early_returns(node.body)
+            node.orelse = _normalize_early_returns(node.orelse)
+            rest = body[index + 1:]
+            body_returns = _always_returns(node.body)
+            orelse_returns = bool(node.orelse) and _always_returns(node.orelse)
+            if body_returns and orelse_returns:
+                return body[:index + 1]  # Both branches return; the rest is dead
+            if rest and (body_returns or orelse_returns):
+                if body_returns:
+                    node.orelse = _normalize_early_returns(list(node.orelse) + rest)
+                else:
+                    node.body = _normalize_early_returns(list(node.body) + rest)
+                return body[:index + 1]
+    return body
+
+
+def _has_non_tail_return(body: List[ast.stmt]) -> bool:
+    """Whether any ``return`` remains outside tail position (e.g., inside a
+    loop, or in a branch that only sometimes returns with statements
+    following) after :func:`_normalize_early_returns`."""
+    for index, node in enumerate(body):
+        in_tail = index == len(body) - 1
+        if isinstance(node, ast.Return):
+            if not in_tail:
+                return True
+        elif isinstance(node, ast.If):
+            if in_tail:
+                if _has_non_tail_return(node.body) or _has_non_tail_return(node.orelse):
+                    return True
+            elif any(isinstance(inner, ast.Return) for child in node.body + node.orelse for inner in ast.walk(child)):
+                return True
+        elif any(isinstance(inner, ast.Return) for inner in ast.walk(node)):
+            return True  # Returns inside loops/other compounds cannot be restructured
+    return False
+
+
+def _strip_tail_returns(scope: tn.ScheduleTreeScope) -> None:
+    """
+    Remove :class:`ReturnNode`\\ s in tail position anywhere in an inlined
+    callee scope. After early-return normalization every return sits at the
+    end of its control path, where exiting the callee coincides with falling
+    off the scope end — the nodes carry no remaining semantics.
+    """
+    children = scope.children
+    while children and isinstance(children[-1], tn.ReturnNode):
+        children.pop()
+    index = len(children) - 1
+    while index >= 0 and isinstance(children[index], (tn.ElifScope, tn.ElseScope)):
+        _strip_tail_returns(children[index])
+        index -= 1
+    if index >= 0 and isinstance(children[index], tn.IfScope):
+        _strip_tail_returns(children[index])
 
 
 def _always_returns(body: List[ast.stmt]) -> bool:

@@ -121,6 +121,19 @@ def prog_early_return(A: dace.float64[N]):
 
 
 @dace.program
+def _select(X: dace.float64[N]):
+    if X[0] > 0.5:
+        return 1.0
+    return 2.0
+
+
+@dace.program
+def prog_callee_early_return(A: dace.float64[N]):
+    y = _select(A)
+    A[0] = y
+
+
+@dace.program
 def prog_view_read(A: dace.float64[N], B: dace.float64[4]):
     b = A[1:5]
     B[:] = b + 1.0
@@ -176,6 +189,7 @@ CORPUS = [
     pytest.param(prog_detected_callable, 1, id='detected_callable'),
     pytest.param(prog_view_read, 0, id='view_read'),
     pytest.param(prog_view_write, 0, id='view_write'),
+    pytest.param(prog_callee_early_return, 0, id='callee_early_return'),
 ]
 
 
@@ -304,6 +318,14 @@ EXECUTION_CORPUS = [
                  _while_inputs,
                  lambda a: {'A': np.concatenate((a['A'][:1], np.full(4, 7.0), a['A'][5:]))},
                  id='view_write'),
+    pytest.param(prog_callee_early_return,
+                 lambda: ({
+                     'A': np.full(12, 0.9)
+                 }, {
+                     'N': 12
+                 }),
+                 lambda a: {'A': np.concatenate(([1.0], a['A'][1:]))},
+                 id='callee_early_return'),
 ]
 
 
