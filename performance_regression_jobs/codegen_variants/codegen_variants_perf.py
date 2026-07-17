@@ -102,7 +102,12 @@ def build_variant(program, tag):
 def bench_kernel(name, compile_reps, run_reps, timeout):
     """Runs in an isolated subprocess (bad codegen can crash). Returns one row per variant."""
     engine.configure_dace_process()
+    import dace
     from dace.codegen import codegen
+    # This job MEASURES compile walls: no binary reuse whatsoever (configure_dace_process
+    # turns use_cache ON for the ordinary perf jobs' intra-rank reuse -- here that must
+    # be off so a cell can never accidentally load instead of build).
+    dace.Config.set('compiler', 'use_cache', value=False)
 
     os.environ['OMP_NUM_THREADS'] = str(MULTI_THREADS)
     info = base.load_bench_info(name)
@@ -143,8 +148,12 @@ def bench_kernel(name, compile_reps, run_reps, timeout):
                 correct = base._compare(reference, got)
                 run_samples = engine.time_sdfg(sdfg, call_kwargs, run_reps, time_budget_s=0.4 * timeout)
 
-        codegen_ms = min(codegen_samples)
-        compile_ms = min(compile_samples)
+        # FIRST sample, not min: the first measurement is the honest cold number. Later
+        # reps benefit from warmed OS page cache / toolchain state (and, for native, the
+        # per-(compiler,flags) PCH built during the first build), so min() would report a
+        # warm build while claiming cold-build semantics.
+        codegen_ms = codegen_samples[0]
+        compile_ms = compile_samples[0]
         rows.append({
             'kernel': name,
             'build_mode': mode,
