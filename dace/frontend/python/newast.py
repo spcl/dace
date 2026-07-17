@@ -5356,8 +5356,11 @@ class ProgramVisitor(ExtNodeVisitor):
 
             # We also check the type of the slice attribute of the node
             # in order to distinguish between A[0] and A[0:1], which are semantically different in numpy
-            # (the former is an index, the latter is a slice).
-            is_index = range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice)
+            # (the former is an index, the latter is a slice). A multidim access whose ranges all look
+            # like (k, k, 1) is only a scalar index if NONE of them came from a slice -- ``A[1:2, 1:2]``
+            # has index-shaped ranges but must stay a 2-D (1, 1) view, so a non-empty ``slice_dims``
+            # forces the slice path. (``None`` slice_dims = untracked, keep the legacy decision.)
+            is_index = (range_is_index(expr.subset) and not isinstance(node.slice, ast.Slice) and not expr.slice_dims)
             other_subset = copy.deepcopy(expr.subset)
         strides = list(arrobj.strides)
 
@@ -5369,7 +5372,18 @@ class ProgramVisitor(ExtNodeVisitor):
             for i in new_axes:
                 strides.insert(i, 1)
         length = len(other_subset)
-        nsqz = other_subset.squeeze(ignore_indices=new_axes)
+        # Only squeeze dimensions that came from a SCALAR index. A length-1 slice (``k:k+1``) keeps
+        # its axis, matching numpy (``A[:, 1:2]`` is 2-D, not 1-D). ``expr.slice_dims`` marks the
+        # surviving dimensions in the pre-unsqueeze subset; shift them past any inserted new axis so
+        # they line up with the post-unsqueeze ``other_subset`` the squeeze operates on.
+        keep = set(new_axes)
+        for dim in (expr.slice_dims or []):
+            shifted = dim
+            for inserted in sorted(new_axes):
+                if inserted <= shifted:
+                    shifted += 1
+            keep.add(shifted)
+        nsqz = other_subset.squeeze(ignore_indices=sorted(keep))
         sqz = [i for i in range(length) if i not in nsqz]
         for i in reversed(sqz):
             strides.pop(i)
