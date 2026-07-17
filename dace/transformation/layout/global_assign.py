@@ -1,27 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Global layout assignment over the line graph: per-array Viterbi DP, the brute-force oracle, the
-per-op greedy baseline, and the conflict report (GLOBAL_LAYOUT_DESIGN.md, tasks C1 + C2 + C3).
-
-The assignment algorithm is COST-PROVIDER AGNOSTIC: it consumes an :class:`AssignmentCosts` table
-(node cost per ``(array, kernel, layout)``, relayout cost per ``(array, from, to)``) and does not
-care whether the numbers came from the tier-0/tier-2 cost model or from measured per-nest timings
--- the two ranking modes of the design share this one solver.
-
-Laws encoded here, not in callers:
-
-  * **Identity-first tie-break** -- each array's layout list must enumerate its baseline layout
-    first; every argmin uses strict ``<`` scanning in enumeration order, so ties resolve toward the
-    earlier (ultimately the identity) candidate. Enumeration order is load-bearing, so it is
-    validated, not assumed.
-  * **Both edge regimes come free** -- ``allow_changes=False`` is the same DP with infinite edge
-    cost on a layout change.
-  * **The brute force is capped and loud** -- above ``cap`` trajectories per array it refuses with
-    the count, never silently samples.
-
-The separability caveat stands (the DP treats arrays independently; the tier-2 nest cost couples
-them through the max): the mandatory mitigation is downstream -- re-score/re-time the COMPOSED
-assignment (D3) and compare against :func:`brute_force_trajectories`.
-"""
+"""Global layout assignment over the line graph: per-array Viterbi DP, brute-force oracle,
+per-op greedy baseline, and conflict report."""
 import itertools
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
@@ -31,25 +10,7 @@ from dace.transformation.layout.apply_assignment import Layout
 
 @dataclass
 class AssignmentCosts:
-    """The pluggable cost table the assignment algorithms consume.
-
-    :ivar layouts: per array, its candidate layouts -- the BASELINE (identity) layout FIRST.
-    :ivar node_cost: ``(array, kernel_index, layout_tag) -> cost`` -- the array's access cost in
-                     that kernel under that layout (others at baseline; one consistent unit).
-    :ivar relayout_cost: ``(array, from_tag, to_tag) -> cost`` of converting between two layouts on
-                         a boundary (same unit as node costs).
-    :ivar entry_conversion_needed: per array, whether ``apply_assignment`` would insert an ENTRY
-                                   conversion into a non-identity first segment (the first touching
-                                   kernel reads live-in, or its write does not provably cover the
-                                   array). Missing key = no entry charge.
-    :ivar last_write_kernel: per array, the last kernel writing it (``None``/missing = never
-                             written): the trajectory must then return the value to the ORIGINAL
-                             descriptor, priced as the EXIT conversion.
-    :ivar untrusted: ``(array, kernel, layout_tag)`` node costs whose measurement was CONTENDED
-                     (spread above the threshold) -- kept in the table per the measurement
-                     protocol, but carried so the conflict report can flag decisions that consumed
-                     them. Empty for model-derived tables.
-    """
+    """Pluggable cost table: per-array layouts, node/relayout costs, entry/exit conversion flags, and untrusted markers."""
     layouts: Dict[str, List[Layout]]
     node_cost: Dict[Tuple[str, int, str], float]
     relayout_cost: Dict[Tuple[str, str, str], float] = field(default_factory=dict)
@@ -81,8 +42,7 @@ class AssignmentCosts:
                 if changes_allowed:
                     pairs = itertools.permutations(tags, 2)
                 elif self.entry_conversion_needed.get(array, False) or lw is not None:
-                    # Even the single-layout regime pays the entry/exit conversions of a
-                    # non-identity layout, so the identity edges must be priced.
+                    # single-layout regime still prices entry/exit conversions
                     pairs = [(tags[0], t) for t in tags[1:]] + [(t, tags[0]) for t in tags[1:]]
                 else:
                     pairs = []
@@ -94,8 +54,7 @@ class AssignmentCosts:
 
 @dataclass
 class ArrayTrajectory:
-    """One array's solved trajectory: the layout tag per kernel and its total (access + relayout)
-    cost."""
+    """One array's solved trajectory: layout tag per kernel and its total cost."""
     array: str
     tags: List[str]
     cost: float
@@ -105,18 +64,7 @@ class ArrayTrajectory:
 
 
 def trajectory_cost(costs: AssignmentCosts, array: str, tags: List[str]) -> float:
-    """Total cost of one trajectory: node costs, every boundary change, plus the ENTRY and EXIT
-    conversions ``apply_assignment`` actually inserts (the liveness facts of the table):
-
-      * entry -- converting the live-in value into a non-identity first layout;
-      * exit  -- returning the last-written value to the original descriptor, priced as a
-        surcharge at the last write; the FIRST later switch back to identity is then free (it IS
-        the exit conversion, moved onto that boundary), every further switch is real again.
-
-    Approximation stated once: the model prices every tag switch, while the applier skips
-    conversions for untouched/aliasing segments and provably-covered first writes -- the optimum is
-    unaffected (the skipped shapes have a cost-equal constant twin), the mandatory D3 re-score
-    covers the rest."""
+    """Trajectory cost: node costs + boundary changes + entry/exit conversions (first post-write switch back to identity is free)."""
     identity = costs.layouts[array][0].tag
     lw = costs.last_write_kernel.get(array)
     total = sum(costs.node_cost[(array, k, tag)] for k, tag in enumerate(tags))
@@ -136,16 +84,7 @@ def trajectory_cost(costs: AssignmentCosts, array: str, tags: List[str]) -> floa
 
 
 def per_array_dp(costs: AssignmentCosts, n_kernels: int, allow_changes: bool = True) -> Dict[str, ArrayTrajectory]:
-    """The Viterbi DP (C1): per array, the cheapest layout trajectory over the kernel line, under
-    the FULL :func:`trajectory_cost` objective (node costs, boundary changes, entry charge, exit
-    surcharge with its one free restore switch). ``allow_changes=False`` forbids boundary changes
-    (infinite edge cost), yielding the best SINGLE global layout -- still paying its entry/exit
-    conversions, so single-vs-trajectory comparisons stay fair. Ties resolve toward the
-    earlier-enumerated layout at every step.
-
-    The DP state is ``(layout, restored)`` -- ``restored`` records whether identity was visited at
-    or after the last write, which decides whether a later switch back to identity is the (already
-    surcharged) exit conversion moved onto that boundary (free, once) or a real conversion."""
+    """Viterbi DP: cheapest per-array layout trajectory under `trajectory_cost`; ties resolve to the earlier-enumerated layout."""
     costs.check(n_kernels, changes_allowed=allow_changes)
     solution: Dict[str, ArrayTrajectory] = {}
     for array, layouts in costs.layouts.items():
@@ -162,8 +101,7 @@ def per_array_dp(costs: AssignmentCosts, n_kernels: int, allow_changes: bool = T
                 c += costs.relayout_cost[(array, tags[j], identity)]
             return c
 
-        # dp[j][flag] = best cost ending at kernel k with layout j; flag = identity visited in
-        # tags[lw..k]. None = unreachable state.
+        # dp[j][flag]: best cost at kernel k, layout j; flag = identity visited in tags[lw..k]
         dp: List[List[Optional[float]]] = [[None, None] for _ in tags]
         for j in range(len(tags)):
             flag = lw == 0 and tags[j] == identity
@@ -210,9 +148,7 @@ def brute_force_trajectories(costs: AssignmentCosts,
                              n_kernels: int,
                              allow_changes: bool = True,
                              cap: int = 1_000_000) -> Dict[str, ArrayTrajectory]:
-    """The enumeration oracle (C2): every trajectory per array, capped and loud. With additive
-    per-array costs the joint optimum decomposes per array, so per-array enumeration IS the oracle
-    for the table (the coupling the table cannot see is D3's re-score job)."""
+    """Enumeration oracle: every trajectory per array, raising if the space exceeds `cap`."""
     costs.check(n_kernels, changes_allowed=allow_changes)
     solution: Dict[str, ArrayTrajectory] = {}
     for array, layouts in costs.layouts.items():
@@ -233,9 +169,7 @@ def brute_force_trajectories(costs: AssignmentCosts,
 
 
 def greedy_assignment(costs: AssignmentCosts, n_kernels: int) -> Dict[str, ArrayTrajectory]:
-    """The per-op greedy baseline (the k17 antagonist): each kernel independently picks the layout
-    with the lowest node cost, then PAYS whatever boundary conversions that implies -- greedy
-    optimizes nodes and is blind to edges."""
+    """Greedy baseline: each kernel picks its lowest node-cost layout, paying whatever boundary conversions that implies."""
     costs.check(n_kernels, changes_allowed=True)
     solution: Dict[str, ArrayTrajectory] = {}
     for array, layouts in costs.layouts.items():
@@ -249,10 +183,7 @@ def greedy_assignment(costs: AssignmentCosts, n_kernels: int) -> Dict[str, Array
 
 @dataclass
 class ConflictRow:
-    """One array's conflict-report row: what each kernel wants, what was chosen, and the k17 triad
-    of costs (greedy / global DP / no-changes single layout). ``untrusted`` marks a chosen
-    trajectory that consumed at least one CONTENDED measurement -- the decision stands, the flag
-    travels with it."""
+    """One array's conflict-report row: per-kernel preferences, chosen trajectory, cost triad, and untrusted (contended) flag."""
     array: str
     per_kernel_preference: List[str]
     conflicting: bool
@@ -264,8 +195,7 @@ class ConflictRow:
 
 
 def conflict_report(costs: AssignmentCosts, n_kernels: int) -> List[ConflictRow]:
-    """The C3 report: per array, the per-kernel preferences, whether they disagree, and the
-    greedy/global/single-layout cost triad."""
+    """Per-array report: per-kernel preferences, whether they disagree, and the greedy/global/single cost triad."""
     greedy = greedy_assignment(costs, n_kernels)
     dp = per_array_dp(costs, n_kernels, allow_changes=True)
     single = per_array_dp(costs, n_kernels, allow_changes=False)
@@ -299,8 +229,7 @@ def format_conflict_report(rows: List[ConflictRow]) -> str:
 
 def to_assignment(trajectories: Dict[str, ArrayTrajectory], layouts: Dict[str,
                                                                           List[Layout]]) -> Dict[str, List[Layout]]:
-    """Convert solved trajectories to ``apply_assignment``'s input: ``{array: [Layout per kernel]}``.
-    Arrays whose trajectory is all-identity are dropped (nothing to apply)."""
+    """Convert trajectories to `apply_assignment` input; drops arrays whose trajectory is all-identity."""
     by_tag = {array: {l.tag: l for l in ls} for array, ls in layouts.items()}
     assignment = {}
     for array, trajectory in trajectories.items():

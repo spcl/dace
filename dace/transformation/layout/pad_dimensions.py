@@ -1,15 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""PadDimensions -- the Pad layout primitive: GROW a dimension's extent, keep packed strides.
+"""Pad layout primitive: grow a dimension's extent with trailing unused elements, keeping packed strides.
 
-Pad increases the physical extent of chosen dimensions by adding (unused) trailing elements,
-keeping the array in the packed normal form (C- or Fortran-contiguous). The logical shape grows;
-every existing memlet subset indexes the live region (``< old_extent < new_extent``) and stays
-valid -- the pad cells are simply never accessed. So only the DESCRIPTOR changes (recursed into
-nested SDFGs); no memlet / tasklet / interstate rewrite is needed. The caller must allocate the
-padded size.
-
-Main uses: make a subsequent Block factor divide exactly (``N -> ceil(N/f)*f``); break L1
-conflict-set periodicity; GPU shared-memory bank padding.
+Only the descriptor changes (recursed into nested SDFGs); existing memlets still index the live region.
 """
 from dataclasses import dataclass
 from typing import Any, Dict, List
@@ -20,11 +12,7 @@ from dace.transformation import pass_pipeline as ppl
 
 @dataclass
 class PadDimensions(ppl.Pass):
-    """Grow chosen array dimensions by trailing pad, preserving the packed layout.
-
-    :param pad_map: ``{array_name: [p_0, ..., p_{d-1}]}`` -- per-dimension pad amount (0 = none),
-                    one entry per array dimension.
-    """
+    """Grow chosen array dimensions by trailing pad, preserving the packed layout."""
 
     def __init__(self, pad_map: Dict[str, List[int]]):
         self._pad_map = pad_map
@@ -50,8 +38,7 @@ class PadDimensions(ppl.Pass):
         desc = sdfg.arrays[arr_name]
         if len(pads) != len(desc.shape):
             raise ValueError(f"PadDimensions: pad {pads} length != rank {len(desc.shape)} of '{arr_name}'")
-        # Preserve the array's packed base (Fortran only if it is packed-Fortran but not packed-C;
-        # 1-D arrays are both, and default to C).
+        # Packed-Fortran only if not also packed-C; 1-D arrays default to C.
         fortran = desc.is_packed_fortran_strides() and not desc.is_packed_c_strides()
         new_shape = [s + p for s, p in zip(desc.shape, pads)]
         strides = self._packed_strides(new_shape, fortran)
@@ -66,8 +53,7 @@ class PadDimensions(ppl.Pass):
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
-                # An array passed read-write appears on both an in-edge and an out-edge with the SAME
-                # inner name; grow that inner descriptor ONCE (growing it twice doubles the pad).
+                # Read-write array shares the same inner name on in+out edge; grow it once.
                 inner_names = set()
                 for ie in state.in_edges(node):
                     if ie.data is not None and ie.data.data == arr_name:

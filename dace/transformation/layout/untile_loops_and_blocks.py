@@ -1,59 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Collapse a manually-tiled loop nest back to a unit-stride loop AND unblock the
-matching materialized array dimension at the same time.
+"""Untile a manually-tiled loop nest and unblock the matching materialized array dimension in the same rewrite.
 
-This is the layout-suite sibling of
-:class:`~dace.transformation.passes.canonicalize.untile_loops.UntileLoops`. The plain
-``UntileLoops`` collapses a two-level tile ``for i in range(0, N, K): for ii in range(0, K):``
-back to a single ``for k in range(0, N)`` loop, but it operates on the SCHEDULE only: its
-combined-access audit requires every memlet to address arrays via the fused ``i + ii``
-expression, and it REFUSES any nest whose body reaches an array through SPLIT tile indices
-such as ``A[int_floor(i, K), ii]`` (a physically blocked array of shape ``[N/K, K]``).
-
-The layout framework's canonical starting point is packed-C arrays plus plain (un-tiled)
-loops. When a source kernel arrives with BOTH a manually-tiled loop and an array that was
-physically blocked to match that tile, returning to canonical form requires two coordinated
-moves: untile the loop AND unblock the array. ``UntileLoopsAndBlocks`` performs both together.
-
-Recognition (blocked pattern, case A)
-=====================================
-
-For a tile pair ``for i in range(0, N, K): for ii in range(0, K)`` (concrete tile ``K``), an
-array ``A`` accessed in the body is a materialized block of a logical dimension when its
-subset has the form::
-
-    A[..., int_floor(i, K), ii]
-
-that is: the LAST physical dimension is a point access by the inner tile variable ``ii`` and
-has extent ``K`` (matching the tile), the SECOND-TO-LAST physical dimension is a point access
-by the block index ``int_floor(i, K)``, and every remaining dimension references neither ``i``
-nor ``ii``. This is exactly the shape ``SplitDimensions`` (the Block primitive) emits when
-blocking the last logical dimension by ``K`` (block index in place, inner offset appended).
-
-Because the outer loop steps ``i`` by ``K``, ``int_floor(i, K) * K == i`` and the block access
-addresses logical flat element ``int_floor(i, K) * K + ii == i + ii`` -- the same element a
-combined ``A[i + ii]`` access would. Unblocking merges ``(block, inner) -> block * K + inner``,
-after which the standard case-A substitution ``i + ii -> k`` folds the access to ``A[k]``.
-
-Rewrite
-=======
-
-For each detected blocked array the pass runs
-:class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions` FIRST (rewriting the
-split subset ``[int_floor(i, K), ii]`` to the combined ``[int_floor(i, K) * K + ii]`` and the
-descriptor from ``[..., N/K, K]`` back to ``[..., N]``), then performs the identical loop-untile
-rewrite as ``UntileLoops`` -- so the combined subset substitutes to ``k`` and the array plus
-schedule land in packed-C at once.
-
-The pure loop-only cases ``UntileLoops`` already handles are unchanged: when no array in the
-body is blocked, the blocked-array set is empty, no ``UnblockDimensions`` runs, and the rewrite
-is byte-for-byte the plain untile. The pass is therefore a strict superset of ``UntileLoops``
-and a strict no-op on any nest that is not blocked+tiled.
-
-The loop-untiling machinery (tile detection, inner-case classification, multi-dim ascent,
-fixpoint, Map round-trip, splice) is REUSED from ``untile_loops`` rather than duplicated; only
-the audit is extended (combined OR blocked) and an ``UnblockDimensions`` step is spliced in
-before the substitution.
+Layout-suite sibling of ``untile_loops.UntileLoops``, extended to also unblock arrays blocked to match the removed tile.
 """
 import copy
 from typing import Dict, List, Optional, Tuple
@@ -69,8 +17,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.layout.unblock_dimensions import UnblockDimensions
 from dace.transformation.passes.analysis import loop_analysis
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption
-# Reuse the pure loop-untiling helpers from UntileLoops rather than duplicate them; the
-# original module stays unchanged and pure. Only the audit + unblock step below are new.
+# Reuse pure loop-untiling helpers from UntileLoops; only audit + unblock below are new.
 from dace.transformation.passes.canonicalize.untile_loops import (_audit_combined_access, _diff_is_zero,
                                                                   _intermediate_chain_clean, _iter_candidate_inners,
                                                                   _match_inner_case, _next_id, _tile_size,
@@ -80,20 +27,7 @@ from dace.transformation.passes.canonicalize.untile_loops import (_audit_combine
 @properties.make_properties
 @xf.explicit_cf_compatible
 class UntileLoopsAndBlocks(ppl.Pass):
-    """Untile a manually-tiled loop nest and, when the body reaches an array through matching
-    block/inner tile indices, unblock that array dimension in the same rewrite.
-
-    A strict superset of :class:`~dace.transformation.passes.canonicalize.untile_loops.UntileLoops`:
-    every nest ``UntileLoops`` collapses, this collapses identically (no blocked array -> no
-    unblock); additionally it recognizes the case-A blocked access ``A[..., int_floor(i, K), ii]``
-    (last dim extent ``K`` indexed by the inner tile variable, adjacent dim the block index) and
-    calls :class:`~dace.transformation.layout.unblock_dimensions.UnblockDimensions` to merge the
-    ``(block, inner)`` pair back before the untile substitution folds it to ``A[k]``.
-
-    Blocked coordination requires a CONCRETE tile ``K`` (the block factor and the extent match
-    are integer). A symbolic tile still untiles (as in ``UntileLoops``) but a split blocked access
-    under a symbolic tile is refused -- ``UnblockDimensions`` needs an integer factor.
-    """
+    """Untiles loops and unblocks arrays blocked to match the tile; blocked coordination needs a concrete tile K."""
 
     CATEGORY: str = 'Canonicalization'
 
@@ -116,8 +50,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
         return False
 
     def _maps_to_loops(self, sdfg: SDFG) -> None:
-        """Pre-round-trip: lower every Map to a LoopRegion so Map-tiled patterns enter the
-        matcher as loops (mirrors ``UntileLoops._maps_to_loops``)."""
+        """Mirrors UntileLoops._maps_to_loops."""
         from dace.transformation.dataflow.map_expansion import MapExpansion
         from dace.transformation.dataflow.map_for_loop import MapToForLoop
         from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
@@ -135,8 +68,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
                 break
 
     def _loops_back_to_maps(self, sdfg: SDFG) -> None:
-        """Post-round-trip: re-lift parallelizable LoopRegions to Maps (mirrors
-        ``UntileLoops._loops_back_to_maps``)."""
+        """Mirrors UntileLoops._loops_back_to_maps."""
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -144,8 +76,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
         PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {})
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
-        """Run the per-loop untile+unblock rewrite as a fixpoint over the SDFG (identical driver
-        to ``UntileLoops.apply_pass``; each iteration collapses one tile pair)."""
+        """Fixpoint over the SDFG; each iteration collapses one tile pair (mirrors UntileLoops.apply_pass)."""
         if self.map_roundtrip:
             self._maps_to_loops(sdfg)
 
@@ -171,14 +102,12 @@ class UntileLoopsAndBlocks(ppl.Pass):
             propagate_memlets_sdfg(sdfg)
         return total or None
 
-    # ------------------------------------------------------------------ #
-    #  Blocked-access recognition (the new part).
-    # ------------------------------------------------------------------ #
+    # Blocked-access recognition (new part).
     def _free_syms(self, comp):
         return symbolic.pystr_to_symbolic(str(comp)).free_symbols
 
     def _dim_mentions(self, rng, sym) -> bool:
-        """``True`` iff any component (lo/hi/stride) of range ``rng`` references ``sym``."""
+        """True iff rng references sym in lo/hi/stride."""
         for comp in rng:
             if sym in self._free_syms(comp):
                 return True
@@ -192,11 +121,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
     def _match_block_memlet(self, sdfg: SDFG, arr_name: str, ranges, outer_var: str, inner_var: str,
                             K_expr: symbolic.SymbolicType,
                             K_const: int) -> Optional[Tuple[List[bool], List[int]]]:
-        """If ``ranges`` (a memlet subset on ``arr_name``) is the case-A blocked access
-        ``[..., int_floor(i, K), ii]`` -- last dim a point ``ii`` of extent ``K``, second-to-last
-        a point ``int_floor(i, K)``, all others independent of ``i``/``ii`` -- return the
-        ``(masks, factors)`` (original-rank length) that ``UnblockDimensions`` needs to merge the
-        last two physical dims back. Otherwise ``None``."""
+        """Returns (masks, factors) for UnblockDimensions if ranges is the case-A blocked access, else None."""
         if arr_name not in sdfg.arrays:
             return None
         arr = sdfg.arrays[arr_name]
@@ -205,16 +130,16 @@ class UntileLoopsAndBlocks(ppl.Pass):
             return None
         ii_sym = symbolic.pystr_to_symbolic(inner_var)
         i_sym = symbolic.pystr_to_symbolic(outer_var)
-        # Last physical dim: point access by the inner tile variable, extent == tile K.
+        # Last dim: point access by inner var, extent == K.
         if not self._is_point(ranges[rank - 1], ii_sym):
             return None
         if not _diff_is_zero(arr.shape[rank - 1], K_const):
             return None
-        # Second-to-last physical dim: point access by the block index int_floor(i, K).
+        # Second-to-last dim: point access by block index int_floor(i, K).
         block_target = symbolic.pystr_to_symbolic(f"int_floor({outer_var}, {symbolic.symstr(K_expr)})")
         if not self._is_point(ranges[rank - 2], block_target):
             return None
-        # Every remaining dim must be independent of the tile variables.
+        # Remaining dims: independent of tile variables.
         for d in range(rank - 2):
             if self._dim_mentions(ranges[d], i_sym) or self._dim_mentions(ranges[d], ii_sym):
                 return None
@@ -225,14 +150,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
     def _audit_case(self, inner: LoopRegion, outer_var: str, inner_var: str, case: str,
                     K_expr: symbolic.SymbolicType, K_const: Optional[int],
                     sdfg: SDFG) -> Optional[Dict[str, Tuple[List[bool], List[int]]]]:
-        """Blocked-aware body audit. Returns ``None`` to refuse, or a (possibly empty) dict
-        ``{array: (masks, factors)}`` of blocked arrays to unblock before the untile.
-
-        Case B delegates to the plain combined audit (no blocked support -- the block/inner form
-        differs and case A is the user-directed pattern). Case A accepts each memlet that is
-        EITHER combined (every subset component mentioning ``i`` also mentions ``ii`` and
-        vice-versa -- the classic ``UntileLoops`` criterion) OR a recognized block access. Any
-        other access refuses."""
+        """Blocked-aware body audit; returns None to refuse, else {array: (masks, factors)} to unblock before untile."""
         if case == 'B':
             return {} if _audit_combined_access(inner, outer_var, inner_var, case) else None
 
@@ -256,10 +174,9 @@ class UntileLoopsAndBlocks(ppl.Pass):
                         if has_i != has_ii:
                             combined = False
                 if not mentions_tile or combined:
-                    # Array not indexed by the tile vars, or accessed in flat combined form:
-                    # the standard case-A rewrite handles it, no unblock needed.
+                    # Not tile-indexed or already combined: standard rewrite handles it.
                     continue
-                # A split access -- must be a recognized materialized block (concrete tile only).
+                # Split access: must be a recognized block (concrete tile only).
                 if K_const is None:
                     return None
                 spec = self._match_block_memlet(sdfg, e.data.data, ranges, outer_var, inner_var, K_expr, K_const)
@@ -271,11 +188,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
         return blocked
 
     def _unblock_is_safe(self, sdfg: SDFG, blocked_arrays: Dict[str, Tuple[List[bool], List[int]]]) -> bool:
-        """Pre-validate that ``UnblockDimensions`` will not raise for any array in
-        ``blocked_arrays`` -- so a failed coordination refuses (no-op) rather than leaving a
-        half-mutated SDFG. Checks the descriptor rank, every memlet's subset rank and absence of
-        ``other_subset``, and refuses any array that flows into a nested SDFG (not visible to this
-        top-level pre-validation)."""
+        """True iff UnblockDimensions can apply safely to every array in blocked_arrays."""
         for arr_name, (masks, factors) in blocked_arrays.items():
             if arr_name not in sdfg.arrays:
                 return False
@@ -297,9 +210,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
                             return False
         return True
 
-    # ------------------------------------------------------------------ #
-    #  Per-loop rewrite (copied from UntileLoops, with the unblock step spliced in).
-    # ------------------------------------------------------------------ #
+    # Per-loop rewrite: copied from UntileLoops, unblock step spliced in.
     def _try_untile(self, outer: LoopRegion, sdfg: SDFG) -> bool:
         outer_stride = loop_analysis.get_loop_stride(outer)
         outer_start = loop_analysis.get_init_assignment(outer)
@@ -339,22 +250,12 @@ class UntileLoopsAndBlocks(ppl.Pass):
         if inner is None:
             return False
 
-        # The case-A fold (ii -> k - i, then i -> 0) rewrites the unblocked element
-        # ``int_floor(i, K) * K + ii`` to ``k``. That IS the original element only when
-        # ``int_floor(i, K) * K == i`` -- i.e. when the outer start is a multiple of K, which is how
-        # the outer loop steps by K. With a start such as 1 and K=4 the first blocked access reads
-        # logical element int_floor(1,4)*4 + 0 = 0 while the untiled one reads k = 1: every element
-        # shifts by (start mod K), silently. Refuse instead, and refuse BEFORE the unblock below
-        # mutates anything. The pure-combined (unblocked) case-A path needs no such guard -- its
-        # element genuinely is i + ii = k for any start.
+        # Case-A fold needs outer start % K == 0, else the unblocked element shifts silently.
         if blocked_arrays and case == 'A':
             if symbolic.simplify(sympy.Mod(outer_start_sym, K_expr)) != 0:
                 return False
 
-        # Coordinated unblock: merge each detected (block, inner) array dimension back to the flat
-        # logical dimension BEFORE the untile substitution, so the resulting combined subset
-        # ``int_floor(i, K) * K + ii`` folds to ``k`` alongside the schedule. Refuse (no-op) if the
-        # unblock cannot be applied safely rather than crash the pipeline.
+        # Unblock before substitution so int_floor(i, K) * K + ii folds to k; refuse if unsafe.
         if blocked_arrays:
             if not self._unblock_is_safe(sdfg, blocked_arrays):
                 return False

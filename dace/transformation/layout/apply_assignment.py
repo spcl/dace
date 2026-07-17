@@ -1,29 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Apply a chosen global layout ASSIGNMENT -- one layout trajectory per array -- end to end
-(GLOBAL_LAYOUT_DESIGN.md, task A5; the audit blocker: without this, the greedy-vs-global figure
-cannot be measured).
-
-An assignment gives every array one :class:`Layout` per kernel of the line graph. Consecutive equal
-layouts form a SEGMENT. The planner walks the segments carrying the LIVE holder -- the descriptor
-that currently materializes the array's value: untouched segments stay unmaterialized, a touched
-segment whose layout matches the live holder's ALIASES onto it, and every other touched segment
-materializes a holder (a transient clone ``B__seg1_perm10``, or the original for identity), gets
-its kernel states rewritten onto it (the shared ``rewrite_state_for_permute`` core, with
-``PermuteDimensions``' copy-retranspose bookkeeping), and is wired with ``LayoutChange``
-conversions:
-
-  * entry conversion  -- chained from the LIVE holder, decided at the segment's first TOUCHING
-    kernel; skipped ONLY on proof that this kernel fully produces the array before any read
-    (``writes_cover_array``; a partial write, a WCR accumulation, or a live-in read all pre-fill
-    the holder, since converting redundantly is correct and skipping wrongly is a miscompile);
-  * exit conversion   -- inserted when the ORIGINAL array does not hold the post-last-write value
-    at program exit: the last write landed in a clone and no later entry conversion restored the
-    original. The program interface stays logical and bit-exact against the untransformed program.
-
-v1 applies PERMUTE trajectories (the k17 conflict class); a Block op in a trajectory is refused
-loudly -- blocked layouts are still scored/timed per nest on externalized copies, and the global
-application of blocked trajectories is the documented extension.
-"""
+"""Applies a chosen global layout assignment (one layout trajectory per array) across the line
+graph, inserting LayoutChange conversions at segment boundaries. v1 handles Permute trajectories only."""
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -40,8 +17,7 @@ from dace.transformation.layout.permute_dimensions import (note_copy_side, retra
 
 @dataclass(frozen=True)
 class Layout:
-    """One layout in a trajectory: a stable tag (candidate identity) plus the layout-algebra op
-    sequence from the packed-C identity to this layout."""
+    """One layout in a trajectory: a stable tag plus the op sequence from packed-C identity."""
     tag: str
     ops: Tuple = ()
 
@@ -54,8 +30,7 @@ IDENTITY_LAYOUT = Layout("identity", ())
 
 
 def composed_permutation(ops, ndim: int) -> List[int]:
-    """The single axis permutation an op sequence amounts to (``new[i] = old[perm[i]]``).
-    Refuses any non-Permute op -- v1 trajectories are permute-only."""
+    """Axis permutation an op sequence amounts to (``new[i] = old[perm[i]]``); refuses non-Permute ops."""
     perm = list(range(ndim))
     for op in ops:
         if not isinstance(op, Permute):
@@ -79,11 +54,8 @@ def segments_of(trajectory: List[Layout]) -> List[Tuple[int, int, Layout]]:
 
 
 def reads_before_write(state: dace.SDFGState, array: str) -> bool:
-    """True iff ``state`` reads ``array``: through a SOURCE access node (data live-in), or through a
-    WCR write -- WCR reads-modifies the destination, so the segment needs the live-in values even
-    when the access node has only in-edges. The wcr sits on the INNER memlet-tree edge in canonical
-    output (the outer MapExit->AccessNode edge has ``wcr=None``), so the whole state's edges are
-    scanned."""
+    """True iff ``state`` reads ``array``: a source access node, or a WCR write (wcr sits on the inner
+    memlet-tree edge, not the outer one, so all edges are scanned)."""
     if any(node.data == array and state.in_degree(node) == 0 for node in state.data_nodes()):
         return True
     return any(e.data is not None and e.data.data == array and e.data.wcr is not None for e in state.edges())
@@ -95,16 +67,8 @@ def state_touches(state: dace.SDFGState, array: str) -> bool:
 
 
 def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
-    """Conservative PROOF that ``state`` writes EVERY element of ``array`` (so a segment starting
-    here may skip its entry conversion). Returns False whenever coverage is unprovable -- a
-    redundant entry conversion is always semantically correct, a skipped necessary one is a silent
-    miscompile.
-
-    The proof: the array's single sink access node is fed by one top-level ``MapExit``, and some
-    INNER write memlet (no WCR) indexes a distinct map parameter per array dimension with each
-    parameter's map range spanning that dimension's full extent. The propagated OUTER memlet is
-    deliberately not consulted: for a partial writer it is over-approximated to the full array, so
-    any coverage test on it is unsound."""
+    """Conservative proof that ``state`` writes every element of ``array``; False whenever coverage
+    is unprovable (skipping the entry conversion on a false positive would be a silent miscompile)."""
     desc = state.sdfg.arrays[array]
     sinks = [n for n in state.data_nodes() if n.data == array and state.in_degree(n) > 0]
     if len(sinks) != 1:
@@ -143,8 +107,7 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
 
 
 def refuse_interstate_references(sdfg: SDFG, arrays) -> None:
-    """v1 rewrites kernel states only; an interstate edge mentioning a reassigned array would keep
-    reading the ORIGINAL layout silently -- refuse loudly instead."""
+    """Refuses interstate edges referencing a reassigned array (would silently read the original layout)."""
     for edge in sdfg.all_interstate_edges():
         text = "; ".join([f"{k} = {v}" for k, v in edge.data.assignments.items()] + [edge.data.condition.as_string])
         for array in arrays:
@@ -163,15 +126,8 @@ class AppliedAssignment:
 
 
 def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[str, List[Layout]]) -> AppliedAssignment:
-    """Apply one layout trajectory per array across the line graph, with paid conversions on the
-    boundaries. The SDFG is modified in place; the program interface stays logical (segment clones
-    are transient, originals untouched at entry/exit).
-
-    :param sdfg: the kernel-per-state line-graph SDFG (the A6 invariant is re-checked).
-    :param kernels: ``line_graph(sdfg)``'s kernel list (positions = trajectory indices).
-    :param assignment: ``{array: [Layout per kernel]}``; arrays not mentioned keep packed-C.
-    :return: the :class:`AppliedAssignment` summary.
-    """
+    """Applies one layout trajectory per array across the line graph, in place, with paid conversions
+    on the boundaries; the program interface stays logical."""
     check_kernel_per_state(sdfg)
     refuse_interstate_references(sdfg, [a for a, traj in assignment.items() if any(not l.is_identity for l in traj)])
     for array, trajectory in assignment.items():
@@ -181,7 +137,7 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
             raise ValueError(f"apply_assignment: trajectory for '{array}' has {len(trajectory)} "
                              f"entries for {len(kernels)} kernels")
 
-    # Plan first (liveness reads pre-rewrite state), then rewrite, then insert conversion states.
+    # Plan first (liveness reads pre-rewrite state), then rewrite, then insert conversions.
     # boundary_changes[kernel_index] = {in_name: (out_name, delta_ops)}
     boundary_changes: Dict[int, Dict[str, Tuple[str, List]]] = {}
     exit_changes: Dict[str, Tuple[str, List]] = {}
@@ -194,12 +150,8 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         ndim = len(desc.shape)
         segments = segments_of(trajectory)
 
-        # Walk the segments carrying the LIVE holder -- the (name, ops) that currently materializes
-        # the array's value. Untouched segments stay unmaterialized (no clone, no conversion, the
-        # value keeps living where it was); a touched segment whose layout equals the live holder's
-        # ALIASES onto it (the tag differs, the physical layout does not -- e.g. perm10 segments
-        # separated by an untouched identity run); everything else materializes a holder and chains
-        # its entry conversion from the LIVE holder, decided at the segment's first TOUCHING kernel.
+        # Walk segments carrying the LIVE holder: untouched stay unmaterialized, aliasing segments
+        # skip conversion, others materialize a holder and chain entry conversion from it.
         live_name, live_ops = array, []
         holders: List[Tuple[str, List]] = []  # per segment: the holder materializing the value
         entry_targets: List[Tuple[int, str]] = []  # (kernel_position, out_name) of planned entries
@@ -224,9 +176,7 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                                    transient=True,
                                    lifetime=desc.lifetime,
                                    find_new_name=False)
-                # The entry conversion may only be skipped on PROOF that the segment's first
-                # touching kernel fully produces the array before any read; anything weaker
-                # (partial write, WCR, live-in read) pre-fills the holder from the live one.
+                # Entry conversion skipped only on proof the first touch fully produces the array before any read.
                 first_touch = kernels[touched[0]].state
                 if reads_before_write(first_touch, array) or not writes_cover_array(first_touch, array):
                     boundary_changes.setdefault(start, {})[live_name] = (name, delta)
@@ -243,10 +193,7 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                                                           for node in k.state.data_nodes())),
                          default=None)
 
-        # Exit conversion: needed when the ORIGINAL array does not hold the post-last-write value at
-        # program exit -- the last write landed in a clone AND no later entry conversion restored the
-        # original (any entry with out_name == array past the last write copies the value back; no
-        # write can follow it, or last_write would be larger).
+        # Exit conversion needed iff the last write landed in a clone and no later entry restored the original.
         if last_write is not None and not desc.transient:
             si_lw = next(si for si, (start, end, _) in enumerate(segments) if start <= last_write < end)
             holder_name, holder_ops = holders[si_lw]
@@ -262,10 +209,7 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         arrays_here = {array for array, _, _ in rewrites_by_state[kernel_index]}
         for node in state.nodes():
             if isinstance(node, nodes.NestedSDFG):
-                # A unit-element edge (scalar slice) is layout-transparent: permuting the outer
-                # subset is the complete rewrite. A SPANNING edge hands the nested SDFG a >=1-D
-                # window whose inner descriptor keeps the old dimension order -- silently wrong on
-                # equal-extent shapes -- so it is refused (recursion is the documented extension).
+                # A spanning edge would hand the nested SDFG a stale dimension order; refuse (unit-element edges are fine).
                 carried = sorted({
                     e.data.data
                     for e in state.all_edges(node)
@@ -277,10 +221,8 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                         f"array(s) {carried} into a NestedSDFG through a spanning memlet; the v1 "
                         f"segment rewrite does not recurse into nested SDFGs (deferred) -- expand "
                         f"the nest first or drop the array from the assignment.")
-        # A copy with ONE relaid operand becomes transposing; the shared PermuteDimensions
-        # bookkeeping converts it to a TensorTranspose (or refuses sub-region copies loudly).
-        # Sides are merged across this state's per-array rewrites so a copy whose two operands are
-        # both reassigned is judged on both permutations.
+        # A copy with one relaid operand becomes transposing (PermuteDimensions converts it to TensorTranspose).
+        # Sides merge across this state's rewrites so a copy with both operands reassigned sees both.
         sides: Dict = {}
         for array, seg_name, perm in rewrites_by_state[kernel_index]:
             noted = rewrite_state_for_permute(state, {array: seg_name}, {array: perm}, note_copy_side)

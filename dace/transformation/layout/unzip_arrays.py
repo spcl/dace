@@ -1,22 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""UnzipArrays -- the Unzip layout primitive: project a fused array back to F separate arrays.
+"""UnzipArrays -- inverse of ZipArrays: splits a fused array back into its component field arrays.
 
-The inverse of :class:`~dace.transformation.layout.zip_arrays.ZipArrays`:
-
-  * **Homogeneous** ``Z`` is a plain array ``[*S, F]`` (field-minor AoS). Unzip drops the field
-    dimension: an access ``Z[idx, f]`` (constant field ``f``) becomes ``A_f[idx]`` on a fresh array
-    ``A_f`` of shape ``[*S]``.
-  * **Heterogeneous struct** ``Z`` is a contiguous array of structs (``Array`` with a
-    ``dace.dtypes.struct`` dtype -- the true-AoS form ``ZipArrays`` emits). Unzip splits it back into
-    the F member arrays: a whole-struct memlet ``Z[idx]`` becomes ``A_f[idx]``, the tasklet code's
-    member access ``conn.f`` is reverted to ``conn``, and the struct-typed connectors are retyped to
-    the member dtypes.
-
-When the fused array flows WHOLE into a nested SDFG, the single connector is split into F connectors
-(one per field) and the inner fused array is unzipped recursively.
-
-Run after ``prepare_for_layout``. ``ZipArrays(...)`` then ``UnzipArrays(...)`` with matching field
-lists is a no-op (bit-exact roundtrip).
+Run after ``prepare_for_layout``. ``ZipArrays`` then ``UnzipArrays`` with matching fields is a no-op roundtrip.
 """
 import ast
 from dataclasses import dataclass
@@ -29,8 +14,7 @@ from dace.transformation import pass_pipeline as ppl
 
 
 class StructMemberReverter(ast.NodeTransformer):
-    """Inverse of ``zip_arrays.StructMemberRewriter``: rewrite a struct member access ``conn.field``
-    back to a bare ``conn`` and record which field each connector accessed (``conn -> field``)."""
+    """Inverse of ``zip_arrays.StructMemberRewriter``: rewrites ``conn.field`` back to ``conn``, recording each connector's field."""
 
     def __init__(self, conns):
         self.conns = conns
@@ -46,13 +30,7 @@ class StructMemberReverter(ast.NodeTransformer):
 
 @dataclass
 class UnzipArrays(ppl.Pass):
-    """Project fused arrays back into their component field arrays.
-
-    :param unzip_map: ``{fused_name: [field_array_0, field_array_1, ...]}`` -- the same mapping used
-                      to build the fused array with :class:`ZipArrays`.
-    :param field_axis: position of the field dimension in a homogeneous fused array's shape. ``None``
-                       (default) = trailing dimension; pass ``ndim-2`` to unzip an AoSoA ``[*S, F, V]``.
-    """
+    """Inverse of ZipArrays: splits a fused array back into its component field arrays."""
 
     def __init__(self, unzip_map: Dict[str, List[str]], field_axis: int = None):
         self._unzip_map = unzip_map
@@ -74,9 +52,7 @@ class UnzipArrays(ppl.Pass):
                 self._unzip_homogeneous(sdfg, fused, fields, desc, axis)
         return 0
 
-    # ------------------------------------------------------------------ #
-    #  Homogeneous [*S, F] -> F arrays [*S]
-    # ------------------------------------------------------------------ #
+    # Homogeneous [*S, F] -> F arrays [*S]
     def _const_field(self, rng, fused):
         """Extract the constant field index ``k`` from a memlet range ``(k, k, 1)``."""
         b, e, s = rng
@@ -106,10 +82,7 @@ class UnzipArrays(ppl.Pass):
                                lifetime=desc.lifetime,
                                find_new_name=False)
 
-        # Fused array flowing whole into a nested SDFG: split the connector into F field connectors.
-        # A read-write array crosses on an in-edge AND an out-edge with the same inner name: the inner
-        # descriptor is unzipped ONCE (unzipping it again crashes -- the fused inner array is gone),
-        # but BOTH boundary edges are rewired to the field connectors.
+        # Nested-SDFG boundary: split the connector into F field connectors; RW arrays unzip the inner array only once.
         unzipped_inner = set()
         for boundary in list(self._nested_boundaries(sdfg, fused)):
             _, node, _, conn, _ = boundary
@@ -117,8 +90,7 @@ class UnzipArrays(ppl.Pass):
             self._split_nested(sdfg, boundary, fused, fields, axis, unzip_inner=key not in unzipped_inner)
             unzipped_inner.add(key)
 
-        # A single fused access node fanning multiple fields through a map: split the map's fused
-        # connector into one (IN/OUT) pair per field so each field gets its own reservoir edge.
+        # Split a map's fused connector into one IN/OUT pair per field, each with its own reservoir edge.
         for state in sdfg.all_states():
             for scope in [n for n in state.nodes() if isinstance(n, nd.MapEntry)]:
                 for conn in [c for c in scope.in_connectors]:
@@ -131,8 +103,7 @@ class UnzipArrays(ppl.Pass):
                     if self._scope_conn_multifield(state, scope, in_conn, fused, axis, is_entry=False):
                         self._split_map_scope(sdfg, state, scope, in_conn, conn, fused, fields, axis, is_entry=False)
 
-        # Remaining top-level edges/nodes: constant-field indexed accesses (incl. the Zip-output
-        # topology where each field already has its own access node).
+        # Remaining top-level edges/nodes: constant-field indexed accesses.
         for state in sdfg.all_states():
             for edge in state.edges():
                 if edge.data is not None and edge.data.data == fused:
@@ -154,9 +125,7 @@ class UnzipArrays(ppl.Pass):
         sdfg.remove_data(fused, validate=False)
 
     def _scope_conn_multifield(self, state, scope, interior_conn, fused, axis, is_entry):
-        """True iff the interior edges of one connector carry >1 distinct fused field (so the
-        connector must be split). A connector already carrying a single field is left to the plain
-        edge/access-node rename."""
+        """True iff the interior edges of one connector carry >1 distinct fused field (needs splitting)."""
         edges = state.out_edges(scope) if is_entry else state.in_edges(scope)
         attr = "src_conn" if is_entry else "dst_conn"
         ks = set()
@@ -166,8 +135,7 @@ class UnzipArrays(ppl.Pass):
         return len(ks) > 1
 
     def _split_map_scope(self, sdfg, state, scope, in_conn, out_conn, fused, fields, axis, is_entry):
-        """Split a map's fused ``(IN_x, OUT_x)`` connector pair into one pair per field. On a
-        ``MapEntry`` the reservoir is the IN side (reads); on a ``MapExit`` it is the OUT side."""
+        """Splits a map's fused ``(IN_x, OUT_x)`` connector pair into one pair per field; reservoir is IN on entry, OUT on exit."""
         reservoir_conn = in_conn if is_entry else out_conn
         interior_conn = out_conn if is_entry else in_conn
         reservoir = [e for e in state.in_edges(scope) if e.dst_conn == reservoir_conn] if is_entry else \
@@ -218,9 +186,7 @@ class UnzipArrays(ppl.Pass):
         scope.remove_in_connector(in_conn)
         scope.remove_out_connector(out_conn)
 
-    # ------------------------------------------------------------------ #
-    #  Nested-SDFG boundary: split the fused connector into F field connectors
-    # ------------------------------------------------------------------ #
+    # Nested-SDFG boundary: split the fused connector into F field connectors
     def _nested_boundaries(self, sdfg, fused):
         """Yield ``(state, nsdfg_node, edge, conn, is_input)`` for each whole-array boundary."""
         for state in sdfg.all_states():
@@ -238,9 +204,7 @@ class UnzipArrays(ppl.Pass):
         nsdfg = node.sdfg
         inner_fields = [f"{conn}_{k}" for k in range(len(fields))]
 
-        # Recurse: unzip the inner fused array first (it has the same [*S, F] shape/field axis). Only
-        # ONCE per inner array -- a read-write array's out-edge boundary reuses the fields the in-edge
-        # already created, since the fused inner descriptor no longer exists to unzip again.
+        # Unzip the inner fused array once; a read-write array's out-edge boundary reuses the in-edge's fields.
         if unzip_inner:
             self._unzip_homogeneous(nsdfg, conn, inner_fields, nsdfg.arrays[conn], axis)
 
@@ -264,12 +228,9 @@ class UnzipArrays(ppl.Pass):
         if state.degree(outer_node) == 0:
             state.remove_node(outer_node)
 
-    # ------------------------------------------------------------------ #
-    #  Heterogeneous struct -> F arrays (drop the dotted prefix)
-    # ------------------------------------------------------------------ #
+    # Heterogeneous struct -> F arrays (drop the dotted prefix)
     def _interior_field(self, state, scope, interior_conn, fields, is_entry):
-        """The field a map connector now carries -- read from its interior edges after they have been
-        renamed from the fused struct to a member array (the inverse of the zip's connector reuse)."""
+        """The field a map connector now carries, read from its (already-renamed) interior edges."""
         edges = state.out_edges(scope) if is_entry else state.in_edges(scope)
         for e in edges:
             conn = e.src_conn if is_entry else e.dst_conn
@@ -278,9 +239,7 @@ class UnzipArrays(ppl.Pass):
         return None
 
     def _unzip_struct(self, sdfg, fused, fields, desc):
-        """Split the contiguous array-of-structs ``fused`` back into its F member arrays -- the exact
-        inverse of ``ZipArrays._zip_struct``. Member dtypes come from the struct's ``fields``; each
-        tasklet's ``conn.f`` member access is reverted to ``conn`` and the connector retyped."""
+        """Splits array-of-structs ``fused`` back into its F member arrays; inverse of ``ZipArrays._zip_struct``."""
         members = dict(desc.dtype.fields)  # {field_name: typeclass}
         for f in fields:
             if f not in sdfg.arrays:
@@ -292,8 +251,7 @@ class UnzipArrays(ppl.Pass):
                                lifetime=desc.lifetime,
                                find_new_name=False)
         for state in sdfg.all_states():
-            # 1. Revert each tasklet's member access, retype the struct connector, and rename its
-            #    fused edges to the member array the connector accessed.
+            # 1. Revert each tasklet's member access, retype the connector, and rename its fused edges to the accessed member.
             for node in [n for n in state.nodes() if isinstance(n, nd.Tasklet)]:
                 conns = {e.dst_conn for e in state.in_edges(node) if e.data is not None and e.data.data == fused}
                 conns |= {e.src_conn for e in state.out_edges(node) if e.data is not None and e.data.data == fused}
@@ -314,10 +272,7 @@ class UnzipArrays(ppl.Pass):
                     if e.data is not None and e.data.data == fused and e.src_conn in conn_field:
                         e.data.data = conn_field[e.src_conn]
                         node.out_connectors[e.src_conn] = members[conn_field[e.src_conn]]
-            # 2. Rename the map-boundary edges: the field is the one its paired interior edge carries.
-            #    A boundary edge can only be resolved once its INTERIOR edge is renamed, so with a
-            #    multi-level map nest an inner boundary must be resolved before its outer one.
-            #    Iterate to a fixpoint so the result is independent of node iteration order.
+            # 2. Rename map-boundary edges from their (already-renamed) interior edge; iterate to a fixpoint (inner nests before outer).
             changed = True
             while changed:
                 changed = False

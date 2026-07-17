@@ -1,22 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The ``LayoutChange`` library node: a first-class, chainable layout-algebra relayout.
+"""``LayoutChange`` library node: relayouts ``_inp`` to ``_out`` via a layout-algebra op sequence.
 
-A ``LayoutChange`` node carries a layout-algebra op sequence (``Permute``/``Block``/``Unblock``/
-``Pad``/...) from its input array's (packed-C) layout to its output array's laid-out layout. It has
-one input ``_inp`` and one output ``_out`` and lowers the WHOLE (simplified) op sequence at once:
-
-  * ``pure``     -- one materialized mapped-tasklet copy (``build_relayout_sdfg``). Handles ANY op
-                    sequence; runs on the GPU when the arrays are ``GPU_Global``.
-  * ``cuTENSOR`` -- if the sequence is a pure dimension permutation, delegate to a ``TensorTranspose``
-                    (``cutensorPermute``); otherwise fall back to ``pure``.
-  * ``HPTT``     -- CPU analog: a pure permutation delegates to ``TensorTranspose`` (HPTT); otherwise
-                    ``pure``.
-
-This is the naive "one impl / libnode per operation" dispatch: permutations map to the tensor-
-transpose libraries, everything else (Block/Unblock/Pad/combinations) to the pure relayout map.
-Two adjacent nodes fold into one via ``fold_layout_changes`` (concatenate op sequences +
-``simplify_ops``).
-"""
+Implementations: pure (mapped-tasklet, any ops); cuTENSOR/HPTT (pure permutation -> TensorTranspose, else pure)."""
 import json
 from typing import List, Optional, Tuple
 
@@ -29,8 +14,7 @@ from dace.libraries.layout.lowering import build_relayout_sdfg, relayout_map
 
 
 def _as_permutation(out_map, logical_shape) -> Optional[Tuple[int, ...]]:
-    """If ``out_map`` is a pure dimension permutation of the packed-C input, return its axis list
-    (``out.shape[i] == in.shape[axes[i]]``); otherwise ``None`` (blocked / padded / zipped)."""
+    """If ``out_map`` is a pure permutation of the packed-C input, return its axis list; else ``None``."""
     ndim = len(logical_shape)
     if len(out_map.digits) != ndim or out_map.element is not None or out_map.shuffles:
         return None
@@ -47,8 +31,7 @@ def _as_permutation(out_map, logical_shape) -> Optional[Tuple[int, ...]]:
 
 
 def _build_transpose_sdfg(label, in_desc, out_desc, axes, impl) -> dace.SDFG:
-    """A nested SDFG that relayouts ``_inp`` to ``_out`` via a ``TensorTranspose`` with the given
-    implementation (``cuTENSOR`` / ``HPTT``)."""
+    """Nested SDFG relaying ``_inp`` to ``_out`` via a ``TensorTranspose`` with the given implementation."""
     from dace.libraries.linalg import TensorTranspose  # avoid import loop
 
     sdfg = dace.SDFG(f"{label}_sdfg")
@@ -113,12 +96,7 @@ class ExpandHPTT(ExpandTransformation):
 
 @library.node
 class LayoutChange(nodes.LibraryNode):
-    """Relayout ``_inp`` (packed-C) to ``_out`` (laid-out) via a layout-algebra op sequence.
-
-    The op sequence is stored (JSON-encoded) in the ``ops`` property; :meth:`op_sequence` decodes it
-    back to op dataclasses. The sequence is simplified before lowering, so cancelling chains fold to
-    a plain copy.
-    """
+    """Relayout ``_inp`` (packed-C) to ``_out`` (laid-out); op sequence stored JSON-encoded in ``ops``."""
 
     implementations = {
         "pure": ExpandPure,
@@ -168,11 +146,7 @@ def add_layout_change(sdfg: dace.SDFG,
                       out_name: str,
                       ops: List,
                       create_output: bool = True) -> LayoutChange:
-    """Add a ``LayoutChange`` node relaying ``in_name`` to ``out_name`` and wire the access nodes.
-    With ``create_output`` (default) the laid-out ``out_name`` descriptor is created from the op
-    sequence (replacing any same-named array); with ``create_output=False`` the existing descriptor
-    is kept and only checked -- the trajectory applier (task A5) pre-creates its segment clones and
-    converts back into ORIGINAL program arrays, which must never be clobbered. Returns the node."""
+    """Add a LayoutChange node relaying in_name to out_name; create_output=False reuses the existing descriptor."""
     in_desc = sdfg.arrays[in_name]
     _, _, out_shape = relayout_map(list(in_desc.shape), ops)
     if not create_output:
@@ -201,7 +175,6 @@ def add_layout_change(sdfg: dace.SDFG,
 
 
 def fold_layout_changes(first: LayoutChange, second: LayoutChange) -> LayoutChange:
-    """Fold two chained layout changes ``A->B``, ``B->C`` into one ``A->C``: concatenate their op
-    sequences and simplify. Returns a fresh node (the caller re-wires ``A`` and ``C``)."""
+    """Fold chained layout changes ``A->B``, ``B->C`` into one ``A->C``; returns a fresh node."""
     merged = simplify_ops(first.op_sequence() + second.op_sequence())
     return LayoutChange(f"{first.label}_then_{second.label}", ops=merged)

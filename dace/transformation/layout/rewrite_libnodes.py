@@ -1,25 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Library-node rewrites that expose an operand's LAYOUT to the layout passes.
+"""Library-node rewrites that expose an operand's layout to the layout passes.
 
-A layout change must reach a library node's SEMANTIC index description, not just its memlets:
-
-  * ``transform_einsum(einsum_str, operand_index, perm)`` -- when a layout pass permutes an einsum
-    operand's dimensions, reorder that operand's subscript letters so the string still describes the
-    same contraction on the new layout (the einsum analog of permute's memlet-subset rewrite).
-  * ``GemmToTensorDot`` -- rewrite a layout-opaque ``Gemm`` (``C = A @ B``) into a ``TensorDot``
-    (an einsum-syntax node with explicit contracted axes), so the operand layout becomes visible
-    and permutable. Only applied when ``alpha == 1``, ``beta == 0`` and there is no ``C`` input
-    (``TensorDot`` pins ``alpha=1, beta=0`` and has no accumulator); a scaled/accumulating Gemm is
-    left untouched (layout still reaches it through its memlets).
-
-  * ``RewriteCopyForLayout`` -- a ``CopyLibraryNode`` is layout-agnostic ONLY while its two operands
-    keep the same layout; a layout change that leaves them with DIFFERENT layouts turns the copy into
-    a per-dim transpose, which the copy node cannot express. Rewrite such a copy to a
-    ``TensorTranspose`` (the copy analog of ``GemmToTensorDot``). Same-layout copies and
-    rank-changing reshapes are left untouched.
-
-Memset is layout-agnostic: it is a plain tasklet whose memlets are renamed by the generic passes, so
-no node rewrite is needed for it.
+Reorders einsum subscripts and rewrites ``Gemm``/``CopyLibraryNode`` into ``TensorDot``/``TensorTranspose`` so a layout change reaches node semantics, not just memlets.
 """
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
@@ -31,14 +13,7 @@ from dace.transformation import pass_pipeline as ppl
 
 
 def transform_einsum(einsum_str: str, operand_index: int, perm: Tuple[int, ...]) -> str:
-    """Permute one einsum operand's subscripts by ``perm`` (``new[i] = old[perm[i]]``).
-
-    ``operand_index`` indexes the operands in the order the ``Einsum`` node binds them -- SORTED
-    input-connector name order. The other groups and the output are unchanged: the same letters
-    still denote the same logical dimensions, so the contraction is preserved on the new layout.
-
-    ``einsum('ij,jk->ik', ...)`` with ``perm=(1, 0)`` on operand 0 -> ``'ji,jk->ik'``.
-    """
+    """Permute one einsum operand's subscripts by ``perm`` (``new[i] = old[perm[i]]``); ``operand_index`` follows sorted input-connector order."""
     lhs, sep, rhs = einsum_str.partition('->')
     groups = [t.strip() for t in lhs.split(',')]
     if operand_index < 0 or operand_index >= len(groups):
@@ -54,55 +29,27 @@ def transform_einsum(einsum_str: str, operand_index: int, perm: Tuple[int, ...])
 
 
 def remap_contracted_axes(axes: List[int], perm: Tuple[int, ...]) -> List[int]:
-    """The ``TensorDot`` numeric analog of :func:`transform_einsum` for one permuted operand.
-
-    When an operand is permuted by ``perm`` (``new[i] = old[perm[i]]``), an old contracted axis
-    ``a`` moves to new position ``perm.index(a)``. Returns the remapped ``left_axes`` / ``right_axes``
-    so the SAME logical modes are still contracted on the new layout. (Reordering only the operand's
-    CONTRACTED axes leaves the output modes unchanged; reordering FREE modes additionally requires
-    the node's ``permutation`` to compensate -- not handled here, so a caller permuting free modes of
-    a multi-free-axis contraction must update ``permutation`` itself.)
-    """
+    """``TensorDot`` analog of :func:`transform_einsum`: remaps contracted axes for an operand permuted by ``perm``. Free-mode reorders need ``permutation`` updated separately."""
     return [perm.index(a) for a in axes]
 
 
 def permute_reduce(node, perm: Tuple[int, ...]) -> None:
-    """Remap a ``Reduce`` node's ``axes`` when its input operand is permuted by ``perm``.
-
-    A reduction is a contraction of its ``axes``; permuting the input moves each reduced axis to a
-    new position, so the reduced axes follow (the non-reduced axes -- the output -- reorder to match
-    the input, which the output array's own layout carries). A reduce-all (``axes is None``) is
-    order-independent and left unchanged.
-    """
+    """Remap a ``Reduce`` node's ``axes`` for an input permuted by ``perm``; reduce-all (``axes is None``) is left unchanged."""
     if node.axes is None:
         return
     node.axes = remap_contracted_axes(list(node.axes), perm)
 
 
 def block_scan_stride(node, factor: int) -> None:
-    """Bump a ``Scan`` node's ``stride`` by ``factor`` when its 1-D array is interleaved (blocked)
-    by ``factor``.
-
-    Blocking a scan array to ``[N/factor, factor]`` and scanning per lane makes the ``factor``
-    residue classes mod ``factor`` independent scans over the flattened array -- exactly the
-    ``out[i+stride] = out[i] OP in[i]`` recurrence the ``stride`` property expresses.
-    """
+    """Bump a ``Scan`` node's ``stride`` by ``factor`` for a blocked (interleaved) 1-D array."""
     node.stride = node.stride * factor
 
 
 @dataclass
 class GemmToTensorDot(ppl.Pass):
-    """Rewrite every eligible ``Gemm`` (``alpha==1``, ``beta==0``, no ``C`` input) into a
-    ``TensorDot`` so its operand layout is visible to the layout passes. Ineligible Gemms are left
-    in place. Runs inside / after ``prepare_for_layout``.
+    """Rewrite eligible ``Gemm`` (``alpha==1``, ``beta==0``, no ``C`` input) into ``TensorDot`` for layout visibility.
 
-    The ``TensorDot`` is inserted WITHOUT an implementation -- the transform does not choose a
-    library lowering. Unlike ``TensorTranspose`` (node default ``pure``), ``TensorDot`` has NO usable
-    default implementation, so an SDFG this pass produces is NOT compilable until a lowering is
-    chosen: ``select_layout_lowering(sdfg, device)`` MUST run before compile (compiling without it
-    raises a misleading ``KeyError`` for the linalg config's BLAS default, which is not a TensorDot
-    implementation). ``select_layout_lowering`` is the required finalizer for this pass; the sweep
-    runs it automatically.
+    ``TensorDot`` has no default implementation -- ``select_layout_lowering`` must run before compile.
     """
 
     def modifies(self) -> ppl.Modifies:
@@ -134,8 +81,7 @@ class GemmToTensorDot(ppl.Pass):
         if a_edge is None or b_edge is None or c_edge is None:
             return 0
 
-        # C = A @ B, A=[M,K], B=[K,N]: contract A's K with B's K. transA => A=[K,M] (contract axis 0);
-        # transB => B=[N,K] (contract axis 1). Output modes = non-contracted-A ++ non-contracted-B.
+        # C=A@B: contract A's K with B's K; transA/transB flip which axis is K.
         left_axes = [0] if node.transA else [1]
         right_axes = [1] if node.transB else [0]
 
@@ -152,23 +98,16 @@ class GemmToTensorDot(ppl.Pass):
 
 
 def copy_permutation_axes(in_sizes: List, out_sizes: List):
-    """Axes ``P`` such that ``out = transpose(in, P)`` for a copy whose two sides are a permutation
-    of each other (``out_sizes[k] == in_sizes[P[k]]``), or ``None`` when the copy needs no transpose.
-
-    ``None`` covers a same-order copy (identity, incl. an undetectable square transpose) and a
-    genuine rank/shape change (a reshape the copy node handles). Raises ``NotImplementedError`` when
-    the permutation is ambiguous -- a repeated dim size means the mapping is not recoverable from the
-    shapes alone, and must instead be driven from the pass that applied the (known) permutation.
-    """
+    """Axes ``P`` s.t. ``out = transpose(in, P)``, or ``None`` if no transpose is needed (same order or reshape). Raises ``NotImplementedError`` on ambiguous (repeated-size) permutations."""
 
     def same(a, b) -> bool:
         return dace.symbolic.simplify(a - b) == 0
 
     if len(in_sizes) != len(out_sizes) or all(same(a, b) for a, b in zip(in_sizes, out_sizes)):
-        return None  # same order -> plain copy; different rank -> reshape (both left to the copy node)
+        return None  # same order or rank change -> left to the copy node
     if sorted(str(dace.symbolic.simplify(s))
               for s in in_sizes) != sorted(str(dace.symbolic.simplify(s)) for s in out_sizes):
-        return None  # not a permutation of the same extents -> a reshape, not a transpose
+        return None  # different extents -> reshape, not transpose
 
     axes, used = [], [False] * len(in_sizes)
     for os in out_sizes:
@@ -185,14 +124,9 @@ def copy_permutation_axes(in_sizes: List, out_sizes: List):
 
 @dataclass
 class RewriteCopyForLayout(ppl.Pass):
-    """Rewrite every ``CopyLibraryNode`` whose two operands ended up with DIFFERENT layouts (a
-    permutation of each other) into a ``TensorTranspose`` -- a plain copy cannot express a per-dim
-    permutation. Same-layout copies and rank-changing reshapes are left untouched. Run AFTER the
-    layout change (the copy becomes transposing only once one side is relaid out).
+    """Rewrite ``CopyLibraryNode``s whose operands ended up with different layouts into ``TensorTranspose``; same-layout copies and reshapes are left untouched. Run after the layout change.
 
-    The ``TensorTranspose`` is inserted WITHOUT an implementation -- the transform does not choose a
-    library lowering. ``select_layout_lowering`` (or the node default) assigns a device-appropriate
-    expansion at compile time.
+    Inserted without an implementation -- ``select_layout_lowering`` (or the node default) assigns one at compile time.
     """
 
     def modifies(self) -> ppl.Modifies:

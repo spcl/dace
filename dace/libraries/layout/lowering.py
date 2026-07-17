@@ -1,18 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lower a layout-algebra op sequence to a materialized relayout in an SDFG.
-
-``build_relayout`` takes an identity-layout (packed-C) input array and an op sequence, computes the
-resulting ``LayoutMap`` (after ``simplify_ops``), creates the output array with the laid-out shape,
-and emits ONE mapped-tasklet copy that reads the input at its logical index and writes the output at
-the physical position dictated by the digit tuple:
-
-    for each logical index i:  out[ (i//stride0)%extent0, (i//stride1)%extent1, ... ] = in[i0, i1, ...]
-
-A Permute becomes a transpose, a Block becomes a reshape-copy, an identity sequence (e.g.
-``Block∘Unblock``) becomes a plain copy. This is the core of the ``LayoutChange`` node's expansion:
-``relayout_map`` computes the (simplified ops, output LayoutMap, output shape) and
-``build_relayout_sdfg`` emits the copy into a standalone nested SDFG with ``_inp``/``_out`` arrays.
-"""
+"""Lower a layout-algebra op sequence to a materialized relayout in an SDFG: one mapped-tasklet copy
+from the logical index to the digit-tuple physical position."""
 from typing import List, Tuple
 
 import dace
@@ -28,19 +16,13 @@ def _digit_expr(digit) -> str:
 
 
 def relayout_map(logical_shape: List, ops: List) -> Tuple[List, LayoutMap, List]:
-    """Simplify ``ops`` and compose them on the packed-C identity of ``logical_shape``.
-
-    :return: ``(simplified_ops, out_map, out_shape)`` where ``out_shape`` is the laid-out
-             (simplified) array shape.
-    """
+    """Simplify ``ops`` and compose them on the packed-C identity of ``logical_shape``; returns
+    ``(simplified_ops, out_map, out_shape)``."""
     dims = list(range(len(logical_shape)))
     simplified = simplify_ops(ops)
     out_map = compose_ops(simplified, base=identity_map(logical_shape, dims))
     if out_map.shuffles:
-        # A net Shuffle renumbers elements by a bijection sigma -- that is a data-dependent
-        # reorder, not a digit reshape this copy can express. It is lowered by the
-        # ShuffleElements pass (which materializes sigma / sigma^{-1} as C functions and rewrites
-        # consumers), so refuse here rather than silently emitting an unshuffled copy.
+        # net Shuffle is a data-dependent reorder, not a digit reshape; ShuffleElements lowers that
         raise NotImplementedError(
             "LayoutChange cannot lower a net Shuffle; apply dace.transformation.layout.ShuffleElements "
             "for the value-permutation, then LayoutChange for the remaining digit reshape.")
@@ -66,12 +48,8 @@ def _emit_relayout_copy(state: dace.SDFGState, in_name: str, out_name: str, logi
 
 
 def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: List) -> dace.SDFGState:
-    """Emit a relayout ``out = layout(ops)(in)`` into ``state``.
-
-    ``in_name`` must be an existing packed-C (identity-layout) array. ``out_name`` is created (or
-    replaced) with the laid-out shape. The op sequence is normalized with ``simplify_ops`` first, so
-    cancelling sequences (Block∘Unblock, Permute∘Permute⁻¹, ...) lower to a plain copy.
-    """
+    """Emit a relayout ``out = layout(ops)(in)`` into ``state``; ``in_name`` must be packed-C,
+    ``out_name`` is created/replaced with the laid-out shape."""
     in_desc = sdfg.arrays[in_name]
     logical_shape = list(in_desc.shape)
     _, out_map, out_shape = relayout_map(logical_shape, ops)
@@ -91,9 +69,8 @@ def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_nam
 
 
 def build_relayout_sdfg(label: str, in_desc, out_desc, ops: List) -> dace.SDFG:
-    """Build a standalone SDFG that relayouts ``_inp`` (shape/strides of ``in_desc``) to ``_out``
-    (shape/strides of ``out_desc``) via ``ops`` -- the nested SDFG a ``LayoutChange.expand()``
-    returns. Both descriptors come from the parent SDFG (the node's in/out arrays)."""
+    """Build a standalone SDFG relayouting ``_inp`` (``in_desc``) to ``_out`` (``out_desc``) via ``ops``
+    -- the nested SDFG ``LayoutChange.expand()`` returns."""
     logical_shape = list(in_desc.shape)
     _, out_map, _ = relayout_map(logical_shape, ops)
 

@@ -1,43 +1,18 @@
 import dace
 from typing import Dict, List
 import copy
-"""
-for i in range(0, N):
-    for j in range(0, M):
-        A[i, j] = B[i, j] + C[i, j]
-
-the loop nests should be represented as:
-{ i : Range(0, N), j: Range(0, M) }
-
-access subset should be represented as:
-{
-    A: [i,j],
-    B: [i,j],
-    C: [i,j],
-}
-
-block size for CPUs will be potentially 8 elements for doubles
-
-We assume both N and M are multiple of the block size (=8)
-
-Need to compute overlap between iterations, behavior
-"""
+"""Access subsets: per-array index ranges touched by a loop nest."""
 
 
 def get_access_subsets(
     state: dace.SDFGState,
     loop_nest: dace.nodes.MapEntry,
 ) -> Dict[str, dace.subsets.Range]:
-    """
-    Given a perfectly-nested loop (map) nest, collect the union of all
-    access subsets for every array touched by tasklets in the innermost map.
-
-    Returns a dictionary mapping array names to their (unioned) Range.
-    """
+    """Union of per-array access subsets over a perfectly-nested loop (map) nest."""
     entry_node: dace.nodes.MapEntry = loop_nest
     exit_node: dace.nodes.MapExit = state.exit_node(loop_nest)
 
-    # ----- 1. Collect all nodes within the outermost scope -----------
+    # 1. collect all nodes in the outermost scope
     scope_children = state.scope_children()
     all_scope_nodes: List[dace.nodes.Node] = []
 
@@ -50,18 +25,12 @@ def get_access_subsets(
 
     _collect_recursive(entry_node)
 
-    # ----- 2. Filter map entries and verify perfect nesting -----------
-    #    Between consecutive map scopes there should be no tasklets or
-    #    non-passthrough access nodes.  Collect map entries.
+    # 2. filter map entries; verify perfect nesting
     map_entries: List[dace.nodes.MapEntry] = [n for n in all_scope_nodes if isinstance(n, dace.nodes.MapEntry)]
 
-    # Also collect the outermost entry itself
     all_entries = [entry_node] + map_entries
 
-    # Verify: every non-map, non-access node that sits between map scopes
-    # (i.e., whose direct parent scope is not the innermost map) is suspect.
-    # For a perfectly-nested loop nest, only access nodes acting as
-    # connectors (passthrough) should appear between map boundaries.
+    # only passthrough access nodes allowed between map scopes
     for entry in all_entries[:-1]:  # all except the innermost
         direct_children = scope_children.get(entry, [])
         for child in direct_children:
@@ -70,11 +39,10 @@ def get_access_subsets(
                                  f"loop nest is not perfectly nested.")
             if isinstance(child, (dace.nodes.MapEntry, dace.nodes.MapExit)):
                 continue
-            # Access nodes used as connectors between maps are acceptable
             if isinstance(child, dace.nodes.AccessNode):
                 continue
 
-    # ----- 3. Order maps by nesting depth (parent chain) -----------
+    # 3. order maps by nesting depth
     scope_dict = state.scope_dict()  # node -> parent entry (or None)
 
     def _nesting_depth(entry: dace.nodes.MapEntry) -> int:
@@ -87,31 +55,29 @@ def get_access_subsets(
 
     all_entries_sorted = sorted(all_entries, key=_nesting_depth)
 
-    # ----- 4. Find the innermost map ----------------------
+    # 4. innermost map
     innermost_entry: dace.nodes.MapEntry = all_entries_sorted[-1]
     innermost_exit: dace.nodes.MapExit = state.exit_node(innermost_entry)
 
-    # ----- 5. Collect all tasklets within the innermost map -----------
+    # 5. tasklets in the innermost map
     innermost_children = scope_children.get(innermost_entry, [])
     tasklets: List[dace.nodes.Tasklet] = [n for n in innermost_children if isinstance(n, dace.nodes.Tasklet)]
 
     if not tasklets:
         raise ValueError("No tasklets found in the innermost map scope.")
 
-    # ----- 6 & 7. Build per-array union of all access subsets -----------
-    #    Inspect all edges incident to the tasklets (both in and out).
-    #    edge.data is a Memlet with .data (array name) and .subset (Range).
+    # 6 & 7. union access subsets over all tasklet edges
     access_ranges: Dict[str, dace.subsets.Range] = {}
 
     for tasklet in tasklets:
-        # Incoming edges  (reads)
+        # reads
         for edge in state.in_edges(tasklet):
             memlet = edge.data
             if memlet.is_empty() or memlet.data is None:
                 continue
             _union_into(access_ranges, memlet.data, memlet.subset)
 
-        # Outgoing edges  (writes)
+        # writes
         for edge in state.out_edges(tasklet):
             memlet = edge.data
             if memlet.is_empty() or memlet.data is None:
@@ -126,32 +92,23 @@ def _union_into(
     array_name: str,
     new_subset: dace.subsets.Subset,
 ) -> None:
-    """
-    Union *new_subset* into the running Range for *array_name*.
-
-    Union rule for two ranges [a, b] and [c, d]:
-        result = [min(a, c), max(b, d)]
-    with simplification where possible.
-
-    Uses dace.subsets.union when both operands are available;
-    falls back to a manual per-dimension min/max otherwise.
-    """
+    """Union new_subset into ranges[array_name]; falls back to per-dimension min/max if dace.subsets.union fails."""
     if array_name not in ranges:
         ranges[array_name] = copy.deepcopy(new_subset)
         return
 
     existing = ranges[array_name]
 
-    # Prefer DaCe's built-in union (handles symbolic simplification)
+    # built-in union handles symbolic simplification
     merged = dace.subsets.union(existing, new_subset)
     if merged is not None:
         ranges[array_name] = merged
     else:
-        # Manual fallback: per-dimension bounding-box union via sympy
+        # fallback: per-dimension bounding-box union via sympy
         import sympy as sp
 
         if (not isinstance(existing, dace.subsets.Range) or not isinstance(new_subset, dace.subsets.Range)):
-            # If one is an Indices subset, convert to Range first
+            # convert Indices to Range first
             if isinstance(new_subset, dace.subsets.Indices):
                 new_subset = dace.subsets.Range([(idx, idx, 1) for idx in new_subset])
             if isinstance(existing, dace.subsets.Indices):
@@ -161,7 +118,7 @@ def _union_into(
         for (rb, re, rs), (nb, ne, ns) in zip(existing.ranges, new_subset.ranges):
             lo = sp.Min(rb, nb)
             hi = sp.Max(re, ne)
-            # Step: keep step only if identical, otherwise fall back to 1
+            # keep step only if identical, else 1
             step = rs if rs == ns else 1
             new_ranges.append((lo, hi, step))
 

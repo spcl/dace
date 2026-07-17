@@ -1,31 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Time the COMPUTE region of a laid-out SDFG, excluding the layout relayout copies.
-
-Applying a global layout in wrap mode brackets the compute with relayout states: a copy-IN state
-(source) that reorders each input into its laid-out transient, and a copy-OUT state (sink) that
-reorders results back. To attribute time to the compute -- not to the relayout -- this module:
-
-  * :func:`add_fusion_barrier` drops an empty side-effect tasklet into a state. ``StateFusion`` treats
-    a side-effecting tasklet as a fusion barrier (dace/transformation/interstate/state_fusion.py), so
-    the copy-in / copy-out states can never be merged into the compute region -- the timed boundary
-    (a state boundary) survives any later simplification.
-  * :class:`InsertLayoutTiming` classifies each state (a source/sink whose every tasklet is a pure
-    copy is a copy-in/out state; the rest is compute), barriers the copy states, and instruments the
-    compute states -- so a run times the compute alone (a start marker after copy-in, a stop marker
-    before copy-out). The instrument is chosen PER DEVICE, never hardcoded: a GPU-scheduled state
-    gets ``InstrumentationType.GPU_Events`` (CUDA events around the kernels -- a host wall-clock
-    ``Timer`` would only bracket the asynchronous launch, not the GPU work), a host state gets
-    ``InstrumentationType.Timer``. Both report milliseconds, so a report mixing the two still sums.
-  * :func:`time_compute` runs the instrumented SDFG and reads the compute duration back from the
-    instrumentation report -- the timing the brute-force sweep should compare (relayout is a
-    one-time global cost, not part of the steady-state kernel).
-
-.. note:: Barriers only stop LATER fusion, so they must exist BEFORE anything that fuses.
-   ``SDFG.apply_gpu_transformations`` fuses the relayout states into the compute state, leaving
-   nothing to time apart -- call :func:`barrier_relayout_states` BEFORE it and the split survives
-   (measured on an RTX 4050: the compute region is then 0.009-0.021 ms of a ~400 ms whole call, and
-   it separates layouts the whole-call timer cannot). :class:`InsertLayoutTiming` is idempotent with
-   respect to barriers already present, so it is safe to call afterwards.
+"""Time the compute region of a laid-out SDFG, excluding the relayout copy-in/copy-out states.
 """
 import statistics
 from dataclasses import dataclass
@@ -54,8 +28,7 @@ def has_fusion_barrier(state: dace.SDFGState) -> bool:
 
 
 def _is_pure_copy_tasklet(t: nodes.Node) -> bool:
-    """True for an ``out = in`` copy tasklet (the relayout copy), False for arithmetic / the empty
-    fusion barrier."""
+    """True for an ``out = in`` copy tasklet, False for arithmetic or the barrier tasklet."""
     if not isinstance(t, nodes.Tasklet) or len(t.out_connectors) != 1 or len(t.in_connectors) != 1:
         return False
     code = t.code.as_string.strip().rstrip(';').strip()
@@ -69,12 +42,8 @@ def _is_pure_copy_tasklet(t: nodes.Node) -> bool:
 
 
 def state_runs_on_gpu(state: dace.SDFGState) -> bool:
-    """True iff ``state``'s compute is scheduled on the GPU, i.e. it carries a GPU map. Such a state
-    must be timed with CUDA events: a host ``Timer`` around it brackets only the asynchronous kernel
-    launch, not the kernel.
-
-    Recurses into nested SDFGs: ``state.nodes()`` is flat, so a GPU map inside a NestedSDFG would
-    otherwise read as host work and get the wall-clock timer."""
+    """True iff ``state`` carries a GPU map (recurses into nested SDFGs); needs CUDA-event timing,
+    not a host ``Timer``."""
     return any(
         isinstance(node, nodes.MapEntry) and node.map.schedule in dace.dtypes.GPU_SCHEDULES
         for node, _ in state.all_nodes_recursive())
@@ -86,19 +55,15 @@ def instrumentation_for(state: dace.SDFGState) -> dace.InstrumentationType:
 
 
 def is_copy_state(state: dace.SDFGState) -> bool:
-    """True iff ``state`` is a pure relayout copy: it has tasklets and every one is an ``out = in``
-    copy (no arithmetic). A barrier tasklet this module added is ignored -- barriering a copy state
-    must not stop it from being recognized as one (it may have been barriered by an earlier pass, or
-    before a GPU transform)."""
+    """True iff ``state`` has tasklets and all are ``out = in`` copies (barrier tasklets are ignored,
+    so an already-barriered copy state is still recognized as one)."""
     tasklets = [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and not is_fusion_barrier(n)]
     return len(tasklets) >= 1 and all(_is_pure_copy_tasklet(t) for t in tasklets)
 
 
 def barrier_relayout_states(sdfg: dace.SDFG) -> int:
-    """Barrier every relayout copy state, so a later fusing transform cannot merge relayout into
-    compute. Call this BEFORE ``SDFG.apply_gpu_transformations`` (which otherwise fuses them into one
-    state, leaving no boundary to time). Already-barriered states are left alone. Returns the count.
-    """
+    """Barrier every relayout copy state so a later fusing transform can't merge it into compute.
+    Call BEFORE ``SDFG.apply_gpu_transformations``, which otherwise fuses them away. Returns the count."""
     count = 0
     for state in list(sdfg.states()):
         if is_copy_state(state) and not has_fusion_barrier(state):
@@ -108,22 +73,15 @@ def barrier_relayout_states(sdfg: dace.SDFG) -> int:
 
 
 def state_has_tasklets(state: dace.SDFGState) -> bool:
-    """True iff ``state`` does real work -- a tasklet that is not one of our barriers. dace's host
-    copy-in/copy-out states (added by ``apply_gpu_transformations``) carry memlet copies but no
-    tasklets, so they are transparent by this measure."""
+    """True iff ``state`` has a non-barrier tasklet. dace's host copy-in/out states carry memlet
+    copies but no tasklets, so they read as transparent here."""
     return any(isinstance(n, nodes.Tasklet) and not is_fusion_barrier(n) for n in state.nodes())
 
 
 def reaches_tasklets(sdfg: dace.SDFG, state: dace.SDFGState, forward: bool) -> bool:
-    """True iff any state reachable from ``state`` (forward or backward) does real work, looking
-    THROUGH states that do none.
-
-    This is the source/sink test that identifies a relayout boundary, made robust to wrapper states:
-    a plain ``in_degree == 0`` breaks as soon as ``apply_gpu_transformations`` wraps the graph in
-    tasklet-less host copy states, which leaves the relayout in the middle and makes it read as
-    compute. Looking through those keeps a MID-GRAPH copy (a real algorithmic copy, which has a
-    working state on both sides) classified as compute, as it must be.
-    """
+    """True iff any state reachable from ``state`` (forward or backward), looking through states
+    with no tasklets, does real work. More robust than plain ``in_degree == 0``, which misclassifies
+    a relayout wrapped by ``apply_gpu_transformations``'s tasklet-less host copy states as compute."""
     edges = sdfg.out_edges if forward else sdfg.in_edges
     pick = (lambda e: e.dst) if forward else (lambda e: e.src)
     seen = set()
@@ -141,14 +99,8 @@ def reaches_tasklets(sdfg: dace.SDFG, state: dace.SDFGState, forward: bool) -> b
 
 @dataclass
 class InsertLayoutTiming(ppl.Pass):
-    """Barrier the copy-in / copy-out relayout states and instrument the compute region.
-
-    After this pass a run of the SDFG produces an instrumentation report whose entries are the
-    compute states only (the relayout copies are excluded). Returns the number of compute states
-    instrumented. The instrument is picked per state by :func:`instrumentation_for` -- CUDA events for
-    a GPU-scheduled state, the host timer otherwise -- so the pass never hardcodes a device-specific
-    measurement.
-    """
+    """Barrier the copy-in/copy-out relayout states and instrument the compute region so a run's
+    instrumentation report covers compute only. Returns the number of states instrumented."""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -160,15 +112,12 @@ class InsertLayoutTiming(ppl.Pass):
         states = list(sdfg.states())
         copy_in = {s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=False)}
         copy_out = {s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=True)}
-        # Symmetric difference: a copy state on BOTH lists has compute on neither side, so it IS
-        # the compute -- the sole state of an externalized transpose/copy nest. Treating it as a
-        # boundary would leave the identity candidate untimed (ranked last as inf) while the
-        # permute candidates time fine, silently inverting the identity-first law for exactly the
-        # kernel class layout matters most for.
+        # sym diff: a copy state on both lists has compute on neither side, so it IS the compute
+        # (a lone transpose/copy nest) -- treating it as boundary would leave it untimed.
         boundary = copy_in ^ copy_out
 
         for state in boundary:
-            if not has_fusion_barrier(state):  # idempotent: a state barriered earlier is left alone
+            if not has_fusion_barrier(state):  # idempotent: skip if already barriered
                 add_fusion_barrier(state)
 
         instrumented = 0
@@ -196,8 +145,7 @@ def _report_total_ms(report) -> Optional[float]:
     return total if seen else None
 
 
-#: Spread above this flags a sample set as contended (kept, but marked untrusted) -- the
-#: refuse-don't-guess doctrine of ``membench.check_environment`` applied to kernel timing.
+#: Spread above this is flagged contended (kept, but marked untrusted).
 SPREAD_CONTENDED_THRESHOLD = 0.10
 
 
@@ -205,22 +153,11 @@ def time_compute_stats(sdfg: dace.SDFG,
                        run: Callable[[dace.SDFG], Any],
                        reps: int = 10,
                        warmup: int = 2) -> Optional[Dict[str, Any]]:
-    """Run ``run(sdfg)`` ``reps`` times and return the compute-region timing statistics from the
-    instrumentation report: ``{"median": ms, "spread": (max-min)/min, "contended": bool,
-    "samples": [ms...]}``, or ``None`` if the SDFG carries no timers. Median, not min, for whole
-    kernels (min is for microbenchmarks, where noise is one-sided; a kernel's distribution is not);
-    the spread is the trust signal -- above :data:`SPREAD_CONTENDED_THRESHOLD` the sample is kept
-    but flagged contended. ``sdfg`` must already be instrumented (see :class:`InsertLayoutTiming`).
-
-    The no-timer case MUST short-circuit: ``get_latest_report`` reads the newest report in
-    ``build_folder/perf``, and the build folder is keyed on the SDFG NAME -- every candidate in a
-    layout sweep shares one. An uninstrumented SDFG writes no report, so falling through would read
-    the PREVIOUS candidate's report and silently return its time as this one's. For the same reason
-    every rep must produce a FRESH report file: re-reading a stale one (instrumentation configured
-    to save only at exit, or a leftover in a shared build folder) would return ``reps`` identical
-    copies of an old time -- median stale, spread 0.0, confidently wrong -- so staleness and missing
-    samples are hard errors, never silently absorbed.
-    """
+    """Run ``run(sdfg)`` ``reps`` times and return compute-region stats from the instrumentation
+    report: ``{"median": ms, "spread": (max-min)/min, "contended": bool, "samples": [...]}``, or
+    ``None`` if ``sdfg`` carries no timers (see :class:`InsertLayoutTiming`). Every rep must produce
+    a fresh report -- the build folder is keyed on SDFG name and shared across sweep candidates, so
+    a stale or missing report is a hard error, never silently absorbed."""
     if not any(state.instrument != dace.InstrumentationType.No_Instrumentation for state in sdfg.states()):
         return None
     for _ in range(warmup):
@@ -260,18 +197,16 @@ def compute_region_timer(sdfg: dace.SDFG,
                          run: Callable[[dace.SDFG], Any],
                          reps: int = 5,
                          warmup: int = 1) -> Optional[float]:
-    """A ``brute_force.sweep`` ``timer``: barrier the relayout states, Timer-instrument the compute
-    region, and return the median compute time (ms) -- so the sweep ranks candidates by compute
-    cost, not by the one-time relayout. Mutates ``sdfg`` (instrumentation)."""
+    """A ``brute_force.sweep`` ``timer``: instruments the compute region and returns its median
+    time (ms), so the sweep ranks by compute cost, not the one-time relayout. Mutates ``sdfg``."""
     InsertLayoutTiming().apply_pass(sdfg, {})
     return time_compute(sdfg, run, reps, warmup)
 
 
 def compute_region_stats_timer(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 10, warmup: int = 2):
-    """:func:`compute_region_timer` with the full measurement protocol: returns
-    ``(median_ms, {"spread": ..., "contended": ..., "samples": ...})`` so the sweep records the
-    trust signal alongside the ranking time (``sweep`` unpacks the pair into ``SweepResult``
-    metadata), or ``None`` when the SDFG has no compute region to instrument."""
+    """Like :func:`compute_region_timer` but returns ``(median_ms, {"spread", "contended",
+    "samples"})`` so ``sweep`` records the trust signal in ``SweepResult.metadata``; ``None`` if
+    nothing to instrument."""
     InsertLayoutTiming().apply_pass(sdfg, {})
     stats = time_compute_stats(sdfg, run, reps, warmup)
     if stats is None:

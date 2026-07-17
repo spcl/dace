@@ -1,19 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Theoretical peak memory bandwidth of the host DRAM and the GPU.
 
-The LogP/LogGP memory model needs a DENOMINATOR: the achievable bandwidth a benchmark measures only
-means something next to the hardware peak (achievable is typically 50-85% of it). This module reports
-that peak from hardware facts, never from a guess.
-
-Host DRAM comes from ``dmidecode --type 17``, which needs root: either run it live via
-:func:`run_dmidecode` (sudo will prompt) or read a dump saved once with
-``sudo dmidecode -t 17 > dram.txt``. :func:`host_dram_spec` picks between the two. Peak is the sum
-over POPULATED devices of ``speed x data_width``, which is correct for both DIMMs (e.g. 2 x 64-bit
-DDR5-5600 -> 89.6 GB/s) and soldered LPDDR (e.g. 4 x 32-bit LPDDR5x-6400 -> 102.4 GB/s); the usual
-per-channel-count formula reports 2x that for the soldered case.
-
-GPU: read from the CUDA device properties, so no file is needed --
-``memory_clock x 2 (DDR) x bus_width / 8``.
+Host DRAM via ``dmidecode --type 17`` (sum over populated devices); GPU via CUDA device properties.
 """
 import re
 from dataclasses import dataclass
@@ -32,8 +20,7 @@ class MemoryDevice:
     memory_type: str
 
     def peak_bytes_per_s(self) -> float:
-        """Peak transfer rate of this device: transfers/s x bytes/transfer. The DDR double-pumping is
-        already inside the MT/s figure dmidecode reports, so it is NOT doubled again here."""
+        """Peak transfer rate: transfers/s x bytes/transfer; DDR double-pumping is already in MT/s, not doubled again."""
         return self.speed_mtps * MT_PER_S * self.data_width_bits / BITS_PER_BYTE
 
 
@@ -88,13 +75,7 @@ def _parse_bits(text: Optional[str]) -> Optional[int]:
 
 
 def parse_dmidecode_memory(text: str) -> DramSpec:
-    """Parse the output of ``dmidecode --type 17`` (a "Memory Device" listing).
-
-    Only POPULATED devices are kept: an empty slot reports ``Size: No Module Installed`` and would
-    otherwise contribute a phantom channel to the peak. ``Configured Memory Speed`` is preferred over
-    ``Speed`` because it is the rate the memory actually RUNS at (the module's rated ``Speed`` can be
-    higher than what the controller drives).
-    """
+    """Parse ``dmidecode --type 17`` output; populated devices only, Configured Memory Speed preferred over Speed."""
     devices: List[MemoryDevice] = []
     for block in re.split(r"\n(?=Memory Device\b)|\n\n(?=Handle )", text):
         if "Memory Device" not in block:
@@ -124,9 +105,7 @@ DMIDECODE_COMMAND = ["dmidecode", "--type", "17"]
 
 
 def run_dmidecode(sudo: bool = True) -> DramSpec:
-    """Run ``dmidecode --type 17`` and parse it. dmidecode reads the DMI table and needs root, so
-    ``sudo`` is prepended by default -- this may PROMPT for a password, which is why it is never
-    called implicitly. Use :func:`read_dmidecode_file` in an unattended context."""
+    """Run ``dmidecode --type 17`` (root; sudo may prompt) and parse it; never called implicitly."""
     import subprocess
 
     command = (["sudo"] if sudo else []) + DMIDECODE_COMMAND
@@ -135,17 +114,14 @@ def run_dmidecode(sudo: bool = True) -> DramSpec:
 
 
 def host_dram_spec(dump_path: Optional[str] = None, sudo: bool = True) -> DramSpec:
-    """The host DRAM configuration: parsed from ``dump_path`` when given, else read live via
-    :func:`run_dmidecode` (which may prompt for a sudo password)."""
+    """Host DRAM configuration: parsed from ``dump_path`` when given, else read live via :func:`run_dmidecode`."""
     if dump_path is not None:
         return read_dmidecode_file(dump_path)
     return run_dmidecode(sudo=sudo)
 
 
 def gpu_peak_bytes_per_s(device: int = 0) -> float:
-    """Theoretical peak GPU memory bandwidth from the CUDA device properties:
-    ``memory_clock x 2 (DDR) x bus_width / 8``. Cross-check: an RTX 4050 Laptop reports 8.001 GHz on
-    a 96-bit bus -> 192.0 GB/s, which is NVIDIA's published figure."""
+    """Peak GPU memory bandwidth from CUDA device properties: memory_clock x 2 (DDR) x bus_width / 8."""
     import cupy  # only on the GPU path
 
     props = cupy.cuda.runtime.getDeviceProperties(device)

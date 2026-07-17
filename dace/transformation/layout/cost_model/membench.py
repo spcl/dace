@@ -1,13 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Build and drive the memory microbenchmarks in ``membench.c``.
 
-The C side self-times a window and returns nanoseconds, so the ctypes call overhead sits outside the
-measurement. This module owns the build, the window statistics, and the environment gate.
-
-Statistic is the MIN over windows, never the mean: interference (interrupts, DVFS, a page fault, the
-iGPU driving the panel off the same DRAM) only ever ADDS time, so the distribution is right-skewed
-and the minimum is the noise-free estimator. The spread across windows is reported alongside, so a
-number taken on a contended box cannot be silently trusted.
+Reports the MIN over windows, never the mean: interference only ever adds time.
 """
 import ctypes
 import os
@@ -17,9 +11,7 @@ from typing import Dict, List, Optional
 
 SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "membench.c")
 
-# -fno-tree-loop-distribute-patterns: without it -O3 rewrites a serial copy loop into a memcpy call,
-# whose strategy flips at glibc's non-temporal threshold -- the benchmark would then measure glibc's
-# choices. No -ffast-math: it buys nothing for a memory-bound kernel and perturbs the triad.
+# no -O3 memcpy-rewrite (glibc-dependent strategy), no -ffast-math (perturbs the triad)
 CFLAGS = ["-O3", "-march=native", "-fno-tree-loop-distribute-patterns", "-fopenmp", "-shared", "-fPIC"]
 
 
@@ -65,9 +57,7 @@ def build(cc: Optional[str] = None, out_dir: Optional[str] = None) -> ctypes.CDL
 
 
 def transparent_hugepages_enabled() -> bool:
-    """Whether THP can back the arena. ``madvise`` is advisory: if THP is ``never`` the arena falls
-    back to 4 KiB pages, a 512 MiB random chase then exceeds the L2 DTLB, and L carries a page-walk
-    term that has nothing to do with the memory level being measured."""
+    """Whether THP backs the arena; if not, L picks up a page-walk term unrelated to the memory level measured."""
     try:
         with open("/sys/kernel/mm/transparent_hugepage/enabled") as handle:
             return "[never]" not in handle.read()
@@ -100,11 +90,7 @@ def available_bytes() -> int:
 
 
 def check_environment(arena_bytes: int, max_load: float = 0.5) -> List[str]:
-    """Reasons this machine cannot produce a trustworthy number RIGHT NOW; empty means go.
-
-    A measurement is not a test: on a loaded box the numbers are plausible and wrong, which is worse
-    than no number at all. The caller refuses to record rather than reporting a qualified guess.
-    """
+    """Reasons this machine cannot produce a trustworthy number right now; empty means go."""
     reasons = []
     load = load_average()
     if load > max_load:
@@ -120,25 +106,7 @@ def check_environment(arena_bytes: int, max_load: float = 0.5) -> List[str]:
 
 
 def fit_core_mlp(latency_by_chains: Dict[int, float]) -> float:
-    """The measured outstanding-miss budget of one core, from the concurrency sweep.
-
-    Input: ``{independent chains: ns per LOAD}`` from the multi-chain pointer chase (each chain is a
-    dependent cycle, chains are mutually independent, so ``n`` chains expose exactly MLP ``n``).
-
-    Little's Law on the sweep: sustained request rate is ``C / L``, so per-load time is ``L / C``
-    until the miss queue is full, then flat. The budget is therefore the TOTAL speedup the sweep
-    achieves over the dependent chain::
-
-        C_core = L(1 chain) / min over chains of ns_per_load
-
-    Using the floor (not a knee-detection fit) is deliberate: it needs no model of the curve's shape,
-    and it is exact under Little's Law whenever the sweep reaches the flat region. Feed the result to
-    ``LogGP(c_core=...)``; ``validate()`` cross-checks it against ``L/g``, and a large disagreement
-    means the default ``g`` was never measured (observed here: knee ~8 vs ``L/g`` 23.75).
-
-    Measure on a QUIET box (``check_environment``): the sweep's ratios are load-robust, but the
-    absolute ``L(1)`` in the numerator carries any page-walk term the arena's paging imposes.
-    """
+    """Core MLP budget: L(1 chain) / min ns-per-load over the concurrency sweep (Little's Law floor)."""
     if 1 not in latency_by_chains:
         raise ValueError("the sweep must include the 1-chain (MLP=1) point; it defines L")
     if len(latency_by_chains) < 2:
@@ -146,10 +114,7 @@ def fit_core_mlp(latency_by_chains: Dict[int, float]) -> float:
     bad = {c: t for c, t in latency_by_chains.items() if c < 1 or t <= 0}
     if bad:
         raise ValueError(f"invalid sweep points (chains must be >= 1, ns/load > 0): {bad}")
-    # The formula is exact only once the sweep reaches the FLAT region. If the fastest point is the
-    # largest chain count, the sweep was truncated before the knee and the result would silently be
-    # ~n_max_chains instead of the budget -- the plausible-and-wrong number this module's own
-    # doctrine forbids. Refuse instead.
+    # exact only once the sweep reaches the flat region; refuse if the minimum sits at the largest chain count
     floor_chains = min(latency_by_chains, key=latency_by_chains.get)
     if floor_chains == max(latency_by_chains):
         raise ValueError(f"sweep truncated: the minimum ns/load is at the largest chain count "
