@@ -16,6 +16,12 @@ from dace import data as dt, dtypes, hooks, symbolic
 from dace.codegen import compiler
 from dace.config import Config
 
+# Try importing CuPy once (avoid hot path).
+try:
+    import cupy
+except (ImportError, ModuleNotFoundError):
+    cupy = None
+
 
 class NanobindCompiledSDFG:
     """A compiled SDFG object that can be called; the nanobind counterpart of ``CompiledSDFG``.
@@ -270,19 +276,11 @@ class NanobindCompiledSDFG:
                 total_size = int(symbolic.evaluate(desc.total_size, syms))
                 strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
                 if desc.storage is dtypes.StorageType.GPU_Global:
-                    # The binding takes a device ndarray (nb::device::cuda/rocm),
-                    # so the allocation must be device memory. CuPy covers both
-                    # backends. cupy.zeros (not empty) for parity with the
-                    # zero-initialized CPU returns below; strides are in bytes
-                    # in both allocators.
-                    try:
-                        import cupy
-                    except (ImportError, ModuleNotFoundError):
+                    if cupy is None:
                         raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
                     arr = cupy.ndarray(shape, dtype, memptr=cupy.zeros(total_size, dtype).data, strides=strides)
                 else:
                     arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
-
             kwargs[name] = arr
             return_arrays.append(arr)
 
