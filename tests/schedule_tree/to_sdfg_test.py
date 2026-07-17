@@ -885,6 +885,59 @@ def test_assign_nodes_avoid_duplicate_boundaries():
     assert [type(child) for child in stree.children] == [tn.AssignNode, tn.StateBoundaryNode, tn.TaskletNode]
 
 
+def test_create_view_read():
+    import numpy as np
+
+    source_desc = data.Array(dace.float64, [20])
+    view_desc = data.ArrayView(dace.float64, [4], transient=True)
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': source_desc,
+            'b': view_desc,
+            'B': data.Array(dace.float64, [4]),
+        },
+        children=[
+            tn.ViewNode(target='b', source='A', memlet=dace.Memlet('A[1:5]'), src_desc=source_desc,
+                        view_desc=view_desc),
+            tn.TaskletNode(nodes.Tasklet('bla', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('b[0]')},
+                           {'out': dace.Memlet('B[0]')}),
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+    A = np.random.rand(20)
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert B[0] == A[1] + 1
+
+
+def test_create_refset():
+    import numpy as np
+
+    source_desc = data.Array(dace.float64, [20])
+    ref_desc = data.Reference.view(data.Array(dace.float64, [4]))
+    stree = tn.ScheduleTreeRoot(
+        name='tester',
+        containers={
+            'A': source_desc,
+            'ref': ref_desc,
+            'B': data.Array(dace.float64, [4]),
+        },
+        children=[
+            tn.RefSetNode(target='ref', memlet=dace.Memlet('A[1:5]'), src_desc=source_desc, ref_desc=ref_desc),
+            tn.TaskletNode(nodes.Tasklet('bla', {'inp'}, {'out'}, 'out = inp + 1'), {'inp': dace.Memlet('ref[0]')},
+                           {'out': dace.Memlet('B[0]')}),
+        ],
+    )
+
+    sdfg = stree.as_sdfg()
+    A = np.random.rand(20)
+    B = np.zeros(4)
+    sdfg(A=A, B=B)
+    assert B[0] == A[1] + 1
+
+
 if __name__ == '__main__':
     test_state_boundaries_none()
     test_state_boundaries_waw()
@@ -913,3 +966,5 @@ if __name__ == '__main__':
     test_create_nested_map_scope_multi_read()
     test_map_with_state_boundary_inside()
     test_edge_assignment_read_after_write()
+    test_create_view_read()
+    test_create_refset()

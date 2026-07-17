@@ -88,7 +88,7 @@ def has_compute(sig: TreeSignature) -> bool:
 
 
 #: Node kinds tree-to-SDFG conversion cannot lower yet.
-_UNSUPPORTED_EXECUTION_KINDS = (tn.ViewNode, tn.RefSetNode)
+_UNSUPPORTED_EXECUTION_KINDS = ()
 
 
 def execution_gap(root: tn.ScheduleTreeRoot) -> str:

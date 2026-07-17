@@ -91,6 +91,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._interstate_symbols: list[tn.AssignNode] = []
         """Interstate symbol assignments. Will be assigned with the next state transition."""
 
+        self._view_bindings: dict[str, tn.ViewNode] = {}
+        """View container name -> its ViewNode binding; resolved to viewing
+        edges per state by _connect_view_edges after traversal."""
+
         self._nviews_free: list[tn.NView] = []
         """Keep track of NView (nested SDFG view) nodes that are "free" to be used."""
 
@@ -762,7 +766,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_ViewNode(self, node: tn.ViewNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # Views are aliasing bindings, not dataflow: record the binding here;
+        # the viewing edges ('views' connector) are attached per state in a
+        # post-pass (_connect_view_edges), mirroring the classic frontend.
+        existing = self._view_bindings.get(node.target)
+        if existing is not None and (existing.source != node.source or str(existing.memlet) != str(node.memlet)):
+            raise NotImplementedError(f"Re-binding view '{node.target}' to a different subset is not supported yet.")
+        self._view_bindings[node.target] = node
 
     def visit_NView(self, node: tn.NView, sdfg: SDFG) -> None:
         # Basic working principle:
@@ -794,7 +804,22 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         raise RuntimeError(f"No matching NView found for target {node.target} in {self._nviews_free}.")
 
     def visit_RefSetNode(self, node: tn.RefSetNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # A reference set is an access node of the Reference container with an
+        # incoming edge on the 'set' connector, pointing to the referenced
+        # subset. References persist across states once set.
+        if isinstance(node.src_desc, nodes.CodeNode):
+            raise NotImplementedError("Reference sets from code nodes are not yet supported.")
+        if node.memlet is None:
+            raise NotImplementedError("Reference sets without a source memlet are not yet supported.")
+        if self._dataflow_stack:
+            raise NotImplementedError("Reference sets inside dataflow scopes are not yet supported.")
+
+        cache_key = (self._current_state, id(self._ctx.current_scope))
+        cache = self._ctx.access_cache.setdefault(cache_key, {})
+        source_name = node.memlet.data
+        source = cache[source_name] if source_name in cache else self._current_state.add_read(source_name)
+        target = self._current_state.add_write(node.target)
+        self._current_state.add_edge(source, None, target, 'set', copy.deepcopy(node.memlet))
 
     def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
         # When creating a state boundary, include all inter-state assignments that precede it.
@@ -990,10 +1015,49 @@ def from_schedule_tree(
     stree = _insert_state_boundaries_to_tree(stree)
 
     # Traverse tree and incrementally build SDFG, finally propagate memlets
-    _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs).visit(stree, sdfg=result)
+    visitor = _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs)
+    visitor.visit(stree, sdfg=result)
+    _connect_view_edges(result, visitor._view_bindings)
     propagation.propagate_memlets_sdfg(result)
 
     return result
+
+
+def _connect_view_edges(sdfg: SDFG, bindings: 'dict[str, tn.ViewNode]') -> None:
+    """
+    Attach the viewing edge (``'views'`` connector) for every state-level
+    access to a view container, mirroring the classic frontend's per-state
+    view resolution: view reads get an incoming edge from the viewed source,
+    view writes an outgoing edge into it. Iterates to support views of views.
+    """
+    if not bindings:
+        return
+    for state in sdfg.all_states():
+        scopes = state.scope_dict()
+        to_process = list(state.data_nodes())
+        while to_process:
+            # New source/target access nodes may themselves be views
+            next_round = []
+            for view_node in to_process:
+                binding = bindings.get(view_node.data)
+                if binding is None or scopes.get(view_node) is not None:
+                    continue
+                if (any(e.dst_conn == 'views' for e in state.in_edges(view_node))
+                        or any(e.src_conn == 'views' for e in state.out_edges(view_node))):
+                    continue
+                memlet = copy.deepcopy(binding.memlet)
+                if state.in_degree(view_node) == 0:
+                    source = state.add_read(binding.source)
+                    state.add_edge(source, None, view_node, 'views', memlet)
+                    next_round.append(source)
+                elif state.out_degree(view_node) == 0:
+                    target = state.add_write(binding.source)
+                    state.add_edge(view_node, 'views', target, None, memlet)
+                    next_round.append(target)
+                else:
+                    raise NotImplementedError(f"View '{view_node.data}' is both read and written in one state; "
+                                              "cannot determine the viewing direction.")
+            to_process = next_round
 
 
 def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTreeRoot:

@@ -120,6 +120,18 @@ def prog_early_return(A: dace.float64[N]):
     return 2.0
 
 
+@dace.program
+def prog_view_read(A: dace.float64[N], B: dace.float64[4]):
+    b = A[1:5]
+    B[:] = b + 1.0
+
+
+@dace.program
+def prog_view_write(A: dace.float64[N]):
+    b = A[1:5]
+    b[:] = 7.0
+
+
 def _read_box(box):
     return box['value']
 
@@ -162,6 +174,8 @@ CORPUS = [
     pytest.param(prog_early_return, 0, id='early_return'),
     pytest.param(prog_pyobject_multi, 1, id='pyobject_multi'),
     pytest.param(prog_detected_callable, 1, id='detected_callable'),
+    pytest.param(prog_view_read, 0, id='view_read'),
+    pytest.param(prog_view_write, 0, id='view_write'),
 ]
 
 
@@ -277,6 +291,19 @@ EXECUTION_CORPUS = [
                  _while_inputs,
                  lambda a: {'A': np.concatenate(([41.5], a['A'][1:]))},
                  id='detected_callable'),
+    pytest.param(prog_view_read,
+                 lambda: ({
+                     'A': np.random.rand(12),
+                     'B': np.zeros(4)
+                 }, {
+                     'N': 12
+                 }),
+                 lambda a: {'B': a['A'][1:5] + 1.0},
+                 id='view_read'),
+    pytest.param(prog_view_write,
+                 _while_inputs,
+                 lambda a: {'A': np.concatenate((a['A'][:1], np.full(4, 7.0), a['A'][5:]))},
+                 id='view_write'),
 ]
 
 
