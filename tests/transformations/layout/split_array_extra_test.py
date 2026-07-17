@@ -45,6 +45,15 @@ def pick_phase(a: dace.float64[nphase, ncol], out: dace.float64[ncol], k: dace.i
         out[j] = a[k, j] + 1.0
 
 
+@dace.program
+def indirect_phase(a: dace.float64[nphase, ncol], idx: dace.int32[nphase], out: dace.float64[ncol]):
+    """Like ``pick_phase``, but the runtime index is READ FROM a split array rather than passed in
+    as a symbol -- the shape that puts a split-array access inside an interstate edge."""
+    for i in range(nphase):
+        for j in range(ncol):
+            out[j] = out[j] + a[idx[i], j]
+
+
 # ---------------------------------------------------------------------------- #
 #  Pure helper functions
 # ---------------------------------------------------------------------------- #
@@ -209,6 +218,46 @@ def test_data_dependent_index_branches_bit_exact():
         assert numpy.allclose(out, a[k] + 1.0)
 
 
+def test_index_read_from_split_array_is_rewritten_bit_exact():
+    """The runtime index may itself be read FROM a split array, and that read lands in an
+    interstate edge -- the one place a split-array access is not a memlet.
+
+    ``pick_phase`` above cannot catch this: its runtime index is a plain symbol (``k``), so no
+    interstate edge ever names a split array. Here the edge carries ``idx_index = idx[i]``, which
+    must become ``idx_ql[0]``. Left alone it still names ``idx``, whose descriptor Phase 5 removes,
+    and the edge reads an array that no longer exists.
+    """
+    sdfg = indirect_phase.to_sdfg()
+    SplitArray(symbol_map=SYMBOL_MAP, name_map=NAME_MAP).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert "idx" not in sdfg.arrays
+    # The split index array is fully consumed, so each element is its own length-1 array.
+    for nm in NAMES:
+        assert tuple(int(s) for s in sdfg.arrays[f"idx_{nm}"].shape) == (1, )
+    # Nothing may still name the removed descriptor. validate() already rejects this, but assert it
+    # directly: the failure is the rewrite silently skipping the edge, not validation per se.
+    for e in sdfg.all_interstate_edges():
+        assert "idx" not in e.data.free_symbols, f"edge still reads removed array 'idx': {e.data.assignments}"
+
+    csdfg = sdfg.compile()
+    ncol_v = 6
+    a = numpy.random.rand(4, ncol_v)
+    idx = numpy.array([2, 0, 3, 1], dtype=numpy.int32)
+    out = numpy.zeros(ncol_v)
+
+    args = {"out": out, "ncol": ncol_v}
+    for i, nm in enumerate(NAMES):
+        args[f"a_{nm}"] = a[i].copy()
+        args[f"idx_{nm}"] = idx[i:i + 1].copy()
+    csdfg(**args)
+
+    ref = numpy.zeros(ncol_v)
+    for i in range(4):
+        ref += a[idx[i]]
+    assert numpy.array_equal(out, ref)
+
+
 def test_split_into_nested_sdfg_raises():
     """A split array feeding a nested SDFG connector is rejected (not yet supported)."""
     inner = dace.SDFG("inner_phase")
@@ -248,5 +297,6 @@ if __name__ == "__main__":
     test_split_two_phase_dimensions_bit_exact()
     test_split_full_dimension_creates_length1_descriptors()
     test_data_dependent_index_branches_bit_exact()
+    test_index_read_from_split_array_is_rewritten_bit_exact()
     test_split_into_nested_sdfg_raises()
     print("split_array extra tests PASS")

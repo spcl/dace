@@ -519,15 +519,21 @@ class SplitArray(ppl.Pass):
     # ------------------------------------------------------------------ #
 
     def _replace_iedges(self, sdfg: dace.SDFG, split_map: Dict[str, List[Optional[str]]]):
-        """Rewrite array-as-function calls in interstate-edge assignments.
+        """Rewrite array accesses in interstate-edge assignments to name the split array.
 
-        DaCe represents array accesses in interstate edges as SymPy function
-        applications (e.g. ``zsolqa(4, 2, j)``). This rewrites them to reference
-        the split array (e.g. ``zsolqa_rain_snow(j)``).
+        An access reaches this pass as one of two SymPy shapes, and both must be split:
+
+          * ``zsolqa(4, 2, j)`` parses to an ``AppliedUndef`` whose *type* is named after the
+            array, with the indices as its arguments.
+          * ``zsolqa[4, 2, j]`` parses to a :class:`Subscript` whose type is the literal string
+            ``"Subscript"``, carrying the array name as its *first argument* instead.
+
+        The Python frontend emits the second shape (``imelt_index = imelt[jm]``), so reading the
+        name off the type alone -- as this did -- silently skips every access it exists to rewrite.
         """
 
         def _rewrite_expr(expr):
-            """Recursively rewrite SymPy expr, folding split-dim args into the name."""
+            """Recursively rewrite SymPy expr, folding split-dim indices into the name."""
             if not expr.args:
                 return expr
 
@@ -536,18 +542,30 @@ class SplitArray(ppl.Pass):
             if not expr.is_Function:
                 return expr.func(*new_args)
 
+            # Normalize both access shapes to (array name, indices). See the method docstring.
             fname = type(expr).__name__
+            if fname == 'Subscript':
+                base, index_args = new_args[0], new_args[1:]
+                fname = str(base)
+            else:
+                index_args = new_args
+
             if fname not in split_map:
-                # Preserve argument order with non-commutative function
-                return sp.Function(fname, commutative=False)(*new_args)
+                # Rebuild through expr.func, NOT sp.Function(fname): that rebuilds a Subscript as a
+                # generic function merely *named* "Subscript", which keeps the array name as an
+                # ordinary argument where the real class excludes it -- so the name leaks into
+                # InterstateEdge.free_symbols. Harmless for an array that still exists, fatal for a
+                # split one, whose descriptor Phase 5 removes. expr.func preserves the class, and
+                # with it the argument order the old non-commutative rebuild was reaching for.
+                return expr.func(*new_args)
 
             dim_filter = split_map[fname]
-            assert len(dim_filter) == len(new_args), (f"{fname}: split_config has {len(dim_filter)} dims "
-                                                      f"but call has {len(new_args)} args: {expr}")
+            assert len(dim_filter) == len(index_args), (f"{fname}: split_config has {len(dim_filter)} dims "
+                                                        f"but access has {len(index_args)} indices: {expr}")
 
             name_parts = []
             kept_args = []
-            for splitd, arg in zip(dim_filter, new_args):
+            for splitd, arg in zip(dim_filter, index_args):
                 if splitd is not None:
                     name_parts.append(str(self._name_map[splitd][int(arg)]))
                 else:
