@@ -242,32 +242,32 @@ def _argument_binding(arglist, binding_order=None, optional_symbols=None):
             # dtype), so take a generic object and pull the raw bytes via the
             # buffer protocol. A nullable one accepts None -> null pointer.
             params_by_name[name] = f'nb::object {name}'
-            if desc.optional is False:
-                setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
-                call_args.append(f'reinterpret_cast<{ctype} *>({name}_buf.data())')
-                nb_args_by_name[name] = f'nb::arg("{name}")'
-            else:
+            if desc.optional:
                 setup_stmts.append(
                     f'std::optional<_DacePyBuffer> {name}_buf; if (!{name}.is_none()) {name}_buf.emplace({name}.ptr());'
                 )
                 call_args.append(f'{name}.is_none() ? nullptr : reinterpret_cast<{ctype} *>({name}_buf->data())')
                 nb_args_by_name[name] = f'nb::arg("{name}").none()'
+            else:
+                setup_stmts.append(f'_DacePyBuffer {name}_buf({name}.ptr());')
+                call_args.append(f'reinterpret_cast<{ctype} *>({name}_buf.data())')
+                nb_args_by_name[name] = f'nb::arg("{name}")'
 
         elif isinstance(desc, dt.Array):
             # The ndarray scalar type may differ from the cast target: a vector
             # dtype binds as its base scalar, but the kernel pointer stays dace::vec*.
             nb_scalar = _ndarray_scalar_ctype(desc.dtype)
             device = _ndarray_device(desc)
-            if desc.optional is False:
-                params_by_name[name] = f'nb::ndarray<{nb_scalar}, {device}> {name}'
-                call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
-                nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
-            else:
+            if desc.optional:
                 # Nullable array: None becomes a null pointer. .none() is
                 # required - nanobind rejects None by default.
                 params_by_name[name] = f'std::optional<nb::ndarray<{nb_scalar}, {device}>> {name}'
                 call_args.append(f'{name}.has_value() ? reinterpret_cast<{ctype} *>({name}->data()) : nullptr')
                 nb_args_by_name[name] = f'nb::arg("{name}").noconvert().none()'
+            else:
+                params_by_name[name] = f'nb::ndarray<{nb_scalar}, {device}> {name}'
+                call_args.append(f'reinterpret_cast<{ctype} *>({name}.data())')
+                nb_args_by_name[name] = f'nb::arg("{name}").noconvert()'
 
         elif isinstance(desc, dt.Scalar) and name in optional_symbols:
             # An "artifact" argument (a size symbol outside the user-facing
