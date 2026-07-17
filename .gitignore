@@ -307,3 +307,6 @@ id_ecdsa*
 # Local secrets / tokens
 .mtoken
 dace/transformation/layout/cost_model/build/
+
+# cloudsc_variants perf job: cached Phase-A parallelized SDFG (expensive to rebuild)
+performance_regression_jobs/cloudsc_variants/cache/

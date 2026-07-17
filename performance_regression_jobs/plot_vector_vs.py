@@ -38,12 +38,27 @@ def baseline_lane(corpus):
     return 'numpy' if corpus in ('npbench', 'polybench') else 'compiler-seq'
 
 
+def _rank(entry):
+    """Sort key for picking the representative of a lane across tags: a
+    correct+timed run beats an untimed/failed one, and among correct+timed the
+    smaller min_ms wins (best-of-N over the compiler x node tags)."""
+    good = bool(entry.get('correct') and entry.get('min_ms') is not None)
+    return (good, -(entry['min_ms'] if good else float('inf')))
+
+
 def merge_kernel(kernel_dir):
+    """All lanes for one kernel merged across its tag folders. A lane CAN appear
+    in several tags (e.g. compiler-seq is timed in a compiler-prefixed tag but
+    untimed in a bare-node tag), so blind last-tag-wins lets a failed copy
+    clobber a good one -- keep the best-ranked entry per lane instead."""
     merged = {}
     for tag in sorted(os.listdir(kernel_dir)):
         p = os.path.join(kernel_dir, tag)
-        if os.path.isdir(p):
-            merged.update(engine._read_kernel(p))
+        if not os.path.isdir(p):
+            continue
+        for lane, entry in engine._read_kernel(p).items():
+            if lane not in merged or _rank(entry) > _rank(merged[lane]):
+                merged[lane] = entry
     return merged
 
 
