@@ -24,7 +24,6 @@ from dace import data, dtypes
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt
-from dace.frontend.python.nextgen.common import FrontendError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 
 
@@ -223,8 +222,9 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
       qualified names again,
     - nested :class:`OpaqueStmt` markers (inside a rolled-back compound
       statement) are replaced by their original statements,
-    - nested :class:`ExplicitTasklet` markers cannot be reconstructed (their
-      with-block form was consumed during canonicalization) and raise.
+    - nested :class:`ExplicitTasklet` markers are restored to their original
+      statement (interpreter-executable ``with dace.tasklet:`` blocks), or a
+      synthesized equivalent with-block when no original exists.
     """
     from dace.frontend.python.nextgen.canonical.cpa import ExplicitTasklet, OpaqueStmt
     from dace.frontend.python.nextgen.semantics.inference import is_literal_constant
@@ -267,8 +267,16 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
             return self.visit(node.original)
 
         def visit_ExplicitTasklet(self, node: ExplicitTasklet) -> ast.stmt:
-            raise FrontendError(
-                'Cannot re-lower an explicit dataflow tasklet through the Python interpreter '
-                '(e.g., inside a control-flow construct that fell back to a callback)', state.context.filename, node)
+            # A tasklet inside a rolled-back region replays through the
+            # interpreter: restore the original statement (``with
+            # dace.tasklet:`` blocks are interpreter-executable), or
+            # synthesize an equivalent with-block for markers without a
+            # standalone source form (desugared ``@dace.map`` bodies).
+            if node.original is not None:
+                return self.visit(node.original)
+            context = ast.Attribute(value=ast.Name(id='dace', ctx=ast.Load()), attr='tasklet', ctx=ast.Load())
+            with_block = ast.With(items=[ast.withitem(context_expr=context, optional_vars=None)],
+                                  body=[self.visit(child) for child in node.statements])
+            return ast.copy_location(with_block, node)
 
     return ast.fix_missing_locations(_Restorer().visit(copy.deepcopy(statement)))

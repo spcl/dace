@@ -201,7 +201,14 @@ def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState) -> List[Tup
 def _bound(node, default, state: LoweringState):
     if node is None:
         return default
-    return symbolic.pystr_to_symbolic(astutils.unparse(resolve_symbol_names(node, state)))
+    expression = astutils.unparse(resolve_symbol_names(node, state))
+    try:
+        return symbolic.pystr_to_symbolic(expression)
+    except Exception:
+        # Not symbolizable (e.g. references a value only the interpreter
+        # knows); the loop falls back to a callback.
+        raise UnsupportedFeatureError(f'Cannot parse loop bound "{expression}" symbolically', state.context.filename,
+                                      node)
 
 
 def _index_dtype(bounds: List[ast.expr], state: LoweringState) -> dtypes.typeclass:

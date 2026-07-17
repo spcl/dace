@@ -19,7 +19,7 @@ Pass order matters and is fixed by :func:`default_passes`:
 """
 import ast
 import copy
-from typing import List, Union
+from typing import List, Optional, Union
 
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.canonical.cpa import CANONICAL_LEAVES, ExplicitTasklet, OpaqueStmt
@@ -106,6 +106,7 @@ class RecognizeExplicitDataflow(_BodyTransformer):
                 return ExplicitTasklet(label=f'tasklet_{statement.lineno}',
                                        statements=statement.body,
                                        location=statement,
+                                       original=statement,
                                        **_tasklet_arguments(context_expr))
         if isinstance(statement, ast.FunctionDef) and len(statement.decorator_list) == 1:
             decorator = statement.decorator_list[0]
@@ -114,6 +115,7 @@ class RecognizeExplicitDataflow(_BodyTransformer):
                 return ExplicitTasklet(label=statement.name,
                                        statements=statement.body,
                                        location=statement,
+                                       original=statement,
                                        **_tasklet_arguments(decorator))
             if _refers_to(decorator_callee, 'dace.map', self.context.global_vars):
                 return self._desugar_map_function(statement, decorator)
@@ -197,10 +199,14 @@ class DesugarStatements(_BodyTransformer):
     Desugar statement forms that have direct canonical equivalents:
 
     - ``a = b = expr`` becomes ``a = expr; b = a``.
+    - ``a, b = c, d`` becomes ``t0 = c; t1 = d; a = t0; b = t1`` (right-hand
+      side evaluated fully before any target is assigned, per Python).
     - ``x += expr`` becomes ``x = x + expr``.
     - ``x: T = expr`` becomes ``x = expr``, carrying the declared type on the
       ``Assign`` node (``annotation`` attribute) as a descriptor hint for the
-      lowering stage.
+      lowering stage. Bare declarations (``x: T`` without a value) stay as
+      canonical ``AnnAssign`` nodes so the hint (e.g. a Reference type) is
+      applied when the name is first assigned.
     - ``for``/``while`` ``else`` clauses become explicit did-break flags.
     - Docstring expression statements are removed.
     """
@@ -224,6 +230,10 @@ class DesugarStatements(_BodyTransformer):
             for target in rest:
                 statements.append(_located(ast.Assign(targets=[target], value=copy.deepcopy(source)), statement))
             return self._transform_body(statements)
+        if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
+            unpacked = self._desugar_tuple_swap(statement)
+            if unpacked is not None:
+                return self._transform_body(unpacked)
         if isinstance(statement, ast.AugAssign):
             read_target = copy.deepcopy(statement.target)
             for node in ast.walk(read_target):
@@ -233,7 +243,9 @@ class DesugarStatements(_BodyTransformer):
             return _located(ast.Assign(targets=[statement.target], value=value), statement)
         if isinstance(statement, ast.AnnAssign):
             if statement.value is None:
-                return None
+                # Bare declaration: canonical as-is (a descriptor hint for the
+                # first assignment to the name, e.g. Reference declarations).
+                return statement if isinstance(statement.target, ast.Name) else None
             assign = _located(ast.Assign(targets=[statement.target], value=statement.value), statement)
             # Keep the declared type as a descriptor hint for the lowering
             # stage (classic frontend semantics: annotations type the target,
@@ -243,6 +255,30 @@ class DesugarStatements(_BodyTransformer):
         if isinstance(statement, (ast.For, ast.While)) and statement.orelse:
             return self._desugar_loop_else(statement)
         return self._recurse(statement)
+
+    def _desugar_tuple_swap(self, statement: ast.Assign) -> Optional[List[ast.stmt]]:
+        """
+        Unpack a tuple-to-tuple assignment (``a, b = c, d``) into temporaries
+        followed by individual assignments, or None if the statement is not of
+        that shape. Starred and nested-tuple targets are left untouched.
+        """
+        target = statement.targets[0]
+        value = statement.value
+        if not isinstance(target, (ast.Tuple, ast.List)) or not isinstance(value, (ast.Tuple, ast.List)):
+            return None
+        if len(target.elts) != len(value.elts):
+            return None
+        if any(isinstance(element, (ast.Starred, ast.Tuple, ast.List)) for element in target.elts + value.elts):
+            return None
+        statements: List[ast.stmt] = []
+        temporaries: List[str] = []
+        for element in value.elts:
+            temp = self.context.fresh_name('__unpack')
+            temporaries.append(temp)
+            statements.append(_assign(temp, element, statement))
+        for element, temp in zip(target.elts, temporaries):
+            statements.append(_located(ast.Assign(targets=[element], value=_name_load(temp, statement)), statement))
+        return statements
 
     def _desugar_loop_else(self, loop: Union[ast.For, ast.While]) -> List[ast.stmt]:
         """Rewrite a loop-else clause using an explicit did-break flag."""

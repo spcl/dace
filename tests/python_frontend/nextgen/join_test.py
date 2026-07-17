@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Tests for branch-scoped bindings and join merging in the next-generation
-frontend: in-place rebinds without φ, compatible container divergence merged
-through per-branch copies, unsound joins rolled back to callbacks, and the
-loop-entry stability rule.
+frontend: in-place rebinds without φ, compatible array divergence merged
+through a Reference re-pointed per branch (scalars merge by value copy),
+unsound joins rolled back to callbacks, and the loop-entry stability rule.
 """
 import dace
 from dace.frontend.python import nextgen
@@ -32,7 +32,8 @@ def test_if_inplace_scalar_rebind_no_merge_nodes():
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
-def test_if_divergent_alias_merges_with_copies():
+def test_if_divergent_alias_merges_with_refsets():
+    from dace import data
 
     @dace.program
     def alias_merge(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], flag: dace.int32):
@@ -46,15 +47,16 @@ def test_if_divergent_alias_merges_with_copies():
     if_scopes = _nodes_of_type(tree, tn.IfScope)
     else_scopes = _nodes_of_type(tree, tn.ElseScope)
     assert len(if_scopes) == 1 and len(else_scopes) == 1
-    # Each branch ends with a copy into the merged container
-    if_copies = [child for child in if_scopes[0].children if isinstance(child, tn.CopyNode)]
-    else_copies = [child for child in else_scopes[0].children if isinstance(child, tn.CopyNode)]
-    assert len(if_copies) == 1 and if_copies[0].memlet.data == 'A'
-    assert len(else_copies) == 1 and else_copies[0].memlet.data == 'B'
-    merged = if_copies[0].target
-    assert merged == else_copies[0].target
-    assert merged in tree.containers
-    # The read after the join consumes the merged container
+    # Arrays are mutable: each branch re-points a merged Reference container
+    # (a pointer set, preserving aliasing for writes after the join)
+    if_refsets = [child for child in if_scopes[0].children if isinstance(child, tn.RefSetNode)]
+    else_refsets = [child for child in else_scopes[0].children if isinstance(child, tn.RefSetNode)]
+    assert len(if_refsets) == 1 and if_refsets[0].memlet.data == 'A'
+    assert len(else_refsets) == 1 and else_refsets[0].memlet.data == 'B'
+    merged = if_refsets[0].target
+    assert merged == else_refsets[0].target
+    assert isinstance(tree.containers[merged], data.Reference)
+    # The read after the join consumes the merged reference
     final_copies = [
         copy for copy in _nodes_of_type(tree, tn.CopyNode) if copy.target == 'C' and copy.memlet.data == merged
     ]
@@ -75,13 +77,13 @@ def test_if_without_else_gets_implicit_merge_branch():
     if_scopes = _nodes_of_type(tree, tn.IfScope)
     else_scopes = _nodes_of_type(tree, tn.ElseScope)
     assert len(if_scopes) == 1
-    # The fall-through path gets a synthesized else branch carrying its copy
+    # The fall-through path gets a synthesized else branch carrying its refset
     assert len(else_scopes) == 1
-    if_copies = [child for child in if_scopes[0].children if isinstance(child, tn.CopyNode)]
-    else_copies = [child for child in else_scopes[0].children if isinstance(child, tn.CopyNode)]
-    assert len(if_copies) == 1 and if_copies[0].memlet.data == 'B'
-    assert len(else_copies) == 1 and else_copies[0].memlet.data == 'A'
-    assert if_copies[0].target == else_copies[0].target
+    if_refsets = [child for child in if_scopes[0].children if isinstance(child, tn.RefSetNode)]
+    else_refsets = [child for child in else_scopes[0].children if isinstance(child, tn.RefSetNode)]
+    assert len(if_refsets) == 1 and if_refsets[0].memlet.data == 'B'
+    assert len(else_refsets) == 1 and else_refsets[0].memlet.data == 'A'
+    assert if_refsets[0].target == else_refsets[0].target
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
@@ -135,13 +137,13 @@ def test_static_same_shape_divergence_merges():
     if_scopes = _nodes_of_type(tree, tn.IfScope)
     else_scopes = _nodes_of_type(tree, tn.ElseScope)
     assert len(if_scopes) == 1 and len(else_scopes) == 1
-    # Each branch materializes its sequence and copies it into the merged container
-    if_copies = [child for child in if_scopes[0].children if isinstance(child, tn.CopyNode)]
-    else_copies = [child for child in else_scopes[0].children if isinstance(child, tn.CopyNode)]
-    assert len(if_copies) == 1 and len(else_copies) == 1
-    assert if_copies[0].memlet.data in tree.constants
-    assert else_copies[0].memlet.data in tree.constants
-    assert if_copies[0].target == else_copies[0].target
+    # Each branch materializes its sequence and points the merged reference at it
+    if_refsets = [child for child in if_scopes[0].children if isinstance(child, tn.RefSetNode)]
+    else_refsets = [child for child in else_scopes[0].children if isinstance(child, tn.RefSetNode)]
+    assert len(if_refsets) == 1 and len(else_refsets) == 1
+    assert if_refsets[0].memlet.data in tree.constants
+    assert else_refsets[0].memlet.data in tree.constants
+    assert if_refsets[0].target == else_refsets[0].target
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
@@ -159,9 +161,9 @@ def test_static_container_mix_merges():
     # The static fall-through path materializes into a synthesized else branch
     else_scopes = _nodes_of_type(tree, tn.ElseScope)
     assert len(else_scopes) == 1
-    else_copies = [child for child in else_scopes[0].children if isinstance(child, tn.CopyNode)]
-    assert len(else_copies) == 1
-    assert else_copies[0].memlet.data in tree.constants
+    else_refsets = [child for child in else_scopes[0].children if isinstance(child, tn.RefSetNode)]
+    assert len(else_refsets) == 1
+    assert else_refsets[0].memlet.data in tree.constants
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
@@ -244,16 +246,16 @@ def test_elif_chain_merges():
     assert len(_nodes_of_type(tree, tn.IfScope)) == 1
     assert len(_nodes_of_type(tree, tn.ElifScope)) == 1
     assert len(_nodes_of_type(tree, tn.ElseScope)) == 1
-    # Three merge copies, one per branch, into the same container
-    copies = _nodes_of_type(tree, tn.CopyNode)
-    merge_targets = {copy.target for copy in copies if copy.memlet.data in ('A', 'B', 'C')}
+    # Three merge refsets, one per branch, re-pointing the same reference
+    refsets = _nodes_of_type(tree, tn.RefSetNode)
+    merge_targets = {refset.target for refset in refsets if refset.memlet.data in ('A', 'B', 'C')}
     assert len(merge_targets) == 1
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
 if __name__ == '__main__':
     test_if_inplace_scalar_rebind_no_merge_nodes()
-    test_if_divergent_alias_merges_with_copies()
+    test_if_divergent_alias_merges_with_refsets()
     test_if_without_else_gets_implicit_merge_branch()
     test_if_shape_divergent_falls_back()
     test_static_divergence_falls_back()

@@ -130,15 +130,24 @@ def indexed_subset(access: DataAccess, params: List[str], result_shape: List) ->
     :param result_shape: The broadcast result shape.
     """
     operand_size = access.subset.size()
-    ranges = []
-    # Right-align operand dims against result dims
+    nondegenerate = [dim for dim, size in enumerate(operand_size) if size != 1]
+    if len(nondegenerate) > len(params):
+        raise UnsupportedFeatureError('Operand has more nondegenerate dimensions than the broadcast result '
+                                      f'({len(nondegenerate)} > {len(params)})')
+    # Right-align operand dims against result dims. When the operand carries
+    # more raw dimensions than the result (integer-indexed dimensions kept as
+    # size-1 subset entries), align its nondegenerate dims instead.
     param_offset = len(result_shape) - len(operand_size)
+    if param_offset < 0:
+        aligned_params = {dim: len(params) - 1 - position for position, dim in enumerate(reversed(nondegenerate))}
+    else:
+        aligned_params = {dim: dim + param_offset for dim in nondegenerate}
+    ranges = []
     for dim_index, (dim_size, (start, _, step)) in enumerate(zip(operand_size, access.subset.ranges)):
-        aligned = dim_index + param_offset
         if dim_size == 1:
             index = start
         else:
-            param = symbolic.pystr_to_symbolic(params[aligned])
+            param = symbolic.pystr_to_symbolic(params[aligned_params[dim_index]])
             index = start + param * step
         ranges.append((index, index, 1))
     return subsets.Range(ranges)

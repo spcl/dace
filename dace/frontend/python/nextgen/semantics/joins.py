@@ -10,9 +10,13 @@ a single post-join state:
    dominant case: scalar names are containers updated in place, so plain
    conditional assignments never diverge.
 2. **Shape- and dtype-compatible container divergence** (each path bound the
-   name to a different repository container) allocates one merged container
-   and appends a full-range copy at the tail of every diverging branch — the
-   φ node of the SSA-lite binding design, materialized only when needed.
+   name to a different repository container) merges — the φ node of the
+   SSA-lite binding design, materialized only when needed. Array bindings
+   merge through a :class:`~dace.data.Reference` container that each branch
+   re-points with a :class:`RefSetNode` (a pointer set, preserving Python
+   aliasing semantics for writes after the join); scalar bindings, which are
+   immutable in Python, merge through a plain container with a full-range
+   copy at each branch tail.
 3. **Conditional definitions** (a name bound on some paths only) keep the
    binding of the paths that define it; reading the name after the join when
    an undefined path was taken is a user error, matching the stable frontend.
@@ -24,6 +28,7 @@ a single post-join state:
    control-flow rule rolls the whole chain back and re-lowers it as a single
    Python callback, preserving totality.
 """
+import copy
 from typing import List, Optional
 
 from dace import data
@@ -102,20 +107,32 @@ def merge_branches(before: BindingSnapshot, branch_ends: List[BindingSnapshot],
 
         descriptors = [state.context.containers[container] for container in path_containers if container is not None]
         merged_descriptor = _merged_descriptor(name, descriptors, statement, state)
+        # Arrays are mutable: the merged name must alias the branch's actual
+        # container so post-join writes reach it — a runtime reference set,
+        # not a copy. Scalars are immutable, so a value copy is exact.
+        reference_merge = isinstance(merged_descriptor, data.Array)
+        if reference_merge:
+            merged_descriptor = data.Reference.view(merged_descriptor)
         merged = state.context.add_container(name, merged_descriptor)
 
         for index, container in enumerate(path_containers):
             if container is None or container == merged:
-                continue  # Undefined on this path: nothing to copy
+                continue  # Undefined on this path: nothing to merge
             scope = branch_scopes[index]
             if scope is None:
                 scope = _implicit_else(branch_scopes, index, state)
             source_descriptor = state.context.containers[container]
-            copy_node = tn.CopyNode(target=merged,
-                                    memlet=Memlet(data=container,
-                                                  subset=Range.from_array(source_descriptor),
-                                                  other_subset=Range.from_array(merged_descriptor)))
-            scope.add_child(copy_node)
+            if reference_merge:
+                merge_node = tn.RefSetNode(target=merged,
+                                           memlet=Memlet(data=container, subset=Range.from_array(source_descriptor)),
+                                           src_desc=source_descriptor,
+                                           ref_desc=copy.deepcopy(merged_descriptor))
+            else:
+                merge_node = tn.CopyNode(target=merged,
+                                         memlet=Memlet(data=container,
+                                                       subset=Range.from_array(source_descriptor),
+                                                       other_subset=Range.from_array(merged_descriptor)))
+            scope.add_child(merge_node)
         state.context.bind(name, merged)
 
 

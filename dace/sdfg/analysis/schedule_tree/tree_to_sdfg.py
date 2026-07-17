@@ -820,6 +820,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         source = cache[source_name] if source_name in cache else self._current_state.add_read(source_name)
         target = self._current_state.add_write(node.target)
         self._current_state.add_edge(source, None, target, 'set', copy.deepcopy(node.memlet))
+        cache.setdefault(source_name, source)
+        # Later reads of the reference in this state must go through the set
+        # node, so the set-then-read order is preserved by the dataflow.
+        cache[node.target] = target
 
     def visit_StateBoundaryNode(self, node: tn.StateBoundaryNode, sdfg: SDFG) -> None:
         # When creating a state boundary, include all inter-state assignments that precede it.
@@ -1159,6 +1163,19 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
         inputs = n.input_memlets()
         outputs = n.output_memlets()
 
+        def _restart_state(index: int) -> None:
+            # The node at ``index`` becomes the first node of a new state: its
+            # reads and writes must seed the fresh tables, so hazards against
+            # it (e.g. a write-after-read within the new state) stay visible.
+            boundaries_to_insert.append(index)
+            reads.clear()
+            writes.clear()
+            parents.clear()
+            for inp in inputs:
+                reads[inp] = [n]
+            for out in outputs:
+                writes[out] = [n]
+
         # Register reads
         for inp in inputs:
             if inp not in reads:
@@ -1174,27 +1191,18 @@ def _insert_memory_dependency_state_boundaries(scope: tn.ScheduleTreeScope):
 
         # Inter-state assignment nodes with reads necessitate a state transition if they were written to.
         if isinstance(n, tn.AssignNode) and any(inp in writes for inp in inputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
+            _restart_state(i)
             continue
 
         # Write after write or potential write/write data race, insert state boundary
         if any(o in writes and (o not in reads or any(id(r) not in parents for r in reads[o])) for o in outputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
+            _restart_state(i)
             continue
 
         # Potential read/write data race: if any read is not in the parents of this node, it might
         # be performed in parallel
         if any(o in reads and any(id(r) not in parents for r in reads[o]) for o in outputs):
-            boundaries_to_insert.append(i)
-            reads.clear()
-            writes.clear()
-            parents.clear()
+            _restart_state(i)
             continue
 
         # Register writes after all hazards have been tested for

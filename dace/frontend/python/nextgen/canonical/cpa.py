@@ -11,6 +11,7 @@ node shape.
 Canonical statement grammar::
 
     stmt := Assign(target, flat)         # single target: Name | Subscript(Name, idx)
+          | AnnAssign(Name, T)           # bare declaration (no value): descriptor hint
           | Expr(Call)                   # call statement (flat call)
           | If(atomexpr, [stmt], [stmt])
           | While(atomexpr, [stmt])      # test is atomic (complex tests are pre-hoisted)
@@ -70,18 +71,22 @@ class OpaqueStmt(ast.stmt):
     _fields = ()
 
     def __init__(self,
-                 original: ast.stmt,
-                 reason: str,
-                 inputs: Set[str],
-                 outputs: Set[str],
+                 original: Optional[ast.stmt] = None,
+                 reason: str = '',
+                 inputs: Optional[Set[str]] = None,
+                 outputs: Optional[Set[str]] = None,
                  originals: Optional[List[ast.stmt]] = None):
+        # All parameters default so ``copy.deepcopy`` can reconstruct the node
+        # (``ast.AST.__reduce__`` rebuilds with no arguments, then restores
+        # the instance dictionary).
         super().__init__()
         self.original = original
         self.reason = reason
-        self.inputs = inputs
-        self.outputs = outputs
-        self.originals = list(originals) if originals is not None else [original]
-        ast.copy_location(self, original)
+        self.inputs = inputs if inputs is not None else set()
+        self.outputs = outputs if outputs is not None else set()
+        self.originals = list(originals) if originals is not None else ([original] if original is not None else [])
+        if original is not None:
+            ast.copy_location(self, original)
 
 
 class ExplicitTasklet(ast.stmt):
@@ -101,26 +106,34 @@ class ExplicitTasklet(ast.stmt):
     :param code_global: Global-scope code emitted alongside the tasklet.
     :param code_init: Initialization code emitted alongside the tasklet.
     :param code_exit: Finalization code emitted alongside the tasklet.
+    :param original: The original (pre-canonicalization) statement, restored
+                     when a surrounding region falls back to a callback. None
+                     for synthesized tasklets with no standalone source form
+                     (e.g. the body of a desugared ``@dace.map`` function).
     """
     _fields = ()
 
     def __init__(self,
-                 label: str,
-                 statements: List[ast.stmt],
+                 label: str = '',
+                 statements: Optional[List[ast.stmt]] = None,
                  language: Optional[str] = None,
                  side_effects: Optional[bool] = None,
                  code_global: str = '',
                  code_init: str = '',
                  code_exit: str = '',
-                 location: Optional[ast.AST] = None):
+                 location: Optional[ast.AST] = None,
+                 original: Optional[ast.stmt] = None):
+        # All parameters default so ``copy.deepcopy`` can reconstruct the node
+        # (``ast.AST.__reduce__`` rebuilds with no arguments).
         super().__init__()
         self.label = label
-        self.statements = statements
+        self.statements = statements if statements is not None else []
         self.language = language
         self.side_effects = side_effects
         self.code_global = code_global
         self.code_init = code_init
         self.code_exit = code_exit
+        self.original = original
         if location is not None:
             ast.copy_location(self, location)
 
@@ -288,6 +301,11 @@ def _violations_in_statement(node: ast.stmt) -> Iterable[str]:
             yield f'Non-canonical assignment target: {ast.dump(node.targets[0])[:80]}'
         if not is_flat(node.value):
             yield f'Non-canonical assignment value: {ast.dump(node.value)[:80]}'
+    elif isinstance(node, ast.AnnAssign):
+        # Only bare declarations survive desugaring (annotated assignments
+        # become Assign nodes carrying the annotation as an attribute).
+        if node.value is not None or not isinstance(node.target, ast.Name):
+            yield f'Non-canonical annotated assignment: {ast.dump(node)[:80]}'
     elif isinstance(node, ast.If):
         if not is_atomexpr(node.test):
             yield f'Non-canonical if-test: {ast.dump(node.test)[:80]}'

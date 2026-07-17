@@ -11,10 +11,14 @@ shared :func:`~dace.frontend.python.memlet_parser.parse_memlet`, porting the
 semantics of the stable frontend's ``TaskletTransformer``. A top-level string
 statement provides intrinsic (C++) tasklet code.
 
-Unlike general Python statements, malformed explicit-dataflow constructs raise
+Unlike general Python statements, malformed explicit-dataflow *structure*
+(duplicate connectors, multiple intrinsic bodies, unknown languages) raises
 frontend errors instead of falling back to callbacks: this is dace-specific
 syntax, so a violation is a user error (matching the stable frontend's
-``TaskletTransformer`` contract), not an unsupported-language feature.
+``TaskletTransformer`` contract), not an unsupported-language feature. Memlet
+*parse* failures fall back, however: the referenced name may be unavailable
+only because its producer fell back to an interpreter callback, and the
+replayed ``with dace.tasklet:`` block re-raises genuine syntax errors.
 
 Global-scope, initialization, and finalization code attach to the tasklet
 through ``with dace.tasklet(code_global=..., code_init=..., code_exit=...)``
@@ -52,11 +56,11 @@ def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> 
         binop = _memlet_binop(body_statement)
         if binop is not None:
             if isinstance(binop.op, ast.LShift):  # local << A[...]
-                connector, memlet = parse_memlet(_shim(state), binop.right, binop.left, defined)
+                connector, memlet = _parse_tasklet_memlet(binop.right, binop.left, defined, state, body_statement)
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 in_memlets[connector] = _to_repository(memlet, state, body_statement)
             else:  # local >> A[...]
-                connector, memlet = parse_memlet(_shim(state), binop.left, binop.right, defined)
+                connector, memlet = _parse_tasklet_memlet(binop.left, binop.right, defined, state, body_statement)
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 out_memlets[connector] = _to_repository(memlet, state, body_statement)
             continue
@@ -89,6 +93,24 @@ def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> 
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
 
 
+def _parse_tasklet_memlet(memlet_expression: ast.expr, connector_expression: ast.expr, defined: Dict,
+                          state: LoweringState, statement: ast.stmt):
+    """
+    Parse a tasklet memlet statement through the shared memlet parser. Parse
+    failures become :class:`UnsupportedFeatureError` (falling back to a
+    callback) rather than hard errors: the referenced name may be unavailable
+    only because an earlier statement fell back (e.g. its producer became an
+    interpreter callback), and genuinely malformed memlets surface when the
+    callback replays the ``with dace.tasklet:`` block in the interpreter.
+    """
+    try:
+        return parse_memlet(_shim(state), memlet_expression, connector_expression, defined)
+    except UnsupportedFeatureError:
+        raise
+    except Exception as error:
+        raise UnsupportedFeatureError(f'Cannot parse tasklet memlet: {error}', state.context.filename, statement)
+
+
 def _memlet_binop(statement: ast.stmt) -> Optional[ast.BinOp]:
     """Return the shift binop of a memlet statement, or None."""
     if (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.BinOp)
@@ -112,6 +134,11 @@ def _to_repository(memlet: Memlet, state: LoweringState, statement: ast.stmt) ->
     binding = state.context.resolve(memlet.data)
     if binding is None or binding.kind != 'container':
         raise UnsupportedFeatureError(f'Tasklet memlet references unknown container "{memlet.data}"',
+                                      state.context.filename, statement)
+    if isinstance(state.context.containers[binding.container].dtype, dtypes.pyobject):
+        # The producer of this name fell back to the interpreter; its typed
+        # form is unavailable, so the tasklet must replay there too.
+        raise UnsupportedFeatureError(f'Tasklet memlet references interpreter-only container "{memlet.data}"',
                                       state.context.filename, statement)
     memlet.data = binding.container
     return memlet

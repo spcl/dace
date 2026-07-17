@@ -10,7 +10,13 @@ assignment rules rather than computation:
 - whole-array aliasing (``b = A``) is a binding update (arrays are mutable),
 - slice reads (``b = A[1:4]``) bind as :class:`ViewNode` (NumPy basic-indexing
   view semantics),
-- subset-to-subset copies (``B[2:4] = A[0:2]``) become :class:`CopyNode`.
+- subset-to-subset copies (``B[2:4] = A[0:2]``) become :class:`CopyNode`,
+- names declared as :class:`~dace.data.Reference` (via annotation) are runtime
+  aliases: every assignment to them emits :class:`RefSetNode` instead of a
+  binding update, and assigning *from* a reference-bound name materializes the
+  target as a fresh reference (a pointer copy — a compile-time binding to a
+  reference container would break when that reference is later re-set, e.g.
+  in a double-buffering swap).
 
 Everything computational is delegated to the type-directed dispatch seam
 (:mod:`~dace.frontend.python.nextgen.lowering.dispatch`), which selects a
@@ -23,7 +29,7 @@ a planned optimization pass, not a correctness requirement.
 """
 import ast
 import copy
-from typing import Optional
+from typing import Optional, Tuple
 
 from dace import data, dtypes, subsets
 from dace.memlet import Memlet
@@ -61,7 +67,7 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
         dispatch.fallback_to_callback(statement, state, str(reason))
         return
     if inferred.kind == 'static':
-        if isinstance(target, ast.Name):
+        if isinstance(target, ast.Name) and _reference_binding(target.id, state) is None:
             state.context.bind_static(target.id, inferred.value)
             return
         # Static value written into a container subset: materialize first
@@ -79,10 +85,31 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
 
 def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, statement: ast.Assign,
                        state: LoweringState) -> None:
-    # Whole-array aliasing: rebind the name. Arrays are mutable in Python, so
-    # both names must observe subsequent writes; a binding update models that.
+    # Names bound to Reference containers re-point at runtime: assignments are
+    # reference sets, never binding updates.
+    reference = _reference_binding(target.id, state)
+    if reference is not None:
+        _lower_reference_set(target, reference, value, inferred, statement, state)
+        return
+
     if isinstance(value, ast.Name):
         source_access = resolve_access(value, state)
+        # Assigning from a reference-bound name materializes a fresh reference
+        # (pointer copy): the source reference may later be re-set, so a
+        # compile-time alias to its container would be unsound.
+        if source_access is not None and isinstance(source_access.descriptor, data.Reference):
+            reference_descriptor = copy.deepcopy(source_access.descriptor)
+            container = state.context.add_container(target.id, reference_descriptor)
+            state.context.bind(target.id, container)
+            state.emitter.emit(
+                tn.RefSetNode(target=container,
+                              memlet=Memlet(data=source_access.container, subset=source_access.subset),
+                              src_desc=source_access.descriptor,
+                              ref_desc=copy.deepcopy(reference_descriptor)))
+            return
+        # Whole-array aliasing: rebind the name. Arrays are mutable in Python,
+        # so both names must observe subsequent writes; a binding update
+        # models that.
         if source_access is not None and isinstance(source_access.descriptor, data.Array):
             state.context.bind(target.id, source_access.container)
             return
@@ -143,6 +170,73 @@ def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringSta
                     view_desc=view_descriptor))
 
 
+@rule(ast.AnnAssign)
+def lower_declaration(statement: ast.AnnAssign, state: LoweringState) -> None:
+    """
+    Lower a bare declaration (``x: T`` without a value): register the declared
+    descriptor so the first assignment to the name adopts it (the primary use
+    is Reference declarations, e.g. ``tmp: dace.data.ArrayReference(...)``).
+    Unresolvable annotations are no-ops, matching the classic frontend.
+    """
+    apply_annotation_hint(statement.target.id, statement, state)
+
+
+def _reference_binding(name: str, state: LoweringState) -> Optional[Tuple[str, data.Data]]:
+    """The (container, descriptor) pair of a name bound to a Reference
+    container, or None."""
+    binding = state.context.resolve(name)
+    if binding is None or binding.kind != 'container':
+        return None
+    descriptor = state.context.containers[binding.container]
+    if isinstance(descriptor, data.Reference):
+        return binding.container, descriptor
+    return None
+
+
+def _lower_reference_set(target: ast.Name, reference: Tuple[str, data.Data], value: ast.expr, inferred: Inferred,
+                         statement: ast.Assign, state: LoweringState) -> None:
+    """
+    Emit a :class:`RefSetNode` re-pointing a reference-bound name. Direct
+    container sources re-point in place; computed values materialize into a
+    fresh container first and the reference is set to it.
+    """
+    container, reference_descriptor = reference
+
+    access = None
+    if isinstance(value, (ast.Name, ast.Subscript)):
+        access = resolve_access(value, state)
+    if access is None:
+        if inferred.kind == 'static':
+            access = static_values.materialize(inferred.value, state, name_hint=f'__{target.id}_value')
+        elif inferred.is_data:
+            descriptor = _result_descriptor(inferred, state, statement)
+            if not isinstance(descriptor, data.Array):
+                raise UnsupportedFeatureError(f'Cannot set reference "{target.id}" to a scalar value',
+                                              state.context.filename, statement)
+            value_container = state.context.add_container(f'__{target.id}_value', descriptor)
+            value_access = DataAccess(value_container, subsets.Range.from_array(descriptor), descriptor)
+            dispatch.lower_computation(value_access, value, statement, state)
+            access = value_access
+        else:
+            raise UnsupportedFeatureError(
+                f'Cannot set reference "{target.id}" to non-data value "{astutils.unparse(value)}"',
+                state.context.filename, statement)
+
+    if access.is_scalar_access:
+        raise UnsupportedFeatureError(f'Cannot set reference "{target.id}" to a scalar element', state.context.filename,
+                                      statement)
+    if list(nondegenerate_shape(access.subset)) != [s for s in reference_descriptor.shape if s != 1]:
+        raise UnsupportedFeatureError(
+            f'Reference "{target.id}" of shape {tuple(reference_descriptor.shape)} cannot be set '
+            f'to source of shape {tuple(nondegenerate_shape(access.subset))}', state.context.filename, statement)
+
+    state.emitter.emit(
+        tn.RefSetNode(target=container,
+                      memlet=Memlet(data=access.container, subset=access.subset),
+                      src_desc=access.descriptor,
+                      ref_desc=copy.deepcopy(reference_descriptor)))
+
+
 def apply_annotation_hint(target_name: str, statement: ast.stmt, state: LoweringState) -> None:
     """
     Pre-register an annotated assignment target (``y: dace.float64 = ...``)
@@ -168,7 +262,7 @@ def annotation_descriptor(annotation: Optional[ast.expr], state: LoweringState) 
         value = annotation.value
     else:
         try:
-            value = astutils.evalnode(annotation, state.context.globals)
+            value = astutils.evalnode(annotation, _annotation_environment(state))
         except Exception:
             return None
     try:
@@ -182,6 +276,17 @@ def annotation_descriptor(annotation: Optional[ast.expr], state: LoweringState) 
     descriptor = copy.deepcopy(descriptor)
     descriptor.transient = True
     return descriptor
+
+
+def _annotation_environment(state: LoweringState) -> dict:
+    """The evaluation environment for type annotations: program globals plus
+    the descriptors of bound containers, so annotations may reference argument
+    properties (``dace.data.ArrayReference(A.dtype, A.shape)``)."""
+    environment = dict(state.context.globals)
+    for name, binding in state.context.bindings.items():
+        if binding.kind == 'container' and binding.container in state.context.containers:
+            environment[name] = state.context.containers[binding.container]
+    return environment
 
 
 def prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringState,
