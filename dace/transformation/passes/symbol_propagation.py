@@ -298,6 +298,15 @@ class SymbolPropagation(ppl.Pass):
         in_syms: Dict[ControlFlowBlock, Dict[str, Any]],
         out_syms: Dict[ControlFlowBlock, Dict[str, Any]],
     ) -> Dict[str, Any]:
+        # Container-aware filters below must consult the SDFG that OWNS this block:
+        # ``all_cfg_blks`` spans every nested SDFG, but ``sdfg`` is always the
+        # top-level one, so looking up ``sdfg.arrays`` for a nested block silently
+        # misses its containers (e.g. cloudsc's ``zqe = zqe_5`` inside the
+        # LoopToMap-nested ``loop_body``: ``zqe_5`` is a mutated Scalar of the
+        # NESTED SDFG, invisible in the root's arrays, so the mutated-scalar guard
+        # no-opped and the fold produced a connector-less container read in
+        # tasklet code).
+        owner = cfg_blk.sdfg
         # Combine the outgoing symbols of all incoming edges with their assignments to the cfg_blk
         new_in_syms = {}
         for i, edge in enumerate(parent.in_edges(cfg_blk)):
@@ -350,7 +359,7 @@ class SymbolPropagation(ppl.Pass):
             sym_table = {
                 k: v
                 for k, v in sym_table.items() if v is None or not any([
-                    str(s) in sdfg.arrays and isinstance(sdfg.arrays[str(s)], dt.View)
+                    str(s) in owner.arrays and isinstance(owner.arrays[str(s)], dt.View)
                     for s in pystr_to_symbolic(v).free_symbols
                 ])
             }
@@ -364,8 +373,8 @@ class SymbolPropagation(ppl.Pass):
             # ``kfdia_plus_1 = (kfdia + 1)`` -- and any shape-symbol expression
             # that resolves through them -- is safe and required for cloudsc's
             # bound-symbol aliases to clean up.
-            mutated = self._mutated_scalars.get(sdfg, set())
-            sym_table = {k: v for k, v in sym_table.items() if v is None or not (scalars(v, sdfg.arrays) & mutated)}
+            mutated = self._mutated_scalars.get(owner, set())
+            sym_table = {k: v for k, v in sym_table.items() if v is None or not (scalars(v, owner.arrays) & mutated)}
 
             # Combine the symbols
             if i == 0:
