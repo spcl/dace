@@ -55,7 +55,7 @@ by-reference divisors all collapsed to noise and were rejected.
 
 ## 2. The keys
 
-Fourteen keys.
+Fifteen keys.
 
 | Key | Default | Applies to |
 |---|---|---|
@@ -68,6 +68,7 @@ Fourteen keys.
 | `const_init` | **`on`** | readable only |
 | `explicit_copy` | **`on`** | readable only |
 | `ssa_loop_scalars` | `off` | readable only |
+| `scalar_emission_type` | `keep` | readable only |
 | `loop_index_type` | `auto` | **both** |
 | `loop_bound_cmp` | `lt` | **both** |
 | `loop_decl_style` | `for_init` | **both** |
@@ -222,6 +223,21 @@ emits no `<array>_idx` helper, so there is no access path to re-spell and it ign
   GPU-specialization pipeline) need the `CopyLibraryNode` left **unexpanded** so `RewriteCopyForLayout`
   can turn it into a `TensorTranspose`. That is why the expansion lives in this key's block in
   `codegen.py`, restricted by predicate to the copy nodes just inserted, and not in the pass itself.
+
+### 2.6 Descriptor form — single-value transients
+
+- **`scalar_emission_type`** (`keep` | `scalar` | `len1_array`, default `keep`) — which C++ form a
+  single-value TRANSIENT is emitted in: a by-value `Scalar` (`T x;`) or a length-1 `Array` (`T x[1];`,
+  indexed `x[0]`). A frontend leaves a mix of the two; this normalizes it. `keep` runs neither
+  conversion (byte-identical). `scalar` runs `ConvertLengthOneArraysToScalars`; `len1_array` runs the
+  inverse `ConvertScalarsToLengthOneArrays` — both existing, tested passes.
+
+  Two properties are load-bearing. **Signature is never touched**: both conversions are
+  `transient_only`, because a non-transient descriptor is the call contract (the caller binds a Python
+  scalar to a `Scalar`, a 1-element buffer to an `Array`). **GPU kernel outputs stay length-1 arrays**:
+  `scalar` chains `PromoteGPUScalarsToArrays` after the scalarization, which widens a GPU_Global
+  length-1 output straight back — a by-value `Scalar` cannot live in device memory. So only host-side
+  transients become `Scalar`s.
 
 ---
 

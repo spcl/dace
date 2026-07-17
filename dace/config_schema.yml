@@ -852,6 +852,41 @@ required:
                                     ``simplify`` uses to unblock ``LoopToMap``), applied here purely for
                                     the readable form; ``off`` reproduces today's output byte-for-byte.
 
+                            scalar_emission_type:
+                                type: str
+                                default: keep
+                                title: Normalize single-value transients to Scalar or length-1 Array
+                                description: >
+                                    Applies to: experimental_readable ONLY (this runs an SDFG rewrite
+                                    inside the readable-generator pipeline in ``codegen.py``; legacy never
+                                    enters that block, so its output stays byte-identical for every value).
+
+                                    Which C++ form a single-value TRANSIENT is emitted in: a by-value
+                                    ``Scalar`` (``T x;``) or a length-1 ``Array`` (``T x[1];``, indexed
+                                    ``x[0]``). A frontend leaves a mix of both; this normalizes it.
+
+                                    ``keep`` (the default) runs neither conversion, so the descriptors and
+                                    the emitted code are byte-identical to today. ``scalar`` runs
+                                    :class:`~dace.transformation.passes.length_one_array_scalar_conversion.
+                                    ConvertLengthOneArraysToScalars` to turn every length-1 array into a
+                                    Scalar; ``len1_array`` runs the inverse
+                                    :class:`~dace.transformation.passes.length_one_array_scalar_conversion.
+                                    ConvertScalarsToLengthOneArrays`.
+
+                                    BOTH conversions are ``transient_only`` -- a non-transient descriptor is
+                                    part of the SDFG signature (the caller binds a Python scalar to a
+                                    ``Scalar`` and a 1-element buffer to an ``Array``), so rewriting it would
+                                    change the call contract. The signature is therefore never touched.
+
+                                    ``scalar`` additionally CHAINS
+                                    :class:`~dace.transformation.passes.promote_gpu_scalars_to_arrays.
+                                    PromoteGPUScalarsToArrays` after the scalarization: a GPU kernel output
+                                    (a length-1 array in GPU_Global storage, or one written by a device
+                                    map's exit) is scalarized by the first pass but immediately widened back
+                                    to a length-1 array by the second, because a by-value Scalar cannot live
+                                    in device global memory. So GPU kernel outputs stay length-1 arrays under
+                                    every value of this key; only host-side transients become Scalars.
+
             #############################################
             # GPU (CUDA/HIP) compiler
             cuda:

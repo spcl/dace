@@ -250,6 +250,29 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         sdfg.apply_transformations_repeated(InlineMultistateSDFG)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # ``scalar_emission_type``: normalize single-value TRANSIENTS to one C++ form before the rest of
+        # the pipeline classifies and inlines them. ``keep`` (default) runs neither conversion ->
+        # byte-identical. Both conversions are transient_only, so the SDFG signature is never rewritten.
+        # Runs BEFORE ``explicit_copy`` so the copy lowering below sees the settled descriptor form
+        # (a scalar copy lowers to ``=``, a length-1-array copy to memcpy).
+        scalar_emission = config.Config.get('compiler', 'cpu', 'codegen_params', 'scalar_emission_type')
+        if scalar_emission == 'scalar':
+            from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
+            from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
+                                                                                  PromoteGPUScalarsToArrays)
+            ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
+            # A GPU kernel output is a length-1 array the scalarization just turned into a GPU-storage
+            # Scalar; a by-value Scalar cannot live in device memory, so widen exactly those back to
+            # length-1 arrays. Host-side transients stay Scalars. The Pipeline supplies the storage
+            # inference PromoteGPUScalarsToArrays depends on.
+            Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        elif scalar_emission == 'len1_array':
+            from dace.transformation.passes.length_one_array_scalar_conversion import ConvertScalarsToLengthOneArrays
+            ConvertScalarsToLengthOneArrays(transient_only=True).apply_pass(sdfg, {})
+            infer_types.infer_connector_types(sdfg)
+            infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # ``explicit_copy``: lift implicit copies (AccessNode -> AccessNode, View endpoints, map
         # staging) to explicit CopyLibraryNodes, so ExpandAuto lowers each one on its merits -- a
         # single-element copy to a plain ``=`` tasklet, a contiguous same-layout copy to
