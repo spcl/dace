@@ -70,6 +70,17 @@ class ConstantPropagation(ppl.Pass):
         """
         initial_symbols = initial_symbols or {}
 
+        # A constant for a Scalar data descriptor is baked with specialize_scalar (folds reads, drops the
+        # node); the replace_dict path below would rename its data to the literal and leave a dangling ref.
+        from dace.sdfg.utils import specialize_scalar
+        specialized_scalars: Set[str] = set()
+        for name in list(initial_symbols):
+            if name in sdfg.arrays and isinstance(sdfg.arrays[name], data.Scalar):
+                specialize_scalar(sdfg, name, initial_symbols[name])
+                specialized_scalars.add(name)
+        if specialized_scalars:
+            initial_symbols = {k: v for k, v in initial_symbols.items() if k not in specialized_scalars}
+
         # Early exit if no constants can be propagated
         if not initial_symbols and not self.should_apply(sdfg):
             result = {}
@@ -168,7 +179,7 @@ class ConstantPropagation(ppl.Pass):
                     # Remove from symbol repository and nested SDFG symbol mapping
                     sdfg.remove_symbol(sym)
 
-        result = set(result.keys())
+        result = set(result.keys()) | specialized_scalars
 
         if self.recursive:
             # Change result to set of tuples
