@@ -198,7 +198,7 @@ def allocation_line(code: str, array: str) -> str:
 # Cases
 # --------------------------------------------------------------------------- #
 def test_symbolic_size_helper(require_experimental):
-    """Symbolic ``T[N*M]`` heap transient -> ``constexpr T_size(long long M, long long N)``."""
+    """Symbolic ``T[N*M]`` heap transient -> ``constexpr T_size(int64_t M, int64_t N)``."""
     n, m = dace.symbol('N'), dace.symbol('M')
     build = lambda name: heap_pipeline_1d(name, n * m, '0:N*M')
     base = dict(A=np.random.rand(48), B=np.zeros(48), N=6, M=8)
@@ -209,13 +209,13 @@ def test_symbolic_size_helper(require_experimental):
     code = experimental_code(build, 'symsize_inspect')
     definition = size_helper_definition(code, 'T')
     assert 'constexpr' in definition, definition
-    assert 'long long M' in definition and 'long long N' in definition, definition
+    assert 'int64_t M' in definition and 'int64_t N' in definition, definition
     assert '(M * N)' in definition, definition
     assert 'new double DACE_ALIGN(64)[T_size(M, N)]' in allocation_line(code, 'T')
 
 
 def test_ipow_size_helper(require_experimental):
-    """``total_size = ipow(N, 2)`` (``T[N*N]``) -> single-symbol ``constexpr T_size(long long N)``."""
+    """``total_size = ipow(N, 2)`` (``T[N*N]``) -> single-symbol ``constexpr T_size(int64_t N)``."""
     n = dace.symbol('N')
     build = lambda name: heap_pipeline_1d(name, n * n, '0:N*N')
     base = dict(A=np.random.rand(49), B=np.zeros(49), N=7)
@@ -225,7 +225,7 @@ def test_ipow_size_helper(require_experimental):
 
     code = experimental_code(build, 'ipowsize_inspect')
     definition = size_helper_definition(code, 'T')
-    assert 'constexpr' in definition and 'long long N' in definition, definition
+    assert 'constexpr' in definition and 'int64_t N' in definition, definition
     # RelaxIntegerPowers lowers ``N**2`` to ``ipow(N, 2)``; ``ipow`` is a constexpr runtime helper, so
     # the constexpr size function may call it directly (see dace/runtime/include/dace/math.h).
     assert 'ipow(N, 2)' in definition, definition

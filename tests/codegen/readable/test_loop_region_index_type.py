@@ -5,7 +5,7 @@
 covers the sibling case the knob previously ignored: the loop counter of a sequential ``LoopRegion``,
 which is a real SDFG symbol declared ahead of its loop by ``emit_interstate_variable_declaration``.
 ``auto`` (the default) must leave that declaration byte-identical to the pre-knob emitter; ``int32`` /
-``int64`` retype it to ``int`` / ``long long`` (the same spellings the map emitter uses). The retype
+``int64`` retype it to ``int32_t`` / ``int64_t`` (the same spellings the map emitter uses). The retype
 touches ONLY a LoopRegion counter -- every other interstate symbol keeps its inferred type -- and both
 generators share the emitter, so the knob applies to legacy and experimental_readable alike.
 """
@@ -60,10 +60,10 @@ def counter_declaration(code):
 
 
 @pytest.mark.parametrize('implementation', ['legacy', 'experimental_readable'])
-@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'int64_t i;'), ('int32', 'int i;'),
-                                                       ('int64', 'long long i;')])
+@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'int64_t i;'), ('int32', 'int32_t i;'),
+                                                       ('int64', 'int64_t i;')])
 def test_loop_region_counter_is_retyped(implementation, loop_index_type, expected):
-    """int32 -> ``int i;``, int64 -> ``long long i;`` (the map-loop spellings); ``auto`` keeps the
+    """int32 -> ``int32_t i;``, int64 -> ``int64_t i;`` (the map-loop spellings); ``auto`` keeps the
     inferred ``int64_t i;``. Both generators emit the counter through the same shared declaration."""
     assert counter_declaration(generate(implementation, loop_index_type)) == expected
 
@@ -97,7 +97,7 @@ def test_every_type_runs_bit_identical(loop_index_type):
 
 if __name__ == '__main__':
     for impl in ('legacy', 'experimental_readable'):
-        for lit, exp in (('auto', 'int64_t i;'), ('int32', 'int i;'), ('int64', 'long long i;')):
+        for lit, exp in (('auto', 'int64_t i;'), ('int32', 'int32_t i;'), ('int64', 'int64_t i;')):
             test_loop_region_counter_is_retyped(impl, lit, exp)
         test_auto_is_byte_identical(impl)
     for lit in ('auto', 'int32', 'int64'):

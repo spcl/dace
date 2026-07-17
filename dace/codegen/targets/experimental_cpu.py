@@ -33,11 +33,12 @@ from dace.sdfg import nodes
 from dace.sdfg.state import SDFGState
 from dace.sdfg.utils import dynamic_map_inputs
 
-#: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. ``int`` (not
-#: ``int32_t``) and ``long long`` (not ``int64_t``) are spelled out deliberately: ``int`` is exactly
-#: what the generated loops declare (``for (auto i = 0; ...)``), so an int32 helper takes its indices
-#: with no conversion at all, and ``long long`` preserves the historical signature byte-for-byte.
-INDEX_CTYPES = {'int64': 'long long', 'int32': 'int'}
+#: C++ integer type for computed flat indices, per ``codegen_params.index_ctype``. Exact-width
+#: ``<cstdint>`` types: ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not say
+#: what the key promises, whereas ``int64_t`` is exactly 64. (``int32`` is likewise ``int32_t``,
+#: which is what the generated loops deduce for ``for (auto i = 0; ...)`` on every platform DaCe
+#: targets, so an int32 helper still takes its indices with no conversion.)
+INDEX_CTYPES = {'int64': 'int64_t', 'int32': 'int32_t'}
 # Qualifier for the generated ``<array>_idx`` and symbolic ``<array>_size`` helpers: host+device
 # callable, inlined, usable in constant expressions.
 INDEX_FUNCTION_QUALIFIER = 'static DACE_HDFI constexpr'
