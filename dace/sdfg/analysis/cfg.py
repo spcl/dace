@@ -20,6 +20,8 @@ def acyclic_dominance_frontier(cfg: ControlFlowRegion, idom=None) -> Dict[Contro
     :return: A dictionary keyed by control flow blocks, containing the dominance frontier for each control flow block.
     """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    # networkx's immediate_dominators omits the root; its idom is itself.
+    idom.setdefault(cfg.start_block, cfg.start_block)
 
     dom_frontiers = {block: set() for block in cfg.nodes()}
     for u in idom:
@@ -45,6 +47,8 @@ def all_dominators(
         idom: Dict[ControlFlowBlock, ControlFlowBlock] = None) -> Dict[ControlFlowBlock, Set[ControlFlowBlock]]:
     """ Returns a mapping between each control flow block and all its dominators. """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    # networkx's immediate_dominators omits the root; its idom is itself.
+    idom.setdefault(cfg.start_block, cfg.start_block)
     # Create a dictionary of all dominators of each node by using the transitive closure of the DAG induced by the idoms
     g = nx.DiGraph()
     for node, dom in idom.items():
@@ -130,6 +134,8 @@ def block_parent_tree(cfg: ControlFlowRegion,
     :return: A dictionary that maps each block to a parent block, or None if the root (start) block.
     """
     idom = idom or nx.immediate_dominators(cfg.nx, cfg.start_block)
+    # networkx's immediate_dominators omits the root; its idom is itself.
+    idom.setdefault(cfg.start_block, cfg.start_block)
     merges = branch_merges(cfg, idom)
     if with_loops:
         alldoms = all_dominators(cfg, idom)
@@ -363,6 +369,8 @@ def blockorder_topological_sort(cfg: ControlFlowRegion,
     # Get parent states
     loopexits: Dict[ControlFlowBlock, ControlFlowBlock] = defaultdict(lambda: None)
     idom = nx.immediate_dominators(cfg.nx, cfg.start_block)
+    # networkx's immediate_dominators omits the root; its idom is itself.
+    idom.setdefault(cfg.start_block, cfg.start_block)
     ptree = block_parent_tree(cfg, loopexits, idom=idom)
 
     # Annotate branches
