@@ -41,7 +41,7 @@ mis-classified as a fold or a parallel map. The TSVC kernel ``s317``
 (``q[0] *= 0.99`` for ``LEN_1D//2`` iters) is the canonical hit.
 """
 import ast
-from typing import Optional, Tuple
+from typing import Optional, Set, Tuple
 
 from dace import SDFG, dtypes, nodes, properties, symbolic
 from dace.sdfg import SDFGState
@@ -100,6 +100,13 @@ class InductionVariableSubstitution(ppl.Pass):
         count = 0
         for _ in range(1000):
             progressed = False
+            # ``SDFG.free_symbols`` re-derives itself from the whole graph on EVERY access -- it is a
+            # property, not a cached one (~0.5s on CloudSC). The invariance checks below consult it once
+            # per candidate symbol, which made it 96% of this pass's runtime (163s of 169s over 500
+            # calls). It only changes when the SDFG does, and every mutation below restarts this round,
+            # so hoisting it here is exact. ``materialize_loop_exit_symbols`` already threads it the
+            # same way for the same reason.
+            sdfg_free_symbols = sdfg.free_symbols
             for node, parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
                     continue
@@ -119,9 +126,10 @@ class InductionVariableSubstitution(ppl.Pass):
                 #     (the derived symbol a primary-IV substitution just freed);
                 # (4) an IV incremented identically in every branch of a body
                 #     conditional -> hoist it out so (2) can then close it (s124).
-                if (_try_substitute(parent, node, sdfg) or _try_substitute_iedge_iv(parent, node, sdfg)
-                        or _try_substitute_derived_symbol(parent, node, sdfg)
-                        or _hoist_branch_uniform_iv(parent, node, sdfg)):
+                if (_try_substitute(parent, node, sdfg, sdfg_free_symbols)
+                        or _try_substitute_iedge_iv(parent, node, sdfg, sdfg_free_symbols)
+                        or _try_substitute_derived_symbol(parent, node, sdfg, sdfg_free_symbols)
+                        or _hoist_branch_uniform_iv(parent, node, sdfg, sdfg_free_symbols)):
                     count += 1
                     progressed = True
                     break  # SDFG mutated -> restart the scan on fresh node list
@@ -152,9 +160,9 @@ def _loop_has_break_or_continue(loop: LoopRegion) -> bool:
     return False
 
 
-def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
     """Return True if the loop matched and was replaced; False otherwise."""
-    info = _extract_iv(loop, sdfg)
+    info = _extract_iv(loop, sdfg, sdfg_free_symbols)
     if info is None:
         return False
     accum, accum_subset, op_type, const_val, trip_count = info
@@ -168,17 +176,20 @@ def _try_substitute(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> 
     return True
 
 
-def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
+def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]) -> bool:
     """Whether ``name`` refers to an SDFG symbol/constant that the loop does not
     redefine in its body (so its value is stable across iterations).
 
     Accepts: SDFG symbols and constants, with the loop variable explicitly excluded,
     and with the symbol not appearing as the LHS of any interstate-edge assignment
     inside the loop's body.
+
+    ``sdfg_free_symbols`` is ``sdfg.free_symbols`` precomputed by the caller: that property walks the
+    whole SDFG on every access, so it is passed in rather than recomputed per candidate symbol.
     """
     if name == loop.loop_variable:
         return False
-    if name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg.free_symbols:
+    if name not in sdfg.symbols and name not in sdfg.constants and name not in sdfg_free_symbols:
         return False
     # The loop must not assign to ``name`` on any of its body interstate edges --
     # otherwise it would not be loop-invariant.
@@ -188,7 +199,8 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
     return True
 
 
-def _extract_iv(loop: LoopRegion, sdfg: SDFG) -> Optional[Tuple[str, str, type, object, object]]:
+def _extract_iv(loop: LoopRegion, sdfg: SDFG,
+                sdfg_free_symbols: Set[str]) -> Optional[Tuple[str, str, type, object, object]]:
     """Pattern-match the loop body. Returns ``(accum_name, accum_subset_str, ast.BinOp_type, const_val, trip_count)``
     or ``None``.
 
@@ -264,11 +276,11 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG) -> Optional[Tuple[str, str, type, 
                     return None
                 # Allow SDFG symbols / constants / known dtype-cast roots; reject
                 # any other name (which would imply a connector or loop-local var).
-                if (sub.id not in sdfg.symbols and sub.id not in sdfg.constants and sub.id not in sdfg.free_symbols
+                if (sub.id not in sdfg.symbols and sub.id not in sdfg.constants and sub.id not in sdfg_free_symbols
                         and sub.id != 'dace' and not hasattr(__import__('builtins'), sub.id)):
                     return None
-                if (sub.id in sdfg.symbols or sub.id in sdfg.constants
-                        or sub.id in sdfg.free_symbols) and not _is_loop_invariant_symbol(sub.id, loop, sdfg):
+                if (sub.id in sdfg.symbols or sub.id in sdfg.constants or sub.id
+                        in sdfg_free_symbols) and not _is_loop_invariant_symbol(sub.id, loop, sdfg, sdfg_free_symbols):
                     return None
         # Render the expression back to a source string for the closed form. The
         # later tasklet body splices it directly, so ``dace.float64(step)`` stays
@@ -369,7 +381,8 @@ def _symbol_updated_in_other_loop(sdfg: SDFG, loop: LoopRegion, sym_name: str) -
     return False
 
 
-def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
+                             sdfg_free_symbols: Set[str]) -> bool:
     """Hoist an IV increment that EVERY branch of a body ``ConditionalBlock``
     performs identically (``sym := sym + step`` on all paths) out of the
     conditional, so the branches share one increment on a single iedge.
@@ -410,7 +423,7 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
         per = [branch_increments(br) for br in branches]
         common = set.intersection(*[set(p) for p in per]) if per else set()
         for sym in common:
-            if sym == loop.loop_variable or (sym not in sdfg.symbols and sym not in sdfg.free_symbols):
+            if sym == loop.loop_variable or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
                 continue
             if any(len(p[sym]) != 1 for p in per):
                 continue  # a branch increments sym more than once
@@ -565,7 +578,8 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name:
     return val
 
 
-def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
+                                   sdfg_free_symbols: Set[str]) -> bool:
     """Substitute a symbol defined *purely* by a loop-variable expression.
 
     A body iedge ``sym := f(loop_var, <loop-invariant symbols>)`` with NO
@@ -602,7 +616,7 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
         if e.data.condition.as_string not in ('1', 'True', '(1)') or len(e.data.assignments) != 1:
             continue
         ((sym, rhs), ) = e.data.assignments.items()
-        if sym == loop_var or (sym not in sdfg.symbols and sym not in sdfg.free_symbols):
+        if sym == loop_var or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
             continue
         try:
             rhs_expr = symbolic.pystr_to_symbolic(rhs)
@@ -611,7 +625,7 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
         free = {str(s) for s in rhs_expr.free_symbols}
         if sym in free:
             continue  # self-reference -> a recurrence, not a derived symbol
-        if not all(s == loop_var or _is_loop_invariant_symbol(s, loop, sdfg) for s in free):
+        if not all(s == loop_var or _is_loop_invariant_symbol(s, loop, sdfg, sdfg_free_symbols) for s in free):
             continue  # depends on another loop-carried symbol -> substitute that first (fixed point)
         if any(oe is not e and sym in (oe.data.assignments or {}) for oe in loop.all_interstate_edges()):
             continue  # sym written elsewhere (incl. a NESTED loop, s141) -> not a clean single definition
@@ -658,7 +672,8 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
     return False
 
 
-def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG) -> bool:
+def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG,
+                             sdfg_free_symbols: Set[str]) -> bool:
     """Substitute an interstate-edge induction variable (``sym := sym + literal``)
     in the loop body with its closed form.
 
@@ -753,12 +768,12 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
         # argument ``inc`` promoted to a symbol). A varying step has no closed form.
         if not getattr(diff, 'is_number', False):
             if not diff.free_symbols or not all(
-                    _is_loop_invariant_symbol(str(s), loop, sdfg) for s in diff.free_symbols):
+                    _is_loop_invariant_symbol(str(s), loop, sdfg, sdfg_free_symbols) for s in diff.free_symbols):
                 continue
         # ``lhs`` must be an SDFG symbol -- not a data container, not a loop var.
         if lhs == loop.loop_variable:
             continue
-        if lhs not in sdfg.symbols and lhs not in sdfg.free_symbols:
+        if lhs not in sdfg.symbols and lhs not in sdfg_free_symbols:
             continue
         # No other body iedge may also write ``lhs``.
         other_writers = [oe for oe in loop.edges() if oe is not e and lhs in (oe.data.assignments or {})]

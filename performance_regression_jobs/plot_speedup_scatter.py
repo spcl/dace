@@ -40,6 +40,10 @@ import math
 import statistics
 import sys
 
+# A failed kernel's traceback in status.csv can exceed csv's 128 KB default field cap; lift it
+# so any raw csv read here stays robust (matches engine.py).
+csv.field_size_limit(min(2 ** 31 - 1, sys.maxsize))
+
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
