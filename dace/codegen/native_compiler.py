@@ -418,9 +418,21 @@ def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, runtime_m
     the produced object; the only failure mode is the one-off PCH build itself, which is swallowed.
     """
     try:
+        import getpass
         import hashlib
         key = hashlib.md5(('\0'.join([cxx, runtime_inc] + pch_flags)).encode()).hexdigest()[:16]
-        pch_dir = os.path.join(os.path.expanduser('~/.cache/dace/native_pch'), key)
+        # PCH root: keep the ~120 MB .gch in RAM (/dev/shm) when available -- on HPC login/compute
+        # nodes the default user cache dir is NFS-backed $HOME, and re-reading the PCH over NFS on
+        # every translation unit costs more than the PCH saves, silently eroding the native
+        # backend's compile-time advantage. Override with DACE_NATIVE_PCH_DIR; fall back to the
+        # user cache dir where /dev/shm is absent (macOS, containers without shm).
+        pch_root = os.environ.get('DACE_NATIVE_PCH_DIR')
+        if not pch_root:
+            if os.path.isdir('/dev/shm') and os.access('/dev/shm', os.W_OK):
+                pch_root = os.path.join('/dev/shm', f'dace_native_pch_{getpass.getuser()}')
+            else:
+                pch_root = os.path.expanduser('~/.cache/dace/native_pch')
+        pch_dir = os.path.join(pch_root, key)
         header = os.path.join(pch_dir, 'dace_prewarm.h')
         gch = header + '.gch'
         # Strictly newer, matching the coarse-mtime convention used for objects/libraries below: a

@@ -58,6 +58,13 @@ fi
 REPS="${REPS:-10}"
 COMPILE_REPS="${COMPILE_REPS:-3}"
 
+# COLD SLATE for the compile-wall measurements: wipe every DaCe build tree and the
+# native backend's PCH cache before the first cell, so codegen_ms/compile_ms sample 0
+# (the one the script records) is a genuinely cold build on both the cmake and the
+# native path -- no leftover binaries, objects, or precompiled headers from a prior
+# job on this node. ~/.cache is cleared too in case a pre-/dev/shm PCH lingers there.
+srun --ntasks-per-node=1 bash -c 'rm -rf /dev/shm/dace_perf_jobs_* /dev/shm/dace_native_pch_* ~/.cache/dace/native_pch' || true
+
 # --distribution=block:block gives rank i a contiguous socket; --cpu-bind=cores pins it.
 srun --cpu-bind=verbose,cores --distribution=block:block \
     python3 codegen_variants/codegen_variants_perf.py --compile-reps "$COMPILE_REPS" --run-reps "$REPS"
