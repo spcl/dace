@@ -1,11 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """One test per ``Range.squeeze()`` call site in the frontend (newast.py). squeeze() drops
 every size-1 dim and can't tell a length-1 SLICE (axis must survive) from a scalar INDEX (axis
-collapses) -- each site is a candidate length-1-slice miscompile. ``_add_read_slice`` is fixed;
-``make_slice`` is xfail(strict=True) pending a fix; the others are safe balanced squeezes.
+collapses) -- each site is a candidate length-1-slice miscompile. Return slices (direct or off a
+closure global) go through the fixed ``_add_read_slice`` and keep the axis; the rest are balanced
+squeezes. make_slice's non-indirection squeeze stays a latent site -- no return idiom reaches it.
 """
 import numpy as np
-import pytest
 
 import dace
 
@@ -30,8 +30,9 @@ def test_add_read_slice_keeps_length1_axis():
     assert np.array_equal(got, oracle)
 
 
-# make_slice: xfail below (see reason).
-_GLOBAL = np.arange(N * M, dtype=np.int64).reshape(N, M)
+# closure-global length-1-slice RETURN (routes through _add_read_slice). The global must own its
+# data: dace rejects a numpy-view argument, and arange().reshape() aliases the 1-D buffer.
+_GLOBAL = np.arange(N * M, dtype=np.int64).reshape(N, M).copy()
 
 
 @dace.program
@@ -39,15 +40,10 @@ def read_closure_slice():
     return _GLOBAL[:, 1:2]
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="make_slice (newast.py:5661) squeezes with no ignore_indices, and the "
-                   "closure-global slice-return path is itself unsupported (raises on the captured "
-                   "view). Both are follow-on work; the primary _add_read_slice site is fixed. XPASS "
-                   "here is the trigger to promote once make_slice threads slice provenance.")
-def test_make_slice_closure_keeps_length1_axis():
+def test_closure_global_slice_keeps_length1_axis():
     got = np.asarray(read_closure_slice())
     oracle = _GLOBAL[:, 1:2]
-    assert got.shape == oracle.shape == (N, 1), f"make_slice site: got {got.shape}, want {oracle.shape}"
+    assert got.shape == oracle.shape == (N, 1), f"got {got.shape}, want {oracle.shape}"
     assert np.array_equal(got, oracle)
 
 
@@ -108,7 +104,7 @@ def test_add_indirection_subgraph_with_slice_is_value_exact():
 
 if __name__ == "__main__":
     test_add_read_slice_keeps_length1_axis()
-    test_make_slice_closure_keeps_length1_axis()
+    test_closure_global_slice_keeps_length1_axis()
     test_add_assignment_broadcast_from_slice_is_value_exact()
     test_add_aug_assignment_matching_slice_is_value_exact()
     test_add_indirection_subgraph_with_slice_is_value_exact()
