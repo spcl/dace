@@ -7,9 +7,10 @@ binding, rule-driven lowering, verification).
 See :mod:`dace.frontend.python.nextgen.pipeline` for the stage contracts.
 """
 import ast
+import copy
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-from dace import data
+from dace import data, dtypes, symbolic
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import preprocessing
 from dace.frontend.python.nextgen.canonical.passes import default_passes
@@ -95,21 +96,45 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
     """
     argtypes, _, gvars, specified = program._get_type_annotations(args, kwargs)
 
+    # Copy argument descriptors before marking them non-transient: annotation
+    # descriptors are shared across calls and must not be mutated.
     for argument_name, descriptor in list(argtypes.items()):
         if isinstance(descriptor, data.View):
-            argtypes[argument_name] = descriptor.as_array()
-        descriptor = argtypes[argument_name]
+            descriptor = descriptor.as_array()
+        else:
+            descriptor = copy.deepcopy(descriptor)
         descriptor.transient = False
+        argtypes[argument_name] = descriptor
 
     global_vars = dict(program.global_vars)
+
+    # Bound methods: "self" is resolved through the closure, not an argument
+    if program.methodobj is not None and program.objname is not None:
+        global_vars[program.objname] = program.methodobj
+
+    # None-valued arguments become foldable globals instead of containers
+    removed_args = set()
+    for argument_name, descriptor in argtypes.items():
+        if descriptor.dtype.type is None:
+            global_vars[argument_name] = None
+            removed_args.add(argument_name)
+
+    modules = {key: value.__name__ for key, value in global_vars.items() if dtypes.ismodule(value)}
+    modules['builtins'] = ''
+
+    # Symbols also resolve under their actual names (aliased symbol globals)
+    global_vars.update(
+        {value.name: value
+         for value in list(global_vars.values()) if isinstance(value, symbolic.symbol)})
+
     unspecified_defaults = {key: value for key, value in program.default_args.items() if key not in specified}
+    removed_args.update(unspecified_defaults)
     gvars.update(unspecified_defaults)
     global_vars.update(gvars)
-    modules = {
-        key: value.__name__
-        for key, value in global_vars.items() if hasattr(value, '__name__') and type(value).__name__ == 'module'
-    }
-    modules['builtins'] = ''
+
+    argtypes = {key: value for key, value in argtypes.items() if key not in removed_args}
+    for descriptor in argtypes.values():
+        global_vars.update({free_symbol.name: free_symbol for free_symbol in descriptor.free_symbols})
 
     parsed_ast, closure = preprocessing.preprocess_dace_program(program.f,
                                                                 argtypes,
@@ -120,6 +145,8 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
 
     constants: Dict[str, Tuple[data.Data, Any]] = {}
     for constant_name, value in closure.closure_constants.items():
+        if constant_name in removed_args:
+            continue
         try:
             descriptor = data.create_datadescriptor(value)
         except (TypeError, ValueError):
@@ -131,6 +158,7 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
     closure_arrays = {
         reference_name: (qualified_name, descriptor)
         for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items()
+        if reference_name not in removed_args
     }
 
     return build_schedule_tree(program.name,

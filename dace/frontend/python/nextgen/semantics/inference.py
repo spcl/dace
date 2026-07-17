@@ -357,8 +357,19 @@ class InferenceService:
         Parse a canonical data access (name or subscript of a name) into a
         memlet expression with an explicit subset, using the shared memlet
         parser.
+
+        :raises UnsupportedFeatureError: If the shared parser cannot handle
+            the access form. The parser fails in assorted ways on exotic
+            indexing (advanced indexing, ``.flat``, long index tuples, ...);
+            every failure at this boundary is a feature gap, not a crash.
         """
-        return ParseMemlet(self._shim, self.context.defined_view(), node)
+        try:
+            return ParseMemlet(self._shim, self.context.defined_view(), node)
+        except UnsupportedFeatureError:
+            raise
+        except Exception as error:
+            raise UnsupportedFeatureError(f'Unsupported access expression "{astutils.unparse(node)}": {error}',
+                                          self.context.filename, node)
 
     def constant_int(self, node: ast.expr) -> Optional[int]:
         """Resolve a canonical atom to a compile-time integer, or None."""
@@ -431,10 +442,18 @@ class InferenceService:
         if not base.is_data:
             raise UnsupportedFeatureError('Subscript of a non-container value', self.context.filename, node)
         expr = self.parse_access(node)
-        shape = [s for s in expr.subset.size() if s != 1]
-        if not shape:
-            return Inferred(kind='data', descriptor=data.Scalar(base.descriptor.dtype))
-        return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, shape))
+        try:
+            shape = [s for s in expr.subset.size() if s != 1]
+            if not shape:
+                return Inferred(kind='data', descriptor=data.Scalar(base.descriptor.dtype))
+            return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, shape))
+        except UnsupportedFeatureError:
+            raise
+        except Exception as error:
+            # Exotic subsets produce non-real symbolic sizes (e.g. sympy zoo)
+            # that crash descriptor validation; treat them as feature gaps.
+            raise UnsupportedFeatureError(f'Cannot infer subscript shape of "{astutils.unparse(node)}": {error}',
+                                          self.context.filename, node)
 
     def _infer_operator(self, node: ast.expr) -> Inferred:
         if isinstance(node, ast.BinOp):

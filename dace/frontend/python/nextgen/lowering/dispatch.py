@@ -17,9 +17,10 @@ because a construct has no dedicated mechanism yet. Future registry entries
 separate per-library rule sets.
 """
 import ast
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from dace import dtypes
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
@@ -180,8 +181,39 @@ def _call_target_access(target: ast.expr, inferred, statement: ast.stmt, state: 
 def fallback_to_callback(statement: ast.stmt, state: LoweringState, reason: str) -> None:
     """Wrap a statement in a fully specified Python callback."""
     from dace.frontend.python.nextgen.lowering.rules.callbacks import lower_opaque
+    if isinstance(statement, ast.Return):
+        _fallback_return(statement, state, reason)
+        return
     reads, writes = statement_io_sets(statement)
     lower_opaque(OpaqueStmt(statement, reason, reads, writes), state)
+
+
+def _fallback_return(statement: ast.Return, state: LoweringState, reason: str) -> None:
+    """
+    Fall back a ``return`` whose value cannot be lowered: a ``return`` cannot
+    execute inside a Python callback, so the value computation runs in the
+    interpreter as an assignment to the conventional return container(s),
+    followed by a regular :class:`ReturnNode` naming them.
+    """
+    from dace.frontend.python.nextgen.lowering.rules.callbacks import lower_opaque
+    if statement.value is None:
+        state.emitter.emit(tn.ReturnNode())
+        return
+
+    prefix = state.context.return_prefix
+    values = statement.value.elts if isinstance(statement.value, ast.Tuple) else [statement.value]
+    names: List[str] = []
+    for index, value in enumerate(values):
+        base_name = '__return' if len(values) == 1 else f'__return_{index}'
+        target_name = f'{prefix}{base_name}'
+        assign = ast.copy_location(ast.Assign(targets=[ast.Name(id=target_name, ctx=ast.Store())], value=value),
+                                   statement)
+        ast.fix_missing_locations(assign)
+        reads, writes = statement_io_sets(assign)
+        lower_opaque(OpaqueStmt(assign, reason, reads, writes), state)
+        names.append(state.context.resolve(target_name).container)
+    state.context.return_names.extend(names)
+    state.emitter.emit(tn.ReturnNode(values=names))
 
 
 def _consumes_pyobject(value: ast.expr, state: LoweringState) -> bool:

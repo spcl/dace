@@ -42,12 +42,13 @@ def lower_expr(statement: ast.Expr, state: LoweringState) -> None:
 
 
 def is_sdfg_convertible(callee: Any) -> bool:
-    """Whether a resolved callee is a nested dace program or an SDFG-valued object."""
+    """Whether a resolved callee is a nested dace program or an SDFG-valued
+    object. Convertibility is duck-typed on ``__sdfg__``, matching the classic
+    frontend (convertible objects need not inherit ``SDFGConvertible``)."""
     if callee is None:
         return False
-    from dace.frontend.python import common as pycommon  # Deferred to avoid an import cycle
-    from dace.sdfg import SDFG
-    return isinstance(callee, (SDFG, pycommon.SDFGConvertible))
+    from dace.sdfg import SDFG  # Deferred to avoid an import cycle
+    return isinstance(callee, SDFG) or hasattr(callee, '__sdfg__')
 
 
 def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, statement: ast.stmt,
@@ -70,7 +71,7 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     from dace.sdfg import SDFG
 
     if not isinstance(callee, DaceProgram):
-        sdfg = callee if isinstance(callee, SDFG) else _convertible_to_sdfg(callee)
+        sdfg = callee if isinstance(callee, SDFG) else _convertible_to_sdfg(callee, call, state)
         if sdfg is None:
             fallback_to_callback(statement, state, 'SDFG-convertible callee could not produce an SDFG')
             return
@@ -312,14 +313,32 @@ def _bind_call_results(target: Optional[ast.expr], returned: List[str], statemen
                                   statement)
 
 
-def _convertible_to_sdfg(callee: Any) -> Optional[Any]:
-    """Produce an SDFG from a non-DaceProgram SDFG-convertible, if possible."""
+def _convertible_to_sdfg(callee: Any, call: ast.Call, state: LoweringState) -> Optional[Any]:
+    """
+    Produce an SDFG from a non-DaceProgram SDFG-convertible, if possible.
+    ``__sdfg__`` receives the inferred argument descriptors (data) and values
+    (constants/symbols), mirroring the classic frontend's convention.
+    """
+    from dace.sdfg import SDFG
     try:
-        sdfg = callee.__sdfg__()
+        arguments = [_sdfg_call_argument(argument, state) for argument in call.args]
+        keywords = {
+            keyword.arg: _sdfg_call_argument(keyword.value, state)
+            for keyword in call.keywords if keyword.arg is not None
+        }
+        sdfg = callee.__sdfg__(*arguments, **keywords)
     except Exception:
         return None
-    from dace.sdfg import SDFG
     return sdfg if isinstance(sdfg, SDFG) else None
+
+
+def _sdfg_call_argument(argument: ast.expr, state: LoweringState) -> Any:
+    """The data descriptor (data arguments) or compile-time value
+    (constant/symbolic arguments) an SDFG-convertible's ``__sdfg__`` sees."""
+    inferred = state.inference.infer(argument)
+    if inferred.is_data:
+        return inferred.descriptor
+    return inferred.value
 
 
 def _lower_sdfg_call(target: Optional[ast.expr], call: ast.Call, sdfg: Any, statement: ast.stmt,

@@ -10,7 +10,7 @@ error.
 import ast
 from typing import Callable, Dict, Type
 
-from dace.frontend.python.nextgen.common import CanonicalViolationError
+from dace.frontend.python.nextgen.common import CanonicalViolationError, UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.emitter import TreeEmitter
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
 from dace.frontend.python.nextgen.semantics.inference import InferenceService
@@ -52,6 +52,11 @@ def lower_statement(statement: ast.stmt, state: LoweringState) -> None:
     """
     Dispatch a canonical statement to its lowering rule.
 
+    A :class:`UnsupportedFeatureError` escaping a rule is a semantic feature
+    gap, not a failure: the partially emitted structure is rolled back and the
+    whole statement falls back to the interpreter (totality safety net). Rules
+    that can fall back more precisely catch the error themselves first.
+
     :raises CanonicalViolationError: If no rule exists for the statement type,
         which indicates that canonicalization and the rule registry are out of
         sync (a frontend bug).
@@ -61,4 +66,12 @@ def lower_statement(statement: ast.stmt, state: LoweringState) -> None:
         raise CanonicalViolationError(
             f'No lowering rule registered for canonical statement type {type(statement).__name__}',
             state.context.filename, statement)
-    handler(statement, state)
+    mark = state.emitter.checkpoint()
+    saved_bindings = state.context.snapshot()
+    try:
+        handler(statement, state)
+    except UnsupportedFeatureError as reason:
+        from dace.frontend.python.nextgen.lowering import dispatch  # Deferred: dispatch imports this module
+        state.emitter.rollback(mark)
+        state.context.restore(saved_bindings)
+        dispatch.fallback_to_callback(statement, state, str(reason))

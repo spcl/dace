@@ -139,6 +139,17 @@ def _outline(renamed: list,
     return function_code, call_code
 
 
+def _constant_reference(value: object, state: LoweringState) -> str:
+    """The program-constant name of an embedded object, registering it under a
+    fresh name if it is not a known constant yet."""
+    for name, (_, existing) in state.context.constants.items():
+        if existing is value:
+            return name
+    name = state.context.fresh_name('__nextgen_object')
+    state.context.constants[name] = (data.Scalar(dtypes.pyobject()), value)
+    return name
+
+
 def _rename_to_repository(statements: list, source_to_repository: dict) -> list:
     """Copies of the statements with source names replaced by their repository
     container names."""
@@ -192,10 +203,15 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
             if not isinstance(node, ast.Constant) or is_literal_constant(node.value):
                 return None
             qualname = getattr(node, 'qualname', None)
-            if qualname is None:
-                raise FrontendError('Cannot reconstruct interpreter code for a resolved object without a source name',
-                                    state.context.filename, node)
-            return ast.parse(qualname, mode='eval').body
+            if qualname is not None:
+                try:
+                    return ast.parse(qualname, mode='eval').body
+                except SyntaxError:
+                    pass
+            # No parseable source form (e.g. a repr-derived name for a
+            # resolved object attribute): bind the object as a named program
+            # constant and reference it by that name.
+            return ast.Name(id=_constant_reference(node.value, state), ctx=ast.Load())
 
         def visit_OpaqueStmt(self, node: OpaqueStmt) -> ast.stmt:
             return self.visit(node.original)

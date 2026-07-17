@@ -1092,7 +1092,10 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         return stree
 
     def _run_parallel_schedule_tree_lowering_checks(self, args: Tuple[Any], kwargs: Dict[str, Any], sdfg: SDFG) -> None:
-        stree = self._generate_schedule_tree(args, kwargs, update_program_state=False)
+        # Deferred import: the nextgen package pulls in the lowering rule
+        # modules, which import this module back.
+        from dace.frontend.python import nextgen
+        stree = nextgen.parse_program(self, *args, **kwargs)
         self._check_schedule_tree_parallel_lowering(stree, sdfg)
 
     def _check_schedule_tree_parallel_lowering(self, stree: 'tn.ScheduleTreeRoot', sdfg: SDFG) -> None:
