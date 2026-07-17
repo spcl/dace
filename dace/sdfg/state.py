@@ -1849,8 +1849,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if sdfg is not None:
             sdfg.parent_nsdfg_node = s
 
-            # Add "default" undefined symbols if None are given
-            symbols = sdfg.free_symbols
+            # Default undefined symbols if none given; NoneSymbol is an optional-array marker, not a runtime symbol.
+            symbols = sdfg.free_symbols - {'NoneSymbol'}
             if symbol_mapping is None:
                 symbol_mapping = {s: s for s in symbols}
                 s.symbol_mapping = symbol_mapping

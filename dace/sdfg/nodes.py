@@ -764,9 +764,9 @@ class NestedSDFG(CodeNode):
                 raise ValueError(f"Inout connector {conn} is connected to different input ({inputs}) and "
                                  f"output ({outputs}) arrays")
 
-        # Validate undefined symbols
+        # Validate undefined symbols; NoneSymbol is an optional-array marker, not a runtime symbol.
         if self.sdfg:
-            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors)
+            symbols = set(k for k in self.sdfg.free_symbols if k not in connectors and k != 'NoneSymbol')
             missing_symbols = [s for s in symbols if s not in self.symbol_mapping]
             if missing_symbols:
                 raise ValueError('Missing symbols on nested SDFG: %s' % (missing_symbols))
