@@ -156,3 +156,7 @@ done
 # Cross-rank (and cross-compiler) aggregation: re-scans the whole results tree.
 python3 npbench_polybench_perf.py --tables-only
 python3 npbench_polybench_compile_perf.py --tables-only
+
+# Re-plot the speedup grid from the freshly-written tree (best-effort: never fail the job).
+python3 plot_npbench_speedup_grid.py --results-dir results --out results/npbench_speedup_grid.png \
+  || echo "[plot] npbench_speedup_grid failed"

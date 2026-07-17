@@ -160,3 +160,8 @@ for corpus in $CORPORA; do
   python3 "${corpus}_perf.py" --tables-only
   python3 tsvc_compile_perf.py --corpus "$corpus" --tables-only
 done
+
+# Re-plot the native-baseline boxplot from the freshly-written tree (best-effort: never fail the job).
+# It reads both tsvc2 and tsvc2_5 and draws whichever are present.
+python3 plot_tsvc_boxplot.py --results-dir results --out results/tsvc_boxplot.png \
+  || echo "[plot] tsvc_boxplot failed"
