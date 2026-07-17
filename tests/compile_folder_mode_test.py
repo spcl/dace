@@ -63,7 +63,11 @@ def _load_and_run_sdfg(build_folder, sdfg):
     _run_sdfg(csdfg)
 
 
-def test_development_folder_mode():
+def test_development_folder_mode(monkeypatch):
+    # Environment variables override Config.set at read time; a CI-side
+    # DACE_compiler_build_folder_mode export must not defeat the explicit
+    # mode this test is about.
+    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
     with dace.config.temporary_config() as Config:
         Config.set('compiler', 'build_folder_mode', value="development")
         sdfg = _make_test_sdfg()
@@ -108,7 +112,9 @@ def test_development_folder_mode():
     assert sdfg_compiler.get_folder_mode(build_folder) == "development"
 
 
-def test_production_folder_mode():
+def test_production_folder_mode(monkeypatch):
+    # See test_development_folder_mode: shield against environment overrides.
+    monkeypatch.delenv('DACE_compiler_build_folder_mode', raising=False)
     with dace.config.temporary_config() as Config:
         Config.set('compiler', 'build_folder_mode', value="production")
         sdfg = _make_test_sdfg()
