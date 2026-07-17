@@ -702,6 +702,7 @@ def pipeline_auto_opt(sdfg, device='cpu'):
     therefore threaded IN as ``find_fast_library_fn`` so it drives the selection
     before expansion -- the same ``perf_library_prio`` the other lanes force."""
     from dace.transformation.auto.auto_optimize import auto_optimize
+    _set_cpu_codegen('legacy')  # the baseline stays on the old CPU generator
     _set_tree_reduction(False)
     # On GPU force all non-transient (I/O) arrays onto GPU_Global storage (use_gpu_storage): the whole
     # program stays device-resident like pipeline_parallel/canon_gpu. auto_optimize defaults
@@ -748,9 +749,20 @@ _CANON_KNOBS = dict(peel_limit=4,
                     scatter_to_guarded_maps=True)
 
 
+def _set_cpu_codegen(implementation):
+    """Pin ``compiler.cpu.implementation`` for this measurement process. Called from the
+    pipeline functions, which run in the same isolated child that then compiles -- so the
+    canonicalize lanes are emitted by the NEW experimental_readable CPU codegen while the
+    auto_opt baseline stays on the legacy generator (each lane pairs its transformation
+    stack with its intended backend instead of both inheriting the process default)."""
+    import dace
+    dace.Config.set('compiler', 'cpu', 'implementation', value=implementation)
+
+
 def pipeline_canon(sdfg, device='cpu'):
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    _set_cpu_codegen('experimental_readable')  # canon lanes are the new-codegen lanes
     _set_tree_reduction(True)  # canon is the only lane that tree-reduces its WCR
     return finalize_for_target(canonicalize(sdfg, validate=True, target=device, **_CANON_KNOBS), device)
 
@@ -767,6 +779,7 @@ def pipeline_canon_gpu(sdfg, device='gpu'):
     target is always the GPU."""
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.auto.auto_optimize import apply_gpu_storage
+    _set_cpu_codegen('experimental_readable')  # canon lanes are the new-codegen lanes (host-side code here)
     _set_tree_reduction(True)  # match the canon lane: tree-reduce the WCR
     sdfg = canonicalize(sdfg, validate=True, target='cpu', **_CANON_KNOBS)
     apply_gpu_storage(sdfg)  # non-transient arrays -> GPU_Global (data resident on device)
@@ -886,6 +899,7 @@ def _apply_multidim_vectorizer(sdfg):
 def pipeline_canon_vectorize(sdfg, device='cpu'):
     """canonicalize -> VectorizeCPUMultiDim."""
     from dace.transformation.passes.canonicalize import canonicalize
+    _set_cpu_codegen('experimental_readable')  # canon lanes are the new-codegen lanes
     _set_tree_reduction(True)  # canon tree-reduces its WCR, like the plain canon lane
     canonicalize(sdfg, validate=True, **_VECTORIZE_CANON_KNOBS)
     return _apply_multidim_vectorizer(sdfg)
