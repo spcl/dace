@@ -1324,6 +1324,61 @@ def test_nanobind_interface_gpu_arrays():
             csdfg(A=np.random.rand(n), B=b, N=np.int32(n))
 
 
+def test_nanobind_interface_gpu_return_binding():
+    """A GPU_Global __return binds as a device ndarray (pin: the GPU-argument
+    device selection must keep covering return arrays)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('gpu_return_probe')
+    sdfg.add_array('A', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.arrays['A'].optional = False
+    sdfg.add_array('__return', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.arrays['__return'].optional = False
+
+    with set_temporary('compiler', 'cuda', 'backend', value='cuda'):
+        code = generate_bindings_code(sdfg)
+    assert 'nb::ndarray<double, nb::device::cuda> __return' in code
+
+
+def test_nanobind_interface_gpu_return_allocation_requires_cupy():
+    """Allocating a GPU_Global return without CuPy raises NotImplementedError
+    instead of silently handing the device binding a host array."""
+    import importlib.util
+    import types
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+
+    if importlib.util.find_spec('cupy') is not None:
+        pytest.skip('cupy is installed; the missing-cupy error path cannot trigger')
+
+    sdfg = dace.SDFG('gpu_return_alloc_probe')
+    sdfg.add_array('__return', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: None, __file__='<stub>')
+    wrapper = NanobindCompiledSDFG(sdfg, stub_module, [])
+    with pytest.raises(NotImplementedError, match='cupy'):
+        wrapper._allocate_return_arrays({})
+
+
+@pytest.mark.gpu
+def test_nanobind_interface_gpu_return_values():
+    """E2E: a GPU program's return value comes back as a CuPy array."""
+    cp = pytest.importorskip('cupy')
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+
+        @dace.program
+        def gpu_ret_nanobind(A: dace.float64[10] @ dace.StorageType.GPU_Global):
+            return A + 1.0
+
+        sdfg = gpu_ret_nanobind.to_sdfg()
+        sdfg.apply_gpu_transformations()
+        csdfg = sdfg.compile()
+
+        a = cp.random.rand(10)
+        result = csdfg(A=a)
+        assert isinstance(result, cp.ndarray)
+        assert np.allclose(cp.asnumpy(result), cp.asnumpy(a) + 1.0)
+
+
 def test_nanobind_interface_strict_scalar_cast_binding():
     """The strict option adds .noconvert() to a numeric scalar arg; default does not."""
     from dace.codegen.nanobind_bindings import generate_bindings_code

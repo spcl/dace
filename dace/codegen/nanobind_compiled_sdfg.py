@@ -55,6 +55,9 @@ class NanobindCompiledSDFG:
            caller passes their own ``__return*`` buffer.
     :note: Return values are arrays only; unlike the ctypes ``CompiledSDFG`` the
            nanobind interface returns neither Python scalars nor pyobjects.
+           A return array with ``GPU_Global`` storage is allocated with (and
+           returned as) a CuPy array; without CuPy installed such a call
+           raises ``NotImplementedError``.
     :note: No argument or symbol values are stored between calls; unlike the
            ctypes ``CompiledSDFG`` (which reuses the last call's arguments,
            ``_lastargs``), :meth:`get_workspace_sizes` and :meth:`set_workspace`
@@ -266,7 +269,19 @@ class NanobindCompiledSDFG:
                 dtype = desc.dtype.as_numpy_dtype()
                 total_size = int(symbolic.evaluate(desc.total_size, syms))
                 strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
-                arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
+                if desc.storage is dtypes.StorageType.GPU_Global:
+                    # The binding takes a device ndarray (nb::device::cuda/rocm),
+                    # so the allocation must be device memory. CuPy covers both
+                    # backends. cupy.zeros (not empty) for parity with the
+                    # zero-initialized CPU returns below; strides are in bytes
+                    # in both allocators.
+                    try:
+                        import cupy
+                    except (ImportError, ModuleNotFoundError):
+                        raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
+                    arr = cupy.ndarray(shape, dtype, memptr=cupy.zeros(total_size, dtype).data, strides=strides)
+                else:
+                    arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
 
             kwargs[name] = arr
             return_arrays.append(arr)
