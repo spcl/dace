@@ -135,6 +135,10 @@ def generate_program_folder(
             with open(bindings_path, 'w') as bindings_file:
                 bindings_file.write(bindings_code)
         filelist.append('cpu,,{}'.format(bindings_name))
+    elif interface == 'ctypes':
+        pass
+    else:
+        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
 
     # Record which interface produced this folder (see `load_precompiled_sdfg`),
     # analogous to the `FOLDER_MODE` file.
