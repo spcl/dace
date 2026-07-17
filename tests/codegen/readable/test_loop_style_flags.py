@@ -46,8 +46,8 @@ def test_defaults_emit_the_historical_loop(implementation):
     assert not any('<=' in line or '!=' in line for line in lines)
 
 
-@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'for (auto '), ('int64', 'for (long long '),
-                                                       ('int32', 'for (int ')])
+@pytest.mark.parametrize('loop_index_type, expected', [('auto', 'for (auto '), ('int64', 'for (int64_t '),
+                                                       ('int32', 'for (int32_t ')])
 def test_loop_index_type(loop_index_type, expected):
     lines = loop_lines(generate(double_it, loop_index_type=loop_index_type))
     assert any(line.startswith(expected) for line in lines), lines

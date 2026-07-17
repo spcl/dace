@@ -43,6 +43,7 @@ cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72"        # one Grace CPU's worth of cores per rank
 export OMP_PROC_BIND="close"       # pin OpenMP threads, packed within the rank's socket
 export OMP_PLACES="cores"          # one OpenMP place per physical core
+export OMP_MAX_ACTIVE_LEVELS=1     # one parallel level only: a BLAS call inside a DaCe omp region must serialize, not fork its own team (openmp-threaded OpenBLAS honors this; the old pthreads pool could not)
 export PYTHONUNBUFFERED=1  # otherwise stdout is fully buffered (not a tty), so progress prints
                            # don't show up in the log until a buffer fills -- looks like a hang
 
@@ -55,7 +56,7 @@ alias python=python3.11
 spack load gcc@16.1.0
 spack load llvm@22.1.5
 spack load cmake
-spack load openblas threads=pthreads
+spack load openblas threads=openmp
 spack load cuda
 spack load cutensor
 
@@ -83,7 +84,7 @@ fi
 # (dace/libraries/blas/environments/openblas.py) needs BOTH the OPENBLAS_DIR env var it now checks
 # AND the lib dir on LD_LIBRARY_PATH. Without them MatMul/potrf report "OpenBLAS not installed" and
 # expand to a naive pure loop (~25x slower); with them gemm/k2mm/k3mm/cholesky route to cblas_dgemm.
-export OPENBLAS_DIR="$(spack location -i openblas threads=pthreads 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+export OPENBLAS_DIR="$(spack location -i openblas threads=openmp 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"

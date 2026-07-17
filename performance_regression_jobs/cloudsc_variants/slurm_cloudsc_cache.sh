@@ -19,14 +19,15 @@
 set -euo pipefail
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72" OMP_PROC_BIND="close" OMP_PLACES="cores" PYTHONUNBUFFERED=1
+export OMP_MAX_ACTIVE_LEVELS=1  # single parallel level: nested BLAS-in-omp-region calls serialize
 export PYTHONUSERBASE=/capstor/scratch/cscs/$USER/aarch64/python
 export PATH=$PYTHONUSERBASE/bin:$PATH
 source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 export PYTHONPATH=/capstor/scratch/cscs/ybudanaz/aarch64/dace:${PYTHONPATH:-}
 spack load gcc@16.1.0
 spack load cmake
-spack load openblas threads=pthreads
-export OPENBLAS_DIR="$(spack location -i openblas threads=pthreads 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+spack load openblas threads=openmp
+export OPENBLAS_DIR="$(spack location -i openblas threads=openmp 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"

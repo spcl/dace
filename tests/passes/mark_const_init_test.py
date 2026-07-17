@@ -2,6 +2,7 @@
 """ Tests the MarkConstInit pass. """
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes as nd
@@ -539,6 +540,120 @@ def test_idempotency():
     assert len(s1.nodes()) == num_nodes_s1
 
 
+def test_partly_paying_fill_map_is_not_unrolled():
+    """A fill map is unrolled only if EVERY name it writes is const-initializable.
+
+    The unroll decision is taken on a probe where all candidate maps are unrolled, but applied to a
+    graph where only the paying ones are. Those two graphs must agree, or a map gets unrolled and
+    then declined anyway -- the mutate-without-apply bug all over again.
+
+    Here map ``fill_x`` writes only ``X``, while map ``fill_xz`` writes ``X`` AND ``Z``; ``Z`` is
+    written a second time, so it is declined. Unrolling only ``fill_x`` would leave ``fill_xz``'s
+    MapExit as a writer of ``X``, which makes ``X`` a runtime multi-write and declines it too -- so
+    ``fill_x`` would have been flattened for nothing.
+    """
+    sdfg = dace.SDFG('partly_paying')
+    sdfg.add_array('X', [8], dace.float64, transient=True)
+    sdfg.add_array('Z', [4], dace.float64, transient=True)
+    sdfg.add_array('BX', [8], dace.float64)
+    sdfg.add_array('BZ', [4], dace.float64)
+
+    s1 = sdfg.add_state('fill')
+    # Disjoint halves of X, so the two fills do not overlap (an overlap is declined outright).
+    s1.add_mapped_tasklet('fill_x', dict(i='0:4'), {}, 'ox = 1.0', dict(ox=dace.Memlet('X[i]')), external_edges=True)
+    s1.add_mapped_tasklet('fill_xz',
+                          dict(i='0:4'), {},
+                          'ox = 2.0\noz = 3.0',
+                          dict(ox=dace.Memlet('X[i + 4]'), oz=dace.Memlet('Z[i]')),
+                          external_edges=True)
+
+    # A second write to Z -> Z is declined, which is what makes fill_xz not pay.
+    s2 = sdfg.add_state('rewrite_z')
+    t = s2.add_tasklet('z0', {}, {'o'}, 'o = 9.0')
+    s2.add_edge(t, 'o', s2.add_access('Z'), None, dace.Memlet('Z[0]'))
+
+    s3 = sdfg.add_state('use')
+    s3.add_mapped_tasklet('ux',
+                          dict(i='0:8'),
+                          dict(inp=dace.Memlet('X[i]')),
+                          'o = inp',
+                          dict(o=dace.Memlet('BX[i]')),
+                          external_edges=True)
+    s3.add_mapped_tasklet('uz',
+                          dict(i='0:4'),
+                          dict(inp=dace.Memlet('Z[i]')),
+                          'o = inp',
+                          dict(o=dace.Memlet('BZ[i]')),
+                          external_edges=True)
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    sdfg.add_edge(s2, s3, dace.InterstateEdge())
+    sdfg.validate()
+
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+
+    # Whatever the classifier decides, the invariant is the same: a map that was flattened MUST have
+    # paid for it. If X was not const-inited, neither fill map may have been unrolled.
+    if 'X' not in kinds:
+        assert len(_map_entries(s1)) == 2, ('a fill map was unrolled but X was not const-inited: '
+                                            f'{[m.map.label for m in _map_entries(s1)]}')
+    sdfg.validate()
+
+
+def _same_state_fill_sdfg(name):
+    """A constant fill whose CONSUMER lives in the same state, connected through one access node.
+
+    This is what ``apply_gpu_transformations`` produces: it fuses the fill's state into its
+    consumer's, leaving ``fill -> MapExit -> A -> MapEntry -> use``. The dependency is explicit, so
+    the fill provably precedes the read.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [8], dace.float64, transient=True)
+    sdfg.add_array('B', [8], dace.float64)
+    s1 = sdfg.add_state('init')
+    s2 = sdfg.add_state('use')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    s1.add_mapped_tasklet('fill', dict(i='0:8'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s2.add_mapped_tasklet('use',
+                          dict(i='0:8'),
+                          dict(inp=dace.Memlet('A[i]')),
+                          'out = inp * 2',
+                          dict(out=dace.Memlet('B[i]')),
+                          external_edges=True)
+    sdfg.apply_gpu_transformations()  # fuses init into use; pure SDFG rewrite, needs no GPU
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.xfail(strict=True, reason='MapUnroll cannot flatten a fill whose consumer shares its state: it '
+                   'duplicates the access node per element but keeps the original out-edge, so all N nodes '
+                   'claim to deliver the FULL array to the consumer while each is written at one index. '
+                   'const-init here needs the fill evaluated WITHOUT unrolling, not a looser classifier.')
+def test_same_state_constant_fill_is_const_inited():
+    """A constant fill should be const-initializable even when its consumer shares the state.
+
+    This is every GPU kernel: ``apply_gpu_transformations`` fuses the fill's state into its consumer's,
+    so nothing on a GPU-transformed SDFG is ever const-inited. The two-state CPU shape is marked only
+    because cross-state reachability answers the ordering question instead
+    (test_array_full_constant_write).
+
+    Currently xfail, and NOT because the classifier is too strict. Unrolling the fill here produces a
+    graph where each per-element node carries ``A[i]`` in but ``A[0:8]`` out -- eight nodes each
+    claiming the whole array. The write-before-read check declines that, which is what SAVES us: the
+    same MapUnroll damage shows up as 'Isolated node' / 'Dangling in-connector' when it is allowed to
+    stand. Relaxing the check would accept a broken graph. The real fix is to teach the classifier to
+    evaluate a constant-fill map's value directly and replace the map wholesale, deleting Step 0's
+    speculative unroll entirely.
+    """
+    sdfg = _same_state_fill_sdfg('same_state_fill')
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('A') == 'constexpr_static', kinds
+    assert 'A' in sdfg.constants
+    assert np.array_equal(sdfg.constants['A'], np.full(8, 3.0))
+    sdfg.validate()
+
+
 def _gpu_fill_program():
     """``@dace.program`` (NOT a hand-built SDFG -- the frontend shape is the point): a small
     constant fill of a transient, then a read of it. After ``apply_gpu_transformations`` the fill is
@@ -615,5 +730,6 @@ if __name__ == '__main__':
     test_multiwrite_partial_elementwise_marked()
     test_multiwrite_overlapping_not_marked()
     test_idempotency()
+    test_partly_paying_fill_map_is_not_unrolled()
     test_gpu_constant_fill_map_keeps_its_schedule()
     test_gpu_rejected_fill_map_stays_valid()
