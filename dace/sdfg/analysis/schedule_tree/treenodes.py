@@ -379,6 +379,19 @@ class SDFGCallNode(ScheduleTreeNode):
         targets = ', '.join(self.return_targets)
         return indent * INDENTATION + f'{targets} = {call}'
 
+    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        return MemletSet(
+            Memlet.from_array(name, root.containers[name]) for name in self.call.arguments.values()
+            if name in root.containers)
+
+    def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        # Without callee dataflow analysis, arguments are conservatively
+        # treated as potentially written; return targets always are.
+        root = root if root is not None else self.get_root()
+        written = list(self.call.arguments.values()) + list(self.return_targets)
+        return MemletSet(Memlet.from_array(name, root.containers[name]) for name in written if name in root.containers)
+
 
 @dataclass
 class DataflowScope(ScheduleTreeScope):

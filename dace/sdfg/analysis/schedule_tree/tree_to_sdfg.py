@@ -7,11 +7,12 @@ from enum import Enum, auto
 from types import TracebackType
 from typing import Final
 
-from dace import symbolic
+from dace import dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, LoopRegion
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ReturnBlock,
+                             SDFGState)
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 
@@ -300,16 +301,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             assignments=self._pending_interstate_assignments(),
         )
 
-        # Check if there's an `ElseScope` following this node (in the parent's children).
+        # Check if there's an `ElifScope`/`ElseScope` following this node (in the parent's children).
         # Filter StateBoundaryNodes, which we inserted earlier, for this analysis.
-        filtered = [n for n in node.parent.children if not isinstance(n, tn.StateBoundaryNode)]
-        if_index = _list_index(filtered, node)
-        has_else_branch = len(filtered) > if_index + 1 and isinstance(filtered[if_index + 1], tn.ElseScope)
-
-        if has_else_branch:
-            # push merge_state on the stack for later usage in `visit_ElseScope`
+        if _has_branch_continuation(node):
+            # push merge_state on the stack for later usage in `visit_ElifScope`/`visit_ElseScope`
             self._state_stack.append(merge_state)
-            # push condition_block on the stack for later usage in `visit_ElseScope`
+            # push condition_block on the stack for later usage in `visit_ElifScope`/`visit_ElseScope`
             self._state_stack.append(conditional_block)
         else:
             self._current_state = merge_state
@@ -318,13 +315,45 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
 
     def visit_BreakNode(self, node: tn.BreakNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        self._insert_exit_block(BreakBlock(f"break_{id(node)}"))
 
     def visit_ContinueNode(self, node: tn.ContinueNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        self._insert_exit_block(ContinueBlock(f"continue_{id(node)}"))
+
+    def _insert_exit_block(self, block: ControlFlowBlock) -> None:
+        """Insert a control-flow exit block (break/continue/return) after the
+        current state. Statements following the exit on the same path are dead
+        code; they attach to a fresh successor of the block."""
+        current_state = self._current_state
+        assert current_state is not None
+        cf_region = current_state.parent_graph
+        cf_region.add_node(block)
+        cf_region.add_edge(current_state, block, InterstateEdge(assignments=self._pending_interstate_assignments()))
+        after = cf_region.add_state(f"after_{block.label}")
+        cf_region.add_edge(block, after, InterstateEdge())
+        self._current_state = after
 
     def visit_ElifScope(self, node: tn.ElifScope, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # An additional conditional branch of the preceding if-chain
+        conditional_block: ConditionalBlock = self._pop_state("if_scope")
+
+        elif_body = ControlFlowRegion(f"elif_body_{id(node)}", sdfg=sdfg)
+        conditional_block.add_branch(node.condition, elif_body)
+
+        elif_state = elif_body.add_state("elif_state", is_start_block=True)
+        self._current_state = elif_state
+
+        self.visit(node.children, sdfg=sdfg)
+
+        if self._pending_interstate_assignments():
+            raise NotImplementedError("TODO: update edge with new assignments")
+
+        if _has_branch_continuation(node):
+            # Another elif/else follows: keep the block available (merge_state stays below it)
+            self._state_stack.append(conditional_block)
+        else:
+            merge_state = self._pop_state("merge_state")
+            self._current_state = merge_state
 
     def visit_ElseScope(self, node: tn.ElseScope, sdfg: SDFG) -> None:
         # get ConditionalBlock from stack
@@ -786,24 +815,129 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def visit_ReturnNode(self, node: tn.ReturnNode, sdfg: SDFG) -> None:
         # Frontends materialize return values into their (non-transient)
         # return containers before this node, so a tail return at the end of
-        # the program is a no-op. Early returns (inside branches, loops, or
-        # function-call scopes) require control-flow exits that are not
-        # implemented yet — raise instead of silently dropping the node.
+        # the program is a no-op, and an early return is a plain control-flow
+        # exit (ReturnBlock). Returns inside FunctionCallScope mean "exit the
+        # inlined callee", which has no direct control-flow equivalent yet.
         parent = node.parent
         if parent is not None and isinstance(parent, tn.ScheduleTreeRoot):
             index = next(i for i, child in enumerate(parent.children) if child is node)
             if all(isinstance(sibling, tn.StateBoundaryNode) for sibling in parent.children[index + 1:]):
                 return
-        raise NotImplementedError("Early returns are not yet supported in tree-to-SDFG conversion.")
+        ancestor = parent
+        while ancestor is not None:
+            if isinstance(ancestor, tn.FunctionCallScope):
+                raise NotImplementedError(
+                    "Returns from inlined nested programs are not yet supported in tree-to-SDFG conversion.")
+            ancestor = ancestor.parent
+        self._insert_exit_block(ReturnBlock(f"return_{id(node)}"))
 
     def visit_PythonCallbackNode(self, node: tn.PythonCallbackNode, sdfg: SDFG) -> None:
-        # Requires the Python-callback ABI (callback symbol, __pystate
-        # serialization). Raise explicitly: silently dropping the node would
-        # produce a wrong program.
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        """
+        Lower a Python callback to the stable callback ABI: a callback-typed
+        SDFG symbol (registered in ``sdfg.callback_mapping``) invoked from a
+        tasklet with ``side_effects=True``, serialized against other callbacks
+        through the ``__pystate`` container.
+        """
+        function_name = node.outlined_function_name
+        if function_name is None:
+            raise NotImplementedError("PythonCallbackNode without outlined scaffolding cannot be lowered.")
+        if self._dataflow_stack:
+            raise NotImplementedError("Python callbacks inside dataflow scopes are not supported.")
+
+        input_types = [sdfg.arrays[name] for name in node.input_names]
+        output_types = [sdfg.arrays[name] for name in node.output_names]
+        if not output_types:
+            return_type = None
+        elif len(output_types) == 1:
+            return_type = output_types[0]
+        else:
+            return_type = list(output_types)
+        callback_type = dtypes.callback(return_type, *input_types)
+
+        if function_name not in sdfg.symbols:
+            sdfg.add_symbol(function_name, callback_type)
+        root = self._ctx.root
+        sdfg.callback_mapping.setdefault(function_name, root.callback_mapping.get(function_name, function_name))
+
+        if '__pystate' not in sdfg.arrays:
+            sdfg.add_scalar('__pystate', dtypes.int32, transient=True)
+
+        # Callback ordering is enforced by state transitions around the call
+        # in addition to the __pystate edges.
+        self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
+                                                     self._pending_interstate_assignments())
+
+        input_connectors = {f'__in_{name}' for name in node.input_names} | {'__istate'}
+        output_connectors = {f'__out_{name}' for name in node.output_names} | {'__ostate'}
+        input_arguments = ', '.join(f'__in_{name}' for name in node.input_names)
+        if callback_type.is_scalar_function() and len(callback_type.return_types) > 0:
+            code = f'__out_{node.output_names[0]} = {function_name}({input_arguments})'
+        else:
+            all_arguments = [f'__in_{name}' for name in node.input_names]
+            all_arguments.extend(f'__out_{name}' for name in node.output_names)
+            code = f'{function_name}({", ".join(all_arguments)})'
+
+        # The tasklet must survive dead-code elimination and never reorder,
+        # even when it has no data outputs: side effects are external.
+        tasklet = nodes.Tasklet(f'callback_{id(node)}', input_connectors, output_connectors, code, side_effects=True)
+        tasklet.add_in_connector('__istate', dtypes.int32, force=True)
+        tasklet.add_out_connector('__ostate', dtypes.int32, force=True)
+        # Avoid casting output pointers to scalars in code generation
+        for name in node.output_names:
+            if tuple(sdfg.arrays[name].shape) == (1, ):
+                tasklet._out_connectors[f'__out_{name}'] = dtypes.pointer(sdfg.arrays[name].dtype)
+
+        in_memlets = {f'__in_{name}': Memlet.from_array(name, sdfg.arrays[name]) for name in node.input_names}
+        in_memlets['__istate'] = Memlet.from_array('__pystate', sdfg.arrays['__pystate'])
+        out_memlets = {f'__out_{name}': Memlet.from_array(name, sdfg.arrays[name]) for name in node.output_names}
+        out_memlets['__ostate'] = Memlet.from_array('__pystate', sdfg.arrays['__pystate'])
+        self.visit_TaskletNode(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets), sdfg)
+
+        self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
 
     def visit_SDFGCallNode(self, node: tn.SDFGCallNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        """
+        Lower an explicit SDFG-valued call to a nested SDFG node, connecting
+        data arguments and return containers with full-range memlets and
+        passing non-data arguments through the symbol mapping.
+        """
+        if self._dataflow_stack:
+            raise NotImplementedError("SDFG calls inside dataflow scopes are not supported.")
+
+        inner = copy.deepcopy(node.sdfg)
+        connections: list[tuple[str, str]] = []  # (inner connector, outer container)
+        symbol_mapping: dict[str, object] = {}
+        for parameter, expression in node.call.arguments.items():
+            if expression in sdfg.arrays and parameter in inner.arrays:
+                connections.append((parameter, expression))
+            else:
+                symbol_mapping[parameter] = symbolic.pystr_to_symbolic(expression)
+
+        return_arrays = sorted(name for name in inner.arrays if name.startswith('__return'))
+        if len(return_arrays) < len(node.return_targets):
+            raise NotImplementedError("SDFG call with more return targets than callee return containers.")
+
+        # Without dataflow analysis of the callee, arguments conservatively
+        # connect as both inputs and outputs; returns are outputs only.
+        input_connectors = {parameter for parameter, _ in connections}
+        output_connectors = input_connectors | set(return_arrays[:len(node.return_targets)])
+
+        state = self._current_state
+        nested = state.add_nested_sdfg(inner,
+                                       inputs=input_connectors,
+                                       outputs=output_connectors,
+                                       symbol_mapping=symbol_mapping)
+        for parameter, container in connections:
+            state.add_edge(state.add_read(container), None, nested, parameter,
+                           Memlet.from_array(container, sdfg.arrays[container]))
+            state.add_edge(nested, parameter, state.add_write(container), None,
+                           Memlet.from_array(container, sdfg.arrays[container]))
+        for inner_name, target in zip(return_arrays, node.return_targets):
+            state.add_edge(nested, inner_name, state.add_write(target), None,
+                           Memlet.from_array(target, sdfg.arrays[target]))
+
+        self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
+                                                     self._pending_interstate_assignments())
 
     def _pending_interstate_assignments(self) -> dict[str, str]:
         """
@@ -837,6 +971,7 @@ def from_schedule_tree(
     for key, container in stree.containers.items():
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
+    result.callback_mapping = copy.deepcopy(stree.callback_mapping)
     # Frontend-produced trees store symbol *objects*; the SDFG symbol
     # repository stores their dtypes.
     result.symbols = {
@@ -1071,6 +1206,14 @@ def _insert_and_split_assignments(
             last_state = cf_region.add_state_after(last_state, label=label, assignments={key: value})
 
     return last_state
+
+
+def _has_branch_continuation(node: tn.ScheduleTreeNode) -> bool:
+    """Whether an if/elif branch scope is followed by another elif/else branch
+    (ignoring inserted state boundaries)."""
+    filtered = [sibling for sibling in node.parent.children if not isinstance(sibling, tn.StateBoundaryNode)]
+    index = _list_index(filtered, node)
+    return len(filtered) > index + 1 and isinstance(filtered[index + 1], (tn.ElifScope, tn.ElseScope))
 
 
 def _list_index(list: list[tn.ScheduleTreeNode], node: tn.ScheduleTreeNode) -> int:

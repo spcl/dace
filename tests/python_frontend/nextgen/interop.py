@@ -88,8 +88,7 @@ def has_compute(sig: TreeSignature) -> bool:
 
 
 #: Node kinds tree-to-SDFG conversion cannot lower yet.
-_UNSUPPORTED_EXECUTION_KINDS = (tn.PythonCallbackNode, tn.SDFGCallNode, tn.ElifScope, tn.ViewNode, tn.RefSetNode,
-                                tn.BreakNode, tn.ContinueNode)
+_UNSUPPORTED_EXECUTION_KINDS = (tn.ViewNode, tn.RefSetNode)
 
 
 def execution_gap(root: tn.ScheduleTreeRoot) -> str:
@@ -101,6 +100,25 @@ def execution_gap(root: tn.ScheduleTreeRoot) -> str:
     for node in root.preorder_traversal():
         if isinstance(node, _UNSUPPORTED_EXECUTION_KINDS):
             return type(node).__name__
-        if isinstance(node, tn.ReturnNode) and not isinstance(node.parent, tn.ScheduleTreeRoot):
-            return 'early ReturnNode'
+        if isinstance(node, tn.ReturnNode):
+            ancestor = node.parent
+            while ancestor is not None:
+                if isinstance(ancestor, tn.FunctionCallScope):
+                    return 'ReturnNode inside FunctionCallScope'
+                ancestor = ancestor.parent
     return ''
+
+
+def callback_arguments(root: tn.ScheduleTreeRoot) -> Dict[str, object]:
+    """
+    Materialize Python callables for a tree's callback nodes by executing
+    their outlined function scaffolding, keyed by the callback symbol name
+    (i.e., ready to pass as SDFG call arguments).
+    """
+    result: Dict[str, object] = {}
+    for node in root.preorder_traversal():
+        if isinstance(node, tn.PythonCallbackNode) and node.outlined_function_name is not None:
+            environment: Dict[str, object] = {}
+            exec(node.outlined_function_code.as_string, environment)
+            result[node.outlined_function_name] = environment[node.outlined_function_name]
+    return result

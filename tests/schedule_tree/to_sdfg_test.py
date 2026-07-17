@@ -421,7 +421,6 @@ def test_create_if_else():
     assert tasklets[0].label == "blub", "Else branch contains Tasklet('blub')"
 
 
-@pytest.mark.xfail(reason="Not yet implemented")
 def test_create_if_elif_else() -> None:
     stree = tn.ScheduleTreeRoot(
         name="tester",

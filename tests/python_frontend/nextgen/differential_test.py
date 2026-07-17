@@ -93,6 +93,33 @@ def prog_callback(A: dace.float64[N]):
     A[0] = 1.0
 
 
+@dace.program
+def prog_elif(A: dace.float64[N], flag: dace.int32):
+    if flag > 0:
+        A[0] = 1.0
+    elif flag < 0:
+        A[0] = 2.0
+    else:
+        A[0] = 3.0
+
+
+@dace.program
+def prog_break(A: dace.float64[N]):
+    i = 0
+    while i < 100:
+        A[0] = A[0] + 1.0
+        i = i + 1
+        if i >= 5:
+            break
+
+
+@dace.program
+def prog_early_return(A: dace.float64[N]):
+    if A[0] > 0.5:
+        return 1.0
+    return 2.0
+
+
 #: (program, nextgen callback budget). The budget is a hard ceiling recording
 #: current coverage; a failing budget means a lowering regression, a
 #: too-generous budget hides progress.
@@ -107,6 +134,9 @@ CORPUS = [
     pytest.param(prog_explicit_tasklet, 0, id='explicit_tasklet'),
     pytest.param(prog_numpy_creation, 0, id='numpy_creation'),
     pytest.param(prog_callback, 1, id='callback'),
+    pytest.param(prog_elif, 0, id='elif'),
+    pytest.param(prog_break, 0, id='break'),
+    pytest.param(prog_early_return, 0, id='early_return'),
 ]
 
 
@@ -192,7 +222,28 @@ EXECUTION_CORPUS = [
                  _while_inputs,
                  lambda a: {'A': np.concatenate(([a['A'][0] + 10.0], a['A'][1:]))},
                  id='while'),
-    pytest.param(prog_callback, _tasklet_inputs, lambda a: {}, id='callback'),
+    pytest.param(prog_callback, _tasklet_inputs, lambda a: {'A': np.concatenate(([1.0], a['A'][1:]))}, id='callback'),
+    pytest.param(prog_elif,
+                 lambda: ({
+                     'A': np.random.rand(12),
+                     'flag': np.int32(-1)
+                 }, {
+                     'N': 12
+                 }),
+                 lambda a: {'A': np.concatenate(([2.0], a['A'][1:]))},
+                 id='elif'),
+    pytest.param(prog_break,
+                 _while_inputs,
+                 lambda a: {'A': np.concatenate(([a['A'][0] + 5.0], a['A'][1:]))},
+                 id='break'),
+    pytest.param(prog_early_return,
+                 lambda: ({
+                     'A': np.full(12, 0.9)
+                 }, {
+                     'N': 12
+                 }),
+                 lambda a: {'__return': 1.0},
+                 id='early_return'),
 ]
 
 
@@ -215,7 +266,7 @@ def test_execution_comparison(program, make_inputs, reference):
     except NotImplementedError as gap_error:
         pytest.xfail(f'tree_to_sdfg gap: {gap_error}')
 
-    result = sdfg(**arrays, **symbols)
+    result = sdfg(**arrays, **symbols, **interop.callback_arguments(new_root))
 
     for name, expected_value in expected.items():
         if name == '__return':
