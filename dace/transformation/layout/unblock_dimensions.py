@@ -25,7 +25,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
 import dace
-from dace.sdfg.graph import Edge, EdgeT
 from dace.transformation import pass_pipeline as ppl
 
 

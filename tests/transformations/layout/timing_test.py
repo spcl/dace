@@ -196,8 +196,9 @@ def test_state_runs_on_gpu_sees_nested_sdfg_maps():
     inner = dace.SDFG("inner_gpu")
     inner.add_array("a", [16], dace.float64)
     istate = inner.add_state("i", is_start_block=True)
-    istate.add_mapped_tasklet("m", {"k": "0:16"}, {"__i": dace.Memlet("a[k]")}, "__o = __i * 2.0",
-                              {"__o": dace.Memlet("a[k]")}, schedule=dace.ScheduleType.GPU_Device,
+    istate.add_mapped_tasklet("m", {"k": "0:16"}, {"__i": dace.Memlet("a[k]")},
+                              "__o = __i * 2.0", {"__o": dace.Memlet("a[k]")},
+                              schedule=dace.ScheduleType.GPU_Device,
                               external_edges=True)
 
     outer = dace.SDFG("outer_host")
@@ -212,6 +213,21 @@ def test_state_runs_on_gpu_sees_nested_sdfg_maps():
     assert instrumentation_for(ostate) == dace.InstrumentationType.GPU_Events
 
 
+def test_rep_without_fresh_report_is_a_hard_error():
+    """A rep that writes no NEW instrumentation report must raise: silently re-reading the newest
+    existing file would return identical copies of a stale time (median stale, spread 0.0, marked
+    trusted), and silently dropping the rep would shrink the sample set unrecorded."""
+    import pytest
+
+    sdfg = dace.SDFG("stale_report_refusal")
+    sdfg.add_array("X", [4], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    state.instrument = dace.InstrumentationType.Timer
+    from dace.transformation.layout.timing import time_compute_stats
+    with pytest.raises(RuntimeError, match="no fresh instrumentation report"):
+        time_compute_stats(sdfg, lambda _: None, reps=2, warmup=0)  # the run never executes the SDFG
+
+
 if __name__ == "__main__":
     test_is_copy_state_classifies_relayout_vs_compute()
     test_insert_timing_instruments_compute_only()
@@ -224,4 +240,5 @@ if __name__ == "__main__":
     test_barrier_relayout_states_is_idempotent()
     test_time_compute_returns_none_for_uninstrumented_sdfg_not_a_stale_report()
     test_state_runs_on_gpu_sees_nested_sdfg_maps()
+    test_rep_without_fresh_report_is_a_hard_error()
     print("timing tests PASS")

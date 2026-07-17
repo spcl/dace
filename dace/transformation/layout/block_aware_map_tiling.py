@@ -12,7 +12,7 @@ matches ``tile_sizes``. Run it BEFORE ``SplitDimensions`` (block), or from the p
 normalization, so the layout's index arithmetic aligns with the schedule.
 """
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Tuple
 
 import sympy
 

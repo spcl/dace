@@ -162,20 +162,34 @@ class LayoutChange(nodes.LibraryNode):
         return in_desc, out_desc
 
 
-def add_layout_change(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: List) -> LayoutChange:
-    """Create the laid-out ``out_name`` array, add a ``LayoutChange`` node relaying ``in_name`` to it,
-    and wire the access nodes. Returns the node."""
+def add_layout_change(sdfg: dace.SDFG,
+                      state: dace.SDFGState,
+                      in_name: str,
+                      out_name: str,
+                      ops: List,
+                      create_output: bool = True) -> LayoutChange:
+    """Add a ``LayoutChange`` node relaying ``in_name`` to ``out_name`` and wire the access nodes.
+    With ``create_output`` (default) the laid-out ``out_name`` descriptor is created from the op
+    sequence (replacing any same-named array); with ``create_output=False`` the existing descriptor
+    is kept and only checked -- the trajectory applier (task A5) pre-creates its segment clones and
+    converts back into ORIGINAL program arrays, which must never be clobbered. Returns the node."""
     in_desc = sdfg.arrays[in_name]
     _, _, out_shape = relayout_map(list(in_desc.shape), ops)
-    if out_name in sdfg.arrays:
-        sdfg.remove_data(out_name, validate=False)
-    sdfg.add_array(name=out_name,
-                   shape=out_shape,
-                   dtype=in_desc.dtype,
-                   storage=in_desc.storage,
-                   transient=in_desc.transient,
-                   lifetime=in_desc.lifetime,
-                   find_new_name=False)
+    if not create_output:
+        existing = sdfg.arrays[out_name]
+        if [str(s) for s in existing.shape] != [str(s) for s in out_shape]:
+            raise ValueError(f"add_layout_change: existing '{out_name}' has shape {existing.shape}, "
+                             f"but the op sequence yields {out_shape}")
+    else:
+        if out_name in sdfg.arrays:
+            sdfg.remove_data(out_name, validate=False)
+        sdfg.add_array(name=out_name,
+                       shape=out_shape,
+                       dtype=in_desc.dtype,
+                       storage=in_desc.storage,
+                       transient=in_desc.transient,
+                       lifetime=in_desc.lifetime,
+                       find_new_name=False)
 
     node = LayoutChange(f"relayout_{in_name}_to_{out_name}", ops=ops)
     rin = state.add_read(in_name)

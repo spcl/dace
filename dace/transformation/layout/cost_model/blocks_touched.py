@@ -37,6 +37,7 @@ must match.
 from typing import Dict, List
 
 import dace
+import numpy
 import sympy as sp
 
 from dace.symbolic import int_floor, pystr_to_symbolic
@@ -98,3 +99,39 @@ def average_blocks_touched(
         results[arr] = sp.simplify(total_new / total_iters)  # a rational average, '/' is exact here
 
     return results
+
+
+def replayed_blocks_touched(indices, block_elems: int):
+    """Blocks-per-access BOUNDS for an INDIRECT access ``A[idx[i]]``, by replaying the index array.
+
+    A data-dependent access has no affine subset, so :func:`average_blocks_touched` cannot score it
+    statically -- but once the index array is materialized (the static-indirection case: ``idx`` is
+    known before the nest runs), the access sequence can be REPLAYED and its blocks counted. Returns
+    ``(streaming, distinct)`` new-blocks-per-access:
+
+      * ``streaming`` -- block-index CHANGES between consecutive accesses (+1 for the first): the
+        no-reuse model (a cache of one block), the same convention as the brute-force oracle the
+        affine metric is validated against. Upper bound.
+      * ``distinct`` -- unique blocks touched over the whole sequence: the infinite-cache model,
+        where a block once fetched is never re-fetched. Lower bound.
+
+    The truth sits between them, decided by whether the reuse distance fits the cache: a CLUSTERED
+    but shuffled index (working set fits L2) behaves like ``distinct``; a scattered one exceeds any
+    cache and behaves like ``streaming`` -- for fully scattered indices the two bounds coincide, so
+    the answer is exact where layout matters most. Report the pair, never one number as exact.
+
+    ``streaming >= distinct`` always. Feed the chosen bound (or both) as ``messages_per_iter`` /
+    ``sectors_per_iter`` overrides when costing the nest.
+    """
+    if block_elems < 1:
+        raise ValueError(f"block_elems must be >= 1, got {block_elems}")
+    idx = numpy.asarray(indices)
+    if idx.ndim != 1:
+        raise ValueError(f"indices must be a 1-D access sequence, got shape {idx.shape}; flatten in "
+                         "TRAVERSAL order first -- the streaming bound depends on it")
+    if idx.size == 0:
+        return 0.0, 0.0
+    blocks = idx // block_elems
+    streaming = (1 + int(numpy.count_nonzero(blocks[1:] != blocks[:-1]))) / idx.size
+    distinct = int(numpy.unique(blocks).size) / idx.size
+    return streaming, distinct

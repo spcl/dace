@@ -1,265 +1,513 @@
-# LogP cost analysis of a loop nest
+# LogGP cost analysis of a loop nest
 
 ## Purpose
 
-Give an SDFG loop nest (a `Map` scope, or a lowered loop) a memory cost that is sensitive to data
-layout, so a layout optimizer can rank `Permute` / `Pad` / `Block` / `Shuffle` choices by predicted
-time instead of by trial compilation. The model is LogP/LogGP, applied to memory rather than a
-network: each contiguous block request is a message, and the nest's cost is the messages it issues,
-priced by measured hardware latency and bandwidth.
+Score a layout by what it costs the memory system, reading the loop nest off the SDFG. A layout
+transform does not change what a nest computes or how many bytes it *needs* — it changes how those
+bytes pack into transfer blocks, i.e. **how many blocks the same computation must move and how many
+requests it must issue**. That is the entire lever, and it is why a block/message-granular model is
+the right abstraction for layout.
 
-The model targets GPU global memory first. On the GPU, a warp's coalesced access maps cleanly onto
-"one contiguous request is one message, a scattered request is many"; on the CPU, hardware
-prefetching blurs that boundary, so the same numbers are an approximation there. The parametrization
-(L, G) is measured on both, but the message abstraction is exact for GPU coalescing and heuristic for
-CPU cache behaviour.
+The model keeps LogP's latency term — deliberately. Latency is where load/store performance is
+*explained*: a nest that cannot keep enough requests in flight runs at its concurrency limit, not at
+the machine's bandwidth, and which of the two binds is itself a function of the layout (a scattered
+access needs `line/sector` times more outstanding requests to saturate than a coalesced one, see
+§Saturation). A bandwidth-only model answers "how fast at best"; the latency term answers "and can
+this nest actually get there".
 
-## From classic LogP to a loop nest
+## Derivation: memory access as point-to-point communication
 
-Classic LogP models a parallel machine as processors that exchange fixed-size messages over a
-network. The mapping onto a loop nest reading memory is direct — a memory request is a message to
-"another rank", where a rank is a memory partition rather than a processor:
+The formula is NOT posited -- it is LogP's own message-stream law with the stages instantiated for
+the memory system. Setting, per LogP's original framing: the core and the memory controller are two
+"processors" exchanging point-to-point messages. A line fill is one exchange: a small REQUEST
+message (an address) and a long REPLY message (the line, ``s`` bytes).
 
-| LogP / LogGP | network meaning | this analysis (memory) |
+**One exchange.** LogGP prices a single long-message exchange ``2o + L + (s-1)G`` (single-message
+form, verified against Hoefler's dissertation Eq. II.1 and the SPCL/Illinois LogGP lecture notes).
+Our pointer-chase ``L`` is the measured ROUND TRIP, so one fill is ``T_fill = o' + L + (s-1)G ~= L``
+(for a 64-byte line, ``line*G << L``). This is ``loggp.message_time``.
+
+**A stream of M independent fills.** The LogP k-message law (Hoefler Eq. II.1, on file verbatim):
+
+```
+RTT(n) = 2L + 2o + (n-1) * max{o, g}
+```
+
+Two structural facts, both LogP's, neither ours:
+
+1. **Latency appears ONCE** -- it is the pipeline depth ("the network is a pipeline of depth L with
+   initiation rate g", Culler et al.). The message count multiplies the GAP, not L. The Illinois
+   notes state the consequence: "there is no latency term like (s/k)*alpha, so the protocol achieves
+   noticeable overlap". Charging L per message (the old serialized branch) contradicts the original
+   model.
+2. **The per-message cost is already a MAX over the pipeline's stages** -- ``max{o, g}`` in II.1 is
+   the bottleneck law: a pipeline runs at its slowest stage's rate.
+
+Instantiate the stages for a stream of line fills:
+
+* **Issue/tracking stage**: LogP's capacity constraint -- "at most ceil(L/g) messages can be in
+  transit ... it stalls" -- IS Little's Law. With ``C`` the in-flight budget the requester actually
+  has, the effective inter-message gap is ``g_eff = L / C``.
+* **Channel stage**: the reply occupies the shared channel for ``s*G`` seconds (LogGP's long-message
+  gap). Over ``M`` messages moving ``B = M*s`` bytes: ``B*G`` total.
+
+Pipeline-bottleneck composition (the same ``max`` II.1 already applies per message):
+
+```
+T(M) = L + M * max( L/C , s*G ) + o*M  =  L + max( M*L/C , B*G ) + o*M
+```
+
+The implementation drops the single leading ``L`` (the one-time pipeline fill; relative error
+``<= C/M``, negligible for any nest with ``M >> C``) and keeps the rest verbatim. Every endpoint is
+inherited rather than assumed: ``C=1`` gives the dependent chain ``M*L`` (each fill IS the pipeline,
+depth un-overlapped), large ``C`` gives LogGP's "gaps dominate, latency may be disregarded" stream.
+
+**Sharing among cores** is LogP contention: the channel stage's ``G`` is one shared resource (its
+rate is the ALL-core saturated bandwidth), while each core brings its own issue stage -- which is
+exactly why ``C`` composes as ``n_units * unit_mlp`` (SSConcurrency) while ``G`` does not scale
+with cores.
+
+## The formula
+
+One continuous expression per nest and memory level (`loggp.nest_memory_time`, used by
+`LoopNestLogP.total_time`):
+
+```
+T  =  max( B · G ,   M · L / C )  +  o · M            (o = 0 today)
+
+M  =  Σ_arrays  new blocks touched at REQUEST granularity  (line_bytes)   × iterations
+B  =  Σ_arrays  new blocks touched at TRANSFER granularity (sector_bytes) × sector_bytes × iterations
+C  =  independent requests the nest keeps in flight (§Concurrency)
+```
+
+There is **no regime switch**. The endpoints of the same formula:
+
+| C | T reduces to | what it is |
 |---|---|---|
-| message | a fixed-size packet | a block request — one cache line (CPU) or coalesced sector (GPU) |
-| "another rank" | a remote processor's memory | global memory; a local (register/shared) access is not a message and is free |
-| `L` | wire latency of a message | round-trip latency of one block (request + reply), measured by pointer chase |
-| `o` | CPU send/receive occupancy | local issue cost — 0 for now (deferred with the SRAM task) |
-| `g` | minimum gap between messages | minimum gap between a core's requests (1 / its request rate) |
-| `G` (LogGP) | per-byte cost of a long message | per-byte channel gap `1/BW`, measured by the triad |
-| `P` | number of processors | the parallel iterations / cores / warps the nest exposes |
+| 1 | `M · L` | the dependent chain — every miss waits out the full round trip (pointer chase) |
+| `1 < C < C*` | `M · L / C` | Little's Law: sustained request rate `C / L`; latency partially hidden |
+| `≥ C* = M·L/(B·G)` | `B · G` | the channels saturate; bandwidth is the only limit |
 
-The loop nest is the "program" each rank runs: every iteration issues the block requests its memlets
-imply, and the nest's cost is the sum of those messages priced by `L` and `G`. A layout transform
-does not change what the nest computes or how many bytes it needs — it changes how those bytes pack
-into blocks, i.e. how many messages the same computation sends. That is the entire lever, and it is
-why a message-based model is the right abstraction for layout.
+The `max` is **continuous at the crossover** (both terms equal `M·L/C*` there). The previous design
+switched formulas at the bandwidth-delay product and returned the *serialized sum* `M·L + B·G` below
+it — a ~26x discontinuity for a one-request change in `C`, and refuted by measurement (§Measurements:
+rate scales linearly with independent chains, so charging full `L` per miss is wrong by the measured
+MLP, ~8x on one core). The serialized sum survives only as `total_time_serialized()`, a diagnostic
+ceiling: a *measurement* above it means the parameters are wrong.
 
-The two LogP capacity ideas carry over unchanged. The gap `g` and the parameter `P` say how many
-messages can be outstanding at once; the ratio `L/g` (LogP's `⌈L/g⌉`) is how many a single core keeps
-in flight. Whether that is enough to hide the latency — the classic overlap question — is exactly the
-latency-bound / bandwidth-bound test below.
+### Why line granularity, not element granularity
 
-## The framing
+`A[:] += B[:]` analyzed per element would report one message latency plus a few bytes per iteration
+— and low line utilization. Wrong twice: the hardware requests a **full line**, and the next 7
+iterations (fp64) hit that same line. Counting **new blocks per iteration**
+(`blocks_touched.average_blocks_touched`) gets both right at once: `1/8` messages per element, and
+every fetched byte used. The element view double-counts latency events 8x and misreports utilization;
+the line view is what the coalescing/streaming hardware actually does.
 
-- **Local memory is free.** Registers and GPU shared memory are "my memory"; their access cost is a
-  later, separate task (SRAM). For now a local access contributes nothing.
-- **A global access is a message.** Reaching global memory is a request plus its reply; the whole
-  round trip is the latency `L`. The bytes that come back cross the channels at the per-byte gap `G`.
-- **A contiguous request is one message; an unstructured (scattered) request is several.** The number
-  of messages an access issues per iteration is the number of distinct memory blocks it touches.
+### The two granularities
 
-## The parameters (LogGP, for one memory level)
+`M` and `B` are counted at **different** granularities, and this split is load-bearing:
+
+| granularity | counts | pays | x86 | NVIDIA |
+|---|---|---|---|---|
+| `line_bytes` (request) | `M` — latency events | `L` | 64 | 128 |
+| `sector_bytes` (transfer) | `B` — bytes on the channels | `G` | 64 (= line) | 32 |
+
+Collapsing them is a 4x GPU error in whichever direction is chosen: one 128-byte number overcounts a
+scattered access's bytes 4x; one 32-byte number overcounts a coalesced access's messages 4x. On x86
+they coincide, which is why the conflation went unnoticed on CPU.
+
+### Saturation — where the latency term explains layout
+
+The crossover is `C* = M·L/(B·G)`. Write `k = B/(M·sector_bytes)` for the sectors actually used per
+request (`1 ≤ k ≤ line/sector`); then
+
+```
+C*  =  L / (k · sector_bytes · G)
+```
+
+A **coalesced** access (`k = line/sector`) needs the fewest outstanding requests to saturate; a
+**scattered** one (`k = 1`) needs `line/sector` times more (4x on NVIDIA). This is a prediction the
+bandwidth-only view cannot make: two access patterns with identical byte traffic differ in how much
+concurrency they demand before the channels fill — and whether the nest *has* that concurrency is a
+property of its schedule and its device (§Concurrency). Pinned by
+`test_scattered_access_needs_line_over_sector_more_concurrency_to_saturate`.
+
+## Concurrency: C
+
+`C` composes as **units × per-unit MLP**, and the two factors mean different things per device:
+
+```
+C  =  n_units · unit_mlp
+```
+
+| | unit | n_units | unit_mlp (affine/streaming) | unit_mlp (scattered/indirect) |
+|---|---|---|---|---|
+| CPU | core | populated cores (threads pinned) | `core_stream_mlp = bw_core·L/line` (~59) — prefetch-INCLUSIVE, Little's Law on the single-core triad | `core_mlp` ≈ 8 (chase knee — prefetch-DEFEATED by design) |
+| GPU | **warp** | resident warps = grid × occupancy | `core_mlp` = outstanding loads per warp — no prefetcher; latency hiding IS warp switching | same |
+
+**Concurrency is PATTERN-dependent, and that is itself a layout statement** (the "second penalty",
+formerly a noted-unmodelled refinement, now first-class): a layout that scatters an access does not
+only touch more blocks — it demotes the nest from the prefetch-extended `core_stream_mlp` to the
+demand-miss `core_mlp`, because the prefetcher only runs ahead of predictable streams. The chase
+knee deliberately defeats the prefetcher (random Hamiltonian cycle), so applying it to a streaming
+nest under-credits concurrency severalfold — the box's own single-core triad (≈40 GB/s) implies ~50
+outstanding lines, not 8. The affine analysis scores prefetch-friendly patterns and uses
+`core_stream_mlp`; scattered/replayed nests are costed with `concurrency = n_units · core_mlp`
+passed explicitly.
+
+Estimation (`exposed_concurrency`), schedule-driven:
+
+- **Parallel map, `n_cores` given** → `n_cores · core_mlp`. Iterations distribute in contiguous
+  chunks (OpenMP static): each core streams its own chunk, so per-core block counts are the nest's
+  divided by the core count, plus one shared boundary line per chunk edge — `O(cores)`, negligible.
+  An *interleaved* distribution would instead multiply `M` by up to `line/elem` (every core touches
+  every line) — distribution quality is expressible as a factor on `M`; DaCe's CPU maps chunk
+  contiguously, so the default carries no penalty.
+- **Parallel map, no core count** → `inf`, the saturated assumption. With `n_cores`, the verdict
+  splits by pattern — and now agrees with both measurements at once: a STREAMING nest saturates
+  easily (`16 × core_stream_mlp ≫ BDP`; the triad indeed saturates at ~2 cores), while a SCATTERED
+  one at `16 × core_mlp = 132 ≈ BDP ≈ 103–148` is marginal — a scattered parallel nest does not
+  comfortably saturate, which blanket `inf` hides.
+- **All maps `Sequential`** → `core_stream_mlp`, NOT 1 and not the chase knee. Sequential does not
+  mean one request at a time: affine addresses are computable ahead of the loads, and the prefetcher
+  keeps fills in flight beyond the demand-miss queue. `C = 1` is **data-dependent addressing** —
+  which the affine analysis never scores (dynamic memlets are refused, see §Indirect).
+- **Caller knows better** → `concurrency=` overrides everything (a measured device MLP, a modelled
+  chase).
+
+### GPU, one thread per cell
+
+Thread-per-cell means no thread streams anything — spatial adjacency moves from *consecutive
+iterations on one core* to *consecutive lanes of one warp*, and the coalescer's merge of the 32 lane
+addresses per instruction **is** the new-blocks count over the innermost (lane-mapped) axis.
+Contiguous fp64: 32 lanes × 8 B = 256 B = 2 requests of 128 B per warp = `1/16` per element — the
+same continuous fraction the CPU analysis computes. A layout that makes lane-adjacent accesses
+strided costs one sector per lane: 16x the messages, 4x the bytes (32 of 128 useful per request).
+
+Consequence: on GPU, `M` is determined **jointly** by the layout and by which axis the schedule maps
+to `threadIdx.x`. The layout algebra's Permute moves the array; the block-map assignment moves the
+lane axis; the model prices both through one term.
+
+Occupancy enters through `n_units`: an under-occupied kernel (register pressure, tiny grid) has few
+resident warps, misses the ~3900-request GPU BDP (500 ns × 1 TB/s / 128 B), and lands in the latency
+regime — a shortfall the blanket saturated assumption hides. Pinned by
+`test_gpu_occupancy_is_the_unit_count`.
+
+## The cache hierarchy: a chain of point-to-point links
+
+Caching does not break the point-to-point picture -- it repeats it. The hierarchy is a chain of
+links, each with its own parameters and granularity:
+
+```
+core <-(L1)-> L1 <-(L2)-> L2 <-(LLC)-> LLC <-(DRAM link)-> memory controller
+     (L_i, G_i, C_i, s_i) per link i
+```
+
+Two model families supply the two halves, and they compose cleanly:
+
+* **Traffic per link -- the I/O model** (Aggarwal-Vitter external memory): the block transfers
+  ``Q_i`` crossing link ``i`` are the I/O complexity at capacity ``M_i`` and block size ``s_i``.
+  This is where CACHING enters: an inner level FILTERS the traffic that reaches the next link
+  (reuse), and "latency similar but bandwidth less" is simply each link having its own ``G_i`` --
+  bytes that hit in L2 pay ``G_L2``, only the filtered ``Q_mem`` pays the DRAM link's ``G``. The
+  layout sensitivity is in ``Q_i`` via the block size (the I/O model's ``B``), which is exactly the
+  pebble-game/Q* division of labour report1 already assigns.
+* **Time per link -- this model**: ``T_i = max( M_i * L_i / C_i , B_i * G_i )``.
+
+**Cross-link composition** is the honest open choice, and we BRACKET it instead of asserting it:
+
+```
+max_i T_i   <=   T   <=   sum_i T_i
+```
+
+full inter-link overlap on the left, none on the right. The published models are the two limits:
+ECM is the SUM instance with every latency term dropped (its own words: "assuming there is no
+access latency", perfect-prefetch streaming; it sums T_L1L2 + T_L2L3 + T_L3Mem and validates well
+on Intel), Roofline is the MAX instance with only the DRAM term. Our single-level model is the
+DRAM link alone -- valid precisely in the layout regime (working set >> LLC, inner links faster),
+which is the regime every kernel in the suite is sized for. A multi-level extension is additive:
+per-link counts from `blocks_touched` at ``s_i``, per-link ``Q_i`` filtering from reuse -- the
+streaming "new blocks" count is the no-reuse instance of ``Q_i``, and the replay bounds below are
+its data-dependent counterpart.
+
+## Indirect accesses: static replay
+
+`A[idx[i]]` has no affine subset — statically unknowable. When the index array is **materialized**
+(the static-indirection case: `idx` known before the nest runs), replay it:
+`blocks_touched.replayed_blocks_touched(idx, block_elems)` returns two bounds per access,
+
+- **streaming** — block changes between consecutive accesses (cache of one block; upper bound), the
+  same convention the affine metric's brute-force oracle uses;
+- **distinct** — unique blocks (infinite cache; lower bound),
+
+and the truth sits between, decided by whether the reuse distance fits the cache. For **fully
+scattered** indices the bounds coincide — the answer is exact precisely where layout matters most.
+For clustered-but-shuffled indices they diverge (distinct `1/8`, streaming ~1) and an honest model
+reports the pair rather than picking one.
+
+Wiring: `analyze_loop_nest(..., replayed_counts={'A': (messages_per_iter, sectors_per_iter)})`. An
+array reached through a **dynamic memlet** without a replayed count is **refused loudly** — its
+declared subset is a whole-array over-approximation, and pricing it would score a gather as one
+invariant read, silently and enormously wrong. Any other unscoreable subset also raises instead of
+being silently dropped from the nest's cost. (This is the quantitative bridge to the Shuffle
+primitive and the static-replace analysis in `relayout.py`.)
+
+## Cache efficiency: the bandwidth term's layout lever
+
+```
+eps = distinct useful bytes / bytes moved  ∈ (0, 1]        B = useful_bytes / eps
+```
+
+`useful_bytes` is the algorithm and layout-invariant; `eps` is the layout. `eps = eps_spatial ·
+eps_write`, with `eps_write = 1/2` for a partial write (read-for-ownership) and `1` for a read or a
+block-covering write. For fp64/64 B: `eps ∈ [1/8, 1]` reading, `[1/16, 1]` writing — layout matters
+roughly twice as much where the nest writes. `eps` **cannot replace the latency term**: four sectors
+in one request and four spread over four requests have identical `eps` and 1-vs-4 messages
+(`test_efficiency_cannot_determine_the_latency_term`).
+
+Bounds this makes non-negotiable: `eps` saturates once the stride reaches one block, so
+`sector/elem` (8x for fp64) is a **hard ceiling** on any layout win. A kernel reporting more is
+confounded, not fast.
+
+## Relayout: cost and break-even
+
+A tiled relayout reads the array once and writes it once, both at `eps = 1`, at the **saturated**
+rate (a streaming copy over all cores — its break-evens are stated in that scope):
+
+```
+T_relayout = 2·S·G          break-even:   passes · (1/eps0 − 1/eps1)  ≥  2 + overhead_passes
+```
+
+`G` and `S` cancel: whether a relayout pays is a pure traffic ratio. Against a perfect target,
+**`eps0 ≤ 1/3` means a single pass already pays**. The `pure` expansion does not stream (one flat
+mapped-tasklet copy, one side strided) — cost it by expanding and analyzing the copy nest like any
+other nest. `overhead_passes > 0` models inspector-executor (not pursued; a threat-to-validity
+quantifier — see report1 "Threats to state").
+
+## Parameters
 
 | symbol | meaning | unit | source |
 |---|---|---|---|
-| `L` | unloaded round-trip latency of one block | s | pointer chase (`membench.c`) |
-| `o` | per-message overhead | s | 0 for now (it is the local-issue cost, deferred with SRAM) |
-| `g` | minimum interval between a core's requests | s | concurrency sweep |
-| `G` | per-byte gap = `1 / BW_saturated` | s/byte | STREAM triad, **all cores** |
-| `line_bytes` | transfer granularity | bytes | 64 (CPU line) / 32 (GPU sector) |
+| `L` | unloaded round-trip latency of one line | s | pointer chase, MLP=1 |
+| `o` | per-message issue overhead | s | 0 (≈0.25 ns vs `L≈95 ns`; deferred with SRAM) |
+| `g` | min interval between one core's requests | s | diagnostic; `L/g` is LogP's capacity cap |
+| `G` | per-byte gap = `1/BW_saturated` | s/byte | STREAM triad, **all cores** |
+| `line_bytes` | request granularity → `M`, `L` | bytes | 64 x86 / 128 NVIDIA |
+| `sector_bytes` | transfer granularity → `B`, `G` | bytes | 64 x86 (= line) / 32 NVIDIA |
+| `c_core` | **measured** per-unit MLP (knee of the sweep) | count | `membench.fit_core_mlp`; falls back to `L/g` |
 
-`G` is `1 / BW_saturated`, not `1 / BW_core`: bandwidth is a property of the memory channels, and a
-single core cannot saturate them (its outstanding-miss budget runs out first). The per-core bandwidth
-is kept only as a diagnostic. See `loggp.LogGP` and `README`-level detail in `loggp.py`.
+`core_mlp = c_core if measured else L/g`. The two differ on purpose: `L/g` is the issue-rate cap,
+the knee is `min(L/g, miss-queue depth)` — and the miss queue usually binds first (measured ~8 vs
+`L/g` = 23.75 from the default `g`). `validate()` cross-checks them; a large disagreement means `g`
+was defaulted, not measured.
 
-`L` and `G` come from `membench.py` (a small C pointer-chase and triad, self-timed); the theoretical
-peak `BW` that `G` is judged against comes from `hardware.py` (parsed from `dmidecode` for DRAM,
-computed from the CUDA device properties for the GPU). None of these run unless the machine is quiet
-— `membench.check_environment` refuses on a loaded box, because a plausible-but-wrong number is worse
-for a cost model than no number.
+## Benchmarking methodology
 
-## How the analysis reads a loop nest
+One benchmark per parameter; each has a pitfall that silently invalidates it. `membench.c` is C so
+the chase compiles to a dependent `mov (%rax),%rax` — vectorized it becomes a gather at MLP=width
+and measures throughput instead.
 
-`logp_analysis.analyze_loop_nest(state, map_entry, p, block_bytes, local_arrays)` does five steps.
+| param | benchmark | pitfall |
+|---|---|---|
+| `L` | pointer chase, MLP=1, arena ≫ LLC, random Hamiltonian cycle (`chase_verify` proves it) | **prefetch** (linear chase measures the prefetcher); **TLB** — at stride 4096 every element is a fresh page: measured 1.03 dTLB misses/load, so the number is `L + page-walk`. Hugepages or sub-page stride. |
+| `G` | STREAM triad, **all cores**, arena ≫ LLC | one core yields `BW_core` not `BW_saturated`; without non-temporal stores the triad's write adds a read-for-ownership stream (4 streams, not 3) |
+| `c_core` | **concurrency sweep**: ns/load vs number of independent chains; `fit_core_mlp` = `L(1)/min` (Little's Law on the floor — no curve model needed) | a defaulted `g` invents `c_core`; the sweep must reach the flat region |
+| GPU `unit_mlp` | multi-warp P-chase (the GPU analog of the chain sweep) | not yet run — see status |
+| peak BW | `dmidecode -t 17` (the accepted sudo case); CUDA props | denominator only, never a model input |
+
+**Quiet box required** (`check_environment` refuses otherwise): a plausible-but-wrong parameter is
+worse than none.
+
+**Validation protocol** — the falsifiable check: fit `L` (MLP=1), `G` (triad), `c_core` (knee).
+Nothing else is fitted. Then *predict* the whole latency-vs-MLP curve `t(C) = max(B·G, M·L/C)` and
+compare it to the measured sweep. Three parameters, one curve, no free knobs.
+
+## Lineage and attribution (verified against primary sources, 2026-07-17)
+
+The assembly is ours; the ingredients are not, and each must be cited:
+
+| idea | prior art (verified) |
+|---|---|
+| memory access as point-to-point LogP | **Cameron & Sun, "Memory logP", IPDPS 2003**; generalized in **Cameron, Ge, Sun, lognP/log3P, IEEE TC 56(3) 2007** — verbatim `T = Σᵢ (max(oᵢ,gᵢ) + lᵢ)` over a succession of buffer-to-buffer transfers. The originating frame for what this model does. |
+| capacity / in-flight constraint | **LogP** (Culler et al., PPoPP 1993): "at most ⌈L/g⌉ messages … in transit … it stalls"; "the network is treated as a pipeline of depth L with initiation rate g" |
+| per-byte long-message gap | **LogGP** (Alexandrov et al., SPAA 1995): `T = 2o + L + (s−1)G`; k pipelined transfers pay `L` once |
+| per-level parameter tuples | **Valiant, Multi-BSP, JCSS 2011**: depth-d machine as `(pᵢ, gᵢ, Lᵢ, mᵢ)` per level; older: **HMM** (Aggarwal et al., STOC 1987), **UMH** (Alpern et al., Algorithmica 1994) |
+| per-link block traffic | **Aggarwal & Vitter, CACM 1988** (the I/O model: `N, M, B`, cost = block transfers) |
+| bandwidth-vs-compute max | **Roofline** (Williams et al., CACM 2009): `Min(peak, BW × intensity)` |
+| concurrency-limited bandwidth | **McCalpin**: "Effective Concurrency = memory latency × measured bandwidth" (Little's Law) |
+| contention, sync, size-dependent params | **LoGPC** (Moritz & Frank, SIGMETRICS 1998), **LogGPS** (Ino et al., PPoPP 2001), **pLogP** (Kielmann et al., IPDPS-W 2000) |
+| multi-level composition endpoints | **ECM** (Treibig/Hager; Stengel et al., ICS 2015): `max(T_OL, T_nOL + ΣT_level)` — the SUM end; Roofline — the MAX end |
+
+Genuinely ours, and only this: (1) the per-line-fill reduction `T = L + M·max(L/C, s·G)` with the
+max between a latency/concurrency leg and a per-byte leg **on a memory link** (no source writes this
+exact form); (2) threading Aggarwal–Vitter per-link traffic through a chain of LogGP links; (3)
+stating the cross-level composition as an explicit max/sum **bracket**; (4) the pattern-dependent
+`C` (stream vs demand-miss) as a layout lever, and the ranking-crossover theorem `C_flip = M₂L/(B₁G)`.
+
+## Example parameters (2026-07-17, Ryzen 7 8845HS, **contended box — illustrative only, NOT calibration**)
+
+The model is pure theory; these one-off numbers exist only to ground the examples and to show the
+parameter-extraction path works. Nothing in the model depends on them.
+
+| what | measured | note |
+|---|---|---|
+| chase, MLP=1 | 146 ns/load | includes a page walk (1.03 dTLB miss/load) |
+| MLP=2 / 4 / 16 | 74.0 / 36.6 / 17.7 ns/load | **1.97x / 3.99x / ~8.2x** — linear in C, then flat |
+| `c_core` (fit) | **~8.2** (= L(1)/floor) | `L/g` default said 23.75 — `g` was never measured; and this is the DEMAND-MISS budget, not the streaming concurrency (`core_stream_mlp` ≈ 50 from the same box's triad) |
+| triad 2→16 threads | 44.6 → 39.5 GB/s | flat: ~2 cores already saturate the triad |
+| cache-misses/load | 1.03 (perf, differential) | every hop a real miss |
+
+The sweep is the empirical refutation of the serialized branch: rate scales linearly with
+independent chains *inside the latency regime*, exactly where that branch charged full `L` per miss.
+
+## Minimality: which tier of the model a claim needs
+
+The formula degrades gracefully into three nested tiers; use the lowest tier that carries the claim,
+because every parameter you do not use is a parameter you cannot get wrong.
+
+| tier | model | parameters | settles | cannot settle |
+|---|---|---|---|---|
+| 0 | counts `(M, B)` + dominance lemma | **none** | layout ranking whenever one layout wins both counts (the common Permute case; what the sweep's ranking rests on) | ties where counts disagree |
+
+Tier 0 is implemented: `count_loop_nest` (the parameter-free counting core `analyze_loop_nest`
+itself delegates to -- one core, two tiers), `dominance_verdict` (`first`/`second`/`tie`/
+`undecided`; refuses when the counts disagree or a symbolic sign is open -- concrete SIZES resolve
+the `int_floor` signs and are still zero measured parameters), and `pareto_front` (sweep pruning:
+every dropped layout is at least as slow as a survivor for ALL `L, G, C`, so it is dropped before
+compiling or timing anything; `undecided` never prunes). `cost_model_tier0_test.py` pins the lemma
+across tiers: a tier-0 `first` is checked against tier-2 times over three decades of each parameter.
+| 1 | `T = B·G` with `eps`, write factor | `G`, `sector_bytes` | absolute times at saturation; relayout break-even (`G` cancels: `passes·(1/eps0−1/eps1) ≥ 2`) | anything latency-side |
+| 2 | `T = max(B·G, M·L/C)` | + `L`, `line_bytes`, `bw_core` (→ `C`) | device-dependent verdicts (`C_flip`), GPU occupancy, the chase, the scattered second penalty | multi-level traffic, depth floors, loaded latency |
+
+Dropping any tier-2 ingredient loses a demonstrated capability: no `L/C` → no `C_flip` (the
+cross-device check the validation plan requires); one granularity → 4x GPU error; no write factor →
+2x on written arrays; latency priced by bytes → refuted by the same-eps/different-messages
+construction. Everything above tier 2 (lognP/ECM level chains, `D·L`, loaded latency, `o`) is
+deliberately out — see §What is deliberately NOT modelled.
+
+## Theoretical properties
+
+All pure theory — no measurement enters any of these; parameters are symbols.
+
+**Continuity & shape.** `T(C) = max(B·G, M·L/C)` is continuous everywhere (both terms equal
+`M·L/C*` at the crossover), non-increasing and convex in `C` (max of a constant and a convex
+function). The old regime switch violated continuity at its own threshold by ~26x.
+
+**Dominance lemma.** If layout 1 has `M₁ ≤ M₂` AND `B₁ ≤ B₂`, then `T₁(C) ≤ T₂(C)` for EVERY
+`L, G, C > 0` — the ranking is parameter-free (each term is monotone in its count, and max preserves
+the order). This is why ranking survives bad parameters whenever one layout dominates on both
+counts — the common case: a Permute that makes the inner axis contiguous lowers `M` and `B`
+together.
+
+**Ranking-crossover theorem.** When the counts DISAGREE — `M₁ < M₂` but `B₁ > B₂` (fewer requests
+vs fewer bytes; reachable under sectoring, padding, or mixed access patterns) — the winner is a
+function of concurrency, and the flip is unique with a closed form:
 
 ```
-  SDFG map scope
-        |
-  (1) extract the nest         -> loop_ranges: [{param: (begin, end, step)}], outer-to-inner
-        |
-  (2) collect accesses         -> {array: unioned subset}          (get_access_subsets)
-        |
-  (3) classify each array      -> local (free) | global (message)  (storage type / override)
-        |
-  (4) per global array:
-        messages_per_iter       = average new blocks touched        (blocks_touched)
-        bytes_moved_per_iter    = messages_per_iter * block_bytes    (whole blocks move)
-        |
-  (5) combine into per-iteration latency + bandwidth, and totals
+layout 1 wins  ⟺  C < C_flip = M₂ · L / (B₁ · G)
 ```
 
-**(1) Extract the nest.** Walk the map scope subtree, order the maps by nesting depth, and read each
-map's `params` and `range`. A collapsed multi-dimensional map is one level with several params; a
-chain of nested maps is several levels. The result is `loop_ranges`, outer-to-inner.
+Proof sketch: for `C ≤ M₁L/(B₁G)` both are latency-bound and `T₁−T₂ = (M₁−M₂)L/C < 0`; for
+`C ≥ M₂L/(B₂G)` both are bandwidth-bound and `T₁−T₂ = (B₁−B₂)G > 0`; in the mixed interval
+`T₁ = B₁G` (constant) and `T₂ = M₂L/C` (strictly decreasing), so their difference is strictly
+increasing with exactly one zero, at `C_flip` — which lies inside the interval since
+`C_flip/C₁* = M₂/M₁ > 1` and `C_flip/C₂* = B₂/B₁ < 1`. ∎
 
-**(2) Collect accesses.** `get_access_subsets` unions, per array, every memlet subset the innermost
-tasklets read or write. For a pointwise `A[i, j]` the subset is `[i:i, j:j]` — the per-iteration
-access, in terms of the (symbolic) loop parameters.
+Consequence: **device-dependent layout verdicts are a theorem, not an anomaly.** A layout that wins
+on a low-concurrency device (single-threaded CPU, under-occupied GPU kernel) and loses on a
+saturated one flips at exactly `C_flip` — the closed-form mechanism behind the "k06/k08 win on GPU
+but not CPU" class of observations, and a per-kernel prediction the sweep harness can test.
 
-**(3) Classify local vs global.** An array in `StorageType.Register` or `StorageType.GPU_Shared`, or
-named in `local_arrays`, is local and free. Everything else (global, heap, default) is a message
-source.
+**Ranking within one device.** For one kernel on one device, `iters`, granularities, `G`, `L`, `C`
+are identical across layouts, so `T` is monotone in `(M, B)`, which are structural. Parameters set
+the absolute time and the regime; the ranking needs only the counts (plus `C_flip` when they
+disagree).
 
-**(4) Messages and bytes per iteration.** For a global array, the number of messages issued per
-iteration is the average number of *new* blocks it touches — `blocks_touched.average_blocks_touched`,
-computed for that array's subset at that array's block granularity (`block_bytes / dtype_bytes`
-elements). This is the term the layout moves: a contiguous access touches `1/8` of a new 64-byte line
-per fp64 element (8 elements share a line), a strided access touches a whole new block every step.
-Because memory moves whole blocks, the bytes that actually cross the channels are
-`messages_per_iter * block_bytes`, not the requested bytes.
+## What is deliberately NOT modelled
 
-**(5) Combine.** Per iteration the nest pays, summed over its global arrays:
+- **The dependency-depth floor `D·L`** (EDAN, arXiv 2512.13176, Eq. 1 — the span-law bound): real
+  for dependent recurrences (k11's K-long Thomas chain, k14's log-depth descent), but `B·G` grows
+  with the problem while `D·L` is fixed, so it binds only at sizes where nothing is bandwidth-bound.
+  A three-term `max(B·G, D·L, M·L/C)` would fuse two literatures that do not cite each other (EDAN
+  has no bandwidth term; LogP has no depth — checked: 0 cross-citations) — an invented model inside
+  a layout paper. `C=1` recovers the practically relevant dependent case.
+- **Loaded latency**: `L` is unloaded; queueing inflates it ~20% near saturation (McCalpin), so the
+  latency term is optimistic near the knee — conservative in the safe direction for layout ranking,
+  since it under-rewards extra concurrency there.
+- **False sharing / boundary lines** in the multicore distribution: `O(cores)` lines per array,
+  negligible per chunk; the pathological interleaved distribution is documented, not priced.
+- **`o`** and the SRAM/local level: local memory is free until the SRAM task lands.
 
-```
-  latency_per_iter   = sum( messages_per_iter    * L )     # one round trip per new block message
-  bandwidth_per_iter = sum( bytes_moved_per_iter * G )     # whole blocks at the channel gap
-```
+## Implementation status
 
-Both are returned symbolically (they depend on the loop bounds `N`, ...). The caller combines them by
-regime:
+Fixed this pass (2026-07-17): the serialized-branch regime switch (→ one continuous `max`), the
+nest-concurrency bug, the line/sector conflation, `nest_time` duplication, sequential ≠ dependent,
+`c_core` as a measured parameter with `fit_core_mlp` (with a truncated-sweep guard), static replay
+for indirection (dynamic memlets refused without `replayed_counts`; unscoreable subsets raise
+instead of silently dropping), `n_units` core/warp distribution, pattern-dependent per-core
+concurrency (`core_stream_mlp` vs `core_mlp` — the adversarial review's chief finding: the chase
+knee is prefetch-defeated and under-credits streams ~6x), write-allocate factor 2 on written
+arrays' bytes, element-wider-than-granularity spans, one-sided `validate()` knee check (knee =
+min(L/g, queue) can sit far below the cap legitimately). 117 cost-model tests green; full layout
+suite 722 green pre-review-fixes.
 
-- `total_time_serialized = (latency_per_iter + bandwidth_per_iter) * total_iters` — every message pays
-  its full latency in series. This is the latency-exposed **upper bound**.
-- `total_time_overlapped = total_bytes / achievable_rate(p)` — the realistic time once requests
-  overlap. `achievable_rate = min(1/G, concurrency * line / L)`: bandwidth-bound once the channels
-  saturate, latency-bound while few requests are outstanding. Charging `L` per message and summing
-  (the serialized form) is ~40x too slow on real hardware, because outstanding requests overlap their
-  latency — that gap is exactly why both `L` and `G` are measured.
-
-## Why this captures layout performance
-
-The layout-sensitive term is `messages_per_iter` (the block count). For one kernel on one device,
-`total_iters`, `line_bytes` and `achievable_rate` are the same for every layout, so the predicted time
-is **proportional to the block count**. Two consequences:
-
-1. A layout change is visible precisely because it changes the number of block messages. Transposing a
-   read operand of a 3-array elementwise add takes its per-iteration blocks from `1/8` to `1`, so
-   predicted `latency/iter` goes 35.7 -> 118.8 ns and the overlapped total 25.2 -> 83.9 ms.
-2. The **ranking of layouts is invariant to the regime**: because both the latency-bound and the
-   bandwidth-bound cost scale the block count by the same per-block constant, the same layout wins
-   whether the kernel is latency- or bandwidth-bound. A latency model can rank layouts because a
-   layout change is a change in message count. (`loggp.memory_time` and the ranking-invariance test
-   pin this.)
-
-## Latency-bound or bandwidth-bound?
-
-A nest is **bandwidth-bound** when it keeps enough block requests in flight to fill the channels, and
-**latency-bound** when it cannot and each access waits out the full `L`. The threshold is the
-**bandwidth-delay product** (Little's Law):
-
-```
-  BDP = L / (line_bytes * G) = L * BW_saturated / line_bytes        # requests needed in flight
-```
-
-Compare it to the concurrency the nest actually exposes:
-
-```
-  regime = "bandwidth" if exposed_concurrency >= BDP else "latency"
-```
-
-which is the same as asking which term of `achievable_rate = min(1/G, concurrency*line/L)` binds.
-
-For the example DRAM (L=95 ns, 100 GB/s, 64 B line) the BDP is ~148 requests. Consequences the model
-then makes concrete:
-
-- A **single CPU core** tracks ~24 outstanding misses — below 148, so one core is **latency-bound** and
-  cannot saturate DRAM. This is why the model assumes many cores, and why `G` is measured with all of
-  them.
-- A **GPU** keeps thousands of accesses in flight — far above 148, so a parallel kernel is
-  **bandwidth-bound**.
-- A **dependency-serialized loop** (a pointer chase, a scan) has one request outstanding at a time —
-  **latency-bound** regardless of the device.
-
-`analyze_loop_nest` estimates the exposed concurrency from the schedule: any parallel map saturates
-(the multi-core / many-warp assumption, returned as `inf` → bandwidth-bound), a fully `Sequential`
-nest is serialized to 1 → latency-bound. A caller who knows the true MLP passes `concurrency=`
-explicitly — `p.concurrency` for the single-core view, `1` for a dependency chain, a measured device
-value otherwise. `LoopNestLogP.regime()` reports the verdict, `bandwidth_delay_product()` the
-threshold, and `total_time()` returns the matching total (overlapped when bandwidth-bound, serialized
-when latency-bound). The layout ranking is the same either way; the regime only sets the absolute
-time.
+Open:
+- **`c_core`, `L`, `G` on a quiet box** — every number above is contended and `L` carries a page
+  walk; the validation-protocol run (predict the sweep from 3 fitted params) is pending on it.
+- **GPU `unit_mlp` / P-chase** — the GPU column of the concurrency table is a structure, not yet a
+  measurement.
+- **Warp-window block counting** — the continuous fraction averages over an unbounded stream; a warp
+  cuts adjacency at 32 lanes. Coincides for contiguous/strided; sub-warp tiles need the windowed
+  count (same next-refinement as the sub-block tile overcount).
+- **Loaded-latency curve**, **`D·L` if a dependent-recurrence kernel ever needs pricing**, **SRAM**.
 
 ## API
 
 ```python
-cost = analyze_loop_nest(state, map_entry, p, block_bytes=32, local_arrays=frozenset())
-
-cost.total_iters                 # symbolic iteration count of the nest
-cost.arrays[name]                # ArrayLogP: is_local, messages_per_iter, bytes_moved_per_iter
-cost.latency_per_iter()          # sum messages * L   (seconds, symbolic)
-cost.bandwidth_per_iter()        # sum bytes   * G
-cost.time_per_iter()             # latency + bandwidth (serialized)
-cost.total_time_serialized()     # per-iter * iters   (upper bound)
-cost.total_time_overlapped()     # total_bytes / achievable_rate  (realistic, saturated)
+cost = analyze_loop_nest(state, map_entry, p,            # granularities from p (line + sector)
+                         n_cores=16)                      # or concurrency=... to override outright
+cost.total_time()            # max(B*G, M*L/C) -- THE answer
+cost.total_time_bandwidth()  # B*G term          cost.total_time_latency()   # M*L/C term
+cost.total_messages()        # M                 cost.total_sectors(), cost.total_bytes()
+cost.regime()                # diagnostic: which term is expected to bind
+cost.total_time_serialized() # diagnostic ceiling (zero overlap); NOT a predictor
 ```
-
-`p` is a `loggp.LogGP` from measurement (or example values for what-if analysis). `block_bytes` picks
-the granularity — 64 for a CPU line, 32 for a GPU sector — so one function serves both devices.
 
 ## Module map
 
 | file | role |
 |---|---|
-| `hardware.py` | theoretical peak BW (DRAM from a `dmidecode` dump, GPU from CUDA props) — the denominator |
-| `membench.c` / `membench.py` | pointer-chase (L) and triad (G) microbenchmarks; environment gate |
-| `loggp.py` | `LogGP` parameters, the `T(n)=α+βn` fit, `achievable_rate`, `memory_time`, `validate` |
-| `blocks_touched.py` | average new blocks per iteration — the Δ term, an INPUT to the analysis |
+| `loggp.py` | parameters (`LogGP`, `c_core`), **`nest_memory_time` — the formula**, `achievable_rate(p, C)`, BDP, `validate` |
+| `logp_analysis.py` | the nest analysis: counts at both granularities, concurrency estimate, `LoopNestLogP` |
+| `blocks_touched.py` | affine new-blocks metric + `replayed_blocks_touched` (static replay for indirection) |
+| `membench.c/.py` | chase (`L`), triad (`G`), `fit_core_mlp` (knee), environment gate |
 | `access_subsets.py` | per-array access subsets from the map scope |
-| `logp_analysis.py` | **this analysis**: the loop-nest LogP cost |
+| `relayout.py` | relayout cost, `eps`, break-evens (saturated scope) |
+| `hardware.py` | theoretical peak BW (dmidecode / CUDA props) — the denominator |
 
 ## Accuracy and limitations
 
-- **`blocks_touched` is asymptotically exact, not exact.** It uses a continuous fraction
-  `(extent-1)*stride/block` where the truth applies `ceil` at block granularity. It converges as
-  extents grow but overcounts small tiles (a contiguous 4x4 fp64 tile is 16 contiguous elements = 2
-  blocks; the per-dimension fractions report ~4, because they cannot see the inner runs combine into
-  one contiguous span). The **ranking is preserved**, so layout selection is sound; absolute block
-  counts for sub-block tiles are not. A brute-force traversal oracle is checked in the tests, and the
-  exact streaming/coalescing count over the innermost contiguous run is the next refinement.
-- **Latency under load is not modelled.** `L` is the *unloaded* round trip; at saturation it inflates
-  2-4x (Little's law). A single-`L` model therefore under-predicts a bandwidth-saturated nest. Adding
-  a loaded-latency curve is the largest known follow-up.
-- **`o = 0`.** It is the local-issue occupancy, deferred with the SRAM cost. It is ~0.25 ns against
-  `L ≈ 95 ns`, below the measurement's own noise band.
-- **One `achievable_rate` for all layouts.** A badly scattered access that cannot sustain concurrency
-  drops to the latency-bound branch and should be penalised a second time; the layout-dependent rate
-  is a noted refinement.
-- **Read/write symmetry.** Each array's accesses are counted once from the unioned subset; a
-  read-modify-write of the same array is not double-counted, and a partial-line write's
-  read-for-ownership traffic (the 1.33-1.5x STREAM undercount) is a hardware-accounting factor folded
-  into `G`, not modelled per access.
-- **Split-index accesses are not scored.** `SplitDimensions` (Block) rewrites an access into
-  split-index form, `A[i, int_floor(j, 8), j % 8]`; the `int_floor`/`%` subscripts are not affine
-  range begins, so `blocks_touched` cannot reduce them and the analysis raises on such an SDFG. A
-  blocked layout is scored today by giving the analysis the blocked STRIDES on the original access
-  (the physical layout the transform materialises), not by running it on the post-`SplitDimensions`
-  graph. `PermuteDimensions` and `PadDimensions`, which keep affine accesses, are scored directly.
-- **Indirect (gather/scatter) accesses are not yet scored.** An `A[idx[i]]` access is data-dependent,
-  not affine; the "unstructured access is many messages" case needs the indirection-aware count and
-  is future work.
+- **`blocks_touched` is asymptotically exact**: continuous fractions overcount sub-block tiles (a
+  contiguous 4x4 fp64 tile is 2 blocks, reported ~4); ranking preserved, absolutes not; brute-force
+  oracle in the tests.
+- **Split-index accesses** (`A[i, int_floor(j,8), j%8]` after `SplitDimensions`) are not affine —
+  score blocked layouts by giving the analysis the blocked strides on the original access.
+- **`validate()` currently fails on this box's defaults** — by design: `L/g` (23.75) vs measured
+  knee (~8) means `g` was never measured here. The check is doing its job; measure, don't loosen it.
 
 ## Worked example
 
-A three-array elementwise add `C[i,j] = A[i,j] + B[i,j]`, loops `(i, j)`, block 64 B, fp64, example
-DRAM `L = 95 ns`, `G = 1/100 GB/s`:
+`C[i,j] = A[i,j] + B[i,j]`, fp64, 64 B blocks, `G = 1/100 GB/s`, N=4096. Only A's layout changes:
 
-| A layout | A blocks/iter | latency/iter | total (overlapped) |
-|---|---|---|---|
-| row-major `(N,1)` | 1/8 | 35.7 ns | 25.2 ms |
-| transposed `(1,N)` | 1 | 118.8 ns | 83.9 ms |
+| A layout | A msgs/iter | eps(A) | bytes/iter (A+B+C, C written ×2) | T = B·G at C=inf |
+|---|---|---|---|---|
+| row-major `(N,1)` | 1/8 | 1 | 8+8+16 = 32 | 5.4 ms |
+| transposed `(1,N)` | 1 | 1/8 | 64+8+16 = 88 | 14.8 ms |
 
-B and C stay contiguous in both; only A's layout changes, and the analysis attributes the whole 3.3x
-difference to A's messages — which is the layout signal a `Permute` search consumes.
-
-## Scoring an actual transform
-
-The same signal comes out when a real transform runs, not just when strides are set by hand. Take
-`C[i,j] = A[i,j] + B[j,i]` — `B` is read transposed, so its inner access is strided and it costs ~1
-block per iteration. `PermuteDimensions(permute_map={"B": [1, 0]}, add_permute_maps=True)` relays `B`
-into the transposed physical order; the compute map then reads a contiguous `permuted_B`, and the
-analysis reports its message count dropping from ~1.0 to ~0.125 — the 8x the relayout was for.
-`PadDimensions` grows a dimension but leaves the innermost stride 1, so a contiguous access stays
-~0.125 (pad buys alignment, not a lower message count) — the model does not credit a pad that moved
-nothing relevant. Both are pinned in `cost_model_transformations_test.py`.
+The 2.75x (not 8x — B stays contiguous and the written C, at its RFO-doubled 16 B/iter, dilutes it
+further) is attributed entirely to A's block count.
+With a real transform the same signal appears: `PermuteDimensions` on a transposed-read operand takes
+its messages from ~1.0 to ~0.125 (the 8x the relayout was for); `PadDimensions` leaves a contiguous
+access at ~0.125 — the model does not credit a pad that moved nothing relevant. Pinned in
+`cost_model_transformations_test.py`.

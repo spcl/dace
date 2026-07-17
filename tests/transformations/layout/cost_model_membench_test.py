@@ -135,3 +135,25 @@ if __name__ == "__main__":
     test_triad_computes_the_right_answer(library)
     test_check_environment_reports_reasons_not_a_verdict()
     print("membench tests PASS")
+
+
+def test_fit_core_mlp_is_the_sweep_speedup():
+    """C_core = L(1 chain) / floor: Little's Law on the multi-chain chase. The measured sweep shape
+    (146 ns at 1 chain falling to ~17.7 ns at the knee) yields the ~8 outstanding misses one core
+    sustains -- the number the L/g default (23.75) got wrong by 3x."""
+    from dace.transformation.layout.cost_model.membench import fit_core_mlp
+    sweep = {1: 146.0, 2: 74.0, 4: 36.6, 8: 19.6, 16: 17.7, 32: 19.3}
+    c = fit_core_mlp(sweep)
+    assert c == 146.0 / 17.7
+    assert 7.0 < c < 9.0
+
+
+def test_fit_core_mlp_rejects_unusable_sweeps():
+    import pytest
+    from dace.transformation.layout.cost_model.membench import fit_core_mlp
+    with pytest.raises(ValueError):
+        fit_core_mlp({2: 74.0, 4: 36.6})  # no MLP=1 point: L undefined
+    with pytest.raises(ValueError):
+        fit_core_mlp({1: 146.0})  # a single point shows no overlap
+    with pytest.raises(ValueError):
+        fit_core_mlp({1: 146.0, 4: 0.0})  # non-positive latency

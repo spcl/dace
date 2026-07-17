@@ -36,12 +36,15 @@ import dace
 
 @dataclass
 class SweepResult:
-    """One candidate's outcome: whether it verified, its median time (if timed), and any error."""
+    """One candidate's outcome: whether it verified, its median time (if timed), and any error.
+    ``order`` is the candidate's ENUMERATION position -- the identity-first tie-break needs it after
+    ranking has reordered the list."""
     name: str
     correct: bool
     time: Optional[float] = None
     error: Optional[str] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    order: int = 0
 
 
 def time_cpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
@@ -124,8 +127,15 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
           warmup: int = 1,
           do_time: bool = True,
           device: str = "cpu",
-          timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None) -> List[SweepResult]:
+          timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None,
+          attempt_log: Optional[str] = None) -> List[SweepResult]:
     """Compile, run, verify and (optionally) time each candidate; return results ranked.
+
+    Two phases, in the design's batch order: EVERY candidate is built, compiled and verified first;
+    only then are the verified ones timed back-to-back -- so no candidate is timed right after its
+    own compile burst (DVFS/cache state), and a timing failure late in the sweep cannot cost the
+    verification verdicts. ``attempt_log`` (a file path) records each candidate name before its
+    build and before its timing run, so a crashed campaign shows which candidate killed it.
 
     :param candidates: ``{name: make_sdfg}`` -- each ``make_sdfg()`` returns a FRESH SDFG with that
                        candidate's global layout already applied.
@@ -142,45 +152,79 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
     :param timer: ``timer(sdfg, run, reps, warmup) -> time`` for a correct candidate. ``None`` =
                   the ``device``-selected whole-call timer; pass
                   ``dace.transformation.layout.timing.compute_region_timer`` to time only the compute
-                  region (excluding the relayout copies). One timer is used for the whole sweep, so
-                  its unit is consistent and the ranking is valid.
+                  region (excluding the relayout copies), or ``compute_region_stats_timer`` to also
+                  record the spread/contended trust signal (a timer may return
+                  ``(time, metadata_dict)``; the dict lands in ``SweepResult.metadata``). One timer
+                  is used for the whole sweep, so its unit is consistent and the ranking is valid.
     :returns: results, correct-first then ascending time.
     """
     if device not in ("cpu", "gpu"):
         raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
     from dace.transformation.layout.select_lowering import select_layout_lowering
 
+    def log_attempt(phase: str, name: str) -> None:
+        if attempt_log is not None:
+            with open(attempt_log, "a") as f:
+                f.write(f"{phase} {name}\n")
+
     default_timer = time_gpu if device == "gpu" else time_cpu
     stream_ctx = single_default_stream() if device == "gpu" else contextlib.nullcontext()
     results: List[SweepResult] = []
     with stream_ctx:  # GPU: force the single default stream at compile time (run() compiles)
-        for name, make in candidates.items():
+        # Phase 1: build + compile + VERIFY every candidate (run() compiles on first call).
+        verified: List[Tuple[SweepResult, dace.SDFG]] = []
+        for order, (name, make) in enumerate(candidates.items()):
+            log_attempt("verify", name)
             try:
                 sdfg = make()
                 select_layout_lowering(sdfg, device)  # the transforms left lowering unset; choose it here
                 out = run(sdfg)
                 correct = all(name_ in out and compare(out[name_], ref) for name_, ref in reference.items())
             except Exception as ex:  # a candidate that fails to build/compile/run is simply not viable
-                results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}"))
+                results.append(SweepResult(name, False, None, f"{type(ex).__name__}: {ex}", order=order))
                 continue
-            # Timing is ADVISORY and runs in its own guard: a timer failure (e.g. cupy absent, no
-            # device) must never demote an already-verified-correct candidate to incorrect.
-            t = None
-            metadata = {}
-            if do_time and correct:
+            result = SweepResult(name, correct, order=order)
+            results.append(result)
+            if correct:
+                verified.append((result, sdfg))
+        # Phase 2: time the verified candidates back-to-back. Timing is ADVISORY and runs in its
+        # own guard: a timer failure (e.g. cupy absent, no device) must never demote an
+        # already-verified-correct candidate to incorrect.
+        if do_time:
+            for result, sdfg in verified:
+                log_attempt("time", result.name)
                 try:
                     t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
                         lambda: run(sdfg), reps, warmup)
+                    if isinstance(t, tuple):  # a stats timer: (median, {"spread": ..., ...})
+                        t, timer_metadata = t
+                        result.metadata.update(timer_metadata)
+                    result.time = t
                 except Exception as ex:
-                    metadata["timing_error"] = f"{type(ex).__name__}: {ex}"
-            results.append(SweepResult(name, correct, t, metadata=metadata))
+                    result.metadata["timing_error"] = f"{type(ex).__name__}: {ex}"
     results.sort(key=lambda r: (not r.correct, r.time if r.time is not None else float('inf')))
     return results
 
 
-def best(results: List[SweepResult]) -> Optional[SweepResult]:
-    """The fastest correct candidate (results are already ranked), or ``None`` if none verified."""
-    return next((r for r in results if r.correct), None)
+def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Optional[SweepResult]:
+    """The winning correct candidate, with the identity-first law widened to measurement
+    resolution: every correct candidate whose time is within ``noise_floor`` (relative) of the
+    fastest counts as TIED, and the tie resolves to the earliest-ENUMERATED one -- exact-float
+    ties essentially never happen between measured medians, so without the window the enumeration
+    order (identity first) would be dead for any timed sweep. The default window is
+    ``timing.SPREAD_CONTENDED_THRESHOLD``: a layout must beat the earlier candidate by more than
+    the contention threshold to displace it. Pass ``noise_floor=0.0`` for the raw fastest.
+    Falls back to the first correct candidate when nothing was timed; ``None`` if none verified.
+    """
+    if noise_floor is None:
+        from dace.transformation.layout.timing import SPREAD_CONTENDED_THRESHOLD
+        noise_floor = SPREAD_CONTENDED_THRESHOLD
+    timed = [r for r in results if r.correct and r.time is not None]
+    if not timed:
+        return next((r for r in results if r.correct), None)
+    fastest = min(r.time for r in timed)
+    window = [r for r in timed if r.time <= fastest * (1.0 + noise_floor)]
+    return min(window, key=lambda r: r.order)
 
 
 # --------------------------------------------------------------------------- #
@@ -237,8 +281,7 @@ def shuffle_candidates(array: str, dim: int, shuffle_names):
         yield f"shuffle_{array}_{name}", apply
 
 
-def indirection_candidates(index_array: str, data_array: str, dim: int, ndim: int, shuffle_names,
-                           prepare: bool = True):
+def indirection_candidates(index_array: str, data_array: str, dim: int, ndim: int, shuffle_names, prepare: bool = True):
     """Yield ``(name, apply)`` layout candidates for a DATA array reached through indirection --
     ``data_array[index_array[f(i)]]`` (a sparse gather/scatter, as found by
     :func:`dace.transformation.layout.indirect_access.indirect_accesses`).

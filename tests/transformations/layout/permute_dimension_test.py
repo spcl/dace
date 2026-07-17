@@ -85,23 +85,12 @@ def test_standalone_execution():
     vals_A_close = np.allclose(vals_A_orig, vals_A_trans, rtol=1e-10, atol=1e-12)
     vals_B_close = np.allclose(vals_B_orig, vals_B_trans, rtol=1e-10, atol=1e-12)
 
-    print(f"vals_A results match: {vals_A_close}")
-    print(f"vals_B results match: {vals_B_close}")
-
-    if vals_A_close and vals_B_close:
-        print("✅ All tests passed! Permute transformations preserve correctness.")
-    else:
-        print("❌ Test failed! Results differ between original and transformed SDFGs.")
-        if not vals_A_close:
-            print(f"vals_A max difference: {np.max(np.abs(vals_A_orig - vals_A_trans))}")
-            print(f"vals_A difference: {np.abs(vals_A_orig - vals_A_trans)}")
-        if not vals_B_close:
-            print(f"vals_B max difference: {np.max(np.abs(vals_B_orig - vals_B_trans))}")
-            print(f"vals_B difference: {np.abs(vals_B_orig - vals_B_trans)}")
-
-    return vals_A_close and vals_B_close
+    # assert, do NOT return: a test that returns its verdict passes regardless of the verdict
+    # (pytest only emits PytestReturnNotNoneWarning), so this test could not fail on a mismatch.
+    assert vals_A_close, f"vals_A differs, max {np.max(np.abs(vals_A_orig - vals_A_trans))}"
+    assert vals_B_close, f"vals_B differs, max {np.max(np.abs(vals_B_orig - vals_B_trans))}"
 
 
 if __name__ == "__main__":
-    success = test_standalone_execution()
-    exit(0 if success else 1)
+    test_standalone_execution()
+    print("permute dimension test PASS")

@@ -35,7 +35,6 @@ import dace
 from dace import nodes
 from dace.transformation import pass_pipeline as ppl
 
-
 BARRIER_PREFIX = "__layout_barrier_"
 
 
@@ -159,9 +158,14 @@ class InsertLayoutTiming(ppl.Pass):
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
         states = list(sdfg.states())
-        copy_in = [s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=False)]
-        copy_out = [s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=True)]
-        boundary = set(copy_in) | set(copy_out)
+        copy_in = {s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=False)}
+        copy_out = {s for s in states if is_copy_state(s) and not reaches_tasklets(sdfg, s, forward=True)}
+        # Symmetric difference: a copy state on BOTH lists has compute on neither side, so it IS
+        # the compute -- the sole state of an externalized transpose/copy nest. Treating it as a
+        # boundary would leave the identity candidate untimed (ranked last as inf) while the
+        # permute candidates time fine, silently inverting the identity-first law for exactly the
+        # kernel class layout matters most for.
+        boundary = copy_in ^ copy_out
 
         for state in boundary:
             if not has_fusion_barrier(state):  # idempotent: a state barriered earlier is left alone
@@ -192,29 +196,64 @@ def _report_total_ms(report) -> Optional[float]:
     return total if seen else None
 
 
-def time_compute(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5, warmup: int = 1) -> Optional[float]:
-    """Run ``run(sdfg)`` ``reps`` times and return the median compute-region time (ms) from the
-    instrumentation report (``None`` if the SDFG carries no timers). ``sdfg`` must already be
-    instrumented (see :class:`InsertLayoutTiming`).
+#: Spread above this flags a sample set as contended (kept, but marked untrusted) -- the
+#: refuse-don't-guess doctrine of ``membench.check_environment`` applied to kernel timing.
+SPREAD_CONTENDED_THRESHOLD = 0.10
+
+
+def time_compute_stats(sdfg: dace.SDFG,
+                       run: Callable[[dace.SDFG], Any],
+                       reps: int = 10,
+                       warmup: int = 2) -> Optional[Dict[str, Any]]:
+    """Run ``run(sdfg)`` ``reps`` times and return the compute-region timing statistics from the
+    instrumentation report: ``{"median": ms, "spread": (max-min)/min, "contended": bool,
+    "samples": [ms...]}``, or ``None`` if the SDFG carries no timers. Median, not min, for whole
+    kernels (min is for microbenchmarks, where noise is one-sided; a kernel's distribution is not);
+    the spread is the trust signal -- above :data:`SPREAD_CONTENDED_THRESHOLD` the sample is kept
+    but flagged contended. ``sdfg`` must already be instrumented (see :class:`InsertLayoutTiming`).
 
     The no-timer case MUST short-circuit: ``get_latest_report`` reads the newest report in
     ``build_folder/perf``, and the build folder is keyed on the SDFG NAME -- every candidate in a
     layout sweep shares one. An uninstrumented SDFG writes no report, so falling through would read
-    the PREVIOUS candidate's report and silently return its time as this one's.
+    the PREVIOUS candidate's report and silently return its time as this one's. For the same reason
+    every rep must produce a FRESH report file: re-reading a stale one (instrumentation configured
+    to save only at exit, or a leftover in a shared build folder) would return ``reps`` identical
+    copies of an old time -- median stale, spread 0.0, confidently wrong -- so staleness and missing
+    samples are hard errors, never silently absorbed.
     """
     if not any(state.instrument != dace.InstrumentationType.No_Instrumentation for state in sdfg.states()):
         return None
     for _ in range(warmup):
         run(sdfg)
     samples: List[float] = []
-    for _ in range(reps):
+    for rep in range(reps):
+        previous_path = sdfg.get_latest_report_path()
         run(sdfg)
+        path = sdfg.get_latest_report_path()
+        if path is None or path == previous_path:
+            raise RuntimeError(f"time_compute_stats: rep {rep} of '{sdfg.name}' produced no fresh instrumentation "
+                               f"report (latest: {path}); the run did not write one (report_each_invocation off, "
+                               f"or a save path failure) -- refusing to report stale timings")
         ms = _report_total_ms(sdfg.get_latest_report())
-        if ms is not None:
-            samples.append(ms)
-    if not samples:
-        return None
-    return statistics.median(samples)
+        if ms is None:
+            raise RuntimeError(f"time_compute_stats: rep {rep} of '{sdfg.name}' wrote an EMPTY instrumentation "
+                               f"report ({path}) despite instrumented states -- refusing to shrink the sample set "
+                               f"silently")
+        samples.append(ms)
+    low = min(samples)
+    spread = (max(samples) - low) / low if low > 0.0 else 0.0
+    return {
+        "median": statistics.median(samples),
+        "spread": spread,
+        "contended": spread > SPREAD_CONTENDED_THRESHOLD,
+        "samples": samples,
+    }
+
+
+def time_compute(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 5, warmup: int = 1) -> Optional[float]:
+    """The median compute-region time (ms) of ``run(sdfg)`` -- see :func:`time_compute_stats`."""
+    stats = time_compute_stats(sdfg, run, reps, warmup)
+    return None if stats is None else stats["median"]
 
 
 def compute_region_timer(sdfg: dace.SDFG,
@@ -226,3 +265,15 @@ def compute_region_timer(sdfg: dace.SDFG,
     cost, not by the one-time relayout. Mutates ``sdfg`` (instrumentation)."""
     InsertLayoutTiming().apply_pass(sdfg, {})
     return time_compute(sdfg, run, reps, warmup)
+
+
+def compute_region_stats_timer(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 10, warmup: int = 2):
+    """:func:`compute_region_timer` with the full measurement protocol: returns
+    ``(median_ms, {"spread": ..., "contended": ..., "samples": ...})`` so the sweep records the
+    trust signal alongside the ranking time (``sweep`` unpacks the pair into ``SweepResult``
+    metadata), or ``None`` when the SDFG has no compute region to instrument."""
+    InsertLayoutTiming().apply_pass(sdfg, {})
+    stats = time_compute_stats(sdfg, run, reps, warmup)
+    if stats is None:
+        return None
+    return stats["median"], {k: stats[k] for k in ("spread", "contended", "samples")}

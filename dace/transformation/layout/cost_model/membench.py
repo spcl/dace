@@ -13,7 +13,7 @@ import ctypes
 import os
 import subprocess
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 SOURCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "membench.c")
 
@@ -117,3 +117,41 @@ def check_environment(arena_bytes: int, max_load: float = 0.5) -> List[str]:
         reasons.append("transparent hugepages are 'never': the arena would use 4 KiB pages and L "
                        "would carry a TLB page-walk term")
     return reasons
+
+
+def fit_core_mlp(latency_by_chains: Dict[int, float]) -> float:
+    """The measured outstanding-miss budget of one core, from the concurrency sweep.
+
+    Input: ``{independent chains: ns per LOAD}`` from the multi-chain pointer chase (each chain is a
+    dependent cycle, chains are mutually independent, so ``n`` chains expose exactly MLP ``n``).
+
+    Little's Law on the sweep: sustained request rate is ``C / L``, so per-load time is ``L / C``
+    until the miss queue is full, then flat. The budget is therefore the TOTAL speedup the sweep
+    achieves over the dependent chain::
+
+        C_core = L(1 chain) / min over chains of ns_per_load
+
+    Using the floor (not a knee-detection fit) is deliberate: it needs no model of the curve's shape,
+    and it is exact under Little's Law whenever the sweep reaches the flat region. Feed the result to
+    ``LogGP(c_core=...)``; ``validate()`` cross-checks it against ``L/g``, and a large disagreement
+    means the default ``g`` was never measured (observed here: knee ~8 vs ``L/g`` 23.75).
+
+    Measure on a QUIET box (``check_environment``): the sweep's ratios are load-robust, but the
+    absolute ``L(1)`` in the numerator carries any page-walk term the arena's paging imposes.
+    """
+    if 1 not in latency_by_chains:
+        raise ValueError("the sweep must include the 1-chain (MLP=1) point; it defines L")
+    if len(latency_by_chains) < 2:
+        raise ValueError("need at least two chain counts to see the latency overlap")
+    bad = {c: t for c, t in latency_by_chains.items() if c < 1 or t <= 0}
+    if bad:
+        raise ValueError(f"invalid sweep points (chains must be >= 1, ns/load > 0): {bad}")
+    # The formula is exact only once the sweep reaches the FLAT region. If the fastest point is the
+    # largest chain count, the sweep was truncated before the knee and the result would silently be
+    # ~n_max_chains instead of the budget -- the plausible-and-wrong number this module's own
+    # doctrine forbids. Refuse instead.
+    floor_chains = min(latency_by_chains, key=latency_by_chains.get)
+    if floor_chains == max(latency_by_chains):
+        raise ValueError(f"sweep truncated: the minimum ns/load is at the largest chain count "
+                         f"({floor_chains}); extend the sweep past the knee so the flat region is visible")
+    return latency_by_chains[1] / min(latency_by_chains.values())

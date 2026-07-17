@@ -175,3 +175,40 @@ if __name__ == "__main__":
     test_formula_converges_to_the_oracle_for_large_extents()
     test_formula_overcounts_small_tiles_ranking_still_holds()
     print("blocks_touched tests PASS")
+
+
+def test_replayed_blocks_bounds_an_indirect_access():
+    """A[idx[i]] has no affine subset -- the block count comes from REPLAYING the materialized index
+    array (the static-indirection case). Two bounds: streaming (no reuse, block changes between
+    consecutive accesses) and distinct (infinite cache). streaming >= distinct always; for a fully
+    scattered index they coincide, so the answer is exact exactly where layout matters most."""
+    import numpy
+    import pytest
+    from dace.transformation.layout.cost_model.blocks_touched import replayed_blocks_touched
+
+    rng = numpy.random.default_rng(0)
+    n, elems_per_block = 4096, 8
+
+    # contiguous: both bounds agree at 1/8 -- replay reproduces the affine answer
+    streaming, distinct = replayed_blocks_touched(numpy.arange(n), elems_per_block)
+    assert streaming == pytest.approx(1.0 / 8, rel=0.01)
+    assert distinct == pytest.approx(1.0 / 8, rel=0.01)
+
+    # fully scattered: both bounds ~1 -- exact, no cache model needed
+    scattered = rng.choice(10**7, size=n, replace=False)
+    streaming, distinct = replayed_blocks_touched(scattered, elems_per_block)
+    assert streaming == pytest.approx(1.0, rel=0.02)
+    assert distinct == pytest.approx(streaming, rel=0.02)
+
+    # clustered but shuffled: the bounds DIVERGE -- distinct says 1/8 (fits cache), streaming ~1
+    # (no-reuse); the truth depends on the cache and an honest model reports the pair
+    clustered = rng.permutation(n)
+    streaming, distinct = replayed_blocks_touched(clustered, elems_per_block)
+    assert distinct == pytest.approx(1.0 / 8, rel=0.01)
+    assert streaming > 6 * distinct
+    assert streaming >= distinct
+
+    # degenerate inputs
+    assert replayed_blocks_touched(numpy.array([], dtype=int), 8) == (0.0, 0.0)
+    with pytest.raises(ValueError):
+        replayed_blocks_touched(numpy.arange(4), 0)
