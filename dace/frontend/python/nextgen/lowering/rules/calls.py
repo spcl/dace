@@ -89,8 +89,9 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     except Exception as reason:  # Unparseable callee, unsupported argument, ...
         fallback_to_callback(statement, state, f'cannot inline call to "{callee.name}": {reason}')
         return
-    if _has_early_return(callee_body):
-        fallback_to_callback(statement, state, f'early return in nested dace program "{callee.name}"')
+    unsupported = _unsupported_return_shape(callee_body)
+    if unsupported is not None:
+        fallback_to_callback(statement, state, f'{unsupported} in nested dace program "{callee.name}"')
         return
 
     return_prefix = state.context.fresh_name(f'__{callee.name}_ret')
@@ -99,7 +100,9 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     with state.context.inline_scope(callee.f, parameter_bindings, callee_globals, return_prefix) as return_names:
         with state.emitter.scope(scope):
             state.lower_body(callee_body)
-        returned = list(return_names)
+        if scope.children and isinstance(scope.children[-1], tn.ReturnNode):
+            scope.children.pop()  # A tail return falls off the scope end
+        returned = list(dict.fromkeys(return_names))
     _bind_call_results(target, returned, statement, state)
 
 
@@ -186,6 +189,11 @@ def _prepare_callee(call: ast.Call, callee: Any,
         except (TypeError, ValueError):
             continue
         state.context.constants.setdefault(constant_name, (descriptor, value))
+    # External arrays the callee references bind inside its inline scope,
+    # deduplicated by qualified name across the whole program
+    for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items():
+        container = state.context.register_closure_array(reference_name, qualified_name, descriptor)
+        parameter_bindings[reference_name] = container
 
     program_ast = parsed_ast.preprocessed_ast
     program_node = program_ast.body[0] if isinstance(program_ast, ast.Module) else program_ast
@@ -197,31 +205,71 @@ def _prepare_callee(call: ast.Call, callee: Any,
     return program.body, parameter_bindings, parsed_ast.program_globals, argument_labels
 
 
-def _has_early_return(body: List[ast.stmt]) -> bool:
+def _unsupported_return_shape(body: List[ast.stmt]) -> Optional[str]:
     """
-    Whether the canonical callee body contains a return anywhere other than
-    the tail of the top-level statement list (including returns swallowed by
-    opaque statements, which cannot execute inside a callback).
+    Check the return statements of a canonical callee body for shapes that
+    cannot be inlined soundly:
+
+    - returns swallowed by opaque statements (a ``return`` cannot execute
+      inside a Python callback),
+    - returns of inconsistent arity (they would materialize into different
+      container sets),
+    - value-returning functions where control may fall through the end (the
+      Python result would be ``None`` on that path, which dataflow cannot
+      represent).
+
+    Early (non-tail) returns of a single consistent arity are supported: they
+    lower to :class:`ReturnNode`, which exits the enclosing
+    :class:`FunctionCallScope`.
+
+    :return: A human-readable reason, or None if the shape is supported.
     """
     from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt
 
-    def _contains(statements: List[ast.stmt], allow_tail: bool) -> bool:
-        for index, node in enumerate(statements):
+    arities: set = set()
+
+    def _scan(statements: List[ast.stmt]) -> Optional[str]:
+        for node in statements:
             if isinstance(node, ast.Return):
-                if not (allow_tail and index == len(statements) - 1):
-                    return True
+                if node.value is None:
+                    arities.add(0)
+                elif isinstance(node.value, ast.Tuple):
+                    arities.add(len(node.value.elts))
+                else:
+                    arities.add(1)
                 continue
             if isinstance(node, OpaqueStmt):
-                if any(isinstance(inner, ast.Return) for inner in ast.walk(node.original)):
-                    return True
+                for original in node.originals:
+                    if any(isinstance(inner, ast.Return) for inner in ast.walk(original)):
+                        return 'return inside an interpreter-fallback region'
                 continue
             for field in ('body', 'orelse'):
                 child = getattr(node, field, None)
-                if child and _contains(child, False):
-                    return True
-        return False
+                if child:
+                    reason = _scan(child)
+                    if reason is not None:
+                        return reason
+        return None
 
-    return _contains(body, True)
+    reason = _scan(body)
+    if reason is not None:
+        return reason
+    if len(arities) > 1:
+        return 'inconsistent return arities'
+    if arities and 0 not in arities and not _always_returns(body):
+        return 'control may fall through without returning'
+    return None
+
+
+def _always_returns(body: List[ast.stmt]) -> bool:
+    """Whether every control-flow path through a canonical statement list ends
+    in a return (conservative: loops are assumed to possibly not execute)."""
+    for node in body:
+        if isinstance(node, ast.Return):
+            return True
+        if isinstance(node, ast.If) and node.orelse and _always_returns(node.body) and _always_returns(node.orelse):
+            return True
+    return False
 
 
 def _bind_call_results(target: Optional[ast.expr], returned: List[str], statement: ast.stmt,

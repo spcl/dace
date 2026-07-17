@@ -33,6 +33,7 @@ def build_schedule_tree(name: str,
                         constants: Optional[Dict[str, Tuple[data.Data, Any]]] = None,
                         callback_mapping: Optional[Dict[str, str]] = None,
                         arg_names: Optional[Sequence[str]] = None,
+                        closure_arrays: Optional[Dict[str, Tuple[str, data.Data]]] = None,
                         debug: bool = False) -> tn.ScheduleTreeRoot:
     """
     Build a verified schedule tree from a preprocessed Python program AST.
@@ -46,6 +47,10 @@ def build_schedule_tree(name: str,
     :param callback_mapping: Mapping from callback symbol names to original
                              function names.
     :param arg_names: Ordered argument names.
+    :param closure_arrays: External arrays referenced by the program, as a
+                           mapping from the preprocessed reference name to
+                           (source qualified name, descriptor). Registered as
+                           non-transient containers.
     :param debug: If True, runs extra verification between pipeline passes.
     :return: A verified :class:`ScheduleTreeRoot`.
     """
@@ -58,6 +63,9 @@ def build_schedule_tree(name: str,
 
     # Stage 2: semantic context (single repository, shared with the tree root)
     context = ProgramContext(name, parsed_ast.filename, argtypes, parsed_ast.program_globals, constants or {})
+    for reference_name, (qualified_name, descriptor) in (closure_arrays or {}).items():
+        container = context.register_closure_array(reference_name, qualified_name, descriptor)
+        context.bind(reference_name, container)
 
     root = tn.ScheduleTreeRoot(name=name,
                                children=[],
@@ -120,6 +128,10 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
 
     callback_mapping = {key: original for key, (original, _, _) in closure.callbacks.items()}
     arg_names = [argument_name for argument_name in program.argnames if argument_name in argtypes]
+    closure_arrays = {
+        reference_name: (qualified_name, descriptor)
+        for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items()
+    }
 
     return build_schedule_tree(program.name,
                                parsed_ast,
@@ -127,6 +139,7 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
                                constants=constants,
                                callback_mapping=callback_mapping,
                                arg_names=arg_names,
+                               closure_arrays=closure_arrays,
                                debug=debug)
 
 

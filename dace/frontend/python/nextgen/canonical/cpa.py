@@ -98,6 +98,9 @@ class ExplicitTasklet(ast.stmt):
     :param statements: The raw tasklet body statements.
     :param language: Optional language name (e.g. ``'Python'``, ``'CPP'``).
     :param side_effects: Optional explicit side-effect flag.
+    :param code_global: Global-scope code emitted alongside the tasklet.
+    :param code_init: Initialization code emitted alongside the tasklet.
+    :param code_exit: Finalization code emitted alongside the tasklet.
     """
     _fields = ()
 
@@ -106,12 +109,18 @@ class ExplicitTasklet(ast.stmt):
                  statements: List[ast.stmt],
                  language: Optional[str] = None,
                  side_effects: Optional[bool] = None,
+                 code_global: str = '',
+                 code_init: str = '',
+                 code_exit: str = '',
                  location: Optional[ast.AST] = None):
         super().__init__()
         self.label = label
         self.statements = statements
         self.language = language
         self.side_effects = side_effects
+        self.code_global = code_global
+        self.code_init = code_init
+        self.code_exit = code_exit
         if location is not None:
             ast.copy_location(self, location)
 

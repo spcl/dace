@@ -16,8 +16,10 @@ frontend errors instead of falling back to callbacks: this is dace-specific
 syntax, so a violation is a user error (matching the stable frontend's
 ``TaskletTransformer`` contract), not an unsupported-language feature.
 
-The stable frontend's ``globalcode``/``initcode``/``exitcode`` tasklet
-attributes are deferred: the schedule tree has no representation for them yet.
+Global-scope, initialization, and finalization code attach to the tasklet
+through ``with dace.tasklet(code_global=..., code_init=..., code_exit=...)``
+keyword arguments and land on the emitted :class:`~dace.sdfg.nodes.Tasklet`'s
+``code_global``/``code_init``/``code_exit`` properties.
 """
 import ast
 from typing import Dict, List, Optional
@@ -74,7 +76,14 @@ def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> 
     else:
         code = '\n'.join(astutils.unparse(s) for s in code_statements)
 
-    tasklet = nodes.Tasklet(statement.label, set(in_memlets.keys()), set(out_memlets.keys()), code, language=language)
+    tasklet = nodes.Tasklet(statement.label,
+                            set(in_memlets.keys()),
+                            set(out_memlets.keys()),
+                            code,
+                            language=language,
+                            code_global=statement.code_global,
+                            code_init=statement.code_init,
+                            code_exit=statement.code_exit)
     if statement.side_effects is not None:
         tasklet.side_effects = statement.side_effects
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))

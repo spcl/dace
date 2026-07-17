@@ -103,22 +103,18 @@ class RecognizeExplicitDataflow(_BodyTransformer):
             context_expr = statement.items[0].context_expr
             callee = context_expr.func if isinstance(context_expr, ast.Call) else context_expr
             if _refers_to(callee, 'dace.tasklet', self.context.global_vars):
-                language, side_effects = _tasklet_arguments(context_expr)
                 return ExplicitTasklet(label=f'tasklet_{statement.lineno}',
                                        statements=statement.body,
-                                       language=language,
-                                       side_effects=side_effects,
-                                       location=statement)
+                                       location=statement,
+                                       **_tasklet_arguments(context_expr))
         if isinstance(statement, ast.FunctionDef) and len(statement.decorator_list) == 1:
             decorator = statement.decorator_list[0]
             decorator_callee = decorator.func if isinstance(decorator, ast.Call) else decorator
             if _refers_to(decorator_callee, 'dace.tasklet', self.context.global_vars):
-                language, side_effects = _tasklet_arguments(decorator)
                 return ExplicitTasklet(label=statement.name,
                                        statements=statement.body,
-                                       language=language,
-                                       side_effects=side_effects,
-                                       location=statement)
+                                       location=statement,
+                                       **_tasklet_arguments(decorator))
             if _refers_to(decorator_callee, 'dace.map', self.context.global_vars):
                 return self._desugar_map_function(statement, decorator)
         return self._recurse(statement)
@@ -181,20 +177,19 @@ def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:
     return False
 
 
-def _tasklet_arguments(node: ast.expr) -> tuple:
-    """Extract (language, side_effects) from a ``dace.tasklet(...)`` call, if present."""
-    language = None
-    side_effects = None
+def _tasklet_arguments(node: ast.expr) -> dict:
+    """Extract :class:`ExplicitTasklet` keyword arguments (language,
+    side-effect flag, global/init/exit code) from a ``dace.tasklet(...)``
+    call, if present."""
+    arguments = {'language': None, 'side_effects': None, 'code_global': '', 'code_init': '', 'code_exit': ''}
     if isinstance(node, ast.Call):
         positional = [a for a in node.args if isinstance(a, ast.Constant)]
         if positional and isinstance(positional[0].value, str):
-            language = positional[0].value
+            arguments['language'] = positional[0].value
         for keyword in node.keywords:
-            if keyword.arg == 'language' and isinstance(keyword.value, ast.Constant):
-                language = keyword.value.value
-            elif keyword.arg == 'side_effects' and isinstance(keyword.value, ast.Constant):
-                side_effects = keyword.value.value
-    return language, side_effects
+            if keyword.arg in arguments and isinstance(keyword.value, ast.Constant):
+                arguments[keyword.arg] = keyword.value.value
+    return arguments
 
 
 class DesugarStatements(_BodyTransformer):

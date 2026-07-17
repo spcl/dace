@@ -157,6 +157,76 @@ def test_method_max_first_element_init():
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
+def test_sum_axis0():
+
+    @dace.program
+    def sum_axis(A: dace.float64[N, 12]):
+        s = np.sum(A, axis=0)
+        return s
+
+    tree = nextgen.parse_program(sum_axis)
+    assert tuple(tree.containers['s'].shape) == (12, )
+    maps = _nodes_of_type(tree, tn.MapScope)
+    # Initialization map over the kept dimension + full-rank WCR map
+    assert len(maps) == 2
+    wcr_tasklets = [
+        t for t in _nodes_of_type(tree, tn.TaskletNode)
+        if t.out_memlets.get('__out') is not None and t.out_memlets['__out'].wcr is not None
+    ]
+    assert len(wcr_tasklets) == 1
+    # The output drops the reduced dimension: indexed by the kept parameter only
+    out_subset = str(wcr_tasklets[0].out_memlets['__out'].subset)
+    assert '__i1' in out_subset and '__i0' not in out_subset
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_method_max_axis1_first_slice_init():
+
+    @dace.program
+    def max_axis(A: dace.float64[N, 12]):
+        m = A.max(1)
+        return m
+
+    tree = nextgen.parse_program(max_axis)
+    assert tuple(tree.containers['m'].shape) == (N, )
+    tasklets = _nodes_of_type(tree, tn.TaskletNode)
+    # max has no identity: the initialization reads the first slice along axis 1
+    init = [t for t in tasklets if t.in_memlets and t.out_memlets['__out'].wcr is None]
+    assert len(init) == 1
+    init_subset = str(init[0].in_memlets['__in0'].subset)
+    assert '__i0' in init_subset and '__i1' not in init_subset
+    wcr = [t for t in tasklets if t.out_memlets['__out'].wcr is not None]
+    assert len(wcr) == 1
+    assert 'max' in wcr[0].out_memlets['__out'].wcr
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_sum_negative_axis():
+
+    @dace.program
+    def sum_last_axis(A: dace.float64[N, 12]):
+        s = np.sum(A, axis=-1)
+        return s
+
+    tree = nextgen.parse_program(sum_last_axis)
+    # axis=-1 on a 2-D array reduces the second dimension
+    assert tuple(tree.containers['s'].shape) == (N, )
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_nonconstant_axis_falls_back():
+
+    @dace.program
+    def dynamic_axis(A: dace.float64[N, 12], k: dace.int32):
+        s = np.sum(A, axis=k)
+        A[0, 0] = 1.0
+
+    tree = nextgen.parse_program(dynamic_axis)
+    callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert len(callbacks) == 1
+    assert not _nodes_of_type(tree, tn.StatementNode)
+
+
 def test_arange():
 
     @dace.program
@@ -197,5 +267,9 @@ if __name__ == '__main__':
     test_ufunc_broadcasts()
     test_np_sum_reduction_wcr()
     test_method_max_first_element_init()
+    test_sum_axis0()
+    test_method_max_axis1_first_slice_init()
+    test_sum_negative_axis()
+    test_nonconstant_axis_falls_back()
     test_arange()
     test_unknown_call_falls_back()

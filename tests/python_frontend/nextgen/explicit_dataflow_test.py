@@ -141,6 +141,28 @@ def test_tasklet_language_argument():
     assert tasklets[0].node.language == dtypes.Language.CPP
 
 
+def test_tasklet_global_init_exit_code():
+
+    @dace.program
+    def instrumented(A: dace.float64[N], B: dace.float64[N]):
+        with dace.tasklet(language='CPP',
+                          code_global='#include <cmath>',
+                          code_init='int __cnt = 0;',
+                          code_exit='(void)__cnt;'):
+            a << A[0]
+            'b = std::sin(a);'
+            b >> B[0]
+
+    tree = nextgen.parse_program(instrumented)
+    tasklets = _nodes_of_type(tree, tn.TaskletNode)
+    assert len(tasklets) == 1
+    tasklet = tasklets[0].node
+    assert tasklet.language == dtypes.Language.CPP
+    assert '#include <cmath>' in tasklet.code_global.as_string
+    assert '__cnt = 0' in tasklet.code_init.as_string
+    assert '__cnt' in tasklet.code_exit.as_string
+
+
 def test_bare_call_falls_back_to_callback():
 
     @dace.program
@@ -187,6 +209,7 @@ if __name__ == '__main__':
     test_map_decorator()
     test_tasklet_cpp_intrinsic()
     test_tasklet_language_argument()
+    test_tasklet_global_init_exit_code()
     test_bare_call_falls_back_to_callback()
     test_local_name_tasklet_not_hijacked()
     test_resolved_bare_tasklet_recognized()

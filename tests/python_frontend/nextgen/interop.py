@@ -85,3 +85,22 @@ def build_both(program) -> Tuple[tn.ScheduleTreeRoot, tn.ScheduleTreeRoot]:
 def has_compute(sig: TreeSignature) -> bool:
     """Whether a signature contains any lowered dataflow at all."""
     return (sig.map_count + sig.loop_count + sig.compute_count + sig.copy_count) > 0
+
+
+#: Node kinds tree-to-SDFG conversion cannot lower yet.
+_UNSUPPORTED_EXECUTION_KINDS = (tn.PythonCallbackNode, tn.SDFGCallNode, tn.ElifScope, tn.ViewNode, tn.RefSetNode,
+                                tn.BreakNode, tn.ContinueNode)
+
+
+def execution_gap(root: tn.ScheduleTreeRoot) -> str:
+    """
+    The first reason a tree cannot be converted to an executable SDFG yet, or
+    an empty string if conversion should succeed (used to gate the execution
+    comparison level of the differential harness).
+    """
+    for node in root.preorder_traversal():
+        if isinstance(node, _UNSUPPORTED_EXECUTION_KINDS):
+            return type(node).__name__
+        if isinstance(node, tn.ReturnNode) and not isinstance(node.parent, tn.ScheduleTreeRoot):
+            return 'early ReturnNode'
+    return ''

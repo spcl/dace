@@ -17,7 +17,7 @@ because a construct has no dedicated mechanism yet. Future registry entries
 separate per-library rule sets.
 """
 import ast
-from typing import Optional
+from typing import Optional, Tuple
 
 from dace import dtypes
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
@@ -115,27 +115,53 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
         creation.lower_creation(qualname, target_access, call, statement, state)
         return True
 
-    # Full-array reductions (axis=None)
-    reduction_ufunc: Optional[str] = None
-    source_expr: Optional[ast.expr] = None
-    if qualname in _REDUCTION_CALLS:
-        # axis=/initial=/out= and positional axis change semantics: interpreter
-        if not call.keywords and len(call.args) == 1:
-            reduction_ufunc = _REDUCTION_CALLS[qualname]
-            source_expr = call.args[0]
-    elif isinstance(call.func, ast.Attribute) and call.func.attr in _REDUCTION_METHODS:
-        if not call.keywords and not call.args:
-            reduction_ufunc = _REDUCTION_METHODS[call.func.attr]
-            source_expr = call.func.value
-    if reduction_ufunc is not None and source_expr is not None:
+    # Reductions (full or per-axis with a compile-time axis)
+    matched = _match_reduction(call, qualname)
+    if matched is not None:
+        reduction_ufunc, source_expr, axis_expr = matched
+        axis: Optional[int] = None
+        if axis_expr is not None and not (isinstance(axis_expr, ast.Constant) and axis_expr.value is None):
+            axis = state.inference.constant_int(axis_expr)
+            if axis is None:
+                return False  # Non-constant axis: run in the interpreter
         source = resolve_access(source_expr, state)
         if source is None:
             return False
         target_access = _call_target_access(target, inferred, statement, state)
-        reduction.emit_reduction(target_access, reduction_ufunc, source, statement, state)
+        reduction.emit_reduction(target_access, reduction_ufunc, source, statement, state, axis=axis)
         return True
 
     return False
+
+
+def _match_reduction(call: ast.Call, qualname: str) -> Optional[Tuple[str, ast.expr, Optional[ast.expr]]]:
+    """
+    Match a reduction call form (``np.sum(A[, axis])`` or ``A.sum([axis])``,
+    ``axis=`` keyword allowed).
+
+    :return: (WCR ufunc name, source expression, axis expression or None), or
+             None if the call is not a lowerable reduction form (extra
+             arguments like ``out=``/``initial=`` change semantics).
+    """
+    if qualname in _REDUCTION_CALLS:
+        if not call.args or len(call.args) > 2:
+            return None
+        ufunc_name = _REDUCTION_CALLS[qualname]
+        source_expr = call.args[0]
+        axis_expr = call.args[1] if len(call.args) == 2 else None
+    elif isinstance(call.func, ast.Attribute) and call.func.attr in _REDUCTION_METHODS:
+        if len(call.args) > 1:
+            return None
+        ufunc_name = _REDUCTION_METHODS[call.func.attr]
+        source_expr = call.func.value
+        axis_expr = call.args[0] if call.args else None
+    else:
+        return None
+    for keyword in call.keywords:
+        if keyword.arg != 'axis' or axis_expr is not None:
+            return None
+        axis_expr = keyword.value
+    return ufunc_name, source_expr, axis_expr
 
 
 def _call_target_access(target: ast.expr, inferred, statement: ast.stmt, state: LoweringState) -> DataAccess:

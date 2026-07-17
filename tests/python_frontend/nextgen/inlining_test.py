@@ -108,7 +108,7 @@ def test_recursion_falls_back():
     assert len(callbacks) >= 1
 
 
-def test_early_return_falls_back():
+def test_early_return_inlines():
 
     @dace.program
     def maybe(X: dace.float64[N]):
@@ -122,9 +122,54 @@ def test_early_return_falls_back():
         A[0] = y
 
     tree = nextgen.parse_program(caller)
+    scopes = _nodes_of_type(tree, tn.FunctionCallScope)
+    assert len(scopes) == 1
+    # The early return lowers to a ReturnNode inside the branch (exit-scope
+    # semantics); the tail return falls off the scope end
+    returns = _nodes_of_type(tree, tn.ReturnNode)
+    assert len(returns) == 1
+    assert isinstance(returns[0].parent, tn.IfScope)
+    # Both returns materialize into the same return container
+    return_names = [name for name in tree.containers if 'maybe_ret' in name]
+    assert len(return_names) == 1
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_mixed_return_arity_falls_back():
+
+    @dace.program
+    def mixed(X: dace.float64[N]):
+        if X[0] > 0.0:
+            return 1.0, 2.0
+        return 3.0
+
+    @dace.program
+    def caller(A: dace.float64[N]):
+        y = mixed(A)
+        A[0] = 1.0
+
+    tree = nextgen.parse_program(caller)
     assert not _nodes_of_type(tree, tn.FunctionCallScope)
     callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
-    assert any('early return' in callback.reason for callback in callbacks)
+    assert any('inconsistent return arities' in callback.reason for callback in callbacks)
+
+
+def test_fallthrough_return_falls_back():
+
+    @dace.program
+    def sometimes(X: dace.float64[N]):
+        if X[0] > 0.0:
+            return 1.0
+
+    @dace.program
+    def caller(A: dace.float64[N]):
+        y = sometimes(A)
+        A[0] = 1.0
+
+    tree = nextgen.parse_program(caller)
+    assert not _nodes_of_type(tree, tn.FunctionCallScope)
+    callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert any('fall through' in callback.reason for callback in callbacks)
 
 
 def test_default_argument_specializes():
@@ -211,7 +256,9 @@ if __name__ == '__main__':
     test_return_value_binding()
     test_two_calls_unique_names()
     test_recursion_falls_back()
-    test_early_return_falls_back()
+    test_early_return_inlines()
+    test_mixed_return_arity_falls_back()
+    test_fallthrough_return_falls_back()
     test_default_argument_specializes()
     test_two_level_inlining()
     test_nested_callee_calls_callee()

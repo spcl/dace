@@ -777,6 +777,34 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             assignments=pending,
         )
 
+    def visit_FunctionCallScope(self, node: tn.FunctionCallScope, sdfg: SDFG) -> None:
+        # An inlined nested-program body: its contents lower transparently in
+        # place (the frontend already resolved arguments to shared containers).
+        # Early returns inside the scope are rejected by visit_ReturnNode.
+        self.visit(node.children, sdfg=sdfg)
+
+    def visit_ReturnNode(self, node: tn.ReturnNode, sdfg: SDFG) -> None:
+        # Frontends materialize return values into their (non-transient)
+        # return containers before this node, so a tail return at the end of
+        # the program is a no-op. Early returns (inside branches, loops, or
+        # function-call scopes) require control-flow exits that are not
+        # implemented yet — raise instead of silently dropping the node.
+        parent = node.parent
+        if parent is not None and isinstance(parent, tn.ScheduleTreeRoot):
+            index = next(i for i, child in enumerate(parent.children) if child is node)
+            if all(isinstance(sibling, tn.StateBoundaryNode) for sibling in parent.children[index + 1:]):
+                return
+        raise NotImplementedError("Early returns are not yet supported in tree-to-SDFG conversion.")
+
+    def visit_PythonCallbackNode(self, node: tn.PythonCallbackNode, sdfg: SDFG) -> None:
+        # Requires the Python-callback ABI (callback symbol, __pystate
+        # serialization). Raise explicitly: silently dropping the node would
+        # produce a wrong program.
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+
+    def visit_SDFGCallNode(self, node: tn.SDFGCallNode, sdfg: SDFG) -> None:
+        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+
     def _pending_interstate_assignments(self) -> dict[str, str]:
         """
         Return currently pending interstate assignments. Clears the cache.
@@ -809,7 +837,12 @@ def from_schedule_tree(
     for key, container in stree.containers.items():
         result._arrays[key] = copy.deepcopy(container)
     result.constants_prop = copy.deepcopy(stree.constants)
-    result.symbols = copy.deepcopy(stree.symbols)
+    # Frontend-produced trees store symbol *objects*; the SDFG symbol
+    # repository stores their dtypes.
+    result.symbols = {
+        name: (value.dtype if isinstance(value, symbolic.symbol) else copy.deepcopy(value))
+        for name, value in stree.symbols.items()
+    }
 
     # Insert artificial state boundaries after WAW, before label, etc.
     stree = _insert_state_boundaries_to_tree(stree)

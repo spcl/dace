@@ -120,6 +120,51 @@ def test_static_divergence_falls_back():
     assert any('x' in callback.reason for callback in callbacks)
 
 
+def test_static_same_shape_divergence_merges():
+
+    @dace.program
+    def static_merge(A: dace.float64[2], flag: dace.int32):
+        if flag > 0:
+            x = [1.0, 2.0]
+        else:
+            x = [3.0, 4.0]
+        A[0] = x[0]
+        A[1] = x[1]
+
+    tree = nextgen.parse_program(static_merge)
+    if_scopes = _nodes_of_type(tree, tn.IfScope)
+    else_scopes = _nodes_of_type(tree, tn.ElseScope)
+    assert len(if_scopes) == 1 and len(else_scopes) == 1
+    # Each branch materializes its sequence and copies it into the merged container
+    if_copies = [child for child in if_scopes[0].children if isinstance(child, tn.CopyNode)]
+    else_copies = [child for child in else_scopes[0].children if isinstance(child, tn.CopyNode)]
+    assert len(if_copies) == 1 and len(else_copies) == 1
+    assert if_copies[0].memlet.data in tree.constants
+    assert else_copies[0].memlet.data in tree.constants
+    assert if_copies[0].target == else_copies[0].target
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_static_container_mix_merges():
+    import numpy as np
+
+    @dace.program
+    def mixed_merge(A: dace.float64[2], flag: dace.int32):
+        x = [1.0, 2.0]
+        if flag > 0:
+            x = np.zeros(2)
+        A[0] = x[0]
+
+    tree = nextgen.parse_program(mixed_merge)
+    # The static fall-through path materializes into a synthesized else branch
+    else_scopes = _nodes_of_type(tree, tn.ElseScope)
+    assert len(else_scopes) == 1
+    else_copies = [child for child in else_scopes[0].children if isinstance(child, tn.CopyNode)]
+    assert len(else_copies) == 1
+    assert else_copies[0].memlet.data in tree.constants
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
 def test_conditional_definition_kept():
 
     @dace.program
@@ -212,6 +257,8 @@ if __name__ == '__main__':
     test_if_without_else_gets_implicit_merge_branch()
     test_if_shape_divergent_falls_back()
     test_static_divergence_falls_back()
+    test_static_same_shape_divergence_merges()
+    test_static_container_mix_merges()
     test_conditional_definition_kept()
     test_while_body_stable_rebind_ok()
     test_while_body_unstable_falls_back()

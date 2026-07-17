@@ -349,6 +349,9 @@ class FunctionCallScope(ControlFlowScope):
     """
     Represents a call to another ``@dace.program`` whose schedule tree body
     is inlined as children of this scope.
+
+    A :class:`ReturnNode` inside this scope exits the scope (the inlined
+    callee), not the surrounding program.
     """
     call: FrontendFunctionCall = field(default_factory=lambda: FrontendFunctionCall(''))
 
@@ -510,6 +513,16 @@ class PythonCallbackNode(ScheduleTreeNode):
     def as_string(self, indent: int = 0):
         return indent * INDENTATION + f'python_callback "{self.reason}" {{ {self.code.as_string} }}'
 
+    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        return MemletSet(
+            Memlet.from_array(name, root.containers[name]) for name in self.input_names if name in root.containers)
+
+    def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        return MemletSet(
+            Memlet.from_array(name, root.containers[name]) for name in self.output_names if name in root.containers)
+
 
 @dataclass
 class RaiseNode(ScheduleTreeNode):
@@ -549,6 +562,14 @@ class ReturnNode(ScheduleTreeNode):
             return indent * INDENTATION + 'return'
         joined = ', '.join(self.values)
         return indent * INDENTATION + f'return {joined}'
+
+    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        return MemletSet(
+            Memlet.from_array(name, root.containers[name]) for name in self.values if name in root.containers)
+
+    def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        return MemletSet()
 
 
 @dataclass

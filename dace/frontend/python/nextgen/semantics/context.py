@@ -79,6 +79,11 @@ class ProgramContext:
         #: Names of generated return containers, in return-value order.
         self.return_names: List[str] = []
 
+        #: Closure-array containers by source qualified name, so an external
+        #: array referenced from multiple (nested) programs maps to a single
+        #: repository container.
+        self.closure_containers: Dict[str, str] = {}
+
         #: Prefix applied to materialized return containers (empty at top level,
         #: set by :meth:`inline_scope` while lowering an inlined callee).
         self.return_prefix: str = ''
@@ -151,6 +156,35 @@ class ProgramContext:
         if binding is None or binding.kind != 'static':
             return None
         return self.static_values.get(source_name)
+
+    def register_closure_array(self, name: str, qualified_name: str, descriptor: data.Data) -> str:
+        """
+        Register an external (closure) array as a non-transient container,
+        deduplicated by its source qualified name so every reference to the
+        same external array — including from inlined callees — shares one
+        repository container.
+
+        Preprocessing injects top-level closure arrays into the argument
+        types, so the container may already exist under this exact
+        descriptor; in that case it is adopted rather than re-registered.
+
+        :return: The repository container name.
+        """
+        if qualified_name in self.closure_containers:
+            return self.closure_containers[qualified_name]
+        if self.containers.get(name) is descriptor:
+            descriptor.transient = False
+            self.closure_containers[qualified_name] = name
+            return name
+        if name in self.closure_containers.values():
+            # The same external array reaches nested closures under different
+            # qualified names; the mangled reference name encodes the source
+            # expression and is stable across closures.
+            self.closure_containers[qualified_name] = name
+            return name
+        actual_name = self.add_container(name, descriptor, transient=False)
+        self.closure_containers[qualified_name] = actual_name
+        return actual_name
 
     def add_constant_container(self, name: str, descriptor: data.Data, value: Any) -> str:
         """

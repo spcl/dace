@@ -16,8 +16,11 @@ a single post-join state:
 3. **Conditional definitions** (a name bound on some paths only) keep the
    binding of the paths that define it; reading the name after the join when
    an undefined path was taken is a user error, matching the stable frontend.
-4. Anything else (kind divergence, shape/dtype divergence, differing
-   compile-time static values) raises :class:`UnsupportedFeatureError`; the
+4. **Diverging compile-time sequences** (differing static values, or a static
+   value on one path and a container on another) materialize the static
+   paths as constant containers and join the container merge of rule 2.
+5. Anything else (kind divergence, shape/dtype divergence, non-constant
+   sequence elements) raises :class:`UnsupportedFeatureError`; the
    control-flow rule rolls the whole chain back and re-lowers it as a single
    Python callback, preserving totality.
 """
@@ -76,24 +79,40 @@ def merge_branches(before: BindingSnapshot, branch_ends: List[BindingSnapshot],
             continue
 
         kinds = {binding.kind for binding, _ in defined}
-        if kinds != {'container'}:
+        if not kinds <= {'container', 'static'}:
             raise UnsupportedFeatureError(
                 f'Cannot merge conditional rebinding of "{name}" across branches '
                 f'(diverging binding kinds: {sorted(kinds)})', state.context.filename, statement)
 
-        descriptors = [state.context.containers[binding.container] for binding, _ in defined]
+        # Per-path container names; compile-time sequences materialize as
+        # constant containers so they can join the container merge. Sequences
+        # with non-constant elements raise, which the control-flow rule turns
+        # into a whole-chain callback.
+        path_containers: List[Optional[str]] = []
+        for binding, static in effective:
+            if binding is None:
+                path_containers.append(None)
+            elif binding.kind == 'container':
+                path_containers.append(binding.container)
+            else:
+                # Deferred import: the mechanism layer imports semantics
+                from dace.frontend.python.nextgen.lowering.mechanisms import static_values
+                access = static_values.materialize(static, state, name_hint=f'__const_{name}')
+                path_containers.append(access.container)
+
+        descriptors = [state.context.containers[container] for container in path_containers if container is not None]
         merged_descriptor = _merged_descriptor(name, descriptors, statement, state)
         merged = state.context.add_container(name, merged_descriptor)
 
-        for index, (binding, _) in enumerate(effective):
-            if binding is None or binding.container == merged:
+        for index, container in enumerate(path_containers):
+            if container is None or container == merged:
                 continue  # Undefined on this path: nothing to copy
             scope = branch_scopes[index]
             if scope is None:
                 scope = _implicit_else(branch_scopes, index, state)
-            source_descriptor = state.context.containers[binding.container]
+            source_descriptor = state.context.containers[container]
             copy_node = tn.CopyNode(target=merged,
-                                    memlet=Memlet(data=binding.container,
+                                    memlet=Memlet(data=container,
                                                   subset=Range.from_array(source_descriptor),
                                                   other_subset=Range.from_array(merged_descriptor)))
             scope.add_child(copy_node)

@@ -8,10 +8,11 @@ explicit :class:`ReturnNode` naming them.
 
 Inside an inlined nested ``@dace.program``
 (:attr:`ProgramContext.return_prefix` is non-empty), return containers are
-prefixed transients instead, their names are recorded in
-:attr:`ProgramContext.return_names` for the call rule to bind, and no
-:class:`ReturnNode` is emitted: inlining only admits tail returns, so control
-falls off the end of the :class:`FunctionCallScope` naturally.
+prefixed transients instead and their names are recorded in
+:attr:`ProgramContext.return_names` for the call rule to bind. The
+:class:`ReturnNode` is emitted uniformly; inside a
+:class:`FunctionCallScope` it means "exit the inlined callee", and the call
+rule strips a trailing one (a tail return falls off the scope end).
 """
 import ast
 from typing import List
@@ -30,8 +31,7 @@ from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 def lower_return(statement: ast.Return, state: LoweringState) -> None:
     prefix = state.context.return_prefix
     if statement.value is None:
-        if not prefix:
-            state.emitter.emit(tn.ReturnNode())
+        state.emitter.emit(tn.ReturnNode())
         return
 
     values = statement.value.elts if isinstance(statement.value, ast.Tuple) else [statement.value]
@@ -40,8 +40,7 @@ def lower_return(statement: ast.Return, state: LoweringState) -> None:
         base_name = '__return' if len(values) == 1 else f'__return_{index}'
         names.append(_materialize_return_value(f'{prefix}{base_name}', value, statement, state))
     state.context.return_names.extend(names)
-    if not prefix:
-        state.emitter.emit(tn.ReturnNode(values=names))
+    state.emitter.emit(tn.ReturnNode(values=names))
 
 
 def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.Return, state: LoweringState) -> str:
