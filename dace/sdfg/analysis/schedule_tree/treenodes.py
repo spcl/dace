@@ -524,7 +524,9 @@ class PythonCallbackNode(ScheduleTreeNode):
     outlined_call_code: Optional[CodeBlock] = None
 
     def as_string(self, indent: int = 0):
-        return indent * INDENTATION + f'python_callback "{self.reason}" {{ {self.code.as_string} }}'
+        return indent * INDENTATION + f'python_callback "{self.reason}" {{\n' + '\n'.join(
+            (indent + 1) * INDENTATION + line
+            for line in self.code.as_string.splitlines()) + f'\n{indent * INDENTATION}}}'
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
