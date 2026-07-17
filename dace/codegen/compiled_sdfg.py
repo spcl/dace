@@ -262,7 +262,6 @@ class CompiledSDFG(object):
         also take care of the finalization if it goes out of scope.
     - It marshalls Python arguments into C arguments.
 
-
     There are two ways in which a compiled SDFG can be called. The first is using
     ``__call__()``, i.e. as a normal function. However, this always processes
     the arguments and performs type checks, which introduces overhead (especially with
@@ -278,6 +277,9 @@ class CompiledSDFG(object):
            1 are returned. Note that currently using scalars as return values
            triggers a validation error in ``SDFG.validate``. The only exception are
            Python objects (pyobjects) returned directly.
+    :note: Although it is not recommended but a ``CompiledSDFG`` can potentially also
+           handle a  binary that was generated for the ``nanobind`` interface, but since
+           no stub library is present it will not work out of the box.
     """
 
     def __init__(self, sdfg, lib: ReloadableDLL, argnames: Optional[List[str]] = None):

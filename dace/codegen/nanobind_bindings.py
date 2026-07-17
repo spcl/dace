@@ -50,12 +50,9 @@ def _symbol_fallbacks(arglist, arg_names, symbol_names):
     Inference sources are user-facing plain arrays only: nullable
     (``optional=True``), struct, container and vector arrays are excluded
     (their run-time shape is either unavailable or does not equal the
-    descriptor shape). Arrays of *unknown* nullability (``optional=None``,
-    e.g. when the simplify pipeline's OptionalArrayInference has not run)
-    bind as ``std::optional`` and are used as guarded sources: the fallback
-    reads their shape only when a value was passed and raises otherwise.
-    A symbol without a source maps to ``None`` - omitting it raises at run
-    time.
+    descriptor shape). Nullability is opt-in, so every source binds as a
+    plain ``nb::ndarray`` whose shape is always readable. A symbol without
+    a source maps to ``None`` - omitting it raises at run time.
     """
     import numpy
     import sympy
@@ -79,8 +76,6 @@ def _symbol_fallbacks(arglist, arg_names, symbol_names):
                if name in arg_names_set and isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
                and not isinstance(desc.dtype, (dtypes.struct, dtypes.vector)) and desc.optional is not True
                and not name.startswith('__return')]
-    # Prefer non-nullable sources: their shape needs no run-time guard.
-    sources.sort(key=lambda item: item[1].optional is not False)
 
     placeholder = sympy.Symbol('__dace_infer_src')
     fallbacks = {}
@@ -88,8 +83,6 @@ def _symbol_fallbacks(arglist, arg_names, symbol_names):
         fallback = None
         ctype = arglist[sym_name].dtype.ctype
         for aname, desc in sources:
-            # optional=None arrays bind as std::optional<nb::ndarray<...>>.
-            nullable_binding = desc.optional is not False
             for i, dim in enumerate(desc.shape):
                 dim_symbols = symbolic.symlist(dim)
                 if set(dim_symbols.keys()) != {sym_name}:
@@ -100,13 +93,8 @@ def _symbol_fallbacks(arglist, arg_names, symbol_names):
                     continue
                 if len(solutions) != 1:
                     continue
-                shape_ref = f'{aname}->shape({i})' if nullable_binding else f'{aname}.shape({i})'
-                expr = sym2cpp(solutions[0]).replace('__dace_infer_src', shape_ref)
+                expr = sym2cpp(solutions[0]).replace('__dace_infer_src', f'{aname}.shape({i})')
                 fallback = f'static_cast<{ctype}>({expr})'
-                if nullable_binding:
-                    fallback = (f'({aname}.has_value() ? {fallback} : throw std::invalid_argument('
-                                f'"SDFG argument error: missing argument \'{sym_name}\' '
-                                f'(inference source \'{aname}\' is None)."))')
                 break
             if fallback is not None:
                 break

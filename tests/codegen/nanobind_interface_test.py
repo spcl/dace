@@ -416,10 +416,9 @@ def test_nanobind_interface_symbol_inference():
 
 
 def test_nanobind_interface_symbol_inference_unsimplified_binding():
-    """Inference works on an unsimplified SDFG, where arrays have unknown
-    nullability (``optional=None`` - only the simplify pipeline's
-    OptionalArrayInference sets ``False``) and bind as ``std::optional``:
-    the shape fallback is then guarded by a has_value check."""
+    """Inference works on an unsimplified SDFG (``optional=None`` arrays):
+    nullability is opt-in, so the arrays bind plain and the shape fallback
+    needs no guard."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     N = dace.symbol('N')
@@ -431,9 +430,7 @@ def test_nanobind_interface_symbol_inference_unsimplified_binding():
     code = generate_bindings_code(sym_infer_unsimplified.to_sdfg(simplify=False))
     assert 'N__opt' in code
     assert 'nb::arg("N") = nb::none()' in code
-    assert 'A.has_value()' in code
-    assert 'A->shape(0)' in code
-    assert "inference source 'A' is None" in code
+    assert 'A.shape(0)' in code
 
 
 def test_nanobind_interface_symbol_inference_unsimplified():
@@ -1352,7 +1349,8 @@ def test_nanobind_interface_gpu_return_allocation_requires_cupy():
 
     sdfg = dace.SDFG('gpu_return_alloc_probe')
     sdfg.add_array('__return', [10], dace.float64, storage=dace.StorageType.GPU_Global)
-    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: None, __file__='<stub>')
+    stub_handle = types.SimpleNamespace(has_gpu_code=True)
+    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: stub_handle, __file__='<stub>')
     wrapper = NanobindCompiledSDFG(sdfg, stub_module, [])
     with pytest.raises(NotImplementedError, match='cupy'):
         wrapper._allocate_return_arrays({})
@@ -1377,6 +1375,59 @@ def test_nanobind_interface_gpu_return_values():
         result = csdfg(A=a)
         assert isinstance(result, cp.ndarray)
         assert np.allclose(cp.asnumpy(result), cp.asnumpy(a) + 1.0)
+
+
+def test_nanobind_interface_gpu_error_check(monkeypatch):
+    """After a call on a GPU SDFG the GPU runtime's last error is checked
+    (ctypes parity: fast_call's do_gpu_check): an error raises, a
+    runtime-lookup failure only warns."""
+    import types
+    import warnings as warnings_mod
+    from dace.codegen import common
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+
+    sdfg = dace.SDFG('gpu_error_probe')
+    sdfg.add_array('A', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+
+    calls = []
+
+    class FakeHandle:
+        has_gpu_code = True
+
+        def __call__(self, *args, **kwargs):
+            calls.append(kwargs)
+
+    handle = FakeHandle()
+    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: handle, __file__='<stub>')
+    csdfg = NanobindCompiledSDFG(sdfg, stub_module, ['A'])
+
+    class FakeRuntime:
+
+        def __init__(self, err):
+            self._err = err
+
+        def get_last_error_string(self):
+            return self._err
+
+    # No pending error: the call goes through.
+    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime(None))
+    csdfg(A=object())
+    assert len(calls) == 1
+
+    # A pending error raises, naming the error and the syncdebug hint.
+    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime('illegal memory access'))
+    with pytest.raises(RuntimeError, match='illegal memory access'):
+        csdfg(A=object())
+
+    # Failure to obtain the runtime degrades to a warning, not an error.
+    def broken_runtime():
+        raise RuntimeError('no runtime available')
+
+    monkeypatch.setattr(common, 'get_gpu_runtime', broken_runtime)
+    with warnings_mod.catch_warnings(record=True) as caught:
+        warnings_mod.simplefilter('always')
+        csdfg(A=object())
+    assert any('Could not get last error' in str(w.message) for w in caught)
 
 
 def test_nanobind_interface_strict_scalar_cast_binding():
