@@ -662,14 +662,31 @@ required:
                                     Applies to: legacy AND experimental_readable for LOOP COUNTERS (the
                                     loop emitter is shared); experimental_readable ONLY for SCALARS
                                     (legacy hoists every scope transient's declaration to its scope top
-                                    and ignores this key for them). ``eager`` reproduces today's output
-                                    byte-for-byte for BOTH generators.
+                                    and ignores this key for them). ``eager`` leaves LEGACY output
+                                    byte-identical; for the readable generator it is the default, so it
+                                    reproduces today's readable output by definition -- but read the
+                                    ``scalar_init_style`` interaction below before assuming that means
+                                    the legacy spelling.
 
                                     Where a declaration is emitted relative to its first use: ``eager``
-                                    (the default) declares everything at the top of its scope, as the
-                                    legacy generator does; ``late`` moves each declaration as close to its
-                                    first use as it is PROVABLY SOUND to move it. Two constructs are
-                                    covered, and each has its own soundness gate -- anything that does not
+                                    (the default) declares at the top of its scope, as the legacy
+                                    generator does; ``late`` moves each declaration as close to its
+                                    first use as it is PROVABLY SOUND to move it.
+
+                                    INTERACTION with ``scalar_init_style``, which is NOT orthogonal for
+                                    scalars and cannot be: ``fused`` (that key's default) makes a
+                                    scalar's declaration BE its first write, so the declaration is at the
+                                    write by construction and there is no separate line for ``eager`` to
+                                    hoist. ``decl_placement`` governs only the declarations that remain
+                                    separate -- loop counters, and the scalars ``fused`` cannot fold
+                                    (a braced first-use tasklet). For those, ``fused`` still emits the
+                                    ``T x;`` at first use rather than the scope top, since a candidate it
+                                    meant to fold is one it means to declare near its write. So at the
+                                    default settings a braced-first-use scalar is NOT declared at its
+                                    scope top; set ``scalar_init_style: split`` to get that.
+
+                                    Two constructs are covered, and each has its own soundness gate --
+                                    anything that does not
                                     pass its gate keeps the eager declaration, so ``late`` is a
                                     best-effort form, never a promise that nothing is hoisted.
 

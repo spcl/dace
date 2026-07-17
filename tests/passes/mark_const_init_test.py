@@ -539,6 +539,66 @@ def test_idempotency():
     assert len(s1.nodes()) == num_nodes_s1
 
 
+def test_partly_paying_fill_map_is_not_unrolled():
+    """A fill map is unrolled only if EVERY name it writes is const-initializable.
+
+    The unroll decision is taken on a probe where all candidate maps are unrolled, but applied to a
+    graph where only the paying ones are. Those two graphs must agree, or a map gets unrolled and
+    then declined anyway -- the mutate-without-apply bug all over again.
+
+    Here map ``fill_x`` writes only ``X``, while map ``fill_xz`` writes ``X`` AND ``Z``; ``Z`` is
+    written a second time, so it is declined. Unrolling only ``fill_x`` would leave ``fill_xz``'s
+    MapExit as a writer of ``X``, which makes ``X`` a runtime multi-write and declines it too -- so
+    ``fill_x`` would have been flattened for nothing.
+    """
+    sdfg = dace.SDFG('partly_paying')
+    sdfg.add_array('X', [8], dace.float64, transient=True)
+    sdfg.add_array('Z', [4], dace.float64, transient=True)
+    sdfg.add_array('BX', [8], dace.float64)
+    sdfg.add_array('BZ', [4], dace.float64)
+
+    s1 = sdfg.add_state('fill')
+    # Disjoint halves of X, so the two fills do not overlap (an overlap is declined outright).
+    s1.add_mapped_tasklet('fill_x', dict(i='0:4'), {}, 'ox = 1.0', dict(ox=dace.Memlet('X[i]')), external_edges=True)
+    s1.add_mapped_tasklet('fill_xz',
+                          dict(i='0:4'), {},
+                          'ox = 2.0\noz = 3.0',
+                          dict(ox=dace.Memlet('X[i + 4]'), oz=dace.Memlet('Z[i]')),
+                          external_edges=True)
+
+    # A second write to Z -> Z is declined, which is what makes fill_xz not pay.
+    s2 = sdfg.add_state('rewrite_z')
+    t = s2.add_tasklet('z0', {}, {'o'}, 'o = 9.0')
+    s2.add_edge(t, 'o', s2.add_access('Z'), None, dace.Memlet('Z[0]'))
+
+    s3 = sdfg.add_state('use')
+    s3.add_mapped_tasklet('ux',
+                          dict(i='0:8'),
+                          dict(inp=dace.Memlet('X[i]')),
+                          'o = inp',
+                          dict(o=dace.Memlet('BX[i]')),
+                          external_edges=True)
+    s3.add_mapped_tasklet('uz',
+                          dict(i='0:4'),
+                          dict(inp=dace.Memlet('Z[i]')),
+                          'o = inp',
+                          dict(o=dace.Memlet('BZ[i]')),
+                          external_edges=True)
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    sdfg.add_edge(s2, s3, dace.InterstateEdge())
+    sdfg.validate()
+
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+
+    # Whatever the classifier decides, the invariant is the same: a map that was flattened MUST have
+    # paid for it. If X was not const-inited, neither fill map may have been unrolled.
+    if 'X' not in kinds:
+        assert len(_map_entries(s1)) == 2, ('a fill map was unrolled but X was not const-inited: '
+                                            f'{[m.map.label for m in _map_entries(s1)]}')
+    sdfg.validate()
+
+
 def _gpu_fill_program():
     """``@dace.program`` (NOT a hand-built SDFG -- the frontend shape is the point): a small
     constant fill of a transient, then a read of it. After ``apply_gpu_transformations`` the fill is
@@ -615,5 +675,6 @@ if __name__ == '__main__':
     test_multiwrite_partial_elementwise_marked()
     test_multiwrite_overlapping_not_marked()
     test_idempotency()
+    test_partly_paying_fill_map_is_not_unrolled()
     test_gpu_constant_fill_map_keeps_its_schedule()
     test_gpu_rejected_fill_map_stays_valid()

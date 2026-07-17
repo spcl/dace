@@ -30,6 +30,12 @@ WRITER_UNKNOWN = 'unknown'  #: Cannot prove either of the above -> leave unmarke
 # initializer / many tasklets.
 CONST_FILL_UNROLL_LIMIT = 16
 
+#: ``{(cfg_id, descriptor name)}`` -- the const-initializable names a constant-fill map must ALL write
+#: before flattening it pays for itself. Keyed by cfg_id, not by position in ``all_sdfgs_recursive``:
+#: the set is built on a throwaway copy and applied to the real SDFG, so it must not depend on the two
+#: being traversed in the same order.
+PayingTargets = Set[Tuple[int, str]]
+
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
@@ -111,12 +117,50 @@ class MarkConstInit(ppl.Pass):
     # ---------------------------------------------------------------------------------------------------------------
 
     def _fill_map_targets(self, sdfg: SDFG, state: SDFGState, map_entry: nd.MapEntry) -> Set[str]:
-        """The descriptor names a constant-fill map writes."""
+        """The descriptor names a constant-fill map writes. Never empty for a map
+        :meth:`_is_constant_fill_map` accepts -- that predicate requires a data out-edge."""
         map_exit = state.exit_node(map_entry)
         return {e.data.data for e in state.out_edges(map_exit) if e.data is not None and e.data.data is not None}
 
-    def _paying_fill_targets(self, top_sdfg: SDFG) -> Optional[Set[Tuple[int, str]]]:
-        """Decides, on a throwaway COPY, which constant-fill maps are worth unrolling.
+    def _fill_map_pays(self, sdfg: SDFG, state: SDFGState, map_entry: nd.MapEntry, paying: PayingTargets) -> bool:
+        """True when EVERY name this fill map writes is const-initializable, so flattening it pays.
+
+        Guards the empty-target case explicitly rather than leaning on ``all(...)`` over an empty set
+        being vacuously True: a map with nothing to const-init must never be unrolled, whatever
+        :meth:`_is_constant_fill_map` is later loosened to admit.
+        """
+        names = self._fill_map_targets(sdfg, state, map_entry)
+        return bool(names) and all((sdfg.cfg_id, name) in paying for name in names)
+
+    def _candidate_fill_maps(self, top_sdfg: SDFG) -> List[Tuple[SDFG, SDFGState, nd.MapEntry]]:
+        """Every top-level constant-fill map in ``top_sdfg``, computed once."""
+        found: List[Tuple[SDFG, SDFGState, nd.MapEntry]] = []
+        for sdfg in list(top_sdfg.all_sdfgs_recursive()):
+            for state in list(sdfg.states()):
+                scope = state.scope_dict()
+                found.extend((sdfg, state, node) for node in state.nodes() if isinstance(node, nd.MapEntry)
+                             and scope[node] is None and self._is_constant_fill_map(sdfg, state, node))
+        return found
+
+    def _classify_probe(self, probe: SDFG) -> PayingTargets:
+        """Runs the classifier over an already-unrolled throwaway copy and returns the
+        ``constexpr_static`` names, keyed by ``(cfg_id, name)``."""
+        access_nodes_all = FindAccessNodes().apply_pass(probe, {})
+        access_sets = AccessSets().apply_pass(probe, {})
+        state_reach_all = StateReachability().apply_pass(probe, {})
+
+        paying: PayingTargets = set()
+        # Materialize before iterating: _process_sdfg mutates the probe as it goes.
+        for sdfg in list(probe.all_sdfgs_recursive()):
+            marked = self._process_sdfg(sdfg, access_nodes_all.get(sdfg.cfg_id, {}), access_sets,
+                                        state_reach_all.get(sdfg.cfg_id, {}))
+            for name, kind in (marked or {}).items():
+                if kind == 'constexpr_static':
+                    paying.add((sdfg.cfg_id, name))
+        return paying
+
+    def _paying_fill_targets(self, top_sdfg: SDFG) -> PayingTargets:
+        """Decides, on throwaway COPIES, which constant-fill maps are worth unrolling.
 
         The unroll is SPECULATIVE: it exists only so the classifier sees element-wise writes, but the
         classifier can still decline the target afterwards (a second write, overlapping subsets, a read
@@ -129,49 +173,56 @@ class MarkConstInit(ppl.Pass):
         form. A fill whose value comes from symbols classifies ``runtime`` per element, which as a
         multi-write is declined anyway, so unrolling it could never have paid.
 
-        :return: ``{(index of the SDFG in all_sdfgs_recursive order, descriptor name)}``. Empty when
-                 there is no candidate map at all -- the common case, which skips the copy entirely.
+        Iterated to a FIXED POINT, because one probe is not enough. The first probe unrolls every
+        candidate, but the real run unrolls only the paying subset -- two different graphs, which can
+        disagree. A map writing both a paying name and a declined one is held back, and its MapExit
+        then makes its OTHER target a runtime multi-write, declining a name the first probe had
+        accepted. Re-probing with the restricted set catches that. It terminates: unrolling fewer maps
+        can only decline more names (a held-back map leaves a MapExit writer, which classifies
+        ``runtime``), so the set shrinks monotonically and is bounded below by the empty set.
+
+        :return: ``{(cfg_id, descriptor name)}``. Empty when nothing pays, and when there is no
+                 candidate map at all -- the common case, which skips the copies entirely.
         """
-        if not any(
-                self._is_constant_fill_map(sdfg, state, node) for sdfg in top_sdfg.all_sdfgs_recursive()
-                for state in sdfg.states()
-                for node, scope in state.scope_dict().items() if isinstance(node, nd.MapEntry) and scope is None):
+        candidates = self._candidate_fill_maps(top_sdfg)
+        if not candidates:
             return set()
 
-        probe = copy.deepcopy(top_sdfg)
-        if not self._unroll_constant_fill_maps(probe, None):
-            return set()
-        access_nodes_all = FindAccessNodes().apply_pass(probe, {})
-        access_sets = AccessSets().apply_pass(probe, {})
-        state_reach_all = StateReachability().apply_pass(probe, {})
+        paying: Optional[PayingTargets] = None  # first round: unroll every candidate
+        while True:
+            probe = copy.deepcopy(top_sdfg)
+            if not self._unroll_constant_fill_maps(probe, paying):
+                return set()
+            found = self._classify_probe(probe)
+            if found == paying:
+                return found  # fixed point: this set unrolls exactly the maps it was derived from
+            paying = found
+            # Restricting to ``found`` still unrolls every candidate, so the next probe would rebuild
+            # the graph we just classified. Skip it -- this is the common case (no partly-paying map).
+            if all(self._fill_map_pays(sdfg, state, entry, found) for sdfg, state, entry in candidates):
+                return found
 
-        paying: Set[Tuple[int, str]] = set()
-        for index, sdfg in enumerate(probe.all_sdfgs_recursive()):
-            marked = self._process_sdfg(sdfg, access_nodes_all.get(sdfg.cfg_id, {}), access_sets,
-                                        state_reach_all.get(sdfg.cfg_id, {}))
-            for name, kind in (marked or {}).items():
-                if kind == 'constexpr_static':
-                    paying.add((index, name))
-        return paying
-
-    def _unroll_constant_fill_maps(self, top_sdfg: SDFG, paying: Optional[Set[Tuple[int, str]]]) -> bool:
+    def _unroll_constant_fill_maps(self, top_sdfg: SDFG, paying: Optional[PayingTargets]) -> bool:
         """Fully unrolls every static-extent constant-fill map (:meth:`_is_constant_fill_map`) into
         per-element tasklet writes via :class:`MapUnroll`, so the classifier sees the element-wise
         ``arr[0]=..; arr[1]=..`` pattern rather than a map producer.
 
-        :param paying: restricts the unroll to the maps whose targets :meth:`_paying_fill_targets`
-                       proved const-initializable; ``None`` unrolls every candidate (used to build that
-                       very set on a throwaway copy).
+        :param paying: ``{(cfg_id, name)}`` restricting the unroll to the maps whose EVERY target
+                       :meth:`_paying_fill_targets` proved const-initializable -- a map writing one
+                       paying name and one declined name is held back, since flattening it would not
+                       pay for itself. ``None`` unrolls every candidate, and is ONLY for building that
+                       set on a throwaway copy: passing it here for the real SDFG is the speculative
+                       unroll this gate exists to prevent.
         :return: True if any map was unrolled (the caller then recomputes its stale analyses).
         """
         changed = False
-        for index, sdfg in enumerate(list(top_sdfg.all_sdfgs_recursive())):
+        for sdfg in list(top_sdfg.all_sdfgs_recursive()):
             for state in list(sdfg.states()):
                 scope = state.scope_dict()
                 targets = [
-                    node for node in state.nodes() if isinstance(node, nd.MapEntry) and scope[node] is None
-                    and self._is_constant_fill_map(sdfg, state, node) and (paying is None or all(
-                        (index, name) in paying for name in self._fill_map_targets(sdfg, state, node)))
+                    node for node in state.nodes()
+                    if isinstance(node, nd.MapEntry) and scope[node] is None and self._is_constant_fill_map(
+                        sdfg, state, node) and (paying is None or self._fill_map_pays(sdfg, state, node, paying))
                 ]
                 for map_entry in targets:
                     # Each target is a distinct top-level map in its own scope, so unrolling one

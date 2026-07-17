@@ -111,6 +111,16 @@ emits no `<array>_idx` helper, so there is no access path to re-spell and it ign
   - *Scalars* (readable only): deferred to the first-use scope. Gate: single-state, absent from every
     interstate edge's free symbols and every region condition, one scope, and no read-before-write.
     **This gate is where the one real miscompile of this feature lived** — see §4.
+
+  **This key is NOT orthogonal to `scalar_init_style`, and cannot be.** `fused` (that key's default)
+  makes a scalar's declaration *be* its first write, so it sits at the write by construction and
+  there is no separate line left for `eager` to hoist. `decl_placement` therefore governs only the
+  declarations that stay separate: loop counters, and the scalars `fused` could not fold (a braced
+  first-use tasklet). For those, `fused` still emits the `T x;` at first use rather than the scope
+  top — a scalar it meant to fold is one it means to declare near its write. So **at the default
+  settings a braced-first-use scalar is not declared at its scope top**; `scalar_init_style: split`
+  is how you get that. Pinned by
+  `test_fused_defers_a_declaration_it_cannot_fold_even_under_eager`.
 - **`scalar_init_style`** (`split` | **`fused`**, default fused) — `T x;` + `x = expr;` vs
   `T x = expr;`. The mutable counterpart of the `const T x = expr;` binding that write-once scalars
   already get from `MarkConstInit`: a reassigned scalar cannot be `const`, but its first write can
@@ -217,7 +227,30 @@ semantically-equivalent forms is ~16.9%, the reportable threshold on the Zen 4 b
 
 ---
 
-## 4. What this design got wrong once (keep it here)
+## 4. What this design got wrong (keep it here)
+
+### 4.1 A pass that decided on one graph and mutated another
+
+`const_init`'s `MarkConstInit` speculatively unrolls a small constant-fill map so its classifier sees
+element-wise writes instead of a map producer. The classifier can then still decline the target — a
+second write, overlapping subsets, a read before the write — by which point the map is gone, and with
+it its schedule. On a GPU-transformed SDFG that schedule is the only thing putting the write on the
+device, so a declined target left host tasklets writing `GPU_Global` memory. It broke plain CPU too:
+an eight-line `@dace.program` using `np.full` corrupted the graph outright (`Isolated node`). The
+corpus never caught either, because a candidate needs a compile-time extent ≤16 and nussinov's
+`np.full` is `(N, N)`.
+
+The fix is to decide on a throwaway copy and unroll only what pays. That is not sufficient on its own,
+and the first attempt was wrong in a way worth recording: the probe unrolls **every** candidate, but
+the real run unrolls only the paying **subset** — two different graphs, which can disagree. A map
+writing one paying name and one declined name is held back, and its surviving `MapExit` then makes its
+other target a runtime multi-write, declining a name the probe had accepted. So the decision is
+iterated to a **fixed point**. It terminates because unrolling fewer maps can only decline more names,
+so the set shrinks monotonically.
+
+**The lesson:** "decide on a copy" only works if the copy is the graph you will actually produce.
+
+### 4.2 An argument's type mistaken for proof of scope
 
 The scalar half of `decl_placement=late` shipped with a real miscompile: the gate used
 `isinstance(dfg, SDFGState)` as proof that a scalar lives in one state. It is not.
