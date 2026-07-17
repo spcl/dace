@@ -144,6 +144,38 @@ def find_best_cpp_compiler():
     return find_compiler('clang++') or find_compiler('g++')
 
 
+def _gxx_version(gxx):
+    """(major, minor) of a g++ binary, or (0, 0) if it can't be queried."""
+    try:
+        dump = subprocess.run([gxx, '-dumpversion'], capture_output=True, text=True, timeout=10).stdout.strip()
+        parts = dump.split('.')
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
+    except Exception:
+        return (0, 0)
+
+
+def newest_gxx():
+    """Path to the HIGHEST-version g++ on PATH, across the bare ``g++`` (a spack-loaded gcc
+    puts its own here) and versioned ``g++-NN`` names. Distros ship a stale ``/usr/bin/g++``
+    (e.g. gcc 7) alongside newer ``g++-14``/``g++-13``; the newest is the one that both
+    compiles DaCe's C++23 (clang's libstdc++ source, see find_gcc_install_dir) AND supports
+    the Graphite loop optimizer (``-floop-parallelize-all``, needs a gcc built with isl --
+    the ancient default g++ predates it). Returns None if no g++ is found at all."""
+    best, best_ver, seen = None, (-1, -1), set()
+    for name in ['g++'] + [f'g++-{m}' for m in range(30, 6, -1)]:
+        gxx = find_compiler(name)
+        if not gxx:
+            continue
+        real = os.path.realpath(gxx)
+        if real in seen:
+            continue
+        seen.add(real)
+        ver = _gxx_version(gxx)
+        if ver > best_ver:
+            best, best_ver = gxx, ver
+    return best
+
+
 def _gcc_install_dir_of(gxx):
     """The libstdc++ 'install:' dir clang's --gcc-install-dir wants, for a given g++."""
     try:
@@ -166,34 +198,14 @@ def find_gcc_install_dir():
     a C-only gcc with no libstdc++-dev, while a different g++ on PATH was the complete
     toolchain).
 
-    Picks the HIGHEST-VERSION g++ available: DaCe codegen emits C++23, and clang resolves
-    its libstdc++ from THIS directory -- a stale one (e.g. a distro's ``/usr/bin/g++`` fixed
-    at gcc 7, whose libstdc++ lacks ``std::ranges::fold_left`` and other C++23 library
-    features) makes clang fail to compile the generated code even though clang itself is
-    modern. Candidates are the bare ``g++`` (a spack-loaded gcc puts its own, e.g. gcc 16,
-    here) plus any versioned system compilers (``g++-14``/``g++-13``/...); choosing the max
-    version means a loaded modern spack gcc wins, and on a box with only the ancient default
-    ``g++`` plus a newer ``g++-14`` the latter wins."""
-    best_dir, best_ver = None, (-1, -1)
-    seen = set()
-    for name in ['g++'] + [f'g++-{m}' for m in range(30, 6, -1)]:
-        gxx = find_compiler(name)
-        if not gxx:
-            continue
-        real = os.path.realpath(gxx)
-        if real in seen:
-            continue
-        seen.add(real)
-        try:
-            dump = subprocess.run([gxx, '-dumpversion'], capture_output=True, text=True, timeout=10).stdout.strip()
-            major = int(dump.split('.')[0])
-            minor = int(dump.split('.')[1]) if '.' in dump else 0
-        except Exception:
-            major, minor = 0, 0
-        d = _gcc_install_dir_of(gxx)
-        if d and (major, minor) > best_ver:
-            best_dir, best_ver = d, (major, minor)
-    return best_dir
+    Resolved from :func:`newest_gxx` (the highest-version g++ on PATH): DaCe codegen emits
+    C++23, and clang resolves its libstdc++ from THIS directory -- a stale one (a distro's
+    ``/usr/bin/g++`` fixed at gcc 7, whose libstdc++ lacks ``std::ranges::fold_left`` and
+    other C++23 features) makes clang fail to compile the generated code even though clang
+    itself is modern. A spack-loaded modern gcc wins; failing that a system ``g++-14`` beats
+    the ancient default ``g++``."""
+    gxx = newest_gxx()
+    return _gcc_install_dir_of(gxx) if gxx else None
 
 
 def needs_gcc_install_dir(cc):
@@ -245,8 +257,12 @@ _LANE_SPEC = {
         '-mllvm', '-polly', '-mllvm', '-polly-parallel', '-mllvm', '-polly-parallel-force', '-mllvm',
         '-polly-process-unprofitable', '-lgomp'
     ]),
+    # newest_gxx (not bare 'g++'): the Graphite loop optimizer '-floop-parallelize-all' needs a
+    # gcc built with isl, which the ancient distro-default '/usr/bin/g++' (gcc 7) lacks -- a
+    # newer system g++-14/13/12 has it. Picking the newest g++ makes this lane a real Graphite
+    # auto-parallelizer instead of silently failing to compile.
     'native-gcc-autopar':
-    (lambda: find_compiler('g++'), lambda cc: [
+    (newest_gxx, lambda cc: [
         f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp'
     ]),
     # -- experiment-facing lanes (run_perf.py). Both follow the PHASE compiler

@@ -30,7 +30,6 @@ export PYTHONUSERBASE=/capstor/scratch/cscs/$USER/aarch64/python
 export PATH=$PYTHONUSERBASE/bin:$PATH
 source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 
-spack load gcc@16.1.0
 
 OMP_BLAS=$(spack location -i openblas)
 PTH_BLAS=$(spack location -i openblas threads=pthreads)

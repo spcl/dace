@@ -30,7 +30,6 @@ export PATH=$PYTHONUSERBASE/bin:$PATH
 source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 export PYTHONPATH=/capstor/scratch/cscs/ybudanaz/aarch64/dace:${PYTHONPATH:-}
 
-spack load gcc@16.1.0
 spack load openblas
 
 export OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || echo "${OPENBLAS_DIR:-}")"

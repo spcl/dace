@@ -51,9 +51,6 @@ export PATH=$PYTHONUSERBASE/bin:$PATH
 source /capstor/scratch/cscs/$USER/aarch64/venvs/myenv/bin/activate
 alias python=python3.11
 
-# gcc@16.1.0 +graphite: its g++ gives clang a modern libstdc++ (--gcc-install-dir), gfortran,
-# AND the Graphite -floop-parallelize-all the native-gcc-autopar lane needs.
-spack load gcc@16.1.0
 spack load llvm@22.1.5    # clang++ = DaCe codegen compiler + Polly for the native-clang-polly-autopar lane
 spack load cmake
 spack load openblas
