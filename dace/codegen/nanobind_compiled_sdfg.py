@@ -149,32 +149,28 @@ class NanobindCompiledSDFG:
         refused unless ``compiler.nanobind_allow_return_override`` is enabled.
         """
         # Fast path - no return arrays, no callbacks, no hooks: hand the
-        # arguments straight to the compiled dispatcher. (Reading the private
-        # hook list directly keeps this at a single truthiness check; entering
-        # the invoking context manager would construct an object per call.)
-        if self._simple_call and not hooks._COMPILED_SDFG_CALL_HOOKS:
+        # arguments straight to the compiled dispatcher.
+        hooks_active = bool(hooks._COMPILED_SDFG_CALL_HOOKS)
+        if self._simple_call and not hooks_active:
             if self.do_not_execute is False:
                 self._handle(*args, **kwargs)
             return None
 
-        hooks_active = bool(hooks._COMPILED_SDFG_CALL_HOOKS)
-
-        # Something downstream needs values by name (return-shape evaluation,
-        # callback wrapping, or the hook invocation - hooks receive the
-        # kwargs), so map positional arguments to their names.
+        # Handle positional arguments and move them into `kwargs`.
         if args:
             if len(args) > len(self._arg_names):
                 raise TypeError(f'Too many positional arguments (got {len(args)}, '
                                 f'expected at most {len(self._arg_names)}).')
-            for name, value in zip(self._arg_names, args):
+            for name, value in zip(self._arg_names, args, strict=False):
                 if name in kwargs:
                     raise TypeError(f'Argument "{name}" passed both positionally and as a keyword.')
                 kwargs[name] = value
 
+        # Process the callbacks.
         if self._callback_args:
             self._process_callbacks(kwargs)
 
-        # No return values (a hook or a callback brought us here): run and exit.
+        # No return value given.
         if not self._return_values:
             if hooks_active:
                 self._call_handle_with_hooks(kwargs)
@@ -190,12 +186,13 @@ class NanobindCompiledSDFG:
         # Will add the return arrays also to `kwargs`.
         return_arrays = self._allocate_return_arrays(kwargs)
 
+        # Perform the call to the compiled extension.
         if hooks_active:
             self._call_handle_with_hooks(kwargs)
         elif self.do_not_execute is False:
             self._handle(**kwargs)
 
-        # A single value is returned bare; a tuple return (even one element) stays a tuple.
+        # Process the return value.
         if self._is_single_value_ret:
             return return_arrays[0]
         return tuple(return_arrays)
