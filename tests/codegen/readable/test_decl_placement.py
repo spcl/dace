@@ -101,9 +101,16 @@ def body_lines(code):
 
 def test_late_moves_declaration_to_first_use(require_experimental):
     """Under ``late`` the ``double s;`` declaration is emitted on the line immediately before the first
-    statement that uses ``s`` (``s = (A...``); under ``eager`` it is hoisted above unrelated code."""
-    eager = body_lines(readable_code(reassign_scalar_sdfg('a_eager'), 'eager'))
-    late = body_lines(readable_code(reassign_scalar_sdfg('a_late'), 'late'))
+    statement that uses ``s`` (``s = (A...``); under ``eager`` it is hoisted above unrelated code.
+
+    ``scalar_init_style`` is pinned to ``split`` so this exercises ONE axis: a separate ``double s;``
+    line is what has a placement to test at all. Under the ``fused`` default the declaration and the
+    first write are the same statement, so there is nothing left to move -- that is the two knobs
+    agreeing, not a conflict, and it is covered by test_scalar_init_style.py.
+    """
+    with set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='split'):
+        eager = body_lines(readable_code(reassign_scalar_sdfg('a_eager'), 'eager'))
+        late = body_lines(readable_code(reassign_scalar_sdfg('a_late'), 'late'))
 
     decl = 'double s;'
     first_use = next(i for i, l in enumerate(late) if l.startswith('s = ('))

@@ -1,10 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``compiler.cpu.codegen_params.scalar_init_style``.
 
-``split`` (the default) emits the legacy pair -- ``T x;`` at the scope top, ``x = expr;`` where the
-write happens. ``fused`` emits ``T x = expr;``: the declaration IS the first write. The knob is
-experimental_readable-only, so legacy output is byte-identical for every value, and the default
-reproduces today's readable output byte-for-byte.
+``split`` emits the legacy pair -- ``T x;`` at the scope top, ``x = expr;`` where the write happens.
+``fused`` (the default) emits ``T x = expr;``: the declaration IS the first write. The knob is
+experimental_readable-only, so legacy output is byte-identical for every value.
+
+Unlike most of the group, the default does NOT reproduce legacy's spelling: the readable generator
+deliberately prefers the fused binding. Legacy is untouched either way, so the byte-identity rule
+that governs legacy is not at stake.
 """
 import numpy as np
 import pytest
@@ -53,11 +56,16 @@ def test_fused_folds_declaration_into_first_write(require_experimental):
     assert 't = t_0;' in fused, fused
 
 
-def test_default_style_is_split(require_experimental):
-    """The default readable output equals the explicit ``split`` output (byte-identical)."""
+def test_default_style_is_fused(require_experimental):
+    """The default readable output equals the explicit ``fused`` output (byte-identical).
+
+    The readable generator deliberately defaults to the fused binding rather than reproducing
+    legacy's ``T x;`` + ``x = expr;`` pair -- declaring a name at its defining write is the point of
+    a readable form. Legacy is unaffected either way; see test_legacy_byte_identical_across_style.
+    """
     with use_implementation(EXPERIMENTAL):
         default = generated_code(reassigned.to_sdfg(simplify=True))
-    assert default == readable_code(reassigned.to_sdfg(simplify=True), 'split')
+    assert default == readable_code(reassigned.to_sdfg(simplify=True), 'fused')
 
 
 def test_legacy_byte_identical_across_style():
@@ -123,7 +131,7 @@ def test_compiles_and_runs_bit_identical(require_experimental, style):
 
 if __name__ == '__main__':
     test_fused_folds_declaration_into_first_write(None)
-    test_default_style_is_split(None)
+    test_default_style_is_fused(None)
     test_legacy_byte_identical_across_style()
     test_braced_tasklet_falls_back_to_a_plain_declaration(None)
     for s in ('split', 'fused'):

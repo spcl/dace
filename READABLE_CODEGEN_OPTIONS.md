@@ -30,11 +30,19 @@ some keys reach both generators, some only the readable one, and one splits down
 (`decl_placement`). A reader must not have to guess. The line is the first line of every key's
 description in `config_schema.yml`.
 
-**Invariant 2 — every default reproduces today's output byte-for-byte.** Not "equivalent",
-not "close" — byte-identical, for both generators. This is what makes the group additive: adding a
-key cannot regress an existing build. Legacy in particular must stay byte-identical for *every*
-value of an experimental-only key, which is why most keys gate on the generator before doing
-anything.
+**Invariant 2 — LEGACY output is byte-identical for every value of every key.** This is the hard
+one, and it is absolute: legacy must not move, whatever the group is set to. An experimental-only key
+gates on the generator before doing anything; a shared-emitter key (`loop_*`,
+`split_nsdfg_translation_units`) must default to legacy's existing spelling. It is why
+`loop_index_type` still defaults to `auto` even though `auto` deduces `int` from a `0` lower bound
+and therefore *wraps* on a map over `0:N` with N above 2³¹ — fixing that by defaulting to `int64`
+would rewrite every legacy user's loops, so it waits on a sweep.
+
+**Invariant 2b — a new key's default reproduces today's output.** This is what makes *adding* a key
+additive: it cannot regress an existing build. Note this constrains the moment of introduction, not
+forever. The readable generator's defaults may be deliberately changed afterwards, and two already
+are: `scalar_init_style` defaults to `fused` and `const_init` to `on`, because the readable form is
+the point of that generator. Legacy is untouched by both.
 
 A third rule comes from `CODEGEN_STYLE_PERFORMANCE.md` §7 and decides what is even allowed in:
 
@@ -47,7 +55,7 @@ by-reference divisors all collapsed to noise and were rejected.
 
 ## 2. The keys
 
-Twelve keys. Defaults in the table are the byte-identical-to-today values.
+Thirteen keys.
 
 | Key | Default | Applies to |
 |---|---|---|
@@ -56,13 +64,17 @@ Twelve keys. Defaults in the table are the byte-identical-to-today values.
 | `heap_ptr_restrict` | `restrict` | readable only |
 | `index_fn_qualifier` | `inline_constexpr` | readable only |
 | `loop_access_form` | `indexed` | readable only |
-| `scalar_init_style` | `split` | readable only |
+| `scalar_init_style` | **`fused`** | readable only |
+| `const_init` | **`on`** | readable only |
 | `ssa_loop_scalars` | `off` | readable only |
 | `loop_index_type` | `auto` | **both** |
 | `loop_bound_cmp` | `lt` | **both** |
 | `loop_decl_style` | `for_init` | **both** |
 | `split_nsdfg_translation_units` | `false` | **both** |
 | `decl_placement` | `eager` | **both** for loop counters; readable only for scalars |
+
+Every default leaves LEGACY byte-identical. The two in bold do *not* reproduce legacy's spelling from
+the READABLE generator — see Invariant 2b.
 
 They group into four sub-designs.
 
@@ -72,9 +84,12 @@ Only the readable generator has these: legacy inlines its offset arithmetic at e
 emits no `<array>_idx` helper, so there is no access path to re-spell and it ignores all three.
 
 - **`index_ctype`** (`int64` | `int32`) — the integer type `<array>_idx` / `<array>_size` compute the
-  flat index in. **Unsafe above 2³¹**: `int32` silently wraps, and the bound is on the *element
-  count*, not bytes — an int8 array overflows at 2 GiB, float64 at 16 GiB. Never selected
-  automatically, because the generator cannot prove a symbolic shape stays under the bound.
+  flat index in, emitted as the exact-width `<cstdint>` types `int64_t` / `int32_t` (already in scope
+  via `dace/dace.h`). `long long` would be wrong to emit here: it is only guaranteed to be *at least*
+  64 bits, so it does not state the width the key names. **`int32` is unsafe above 2³¹**: it silently
+  wraps, and the bound is on the *element count*, not bytes — an int8 array overflows at 2 GiB,
+  float64 at 16 GiB. Never selected automatically, because the generator cannot prove a symbolic
+  shape stays under the bound.
 - **`index_fn_qualifier`** (`inline_constexpr` | `always_inline`) — `static DACE_HDFI constexpr` vs
   additionally forcing `__attribute__((always_inline))`. Inlining is the *precondition* for the
   access to read as `p[i*S+j]` to the vectorizer; `always_inline` matters only where a helper is
@@ -96,10 +111,19 @@ emits no `<array>_idx` helper, so there is no access path to re-spell and it ign
   - *Scalars* (readable only): deferred to the first-use scope. Gate: single-state, absent from every
     interstate edge's free symbols and every region condition, one scope, and no read-before-write.
     **This gate is where the one real miscompile of this feature lived** — see §4.
-- **`scalar_init_style`** (`split` | `fused`) — `T x;` + `x = expr;` vs `T x = expr;`. The mutable
-  counterpart of the `const T x = expr;` binding that write-once scalars already get from
-  `MarkConstInit`: a reassigned scalar cannot be `const`, but its first write can still *define* it.
-  Later writes stay plain assignments.
+- **`scalar_init_style`** (`split` | **`fused`**, default fused) — `T x;` + `x = expr;` vs
+  `T x = expr;`. The mutable counterpart of the `const T x = expr;` binding that write-once scalars
+  already get from `MarkConstInit`: a reassigned scalar cannot be `const`, but its first write can
+  still *define* it. Later writes stay plain assignments. Fusion is decided at **emission**, not
+  predicted — a declaration folded into a tasklet that turns out to need its own `{ ... }` block
+  would be scoped to that block and invisible to later readers, and whether a tasklet is brace-free
+  is not known until its body is lowered; a braced candidate falls back to a plain `T x;` ahead of
+  the tasklet.
+- **`const_init`** (**`on`** | `off`, default on) — runs `MarkConstInit`, which classifies
+  write-once-then-read-only transients for `constexpr T x[N] = {...}` (promoted to an SDFG constant,
+  its dead runtime writes removed) or `const T x = expr;`. Default `on` because the pass already
+  runs; the key exists to take it *out*. **Not a pure spelling axis** — a `constexpr_static` fill
+  deletes the initializing writes, so `off` emits strictly more work.
 - **`ssa_loop_scalars`** (`off` | `on`) — the only key that runs an **SDFG rewrite**, not an emission
   change: `PrivatizeScalars` (`ScalarFission`) versions a repeatedly-reassigned scope scalar into
   single-assignment names (`nx`, `nx_0`, …). Each version is then write-once, so `MarkConstInit`
@@ -120,10 +144,13 @@ emits no `<array>_idx` helper, so there is no access path to re-spell and it ign
 ### 2.3 Loop form — shared emitter, so both generators
 
 - **`loop_index_type`** (`auto` | `int64` | `int32`) — `auto` deduces from the lower bound, so the
-  usual `0` gives `int` (32-bit index math). Distinct from `index_ctype`, which types the *helpers*.
-  Widening can let TBAA disprove aliasing so a store sinks out of the loop, and it changes the
-  no-wrap facts SCEV relies on — but it is also register pressure, and pure cost on a 32-bit-safe
-  loop. Sign not fixed; sweep it.
+  usual `0` gives `int` (32-bit index math); `int64`/`int32` emit `int64_t`/`int32_t`. Distinct from
+  `index_ctype`, which types the *helpers*. Widening can let TBAA disprove aliasing so a store sinks
+  out of the loop, and it changes the no-wrap facts SCEV relies on — but it is also register
+  pressure, and pure cost on a 32-bit-safe loop. Sign not fixed; sweep it.
+  **The `auto` default is a known wart**: 32-bit index math wraps on a map over `0:N` with N above
+  2³¹. It stays `auto` anyway because this key reaches the shared emitter, so an `int64` default
+  would rewrite every legacy user's loops (Invariant 2) for an unmeasured perf tradeoff.
 - **`loop_bound_cmp`** (`lt` | `le` | `ne`) — `i < end + 1`, `i <= end`, or `i != end + 1`, for the
   identical iteration space. `ne` carries a real correctness subtlety: naive `i != end + 1` is only
   correct when the stride divides the range, else the counter steps *over* the bound and the loop

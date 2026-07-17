@@ -432,9 +432,11 @@ required:
                                     no index type to pick and ignores this key).
 
                                     The integer type the generated ``<array>_idx`` / ``<array>_size``
-                                    helpers compute a flat index in: ``int64`` emits ``long long``
-                                    (the default, and byte-identical to the historical signature),
-                                    ``int32`` emits ``int``.
+                                    helpers compute a flat index in: ``int64`` emits ``int64_t`` (the
+                                    default), ``int32`` emits ``int32_t``. Both are the exact-width
+                                    ``<cstdint>`` types, already in scope via ``dace/dace.h``. The
+                                    spelling is deliberate: ``long long`` is only guaranteed to be AT
+                                    LEAST 64 bits, so it does not state the width this key names.
 
                                     UNSAFE ABOVE 2**31: ``int32`` silently WRAPS past 2147483647, and
                                     the bound is on the ELEMENT COUNT, not the byte size -- an int8
@@ -547,7 +549,15 @@ required:
                                     The declared type of a map loop's induction variable. ``auto`` (the
                                     default) deduces it from the lower bound -- for the usual ``0`` that
                                     makes it ``int``, i.e. 32-bit index math. ``int64`` emits
-                                    ``long long`` and ``int32`` emits ``int`` explicitly.
+                                    ``int64_t`` and ``int32`` emits ``int32_t`` explicitly (the
+                                    exact-width ``<cstdint>`` types, in scope via ``dace/dace.h``).
+
+                                    NOTE the ``auto`` default is 32-bit index math for the usual lower
+                                    bound of ``0``, so a map over ``0:N`` with N above 2**31 WRAPS. That
+                                    is an argument for defaulting to ``int64``, but this key reaches the
+                                    SHARED map-loop emitter, so changing its default would change legacy
+                                    output for every user, and a wider counter is not free (see below).
+                                    It stays ``auto`` until a sweep says otherwise.
 
                                     Widening the induction variable can let TBAA disprove aliasing so a
                                     store sinks out of the loop, and it changes the no-wrap facts SCEV
@@ -664,10 +674,10 @@ required:
                                     best-effort form, never a promise that nothing is hoisted.
 
                                     LOOP COUNTERS. A ``LoopRegion`` counter is declared at the top of the
-                                    generated function today (``long long i;``, then ``for (i = 0; ...)``)
+                                    generated function today (``int64_t i;``, then ``for (i = 0; ...)``)
                                     no matter how deep its loop is -- the furthest-from-use declaration
                                     the generator emits. ``late`` declares it in the loop's own for-init
-                                    clause instead, ``for (long long i = 0; ...)``, which also scopes it
+                                    clause instead, ``for (int64_t i = 0; ...)``, which also scopes it
                                     to the loop. Sound only when the counter is genuinely loop-local:
                                     exactly ONE LoopRegion owns the name, the loop is not ``inverted``
                                     (an inverted loop emits its init BEFORE the loop brace, where a
@@ -696,7 +706,7 @@ required:
                                     backend sinks a dead declaration to first use regardless.
                             scalar_init_style:
                                 type: str
-                                default: split
+                                default: fused
                                 title: Mutable scalar declaration / first-write fusion
                                 description: >
                                     Applies to: experimental_readable ONLY (legacy always declares a scope
@@ -704,9 +714,17 @@ required:
                                     this key -- its output stays byte-identical for every value).
 
                                     Whether a MUTABLE scalar's declaration and its FIRST write are emitted
-                                    as one binding: ``split`` (the default) emits the legacy pair,
-                                    ``T x;`` at the scope top and ``x = expr;`` where the write happens;
-                                    ``fused`` emits ``T x = expr;`` -- the declaration IS the first write.
+                                    as one binding: ``split`` emits the legacy pair, ``T x;`` at the scope
+                                    top and ``x = expr;`` where the write happens; ``fused`` (the default)
+                                    emits ``T x = expr;`` -- the declaration IS the first write.
+
+                                    NOTE this default does NOT reproduce legacy's spelling, unlike the
+                                    rest of the group: the readable generator deliberately prefers the
+                                    fused binding, since declaring a name at its defining write is the
+                                    whole point of a readable form and it shortens the live range. Legacy
+                                    is untouched either way -- it ignores this key entirely -- so the
+                                    byte-identity rule that governs legacy is not at stake here. Set
+                                    ``split`` to recover the legacy pair from the readable generator.
 
                                     This is the mutable counterpart of the ``const T x = expr;`` binding
                                     that write-once scalars already get from ``MarkConstInit``; a scalar

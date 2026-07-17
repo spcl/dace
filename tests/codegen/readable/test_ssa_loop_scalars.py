@@ -57,12 +57,17 @@ def readable_code(sdfg, ssa):
 
 
 def assignment_targets(code):
-    """Every ``<name> = ...`` / ``const T <name> = ...`` assignment target in the emitted body, so a
-    single-assignment name appears exactly once."""
+    """Every assignment target in the emitted body, so a single-assignment name appears exactly once.
+
+    Matches all three spellings a write to ``s`` can take: a bare ``s = (...)``, the write-once
+    ``const double s = (...)`` binding MarkConstInit produces, and the ``double s = (...)`` binding
+    the ``fused`` default of ``scalar_init_style`` produces for a mutable scalar's FIRST write. Only
+    accepting the first two would silently miss that first write and undercount.
+    """
     targets = []
     for raw in code.splitlines():
         line = raw.split('////')[0].strip()
-        m = re.match(r'(?:const\s+\w+\s+)?(s(?:_\d+)?)\s*=\s*\(', line)
+        m = re.match(r'(?:(?:const\s+)?\w+\s+)?(s(?:_\d+)?)\s*=\s*\(', line)
         if m:
             targets.append(m.group(1))
     return targets
@@ -77,6 +82,9 @@ def test_ssa_on_creates_single_assignment_versions(require_experimental):
     off_targets = assignment_targets(off)
     assert off_targets == ['s', 's', 's'], off_targets  # one mutable variable, three writes
     assert 'const double s' not in off  # not const: it is reassigned
+    # ... and exactly one of those three writes carries the declaration (the `fused` default), so `s`
+    # is still ONE variable and not three shadowing ones.
+    assert off.count('double s') == 1, off
 
     on_targets = assignment_targets(on)
     assert len(on_targets) == 3, on_targets
