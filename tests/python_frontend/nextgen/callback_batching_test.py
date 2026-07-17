@@ -131,6 +131,48 @@ def test_callback_mapping_contains_outlined_names():
     assert callbacks[0].outlined_function_name in tree.callback_mapping
 
 
+def test_detected_callable_reconstitutes_callee_only():
+    # Preprocessing embeds detected callables in callee position with the
+    # *full call expression* as their qualified name; reconstitution must
+    # restore only the callee, not produce a double call.
+
+    def read_box(box):
+        return box['value']
+
+    @dace.program
+    def uses_callable(A: dace.float64[N]):
+        box = {'value': 1.0}
+        y = read_box(box)
+        A[0] = y
+
+    tree = nextgen.parse_program(uses_callable)
+    callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert len(callbacks) == 1
+    assert 'read_box(box)' in callbacks[0].code.as_string
+    assert 'read_box(box)(box)' not in callbacks[0].code.as_string
+    # The unknown return is an opaque Python object, not a typed container
+    assert str(tree.containers['box'].dtype) == 'pyobject'
+    assert str(tree.containers['y'].dtype) == 'pyobject'
+
+
+def test_pretyped_callback_target_stays_typed():
+
+    def read_box(box):
+        return box['value']
+
+    @dace.program
+    def typed_target(A: dace.float64[N]):
+        y = 0.0
+        box = {'value': 1.0}
+        y = read_box(box)
+        A[0] = y
+
+    tree = nextgen.parse_program(typed_target)
+    # A pre-bound typed container is reused: the callback returns a typed value
+    assert str(tree.containers['y'].dtype) == 'double'
+    assert str(tree.containers['box'].dtype) == 'pyobject'
+
+
 def test_merged_reason_reports_both():
 
     @dace.program
@@ -152,6 +194,8 @@ if __name__ == '__main__':
     test_io_chaining()
     test_no_merge_across_supported_stmt()
     test_no_merge_across_scope_boundary()
+    test_detected_callable_reconstitutes_callee_only()
+    test_pretyped_callback_target_stays_typed()
     test_outlined_fields_populated()
     test_outlined_body_uses_repository_names()
     test_callback_mapping_contains_outlined_names()

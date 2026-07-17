@@ -17,6 +17,7 @@ The callback contract:
 """
 import ast
 import copy
+from typing import Optional
 
 from dace import data, dtypes
 from dace.properties import CodeBlock
@@ -169,14 +170,32 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
 
     class _Restorer(ast.NodeTransformer):
 
+        def visit_Call(self, node: ast.Call) -> ast.expr:
+            # Detected callables in callee position carry the *full call
+            # expression* as their qualified name; restore only the callee.
+            restored = self._restore_constant(node.func)
+            if restored is not None:
+                if isinstance(restored, ast.Call):
+                    restored = restored.func
+                node.func = ast.copy_location(restored, node.func)
+            return self.generic_visit(node)
+
         def visit_Constant(self, node: ast.Constant) -> ast.expr:
-            if is_literal_constant(node.value):
+            restored = self._restore_constant(node)
+            if restored is None:
                 return node
+            return ast.copy_location(restored, node)
+
+        def _restore_constant(self, node: ast.expr) -> Optional[ast.expr]:
+            """The source expression of an embedded resolved object, or None
+            for plain literals and non-constant expressions."""
+            if not isinstance(node, ast.Constant) or is_literal_constant(node.value):
+                return None
             qualname = getattr(node, 'qualname', None)
             if qualname is None:
                 raise FrontendError('Cannot reconstruct interpreter code for a resolved object without a source name',
                                     state.context.filename, node)
-            return ast.copy_location(ast.parse(qualname, mode='eval').body, node)
+            return ast.parse(qualname, mode='eval').body
 
         def visit_OpaqueStmt(self, node: OpaqueStmt) -> ast.stmt:
             return self.visit(node.original)
