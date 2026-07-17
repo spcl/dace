@@ -23,7 +23,7 @@
 #
 # Toolchain env block identical to codegen_variants/slurm_codegen_variants.sh (see that
 # script + slurm_npbench_polybench_compile.sh for the rationale on each export).
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72"

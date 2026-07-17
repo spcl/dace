@@ -10,7 +10,7 @@
 #
 #   ./submit_perf_jobs.sh                 # clang++ for DaCe codegen (default)
 #   CXX=g++ ./submit_perf_jobs.sh         # pin a different DaCe codegen compiler
-set -euo pipefail
+set -eu
 cd "$(dirname "$(readlink -f "$0")")"
 
 CXX="${CXX:-clang++}"

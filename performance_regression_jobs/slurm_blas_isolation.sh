@@ -19,7 +19,7 @@
 # Each measurement runs DIRECTLY in the batch step (full 72-core cgroup): an inner
 # `srun -n1` would NOT inherit --cpus-per-task on modern slurm and would squeeze
 # every OMP thread onto one core -- poisoning exactly what this job measures.
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 export OMP_PROC_BIND="close"

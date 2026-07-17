@@ -21,7 +21,7 @@
 # The cmake variants need cmake on PATH; both build_modes need g++/nvcc exactly like the CMake
 # path. The toolchain / library environment below is the same one slurm_npbench_polybench_compile.sh
 # sets (see that script for the rationale on each export). Adjust the SBATCH header for your account.
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72"       # paper (multi-core) lane thread count

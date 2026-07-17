@@ -17,7 +17,7 @@
 # (cloudsc_bisect_check.py) only LOAD these snapshots and run on the login node.
 #
 # Env block identical to slurm_cloudsc_cache.sh.
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 export PYTHONUNBUFFERED=1

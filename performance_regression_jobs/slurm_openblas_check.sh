@@ -16,7 +16,7 @@
 # openblas_threading_check.py's docstring. Two spack openblas installs exist
 # (threads=pthreads and threads=none); this checks which one a real
 # DaCe-compiled GEMM kernel actually resolves and whether it scales.
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 export OMP_NUM_THREADS="72"

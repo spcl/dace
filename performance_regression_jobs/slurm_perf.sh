@@ -23,7 +23,7 @@
 #
 # Kernels are distributed across the job's 4 ranks automatically.
 
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 EXPERIMENT="${EXPERIMENT:-canon_vs}"

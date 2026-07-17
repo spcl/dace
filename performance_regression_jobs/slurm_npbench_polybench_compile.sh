@@ -39,7 +39,7 @@
 #   CXXES="g++ clang++ icpx nvc++" sbatch slurm_npbench_polybench_compile.sh    # cross-compiler
 # Adjust --nodes / --ntasks-per-node for however many ranks you want.
 
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72"        # one Grace CPU's worth of cores per rank

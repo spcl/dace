@@ -21,7 +21,7 @@
 #      buffers (python-process composition WITHOUT DaCe)
 #   C  batch-step python: the canon-pipeline DaCe GEMM kernel (the exact earlier
 #      repro, minus srun)
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 
 export OMP_PROC_BIND="close"

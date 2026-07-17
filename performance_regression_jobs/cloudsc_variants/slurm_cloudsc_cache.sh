@@ -16,7 +16,7 @@
 # cloudsc_variants/cache/cloudsc_parallel.sdfgz. Runs on the NORMAL partition with a 1.5h window
 # because this exceeds the 30-min debug cap (per the user: "for sdfgz submit a 1.5 hour job if it
 # times out on normal node"). The measurement (Phase B) then loads this cache inside a debug job.
-set -euo pipefail
+set -eu
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72" OMP_PROC_BIND="close" OMP_PLACES="cores" PYTHONUNBUFFERED=1
 export OMP_MAX_ACTIVE_LEVELS=1  # single parallel level: nested BLAS-in-omp-region calls serialize
