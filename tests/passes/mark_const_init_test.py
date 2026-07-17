@@ -2,6 +2,7 @@
 """ Tests the MarkConstInit pass. """
 
 import numpy as np
+import pytest
 
 import dace
 from dace.sdfg import nodes as nd
@@ -596,6 +597,60 @@ def test_partly_paying_fill_map_is_not_unrolled():
     if 'X' not in kinds:
         assert len(_map_entries(s1)) == 2, ('a fill map was unrolled but X was not const-inited: '
                                             f'{[m.map.label for m in _map_entries(s1)]}')
+    sdfg.validate()
+
+
+def _same_state_fill_sdfg(name):
+    """A constant fill whose CONSUMER lives in the same state, connected through one access node.
+
+    This is what ``apply_gpu_transformations`` produces: it fuses the fill's state into its
+    consumer's, leaving ``fill -> MapExit -> A -> MapEntry -> use``. The dependency is explicit, so
+    the fill provably precedes the read.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [8], dace.float64, transient=True)
+    sdfg.add_array('B', [8], dace.float64)
+    s1 = sdfg.add_state('init')
+    s2 = sdfg.add_state('use')
+    sdfg.add_edge(s1, s2, dace.InterstateEdge())
+    s1.add_mapped_tasklet('fill', dict(i='0:8'), {}, 'out = 3.0', dict(out=dace.Memlet('A[i]')), external_edges=True)
+    s2.add_mapped_tasklet('use',
+                          dict(i='0:8'),
+                          dict(inp=dace.Memlet('A[i]')),
+                          'out = inp * 2',
+                          dict(out=dace.Memlet('B[i]')),
+                          external_edges=True)
+    sdfg.apply_gpu_transformations()  # fuses init into use; pure SDFG rewrite, needs no GPU
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.xfail(strict=True, reason='MapUnroll cannot flatten a fill whose consumer shares its state: it '
+                   'duplicates the access node per element but keeps the original out-edge, so all N nodes '
+                   'claim to deliver the FULL array to the consumer while each is written at one index. '
+                   'const-init here needs the fill evaluated WITHOUT unrolling, not a looser classifier.')
+def test_same_state_constant_fill_is_const_inited():
+    """A constant fill should be const-initializable even when its consumer shares the state.
+
+    This is every GPU kernel: ``apply_gpu_transformations`` fuses the fill's state into its consumer's,
+    so nothing on a GPU-transformed SDFG is ever const-inited. The two-state CPU shape is marked only
+    because cross-state reachability answers the ordering question instead
+    (test_array_full_constant_write).
+
+    Currently xfail, and NOT because the classifier is too strict. Unrolling the fill here produces a
+    graph where each per-element node carries ``A[i]`` in but ``A[0:8]`` out -- eight nodes each
+    claiming the whole array. The write-before-read check declines that, which is what SAVES us: the
+    same MapUnroll damage shows up as 'Isolated node' / 'Dangling in-connector' when it is allowed to
+    stand. Relaxing the check would accept a broken graph. The real fix is to teach the classifier to
+    evaluate a constant-fill map's value directly and replace the map wholesale, deleting Step 0's
+    speculative unroll entirely.
+    """
+    sdfg = _same_state_fill_sdfg('same_state_fill')
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('A') == 'constexpr_static', kinds
+    assert 'A' in sdfg.constants
+    assert np.array_equal(sdfg.constants['A'], np.full(8, 3.0))
     sdfg.validate()
 
 
