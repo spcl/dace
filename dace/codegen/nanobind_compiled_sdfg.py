@@ -63,6 +63,17 @@ class NanobindCompiledSDFG:
            supported; a hook's ``args`` parameter is a 1-tuple holding the
            processed keyword arguments (there is no ctypes-style C-argument
            tuple - marshalling happens in compiled code).
+
+    :note: **Not thread-safe** (accepted by design: a handle is not meant to
+           be shared across threads). Calls carry all their per-call data,
+           but the lazy state initialization is an unsynchronized
+           check-then-act that runs with the GIL released, concurrent calls
+           share the single SDFG state struct (persistent transients,
+           workspace), and ``finalize()`` frees that state without
+           synchronizing with in-flight calls. Distinct instances are
+           independent. The ctypes ``CompiledSDFG`` has the same
+           initialization race and is additionally unsafe under mere
+           GIL-interleaving (``_lastargs``).
     """
 
     def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: List[str]):

@@ -544,6 +544,12 @@ void __program_{name}({program_params});
 
 namespace dace {{ namespace generated {{ namespace {name} {{
 
+// Not thread-safe (accepted by design - a handle is not meant to be shared
+// across threads): the lazy init is an unsynchronized check-then-act on
+// m_state and runs with the GIL released, concurrent call()s share the one
+// SDFG state struct, and finalize() frees it without synchronizing with
+// in-flight calls. Per-call data is all locals, so distinct handles are
+// independent.
 struct DaceHandle_{name} {{
 {pybuffer_helper}    {state_t} *m_state = nullptr;
 
