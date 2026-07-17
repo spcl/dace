@@ -29,6 +29,7 @@ cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/performance_regression_jobs
 export OMP_NUM_THREADS="72" OPENBLAS_NUM_THREADS="72"
 export OMP_PROC_BIND="close"
 export OMP_PLACES="cores"
+export OMP_MAX_ACTIVE_LEVELS=1     # one parallel level only: a BLAS call inside a DaCe omp region must serialize, not fork its own team (openmp-threaded OpenBLAS honors this; the old pthreads pool could not)
 export PYTHONUNBUFFERED=1
 
 export PYTHONUSERBASE=/capstor/scratch/cscs/$USER/aarch64/python
@@ -39,7 +40,7 @@ export PYTHONPATH=/capstor/scratch/cscs/ybudanaz/aarch64/dace:${PYTHONPATH:-}
 spack load gcc@16.1.0
 spack load llvm@22.1.5
 spack load cmake            # the cmake variants still run a real CMake configure+build
-spack load openblas threads=pthreads
+spack load openblas threads=openmp
 spack load cuda
 
 # nvcc discovery (CUDA_HOME) + runtime lib paths (spack load sets PATH only).
@@ -49,7 +50,7 @@ if [ -n "$CUDA_HOME" ]; then
     export LD_LIBRARY_PATH="$CUDA_HOME/lib64:${LD_LIBRARY_PATH:-}"
     export CPATH="$CUDA_HOME/include:${CPATH:-}"
 fi
-export OPENBLAS_DIR="$(spack location -i openblas threads=pthreads 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
+export OPENBLAS_DIR="$(spack location -i openblas threads=openmp 2>/dev/null || echo "${OPENBLAS_DIR:-}")"
 if [ -n "$OPENBLAS_DIR" ]; then
     for _d in "$OPENBLAS_DIR"/lib "$OPENBLAS_DIR"/lib64; do
         [ -d "$_d" ] && export LD_LIBRARY_PATH="$_d:${LD_LIBRARY_PATH:-}" LIBRARY_PATH="$_d:${LIBRARY_PATH:-}"

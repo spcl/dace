@@ -43,6 +43,32 @@ _COMPILE_CSV = 'compile.csv'
 # be lifted too so the oversized files already on disk stay readable.
 csv.field_size_limit(min(2 ** 31 - 1, sys.maxsize))
 
+# The job's FULL cpu mask, captured at engine import -- i.e. before any DaCe-compiled
+# kernel .so is loaded. With OMP_PROC_BIND set (the job scripts export close/cores),
+# libgomp's INIT -- which runs the moment a -fopenmp .so is dlopened, no parallel
+# region needed -- binds the master thread to its single place (core 0). From then on
+# (a) every subprocess this process spawns inherits a ONE-CORE mask, so the child's
+# libgomp resolves OMP_PLACES=cores to '{0}' and its 72 "threads" time-slice core 0
+# (measured: 2048^3 DGEMM 24x SLOWER at 72 threads than at 1), and (b) any
+# affinity-derived thread-count detection (pthreads OpenBLAS, numpy's bundled BLAS)
+# sees ONE cpu and silently caps itself at a single thread -- which is why every
+# BLAS-backed kernel measured near-identical times across all thread configurations.
+# restore_cpu_affinity() undoes the master-thread bind; call it after any kernel .so
+# load and before spawning measurement children.
+try:
+    _INITIAL_CPU_AFFINITY = frozenset(os.sched_getaffinity(0))
+except (AttributeError, OSError):
+    _INITIAL_CPU_AFFINITY = None
+
+
+def restore_cpu_affinity():
+    """Restore this thread's cpu mask to the job's full mask (see the capture above)."""
+    if _INITIAL_CPU_AFFINITY:
+        try:
+            os.sched_setaffinity(0, _INITIAL_CPU_AFFINITY)
+        except OSError:
+            pass
+
 _MAX_STATUS_ERROR_CHARS = 8192
 
 
@@ -143,6 +169,10 @@ def configure_dace_process():
       become self-locating too -- otherwise, since `spack load` puts neither
       libomp nor libgomp on LD_LIBRARY_PATH, loading a -fopenmp kernel via ctypes
       fails with 'libomp.so: cannot open shared object file'."""
+    # Defensive affinity reset (see _INITIAL_CPU_AFFINITY): harmless when the mask is
+    # already full; undoes libgomp's master-thread bind when a kernel .so was loaded
+    # earlier in this process.
+    restore_cpu_affinity()
     import dace
     import native_harness as nh
     # Warm the transformation import graph before any to_sdfg() runs in this
@@ -252,6 +282,11 @@ def _kill_process_group(p):
 
 def run_isolated(fn, args=(), timeout=120):
     """Returns (ok, payload_or_error). Never raises; a crash/timeout is (False, msg)."""
+    # Un-poison the mask BEFORE spawning: if this process ever dlopened a kernel .so,
+    # libgomp bound the master thread to one core and the child would inherit that
+    # single-core mask (see _INITIAL_CPU_AFFINITY) -- collapsing every threaded
+    # library inside the measurement child onto core 0.
+    restore_cpu_affinity()
     ctx = mp.get_context('spawn')
     q = ctx.Queue()
     p = ctx.Process(target=_run_and_queue, args=(fn, args, q))
@@ -357,6 +392,11 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1, time_budget_s=None):
     import time
     import dace
     import numpy as np
+    # A previously loaded kernel .so has already libgomp-bound this master thread to
+    # one core (OMP_PROC_BIND); restore the full mask so affinity-derived thread
+    # detection (pthreads BLAS, numpy's bundled BLAS) inside the timed calls is not
+    # silently capped at a single thread.
+    restore_cpu_affinity()
     sdfg.instrument = dace.InstrumentationType.Timer
     # Instrumented codegen is different C++ than the plain correctness-check
     # build of the exact same variant -- needs its own cache-key (name) or
