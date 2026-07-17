@@ -48,7 +48,7 @@ jobs:
 
     - name: Test with pytest
       run: |
-        #export DACE_compiler_interface=nanobind
+        export DACE_compiler_interface=nanobind
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
