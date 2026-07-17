@@ -8,9 +8,10 @@ It composes standalone passes in order, applied once:
     recurrence / reduction loops become inline straight-line code rather than
     atomically-parallelized maps.
 0b. :class:`~dace.transformation.passes.parallelization_prep.BestEffortLoopPeeling`
-    -- search front/back/both peels of 1..``peel_limit`` boundary iterations, keep
-    the one that unblocks the most maps, revert if none helps. Runs before scalar
-    fission so the freshly-introduced straight-line bodies' scalars get renamed.
+    -- index-set-split a loop at a point derived from its body (an ``if i == x``
+    guard, a broadcast read's conflicting index), and peel a wrapping body modulo
+    to its floor-correct affine form. Runs before scalar fission so the
+    freshly-introduced straight-line bodies' scalars get renamed.
 1.  ``PrivatizeScalars`` -- privatize loop-local scalars (drop false carried deps).
 2.  ``SymbolPropagation`` + ``ConstantPropagation`` -- peeling / unrolling fold
     concrete iteration indices into the bodies; propagating them simplifies
