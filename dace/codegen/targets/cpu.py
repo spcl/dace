@@ -623,23 +623,18 @@ class CPUCodeGen(TargetCodeGenerator):
             # include is written relative to src/<target>/ and this file sits one level deeper
             # (src/cpu/nsdfg/); only frame code uses __HASH_*.
             #
-            # The <sdfg>_state_t struct is FORWARD-DECLARED, not re-defined, whenever this nest only
-            # passes the state pointer through -- which an offloaded loop nest does, since it takes
-            # arrays and symbols and never touches persistent state. That keeps the nest's file
-            # independent of the struct's contents and removes the one repeated DEFINITION here: a
-            # struct is one careless namespace-scope statestruct entry away from being multiply
-            # defined across every TU. A nest that does dereference __state needs the complete type,
-            # so it falls back to the full definition.
+            # The <sdfg>_state_t struct is DEFINED here, not forward-declared: dace Streams and
+            # persistent-lifetime storage are state fields, so any nest may dereference __state,
+            # and an incomplete type cannot be.
             #
-            # Everything else generate_fileheader emits is repeatable per TU by construction:
-            # includes are guarded, type definitions are types, and generate_constants emits
-            # ``constexpr`` (implicitly internal linkage).
-            state_struct = 'define' if '__state->' in code else 'forward'
-            self._frame.generate_fileheader(top_sdfg,
-                                            fileheader,
-                                            'frame',
-                                            include_hash=False,
-                                            state_struct=state_struct)
+            # This TU therefore carries a second, identical definition of everything
+            # generate_fileheader emits at namespace scope. That is safe for a struct (a type), for
+            # guarded includes, and for generate_constants' ``constexpr`` (internal linkage). It is
+            # NOT safe for ``sdfg.global_code``, which the same function re-emits verbatim
+            # (framecode.py, generate_fileheader) and which accepts arbitrary text: a non-inline
+            # definition there multiply-defines across the frame and every nest TU. That predates
+            # the split -- the frame/.cu pair has the same exposure -- but N nests widen it.
+            self._frame.generate_fileheader(top_sdfg, fileheader, 'frame', include_hash=False)
             objects.append(
                 CodeObject(f'{top_sdfg.name}.{label}',
                            '/* DaCe AUTO-GENERATED FILE. DO NOT MODIFY */\n#include <dace/dace.h>\n' +
