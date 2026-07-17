@@ -1,17 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Extra unit tests for SplitArray (dace/transformation/layout/split_array.py).
-
-These complement the kernel-level tests in tests/layout/split_array_test.py by
-exercising:
-  * the pure helper functions (resolve_aliases, copy_state_contents,
-    reverse_bfs_assignments) in isolation,
-  * splitting a symbol-sized dimension into named per-index arrays with
-    compile-time (extent-1) slices, bit-exact vs numpy,
-  * the two-split-dimension Cartesian-product naming,
-  * the length-1 descriptor path for a fully consumed split dimension,
-  * the data-dependent-index ConditionalBlock branch path, bit-exact vs numpy,
-  * the not-yet-supported nested-SDFG raise path.
-"""
+"""Extra unit tests for SplitArray (dace/transformation/layout/split_array.py): helper functions,
+splitting behaviour, and error paths not covered by tests/layout/split_array_test.py."""
 import numpy
 
 import dace
@@ -47,8 +36,7 @@ def pick_phase(a: dace.float64[nphase, ncol], out: dace.float64[ncol], k: dace.i
 
 @dace.program
 def indirect_phase(a: dace.float64[nphase, ncol], idx: dace.int32[nphase], out: dace.float64[ncol]):
-    """Like ``pick_phase``, but the runtime index is READ FROM a split array rather than passed in
-    as a symbol -- the shape that puts a split-array access inside an interstate edge."""
+    """Like ``pick_phase``, but the runtime index is read from a split array, not passed as a symbol."""
     for i in range(nphase):
         for j in range(ncol):
             out[j] = out[j] + a[idx[i], j]
@@ -64,7 +52,6 @@ def test_resolve_aliases_dedup_and_none_passthrough():
         None,
         dace.symbolic.pystr_to_symbolic("b"),
     ]
-    # a1 maps to the same value as a0 -> a1 is an alias of the canonical a0.
     assignments = {"a0": "imelt[0]", "a1": "imelt[0]", "b": "imelt[1]"}
     resolved = resolve_aliases(exprs, assignments)
 
@@ -95,9 +82,7 @@ def test_copy_state_contents_preserves_graph():
     assert len(node_map) == src.number_of_nodes()
     assert dst.number_of_nodes() == src.number_of_nodes()
     assert dst.number_of_edges() == src.number_of_edges()
-    # Each original maps to a fresh, distinct copy.
     assert all(orig is not clone for orig, clone in node_map.items())
-    # Access-node data names are preserved by the copy.
     assert {n.data for n in src.data_nodes()} == {n.data for n in dst.data_nodes()}
 
 
@@ -175,12 +160,7 @@ def test_split_two_phase_dimensions_bit_exact():
 
 
 def test_split_full_dimension_creates_length1_descriptors():
-    """A fully consumed split dimension keeps no axis: each element becomes a length-1 array.
-
-    Fully-split arrays are only *used* correctly through interstate-edge reads
-    (which resolve to element 0); here we assert the descriptor shapes produced
-    by _split_data_descriptors structurally, without dataflow accesses.
-    """
+    """A fully consumed split dimension keeps no axis: each element becomes a length-1 array."""
     sdfg = dace.SDFG("full_split_descs")
     sdfg.add_array("coef", [nphase], dace.float64)
     sdfg.add_state("only", is_start_block=True)
@@ -219,14 +199,8 @@ def test_data_dependent_index_branches_bit_exact():
 
 
 def test_index_read_from_split_array_is_rewritten_bit_exact():
-    """The runtime index may itself be read FROM a split array, and that read lands in an
-    interstate edge -- the one place a split-array access is not a memlet.
-
-    ``pick_phase`` above cannot catch this: its runtime index is a plain symbol (``k``), so no
-    interstate edge ever names a split array. Here the edge carries ``idx_index = idx[i]``, which
-    must become ``idx_ql[0]``. Left alone it still names ``idx``, whose descriptor Phase 5 removes,
-    and the edge reads an array that no longer exists.
-    """
+    """The runtime index may itself be read from a split array; that read lands in an interstate edge --
+    the one place a split-array access is not a memlet."""
     sdfg = indirect_phase.to_sdfg()
     SplitArray(symbol_map=SYMBOL_MAP, name_map=NAME_MAP).apply_pass(sdfg, {})
     sdfg.validate()
@@ -235,8 +209,7 @@ def test_index_read_from_split_array_is_rewritten_bit_exact():
     # The split index array is fully consumed, so each element is its own length-1 array.
     for nm in NAMES:
         assert tuple(int(s) for s in sdfg.arrays[f"idx_{nm}"].shape) == (1, )
-    # Nothing may still name the removed descriptor. validate() already rejects this, but assert it
-    # directly: the failure is the rewrite silently skipping the edge, not validation per se.
+    # Asserted directly (not just via validate()): a silently-skipped edge is the actual failure mode.
     for e in sdfg.all_interstate_edges():
         assert "idx" not in e.data.free_symbols, f"edge still reads removed array 'idx': {e.data.assignments}"
 

@@ -50,16 +50,7 @@ def test_map_unroll():
 
 
 def test_gpu_map_declined_unless_permissive():
-    """A GPU map is declined by default, and offered under permissive.
-
-    A device map IS the kernel launch: replicating its body per iteration and eliminating the map
-    leaves that body on the host, still reading and writing GPU_Global memory -- an SDFG the code
-    generator cannot lower. MapUnroll cannot repair that on its own, so it declines.
-
-    It is only offered under ``permissive`` because a caller may know what this check cannot: that it
-    will DELETE the unrolled writes afterwards. MarkConstInit does exactly that when it promotes a
-    constant fill to a compile-time constant, leaving no host code behind at all.
-    """
+    """A GPU map is declined by default (a device map IS the kernel launch) and offered under permissive."""
     sdfg = dace.SDFG('gpu_unroll')
     sdfg.add_array('A', [4], dace.float64, transient=True)
     state = sdfg.add_state('main')
@@ -74,8 +65,7 @@ def test_gpu_map_declined_unless_permissive():
     assert not MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
     assert MapUnroll.can_be_applied_to(sdfg, permissive=True, map_entry=entry)
 
-    # The same map on a CPU schedule is offered either way -- it is the GPU schedule doing the work
-    # here, not some other precondition.
+    # Same map on a CPU schedule is offered either way -- the GPU schedule alone is the precondition.
     entry.map.schedule = dace.ScheduleType.Sequential
     assert MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
 

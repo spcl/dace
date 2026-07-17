@@ -38,10 +38,7 @@ def generate_headers(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
 
 
 def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
-    """ Generates a C program calling this SDFG. Since we do not
-        know the purpose/semantics of the program, we allocate
-        the right types and and guess values for scalars.
-    """
+    """ Generates a C program that calls this SDFG, guessing scalar values and allocating array args. """
     al = frame.arglist
     init_params = sdfg.init_signature(for_call=True, free_symbols=frame.free_symbols(sdfg))
     params = sdfg.signature(with_types=False, for_call=True, arglist=frame.arglist)
@@ -51,12 +48,10 @@ def generate_dummy(sdfg: SDFG, frame: framecode.DaCeCodeGenerator) -> str:
     allocations = ''
     deallocations = ''
 
-    # first find all scalars and set them to 42
     for argname, arg in al.items():
         if isinstance(arg, data.Scalar):
             allocations += ("    " + str(arg.as_arg(name=argname, with_types=True)) + " = 42;\n")
 
-    # allocate the array args using calloc
     for argname, arg in al.items():
         if isinstance(arg, data.Array):
             from dace.codegen.targets import cpp
@@ -86,10 +81,7 @@ int main(int argc, char **argv) {{
 
 
 def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
-    """
-    Queries all code generation targets in this SDFG and all nested SDFGs,
-    as well as instrumentation providers, and stores them in the frame code generator.
-    """
+    """Collects code generation targets and instrumentation providers for the SDFG into the frame code generator."""
     disp = frame._dispatcher
     provider_mapping = InstrumentationProvider.get_provider_mapping()
     disp.instrumentation[dtypes.InstrumentationType.No_Instrumentation] = None
@@ -112,8 +104,7 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
             desc = node.desc(nsdfg)
             frame.targets.add(disp.get_array_dispatcher(desc.storage))
 
-        # Copies and memlets - via access nodes and tasklets
-        # To avoid duplicate checks, only look at outgoing edges of access nodes and tasklets
+        # Copies/memlets: only check outgoing edges of access nodes/tasklets, to avoid duplicate checks.
         if isinstance(node, (dace.nodes.AccessNode, dace.nodes.Tasklet)):
             state: SDFGState = parent
             for e in state.out_edges(node):
@@ -146,7 +137,6 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         elif hasattr(node, 'map'):
             disp.instrumentation[node.map.instrument] = provider_mapping[node.map.instrument]
 
-    # Query instrumentation provider of SDFG
     if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
@@ -161,7 +151,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     from dace.codegen.target import TargetCodeGenerator  # Avoid import loop
 
-    # Before compiling, validate SDFG correctness
     if validate:
         sdfg.validate()
 
@@ -196,7 +185,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
                 raise RuntimeError(f'SDFG serialization failed - files do not match:\n{diff}')
 
         finally:
-            # Clean up the temporary files
             try:
                 os.remove(tmp1_path)
                 os.remove(tmp2_path)
@@ -204,41 +192,29 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
                 pass
 
     if config.Config.get_bool('optimizer', 'detect_control_flow'):
-        # NOTE: This should likely be done either earlier in the future, or changed entirely in modular codegen.
-        # It is being done here to ensure that for now the semantics of the setting are preserved and legacy tests,
-        # where explicit control flow was not used, continue to work as expected.
+        # TODO: move earlier / into modular codegen; kept here for now to preserve legacy-test semantics.
         FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
-    # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
 
-    # Set default storage/schedule types in SDFG
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Recursively expand library nodes that have not yet been expanded
     sdfg.expand_library_nodes()
 
-    # After expansion, run another pass of connector/type inference
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Per-nest translation units: wrap each top-level map-nest / loop region of the root SDFG in its
-    # own ``no_inline`` nested SDFG, which the CPU code generator then emits to its own .cpp (the
-    # ``do_split`` path in ``_generate_NestedSDFG``). Structural and codegen-agnostic, so it serves the
-    # legacy and readable generators alike -- but it must run BEFORE the readable generator's
-    # InlineSDFG sweep below, which would otherwise inline the nests straight back (``no_inline``
-    # stops that, and this ordering keeps the intent explicit). After ``expand_library_nodes`` so an
-    # expanded library node is inside the nest it belongs to, not left behind at the top level.
+    # Wrap top-level map-nests/loops into no_inline nested SDFGs (own .cpp each, via the do_split path
+    # in _generate_NestedSDFG). Must run before the readable generator's InlineSDFG sweep below (which
+    # would otherwise inline them straight back) and after expand_library_nodes.
     if config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units'):
         from dace.transformation.passes.outline_top_level_nests import outline_top_level_nests
         outline_top_level_nests(sdfg)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
-    # Experimental readable generator: flatten nested SDFGs (so the connector-free + index-function
-    # lowering applies uniformly, not stopping at NSDFG boundaries), then mark write-once data
-    # const/constexpr and inline tasklet connectors. After library expansion so post-expansion
-    # tasklets are seen; affects CPU and GPU-kernel tasklets alike.
+    # Experimental readable generator: flatten nested SDFGs, mark write-once data const/constexpr, and
+    # inline tasklet connectors. Runs after library expansion so post-expansion tasklets are seen too.
     if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
         from dace.transformation.pass_pipeline import Pipeline
         from dace.transformation.passes.mark_const_init import MarkConstInit
@@ -250,21 +226,15 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         sdfg.apply_transformations_repeated(InlineMultistateSDFG)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # ``scalar_emission_type``: normalize single-value TRANSIENTS to one C++ form before the rest of
-        # the pipeline classifies and inlines them. ``keep`` (default) runs neither conversion ->
-        # byte-identical. Both conversions are transient_only, so the SDFG signature is never rewritten.
-        # Runs BEFORE ``explicit_copy`` so the copy lowering below sees the settled descriptor form
-        # (a scalar copy lowers to ``=``, a length-1-array copy to memcpy).
+        # Normalize single-value transients to Scalar/len1-array (transient_only keeps the signature);
+        # must run before explicit_copy so copy lowering sees the final descriptor form.
         scalar_emission = config.Config.get('compiler', 'cpu', 'codegen_params', 'scalar_emission_type')
         if scalar_emission == 'scalar':
             from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
             from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
                                                                                   PromoteGPUScalarsToArrays)
             ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
-            # A GPU kernel output is a length-1 array the scalarization just turned into a GPU-storage
-            # Scalar; a by-value Scalar cannot live in device memory, so widen exactly those back to
-            # length-1 arrays. Host-side transients stay Scalars. The Pipeline supplies the storage
-            # inference PromoteGPUScalarsToArrays depends on.
+            # Widen GPU-storage scalars back: a by-value Scalar cannot live in device memory.
             Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
@@ -273,18 +243,8 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             ConvertScalarsToLengthOneArrays(transient_only=True).apply_pass(sdfg, {})
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # ``explicit_copy``: lift implicit copies (AccessNode -> AccessNode, View endpoints, map
-        # staging) to explicit CopyLibraryNodes, so ExpandAuto lowers each one on its merits -- a
-        # single-element copy to a plain ``=`` tasklet, a contiguous same-layout copy to
-        # ``std::memcpy`` -- instead of the ``dace::CopyND`` template the implicit path emits. After
-        # the inline sweep above, so copies that were inside nested SDFGs are seen too, and before
-        # the passes below, so they classify and connector-inline the explicit form.
-        #
-        # ``expand_library_nodes`` already ran further up, so nothing would expand what this inserts;
-        # expand it here, restricted BY PREDICATE to the copy nodes just added. The restriction is not
-        # cosmetic: the pass is shared, and its other callers (transformation/layout/prepare.py, the
-        # GPU-specialization pipeline) require the CopyLibraryNode to survive UNEXPANDED for
-        # RewriteCopyForLayout to turn into a TensorTranspose. Expanding belongs here, not in the pass.
+        # Lift implicit copies to CopyLibraryNodes so ExpandAuto picks memcpy over dace::CopyND; expand
+        # only these nodes -- RewriteCopyForLayout needs the shared pass's other callers unexpanded.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on':
             from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
             from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
@@ -293,48 +253,36 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
-        # ``ssa_loop_scalars``: version a scalar reassigned several times in a scope/loop nest into
-        # single-assignment names, so each write-once version below becomes a ``const T nx_0 = expr;``
-        # binding. Reuses the existing ScalarFission pass (the SSA renaming simplify already uses), run
-        # BEFORE MarkConstInit so the versioned single writes are seen as write-once and marked const.
-        # Default 'off' -> pass not run -> byte-identical output.
+        # ssa_loop_scalars: SSA-versions reassigned scalars so each write-once version can be marked
+        # const. Must run before MarkConstInit. Default 'off' keeps output byte-identical.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'ssa_loop_scalars') == 'on':
             from dace.transformation.passes.scalar_fission import PrivatizeScalars
             PrivatizeScalars().apply_pass(sdfg, {})
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        # ``const_init``: classify write-once-then-read-only transients so they are emitted as
-        # ``constexpr T x[N] = {...}`` / ``const T x = expr;`` instead of a runtime-filled buffer.
-        # Default 'on' -- unlike ``ssa_loop_scalars`` above, this pass ALREADY runs today, so 'on' is
-        # the value that keeps the output byte-identical; 'off' takes it out.
+        # const_init: classify write-once transients as constexpr/const. Default 'on' keeps output
+        # byte-identical (unlike ssa_loop_scalars above, this already runs today).
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
             Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})
-        # Any nested SDFG that survived inlining (e.g. a library expansion) must not share a data name
-        # with a differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
+        # A nested SDFG surviving inlining (e.g. a library expansion) must not share a data name with a
+        # differently-strided parent array, else its ``<name>_idx`` helper redefines the parent's.
         CanonicalizeNestedIndexNames().apply_pass(sdfg, {})
         sdfg.validate()
 
-        # The readable ``<arr>_idx`` / ``<arr>_size`` helpers (and the ``ipow`` they may call) are
-        # ``constexpr``; when they are reached from device code, nvcc needs ``--expt-relaxed-constexpr``
-        # to evaluate a host/device constexpr in a constant context. Ensure it is on the CUDA flags
-        # (idempotent) so a GPU build under the readable generator compiles without a manual config edit.
+        # Device code reaching the constexpr _idx/_size helpers needs nvcc's --expt-relaxed-constexpr;
+        # ensure it's set (idempotent) so GPU builds don't need a manual config edit.
         cuda_args = config.Config.get('compiler', 'cuda', 'args')
         if '--expt-relaxed-constexpr' not in cuda_args:
             config.Config.set('compiler', 'cuda', 'args', value=(cuda_args + ' --expt-relaxed-constexpr').strip())
 
-    # Lower ``base ** exp`` to ``ipow`` (exact integer power) wherever the exponent is a
-    # provable non-negative integer -- array sizes, subscripts, loop bounds and interstate
-    # edges. Runs here, right before codegen, rather than in ``simplify``: a size is "just a
-    # more complicated expression" that should not perturb the SDFG, and keeping powers as
-    # ``Pow`` through simplification lets SymPy's power laws fold them (``R**i * R**(K-i-1) ->
-    # R**(K-1)``) before the opaque ``ipow`` freezes the form.
+    # Lower base**exp to ipow where the exponent is a provable non-negative integer. Runs here (not in
+    # simplify) so SymPy's power laws can still fold Pow expressions beforehand.
     from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
     RelaxIntegerPowers().apply_pass(sdfg, {})
 
     frame = framecode.DaCeCodeGenerator(sdfg)
 
-    # Test for undefined symbols in SDFG arguments
     if "?" in frame.arglist.keys():
         raise exc.CodegenError("SDFG '%s' has undefined symbols in its arguments. "
                                "Please ensure all symbols are defined before generating code." % sdfg.name)
@@ -347,44 +295,36 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # If another target has already been registered as CPU, use it instead
         if v['name'] == 'cpu':
             default_target = k
-    # The experimental readable CPU generator is opt-in and selected explicitly
-    # (it is not registered with the target registry), so it wins over any 'cpu'
+    # Readable CPU generator is opt-in (not in the target registry), so it wins over any 'cpu'
     # extension picked above.
     if config.Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable':
         from dace.codegen.targets import experimental_cpu
         default_target = experimental_cpu.ExperimentalCPUCodeGen
     targets = {'cpu': default_target(frame, sdfg)}
 
-    # Both CUDA code generators are registered, but only the one selected in
-    # ``compiler.cuda.implementation`` may be instantiated: they share GPU schedule
-    # types, so instantiating both would raise a duplicate-dispatcher error.
+    # Only the CUDA generator selected via compiler.cuda.implementation may be instantiated -- both
+    # share GPU schedule types, so instantiating both raises a duplicate-dispatcher error.
     cuda_impl = config.Config.get('compiler', 'cuda', 'implementation')
     if cuda_impl not in ('legacy', 'experimental'):
         raise ValueError(f"Invalid compiler.cuda.implementation: {cuda_impl!r}. "
                          "Please select one of 'legacy' or 'experimental'.")
     disabled_cuda_target = 'experimental_cuda' if cuda_impl == 'legacy' else 'cuda'
 
-    # Instantiate the rest of the targets
     targets.update({
         v['name']: k(frame, sdfg)
         for k, v in TargetCodeGenerator.extensions().items()
         if v['name'] not in targets and v['name'] != disabled_cuda_target
     })
 
-    # Query all code generation targets and instrumentation providers in SDFG
     _get_codegen_targets(sdfg, frame)
 
-    # Preprocess SDFG
     for target in frame.targets:
         target.preprocess(sdfg)
 
-    # Give the allocator a state on each loop / conditional boundary so a
-    # transient whose shape depends on a symbol assigned inside the block is
-    # allocated after that symbol is defined (not at a dominator that precedes
-    # the definition).
+    # Give the allocator a state at each loop/conditional boundary, so a transient whose shape depends
+    # on a symbol assigned inside the block allocates after that symbol is defined.
     framecode.pad_control_flow_region_boundaries(sdfg)
 
-    # Instantiate instrumentation providers
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None
         for k, v in frame._dispatcher.instrumentation.items()
@@ -392,7 +332,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     # NOTE: THE SDFG IS ASSUMED TO BE FROZEN (not change) FROM THIS POINT ONWARDS
 
-    # Generate frame code (and the rest of the code)
     (global_code, frame_code, used_targets, used_environments) = frame.generate_code(sdfg, None)
     target_objects = [
         CodeObject(sdfg.name,
@@ -404,14 +343,12 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
                    sdfg=sdfg)
     ]
 
-    # Create code objects for each target
     for tgt in used_targets:
         target_objects.extend(tgt.get_generated_codeobjects())
 
     # Ensure that no new targets were dynamically added
     assert frame._dispatcher.used_targets == (frame.targets - {frame})
 
-    # add a header file for calling the SDFG
     dummy = CodeObject(sdfg.name,
                        generate_headers(sdfg, frame),
                        'h',
@@ -425,7 +362,6 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         if hasattr(env, "codeobjects"):
             target_objects.extend(env.codeobjects)
 
-    # add a dummy main function to show how to call the SDFG
     dummy = CodeObject(sdfg.name + "_main",
                        generate_dummy(sdfg, frame),
                        'cpp',

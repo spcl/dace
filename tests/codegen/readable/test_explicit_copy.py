@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for ``compiler.cpu.codegen_params.explicit_copy``: whether the readable CPU code generator
-    lifts implicit copies to explicit ``CopyLibraryNode`` instances before emission, so ``ExpandAuto``
-    lowers each on its merits (single element -> ``=`` tasklet, contiguous -> ``std::memcpy``) instead
-    of the ``dace::CopyND`` template the implicit path emits. """
+""" Tests for ``compiler.cpu.codegen_params.explicit_copy`` (lifts implicit copies to explicit
+    ``CopyLibraryNode`` instances before emission). """
 import numpy
 import pytest
 
@@ -19,8 +17,7 @@ def mixed_copies(A: dace.float64[N], B: dace.float64[N], sc_in: dace.float64[1],
 
 
 def generate(implementation: str, explicit_copy: str) -> str:
-    # simplify=False: a copy straight into an output argument is exactly what a redundant-copy
-    # simplify pass would try to remove, and the point here is to keep the copy so it reaches codegen.
+    # simplify=False: keeps the copy alive so it reaches codegen instead of being simplified away.
     sdfg = mixed_copies.to_sdfg(simplify=False)
     with set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
          set_temporary('compiler', 'cpu', 'codegen_params', 'explicit_copy', value=explicit_copy):
@@ -28,8 +25,7 @@ def generate(implementation: str, explicit_copy: str) -> str:
 
 
 def test_on_replaces_copynd_in_readable():
-    """ ``on`` (the default) removes the ``dace::CopyND`` template and lowers the contiguous copy to
-        ``std::memcpy`` instead. """
+    """ ``on`` (the default) removes ``dace::CopyND`` and lowers the contiguous copy to ``memcpy``. """
     on = generate('experimental_readable', 'on')
     assert 'dace::CopyND' not in on, 'explicit_copy on should leave no dace::CopyND behind'
     assert 'memcpy' in on, 'the contiguous copy should lower to memcpy'

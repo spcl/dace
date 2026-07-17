@@ -1,23 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Shared fixtures + skip gates for the experimental "readable" CPU code generator.
 
-This suite proves that the experimental generator
-(``compiler.cpu.implementation = experimental``) is numerically equivalent to the
-``legacy`` generator across the npbench, polybench, tsvc and tsvc_2_5 corpora, on
-CPU and GPU.
-
-The readable generator is developed in a parallel task and is not ready yet.
-:func:`experimental_available` gates the whole suite: until the generator is
-wired up it returns ``False`` and every test skips, so
-``pytest tests/codegen/readable`` is green today and flips on automatically once
-the feature lands.
-
-The gate is deliberately stronger than "did it raise": today the code generator
-ignores the ``implementation`` key and silently falls back to legacy (byte-
-identical output), so an exception-only probe would wrongly report the feature as
-ready. The probe therefore also requires the experimental output to *differ* from
-legacy on a trivial SDFG (the readable form emits per-array ``_idx`` index
-functions and ``const``/``constexpr`` initialization, which legacy never does).
+Skips the whole suite until the generator is wired up and its output differs from legacy.
 """
 import functools
 import os
@@ -26,19 +10,13 @@ import signal
 import subprocess
 import tempfile
 
-# dace lazily ``from mpi4py import MPI`` inside ``to_sdfg`` (auto-calls
-# ``MPI_Init``); steer Open MPI off UCX before that import so it cannot stall.
-# ``setdefault`` defers to any externally-provided configuration.
+# Steer Open MPI off UCX before dace's lazy MPI import can stall; setdefault defers to external config.
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 
-# Pin a single OpenMP thread so parallel reductions accumulate in a deterministic order. The
-# suite compares the legacy and experimental generators BIT-EXACTLY on CPU; with more than one
-# thread a reduction's summation order is non-deterministic and the two runs (both multi-threaded)
-# would differ by rounding on FP-heavy kernels -- a thread-scheduling artifact, not a code-generator
-# difference. ``setdefault`` defers to an externally-provided value.
+# Pin 1 OpenMP thread: reduction order must be deterministic for the bit-exact legacy-vs-experimental compare.
 os.environ.setdefault("OMP_NUM_THREADS", "1")
 
 import numpy as np
@@ -60,11 +38,7 @@ def use_implementation(implementation):
 
 
 def trivial_elementwise_sdfg(name):
-    """A tiny ``b[i] = a[i] + 1`` map SDFG, built with the low-level API.
-
-    Constructed directly (not via ``@dace.program``) so the probe is self-
-    contained and works from any interpreter.
-    """
+    """A tiny ``b[i] = a[i] + 1`` map SDFG, built directly with the low-level API (not ``@dace.program``)."""
     sdfg = dace.SDFG(name)
     sdfg.add_array("a", [8], dace.float64)
     sdfg.add_array("b", [8], dace.float64)
@@ -84,24 +58,14 @@ def generated_code(sdfg):
 
 @functools.lru_cache(maxsize=1)
 def experimental_available():
-    """True iff the experimental readable CPU generator is wired up and active.
-
-    All of the following must hold, else the feature is "not ready" and the whole
-    suite skips:
-
-    1. the ``compiler.cpu.implementation`` config key exists;
-    2. code generation under ``experimental`` does not raise on a trivial SDFG;
-    3. that generated code DIFFERS from the ``legacy`` output for the same SDFG
-       (a silent legacy fallback -- today's state -- produces identical bytes).
-    """
+    """True iff the experimental readable CPU generator is wired up and its output differs from legacy."""
     try:
         Config.get(*IMPLEMENTATION_KEY)
     except Exception:  # noqa: BLE001 - key absent -> feature not present
         return False
     try:
-        # One SDFG object generated under each config: the ONLY difference is the
-        # generator, so this is deterministic (unlike two separately-built SDFGs,
-        # whose names DaCe may deduplicate, spuriously diverging the output).
+        # Same SDFG object under both configs -- avoids spurious divergence from DaCe deduplicating
+        # two separately-built SDFGs' names.
         sdfg = trivial_elementwise_sdfg("readable_probe")
         with use_implementation(LEGACY):
             legacy_code = generated_code(sdfg)
@@ -160,17 +124,8 @@ def waitpid_with_timeout(pid, timeout):
 
 
 def run_isolated(build_and_run, timeout=300):
-    """Run ``build_and_run() -> Dict[str, ndarray]`` in a forked child process.
-
-    Repo rule: always fork when running compiled kernels -- an experimental
-    kernel that segfaults must not take down the pytest process. The child
-    marshals its output arrays through a temporary ``.npz``; a crash or timeout
-    surfaces as a ``RuntimeError`` in the parent.
-
-    Reserved for CPU runs. CUDA and ``os.fork`` are incompatible (a CUDA context
-    initialized in the parent is unusable after fork), so GPU cases run in-process
-    (see the test drivers).
-    """
+    """Run ``build_and_run() -> Dict[str, ndarray]`` in a forked child process (CPU only -- CUDA and
+    ``os.fork`` don't mix). A crash or timeout surfaces as a ``RuntimeError`` in the parent."""
     handle, path = tempfile.mkstemp(suffix=".npz")
     os.close(handle)
     pid = os.fork()
@@ -210,28 +165,7 @@ def max_abs_diff(legacy, experimental):
 
 
 def assert_outputs_equivalent(legacy, experimental, target, label=""):
-    """Assert the readable generator reproduced the legacy outputs.
-
-    FLOAT outputs are compared with a precision-matched tolerance, not bit-for-bit.
-    The readable generator deliberately RESTRUCTURES the emitted C++ -- it drops
-    copy-in/out temporaries and folds a single-element copy into ``const T x =
-    arr[...]``. Folding away a copy removes an address-taken 64-bit store (the
-    legacy ``dace::CopyND(..., &tmp, 1)`` forces ``tmp`` to memory); once that
-    store is gone the default ``-ffast-math`` may keep the value in a wider
-    register or FMA-contract the neighbouring ops, so a float result can land a
-    few ULP off legacy even though the computation is identical. This was
-    root-caused on ``gramschmidt`` (the only corpus kernel that feeds such a freed
-    value into an FP-sensitive normalization) and PROVEN benign: legacy vs
-    readable is bit-exact once ``-ffast-math`` is stripped. The tolerance is a
-    real-bug net, not a fudge -- a genuine miscompile is orders larger.
-
-    INTEGER (and bool) outputs keep exact equality: ``tolerance_for`` returns
-    ``(0, 0)`` for them, so ``np.allclose`` reduces to bit-exact. No FP
-    reassociation is possible there, so any integer discrepancy is a real bug.
-
-    GPU additionally reorders reductions/atomics; the same dtype-aware tolerance
-    covers it, so CPU and GPU share one comparison.
-    """
+    """Assert the readable generator reproduced the legacy outputs (dtype-aware tolerance; exact for ints)."""
     legacy = {name: to_host(value) for name, value in legacy.items()}
     experimental = {name: to_host(value) for name, value in experimental.items()}
     assert set(legacy) == set(experimental), (f"{label}: output-key mismatch "
@@ -267,8 +201,7 @@ def require_gpu():
     pytest.param("gpu", id="gpu", marks=pytest.mark.gpu),
 ])
 def target(request):
-    """Codegen target. The GPU variant carries ``@pytest.mark.gpu`` (select with
-    ``-m gpu``) and additionally skips when no CUDA device is available."""
+    """Codegen target ("cpu"/"gpu"); the GPU variant carries ``@pytest.mark.gpu`` and skips without CUDA."""
     if request.param == "gpu" and not gpu_available():
         pytest.skip("no CUDA-capable GPU available")
     return request.param
@@ -276,7 +209,5 @@ def target(request):
 
 @pytest.fixture(params=[LEGACY, EXPERIMENTAL])
 def codegen_variant(request):
-    """A single CPU generator implementation. Available for future single-variant
-    tests; the equivalence tests here drive both variants within one test and
-    compare, so they do not consume this fixture."""
+    """A single CPU generator implementation (unused by the equivalence tests here, which drive both)."""
     return request.param

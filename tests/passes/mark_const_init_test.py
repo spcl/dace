@@ -11,8 +11,7 @@ from dace.transformation.passes.mark_const_init import MarkConstInit
 
 
 def _run(sdfg: dace.SDFG):
-    # MarkConstInit's own return value is ``{cfg_id: {name: classification}}`` (the source of truth for
-    # the classification); the pipeline nests it under the pass name, so unwrap it here.
+    # Pipeline nests MarkConstInit's own {cfg_id: {name: classification}} return under the pass name; unwrap it.
     res = Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
     return (res or {}).get('MarkConstInit')
 
@@ -51,10 +50,8 @@ def test_scalar_constant_single_write():
     assert kinds.get('a') == 'constexpr_static'
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 0
-    # The runtime write (tasklet + write access node) must be gone.
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'a'] == []
-    # The read side must be preserved.
     assert any(n.data == 'a' for n in s2.data_nodes())
 
 
@@ -83,7 +80,6 @@ def test_array_full_constant_write():
     assert kinds.get('A') == 'constexpr_static'
     assert 'A' in sdfg.constants
     assert np.array_equal(sdfg.constants['A'], np.full(10, 3.0))
-    # The initializing map must be gone from s1.
     assert _tasklets(s1) == []
     assert [n for n in s1.data_nodes() if n.data == 'A'] == []
 
@@ -119,10 +115,7 @@ def test_array_partial_constant_write():
 
 
 def test_scalar_runtime_single_write():
-    """A scalar written once (a fuseable ``out = inp`` tasklet) from runtime data then
-    read in the SAME state is marked const_runtime -- the const binding is emitted at the
-    write and read within one state block. (A cross-state write is write-once too but not
-    const-emittable: each state is its own scope, so it is deliberately NOT marked.)"""
+    """A scalar written once from runtime data and read in the SAME state is marked const_runtime."""
     sdfg = dace.SDFG('scalar_runtime')
     sdfg.add_array('src', [1], dace.int32)
     sdfg.add_scalar('a', dace.int32, transient=True)
@@ -145,7 +138,6 @@ def test_scalar_runtime_single_write():
     assert kinds.get('a') == 'const_runtime'
     assert sdfg.arrays['a'].const_init is True
     assert 'a' not in sdfg.constants
-    # Dataflow must be untouched: producer + consumer tasklets and the access node stay.
     assert len(_tasklets(s)) == 2
     assert any(n.data == 'a' for n in s.data_nodes())
 
@@ -179,23 +171,15 @@ def test_array_double_write_not_marked():
     assert 'A' not in kinds
     assert 'A' not in sdfg.constants
     assert not sdfg.arrays['A'].const_init
-    # Both writes must be preserved.
     assert _tasklets(s1) != []
     assert _tasklets(s2) != []
-    # ... and preserved AS THEY WERE. The pass speculatively unrolls a constant-fill map before it
-    # classifies, so a rejected target (here: A is written twice) must not leave the fill map
-    # flattened into per-element tasklets -- a pass that does not apply must not mutate. Asserting
-    # only on _tasklets() above cannot see this: the unroll leaves 10 tasklets behind, so the check
-    # passes either way.
+    # _tasklets() alone can't see a decline leaving the fill map flattened (speculative unroll runs
+    # before classification, and 10 leftover per-element tasklets would pass that check either way).
     assert _map_entries(s1) != [], 'rejected fill map was unrolled anyway'
 
 
 def test_interstate_edge_read_not_marked():
-    """A scalar read on an interstate edge is a live use and must not be promoted, even if written once by a constant.
-
-    Interstate edges never write arrays but may read them (in conditions/assignments); such reads are not visible as
-    access nodes, so the pass must treat the descriptor conservatively and leave it unmarked (and its dataflow intact).
-    """
+    """A scalar read on an interstate edge is a live use and must not be promoted, even if written once."""
     sdfg = dace.SDFG('iedge_read')
     sdfg.add_scalar('a', dace.int32, transient=True)
     sdfg.add_array('B', [1], dace.int32)
@@ -206,8 +190,7 @@ def test_interstate_edge_read_not_marked():
     s1.add_edge(init_t, 'out', a_write, None, dace.Memlet('a[0]'))
 
     s2 = sdfg.add_state('mid')
-    # Dominated access-node read of 'a': without the interstate-edge guard this structure would be promoted
-    # (it is otherwise identical to the plain scalar-constant case), so the iedge read is the sole disqualifier.
+    # Otherwise identical to the plain scalar-constant case -- the iedge read is the sole disqualifier.
     s3 = sdfg.add_state('use')
     a_read = s3.add_read('a')
     use_t = s3.add_tasklet('use', {'inp'}, {'out'}, 'out = inp + 1')
@@ -225,7 +208,6 @@ def test_interstate_edge_read_not_marked():
     assert 'a' not in kinds
     assert 'a' not in sdfg.constants
     assert not sdfg.arrays['a'].const_init
-    # Dataflow untouched: the writing tasklet and access node remain.
     assert len(_tasklets(s1)) == 1
     assert any(n.data == 'a' for n in s1.data_nodes())
 
@@ -251,7 +233,6 @@ def test_same_state_separable_marked():
     assert kinds.get('a') == 'constexpr_static'
     assert 'a' in sdfg.constants
     assert int(sdfg.constants['a']) == 4
-    # The init tasklet is removed, but the access node is kept (it still feeds the reader).
     assert init_t not in s.nodes()
     assert a_node in s.nodes()
     assert use_t in s.nodes()
@@ -281,7 +262,6 @@ def test_same_state_non_separable_not_marked():
     assert 'a' not in kinds
     assert 'a' not in sdfg.constants
     assert not sdfg.arrays['a'].const_init
-    # Dataflow untouched.
     assert init_t in s.nodes()
     assert a_write in s.nodes()
 
@@ -444,7 +424,6 @@ def test_multiwrite_read_before_write_not_marked():
     assert 'arr' not in kinds
     assert 'arr' not in sdfg.constants
     assert not sdfg.arrays['arr'].const_init
-    # Dataflow untouched.
     assert t0 in s0.nodes()
     assert t2 in s2.nodes()
 
@@ -531,8 +510,7 @@ def test_idempotency():
     first_value = np.copy(sdfg.constants['A'])
     num_nodes_s1 = len(s1.nodes())
 
-    # Second run must not change anything: MarkConstInit marks nothing (already an SDFG constant), so its
-    # own return value is None and 'A' is absent from the classification.
+    # Second run marks nothing (already an SDFG constant): return value is None, 'A' absent from classification.
     second_result = _run(sdfg)
     assert 'A' not in (second_result or {}).get(sdfg.cfg_id, {})
     assert 'A' in sdfg.constants
@@ -541,17 +519,7 @@ def test_idempotency():
 
 
 def test_partly_paying_fill_map_is_not_unrolled():
-    """A fill map is unrolled only if EVERY name it writes is const-initializable.
-
-    The unroll decision is taken on a probe where all candidate maps are unrolled, but applied to a
-    graph where only the paying ones are. Those two graphs must agree, or a map gets unrolled and
-    then declined anyway -- the mutate-without-apply bug all over again.
-
-    Here map ``fill_x`` writes only ``X``, while map ``fill_xz`` writes ``X`` AND ``Z``; ``Z`` is
-    written a second time, so it is declined. Unrolling only ``fill_x`` would leave ``fill_xz``'s
-    MapExit as a writer of ``X``, which makes ``X`` a runtime multi-write and declines it too -- so
-    ``fill_x`` would have been flattened for nothing.
-    """
+    """A fill map is unrolled only if EVERY name it writes is const-initializable, not just some."""
     sdfg = dace.SDFG('partly_paying')
     sdfg.add_array('X', [8], dace.float64, transient=True)
     sdfg.add_array('Z', [4], dace.float64, transient=True)
@@ -592,8 +560,7 @@ def test_partly_paying_fill_map_is_not_unrolled():
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
 
-    # Whatever the classifier decides, the invariant is the same: a map that was flattened MUST have
-    # paid for it. If X was not const-inited, neither fill map may have been unrolled.
+    # Invariant regardless of the classifier's decision: a flattened map must have paid for it.
     if 'X' not in kinds:
         assert len(_map_entries(s1)) == 2, ('a fill map was unrolled but X was not const-inited: '
                                             f'{[m.map.label for m in _map_entries(s1)]}')
@@ -601,23 +568,7 @@ def test_partly_paying_fill_map_is_not_unrolled():
 
 
 def test_symbolic_fill_map_never_becomes_const_runtime():
-    """Unrolling a fill map can never produce a ``const_runtime``, so the unroll gate is right to
-    count only ``constexpr_static``.
-
-    It looks like it should. A fill map has no data inputs, so a symbol-valued one (``s = N * 2.0``)
-    classifies ``runtime`` per element; for N>1 that is a runtime multi-write and declined, but a
-    ONE-iteration fill unrolls to a single runtime write -- apparently exactly the
-    ``const T s = expr;`` binding, and apparently a shape the gate would wrongly hold back. It is not,
-    because two requirements are mutually exclusive:
-
-      * ``const_runtime`` needs the write's scope to ENCLOSE every read (_write_encloses_reads): each
-        state is its own ``{ }`` block, so the reads must live in the WRITE's state.
-      * The unroll needs the consumer NOT in the fill's state (_is_constant_fill_map), or MapUnroll
-        drags it into the component it replicates.
-
-    So the fill is either unrollable or const_runtime-able, never both. Both arrangements below are
-    unmarked, for those two different reasons.
-    """
+    """A fill map is either unrollable or const_runtime-able, never both."""
     sdfg = dace.SDFG('sym_fill')
     sdfg.add_symbol('N', dace.int64)
     sdfg.add_scalar('s', dace.float64, transient=True)
@@ -648,12 +599,7 @@ def test_symbolic_fill_map_never_becomes_const_runtime():
 
 
 def _same_state_fill_sdfg(name):
-    """A constant fill whose CONSUMER lives in the same state, connected through one access node.
-
-    This is what ``apply_gpu_transformations`` produces: it fuses the fill's state into its
-    consumer's, leaving ``fill -> MapExit -> A -> MapEntry -> use``. The dependency is explicit, so
-    the fill provably precedes the read.
-    """
+    """A constant fill whose consumer lives in the same state (what ``apply_gpu_transformations`` produces)."""
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [8], dace.float64, transient=True)
     sdfg.add_array('B', [8], dace.float64)
@@ -678,21 +624,7 @@ def _same_state_fill_sdfg(name):
                    'claim to deliver the FULL array to the consumer while each is written at one index. '
                    'const-init here needs the fill evaluated WITHOUT unrolling, not a looser classifier.')
 def test_same_state_constant_fill_is_const_inited():
-    """A constant fill should be const-initializable even when its consumer shares the state.
-
-    This is every GPU kernel: ``apply_gpu_transformations`` fuses the fill's state into its consumer's,
-    so nothing on a GPU-transformed SDFG is ever const-inited. The two-state CPU shape is marked only
-    because cross-state reachability answers the ordering question instead
-    (test_array_full_constant_write).
-
-    Currently xfail, and NOT because the classifier is too strict. Unrolling the fill here produces a
-    graph where each per-element node carries ``A[i]`` in but ``A[0:8]`` out -- eight nodes each
-    claiming the whole array. The write-before-read check declines that, which is what SAVES us: the
-    same MapUnroll damage shows up as 'Isolated node' / 'Dangling in-connector' when it is allowed to
-    stand. Relaxing the check would accept a broken graph. The real fix is to teach the classifier to
-    evaluate a constant-fill map's value directly and replace the map wholesale, deleting Step 0's
-    speculative unroll entirely.
-    """
+    """A constant fill should be const-initializable even when its consumer shares the state."""
     sdfg = _same_state_fill_sdfg('same_state_fill')
     res = _run(sdfg)
     kinds = (res or {}).get(sdfg.cfg_id, {})
@@ -702,17 +634,12 @@ def test_same_state_constant_fill_is_const_inited():
     sdfg.validate()
 
 
-# These two are @dace.program (NOT hand-built SDFGs -- the frontend shape is the point) and live at
-# MODULE scope deliberately: a @dace.program nested inside a function is parsed as a nested program,
-# which fails once another test in the session has put the frontend in a program context
-# ("Nested programs must be defined...", "'Expr' object has no attribute 'body'"). Those failures do
-# not reproduce when the file runs alone, only in the full suite.
+# Must stay at MODULE scope: @dace.program nested in a function parses as a nested program and fails cross-test.
 
 
 @dace.program
 def gpu_constfill(A: dace.float64[8]):
-    """A small constant fill of a transient, then a read of it. After apply_gpu_transformations the
-    fill is a GPU_Device-scheduled map writing a GPU_Global transient."""
+    """A constant fill of a transient; after ``apply_gpu_transformations`` it is GPU_Device-scheduled."""
     w = np.zeros((8, ), dtype=np.float64)
     for i in dace.map[0:8]:
         w[i] = 2.0
@@ -740,27 +667,14 @@ def _gpu_fill_program(program):
 
 
 def test_gpu_constant_fill_map_keeps_its_schedule():
-    """The pass must not flatten a GPU_Device-scheduled fill map into host tasklets.
-
-    ``_unroll_constant_fill_maps`` unrolls a constant-fill map so the classifier sees element-wise
-    writes. On a GPU-transformed SDFG the map's GPU_Device schedule is what puts the write on the
-    device, so unrolling it strands host tasklets writing GPU_Global memory -- an invalid SDFG
-    (``Data container "w" is stored as StorageType.GPU_Global but accessed on host``).
-
-    Needs no GPU: ``apply_gpu_transformations`` is a pure SDFG rewrite and validation catches this.
-    """
+    """The pass must not flatten a GPU_Device-scheduled fill map into host tasklets (no GPU needed to check)."""
     sdfg = _gpu_fill_program(gpu_constfill)
     _run(sdfg)
     sdfg.validate()
 
 
 def test_gpu_rejected_fill_map_stays_valid():
-    """Same shape, but the fill target is written a second time, so the classifier REJECTS it.
-
-    This is the durbin failure: the speculative unroll has already destroyed the schedule by the
-    time the classifier declines to const-init, so the pass mutates without applying AND leaves the
-    SDFG invalid.
-    """
+    """Same shape, but the fill target is written twice, so the classifier rejects it (the durbin failure)."""
     sdfg = _gpu_fill_program(gpu_refill)
     _run(sdfg)
     sdfg.validate()

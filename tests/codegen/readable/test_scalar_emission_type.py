@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-""" Tests for ``compiler.cpu.codegen_params.scalar_emission_type``: normalize single-value TRANSIENTS
-    to a by-value ``Scalar`` (``scalar``) or a length-1 ``Array`` (``len1_array``), or leave the mix
-    untouched (``keep``, the default). Both conversions are transient-only, so the SDFG signature is
-    never rewritten, and ``scalar`` keeps GPU kernel outputs as length-1 arrays. """
+""" Tests for ``compiler.cpu.codegen_params.scalar_emission_type``: normalizes transient single-value
+    data to ``Scalar`` or length-1 ``Array`` (``keep``, the default, leaves the mix untouched). """
 import numpy as np
 import pytest
 
@@ -22,11 +20,7 @@ def mixed(A: dace.float64[8], out: dace.float64[1]):
 
 
 def descriptors(implementation, mode):
-    """``{name: (descriptor_class_name, transient)}`` after the readable pipeline's conversion.
-
-    Replays the two conversion passes the codegen gate runs, so the descriptor effect is observable
-    without reaching into ``generate_code``'s internal deep copy.
-    """
+    """``{name: (descriptor_class_name, transient)}`` after replaying the pipeline's conversion passes."""
     from dace.transformation.passes.length_one_array_scalar_conversion import (ConvertLengthOneArraysToScalars,
                                                                                ConvertScalarsToLengthOneArrays)
     sdfg = mixed.to_sdfg(simplify=True)
@@ -85,8 +79,8 @@ def test_all_modes_compile_and_run(mode):
 
 
 def test_scalar_keeps_gpu_kernel_output_as_length1_array():
-    """ ``scalar`` scalarizes a GPU_Global length-1 output but PromoteGPUScalarsToArrays widens it
-    back -- a by-value Scalar cannot live in device memory. Needs no GPU: it is a pure SDFG rewrite. """
+    """ ``scalar`` scalarizes a GPU_Global output, but PromoteGPUScalarsToArrays widens it back
+    (a pure SDFG rewrite -- needs no GPU). """
     from dace.transformation.pass_pipeline import Pipeline
     from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
     from dace.transformation.passes.promote_gpu_scalars_to_arrays import (InferDefaultSchedulesAndStorages,
