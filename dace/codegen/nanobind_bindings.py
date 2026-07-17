@@ -417,6 +417,21 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     init_def_args = ''.join(f', {a}' for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
     has_gpu = 'true' if _has_gpu_code(sdfg) else 'false'
 
+    # Codegen-time call metadata, exposed on the handle so the Python wrapper
+    # does not re-derive it (the __return naming convention and the callback
+    # detection live in one place).
+    if '__return' in sdfg.arrays:
+        return_names = ('__return', )
+        is_single_ret = 'true'
+    else:
+        found_returns = {n for n in sdfg.arrays if n.startswith('__return_')}
+        return_names = tuple(f'__return_{i}' for i in range(len(found_returns)))
+        if found_returns != set(return_names):
+            raise ValueError(f"SDFG '{sdfg.name}': non-contiguous return-array numbering: {sorted(found_returns)}")
+        is_single_ret = 'false'
+    return_names_def = ', '.join(f'"{n}"' for n in return_names)
+    callback_names_def = ', '.join(f'"{n}"' for n in arglist if isinstance(arglist[n].dtype, dtypes.callback))
+
     # Symbol values are never stored on the handle: the external-memory entry
     # points (framecode.py, generate_external_memory_management) take the init
     # symbols as arguments, so the caller passes them per call - the bound
@@ -616,6 +631,9 @@ NB_MODULE({name}, m) {{
             return fields;
         }})
         .def_prop_ro("has_gpu_code", [](DaceHandle_{name} &) {{ return {has_gpu}; }})
+        .def_prop_ro("return_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({return_names_def}); }})
+        .def_prop_ro("is_single_value_ret", [](DaceHandle_{name} &) {{ return {is_single_ret}; }})
+        .def_prop_ro("callback_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({callback_names_def}); }})
         .def_prop_ro("state_pointer", [](DaceHandle_{name} &h) {{
             h.require_state();
             return reinterpret_cast<std::uintptr_t>(h.m_state);

@@ -79,21 +79,15 @@ class NanobindCompiledSDFG:
         #: runs the repetitions itself and then suppresses the hooked call.
         self.do_not_execute: bool = False
 
-        if '__return' in sdfg.arrays:
-            self._return_values: Tuple[str] = ('__return', )
-            self._is_single_value_ret = True
-        else:
-            # Can not use `sorted()` here, because then `__return_11` would be ordered before `__return_2`.
-            return_names = {name for name in sdfg.arrays if name.startswith('__return_')}
-            self._return_values = tuple(f'__return_{i}' for i in range(len(return_names)))
-            self._is_single_value_ret = False
-            assert return_names == set(self._return_values)
+        # Codegen-time call metadata comes from the handle: the `__return*`
+        # naming convention and the callback detection live in the bindings
+        # generator, not here.
+        self._return_values: Tuple[str, ...] = tuple(self._handle.return_names)
+        self._is_single_value_ret: bool = self._handle.is_single_value_ret
 
         # Callback arguments; each call wraps the passed callable in a ctypes `CFUNCTYPE` (see _process_callbacks).
-        self._callback_args: Dict[str, Any] = {
-            name: desc.dtype
-            for name, desc in sdfg.arglist().items() if isinstance(desc.dtype, dtypes.callback)
-        }
+        arglist = sdfg.arglist()
+        self._callback_args: Dict[str, Any] = {name: arglist[name].dtype for name in self._handle.callback_names}
         self._callback_keepalive: List[Any] = []
         self._callback_refs: List[Any] = []
 

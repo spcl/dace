@@ -366,6 +366,41 @@ def test_nanobind_interface_callback_binding():
     assert 'm_sym_' not in code  # symbol values are never stored on the handle
 
 
+def test_nanobind_interface_handle_metadata_binding():
+    """The handle exposes the codegen-time call metadata - return-array names,
+    the single-value-return convention, and callback names - so the Python
+    wrapper does not re-derive them from naming conventions."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    # Multi-value returns: names in order, not the single-value convention.
+    sdfg = dace.SDFG('metadata_probe_rets')
+    sdfg.add_array('__return_0', [4], dace.float64)
+    sdfg.add_array('__return_1', [4], dace.float64)
+    code = generate_bindings_code(sdfg)
+    assert 'nb::make_tuple("__return_0", "__return_1")' in code
+    assert '"is_single_value_ret", [](DaceHandle_metadata_probe_rets &) { return false; }' in code
+
+    # Single-value return plus a callback.
+    sdfg = dace.SDFG('metadata_probe_single')
+    sdfg.add_array('__return', [4], dace.float64)
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_symbol('cb', dace.callback(dace.float64, dace.float64))
+    state = sdfg.add_state()
+    t = state.add_tasklet('t', {}, {'o'}, 'o = cb(1.0)')
+    state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+    code = generate_bindings_code(sdfg)
+    assert 'nb::make_tuple("__return")' in code
+    assert '"is_single_value_ret", [](DaceHandle_metadata_probe_single &) { return true; }' in code
+    assert '"callback_names", [](DaceHandle_metadata_probe_single &) { return nb::make_tuple("cb"); }' in code
+
+    # No returns, no callbacks: empty tuples.
+    sdfg = dace.SDFG('metadata_probe_empty')
+    sdfg.add_array('A', [10], dace.float64)
+    code = generate_bindings_code(sdfg)
+    assert '"return_names", [](DaceHandle_metadata_probe_empty &) { return nb::make_tuple(); }' in code
+    assert '"callback_names", [](DaceHandle_metadata_probe_empty &) { return nb::make_tuple(); }' in code
+
+
 def test_nanobind_interface_symbol_inference_binding():
     """A size symbol not in arg_names binds as an optional parameter with a shape-derived fallback."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
@@ -1349,7 +1384,10 @@ def test_nanobind_interface_gpu_return_allocation_requires_cupy():
 
     sdfg = dace.SDFG('gpu_return_alloc_probe')
     sdfg.add_array('__return', [10], dace.float64, storage=dace.StorageType.GPU_Global)
-    stub_handle = types.SimpleNamespace(has_gpu_code=True)
+    stub_handle = types.SimpleNamespace(has_gpu_code=True,
+                                        return_names=('__return', ),
+                                        is_single_value_ret=True,
+                                        callback_names=())
     stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: stub_handle, __file__='<stub>')
     wrapper = NanobindCompiledSDFG(sdfg, stub_module, [])
     with pytest.raises(NotImplementedError, match='cupy'):
@@ -1393,6 +1431,9 @@ def test_nanobind_interface_gpu_error_check(monkeypatch):
 
     class FakeHandle:
         has_gpu_code = True
+        return_names = ()
+        is_single_value_ret = False
+        callback_names = ()
 
         def __call__(self, *args, **kwargs):
             calls.append(kwargs)
