@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from dace import data, dtypes, symbolic
 from dace.sdfg.sdfg import NestedDict
 from dace.frontend.python.nextgen.common import FrontendError
+from dace.frontend.python.nextgen.lowering.parse_cache import CalleeParseCache
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
 from dace.frontend.python.schedule_tree import structure_support
 
@@ -99,6 +100,11 @@ class ProgramContext:
         #: path, so repeated accesses to the same member share one descriptor
         #: object (member resolution clones by contract).
         self._member_descriptors: Dict[str, data.Data] = {}
+
+        #: Per-parse cache of preprocessed+canonicalized callees, shared by
+        #: all call sites (including nested inline scopes, which reuse this
+        #: context object).
+        self.parse_cache = CalleeParseCache()
 
         self._name_counter = 0
 

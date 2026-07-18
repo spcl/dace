@@ -118,20 +118,68 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
 def _prepare_callee(call: ast.Call, callee: Any,
                     state: LoweringState) -> Tuple[List[ast.stmt], Dict[str, str], Dict[str, Any], Dict[str, str]]:
     """
-    Map call arguments to callee parameters, preprocess the callee, and
-    canonicalize its body against the shared repository.
+    Map call arguments to callee parameters, then fetch (or produce) the
+    callee's preprocessed and canonicalized parse through the per-program
+    parse cache: a callee invoked from multiple call sites with the same
+    specialization parses once.
 
     Data arguments bind parameters to the caller's repository containers (by
     reference); constant, symbolic, and compile-time-sequence arguments
     specialize the callee through its globals.
 
-    :return: A 4-tuple of (canonical callee body, parameter-to-container
-             bindings, resolved callee globals, argument label mapping).
+    :return: A 4-tuple of (canonical callee body — a fresh deep copy, since
+             lowering mutates it, parameter-to-container bindings, resolved
+             callee globals, argument label mapping).
     """
-    from dace.frontend.python import preprocessing  # Deferred to keep rule import light
-    from dace.frontend.python.nextgen.canonical.passes import default_passes
-    from dace.frontend.python.nextgen.pipeline import CanonicalizationPipeline, PipelineContext
+    argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, spec_key = _map_arguments(
+        call, callee, state)
 
+    # Cache key: callee identity (function AND bound object — two instances
+    # share __call__ source but specialize separately through their attribute
+    # values, which enter the parse via preprocessing, invisible to the
+    # specialization key) plus the argument specialization.
+    key = (id(callee), callee.resolve_functions, id(callee.methodobj), spec_key)
+    parse = state.context.parse_cache.get_or_parse(
+        key, lambda: _parse_callee(callee, argtypes, callee_globals, injected_defaults))
+
+    # Merge closure metadata into the shared repository/root. Idempotent
+    # (setdefault), and the closure object is deliberately shared across call
+    # sites: closure-array descriptor identity drives qualified-name
+    # deduplication.
+    closure = parse.closure
+    for callback_name, (original, _, _) in closure.callbacks.items():
+        state.emitter.root.callback_mapping.setdefault(callback_name, original)
+    for constant_name, value in closure.closure_constants.items():
+        try:
+            descriptor = data.create_datadescriptor(value)
+        except (TypeError, ValueError):
+            continue
+        state.context.constants.setdefault(constant_name, (descriptor, value))
+    # External arrays the callee references bind inside its inline scope,
+    # deduplicated by qualified name across the whole program
+    for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items():
+        container = state.context.register_closure_array(reference_name, qualified_name, descriptor)
+        parameter_bindings[reference_name] = container
+
+    # Lowering mutates the body (early-return restructuring, annotation
+    # hints), so every call site works on its own copy.
+    body = copy.deepcopy(parse.canonical_body)
+    return body, parameter_bindings, parse.program_globals, argument_labels
+
+
+def _map_arguments(
+        call: ast.Call, callee: Any, state: LoweringState
+) -> Tuple[Dict[str, data.Data], Dict[str, Any], Dict[str, str], Dict[str, str], set, Tuple]:
+    """
+    Map call arguments to callee parameters against the caller's context.
+    Cheap and caller-state-dependent (runs on every call site, unlike the
+    cached parse).
+
+    :return: A 6-tuple of (argument descriptors by parameter, callee globals
+             with specialized values, parameter-to-container bindings,
+             argument label mapping, injected default-argument names, and the
+             hashable specialization key for the parse cache).
+    """
     parameter_names = list(callee.argnames)
     if len(call.args) > len(parameter_names):
         raise UnsupportedFeatureError(f'Too many arguments in call to "{callee.name}"', state.context.filename, call)
@@ -151,13 +199,16 @@ def _prepare_callee(call: ast.Call, callee: Any,
     argtypes: Dict[str, data.Data] = {}
     parameter_bindings: Dict[str, str] = {}
     argument_labels: Dict[str, str] = {}
+    specialization = []
     for parameter in parameter_names:
         if parameter not in provided:
             if parameter not in callee.default_args:
                 raise UnsupportedFeatureError(f'Missing argument "{parameter}" in call to "{callee.name}"',
                                               state.context.filename, call)
-            callee_globals[parameter] = callee.default_args[parameter]
+            default_value = callee.default_args[parameter]
+            callee_globals[parameter] = default_value
             injected_defaults.add(parameter)
+            specialization.append((parameter, 'default', repr(default_value)))
             continue
         argument = provided[parameter]
         argument_labels[parameter] = astutils.unparse(argument)
@@ -172,14 +223,31 @@ def _prepare_callee(call: ast.Call, callee: Any,
             container = state.context.container_of(argument.id, argument)
             argtypes[parameter] = state.context.containers[container]  # By reference: shared repository
             parameter_bindings[parameter] = container
+            specialization.append((parameter, 'descriptor', repr(argtypes[parameter])))
         elif inferred.kind in ('constant', 'symbolic'):
             callee_globals[parameter] = inferred.value
+            specialization.append((parameter, type(inferred.value).__name__, repr(inferred.value)))
         elif inferred.kind == 'static':
             constants = state.inference.sequence_constants(inferred.value)
             callee_globals[parameter] = tuple(constants) if inferred.value.kind == 'tuple' else constants
+            specialization.append((parameter, 'static', repr(callee_globals[parameter])))
         else:
             raise UnsupportedFeatureError(f'Unsupported argument kind in call to "{callee.name}"',
                                           state.context.filename, argument)
+    return argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, tuple(specialization)
+
+
+def _parse_callee(callee: Any, argtypes: Dict[str, data.Data], callee_globals: Dict[str, Any],
+                  injected_defaults: set) -> 'parse_cache.CalleeParse':
+    """
+    Preprocess and canonicalize a callee. Pure with respect to the caller's
+    lowering state — it touches no context, emitter, or inference objects —
+    so results are cacheable (and, later, parallelizable).
+    """
+    from dace.frontend.python import preprocessing  # Deferred to keep rule import light
+    from dace.frontend.python.nextgen.canonical.passes import default_passes
+    from dace.frontend.python.nextgen.lowering import parse_cache
+    from dace.frontend.python.nextgen.pipeline import CanonicalizationPipeline, PipelineContext
 
     modules = {
         key: value.__name__
@@ -193,29 +261,16 @@ def _prepare_callee(call: ast.Call, callee: Any,
                                                                 resolve_functions=callee.resolve_functions,
                                                                 default_args=injected_defaults)
 
-    # Merge closure metadata into the shared repository/root
-    for key, (original, _, _) in closure.callbacks.items():
-        state.emitter.root.callback_mapping.setdefault(key, original)
-    for constant_name, value in closure.closure_constants.items():
-        try:
-            descriptor = data.create_datadescriptor(value)
-        except (TypeError, ValueError):
-            continue
-        state.context.constants.setdefault(constant_name, (descriptor, value))
-    # External arrays the callee references bind inside its inline scope,
-    # deduplicated by qualified name across the whole program
-    for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items():
-        container = state.context.register_closure_array(reference_name, qualified_name, descriptor)
-        parameter_bindings[reference_name] = container
-
     program_ast = parsed_ast.preprocessed_ast
     program_node = program_ast.body[0] if isinstance(program_ast, ast.Module) else program_ast
     if not isinstance(program_node, ast.FunctionDef):
-        raise UnsupportedFeatureError(f'Preprocessing "{callee.name}" did not produce a function',
-                                      state.context.filename, call)
+        raise UnsupportedFeatureError(f'Preprocessing "{callee.name}" did not produce a function', parsed_ast.filename)
     pipeline_context = PipelineContext(callee.name, parsed_ast.filename, parsed_ast.program_globals, argtypes)
     program = CanonicalizationPipeline(default_passes()).run(program_node, pipeline_context)
-    return program.body, parameter_bindings, parsed_ast.program_globals, argument_labels
+    return parse_cache.CalleeParse(canonical_body=program.body,
+                                   program_globals=parsed_ast.program_globals,
+                                   closure=closure,
+                                   filename=parsed_ast.filename)
 
 
 def _unsupported_return_shape(body: List[ast.stmt]) -> Optional[str]:
