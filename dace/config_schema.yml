@@ -585,6 +585,34 @@ required:
 
                                     Default ``false`` reproduces today's output byte-identically: the lift
                                     and the recursive per-child codegen are both gated on this key.
+                            inline_full_array_nsdfg:
+                                type: bool
+                                default: false
+                                title: Inline a full-array nested SDFG as a __restrict__ pointer alias
+                                description: >
+                                    Applies to: legacy AND experimental_readable.
+
+                                    A nested SDFG (e.g. an outlined map nest) is normally emitted as its own
+                                    C++ function that the parent calls with the connector arrays as
+                                    arguments. When this key is on, a nested SDFG whose EVERY connector binds
+                                    a WHOLE outer array -- full range, offset 0, and the nested array has the
+                                    same shape and strides -- is instead emitted INLINE at the call site: no
+                                    function, no argument marshaling, just one pointer alias per connector,
+
+                                        T* __restrict__ <connector> = <outer array>;
+
+                                    (and nothing at all when the connector already has the same name as the
+                                    outer array). ``__restrict__`` records that the alias does not overlap the
+                                    other connectors -- the no-alias hint the function-argument form gets for
+                                    free -- so the optimizer keeps vectorizing across the (now inlined) body.
+
+                                    Only whole-array connectors qualify: a sub-range needs offset/stride math,
+                                    a scalar is passed by value, and a WCR output must go through the atomic
+                                    resolve path -- each of those keeps the function form. Because it inlines,
+                                    it shares ``inline_sdfgs``' constraint that a nested transient must not
+                                    shadow a name already live in the parent scope.
+
+                                    Default ``false`` keeps the function form, byte-identical to today.
                             index_fn_qualifier:
                                 type: str
                                 default: inline_constexpr

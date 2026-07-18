@@ -617,6 +617,70 @@ class CPUCodeGen(TargetCodeGenerator):
                         return False
         return True
 
+    @staticmethod
+    def _rename_full_array_connectors_to_outer(sdfg, state, node):
+        """Rename each full-array connector of ``node`` to its OUTER array's name where that binding is
+        unambiguous, so the connector and the outer array share a name and codegen emits no alias at all
+        (the body just uses the outer pointer, in scope via ``can_access_parent``). Skips a rename that
+        would clash -- the same outer array bound through a SEPARATE in- and out-connector (an in/out name
+        clash), or a target name already used by a distinct nested array/symbol -- leaving those to the
+        ``__restrict__`` alias path. Mutates ``node.sdfg`` in place; only sound because a nest reaching the
+        inline path is generated exactly once, here.
+        """
+        bindings = {}  # outer array name -> list of (edge, connector, is_input)
+        for e in state.in_edges(node):
+            if e.data is not None and e.data.data is not None and e.dst_conn:
+                bindings.setdefault(e.data.data, []).append((e, e.dst_conn, True))
+        for e in state.out_edges(node):
+            if e.data is not None and e.data.data is not None and e.src_conn:
+                bindings.setdefault(e.data.data, []).append((e, e.src_conn, False))
+        for outer, binds in bindings.items():
+            conns = {conn for _, conn, _ in binds}
+            if len(conns) != 1:
+                continue  # in/out name clash: in- and out-connectors are distinct nested arrays -> alias
+            conn = next(iter(conns))
+            if conn == outer:
+                continue  # already the same name
+            if outer in node.sdfg.arrays or outer in node.sdfg.symbols or outer in node.sdfg.constants:
+                continue  # target name already taken inside the nest -> alias
+            node.sdfg.replace(conn, outer)  # rename the nested array + every reference to it
+            for e, _, is_input in binds:
+                if is_input:
+                    node.in_connectors[outer] = node.in_connectors.pop(conn)
+                    e.dst_conn = outer
+                else:
+                    node.out_connectors[outer] = node.out_connectors.pop(conn)
+                    e.src_conn = outer
+
+    @staticmethod
+    def _nsdfg_connectors_are_full_arrays(sdfg, state, node) -> bool:
+        """True iff EVERY in/out connector of ``node`` binds a whole outer array (full range, offset 0)
+        to a nested array of identical shape and strides -- the case where the two can be aliased with
+        one ``T* __restrict__`` pointer assignment instead of passed through a function argument. Rejects
+        scalars, sub-ranges, WCR and views, which each need real argument handling. Backs the
+        ``inline_full_array_nsdfg`` knob.
+        """
+        edges = [(e, e.dst_conn) for e in state.in_edges(node)] + [(e, e.src_conn) for e in state.out_edges(node)]
+        seen = False
+        for e, conn in edges:
+            if e.data is None or e.data.data is None:
+                continue
+            seen = True
+            if conn is None or e.data.wcr is not None or conn not in node.sdfg.arrays:
+                return False
+            outer = sdfg.arrays.get(e.data.data)
+            inner = node.sdfg.arrays[conn]
+            if outer is None or isinstance(outer, data.Scalar) or isinstance(inner, data.Scalar):
+                return False
+            if isinstance(outer, data.View) or isinstance(inner, data.View):
+                return False
+            full = subsets.Range.from_array(outer)
+            if e.data.subset is None or not (e.data.subset.covers(full) and full.covers(e.data.subset)):
+                return False
+            if list(inner.shape) != list(outer.shape) or list(inner.strides) != list(outer.strides):
+                return False
+        return seen
+
     def get_generated_codeobjects(self):
         objects = []
 
@@ -2464,9 +2528,22 @@ class CPUCodeGen(TargetCodeGenerator):
         callsite_stream: CodeIOStream,
     ):
         inline = Config.get_bool('compiler', 'inline_sdfgs')
+        state_dfg = cfg.nodes()[state_id]
+        # inline_full_array_nsdfg: a CPU-only nest whose connectors are ALL whole outer arrays can be
+        # emitted inline via __restrict__ pointer aliases (see the inline branch below) instead of a
+        # function. Take the inline path -- which also enters the scopes with can_access_parent=True so
+        # the aliased outer pointers resolve. GPU nests (not cpu-only) fall through to do_external.
+        do_alias_inline = (not inline and self.calling_codegen is self
+                           and Config.get_bool('compiler', 'cpu', 'codegen_params', 'inline_full_array_nsdfg')
+                           and self._nsdfg_subtree_is_cpu_only(node.sdfg)
+                           and self._nsdfg_connectors_are_full_arrays(sdfg, state_dfg, node))
+        if do_alias_inline:
+            # Prefer renaming each connector to its outer array's name (no alias needed at all); only a
+            # connector that cannot be renamed without a clash keeps its __restrict__ alias below.
+            self._rename_full_array_connectors_to_outer(sdfg, state_dfg, node)
+            inline = True
         self._dispatcher.defined_vars.enter_scope(sdfg, can_access_parent=inline)
         self._dispatcher.declared_arrays.enter_scope(sdfg, can_access_parent=inline)
-        state_dfg = cfg.nodes()[state_id]
 
         fsyms = self._frame.free_symbols(node.sdfg)
         arglist = node.sdfg.arglist(scalars_only=False, free_symbols=fsyms)
@@ -2589,8 +2666,22 @@ class CPUCodeGen(TargetCodeGenerator):
 
         if inline:
             callsite_stream.write('{', cfg, state_id, node)
-            for ref in memlet_references:
-                callsite_stream.write('%s %s = %s;' % ref, cfg, state_id, node)
+            # inline_full_array_nsdfg: a connector that already shares its outer array's NAME needs no
+            # binding at all (the outer pointer is in scope, can_access_parent=True); every other
+            # full-array connector is aliased with a single __restrict__ pointer assignment.
+            alias_same_name = set()
+            if do_alias_inline:
+                for e in list(state_dfg.in_edges(node)) + list(state_dfg.out_edges(node)):
+                    conn = e.dst_conn if e.dst is node else e.src_conn
+                    if conn is not None and e.data is not None and e.data.data == conn:
+                        alias_same_name.add(conn)
+            for atype, aname, argval in memlet_references:
+                if do_alias_inline:
+                    if aname in alias_same_name:
+                        continue
+                    callsite_stream.write('%s __restrict__ %s = %s;' % (atype, aname, argval), cfg, state_id, node)
+                else:
+                    callsite_stream.write('%s %s = %s;' % (atype, aname, argval), cfg, state_id, node)
             # Emit symbol mappings
             # We first emit variables of the form __dacesym_X = Y to avoid
             # overriding symbolic expressions when the symbol names match
