@@ -162,6 +162,47 @@ def test_shuffle_2d_single_dim_transparent():
     assert numpy.allclose(C1, C0)
 
 
+def test_shuffle_2d_multi_dim_transparent():
+    """Shuffle BOTH dims of a 2D array with distinct sigma each; the elementwise result is unchanged."""
+    register_shuffle("xor3", "i ^ 3", "i ^ 3")
+    register_shuffle("cyc", "(i + 1) % N", "(i + N - 1) % N")
+    sh = _apply_shuffle(rowscale, "rowscale_multi", {"A": [("xor3", 0), ("cyc", 1)]})
+    assert "shuffled_A" in sh.arrays
+
+    _N = 8
+    A = numpy.random.rand(_N, _N)
+    C0 = numpy.zeros((_N, _N))
+    C1 = numpy.zeros((_N, _N))
+    rowscale.to_sdfg()(A=A.copy(), C=C0, N=_N)
+    sh(A=A.copy(), C=C1, N=_N)
+    assert numpy.allclose(C1, C0)
+
+
+def test_shuffle_list_form_single_dim_matches_tuple():
+    """The list form [(name, dim)] is accepted and equivalent to the bare (name, dim) tuple."""
+    register_shuffle("xor3", "i ^ 3", "i ^ 3")
+    sh = _apply_shuffle(scale, "scale_listform", {"A": [("xor3", 0)]})
+    assert "shuffled_A" in sh.arrays
+
+    _N = 8
+    A = numpy.random.rand(_N)
+    C0 = numpy.zeros(_N)
+    C1 = numpy.zeros(_N)
+    scale.to_sdfg()(A=A.copy(), C=C0, N=_N)
+    sh(A=A.copy(), C=C1, N=_N)
+    assert numpy.allclose(C1, C0)
+
+
+def test_shuffle_duplicate_dim_raises():
+    """Shuffling the same dimension twice is refused."""
+    import pytest
+    register_shuffle("xor3", "i ^ 3", "i ^ 3")
+    register_shuffle("cyc", "(i + 1) % N", "(i + N - 1) % N")
+    sdfg = copy.deepcopy(rowscale.to_sdfg(simplify=True))
+    with pytest.raises(ValueError):
+        ShuffleElements(shuffle_map={"A": [("xor3", 0), ("cyc", 0)]}).apply_pass(sdfg, {})
+
+
 def test_shuffle_negative_mod_transparent():
     """A cyclic shift whose inverse (i - 3) % 8 produces a negative dividend stays transparent:
     the emitted C floors like Python (would give an OOB negative index under C's truncating %)."""
@@ -281,6 +322,9 @@ if __name__ == "__main__":
     test_shuffle_affine_inplace_transparent()
     test_shuffle_wrong_inverse_breaks_transparency()
     test_shuffle_2d_single_dim_transparent()
+    test_shuffle_2d_multi_dim_transparent()
+    test_shuffle_list_form_single_dim_matches_tuple()
+    test_shuffle_duplicate_dim_raises()
     test_shuffle_emits_c_functions()
     test_shuffle_nested_sdfg_transparent()
     print("shuffle tests PASS")
