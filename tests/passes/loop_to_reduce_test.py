@@ -584,19 +584,18 @@ def _array_slot_const_product(q: dace.float64[N]):
         q[0] = q[0] * 0.99
 
 
-@pytest.mark.xfail(reason="TSVC s317: ``q[0] *= 0.99`` is a multiplicative induction variable. The preferred "
-                   "path -- ``InductionVariableSubstitution`` (canonicalize/induction_variable_substitution.py) -- "
-                   "now collapses it to the O(1) closed form ``q[0] *= 0.99**N`` and is wired into the "
-                   "canonicalize pipeline. This test still xfails because it exercises ``LoopToReduce`` "
-                   "in isolation, which intentionally does NOT recognise the IV shape (no array to fold). "
-                   "See tests/passes/induction_variable_substitution_test.py for the passing IV-pass tests.",
-                   strict=True)
-def test_array_slot_const_product_is_lifted(prefer):
-    """TSVC s317."""
+def test_array_slot_const_product_not_lifted_iv(prefer):
+    """TSVC s317 ``q[0] *= 0.99`` is a geometric induction variable, NOT a reduction: there
+    is no array to fold, so ``LoopToReduce`` alone (either mode) must refuse it. The O(1)
+    closed form ``q[0] *= 0.99**N`` is produced by ``InductionVariableSubstitution`` (run
+    before LoopToReduce in the pipeline) -- see
+    ``test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce`` and
+    tests/passes/induction_variable_substitution_test.py for the passing IV-pass coverage.
+    """
     sdfg = _array_slot_const_product.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
-    assert lifted >= 1
+    assert lifted == 0
 
 
 # ---- s314 / s316: branched min / max -------------------------------------
@@ -924,7 +923,7 @@ def test_geometric_iv_handled_by_induction_pass_not_loop_to_reduce():
     induction-variable closed form ``q[0] *= 0.99**N`` handled by
     ``InductionVariableSubstitution`` (run BEFORE LoopToReduce in the pipeline). After
     ``TTE + IVS`` the loop is gone, so a subsequent LoopToReduce has nothing to lift. The
-    ``test_array_slot_const_product_is_lifted`` xfails pin the inverse: LoopToReduce alone
+    ``test_array_slot_const_product_not_lifted_iv`` test pins the inverse: LoopToReduce alone
     must NOT recognise the IV shape.
     """
     import numpy as np

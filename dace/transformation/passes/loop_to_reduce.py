@@ -52,12 +52,12 @@ def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
     """True iff ``loop`` is lexically nested inside another (sequential) ``LoopRegion``,
     crossing NestedSDFG boundaries.
 
-    Heuristic gate for the ``wcr-scalar`` lift: a scalar-accumulator reduction is lifted
-    to a parallel WCR-map (which ``LoopToMap`` then parallelizes) ONLY at a loop that is
-    not nested inside an enclosing sequential loop. Nested, the resulting parallel map is
-    re-entered once per outer iteration -- the OpenMP fork/join plus per-entry accumulator
-    privatization dominates the tiny inner reduction, so it runs far slower than the plain
-    sequential loop ``auto_optimize`` keeps. (nussinov's ``table[i,j] = max(table[i,j],
+    Gate for the ``wcr-scalar`` lift: a nested scalar-accumulator reduction is still lifted,
+    but marked ``pinned_sequential`` so the downstream ``LoopToMap`` keeps it a sequential
+    per-thread inner loop instead of a parallel WCR-map. A parallel map nested inside a
+    sequential loop is re-entered once per outer iteration -- the OpenMP fork/join plus
+    per-entry accumulator privatization dominates the tiny inner reduction, so it runs far
+    slower than the plain sequential loop ``auto_optimize`` keeps. (nussinov's ``table[i,j] = max(table[i,j],
     table[i,k] + table[k+1,j])`` k-reduction sits inside two sequential ``i``/``j`` loops and
     is re-entered O(N^2) times: lifted to a parallel WCR-map it measured ~340x slower than
     the sequential baseline.) The enclosing loop, if itself parallelizable, was already
@@ -138,16 +138,13 @@ class LoopToReduce(ppl.Pass):
         # handles scalar-slice intermediates, WCRToAugAssign above covers normalization.
         # Redundant + risks the ordering pitfalls seen in LoopToScan.
 
-        # wcr-scalar mode only: a scalar-accumulator reduction is lifted to the
-        # parallelizable WCR-map form ONLY at a top-level loop. Pin every loop nested
-        # inside a sequential loop as ``pinned_sequential`` up front, so it is refused not
-        # just by the lifts below but by the downstream ``LoopToMap`` / ``LoopToScan`` too
-        # (both honor the flag) -- the ``AugAssignToWCR`` / ``TrivialTaskletElimination``
-        # normalization run here would otherwise leave the loop in a form ``LoopToMap``
-        # parallelizes as a side effect, re-forking an OpenMP region per outer iteration
-        # (see _nested_in_sequential_loop). A pinned loop keeps whatever WCR the
-        # normalization added; the pipeline's terminal ``WCRToAugAssign`` reverts it to a
-        # clean sequential accumulate -- the same sequential form ``auto_optimize`` keeps.
+        # wcr-scalar mode only: mark every loop nested inside a sequential loop as
+        # ``pinned_sequential`` up front. The lift below still runs (and carries the flag onto
+        # the lifted loop), but the flag makes the downstream ``LoopToMap`` / ``LoopToScan``
+        # keep it sequential (both honor it) -- so the nested reduction is NOT parallelized into
+        # an OpenMP region re-forked once per outer iteration (see _nested_in_sequential_loop;
+        # nussinov's k-reduction). The pipeline's terminal ``WCRToAugAssign`` then reverts the
+        # pinned WCR to a clean sequential accumulate -- the form ``auto_optimize`` keeps.
         if self.prefer == 'wcr-scalar':
             for node, _p in list(sdfg.all_nodes_recursive()):
                 if isinstance(node, LoopRegion) and node.loop_variable and _nested_in_sequential_loop(node):
@@ -161,8 +158,8 @@ class LoopToReduce(ppl.Pass):
             if info is None:
                 continue
             if self.prefer == 'wcr-scalar':
-                if node.pinned_sequential:  # nested in a sequential loop -> keep sequential
-                    continue
+                # Lift even a pinned (nested) reduction; ``_lift_wcr_scalar`` carries the pin
+                # onto the new loop so the downstream ``LoopToMap`` keeps it sequential.
                 _lift_wcr_scalar(parent, node, info)
             else:
                 _lift(parent, node, info)
@@ -195,8 +192,7 @@ class LoopToReduce(ppl.Pass):
                 wcr_info = _extract_wcr_body(node, sdfg)
                 if wcr_info is None:
                     continue
-                if node.pinned_sequential:  # nested in a sequential loop -> keep sequential
-                    continue
+                # Retarget reuses ``node`` in place, so a pinned loop keeps its flag.
                 _lift_wcr_scalar_retarget(parent, node, *wcr_info)
                 count += 1
 
@@ -212,8 +208,7 @@ class LoopToReduce(ppl.Pass):
                 chain_info = _extract_multi_state_chain(node, sdfg)
                 if chain_info is None:
                     continue
-                if node.pinned_sequential:  # nested in a sequential loop -> keep sequential
-                    continue
+                # Reuses ``node`` in place, so a pinned loop keeps its flag.
                 _lift_multi_state_chain(parent, node, chain_info)
                 count += 1
 
@@ -926,6 +921,9 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
         initialize_expr=loop.init_statement.as_string,
         update_expr=loop.update_statement.as_string,
     )
+    # Carry the sequential pin forward: a nested reduction stays sequential downstream
+    # (``LoopToMap`` honors the flag) so it opens no OpenMP region per outer iteration.
+    new_loop.pinned_sequential = loop.pinned_sequential
     parent.add_node(new_loop, ensure_unique_name=True)  # derived label; wired below by object ref
 
     body = new_loop.add_state(loop.label + "_body", is_start_block=True)
