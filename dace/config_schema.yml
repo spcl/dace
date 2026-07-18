@@ -109,6 +109,30 @@ required:
                     When an exception is raised in a transformation "can_be_applied"
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
+
+            canonicalization:
+                type: dict
+                title: Canonicalization pipeline defaults
+                description: >
+                    Default limits for the canonicalization / parallelization loop
+                    passes. Each seeds the matching pass Property default (read once
+                    at import); an explicit constructor argument still overrides.
+                required:
+                    unroll_limit:
+                        type: int
+                        default: 8
+                        title: Short-loop unroll limit
+                        description: >
+                            Fully unroll constant-trip loops with at most this many
+                            iterations (0 disables). Seeds ``ShortLoopUnroll.unroll_limit``.
+
+                    peel_limit:
+                        type: int
+                        default: 8
+                        title: Best-effort loop peel limit
+                        description: >
+                            Bounds the wrapping-modulo peel to 1..peel_limit iterations
+                            (0 disables). Seeds ``BestEffortLoopPeeling.peel_limit``.
     compiler:
         type: dict
         title: Compiler

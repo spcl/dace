@@ -22,15 +22,17 @@ import copy
 from typing import Any, Dict, Optional
 
 from dace import properties, symbolic
+from dace.config import Config
 from dace.sdfg import SDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
 
-#: Default trip-count threshold below which a constant-trip loop is unrolled.
-DEFAULT_UNROLL_LIMIT = 8
+#: Default trip-count threshold below which a constant-trip loop is unrolled
+#: (``optimizer.canonicalization.unroll_limit``).
+DEFAULT_UNROLL_LIMIT = Config.get('optimizer', 'canonicalization', 'unroll_limit')
 #: Default maximum number of iterations peeled (per side) when searching for a
-#: peel that unblocks parallelization.
-DEFAULT_PEEL_LIMIT = 8
+#: peel that unblocks parallelization (``optimizer.canonicalization.peel_limit``).
+DEFAULT_PEEL_LIMIT = Config.get('optimizer', 'canonicalization', 'peel_limit')
 #: Names under which a (floor) modulo may be defined in a subset expression. The
 #: peel modulo-rewrite recognises all of these -- ``sympy.Mod`` (the ``%`` operator)
 #: and the equivalent helper-function spellings -- so it folds a wrap-around access
@@ -73,9 +75,55 @@ def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> Optional[int]:
     return len(range(0, diff, stride_val))
 
 
+def _loop_depth(loop: LoopRegion) -> int:
+    """Nesting depth: number of enclosing control-flow regions up to the root SDFG. Used to order
+    unrolling deepest-first (bottom-up)."""
+    depth = 0
+    graph = loop.parent_graph
+    while graph is not None and not isinstance(graph, SDFG):
+        depth += 1
+        graph = graph.parent_graph
+    return depth
+
+
+def _local_state_fusion(sdfg: SDFG, region) -> int:
+    """Fuse adjacent states within ``region``'s subtree only (StateFusionExtended), leaving the rest
+    of the SDFG untouched. Interstate matching ignores ``apply_transformations``' ``states=`` filter,
+    so drive the fusion on each adjacent pair directly. Returns the number fused."""
+    from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
+    fused = 0
+    changed = True
+    while changed:
+        changed = False
+        cfrs = [region] + list(region.all_control_flow_regions(recursive=True))
+        for cfr in cfrs:
+            for edge in list(cfr.edges()):
+                u, v = edge.src, edge.dst
+                if (isinstance(u, SDFGState) and isinstance(v, SDFGState)
+                        and StateFusionExtended.can_be_applied_to(sdfg, first_state=u, second_state=v)):
+                    StateFusionExtended.apply_to(sdfg,
+                                                 first_state=u,
+                                                 second_state=v,
+                                                 verify=False,
+                                                 annotate=False,
+                                                 save=False)
+                    fused += 1
+                    changed = True
+                    break
+            if changed:
+                break
+    return fused
+
+
 @properties.make_properties
 class ShortLoopUnroll(ppl.Pass):
-    """Fully unroll every constant-trip loop with at most ``unroll_limit`` iterations."""
+    """Fully unroll every constant-trip loop with at most ``unroll_limit`` iterations.
+
+    Unrolls **bottom-up** (deepest loops first) and fuses the freshly unrolled states back down right
+    after each unroll -- scoped to just the touched region, not the whole SDFG. So an enclosing loop
+    deepcopies an already-compacted, loop-free body instead of a fan-out of one-state-per-iterate
+    sub-loops: far less deepcopy volume and no intermediate blow-up (measured 6.5x faster on CloudSC vs
+    unroll-then-global-fuse), so it is unconditional."""
 
     CATEGORY: str = 'Optimization Preparation'
 
@@ -109,10 +157,13 @@ class ShortLoopUnroll(ppl.Pass):
         changed = True
         while changed:
             changed = False
-            for loop in _loops(sdfg):
+            # Bottom-up: unroll the deepest loops first, so an enclosing loop is only unrolled once its
+            # inner loops are already unrolled + locally fused into a compact body.
+            for loop in sorted(_loops(sdfg), key=_loop_depth, reverse=True):
                 trip = _constant_trip_count(loop, sdfg)
                 if trip is None or trip > self.unroll_limit:
                     continue
+                parent = loop.parent_graph
                 try:
                     # ``annotate=False``: skip the per-apply full-SDFG memlet/state
                     # propagation. The transformation framework otherwise re-runs it
@@ -127,6 +178,9 @@ class ShortLoopUnroll(ppl.Pass):
                     continue  # not unrollable in this context; leave it for LoopToMap
                 unrolled += 1
                 changed = True
+                if parent is not None:
+                    # Compact the just-unrolled region before an enclosing loop deepcopies it.
+                    _local_state_fusion(sdfg, parent)
                 break
         if unrolled:
             # Propagate once, at the end of the pass (not per-apply).

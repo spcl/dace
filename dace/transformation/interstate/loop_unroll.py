@@ -70,6 +70,13 @@ class LoopUnroll(xf.MultiStateTransformation):
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
 
+        # A start-block loop has no in-edges, so the unrolled chain would inherit none and leave the
+        # parent with an ambiguous start. Prepend an empty ``pre -> loop`` start state so the loop is a
+        # normal interior block; ``pre`` stays the single start and is absorbed by the following fusion.
+        if loop_diff > 0 and graph.start_block is self.loop:
+            pre_state = graph.add_state(self.loop.label + '_unroll_pre', is_start_block=True)
+            graph.add_edge(pre_state, self.loop, sd.InterstateEdge())
+
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
         unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
@@ -103,18 +110,8 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert oe.dst in graph.nodes()
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-        # If we removed the region's start block, its replacement is the head of the
-        # unrolled chain (``unrolled_iterations[0]``), which carries the loop's former
-        # in-edges. Capture that head now: when the iteration regions are inlined below,
-        # the first one is spliced out and replaced by its own internal start block
-        # (added to ``graph`` as-is), which is then the chain head. (The previous logic
-        # promoted the loop's *successor* instead, severing the chain whenever the loop
-        # preceded sibling blocks.)
-        was_start_block = graph.start_block == self.loop
-        new_start_block = None
-        if was_start_block:
-            head = unrolled_iterations[0]
-            new_start_block = head.start_block if (self.inline_iterations and not isinstance(head, SDFGState)) else head
+        # The loop is never the start block here (a start-block loop got an empty ``pre`` predecessor
+        # above), so removing it cannot orphan the parent's start -- no start-block re-designation needed.
         graph.remove_node(self.loop)
 
         if self.inline_iterations:
@@ -124,12 +121,6 @@ class LoopUnroll(xf.MultiStateTransformation):
                     continue
                 it.inline()
 
-        # Re-designate the start block explicitly so the region's start stays
-        # unambiguous (inlining the former start region leaves the previous start-block
-        # index stale).
-        if was_start_block and new_start_block in graph.nodes():
-            graph.start_block = graph.node_id(new_start_block)
-
     def instantiate_loop_iteration(self,
                                    graph: ControlFlowRegion,
                                    loop: LoopRegion,
@@ -138,7 +129,13 @@ class LoopUnroll(xf.MultiStateTransformation):
         it_label = loop.label + '_' + loop.loop_variable + (label_suffix if label_suffix is not None else str(value))
         iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
 
-        graph.add_node(iteration_region)
+        # ``ensure_unique_name``: the label is derived from the loop label + iterate value, which is
+        # NOT unique when several sibling loops share a label (e.g. many deepcopies of one inner loop
+        # left by unrolling an enclosing loop). Without this, every such loop emits the same
+        # ``<label>_<var><value>`` iteration regions into one parent -- a "multiple blocks with the
+        # same name" validation failure. On inline the unique region label prefixes its promoted
+        # children too, so the fix carries through both the inline and no-inline paths.
+        graph.add_node(iteration_region, ensure_unique_name=True)
 
         block_map = {}
 

@@ -280,6 +280,50 @@ def test_unroll_loop_body_with_nested_sdfg():
     assert np.array_equal(A, np.arange(4, dtype=np.int32)), A
 
 
+def _sibling_loops_sdfg(n_loops: int, trip: int) -> tuple:
+    """``n_loops`` sibling loops in one parent, ALL sharing one label -- the state that unrolling an
+    enclosing loop leaves behind (each iterate deepcopies the inner loop, preserving its label). The
+    iteration-region label is derived from that shared loop label, so unrolling all of them must not
+    collide."""
+    sdfg = dace.SDFG("siblings")
+    sdfg.add_array("A", shape=(trip, ), dtype=dace.float64)
+    loops = []
+    prev = None
+    for k in range(n_loops):
+        loop = LoopRegion(label="loop_ss",
+                          condition_expr=CodeBlock(f"_loop_it < {trip}"),
+                          loop_var="_loop_it",
+                          initialize_expr=CodeBlock("_loop_it = 0"),
+                          update_expr=CodeBlock("_loop_it = _loop_it + 1"),
+                          sdfg=sdfg)
+        # add_node WITHOUT ensure_unique_name: the siblings deliberately keep the identical label.
+        sdfg.add_node(loop, is_start_block=(k == 0))
+        if prev is not None:
+            sdfg.add_edge(prev, loop, InterstateEdge())
+        body = ControlFlowRegion(label="body", sdfg=sdfg, parent=loop)
+        loop.add_node(body, is_start_block=True)
+        s = body.add_state(label="s", is_start_block=True)
+        t = s.add_tasklet(name="w", inputs=set(), outputs={"_o"}, code="_o = 1.0")
+        s.add_edge(t, "_o", s.add_access("A"), None, Memlet(expr="A[_loop_it]"))
+        prev = loop
+        loops.append(loop)
+    return sdfg, loops
+
+
+def test_unroll_sibling_loops_sharing_label():
+    """Regression: iteration regions were labelled purely from ``loop.label`` + iterate, with no
+    uniqueness check -- sibling loops sharing a label produced ``multiple blocks with the same name``.
+    Exercised on the no-inline path, where the iteration regions persist as blocks (as in the
+    failing CloudSC unroll)."""
+    for inline in (False, True):
+        sdfg, loops = _sibling_loops_sdfg(n_loops=3, trip=4)
+        for loop in list(loops):
+            LoopUnroll.apply_to(sdfg, options={'inline_iterations': inline}, verify=False, annotate=False, loop=loop)
+        # No LoopRegion left, and validation (per-parent label uniqueness) holds.
+        assert not [n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)]
+        sdfg.validate()
+
+
 if __name__ == "__main__":
     test_if_block_inside_for()
     test_empty_loop()
@@ -290,3 +334,4 @@ if __name__ == "__main__":
     test_replace_dict_inner_loop()
     test_start_block_loop_with_successors()
     test_unroll_loop_body_with_nested_sdfg()
+    test_unroll_sibling_loops_sharing_label()
