@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""UnblockDimensions -- inverse of SplitDimensions (Block): merges each blocked (outer, inner) dim pair back into one flat dim, ``outer*factor + inner``.
-
-Assumes layout normal form (post ``prepare_for_layout``), a packed blocked array, and single-tile outer accesses; multi-tile outer accesses raise.
-"""
+"""UnblockDimensions -- inverse of SplitDimensions (Block): merges each blocked (outer, inner) dim pair back into one flat dim, ``outer*factor + inner``. Assumes layout normal form (post ``prepare_for_layout``), a packed blocked array, and single-tile outer accesses; multi-tile outer accesses raise."""
 import copy
 import re
 from dataclasses import dataclass
@@ -14,7 +11,7 @@ from dace.transformation import pass_pipeline as ppl
 
 @dataclass
 class UnblockDimensions(ppl.Pass):
-    """``unblock_map``: ``{array_name: (masks, factors)}``, the same the Block used; length = original (unblocked) rank."""
+    """``unblock_map``: ``{array_name: (masks, factors)}`` -- the same mapping the Block transform used; length equals the original (unblocked) rank."""
 
     def __init__(self, unblock_map: Dict[str, Tuple[List[bool], List[int]]], verbose: bool = False):
         self._unblock_map = unblock_map
@@ -32,10 +29,7 @@ class UnblockDimensions(ppl.Pass):
         return len(masks) + sum(1 for m in masks[:d] if m)
 
     def _recover_extent(self, blocked_dim, factor: int):
-        """Invert Block's per-dimension division to recover the original extent.
-
-        Unwraps ``int_ceil``/``int_floor(E, factor)`` to ``E`` exactly; a folded integer count falls back to ``count * factor``.
-        """
+        """Invert Block's per-dimension division to recover the original extent: unwraps ``int_ceil``/``int_floor(E, factor)`` to ``E`` exactly, falling back to ``count * factor`` for a folded integer count."""
         expr = dace.symbolic.pystr_to_symbolic(blocked_dim)
         if type(expr).__name__ in ('int_ceil', 'int_floor') and len(
                 expr.args) == 2 and dace.symbolic.simplify(expr.args[1] - factor) == 0:

@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""UnzipArrays -- inverse of ZipArrays: splits a fused array back into its component field arrays.
-
-Run after ``prepare_for_layout``. ``ZipArrays`` then ``UnzipArrays`` with matching fields is a no-op roundtrip.
-"""
+"""UnzipArrays -- inverse of ZipArrays: splits a fused array back into its component field arrays. Run after ``prepare_for_layout``; ``ZipArrays`` then ``UnzipArrays`` with matching fields is a no-op roundtrip."""
 import ast
 from dataclasses import dataclass
 from typing import Any, Dict, List

@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Untile a manually-tiled loop nest and unblock the matching materialized array dimension in the same rewrite.
-
-Layout-suite sibling of ``untile_loops.UntileLoops``, extended to also unblock arrays blocked to match the removed tile.
-"""
+"""Untile a manually-tiled loop nest and unblock the matching materialized array dimension in the same rewrite; a layout-suite sibling of ``untile_loops.UntileLoops``, extended to also unblock arrays blocked to match the removed tile."""
 import copy
 from typing import Dict, List, Optional, Tuple
 
@@ -27,7 +24,7 @@ from dace.transformation.passes.canonicalize.untile_loops import (_audit_combine
 @properties.make_properties
 @xf.explicit_cf_compatible
 class UntileLoopsAndBlocks(ppl.Pass):
-    """Untiles loops and unblocks arrays blocked to match the tile; blocked coordination needs a concrete tile K."""
+    """Untiles loops and unblocks arrays blocked to match the tile; coordinating the two needs a concrete tile size K."""
 
     CATEGORY: str = 'Canonicalization'
 

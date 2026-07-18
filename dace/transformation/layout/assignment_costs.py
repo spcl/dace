@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Cost providers for the global layout assignment: fill an ``AssignmentCosts`` table from either the
-LogGP cost model or measured per-nest timings. Candidate layouts are dimension permutations (v1-lite)."""
+"""Cost providers for the global layout assignment: fill an ``AssignmentCosts`` table from either the LogGP cost model or measured per-nest timings. Candidate layouts are dimension permutations (v1-lite)."""
 import itertools
 import warnings
 from typing import Dict, List, Optional

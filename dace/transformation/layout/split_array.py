@@ -310,7 +310,7 @@ class SplitArray(ppl.Pass):
             if splitd is not None:
                 assert ((e + 1) - b) // s == 1
                 try:
-                    int(b)  # Compile-time resolvable — not data-dependent
+                    int(b)  # compile-time resolvable, not data-dependent
                 except Exception:
                     data_dependent_dims.append(b)
             else:

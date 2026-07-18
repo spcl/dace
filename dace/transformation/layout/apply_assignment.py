@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Applies a chosen global layout assignment (one layout trajectory per array) across the line
-graph, inserting LayoutChange conversions at segment boundaries. v1 handles Permute trajectories only."""
+"""Applies a chosen global layout assignment (one layout trajectory per array) across the line graph, inserting LayoutChange conversions at segment boundaries. v1 handles Permute trajectories only."""
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -54,8 +53,7 @@ def segments_of(trajectory: List[Layout]) -> List[Tuple[int, int, Layout]]:
 
 
 def reads_before_write(state: dace.SDFGState, array: str) -> bool:
-    """True iff ``state`` reads ``array``: a source access node, or a WCR write (wcr sits on the inner
-    memlet-tree edge, not the outer one, so all edges are scanned)."""
+    """True iff ``state`` reads ``array``: a source access node, or a WCR write (wcr sits on the inner memlet-tree edge, not the outer one, so all edges are scanned)."""
     if any(node.data == array and state.in_degree(node) == 0 for node in state.data_nodes()):
         return True
     return any(e.data is not None and e.data.data == array and e.data.wcr is not None for e in state.edges())
@@ -67,8 +65,7 @@ def state_touches(state: dace.SDFGState, array: str) -> bool:
 
 
 def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
-    """Conservative proof that ``state`` writes every element of ``array``; False whenever coverage
-    is unprovable (skipping the entry conversion on a false positive would be a silent miscompile)."""
+    """Conservative proof that ``state`` writes every element of ``array``; False whenever coverage is unprovable (skipping the entry conversion on a false positive would be a silent miscompile)."""
     desc = state.sdfg.arrays[array]
     sinks = [n for n in state.data_nodes() if n.data == array and state.in_degree(n) > 0]
     if len(sinks) != 1:
@@ -126,8 +123,7 @@ class AppliedAssignment:
 
 
 def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[str, List[Layout]]) -> AppliedAssignment:
-    """Applies one layout trajectory per array across the line graph, in place, with paid conversions
-    on the boundaries; the program interface stays logical."""
+    """Applies one layout trajectory per array across the line graph, in place, with paid conversions on the boundaries; the program interface stays logical."""
     check_kernel_per_state(sdfg)
     refuse_interstate_references(sdfg, [a for a, traj in assignment.items() if any(not l.is_identity for l in traj)])
     for array, trajectory in assignment.items():

@@ -55,11 +55,11 @@ def get_access_subsets(
 
     all_entries_sorted = sorted(all_entries, key=_nesting_depth)
 
-    # 4. innermost map
+    # 4. locate the innermost map
     innermost_entry: dace.nodes.MapEntry = all_entries_sorted[-1]
     innermost_exit: dace.nodes.MapExit = state.exit_node(innermost_entry)
 
-    # 5. tasklets in the innermost map
+    # 5. collect tasklets in the innermost map
     innermost_children = scope_children.get(innermost_entry, [])
     tasklets: List[dace.nodes.Tasklet] = [n for n in innermost_children if isinstance(n, dace.nodes.Tasklet)]
 

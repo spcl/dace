@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Run a freshly-compiled candidate in a forked child, so a segfault or runaway loop in generated
-code cannot take down the layout sweep; also pauses OpenMP thread pools first to avoid a fork deadlock."""
+"""Run a freshly-compiled candidate in a forked child, so a segfault or runaway loop in generated code cannot take down the layout sweep; also pauses OpenMP thread pools first to avoid a fork deadlock."""
 import ctypes
 import json
 import os
@@ -20,8 +19,7 @@ OMP_PAUSE_MODES = {"soft": OMP_PAUSE_SOFT, "hard": OMP_PAUSE_HARD}
 
 
 def pause_openmp_pools(mode: int = OMP_PAUSE_SOFT) -> None:
-    """Tear down the thread pool of every OpenMP runtime already loaded, so the coming fork is safe.
-    Best effort; warns rather than silently skipping when it can't."""
+    """Tear down the thread pool of every OpenMP runtime already loaded, so the coming fork is safe. Best effort; warns rather than silently skipping when it can't."""
     for soname in OMP_RUNTIME_SONAMES:
         try:
             lib = ctypes.CDLL(soname, mode=os.RTLD_NOLOAD)  # only touch runtimes already mapped
@@ -51,8 +49,7 @@ def quiet_fatal_signals() -> None:
 
 
 def run_isolated(work_fn: Callable[[], Dict], timeout: float = 900.0) -> Dict:
-    """Run ``work_fn`` in a forked child; returns its JSON-able dict, or an ``{"error": ...}``
-    sentinel on crash/timeout/malformed output. ``work_fn`` must be fork-safe (no live CUDA context)."""
+    """Run ``work_fn`` in a forked child; returns its JSON-able dict, or an ``{"error": ...}`` sentinel on crash/timeout/malformed output. ``work_fn`` must be fork-safe (no live CUDA context)."""
     pause_openmp_pools()  # a live pool across fork deadlocks the child's first parallel region
     r, w = os.pipe()
     pid = os.fork()

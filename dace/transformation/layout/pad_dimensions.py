@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Pad layout primitive: grow a dimension's extent with trailing unused elements, keeping packed strides.
-
-Only the descriptor changes (recursed into nested SDFGs); existing memlets still index the live region.
-"""
+"""Pad layout primitive: grow a dimension's extent with trailing unused elements, keeping packed strides. Only the descriptor changes (recursed into nested SDFGs); existing memlets still index the live region."""
 from dataclasses import dataclass
 from typing import Any, Dict, List
 

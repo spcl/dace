@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Time the compute region of a laid-out SDFG, excluding the relayout copy-in/copy-out states.
-"""
+"""Time the compute region of a laid-out SDFG, excluding the relayout copy-in/copy-out states."""
 import statistics
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
@@ -42,8 +41,7 @@ def _is_pure_copy_tasklet(t: nodes.Node) -> bool:
 
 
 def state_runs_on_gpu(state: dace.SDFGState) -> bool:
-    """True iff ``state`` carries a GPU map (recurses into nested SDFGs); needs CUDA-event timing,
-    not a host ``Timer``."""
+    """True iff ``state`` carries a GPU map (recurses into nested SDFGs); needs CUDA-event timing, not a host ``Timer``."""
     return any(
         isinstance(node, nodes.MapEntry) and node.map.schedule in dace.dtypes.GPU_SCHEDULES
         for node, _ in state.all_nodes_recursive())
@@ -55,15 +53,13 @@ def instrumentation_for(state: dace.SDFGState) -> dace.InstrumentationType:
 
 
 def is_copy_state(state: dace.SDFGState) -> bool:
-    """True iff ``state`` has tasklets and all are ``out = in`` copies (barrier tasklets are ignored,
-    so an already-barriered copy state is still recognized as one)."""
+    """True iff ``state`` has tasklets and all are ``out = in`` copies (barrier tasklets are ignored, so an already-barriered copy state is still recognized as one)."""
     tasklets = [n for n in state.nodes() if isinstance(n, nodes.Tasklet) and not is_fusion_barrier(n)]
     return len(tasklets) >= 1 and all(_is_pure_copy_tasklet(t) for t in tasklets)
 
 
 def barrier_relayout_states(sdfg: dace.SDFG) -> int:
-    """Barrier every relayout copy state so a later fusing transform can't merge it into compute.
-    Call BEFORE ``SDFG.apply_gpu_transformations``, which otherwise fuses them away. Returns the count."""
+    """Barrier every relayout copy state so a later fusing transform can't merge it into compute. Call BEFORE ``SDFG.apply_gpu_transformations``, which otherwise fuses them away. Returns the count."""
     count = 0
     for state in list(sdfg.states()):
         if is_copy_state(state) and not has_fusion_barrier(state):
@@ -73,15 +69,12 @@ def barrier_relayout_states(sdfg: dace.SDFG) -> int:
 
 
 def state_has_tasklets(state: dace.SDFGState) -> bool:
-    """True iff ``state`` has a non-barrier tasklet. dace's host copy-in/out states carry memlet
-    copies but no tasklets, so they read as transparent here."""
+    """True iff ``state`` has a non-barrier tasklet. dace's host copy-in/out states carry memlet copies but no tasklets, so they read as transparent here."""
     return any(isinstance(n, nodes.Tasklet) and not is_fusion_barrier(n) for n in state.nodes())
 
 
 def reaches_tasklets(sdfg: dace.SDFG, state: dace.SDFGState, forward: bool) -> bool:
-    """True iff any state reachable from ``state`` (forward or backward), looking through states
-    with no tasklets, does real work. More robust than plain ``in_degree == 0``, which misclassifies
-    a relayout wrapped by ``apply_gpu_transformations``'s tasklet-less host copy states as compute."""
+    """True iff any state reachable from ``state`` (forward or backward), looking through states with no tasklets, does real work. More robust than plain ``in_degree == 0``, which misclassifies a relayout wrapped by ``apply_gpu_transformations``'s tasklet-less host copy states as compute."""
     edges = sdfg.out_edges if forward else sdfg.in_edges
     pick = (lambda e: e.dst) if forward else (lambda e: e.src)
     seen = set()
@@ -99,8 +92,7 @@ def reaches_tasklets(sdfg: dace.SDFG, state: dace.SDFGState, forward: bool) -> b
 
 @dataclass
 class InsertLayoutTiming(ppl.Pass):
-    """Barrier the copy-in/copy-out relayout states and instrument the compute region so a run's
-    instrumentation report covers compute only. Returns the number of states instrumented."""
+    """Barrier the copy-in/copy-out relayout states and instrument the compute region so a run's instrumentation report covers compute only. Returns the number of states instrumented."""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes
@@ -153,11 +145,7 @@ def time_compute_stats(sdfg: dace.SDFG,
                        run: Callable[[dace.SDFG], Any],
                        reps: int = 10,
                        warmup: int = 2) -> Optional[Dict[str, Any]]:
-    """Run ``run(sdfg)`` ``reps`` times and return compute-region stats from the instrumentation
-    report: ``{"median": ms, "spread": (max-min)/min, "contended": bool, "samples": [...]}``, or
-    ``None`` if ``sdfg`` carries no timers (see :class:`InsertLayoutTiming`). Every rep must produce
-    a fresh report -- the build folder is keyed on SDFG name and shared across sweep candidates, so
-    a stale or missing report is a hard error, never silently absorbed."""
+    """Run ``run(sdfg)`` ``reps`` times and return compute-region stats from the instrumentation report: ``{"median": ms, "spread": (max-min)/min, "contended": bool, "samples": [...]}``, or ``None`` if ``sdfg`` carries no timers (see :class:`InsertLayoutTiming`). Every rep must produce a fresh report -- the build folder is keyed on SDFG name and shared across sweep candidates, so a stale or missing report is a hard error, never silently absorbed."""
     if not any(state.instrument != dace.InstrumentationType.No_Instrumentation for state in sdfg.states()):
         return None
     for _ in range(warmup):
@@ -197,16 +185,13 @@ def compute_region_timer(sdfg: dace.SDFG,
                          run: Callable[[dace.SDFG], Any],
                          reps: int = 5,
                          warmup: int = 1) -> Optional[float]:
-    """A ``brute_force.sweep`` ``timer``: instruments the compute region and returns its median
-    time (ms), so the sweep ranks by compute cost, not the one-time relayout. Mutates ``sdfg``."""
+    """A ``brute_force.sweep`` ``timer``: instruments the compute region and returns its median time (ms), so the sweep ranks by compute cost, not the one-time relayout. Mutates ``sdfg``."""
     InsertLayoutTiming().apply_pass(sdfg, {})
     return time_compute(sdfg, run, reps, warmup)
 
 
 def compute_region_stats_timer(sdfg: dace.SDFG, run: Callable[[dace.SDFG], Any], reps: int = 10, warmup: int = 2):
-    """Like :func:`compute_region_timer` but returns ``(median_ms, {"spread", "contended",
-    "samples"})`` so ``sweep`` records the trust signal in ``SweepResult.metadata``; ``None`` if
-    nothing to instrument."""
+    """Like :func:`compute_region_timer` but returns ``(median_ms, {"spread", "contended", "samples"})`` so ``sweep`` records the trust signal in ``SweepResult.metadata``; ``None`` if nothing to instrument."""
     InsertLayoutTiming().apply_pass(sdfg, {})
     stats = time_compute_stats(sdfg, run, reps, warmup)
     if stats is None:

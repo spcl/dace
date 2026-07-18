@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""ShuffleElements -- the Shuffle layout primitive: renumbers an array dimension via a
-registered bijection ``sigma``, rewriting body accesses and inserting gather/scatter boundary states."""
+"""ShuffleElements -- the Shuffle layout primitive: renumbers an array dimension via a registered bijection ``sigma``, rewriting body accesses and inserting gather/scatter boundary states."""
 import copy
 import re
 from dataclasses import dataclass
@@ -15,7 +14,7 @@ from dace.libraries.layout.shuffle import get_shuffle, emit_shuffle_globals
 
 @dataclass
 class ShuffleElements(ppl.Pass):
-    """Renumber a dimension via registered bijection ``sigma``; shuffle_map: array -> (shuffle_name, dim)."""
+    """Renumber a dimension via registered bijection ``sigma``; shuffle_map maps each array to (shuffle_name, dim)."""
 
     def __init__(self, shuffle_map: Dict[str, Tuple[str, int]]):
         self._shuffle_map = shuffle_map

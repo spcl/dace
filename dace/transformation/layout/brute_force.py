@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Brute-force GLOBAL layout sweep -- the layout optimizer (no cost model): enumerate candidates,
-compile, verify against a numpy oracle, and time the correct ones."""
+"""Brute-force GLOBAL layout sweep -- the layout optimizer (no cost model): enumerate candidates, compile, verify against a numpy oracle, and time the correct ones."""
 import contextlib
 import itertools
 import time as _time
@@ -38,9 +37,7 @@ def time_cpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
 
 
 def time_gpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
-    """Median GPU time (s) of ``fn`` via CUDA events on cupy's current stream; ``fn`` must be
-    compiled inside :func:`single_default_stream`. Times the whole call, so small kernels are
-    overhead-bound -- see :func:`compute_region_timer` for compute-only timing."""
+    """Median GPU time (s) of ``fn`` via CUDA events on cupy's current stream; ``fn`` must be compiled inside :func:`single_default_stream`. Times the whole call, so small kernels are overhead-bound -- see :func:`compute_region_timer` for compute-only timing."""
     import cupy  # GPU-only; keeps the module importable without a GPU
 
     start = cupy.cuda.Event()
@@ -61,9 +58,7 @@ def time_gpu(fn: Callable[[], Any], reps: int = 5, warmup: int = 1) -> float:
 
 @contextlib.contextmanager
 def single_default_stream():
-    """Force dace to emit one CUDA stream (``max_concurrent_streams=-1``) so :func:`time_gpu`'s
-    events see all kernels. The SDFG must be COMPILED inside this context; clean ``.dacecache`` if
-    switching stream modes -- the build cache keys on the SDFG name, not this setting."""
+    """Force dace to emit one CUDA stream (``max_concurrent_streams=-1``) so :func:`time_gpu`'s events see all kernels. The SDFG must be COMPILED inside this context; clean ``.dacecache`` if switching stream modes -- the build cache keys on the SDFG name, not this setting."""
     with dace.config.set_temporary("compiler", "cuda", "max_concurrent_streams", value=-1):
         yield
 
@@ -79,9 +74,7 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
           timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None,
           attempt_log: Optional[str] = None,
           isolate: bool = False) -> List[SweepResult]:
-    """Compile, run, verify, and (optionally) time each candidate; return results ranked (correct
-    first, then by time). ``isolate`` forks each candidate (CPU only) so a crash doesn't kill the
-    sweep."""
+    """Compile, run, verify, and (optionally) time each candidate; return results ranked (correct first, then by time). ``isolate`` forks each candidate (CPU only) so a crash doesn't kill the sweep."""
     if device not in ("cpu", "gpu"):
         raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
     if isolate and device == "gpu":
@@ -175,9 +168,7 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
 
 
 def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Optional[SweepResult]:
-    """The winning candidate: correct candidates within ``noise_floor`` (relative) of the fastest
-    tie, resolved to the earliest-enumerated. Defaults to
-    :data:`timing.SPREAD_CONTENDED_THRESHOLD`; ``None`` if nothing verified."""
+    """The winning candidate: correct candidates within ``noise_floor`` (relative) of the fastest tie, resolved to the earliest-enumerated. Defaults to :data:`timing.SPREAD_CONTENDED_THRESHOLD`; ``None`` if nothing verified."""
     if noise_floor is None:
         from dace.transformation.layout.timing import SPREAD_CONTENDED_THRESHOLD
         noise_floor = SPREAD_CONTENDED_THRESHOLD
@@ -193,8 +184,7 @@ def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Opt
 #  Candidate-family enumerators (apply closures over the layout passes)
 # --------------------------------------------------------------------------- #
 def permutation_candidates(array: str, ndim: int):
-    """Yield ``(name, apply)`` for every dimension permutation of ``array`` (identity included);
-    ``apply`` runs ``PermuteDimensions``."""
+    """Yield ``(name, apply)`` for every dimension permutation of ``array`` (identity included); ``apply`` runs ``PermuteDimensions``."""
     from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
     for perm in itertools.permutations(range(ndim)):
@@ -206,8 +196,7 @@ def permutation_candidates(array: str, ndim: int):
 
 
 def block_candidates(array: str, ndim: int, factors: Tuple[int, ...] = (8, 16, 32)):
-    """Yield ``(name, apply)`` for blocking one dimension of ``array`` by each factor (plus
-    unblocked identity); ``apply`` runs ``SplitDimensions`` then ``normalize_schedule_for_layout``."""
+    """Yield ``(name, apply)`` for blocking one dimension of ``array`` by each factor (plus unblocked identity); ``apply`` runs ``SplitDimensions`` then ``normalize_schedule_for_layout``."""
     from dace.transformation.layout.split_dimensions import SplitDimensions
     from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
 
@@ -225,9 +214,7 @@ def block_candidates(array: str, ndim: int, factors: Tuple[int, ...] = (8, 16, 3
 
 
 def shuffle_candidates(array: str, dim: int, shuffle_names):
-    """Yield ``(name, apply)`` for renumbering ``array``'s dimension ``dim`` by each registered
-    shuffle (plus identity); ``apply`` runs ``ShuffleElements``. Every shuffle is transparent, so
-    all candidates verify."""
+    """Yield ``(name, apply)`` for renumbering ``array``'s dimension ``dim`` by each registered shuffle (plus identity); ``apply`` runs ``ShuffleElements``. Every shuffle is transparent, so all candidates verify."""
     from dace.transformation.layout.shuffle_elements import ShuffleElements
 
     yield f"noshuffle_{array}", (lambda sdfg: None)
@@ -240,10 +227,7 @@ def shuffle_candidates(array: str, dim: int, shuffle_names):
 
 
 def indirection_candidates(index_array: str, data_array: str, dim: int, ndim: int, shuffle_names, prepare: bool = True):
-    """Yield ``(name, apply)`` layout candidates for a DATA array reached through indirection
-    (``data_array[index_array[f(i)]]``): Shuffle/Permute candidates on ``data_array`` plus the
-    ``noindir`` baseline. Each ``apply`` runs :func:`prepare_for_layout` first (unless
-    ``prepare=False``); every candidate is transparent, so all verify."""
+    """Yield ``(name, apply)`` layout candidates for a DATA array reached through indirection (``data_array[index_array[f(i)]]``): Shuffle/Permute candidates on ``data_array`` plus the ``noindir`` baseline. Each ``apply`` runs :func:`prepare_for_layout` first (unless ``prepare=False``); every candidate is transparent, so all verify."""
     from dace.transformation.layout.shuffle_elements import ShuffleElements
     from dace.transformation.layout.permute_dimensions import PermuteDimensions
     from dace.transformation.layout.prepare import prepare_for_layout

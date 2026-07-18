@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Program structure for global layout assignment: one kernel per state, and the flat line
-graph of kernels (:func:`kernel_per_state`, :func:`check_kernel_per_state`, :func:`line_graph`)."""
+"""Program structure for global layout assignment: one kernel per state, and the flat line graph of kernels (:func:`kernel_per_state`, :func:`check_kernel_per_state`, :func:`line_graph`)."""
 from dataclasses import dataclass
 from typing import List, Optional
 
@@ -13,8 +12,7 @@ from dace.transformation.layout.externalize import nest_entries
 
 
 def kernel_per_state(sdfg: SDFG) -> int:
-    """Split every state with several top-level map scopes into one state per kernel (A2); runs to
-    fixpoint since ``state_fission`` can drag a second nest along. Returns the split count."""
+    """Split every state with several top-level map scopes into one state per kernel (A2); runs to fixpoint since ``state_fission`` can drag a second nest along. Returns the split count."""
 
     def excess_nests() -> int:
         return sum(len(nest_entries(s)) - 1 for s in sdfg.states() if len(nest_entries(s)) > 1)
@@ -59,8 +57,7 @@ class KernelState:
 
 
 def state_does_work(state: SDFGState) -> bool:
-    """True iff ``state`` moves data: beyond bare access nodes and connector-less tasklets, access
-    nodes joined by copy memlets count too (the edge scan catches those)."""
+    """True iff ``state`` moves data: beyond bare access nodes and connector-less tasklets, access nodes joined by copy memlets count too (the edge scan catches those)."""
     for n in state.nodes():
         if isinstance(n, nodes.AccessNode):
             continue
@@ -79,8 +76,7 @@ def is_relayout_state(state: SDFGState) -> bool:
 
 
 def line_graph(sdfg: SDFG) -> List[KernelState]:
-    """Extract the flat ordered kernel sequence of ``sdfg`` (A3); refuses branches, DAGs, LoopRegions,
-    and states with non-map work at top level."""
+    """Extract the flat ordered kernel sequence of ``sdfg`` (A3); refuses branches, DAGs, LoopRegions, and states with non-map work at top level."""
     for block in sdfg.nodes():
         if not isinstance(block, SDFGState):
             raise NotImplementedError(

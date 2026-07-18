@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Global layout assignment over the line graph: per-array Viterbi DP, brute-force oracle,
-per-op greedy baseline, and conflict report."""
+"""Global layout assignment over the line graph: per-array Viterbi DP, brute-force oracle, per-op greedy baseline, and conflict report."""
 import itertools
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple

@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Theoretical peak memory bandwidth of the host DRAM and the GPU.
-
-Host DRAM via ``dmidecode --type 17`` (sum over populated devices); GPU via CUDA device properties.
-"""
+"""Theoretical peak memory bandwidth of the host DRAM (via dmidecode --type 17, summed over populated devices) and the GPU (CUDA device properties)."""
 import re
 from dataclasses import dataclass
 from typing import List, Optional

@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""LogP/LogGP cost analysis of an SDFG loop nest.
-
-Time = max(total_bytes * G, total_messages * L / concurrency); see loggp.nest_memory_time.
-"""
+"""LogP/LogGP cost analysis of an SDFG loop nest: time = max(total_bytes * G, total_messages * L / concurrency); see loggp.nest_memory_time."""
 from dataclasses import dataclass
 from typing import Dict, FrozenSet, List
 
@@ -213,7 +210,6 @@ def count_loop_nest(state: dace.SDFGState,
     loop_ranges = _loop_ranges(state, map_entry)
     subsets = get_access_subsets(state, map_entry)
 
-    # Iteration count of the whole nest.
     total_iters = sp.Integer(1)
     for nest in loop_ranges:
         for begin, end, step in nest.values():

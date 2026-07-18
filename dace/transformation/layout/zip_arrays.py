@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""ZipArrays -- the Zip layout primitive: fuses F same-shape SoA arrays into one field-minor array ``Z``.
-
-Run after ``prepare_for_layout``. Homogeneous fields -> plain ``[*S, F]`` array; heterogeneous -> array of structs.
-"""
+"""ZipArrays -- the Zip layout primitive: fuses F same-shape SoA arrays into one field-minor array ``Z``. Run after ``prepare_for_layout``; homogeneous fields become a plain ``[*S, F]`` array, heterogeneous fields an array of structs."""
 import ast
 from dataclasses import dataclass
 from typing import Any, Dict, List

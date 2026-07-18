@@ -118,7 +118,7 @@ class Unblock:
                 outer = m.digits[op]
                 merged = Digit(self.dim, inner.stride, outer.extent * self.factor)
                 digits = [dg for i, dg in enumerate(m.digits) if i != ip]
-                op2 = op if op < ip else op - 1  # index shift after removing inner
+                op2 = op if op < ip else op - 1  # shift index after removing the inner digit
                 digits[op2] = merged
                 return replace(m, digits=tuple(digits))
         raise ValueError(f"Unblock: no outer partner for dim {self.dim} factor {self.factor}")
@@ -212,7 +212,6 @@ def compose_ops(ops: List, base: Optional[LayoutMap] = None, shape=None) -> Layo
 
 def _fuse_pair(a, b):
     """Fuse two adjacent ops: ``[]`` cancels both, ``[op]`` fuses to one, ``None`` leaves as-is."""
-    # Inverse pair -> cancel.
     if a.inverse() == b:
         return []
     # Same-type fusion.

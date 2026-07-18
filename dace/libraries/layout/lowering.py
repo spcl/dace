@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Lower a layout-algebra op sequence to a materialized relayout in an SDFG: one mapped-tasklet copy
-from the logical index to the digit-tuple physical position."""
+"""Lower a layout-algebra op sequence to a materialized relayout in an SDFG: one mapped-tasklet copy from the logical index to the digit-tuple physical position."""
 from typing import List, Tuple
 
 import dace
@@ -16,8 +15,7 @@ def _digit_expr(digit) -> str:
 
 
 def relayout_map(logical_shape: List, ops: List) -> Tuple[List, LayoutMap, List]:
-    """Simplify ``ops`` and compose them on the packed-C identity of ``logical_shape``; returns
-    ``(simplified_ops, out_map, out_shape)``."""
+    """Simplify ``ops`` and compose them on the packed-C identity of ``logical_shape``; returns ``(simplified_ops, out_map, out_shape)``."""
     dims = list(range(len(logical_shape)))
     simplified = simplify_ops(ops)
     out_map = compose_ops(simplified, base=identity_map(logical_shape, dims))
@@ -48,8 +46,7 @@ def _emit_relayout_copy(state: dace.SDFGState, in_name: str, out_name: str, logi
 
 
 def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_name: str, ops: List) -> dace.SDFGState:
-    """Emit a relayout ``out = layout(ops)(in)`` into ``state``; ``in_name`` must be packed-C,
-    ``out_name`` is created/replaced with the laid-out shape."""
+    """Emit a relayout ``out = layout(ops)(in)`` into ``state``; ``in_name`` must be packed-C, ``out_name`` is created/replaced with the laid-out shape."""
     in_desc = sdfg.arrays[in_name]
     logical_shape = list(in_desc.shape)
     _, out_map, out_shape = relayout_map(logical_shape, ops)
@@ -69,8 +66,7 @@ def build_relayout(sdfg: dace.SDFG, state: dace.SDFGState, in_name: str, out_nam
 
 
 def build_relayout_sdfg(label: str, in_desc, out_desc, ops: List) -> dace.SDFG:
-    """Build a standalone SDFG relayouting ``_inp`` (``in_desc``) to ``_out`` (``out_desc``) via ``ops``
-    -- the nested SDFG ``LayoutChange.expand()`` returns."""
+    """Build a standalone SDFG relayouting ``_inp`` to ``_out`` via ``ops`` -- the nested SDFG ``LayoutChange.expand()`` returns."""
     logical_shape = list(in_desc.shape)
     _, out_map, _ = relayout_map(logical_shape, ops)
 

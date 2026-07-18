@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""NormalizeScheduleForLayout -- re-tile each top-level map to the block width its operands are
-laid out with, so the inner ``Mod(i, b)`` offset iterates contiguously. Run after applying a layout."""
+"""NormalizeScheduleForLayout -- re-tile each top-level map to the block width its operands are laid out with, so the inner ``Mod(i, b)`` offset iterates contiguously. Run after applying a layout."""
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 

@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BlockAwareMapTiling -- tile the schedule to a block factor so Block lowers cleanly.
-
-Tiles top-level maps matching ``tile_sizes`` so SplitDimensions emits clean tile/offset indices, no residual %/int_floor.
-"""
+"""BlockAwareMapTiling -- tiles top-level maps matching ``tile_sizes`` so SplitDimensions emits clean tile/offset indices and Block lowers cleanly, with no residual %/int_floor."""
 from dataclasses import dataclass
 from typing import Any, Dict, Tuple
 

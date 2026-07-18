@@ -1,9 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Average new memory blocks touched per iteration -- the layout-sensitive term of the memory cost.
-
-Per-dimension fraction is a continuous approximation of the integer block count: exact as extents
-grow, overcounts small sub-block tiles, but layout ranking is preserved.
-"""
+"""Average new memory blocks touched per iteration -- the layout-sensitive cost term (overcounts small tiles, but layout ranking is preserved)."""
 from typing import Dict, List
 
 import dace

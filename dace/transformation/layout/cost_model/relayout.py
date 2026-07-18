@@ -61,8 +61,7 @@ def relayout_pays(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout: s
     return n is not None and uses >= n
 
 
-# Combining cache efficiency with LogP: efficiency enters only the G (bandwidth) term, never L
-# (latency is paid per message, not per byte).
+# Efficiency enters only the G (bandwidth) term below, never L (paid per message, not per byte).
 
 
 def bandwidth_efficiency(useful_bytes: sp.Basic, sectors_touched: sp.Basic, p: LogGP, written: bool = False,

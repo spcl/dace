@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Device-aware lowering selection for layout-inserted library nodes: CPU always gets ``pure``;
-GPU prefers ``cuTENSOR``, falling back to ``pure`` when it can't build/run for the operands."""
+"""Device-aware lowering selection for layout-inserted library nodes: CPU always gets ``pure``; GPU prefers ``cuTENSOR``, falling back to ``pure`` when it can't build/run for the operands."""
 import ctypes.util
 from typing import List, Set, Type
 

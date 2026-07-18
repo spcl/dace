@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared preprocessing for layout transformations: establishes the normal form (no stray views,
-implicit copies, or narrow nested-SDFG memlets; loops parallelized to maps) layout passes assume."""
+"""Shared preprocessing for layout transformations: establishes the normal form layout passes assume (no stray views, implicit copies, or narrow nested-SDFG memlets; loops parallelized to maps)."""
 import warnings
 
 from dace import SDFG, data

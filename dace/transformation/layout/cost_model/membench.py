@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Build and drive the memory microbenchmarks in ``membench.c``.
-
-Reports the MIN over windows, never the mean: interference only ever adds time.
-"""
+"""Build and drive the memory microbenchmarks in ``membench.c``; reports the MIN over windows, never the mean, since interference only ever adds time."""
 import ctypes
 import os
 import subprocess

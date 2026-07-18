@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``LayoutChange`` library node: relayouts ``_inp`` to ``_out`` via a layout-algebra op sequence.
-
-Implementations: pure (mapped-tasklet, any ops); cuTENSOR/HPTT (pure permutation -> TensorTranspose, else pure)."""
+"""``LayoutChange`` library node: relayouts ``_inp`` to ``_out`` via a layout-algebra op sequence; pure uses a mapped tasklet, cuTENSOR/HPTT use TensorTranspose for a pure permutation (else pure)."""
 import json
 from typing import List, Optional, Tuple
 
@@ -32,7 +30,7 @@ def _as_permutation(out_map, logical_shape) -> Optional[Tuple[int, ...]]:
 
 def _build_transpose_sdfg(label, in_desc, out_desc, axes, impl) -> dace.SDFG:
     """Nested SDFG relaying ``_inp`` to ``_out`` via a ``TensorTranspose`` with the given implementation."""
-    from dace.libraries.linalg import TensorTranspose  # avoid import loop
+    from dace.libraries.linalg import TensorTranspose  # avoids a circular import
 
     sdfg = dace.SDFG(f"{label}_sdfg")
     sdfg.add_array("_inp", in_desc.shape, in_desc.dtype, in_desc.storage, strides=in_desc.strides)
@@ -50,7 +48,7 @@ def _build_transpose_sdfg(label, in_desc, out_desc, axes, impl) -> dace.SDFG:
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """Materialize the whole op sequence as ONE mapped-tasklet relayout copy."""
+    """Materialize the whole op sequence as one mapped-tasklet relayout copy."""
 
     environments = []
 

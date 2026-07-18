@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Externalize one loop nest into a standalone runnable SDFG (GLOBAL_LAYOUT_DESIGN.md, task A1).
-
-Thin wrapper over ``SDFGCutout``: cuts the nest's scope subgraph out and gives it a stable unique name.
-"""
+"""Externalize one loop nest into a standalone runnable SDFG (GLOBAL_LAYOUT_DESIGN.md, task A1); a thin wrapper over ``SDFGCutout`` that cuts the nest's scope subgraph out and gives it a stable unique name."""
 import re
 from typing import Dict, Optional
 
@@ -54,10 +51,7 @@ def nest_arguments(ext: SDFG,
                    symbols: Dict[str, int],
                    provided: Optional[Dict[str, numpy.ndarray]] = None,
                    seed: int = 0) -> Dict[str, numpy.ndarray]:
-    """Deterministic argument buffers for an externalized nest.
-
-    ``provided`` arrays are copied verbatim; everything else gets a deterministic fill from ``seed`` (sorted name order).
-    """
+    """Deterministic argument buffers for an externalized nest. ``provided`` arrays are copied verbatim; everything else gets a deterministic fill from ``seed`` (sorted name order)."""
     provided = provided or {}
     rng = numpy.random.default_rng(seed)
     args: Dict[str, numpy.ndarray] = {}

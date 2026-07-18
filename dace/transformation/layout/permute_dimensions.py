@@ -22,8 +22,7 @@ def _is_full_extent(memlet, arr) -> bool:
 
 def _nested_inner_permutation(sdfg, node, outer_name: str, inner_name: str, permute_map: Dict[str,
                                                                                               List[int]]) -> List[int]:
-    """Inner permutation for outer_name in node's nested SDFG; None if full/1-D rank match, else raises
-    (partial-slice rank is unreachable after prepare_for_layout)."""
+    """Inner permutation for outer_name in node's nested SDFG; None if full/1-D rank match, else raises (partial-slice rank is unreachable after prepare_for_layout)."""
     if outer_name not in permute_map:
         return None
     if inner_name is None or inner_name not in node.sdfg.arrays:
@@ -190,7 +189,6 @@ def _is_zero_initialized(sdfg: dace.SDFG, name: str) -> bool:
 class PermuteDimensions(ppl.Pass):
 
     def modifies(self) -> ppl.Modifies:
-        # analysis pass -- modifies nothing
         return (ppl.Modifies.States | ppl.Modifies.AccessNodes | ppl.Modifies.Edges | ppl.Modifies.Descriptors
                 | ppl.Modifies.NestedSDFGs | ppl.Modifies.Memlets)
 
@@ -216,8 +214,7 @@ class PermuteDimensions(ppl.Pass):
 
     def _add_permute_map(self, sdfg: dace.SDFG, state: dace.SDFGState, old_shape: List[int], new_shape: List[int],
                          permute_indices: List[int], old_name: str, new_name: str):
-        """Copies old_name to new_name via transpose; no implementation chosen here (picked later by
-        select_layout_lowering)."""
+        """Copies old_name to new_name via transpose; no implementation chosen here (picked later by select_layout_lowering)."""
         if self._use_permute_libnodes:
             from dace.libraries.linalg import TensorTranspose
 
@@ -275,7 +272,6 @@ class PermuteDimensions(ppl.Pass):
 
                 arr_shape = arr.shape
 
-                # Generate new shape
                 permuted_shape = []
                 assert len(permute_indices) == len(
                     arr_shape
@@ -470,8 +466,7 @@ def covers_full_array(memlet, desc) -> bool:
 
 
 def retranspose_copies(state: dace.SDFGState, sides: Dict, context: str = "PermuteDimensions") -> None:
-    """Replaces transposing copies with TensorTranspose; must run now, the permutation isn't recoverable
-    later (axes = P^-1 if input relaid, P if output relaid)."""
+    """Replaces transposing copies with TensorTranspose; must run now, the permutation isn't recoverable later (axes = P^-1 if input relaid, P if output relaid)."""
     from dace.libraries.linalg import TensorTranspose
     from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
 
@@ -521,8 +516,7 @@ def rewrite_state_for_permute(state: dace.SDFGState,
                               name_map: Dict[str, str],
                               permute_map: Dict[str, List[int]],
                               note_copy_side=None) -> Dict:
-    """Renames access nodes/connectors per name_map and permutes memlet subsets (new_subset[i] =
-    old_subset[perm[i]]); shared rewrite core of PermuteDimensions and apply_assignment."""
+    """Renames access nodes/connectors per name_map and permutes memlet subsets (new_subset[i] = old_subset[perm[i]]); shared rewrite core of PermuteDimensions and apply_assignment."""
     sides: Dict = {}
     for node in state.nodes():
         if isinstance(node, dace.nodes.AccessNode) and node.data in name_map:

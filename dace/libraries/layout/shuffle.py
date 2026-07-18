@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The shuffle registry: user-defined value-permutation sigma (forward + inverse expressions),
-minting sympy Function classes and C++ lowerings for codegen."""
+"""The shuffle registry: user-defined value-permutation sigma (forward + inverse expressions), minting sympy Function classes and C++ lowerings for codegen."""
 import ast
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple
@@ -35,7 +34,7 @@ class _FlooredMod(ast.NodeTransformer):
 
 
 def _expr_to_c(expr: str) -> str:
-    """Convert a python index expression to C++; ``%`` emitted as floored ``shuffle_pymod``."""
+    """Convert a Python index expression to C++; ``%`` emitted as floored ``shuffle_pymod``."""
     tree = _FlooredMod().visit(ast.parse(expr, mode="eval"))
     ast.fix_missing_locations(tree)
     return cppunparse.pyexpr2cpp(ast.unparse(tree))
@@ -131,7 +130,7 @@ class ShuffleFunction:
         return self.forward_c_def() + self.inverse_c_def()
 
     def numeric_forward(self) -> Callable:
-        """A python callable ``sigma(index, **symbol_values)`` for numpy oracles/tests."""
+        """A Python callable ``sigma(index, **symbol_values)`` for numpy oracles/tests."""
         return self._numeric(self.forward_expr)
 
     def numeric_inverse(self) -> Callable:
@@ -196,7 +195,7 @@ def emit_shuffle_globals(sdfg: dace.SDFG, names) -> None:
         already += definition
 
     emit_once(PYMOD_FUNC, PYMOD_DEF)
-    for name in dict.fromkeys(names):  # de-dup names, keep order
+    for name in dict.fromkeys(names):  # remove duplicate names, preserve order
         fn = get_shuffle(name)
         emit_once(fn.forward_name(), fn.forward_c_def())
         emit_once(fn.inverse_name(), fn.inverse_c_def())

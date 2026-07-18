@@ -14,10 +14,10 @@ class LogGP:
     o: float  # s -- per-message overhead (0 in v1)
     g: float  # s -- minimum interval between requests from one core
     G: float  # s/byte -- per-byte gap = 1 / BW_saturated (channel-limited, all cores)
-    line_bytes: int  # REQUEST granularity: what one message covers (64 x86, 128 NVIDIA) -> the L term
+    line_bytes: int  # REQUEST granularity: what one message covers (64B x86, 128B NVIDIA); feeds the L term
     bw_saturated: float  # bytes/s -- all-core channel bandwidth; G == 1 / bw_saturated
     bw_core: float  # bytes/s -- single-core bandwidth (< bw_saturated); DIAGNOSTIC, not the model G
-    #: TRANSFER granularity crossing the channels (the G term). x86 == line_bytes; NVIDIA sectors 32B within a 128B line.
+    #: TRANSFER granularity crossing the channels (the G term). x86 = line_bytes; NVIDIA sectors 32B within a 128B line.
     sector_bytes: int = None  # defaults to line_bytes (no sectoring)
 
     #: measured outstanding-miss knee of one core; None falls back to L/g. validate() cross-checks them.

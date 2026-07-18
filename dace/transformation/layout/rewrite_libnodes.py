@@ -1,8 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Library-node rewrites that expose an operand's layout to the layout passes.
-
-Reorders einsum subscripts and rewrites ``Gemm``/``CopyLibraryNode`` into ``TensorDot``/``TensorTranspose`` so a layout change reaches node semantics, not just memlets.
-"""
+"""Library-node rewrites that expose an operand's layout to the layout passes: reorders einsum subscripts and rewrites ``Gemm``/``CopyLibraryNode`` into ``TensorDot``/``TensorTranspose`` so a layout change reaches node semantics, not just memlets."""
 from dataclasses import dataclass
 from typing import Any, Dict, List, Tuple
 
@@ -47,10 +44,7 @@ def block_scan_stride(node, factor: int) -> None:
 
 @dataclass
 class GemmToTensorDot(ppl.Pass):
-    """Rewrite eligible ``Gemm`` (``alpha==1``, ``beta==0``, no ``C`` input) into ``TensorDot`` for layout visibility.
-
-    ``TensorDot`` has no default implementation -- ``select_layout_lowering`` must run before compile.
-    """
+    """Rewrite eligible ``Gemm`` (``alpha==1``, ``beta==0``, no ``C`` input) into ``TensorDot`` for layout visibility; ``TensorDot`` has no default implementation, so ``select_layout_lowering`` must run before compile."""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
@@ -98,7 +92,7 @@ class GemmToTensorDot(ppl.Pass):
 
 
 def copy_permutation_axes(in_sizes: List, out_sizes: List):
-    """Axes ``P`` s.t. ``out = transpose(in, P)``, or ``None`` if no transpose is needed (same order or reshape). Raises ``NotImplementedError`` on ambiguous (repeated-size) permutations."""
+    """Axes ``P`` such that ``out = transpose(in, P)``, or ``None`` if no transpose is needed (same order or reshape). Raises ``NotImplementedError`` on ambiguous (repeated-size) permutations."""
 
     def same(a, b) -> bool:
         return dace.symbolic.simplify(a - b) == 0
@@ -124,10 +118,7 @@ def copy_permutation_axes(in_sizes: List, out_sizes: List):
 
 @dataclass
 class RewriteCopyForLayout(ppl.Pass):
-    """Rewrite ``CopyLibraryNode``s whose operands ended up with different layouts into ``TensorTranspose``; same-layout copies and reshapes are left untouched. Run after the layout change.
-
-    Inserted without an implementation -- ``select_layout_lowering`` (or the node default) assigns one at compile time.
-    """
+    """Rewrite ``CopyLibraryNode``s whose operands ended up with different layouts into ``TensorTranspose``; same-layout copies and reshapes are left untouched. Run after the layout change, with no implementation set -- ``select_layout_lowering`` (or the node default) assigns one at compile time."""
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Nodes | ppl.Modifies.Edges | ppl.Modifies.Memlets

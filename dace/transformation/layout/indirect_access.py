@@ -1,7 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Detect indirect (data-dependent) array accesses for the layout algebra: names the
-``(index_array, data_array)`` pair behind each ``A[idx[i]]`` gather/scatter, via symbol promotion
-(``sym := idx[f(loop_var)]`` on the loop region, then a data memlet ``A[sym]``)."""
+"""Detect indirect (data-dependent) array accesses for the layout algebra: names the ``(index_array, data_array)`` pair behind each ``A[idx[i]]`` gather/scatter, via symbol promotion (``sym := idx[f(loop_var)]`` on the loop region, then a data memlet ``A[sym]``)."""
 import ast
 from typing import Dict, List, NamedTuple, Optional
 
@@ -10,8 +8,7 @@ from dace.sdfg.state import LoopRegion
 
 
 class IndirectAccess(NamedTuple):
-    """One indirect access site: ``data_array`` subscripted by ``index_array``'s value; ``kind`` is
-    ``'gather'`` (read) or ``'scatter'`` (write)."""
+    """One indirect access site: ``data_array`` subscripted by ``index_array``'s value; ``kind`` is ``'gather'`` (read) or ``'scatter'`` (write)."""
     index_array: str
     data_array: str
     kind: str
