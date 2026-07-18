@@ -143,6 +143,10 @@ def _prepare_callee(call: ast.Call, callee: Any,
         provided[keyword.arg] = keyword.value
 
     callee_globals = dict(callee.global_vars)
+    # Bound methods: "self" is resolved through the closure, not an argument
+    # (mirrors parse_program's bound-method handling in nextgen/__init__.py)
+    if callee.methodobj is not None and callee.objname is not None:
+        callee_globals[callee.objname] = callee.methodobj
     injected_defaults = set()
     argtypes: Dict[str, data.Data] = {}
     parameter_bindings: Dict[str, str] = {}

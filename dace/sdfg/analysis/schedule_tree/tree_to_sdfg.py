@@ -1001,11 +1001,15 @@ def from_schedule_tree(
         result._arrays[key] = copy.deepcopy(container)
     # Opaque Python-object constants (callback namespace entries) have no
     # code-generatable representation and may not even be deep-copyable
-    # (modules, callables); they stay on the tree root only.
+    # (modules, callables); they stay on the tree root only. The same goes for
+    # constants keyed by a non-identifier qualname (e.g. 'self.parameter'):
+    # preprocessing folds their values inline, so nothing references them by
+    # name, and the dotted name is not a valid C identifier.
     result.constants_prop = copy.deepcopy({
         name: entry
-        for name, entry in stree.constants.items() if not (isinstance(entry, tuple) and isinstance(entry[0], data.Data)
-                                                           and isinstance(entry[0].dtype, dtypes.pyobject))
+        for name, entry in stree.constants.items()
+        if name.isidentifier() and not (isinstance(entry, tuple) and isinstance(entry[0], data.Data)
+                                        and isinstance(entry[0].dtype, dtypes.pyobject))
     })
     result.callback_mapping = copy.deepcopy(stree.callback_mapping)
     # Frontend-produced trees store symbol *objects*; the SDFG symbol
