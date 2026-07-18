@@ -194,6 +194,3 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
-
-# Local secrets / tokens
-.mtoken
