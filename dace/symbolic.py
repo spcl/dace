@@ -901,7 +901,10 @@ def symbols_in_ast(tree: ast.AST):
         if node in skip:
             continue
         if isinstance(node, ast.Call):
-            skip.add(node.func)
+            # Skip the entire callee, not just its root node: an attribute call like ``dace.int64(x)``
+            # has callee ``dace.int64`` whose base ``dace`` is a module, not a free symbol. Adding only
+            # ``node.func`` (the Attribute) still left its inner ``Name`` (here ``dace``) collected.
+            skip.update(ast.walk(node.func))
         if isinstance(node, ast.Name):
             symbols.append(node.id)
     return dtypes.deduplicate(symbols)
