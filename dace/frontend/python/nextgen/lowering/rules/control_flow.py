@@ -11,7 +11,7 @@ for frontend-produced and SDFG-derived schedule trees.
 import ast
 from typing import List, Optional, Tuple
 
-from dace import data, dtypes, subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -20,7 +20,7 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
-from dace.frontend.python.nextgen.lowering.access import resolve_symbol_names
+from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access, resolve_symbol_names
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.context import BindingSnapshot
 from dace.frontend.python.nextgen.semantics.joins import merge_branches
@@ -217,17 +217,22 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
     """
     Resolve a single ``dace.map`` range bound to a symbolic expression.
 
-    A bound that is a bare name bound to a scalar integer data container (the
-    shape ANF hoisting leaves a data-dependent bound expression in, e.g.
-    ``A_row[i]`` becomes ``__anf0 = A_row[i]`` before the loop) is turned into
-    a fresh dynamic-map-range symbol instead: see :func:`_dynamic_bound`.
+    A bound that reads a data container — a scalar name, a scalar structure
+    member, or a scalar array element like ``A_row[i]`` (index expressions
+    are canonical in place, not hoisted) — becomes a fresh dynamic-map-range
+    symbol fed by a :class:`DynScopeCopyNode`: see :func:`_dynamic_bound`.
+    Purely symbolic expressions (``i + 1``) resolve symbolically. Compound
+    expressions that mix data reads with arithmetic (``A_row[i] + 1``) are
+    not symbolizable and fall back to a callback.
     """
     if node is None:
         return default
-    if isinstance(node, ast.Name):
-        binding = state.context.resolve(node.id)
-        if binding is not None and binding.kind == 'container':
-            return _dynamic_bound(node, binding.container, state, dynamic_inputs)
+    if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)):
+        # May raise UnsupportedFeatureError (e.g. a data-dependent index
+        # inside the bound itself), falling the whole loop back to a callback.
+        access = resolve_access(node, state)
+        if access is not None:
+            return _dynamic_bound(node, access, state, dynamic_inputs)
     expression = astutils.unparse(resolve_symbol_names(node, state))
     try:
         return symbolic.pystr_to_symbolic(expression)
@@ -238,30 +243,30 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
                                       node)
 
 
-def _dynamic_bound(node: ast.Name, container: str, state: LoweringState,
+def _dynamic_bound(node: ast.expr, access: DataAccess, state: LoweringState,
                    dynamic_inputs: List[tn.DynScopeCopyNode]) -> symbolic.symbol:
     """
-    Turn a data-dependent ``dace.map`` bound (a name bound to a scalar
-    integer container) into a fresh symbol fed by a dynamic map-range input,
-    recording a :class:`~dace.sdfg.analysis.schedule_tree.treenodes.DynScopeCopyNode`
+    Turn a data-dependent ``dace.map`` bound (a scalar integer data access —
+    a scalar container or a single array element like ``A_row[i]``) into a
+    fresh symbol fed by a dynamic map-range input, recording a
+    :class:`~dace.sdfg.analysis.schedule_tree.treenodes.DynScopeCopyNode`
     for the caller to emit right before the map scope.
 
-    :raises UnsupportedFeatureError: If the container is not a scalar integer
-        (e.g. a whole array, or a floating-point scalar) -- those forms are
-        not (yet) supported as dynamic map-range inputs.
+    :raises UnsupportedFeatureError: If the access is not a single integer
+        element (e.g. a whole array, a sub-range, or a floating-point
+        scalar) -- those forms are not supported as dynamic map-range inputs.
     """
-    descriptor = state.context.containers[container]
-    if not (isinstance(descriptor, data.Scalar) and descriptor.dtype in dtypes.INTEGER_TYPES):
+    if not access.is_scalar_access or access.descriptor.dtype not in dtypes.INTEGER_TYPES:
         raise UnsupportedFeatureError(
-            f'Data-dependent dace.map bound "{astutils.unparse(node)}" must be an integer scalar '
-            f'(got {descriptor})', state.context.filename, node)
+            f'Data-dependent dace.map bound "{astutils.unparse(node)}" must be a scalar integer '
+            f'element (got subset {access.subset} of {access.descriptor})', state.context.filename, node)
     symbol_name = state.context.fresh_name('__dyn')
     # A repository-only symbol: registered directly in the symbol table (which
     # *is* the tree root's symbol table), without a source-level name binding.
-    state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, descriptor.dtype)
-    memlet = Memlet(data=container, subset=subsets.Range.from_array(descriptor))
+    state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
+    memlet = Memlet(data=access.container, subset=access.subset)
     dynamic_inputs.append(tn.DynScopeCopyNode(target=symbol_name, memlet=memlet))
-    return symbolic.symbol(symbol_name, descriptor.dtype)
+    return symbolic.symbol(symbol_name, access.descriptor.dtype)
 
 
 def _index_dtype(bounds: List[ast.expr], state: LoweringState) -> dtypes.typeclass:

@@ -33,10 +33,15 @@ Canonical statement grammar::
     operand := atom | Subscript(dataref, idx) | UnaryOp(op, operand)
 
     dataref := Name | Attribute(Name)    # container or single-level structure member
+                                          # (nested structure members reach this
+                                          # form via ANF hoisting, see
+                                          # ANFTransform._as_dataref)
 
     atom  := Name | Constant | UnaryOp(op, atom) | Attribute-chain over Name
 
-    idx   := atom | Slice(atom?, atom?, atom?) | Tuple([idx...])
+    idx     := idxexpr | Slice(idxexpr?, idxexpr?, idxexpr?) | Tuple([idx...])
+
+    idxexpr := operand | BinOp(operand, op, operand)
 
 Statements that cannot be reduced to this grammar become :class:`OpaqueStmt`
 markers carrying the original statement and its input/output name sets, so
@@ -243,13 +248,26 @@ def is_atomexpr(node: ast.AST) -> bool:
     return False
 
 
+def is_index_expr(node: ast.AST) -> bool:
+    """
+    Check whether an expression is a canonical index expression (depth-1): an
+    operand, or a binary operation of two operands (e.g. the ``i + 1`` in
+    ``A[i + 1]``, or the ``A_col[j]`` data-read operand in ``x[A_col[j]]``).
+    """
+    if is_operand(node):
+        return True
+    if isinstance(node, ast.BinOp):
+        return is_operand(node.left) and is_operand(node.right)
+    return False
+
+
 def is_index(node: ast.AST) -> bool:
     """Check whether an expression is a canonical subscript index."""
     if isinstance(node, ast.Slice):
-        return all(part is None or is_atom(part) for part in (node.lower, node.upper, node.step))
+        return all(part is None or is_index_expr(part) for part in (node.lower, node.upper, node.step))
     if isinstance(node, ast.Tuple):
         return all(is_index(element) for element in node.elts)
-    return is_atom(node)
+    return is_index_expr(node)
 
 
 def is_flat(node: ast.AST) -> bool:

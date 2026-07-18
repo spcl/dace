@@ -454,6 +454,18 @@ class InferenceService:
         if not base.is_data:
             raise UnsupportedFeatureError('Subscript of a non-container value', self.context.filename, node)
         expr = self.parse_access(node)
+        # Deferred import: avoids an import cycle (lowering.access ->
+        # lowering.registry -> semantics.inference). See the soundness-guard
+        # docstring on data_dependent_container_names for why this check
+        # cannot rely on subset.free_symbols alone. Only array reads reject
+        # here: scalar containers in subsets are handled scope-sensitively by
+        # resolve_access (inference has no emitter context).
+        from dace.frontend.python.nextgen.lowering.access import data_dependent_container_names
+        _, array_reads = data_dependent_container_names(expr.subset, self.context)
+        if array_reads:
+            raise UnsupportedFeatureError(
+                f'Data-dependent subscript index (reads {", ".join(sorted(array_reads))}) is not supported here',
+                self.context.filename, node)
         try:
             shape = [s for s in expr.subset.size() if s != 1]
             if not shape:

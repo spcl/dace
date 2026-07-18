@@ -20,15 +20,51 @@ class DataAccess:
     container: str  #: Repository container name
     subset: subsets.Range  #: Accessed subset (in container index space)
     descriptor: data.Data
+    #: Per-subset-dimension flags: True when the source index was slice-formed
+    #: (the dimension survives in the NumPy result shape even at size 1),
+    #: False when integer-indexed (dropped). None when the index form could
+    #: not be analyzed (fall back to squeezing all size-1 dimensions).
+    kept_dims: Optional[List[bool]] = None
 
     @property
     def is_scalar_access(self) -> bool:
         return self.subset.num_elements() == 1
 
+    @property
+    def numpy_shape(self) -> List:
+        """
+        The NumPy-semantic result shape of this access: slice-formed
+        dimensions are kept (``a[0:20, 1:2]`` → (20, 1)), integer-indexed
+        dimensions are dropped (``a[0:20, 1]`` → (20,)). Empty for scalar
+        element accesses.
+        """
+        if self.kept_dims is None:
+            return nondegenerate_shape(self.subset)
+        return [size for size, kept in zip(self.subset.size(), self.kept_dims) if kept]
+
 
 def nondegenerate_shape(subset: subsets.Range) -> List:
     """The shape of a subset with size-1 dimensions squeezed out."""
     return [s for s in subset.size() if s != 1]
+
+
+def _kept_dimensions(slice_node: ast.expr, ndim: int) -> Optional[List[bool]]:
+    """
+    Which subset dimensions a subscript keeps in its NumPy result shape:
+    slice-formed indices keep their dimension, integer indices drop it, and
+    unindexed trailing dimensions are kept. Returns None (unknown) for index
+    forms this analysis does not model (``...``, ``None``/newaxis).
+    """
+    elements = list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
+    if len(elements) > ndim:
+        return None
+    kept: List[bool] = []
+    for element in elements:
+        if isinstance(element, ast.Constant) and (element.value is Ellipsis or element.value is None):
+            return None
+        kept.append(isinstance(element, ast.Slice))
+    kept.extend([True] * (ndim - len(kept)))
+    return kept
 
 
 def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]:
@@ -68,8 +104,64 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
         if expr.arrdims:
             raise UnsupportedFeatureError('Advanced (array-valued) indexing is not supported yet',
                                           state.context.filename, node)
-        return DataAccess(base_container, subset, base_descriptor)
+        scalar_reads, array_reads = data_dependent_container_names(subset, state.context)
+        if array_reads:
+            # An array element read inside the index (x[A_col[j]]): genuine
+            # indirection, only supported by the explicit-tasklet rule.
+            raise UnsupportedFeatureError(
+                f'Data-dependent subscript index (reads {", ".join(sorted(array_reads))}) is not supported here',
+                state.context.filename, node)
+        if scalar_reads and state.emitter.in_dataflow_scope:
+            # Scalar containers in subsets are legitimate at control-flow
+            # level (scalar-to-symbol promotion turns them into symbols), but
+            # inside a dataflow scope no such mechanism exists — the memlet
+            # would reference a runtime scalar as if it were a symbol.
+            raise UnsupportedFeatureError(
+                f'Subscript index reads scalar container(s) {", ".join(sorted(scalar_reads))} inside a '
+                'dataflow scope', state.context.filename, node)
+        kept = None if expr.new_axes else _kept_dimensions(node.slice, len(subset.ranges))
+        return DataAccess(base_container, subset, base_descriptor, kept_dims=kept)
     return None
+
+
+def data_dependent_container_names(subset: subsets.Range, context) -> Tuple[set, set]:
+    """
+    Names referenced by a subset's index expressions that are themselves
+    bound to data containers (rather than symbols), split into scalar
+    containers and array reads -- e.g. the ``A_col`` in ``x[A_col[j]]``.
+
+    The shared memlet parser (``dace.frontend.python.memlet_parser``)
+    represents an inner subscript it cannot evaluate as a compile-time
+    constant as an un-evaluated applied sympy function (e.g. ``A_col(j)``),
+    so the true free symbols of the subset (``subsets.Range.free_symbols``,
+    built from ``sympy.Expr.free_symbols``) do not include ``A_col`` -- only
+    ``dace.symbolic.free_symbols_and_functions`` reports both the real
+    symbols and any function heads.
+
+    Used as a soundness guard: array reads in an index are genuine
+    indirection and only the explicit-tasklet rule implements them (see
+    ``lowering/rules/dataflow_explicit.py``); scalar containers are
+    legitimate at control-flow level (scalar-to-symbol promotion applies)
+    but not inside dataflow scopes.
+
+    :return: A 2-tuple of (scalar container names, array read names).
+    """
+    names = set()
+    for dim in subset.ranges:
+        for component in dim:
+            names |= symbolic.free_symbols_and_functions(component)
+    scalar_reads = set()
+    array_reads = set()
+    for name in names:
+        binding = context.resolve(name)
+        if binding is None or binding.kind != 'container':
+            continue
+        descriptor = context.containers[binding.container]
+        if isinstance(descriptor, data.Scalar):
+            scalar_reads.add(name)
+        else:
+            array_reads.add(name)
+    return scalar_reads, array_reads
 
 
 def _member_access(node: ast.Attribute, state: LoweringState) -> Optional[DataAccess]:

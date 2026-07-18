@@ -112,10 +112,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._dataflow_stack: list[tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]]
                                    | tuple[SDFG, dict[str, set[str]]]] = []
 
-        self._pending_dynamic_inputs: dict[str, tuple[nodes.AccessNode, Memlet]] = {}
-        """Dynamic map-range inputs (from DynScopeCopyNode siblings emitted right
-        before a MapScope) that are still waiting to be wired to a map entry's
-        dynamic (unprefixed) input connector, keyed by target symbol name."""
+        self._pending_dynamic_inputs: dict[str, Memlet] = {}
+        """Dynamic map-range input memlets (from DynScopeCopyNode siblings
+        emitted right before a MapScope) that are still waiting to be wired to
+        a map entry's dynamic (unprefixed) input connector, keyed by target
+        symbol name."""
 
         self._max_nested_sdfg = max_nested_sdfg
 
@@ -475,6 +476,57 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # Restore current nested SDFG
         self._current_nestedSDFG = outer_nestedSDFG
 
+    def _connect_map_input(self, map_entry: nodes.MapEntry, connector: str, memlet_data: str, memlet: Memlet,
+                           outer_map_entry, outer_to_connect, access_cache: dict, sdfg: SDFG) -> None:
+        """
+        Source one input connector of a map entry: from a local access node
+        when the data was produced in the enclosing scope, through the
+        enclosing map entry's IN_/OUT_ passthrough connectors when nested, or
+        from a (cached) state-level read otherwise — registering the read on a
+        nested-SDFG boundary when one encloses the map.
+        """
+        # connect to local access node (if available)
+        if memlet_data in access_cache:
+            self._current_state.add_memlet_path(access_cache[memlet_data], map_entry, dst_conn=connector, memlet=memlet)
+            return
+
+        if isinstance(outer_map_entry, nodes.EntryNode):
+            # get it from outside the map
+            connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet_data}"
+            if connector_name not in outer_map_entry.out_connectors:
+                new_in_connector = outer_map_entry.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet_data}")
+                new_out_connector = outer_map_entry.add_out_connector(connector_name)
+                assert new_in_connector == True
+                assert new_in_connector == new_out_connector
+
+            self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector, memlet)
+            return
+
+        if isinstance(outer_map_entry, SDFG):
+            # Copy data descriptor from parent SDFG and add input connector
+            if memlet_data not in sdfg.arrays:
+                parent_sdfg: SDFG = self._parent_sdfg_with_array(memlet_data, sdfg)
+
+                # Add support for NView nodes
+                use_nview = self._apply_nview_array_override(memlet_data, sdfg)
+                if not use_nview:
+                    sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
+
+                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                    if parent_sdfg.arrays[memlet_data].transient:
+                        sdfg.arrays[memlet_data].transient = False
+
+                # Dev note: nview.target and memlet_data are identical
+                assert memlet_data not in outer_to_connect["inputs"]
+                outer_to_connect["inputs"].add(memlet_data)
+        else:
+            assert outer_map_entry is None
+
+        # cache local read access
+        assert memlet_data not in access_cache
+        access_cache[memlet_data] = self._current_state.add_read(memlet_data)
+        self._current_state.add_memlet_path(access_cache[memlet_data], map_entry, dst_conn=connector, memlet=memlet)
+
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
         cache_state = self._current_state
@@ -484,20 +536,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         map_entry = nodes.MapEntry(node.node.map)
         self._current_state.add_node(map_entry)
 
-        # Wire any dynamic map-range inputs (DynScopeCopyNode siblings emitted
+        # Claim any dynamic map-range inputs (DynScopeCopyNode siblings emitted
         # right before this scope) whose target symbol appears in this map's
-        # range. These get a raw (unprefixed) input connector directly wired
-        # to their source access node -- not the IN_/OUT_ passthrough scheme
-        # used for regular data reads -- so exclude them from that handling
-        # below.
-        dynamic_connectors: set[str] = set()
+        # range. They get raw (unprefixed) input connectors carrying their
+        # element memlets; the actual wiring happens with the other input
+        # connectors after the children are visited, so the source routes
+        # through enclosing scopes like any other read.
+        dynamic_inputs: dict[str, Memlet] = {}
         range_symbols = {str(s) for s in node.node.map.range.free_symbols}
         for target in list(self._pending_dynamic_inputs.keys()):
             if target in range_symbols:
-                access_node, memlet = self._pending_dynamic_inputs.pop(target)
+                dynamic_inputs[target] = self._pending_dynamic_inputs.pop(target)
                 map_entry.add_in_connector(target)
-                self._current_state.add_edge(access_node, None, map_entry, target, memlet)
-                dynamic_connectors.add(target)
 
         self._dataflow_stack.append((map_entry, dict()))
 
@@ -528,61 +578,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # connect potential input connectors on map_entry
         for connector in map_entry.in_connectors:
-            if connector in dynamic_connectors:
-                # Already wired above, directly from its source access node.
+            if connector in dynamic_inputs:
+                # Dynamic map-range input: an unprefixed connector carrying an
+                # element memlet, sourced like any other read (local access
+                # node, enclosing scope passthrough, or state-level read).
+                memlet = copy.deepcopy(dynamic_inputs[connector])
+                self._connect_map_input(map_entry, connector, memlet.data, memlet, outer_map_entry, outer_to_connect,
+                                        access_cache, sdfg)
                 continue
             memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
-
-            # connect to local access node (if available)
-            if memlet_data in access_cache:
-                cached_access = access_cache[memlet_data]
-                self._current_state.add_memlet_path(cached_access,
-                                                    map_entry,
-                                                    dst_conn=connector,
-                                                    memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
-                continue
-
-            if isinstance(outer_map_entry, nodes.EntryNode):
-
-                # get it from outside the map
-                connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet_data}"
-                if connector_name not in outer_map_entry.out_connectors:
-                    new_in_connector = outer_map_entry.add_in_connector(connector)
-                    new_out_connector = outer_map_entry.add_out_connector(connector_name)
-                    assert new_in_connector == True
-                    assert new_in_connector == new_out_connector
-
-                self._current_state.add_edge(outer_map_entry, connector_name, map_entry, connector,
-                                             Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
-            else:
-                if isinstance(outer_map_entry, SDFG):
-                    # Copy data descriptor from parent SDFG and add input connector
-                    if memlet_data not in sdfg.arrays:
-                        parent_sdfg: SDFG = self._parent_sdfg_with_array(memlet_data, sdfg)
-
-                        # Add support for NView nodes
-                        use_nview = self._apply_nview_array_override(memlet_data, sdfg)
-                        if not use_nview:
-                            sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
-
-                            # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                            if parent_sdfg.arrays[memlet_data].transient:
-                                sdfg.arrays[memlet_data].transient = False
-
-                        # Dev note: nview.target and memlet_data are identical
-                        assert memlet_data not in outer_to_connect["inputs"]
-                        outer_to_connect["inputs"].add(memlet_data)
-                else:
-                    assert outer_map_entry is None
-
-                # cache local read access
-                assert memlet_data not in access_cache
-                access_cache[memlet_data] = self._current_state.add_read(memlet_data)
-                cached_access = access_cache[memlet_data]
-                self._current_state.add_memlet_path(cached_access,
-                                                    map_entry,
-                                                    dst_conn=connector,
-                                                    memlet=Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]))
+            self._connect_map_input(map_entry, connector, memlet_data,
+                                    Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]), outer_map_entry,
+                                    outer_to_connect, access_cache, sdfg)
 
         if isinstance(outer_map_entry, nodes.EntryNode) and self._current_state.out_degree(outer_map_entry) < 1:
             self._current_state.add_nedge(outer_map_entry, map_entry, Memlet())
@@ -795,19 +802,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
     def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:
         # A dynamic map-range input: emitted as a sibling immediately before
         # the scope (typically a MapScope) whose range uses ``node.target`` as
-        # a symbol. We can't wire the connector yet -- the scope's entry node
-        # doesn't exist until that sibling is visited -- so stash the source
-        # access node and memlet, keyed by the target symbol, for the entry
-        # node's visitor to pick up (see visit_MapScope).
-        cache_key = (self._current_state, id(self._ctx.current_scope))
-        if cache_key not in self._ctx.access_cache:
-            self._ctx.access_cache[cache_key] = {}
-        access_cache = self._ctx.access_cache[cache_key]
-
-        src_name = node.memlet.data
-        source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
-
-        self._pending_dynamic_inputs[node.target] = (source, node.memlet)
+        # a symbol. We can't wire anything yet -- the scope's entry node
+        # doesn't exist until that sibling is visited -- so stash the memlet,
+        # keyed by the target symbol; the entry node's visitor sources it like
+        # any other map input (see visit_MapScope/_connect_map_input).
+        self._pending_dynamic_inputs[node.target] = node.memlet
 
     def visit_ViewNode(self, node: tn.ViewNode, sdfg: SDFG) -> None:
         # Views are aliasing bindings, not dataflow: record the binding here;

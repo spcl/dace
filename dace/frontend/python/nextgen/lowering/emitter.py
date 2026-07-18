@@ -54,6 +54,13 @@ class TreeEmitter:
     def current_scope(self) -> tn.ScheduleTreeScope:
         return self._scope_stack[-1]
 
+    @property
+    def in_dataflow_scope(self) -> bool:
+        """Whether emission currently targets (a descendant of) a dataflow
+        scope (map/consume), where interstate mechanisms like scalar-to-symbol
+        promotion cannot apply."""
+        return any(isinstance(scope, tn.DataflowScope) for scope in self._scope_stack)
+
     def emit(self, node: tn.ScheduleTreeNode) -> tn.ScheduleTreeNode:
         """
         Append a node to the current scope.

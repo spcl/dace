@@ -8,16 +8,16 @@ next-generation Python frontend.
 :class:`~dace.sdfg.nodes.MapEntry` whose range uses fresh symbols fed by
 :class:`~dace.sdfg.analysis.schedule_tree.treenodes.DynScopeCopyNode` inputs
 (dynamic map-range inputs), instead of falling back to an interpreter
-callback for the whole loop. ANF hoists a data-dependent bound expression
-(e.g. ``A_row[i]``) into a scalar temporary before the loop; the lowering
-rule (``control_flow.py::_bound``/``_dynamic_bound``) recognizes that
-temporary (a bare name bound to a scalar integer container) and turns it into
-a dynamic map-range input, emitted as a ``DynScopeCopyNode`` sibling
-immediately preceding the map scope (matching the placement SDFG-derived
-schedule trees use -- see ``sdfg_to_tree.py`` and ``tree_to_sdfg.py``).
+callback for the whole loop. Index expressions are canonical in place (never
+ANF-hoisted), so the lowering rule
+(``control_flow.py::_bound``/``_dynamic_bound``) sees the bound expression
+directly (a scalar integer element access like ``A_row[i]``, or a scalar
+container name) and turns it into a dynamic map-range input, emitted as a
+``DynScopeCopyNode`` sibling immediately preceding the map scope (matching
+the placement SDFG-derived schedule trees use -- see ``sdfg_to_tree.py`` and
+``tree_to_sdfg.py``).
 """
 import numpy as np
-import pytest
 import scipy.sparse as sp
 
 import dace
@@ -98,17 +98,10 @@ def test_dynamic_map_structure():
 
 def test_dynamic_map_execution():
     """
-    End-to-end: a dynamic-bounds CSR row-sum executes correctly against a
-    scipy-built reference. The outer row loop is a regular Python for-loop
-    (rather than @dace.mapscope) -- @dace.mapscope wrapping a data-dependent
-    inner @dace.map hits a separate, pre-existing nextgen-frontend limitation
-    where a compound index expression (the ANF-hoisted "i + 1") is not
-    inlined/promoted when the defining tasklet lives inside a Map scope
-    (reproducible with plain array indexing and no dynamic map ranges at all,
-    e.g. ``b[i] = A[i + 1]`` inside a bare ``@dace.mapscope``); see
-    test_dynamic_map_mapscope_execution_known_limitation below. That
-    limitation is orthogonal to dynamic map ranges themselves, which this
-    test verifies work correctly end-to-end.
+    End-to-end: a dynamic-bounds CSR row-sum with a regular Python for-loop
+    as the outer row loop executes correctly against a scipy-built reference
+    (the @dace.mapscope-nested variant is covered by
+    test_dynamic_map_mapscope_execution).
     """
 
     @dace.program
@@ -213,31 +206,14 @@ def test_dynamic_bound_unsupported_form():
     assert len(callbacks2) == 1
 
 
-@pytest.mark.xfail(
-    reason='Pre-existing nextgen-frontend limitation: compound index expressions ("i + 1") defined inside a Map '
-    'scope are not inlined/promoted, breaking codegen for data-dependent bounds when the outer loop is a '
-    '@dace.mapscope rather than a sequential for-loop. Unrelated to dynamic map ranges themselves.',
-    strict=False)
-def test_dynamic_map_mapscope_execution_known_limitation():
+def test_dynamic_map_mapscope_execution():
     """
-    Documents a discovered, pre-existing nextgen-frontend limitation
-    (unrelated to dynamic map ranges): wrapping the data-dependent inner
-    @dace.map in an outer @dace.mapscope (exactly as in the CSR row-sum
-    example this feature targets) fails to *compile* to a shared library,
-    because the ANF-hoisted "i + 1" scalar temporary (a purely symbolic
-    computation with no data reads) is never inlined/promoted when its
-    defining tasklet lives inside a Map scope --
-    dace.transformation.passes.scalar_to_symbol.find_promotable_scalars
-    intentionally restricts promotion to top-level (non-scoped) scalars, and
-    the nextgen frontend does not do this inlining itself (see the
-    docstring note in lowering/rules/assign.py: "Symbol promotion of
-    compile-time scalars is a planned optimization pass, not a correctness
-    requirement"). This reproduces with plain array indexing alone, with no
-    dynamic map ranges involved at all (e.g. ``b[i] = A[i + 1]`` inside a
-    bare ``@dace.mapscope``). The schedule tree itself is built correctly
-    (see test_dynamic_map_structure); only SDFG compilation of the
-    mapscope-nested variant is affected. xfail (not skip) so this is
-    automatically revisited if the underlying limitation is ever fixed.
+    End-to-end: the exact CSR row-sum shape this feature targets — a
+    data-dependent inner @dace.map nested in an outer @dace.mapscope.
+    Index expressions stay in place (``dace.map[A_row[i]:A_row[i + 1]]``
+    keeps its subscripts; ``i + 1`` resolves symbolically), so the dynamic
+    inputs read ``A_row`` directly and the map compiles and runs even though
+    it is nested inside another map scope.
     """
 
     @dace.program
@@ -274,8 +250,4 @@ if __name__ == '__main__':
     test_dynamic_map_execution()
     test_dynamic_map_plain_python_loop()
     test_dynamic_bound_unsupported_form()
-    # Known pre-existing limitation (see docstring); not asserted under __main__.
-    try:
-        test_dynamic_map_mapscope_execution_known_limitation()
-    except Exception as e:
-        print(f'test_dynamic_map_mapscope_execution_known_limitation: known failure ({e})')
+    test_dynamic_map_mapscope_execution()

@@ -490,6 +490,8 @@ class ANFTransform(_BodyTransformer):
             return expr if level not in ('atom', 'operand') else self._hoist(expr, hoisted)
         if isinstance(expr, ast.Subscript) and isinstance(expr.ctx, ast.Load):
             if not cpa.is_dataref(expr.value):
+                # Atom-level flattening also reduces nested structure-member
+                # chains (``outer.inner.data``) to single-level datarefs.
                 expr.value = self._flatten(expr.value, hoisted, level='atom')
             if not cpa.is_dataref(expr.value):
                 raise _ShortCircuitHazard
@@ -510,14 +512,49 @@ class ANFTransform(_BodyTransformer):
             # ('flat') and is hoisted to a named temporary elsewhere.
             expr.elts = [self._flatten(element, hoisted, level='atom') for element in expr.elts]
             return expr if level == 'flat' else self._hoist(expr, hoisted)
+        if isinstance(expr, ast.Attribute) and not cpa.is_dataref(expr):
+            # Nested structure-member chains (``outer.inner.leaf``) reduce to
+            # single-level datarefs; chains not rooted at a Name stay atoms.
+            expr = self._as_dataref(expr, hoisted)
         if cpa.is_atom(expr):
             return expr
         raise _ShortCircuitHazard
 
     def _flatten_target(self, target: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
-        if isinstance(target, ast.Subscript) and cpa.is_dataref(target.value):
+        if isinstance(target, ast.Attribute) and not cpa.is_dataref(target):
+            return self._as_dataref(target, hoisted)
+        if isinstance(target, ast.Subscript):
+            if not cpa.is_dataref(target.value):
+                target.value = self._as_dataref(target.value, hoisted)
             target.slice = self._flatten_index(target.slice, hoisted)
         return target
+
+    def _as_dataref(self, node: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
+        """
+        Reduce a chain of attribute accesses over a name (a nested structure
+        member, e.g. ``outer.inner.leaf``) to the single-level dataref grammar
+        (``Name`` or ``Attribute(Name)``), hoisting intermediate member
+        accesses into fresh temporaries (``__anf0 = outer.inner``,
+        ``__anf0.leaf``). This lets structures of structures lower through the
+        same single-level member-access machinery as top-level members,
+        without widening the dataref grammar itself.
+
+        Chains not rooted at a ``Name`` (e.g. attribute access on an embedded
+        constant) are returned unchanged: they remain legal atoms and either
+        resolve semantically or fall back during lowering.
+        """
+        if cpa.is_dataref(node) or not isinstance(node, ast.Attribute):
+            return node
+        root = node.value
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if not isinstance(root, ast.Name):
+            return node
+        base = self._as_dataref(node.value, hoisted)
+        if not isinstance(base, ast.Name):
+            base = self._hoist(base, hoisted)
+        node.value = base
+        return node
 
     def _flatten_index(self, index: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
         if isinstance(index, ast.Tuple):
@@ -527,9 +564,46 @@ class ANFTransform(_BodyTransformer):
             for field in ('lower', 'upper', 'step'):
                 part = getattr(index, field)
                 if part is not None:
-                    setattr(index, field, self._flatten(part, hoisted, level='atom'))
+                    setattr(index, field, self._flatten_index_expr(part, hoisted))
             return index
-        return self._flatten(index, hoisted, level='atom')
+        return self._flatten_index_expr(index, hoisted)
+
+    def _flatten_index_expr(self, node: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
+        """
+        Flatten a canonical index expression (see ``cpa.is_index_expr``): a
+        ``BinOp`` of two operands is kept in place with its sides reduced to
+        operand level; anything else goes through :meth:`_flatten_operand`.
+        Unlike :meth:`_flatten`, the ``BinOp`` itself is never hoisted here —
+        it is canonical directly in index position (e.g. ``A[i + 1]``).
+        """
+        if isinstance(node, ast.BinOp):
+            node.left = self._flatten_operand(node.left, hoisted)
+            node.right = self._flatten_operand(node.right, hoisted)
+            return node
+        return self._flatten_operand(node, hoisted)
+
+    def _flatten_operand(self, node: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
+        """
+        Flatten an expression to canonical operand level (``cpa.is_operand``):
+        atoms pass through unchanged; a unary op recurses into its operand; a
+        data subscript (``A_col[j]``) is kept in place with its own index
+        recursively flattened -- it is canonical directly in operand
+        position, so it is never hoisted, unlike the general ``'operand'``
+        level of :meth:`_flatten`. Anything else (calls, nested compound
+        expressions, ...) is hoisted to a temporary via the existing
+        atom-level machinery.
+        """
+        if isinstance(node, ast.Attribute) and not cpa.is_dataref(node):
+            node = self._as_dataref(node, hoisted)
+        if cpa.is_atom(node):
+            return node
+        if isinstance(node, ast.UnaryOp):
+            node.operand = self._flatten_operand(node.operand, hoisted)
+            return node
+        if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and cpa.is_dataref(node.value):
+            node.slice = self._flatten_index(node.slice, hoisted)
+            return node
+        return self._flatten(node, hoisted, level='atom')
 
 
 class _ShortCircuitHazard(Exception):

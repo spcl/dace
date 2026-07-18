@@ -26,6 +26,7 @@ keyword arguments and land on the emitted :class:`~dace.sdfg.nodes.Tasklet`'s
 ``code_global``/``code_init``/``code_exit`` properties.
 """
 import ast
+import copy
 from typing import Dict, List, Optional
 
 from dace import dtypes
@@ -36,6 +37,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import parse_memlet
 from dace.frontend.python.nextgen.canonical.cpa import ExplicitTasklet
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
+from dace.frontend.python.nextgen.lowering.access import resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import _LocationShim
 
@@ -49,6 +51,8 @@ def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> 
     in_memlets: Dict[str, Memlet] = {}
     out_memlets: Dict[str, Memlet] = {}
     code_statements: List[ast.stmt] = []
+    prelude: List[str] = []  # Indirection reads, prepended to the tasklet code
+    epilogue: List[str] = []  # Indirection writes, appended to the tasklet code
     intrinsic_code: Optional[str] = None
     defined = state.context.defined_view()
 
@@ -56,10 +60,20 @@ def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> 
         binop = _memlet_binop(body_statement)
         if binop is not None:
             if isinstance(binop.op, ast.LShift):  # local << A[...]
+                indirect = _indirect_index_reads(binop.right, state)
+                if indirect:
+                    _lower_indirect_memlet(binop.left, binop.right, indirect, in_memlets, out_memlets, prelude,
+                                           epilogue, True, state, body_statement)
+                    continue
                 connector, memlet = _parse_tasklet_memlet(binop.right, binop.left, defined, state, body_statement)
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 in_memlets[connector] = _to_repository(memlet, state, body_statement)
             else:  # local >> A[...]
+                indirect = _indirect_index_reads(binop.right, state)
+                if indirect:
+                    _lower_indirect_memlet(binop.left, binop.right, indirect, in_memlets, out_memlets, prelude,
+                                           epilogue, False, state, body_statement)
+                    continue
                 connector, memlet = _parse_tasklet_memlet(binop.left, binop.right, defined, state, body_statement)
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 out_memlets[connector] = _to_repository(memlet, state, body_statement)
@@ -76,9 +90,12 @@ def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> 
 
     language = _language(statement, intrinsic_code, state)
     if intrinsic_code is not None:
+        if prelude or epilogue:
+            raise UnsupportedFeatureError('Indirect memlets are not supported with intrinsic tasklet code',
+                                          state.context.filename, statement)
         code = intrinsic_code
     else:
-        code = '\n'.join(astutils.unparse(s) for s in code_statements)
+        code = '\n'.join(prelude + [astutils.unparse(s) for s in code_statements] + epilogue)
 
     tasklet = nodes.Tasklet(statement.label,
                             set(in_memlets.keys()),
@@ -91,6 +108,134 @@ def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> 
     if statement.side_effects is not None:
         tasklet.side_effects = statement.side_effects
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+
+
+def _indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> List[ast.expr]:
+    """
+    The outermost data-access subexpressions inside a memlet subscript's index
+    (e.g. the ``A_col[j]`` in ``x[A_col[j]]``), or an empty list when the
+    index is data-independent. Detection is AST-based and must run BEFORE the
+    shared memlet parser: the parser silently represents an inner data
+    subscript as an applied sympy function, so a parse would not fail — it
+    would produce a memlet whose subset references runtime data as if it were
+    symbolic.
+    """
+    if not isinstance(array_expression, ast.Subscript):
+        return []
+    reads: List[ast.expr] = []
+    seen: set = set()
+
+    class _Collector(ast.NodeVisitor):
+
+        def _try_collect(self, node: ast.expr) -> bool:
+            if not isinstance(getattr(node, 'ctx', ast.Load()), ast.Load):
+                return False
+            try:
+                access = resolve_access(node, state)
+            except UnsupportedFeatureError:
+                # Nested data-dependent index inside the index itself
+                # (x[idx[idx[j]]]): not supported, let the caller fall back.
+                raise
+            if access is None:
+                return False
+            key = astutils.unparse(node)
+            if key not in seen:
+                seen.add(key)
+                reads.append(node)
+            return True
+
+        def visit_Subscript(self, node: ast.Subscript) -> None:
+            if not self._try_collect(node):
+                self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if not self._try_collect(node):
+                self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            self._try_collect(node)
+
+    _Collector().visit(array_expression.slice)
+    return reads
+
+
+def _lower_indirect_memlet(connector_expression: ast.expr, array_expression: ast.Subscript, reads: List[ast.expr],
+                           in_memlets: Dict[str, Memlet], out_memlets: Dict[str, Memlet], prelude: List[str],
+                           epilogue: List[str], is_input: bool, state: LoweringState, statement: ast.stmt) -> None:
+    """
+    Lower a tasklet memlet with a data-dependent index (``in_x << x[A_col[j]]``)
+    as an indirection: each inner data read becomes a synthetic ``__ind<N>``
+    input connector, the outer array becomes a full-array connector
+    ``<conn>__arr``, and the actual element access moves into the tasklet code
+    (``in_x = in_x__arr[__ind0]`` prepended for inputs, the mirrored store
+    appended for outputs). The original connector name turns into a plain
+    tasklet local. Write-conflict-resolution forms (``b(1, lambda ...)[...]``)
+    cannot be indirected this way and fall back.
+    """
+    if not isinstance(connector_expression, ast.Name):
+        raise UnsupportedFeatureError('Indirect memlets require a plain connector name', state.context.filename,
+                                      statement)
+    if not isinstance(array_expression.value, (ast.Name, ast.Attribute)):
+        # e.g. a WCR/volume call form b(1, lambda a, b: ...)[...] — the
+        # write-conflict semantics cannot move into the tasklet code.
+        raise UnsupportedFeatureError('Indirect memlets do not support write-conflict or volume annotations',
+                                      state.context.filename, statement)
+    array_access = resolve_access(array_expression.value, state)
+    if array_access is None:
+        raise UnsupportedFeatureError(
+            f'Indirect memlet references unknown container "{astutils.unparse(array_expression.value)}"',
+            state.context.filename, statement)
+    if isinstance(array_access.descriptor.dtype, dtypes.pyobject):
+        raise UnsupportedFeatureError(
+            f'Indirect memlet references interpreter-only container "{astutils.unparse(array_expression.value)}"',
+            state.context.filename, statement)
+
+    connector = connector_expression.id
+    _check_connector(connector + '__arr', in_memlets, out_memlets, state, statement)
+
+    # Synthetic affine input connectors for the inner reads
+    index_names: Dict[str, str] = {}
+    for read in reads:
+        access = resolve_access(read, state)
+        if isinstance(access.descriptor.dtype, dtypes.pyobject):
+            raise UnsupportedFeatureError('Indirect memlet index references an interpreter-only container',
+                                          state.context.filename, statement)
+        synthetic = _fresh_connector('__ind', in_memlets, out_memlets)
+        _check_connector(synthetic, in_memlets, out_memlets, state, statement)
+        in_memlets[synthetic] = Memlet(data=access.container, subset=access.subset)
+        index_names[astutils.unparse(read)] = synthetic
+
+    # The element access moves into the tasklet code over a full-array connector
+    index_code = astutils.unparse(_substitute_reads(array_expression.slice, index_names))
+    if is_input:
+        in_memlets[connector + '__arr'] = Memlet(data=array_access.container, subset=array_access.subset)
+        prelude.append(f'{connector} = {connector}__arr[{index_code}]')
+    else:
+        out_memlets[connector + '__arr'] = Memlet(data=array_access.container, subset=array_access.subset)
+        epilogue.append(f'{connector}__arr[{index_code}] = {connector}')
+
+
+def _fresh_connector(prefix: str, in_memlets: Dict[str, Memlet], out_memlets: Dict[str, Memlet]) -> str:
+    index = 0
+    while f'{prefix}{index}' in in_memlets or f'{prefix}{index}' in out_memlets:
+        index += 1
+    return f'{prefix}{index}'
+
+
+def _substitute_reads(index_expression: ast.expr, index_names: Dict[str, str]) -> ast.expr:
+    """Replace collected inner data reads in an index expression with their
+    synthetic connector names (matched by unparsed source text)."""
+    result = copy.deepcopy(index_expression)
+
+    class _Replacer(ast.NodeTransformer):
+
+        def visit(self, node: ast.AST) -> ast.AST:
+            key = astutils.unparse(node) if isinstance(node, ast.expr) else None
+            if key in index_names:
+                return ast.copy_location(ast.Name(id=index_names[key], ctx=ast.Load()), node)
+            return super().visit(node)
+
+    return ast.fix_missing_locations(_Replacer().visit(result))
 
 
 def _parse_tasklet_memlet(memlet_expression: ast.expr, connector_expression: ast.expr, defined: Dict,
