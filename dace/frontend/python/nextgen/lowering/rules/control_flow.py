@@ -11,7 +11,8 @@ for frontend-produced and SDFG-derived schedule trees.
 import ast
 from typing import List, Optional, Tuple
 
-from dace import dtypes, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic
+from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
@@ -170,27 +171,41 @@ def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:
 def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     targets = statement.target.elts if isinstance(statement.target, ast.Tuple) else [statement.target]
     params = [target.id for target in targets]
-    ranges = _parse_map_ranges(statement.iter, state)
+    dynamic_inputs: List[tn.DynScopeCopyNode] = []
+    ranges = _parse_map_ranges(statement.iter, state, dynamic_inputs)
     if len(params) != len(ranges):
         raise UnsupportedFeatureError('Number of dace.map indices does not match number of ranges',
                                       state.context.filename, statement)
     for param in params:
         state.context.bind_symbol(param)
+    # Dynamic-range inputs (data-dependent bounds) are emitted as siblings
+    # immediately preceding the map scope, matching how SDFG-derived schedule
+    # trees place them (see sdfg_to_tree.py) rather than as children inside
+    # the scope: the scope emitter appends the scope node itself to the
+    # *current* (enclosing) scope before entering it, so emitting these first
+    # places them right before the map.
+    for dynamic_input in dynamic_inputs:
+        state.emitter.emit(dynamic_input)
     map_node = nodes.MapEntry(nodes.Map(f'map_{statement.lineno}', params, subsets.Range(ranges)))
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.lower_body(statement.body)
 
 
-def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState) -> List[Tuple]:
-    """Parse ``dace.map[start:stop:step, ...]`` into inclusive-end symbolic ranges."""
+def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState,
+                      dynamic_inputs: List[tn.DynScopeCopyNode]) -> List[Tuple]:
+    """Parse ``dace.map[start:stop:step, ...]`` into inclusive-end symbolic ranges.
+
+    :param dynamic_inputs: Collects a :class:`~dace.sdfg.analysis.schedule_tree.treenodes.DynScopeCopyNode`
+                           for every data-dependent bound encountered (see :func:`_dynamic_bound`).
+    """
     dimensions = iterator.slice.elts if isinstance(iterator.slice, ast.Tuple) else [iterator.slice]
     ranges = []
     for dimension in dimensions:
         if not isinstance(dimension, ast.Slice):
             raise UnsupportedFeatureError('dace.map dimensions must be slices', state.context.filename, iterator)
-        start = _bound(dimension.lower, 0, state)
-        stop = _bound(dimension.upper, None, state)
-        step = _bound(dimension.step, 1, state)
+        start = _bound(dimension.lower, 0, state, dynamic_inputs)
+        stop = _bound(dimension.upper, None, state, dynamic_inputs)
+        step = _bound(dimension.step, 1, state, dynamic_inputs)
         if stop is None:
             raise UnsupportedFeatureError('dace.map dimensions require an upper bound', state.context.filename,
                                           iterator)
@@ -198,9 +213,21 @@ def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState) -> List[Tup
     return ranges
 
 
-def _bound(node, default, state: LoweringState):
+def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScopeCopyNode]):
+    """
+    Resolve a single ``dace.map`` range bound to a symbolic expression.
+
+    A bound that is a bare name bound to a scalar integer data container (the
+    shape ANF hoisting leaves a data-dependent bound expression in, e.g.
+    ``A_row[i]`` becomes ``__anf0 = A_row[i]`` before the loop) is turned into
+    a fresh dynamic-map-range symbol instead: see :func:`_dynamic_bound`.
+    """
     if node is None:
         return default
+    if isinstance(node, ast.Name):
+        binding = state.context.resolve(node.id)
+        if binding is not None and binding.kind == 'container':
+            return _dynamic_bound(node, binding.container, state, dynamic_inputs)
     expression = astutils.unparse(resolve_symbol_names(node, state))
     try:
         return symbolic.pystr_to_symbolic(expression)
@@ -209,6 +236,32 @@ def _bound(node, default, state: LoweringState):
         # knows); the loop falls back to a callback.
         raise UnsupportedFeatureError(f'Cannot parse loop bound "{expression}" symbolically', state.context.filename,
                                       node)
+
+
+def _dynamic_bound(node: ast.Name, container: str, state: LoweringState,
+                   dynamic_inputs: List[tn.DynScopeCopyNode]) -> symbolic.symbol:
+    """
+    Turn a data-dependent ``dace.map`` bound (a name bound to a scalar
+    integer container) into a fresh symbol fed by a dynamic map-range input,
+    recording a :class:`~dace.sdfg.analysis.schedule_tree.treenodes.DynScopeCopyNode`
+    for the caller to emit right before the map scope.
+
+    :raises UnsupportedFeatureError: If the container is not a scalar integer
+        (e.g. a whole array, or a floating-point scalar) -- those forms are
+        not (yet) supported as dynamic map-range inputs.
+    """
+    descriptor = state.context.containers[container]
+    if not (isinstance(descriptor, data.Scalar) and descriptor.dtype in dtypes.INTEGER_TYPES):
+        raise UnsupportedFeatureError(
+            f'Data-dependent dace.map bound "{astutils.unparse(node)}" must be an integer scalar '
+            f'(got {descriptor})', state.context.filename, node)
+    symbol_name = state.context.fresh_name('__dyn')
+    # A repository-only symbol: registered directly in the symbol table (which
+    # *is* the tree root's symbol table), without a source-level name binding.
+    state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, descriptor.dtype)
+    memlet = Memlet(data=container, subset=subsets.Range.from_array(descriptor))
+    dynamic_inputs.append(tn.DynScopeCopyNode(target=symbol_name, memlet=memlet))
+    return symbolic.symbol(symbol_name, descriptor.dtype)
 
 
 def _index_dtype(bounds: List[ast.expr], state: LoweringState) -> dtypes.typeclass:

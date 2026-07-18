@@ -112,6 +112,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._dataflow_stack: list[tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]]
                                    | tuple[SDFG, dict[str, set[str]]]] = []
 
+        self._pending_dynamic_inputs: dict[str, tuple[nodes.AccessNode, Memlet]] = {}
+        """Dynamic map-range inputs (from DynScopeCopyNode siblings emitted right
+        before a MapScope) that are still waiting to be wired to a map entry's
+        dynamic (unprefixed) input connector, keyed by target symbol name."""
+
         self._max_nested_sdfg = max_nested_sdfg
 
     def _apply_nview_array_override(self, array_name: str, sdfg: SDFG) -> bool:
@@ -478,6 +483,22 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # ---------
         map_entry = nodes.MapEntry(node.node.map)
         self._current_state.add_node(map_entry)
+
+        # Wire any dynamic map-range inputs (DynScopeCopyNode siblings emitted
+        # right before this scope) whose target symbol appears in this map's
+        # range. These get a raw (unprefixed) input connector directly wired
+        # to their source access node -- not the IN_/OUT_ passthrough scheme
+        # used for regular data reads -- so exclude them from that handling
+        # below.
+        dynamic_connectors: set[str] = set()
+        range_symbols = {str(s) for s in node.node.map.range.free_symbols}
+        for target in list(self._pending_dynamic_inputs.keys()):
+            if target in range_symbols:
+                access_node, memlet = self._pending_dynamic_inputs.pop(target)
+                map_entry.add_in_connector(target)
+                self._current_state.add_edge(access_node, None, map_entry, target, memlet)
+                dynamic_connectors.add(target)
+
         self._dataflow_stack.append((map_entry, dict()))
 
         # visit children inside the map
@@ -507,6 +528,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # connect potential input connectors on map_entry
         for connector in map_entry.in_connectors:
+            if connector in dynamic_connectors:
+                # Already wired above, directly from its source access node.
+                continue
             memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
 
             # connect to local access node (if available)
@@ -701,8 +725,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             cached_access = cache[memlet.data]
             self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
 
-        # Add empty memlet if map_entry has no out_connectors to connect to
-        if isinstance(scope_node, nodes.MapEntry) and self._current_state.out_degree(scope_node) < 1:
+        # Add an empty (control-only) memlet from the map entry if this tasklet has no data
+        # inputs of its own (e.g. it only reads scope symbols, like a hoisted "i + 1"
+        # computation). Without this, the tasklet would have in-degree zero and, despite
+        # being nested inside the map, would be misclassified as a graph-level source node by
+        # SDFGState.source_nodes() -- breaking scope_dict()/memlet propagation. Keying this off
+        # the map_entry's own out-degree (rather than this tasklet's in-degree) would only catch
+        # the case where this happens to be the very first child connected to the scope.
+        if isinstance(scope_node, nodes.MapEntry) and self._current_state.in_degree(tasklet) < 1:
             self._current_state.add_nedge(scope_node, tasklet, Memlet())
 
         # Connect output memlets
@@ -763,7 +793,21 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_state.add_memlet_path(source, target, memlet=node.memlet)
 
     def visit_DynScopeCopyNode(self, node: tn.DynScopeCopyNode, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        # A dynamic map-range input: emitted as a sibling immediately before
+        # the scope (typically a MapScope) whose range uses ``node.target`` as
+        # a symbol. We can't wire the connector yet -- the scope's entry node
+        # doesn't exist until that sibling is visited -- so stash the source
+        # access node and memlet, keyed by the target symbol, for the entry
+        # node's visitor to pick up (see visit_MapScope).
+        cache_key = (self._current_state, id(self._ctx.current_scope))
+        if cache_key not in self._ctx.access_cache:
+            self._ctx.access_cache[cache_key] = {}
+        access_cache = self._ctx.access_cache[cache_key]
+
+        src_name = node.memlet.data
+        source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
+
+        self._pending_dynamic_inputs[node.target] = (source, node.memlet)
 
     def visit_ViewNode(self, node: tn.ViewNode, sdfg: SDFG) -> None:
         # Views are aliasing bindings, not dataflow: record the binding here;

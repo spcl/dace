@@ -51,10 +51,16 @@ def verify_tree(root: tn.ScheduleTreeRoot) -> None:
                 _check_memlet(child.memlet, where)
                 if not _known_container(child.target):
                     problems.append(f'{where}: copy target "{child.target}" is not a registered container')
-            elif isinstance(child, (tn.ViewNode, tn.RefSetNode, tn.DynScopeCopyNode)):
+            elif isinstance(child, (tn.ViewNode, tn.RefSetNode)):
                 _check_memlet(child.memlet, where)
                 if not _known_container(child.target):
                     problems.append(f'{where}: target "{child.target}" is not a registered container')
+            elif isinstance(child, tn.DynScopeCopyNode):
+                # The target of a dynamic map-range copy is a symbol (fed
+                # into a map's range), not a data container.
+                _check_memlet(child.memlet, where)
+                if child.target not in root.symbols:
+                    problems.append(f'{where}: target "{child.target}" is not a registered symbol')
             elif isinstance(child, tn.PythonCallbackNode):
                 if not child.reason:
                     problems.append(f'{where}: callback node without a reason')
