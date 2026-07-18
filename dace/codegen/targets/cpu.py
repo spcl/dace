@@ -1502,7 +1502,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             # so address-of would add an unwanted indirection
                             # that breaks the libnode call (e.g. ``MPI_Bcast``
                             # expects ``MPI_Comm``, not ``MPI_Comm *``).
-                            result += "{} {} = &{};".format(conntype.ctype, local_name, expr)
+                            result += "auto {} = &{};".format(local_name, expr)
                         else:
                             # Pointer reference
                             result += "{} {} = {};".format(ctypedef, local_name, expr)
