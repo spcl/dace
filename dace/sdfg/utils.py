@@ -2756,6 +2756,11 @@ def specialize_symbol(sdfg: 'dace.SDFG', symbol_name: str, value: Union[float, i
     """
     val = str(value)
     for sd in list(sdfg.all_sdfgs_recursive()):
+        # Drop the symbol's interstate-edge definitions first: baking it to a constant makes them dead,
+        # and ``replace_dict`` would otherwise rewrite the assignment *key* into a literal -- an invalid
+        # ``<value> = ...`` edge (hit on the frontend's ``dim = dim`` buffer-dimension materializers).
+        for e in sd.all_interstate_edges(recursive=False):
+            e.data.assignments.pop(symbol_name, None)
         if symbol_name in sd.symbols or any(str(s) == symbol_name for s in sd.free_symbols):
             sd.replace_dict({symbol_name: val})
         if symbol_name in sd.symbols:
