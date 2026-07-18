@@ -145,7 +145,7 @@ def test_mapscope_statements_body():
     assert np.allclose(B, A * 2.0)
 
 
-def test_consumescope_fallback():
+def test_consume_recognized():
 
     @dace.program
     def fibonacci(iv: dace.int32[1], res: dace.float32[1]):
@@ -165,12 +165,12 @@ def test_consumescope_fallback():
                 sout = elem - 1
                 sout = elem - 2
 
-    # dace.consume/dace.consumescope are not yet recognized as explicit
-    # dataflow; they must fall through to the interpreter-callback path
-    # without crashing lowering.
+    # dace.consume/dace.consumescope are recognized explicit dataflow (see
+    # consume_test.py for full coverage): the program lowers to a ConsumeScope
+    # with zero callbacks.
     tree = nextgen.parse_program(fibonacci)
-    callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
-    assert len(callbacks) >= 1
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert len(_nodes_of_type(tree, tn.ConsumeScope)) == 1
 
 
 if __name__ == '__main__':
@@ -178,4 +178,4 @@ if __name__ == '__main__':
     test_mapscope_execution()
     test_mapscope_multidim()
     test_mapscope_statements_body()
-    test_consumescope_fallback()
+    test_consume_recognized()

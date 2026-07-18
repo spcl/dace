@@ -259,10 +259,12 @@ class InferenceService:
                 return None
             return self._registry_inference(infer_fn, input_descs, callee.__name__, *args, **kwargs)
 
-        # Free functions by qualified name (numpy.zeros, numpy.sum, ...)
+        # Free functions by qualified name (numpy.zeros, numpy.sum, ...).
+        # Fall back to the source-level name: the qualname preprocessing
+        # attaches to embedded callee constants, or the textual call name.
         infer_fn = oprepo.Replacements.get_descriptor_inference(qualname)
         if infer_fn is None:
-            textual_name = astutils.rname(node.func)
+            textual_name = getattr(node.func, 'qualname', None) or astutils.rname(node.func)
             if textual_name != qualname:
                 infer_fn = oprepo.Replacements.get_descriptor_inference(textual_name)
         if infer_fn is None:
@@ -435,12 +437,19 @@ class InferenceService:
         raise UnsupportedFeatureError(f'Use of undefined name "{node.id}"', self.context.filename, node)
 
     def _infer_attribute(self, node: ast.Attribute) -> Inferred:
-        """Infer a structure member access (``tracers.data``). Any other
-        attribute read is a feature gap that degrades to the interpreter."""
+        """Infer a structure member access (``tracers.data``) or an attribute
+        chain resolving through the program globals to a compile-time value
+        (``dace.int32``). Any other attribute read is a feature gap that
+        degrades to the interpreter."""
         if isinstance(node.value, ast.Name):
             member = self.context.member_access_of(node.value.id, node.attr)
             if member is not None:
                 return Inferred(kind='data', descriptor=member[1])
+        _, resolved = self.resolve_callee(node)
+        if resolved is not None:
+            if isinstance(resolved, symbolic.symbol):
+                return Inferred(kind='symbolic', value=resolved)
+            return Inferred(kind='constant', value=resolved)
         raise UnsupportedFeatureError(f'Cannot infer type of expression: {astutils.unparse(node)}',
                                       self.context.filename, node)
 

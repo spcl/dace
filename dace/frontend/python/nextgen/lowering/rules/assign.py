@@ -357,6 +357,9 @@ def _result_descriptor(inferred: Inferred, state: LoweringState, statement: ast.
         return state.inference.sequence_descriptor(inferred.value)
     if inferred.is_data:
         descriptor = inferred.descriptor
+        if isinstance(descriptor, data.Stream):
+            # Streams keep their full descriptor (buffer size etc.)
+            return copy.deepcopy(descriptor)
         if isinstance(descriptor, data.Array):
             return data.Array(descriptor.dtype, list(descriptor.shape))
         return data.Scalar(descriptor.dtype)

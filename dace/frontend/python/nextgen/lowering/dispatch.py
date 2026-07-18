@@ -20,6 +20,7 @@ import ast
 from typing import List, Optional, Tuple
 
 from dace import dtypes
+from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
@@ -108,12 +109,18 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
         elementwise.emit_ufunc(target_access, callee.__name__, call.args, statement, state)
         return True
 
-    # Array creation
-    if qualname in creation.CREATION_CALLS:
+    # Array/stream creation. Resolution may yield the callee's real module
+    # path (dace.define_stream lives in dace.frontend.python.wrappers), so
+    # fall back to the source-level name: the qualname preprocessing attaches
+    # to embedded callee constants, or the textual call name.
+    creation_name = qualname
+    if creation_name not in creation.CREATION_CALLS:
+        creation_name = getattr(call.func, 'qualname', None) or astutils.rname(call.func)
+    if creation_name in creation.CREATION_CALLS:
         if any(keyword.arg not in ('dtype', 'fill_value', 'shape') for keyword in call.keywords):
             return False
         target_access = _call_target_access(target, inferred, statement, state)
-        creation.lower_creation(qualname, target_access, call, statement, state)
+        creation.lower_creation(creation_name, target_access, call, statement, state)
         return True
 
     # Reductions (full or per-axis with a compile-time axis)

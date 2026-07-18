@@ -22,7 +22,7 @@ import copy
 from typing import List, Optional, Tuple, Union
 
 from dace.frontend.python.nextgen.canonical import cpa
-from dace.frontend.python.nextgen.canonical.cpa import CANONICAL_LEAVES, ExplicitTasklet, OpaqueStmt
+from dace.frontend.python.nextgen.canonical.cpa import CANONICAL_LEAVES, ExplicitConsume, ExplicitTasklet, OpaqueStmt
 
 _TERMINAL_STMTS = (ast.Break, ast.Continue, ast.Pass)
 
@@ -97,10 +97,22 @@ class RecognizeExplicitDataflow(_BodyTransformer):
       loops whose body is the function body itself, recursively canonicalized
       by this same pass (map + arbitrary nested dataflow, rather than a single
       tasklet).
+    - ``@dace.consume(stream, num_pes[, condition, chunksize])`` and
+      ``@dace.consumescope(...)``-decorated functions become
+      :class:`ExplicitConsume` markers (tasklet body for ``consume``,
+      recursively canonicalized statement body for ``consumescope``),
+      following the classic contract: the function takes exactly (element,
+      PE index) parameters and the decorator at least (stream, num_pes).
+      Malformed forms are left for MarkOpaque.
 
-    ``@dace.consume``/``@dace.consumescope`` are intentionally left
-    unrecognized for now; such decorated functions fall through to the
-    interpreter-callback path until a dedicated commit handles them.
+    Explicit-dataflow support matrix (frontend/tree level): with-tasklets,
+    decorated tasklets/maps/mapscopes/consumes/consumescopes, dynamic-volume
+    memlets (``S(-1)``), write-conflict lambdas, dynamic map ranges, and
+    indirect (data-dependent) tasklet input/output memlets all lower to
+    schedule-tree nodes; WCR-with-indirection, intrinsic-code-with-
+    indirection, and nested indirection fall back to interpreter callbacks.
+    ``ConsumeScope`` SDFG lowering (tree_to_sdfg) is not implemented yet —
+    consume programs build correct trees but cannot convert to SDFGs.
     """
     name = 'recognize-explicit-dataflow'
 
@@ -129,6 +141,10 @@ class RecognizeExplicitDataflow(_BodyTransformer):
                 return self._desugar_map_function(statement, decorator)
             if _refers_to(decorator_callee, 'dace.mapscope', self.context.global_vars):
                 return self._desugar_mapscope_function(statement, decorator)
+            if _refers_to(decorator_callee, 'dace.consume', self.context.global_vars):
+                return self._desugar_consume_function(statement, decorator, scope_body=False)
+            if _refers_to(decorator_callee, 'dace.consumescope', self.context.global_vars):
+                return self._desugar_consume_function(statement, decorator, scope_body=True)
         return self._recurse(statement)
 
     def _extract_map_ranges(self, function: ast.FunctionDef,
@@ -200,6 +216,32 @@ class RecognizeExplicitDataflow(_BodyTransformer):
         parameter_names, dimension_slices = extraction
         body = self._transform_body(function.body)
         return self._build_map_for_loop(function, parameter_names, dimension_slices, body)
+
+    def _desugar_consume_function(self, function: ast.FunctionDef, decorator: ast.expr, scope_body: bool) -> ast.stmt:
+        """
+        Turn ``@dace.consume``/``@dace.consumescope``-decorated functions into
+        :class:`ExplicitConsume` markers. Follows the classic contract
+        (``newast._parse_consume_inputs``): the decorator carries at least
+        (stream, num_pes) with optional (condition, chunksize) arguments, and
+        the function takes exactly (element, PE index). Malformed forms are
+        left in place for MarkOpaque.
+        """
+        if not isinstance(decorator, ast.Call) or len(decorator.args) < 2 or len(function.args.args) != 2:
+            return function
+        element, pe_index = (argument.arg for argument in function.args.args)
+        original = copy.deepcopy(function)
+        body = self._transform_body(function.body) if scope_body else function.body
+        return ExplicitConsume(label=function.name,
+                               stream=decorator.args[0],
+                               num_pes_src=ast.unparse(decorator.args[1]),
+                               condition_src=ast.unparse(decorator.args[2]) if len(decorator.args) >= 3 else None,
+                               chunksize_src=ast.unparse(decorator.args[3]) if len(decorator.args) >= 4 else '1',
+                               element=element,
+                               pe_index=pe_index,
+                               statements=body,
+                               scope_body=scope_body,
+                               location=function,
+                               original=original)
 
 
 def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:

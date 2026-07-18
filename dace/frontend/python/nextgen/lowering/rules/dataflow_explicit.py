@@ -29,13 +29,14 @@ import ast
 import copy
 from typing import Dict, List, Optional
 
-from dace import dtypes
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import parse_memlet
-from dace.frontend.python.nextgen.canonical.cpa import ExplicitTasklet
+from dace.frontend.python.nextgen.canonical.cpa import ExplicitConsume, ExplicitTasklet
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
@@ -47,8 +48,15 @@ def _shim(state: LoweringState) -> _LocationShim:
 
 
 @rule(ExplicitTasklet)
-def lower_explicit_tasklet(statement: ExplicitTasklet, state: LoweringState) -> None:
-    in_memlets: Dict[str, Memlet] = {}
+def lower_explicit_tasklet(statement: ExplicitTasklet,
+                           state: LoweringState,
+                           extra_inputs: Optional[Dict[str, Memlet]] = None) -> None:
+    """
+    :param extra_inputs: Additional input connectors injected by an enclosing
+                         construct (e.g. the popped stream element of a
+                         consume scope), merged into the tasklet's inputs.
+    """
+    in_memlets: Dict[str, Memlet] = dict(extra_inputs or {})
     out_memlets: Dict[str, Memlet] = {}
     code_statements: List[ast.stmt] = []
     prelude: List[str] = []  # Indirection reads, prepended to the tasklet code
@@ -287,6 +295,58 @@ def _to_repository(memlet: Memlet, state: LoweringState, statement: ast.stmt) ->
                                       state.context.filename, statement)
     memlet.data = binding.container
     return memlet
+
+
+@rule(ExplicitConsume)
+def lower_explicit_consume(statement: ExplicitConsume, state: LoweringState) -> None:
+    """
+    Lower an explicit consume scope to a :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ConsumeScope`
+    with a real :class:`~dace.sdfg.nodes.ConsumeEntry`. The popped stream
+    element enters the body as a dynamic (volume ``-1``) read of the stream:
+    directly as a tasklet input connector for the ``@dace.consume`` (tasklet)
+    form, or through a scalar element container written by a leading pop
+    tasklet for the ``@dace.consumescope`` (statement-body) form. The
+    processing-element index binds as a symbol.
+
+    NOTE: ``tree_to_sdfg`` does not lower ``ConsumeScope`` yet — consume
+    programs build correct schedule trees but cannot convert to SDFGs.
+    """
+    stream_access = resolve_access(statement.stream, state) if statement.stream is not None else None
+    if stream_access is None or not isinstance(stream_access.descriptor, data.Stream):
+        raise UnsupportedFeatureError(
+            f'Consume scope requires a stream input (got "{astutils.unparse(statement.stream)}")',
+            state.context.filename, statement)
+    try:
+        num_pes = symbolic.pystr_to_symbolic(statement.num_pes_src)
+    except Exception:
+        raise UnsupportedFeatureError(f'Cannot parse consume processing-element count "{statement.num_pes_src}"',
+                                      state.context.filename, statement)
+    chunksize = state.inference.constant_int(ast.parse(statement.chunksize_src, mode='eval').body) or 1
+    condition = CodeBlock(statement.condition_src) if statement.condition_src is not None else None
+
+    state.context.bind_symbol(statement.pe_index)
+    consume_node = nodes.Consume(statement.label, (statement.pe_index, num_pes), condition, chunksize=chunksize)
+    element_memlet = Memlet(data=stream_access.container, subset=subsets.Range([(0, 0, 1)]))
+    element_memlet.dynamic = True
+    element_memlet.volume = -1
+
+    with state.emitter.scope(tn.ConsumeScope(node=nodes.ConsumeEntry(consume_node), children=[])):
+        if statement.scope_body:
+            # Statement body: the popped element materializes in a scalar
+            # container written by a leading pop tasklet.
+            element_descriptor = data.Scalar(stream_access.descriptor.dtype)
+            element_container = state.context.add_container(statement.element, element_descriptor)
+            state.context.bind(statement.element, element_container)
+            pop = nodes.Tasklet(f'{statement.label}_pop', {'__stream'}, {'__out'}, '__out = __stream')
+            state.emitter.emit(
+                tn.TaskletNode(node=pop,
+                               in_memlets={'__stream': copy.deepcopy(element_memlet)},
+                               out_memlets={'__out': Memlet(data=element_container, subset='0')}))
+            state.lower_body(statement.statements)
+        else:
+            # Tasklet body: the element is a direct tasklet input connector.
+            tasklet = ExplicitTasklet(label=statement.label, statements=statement.statements, location=statement)
+            lower_explicit_tasklet(tasklet, state, extra_inputs={statement.element: element_memlet})
 
 
 def _language(statement: ExplicitTasklet, intrinsic_code: Optional[str], state: LoweringState) -> dtypes.Language:

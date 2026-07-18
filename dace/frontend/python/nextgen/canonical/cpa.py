@@ -20,6 +20,7 @@ Canonical statement grammar::
           | Return(atom | Tuple[atom] | None)
           | Break | Continue | Pass
           | ExplicitTasklet              # explicit-dataflow tasklet (opaque body)
+          | ExplicitConsume              # explicit consume scope (stream pop)
           | OpaqueStmt                   # explicit interpreter-fallback marker
 
     flat  := atomexpr
@@ -145,8 +146,65 @@ class ExplicitTasklet(ast.stmt):
             ast.copy_location(self, location)
 
 
+class ExplicitConsume(ast.stmt):
+    """
+    Canonical marker for explicit consume scopes (``@dace.consume(stream,
+    num_pes[, condition, chunksize])`` and ``@dace.consumescope(...)``
+    decorated functions, following the classic frontend's contract: the
+    decorated function takes exactly two parameters — the popped stream
+    element and the processing-element index).
+
+    :param label: Scope label (the function name).
+    :param stream: The stream expression from the decorator (an ``ast.expr``).
+    :param num_pes_src: Source text of the number-of-processing-elements
+                        argument.
+    :param condition_src: Source text of the quiescence condition, or None
+                          (run until the stream is empty).
+    :param chunksize_src: Source text of the chunk size (default ``'1'``).
+    :param element: Name of the popped-element parameter.
+    :param pe_index: Name of the processing-element index parameter.
+    :param statements: The function body. For the ``consume`` (tasklet) form
+                       these are raw tasklet statements; for the
+                       ``consumescope`` form they are canonicalized program
+                       statements.
+    :param scope_body: True for ``@dace.consumescope`` (statement body),
+                       False for ``@dace.consume`` (tasklet body).
+    :param original: The original decorated FunctionDef, restored when a
+                     surrounding region falls back to a callback.
+    """
+    _fields = ()
+
+    def __init__(self,
+                 label: str = '',
+                 stream: Optional[ast.expr] = None,
+                 num_pes_src: str = '1',
+                 condition_src: Optional[str] = None,
+                 chunksize_src: str = '1',
+                 element: str = '',
+                 pe_index: str = '',
+                 statements: Optional[List[ast.stmt]] = None,
+                 scope_body: bool = False,
+                 location: Optional[ast.AST] = None,
+                 original: Optional[ast.stmt] = None):
+        # All parameters default so ``copy.deepcopy`` can reconstruct the node
+        # (``ast.AST.__reduce__`` rebuilds with no arguments).
+        super().__init__()
+        self.label = label
+        self.stream = stream
+        self.num_pes_src = num_pes_src
+        self.condition_src = condition_src
+        self.chunksize_src = chunksize_src
+        self.element = element
+        self.pe_index = pe_index
+        self.statements = statements if statements is not None else []
+        self.scope_body = scope_body
+        self.original = original
+        if location is not None:
+            ast.copy_location(self, location)
+
+
 #: Canonical statement markers whose contents no canonicalization pass may touch.
-CANONICAL_LEAVES = (OpaqueStmt, ExplicitTasklet)
+CANONICAL_LEAVES = (OpaqueStmt, ExplicitTasklet, ExplicitConsume)
 
 
 def statement_io_sets(node: ast.stmt) -> Tuple[Set[str], Set[str]]:

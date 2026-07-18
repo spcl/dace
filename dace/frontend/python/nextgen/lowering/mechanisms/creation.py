@@ -22,7 +22,7 @@ from dace.frontend.python.nextgen.lowering.registry import LoweringState
 #: Creation calls this mechanism lowers, by registry-qualified name.
 CREATION_CALLS = frozenset({
     'numpy.zeros', 'numpy.ones', 'numpy.full', 'numpy.empty', 'numpy.zeros_like', 'numpy.ones_like', 'numpy.full_like',
-    'numpy.empty_like', 'numpy.copy', 'numpy.arange'
+    'numpy.empty_like', 'numpy.copy', 'numpy.arange', 'dace.define_stream', 'dace.define_streamarray'
 })
 
 
@@ -36,8 +36,8 @@ def lower_creation(qualname: str, target: DataAccess, call: ast.Call, statement:
                                      dispatch seam converts this to a callback).
     """
     function = qualname.split('.', 1)[1]
-    if function in ('empty', 'empty_like'):
-        return  # Allocation only, contents are undefined
+    if function in ('empty', 'empty_like', 'define_stream', 'define_streamarray'):
+        return  # Allocation only, contents are undefined (streams start empty)
     if function in ('zeros', 'zeros_like'):
         _emit_fill(target, ast.Constant(value=0), statement, state)
         return

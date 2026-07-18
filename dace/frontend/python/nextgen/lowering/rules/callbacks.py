@@ -279,4 +279,10 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
                                   body=[self.visit(child) for child in node.statements])
             return ast.copy_location(with_block, node)
 
+        def visit_ExplicitConsume(self, node) -> ast.stmt:
+            # Consume markers always carry their original decorated
+            # FunctionDef (the desugar deep-copies it before transforming the
+            # body).
+            return self.visit(node.original)
+
     return ast.fix_missing_locations(_Restorer().visit(copy.deepcopy(statement)))
