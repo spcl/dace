@@ -76,6 +76,8 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
 
     if isinstance(target, ast.Name):
         _lower_name_assign(target, value, inferred, statement, state)
+    elif isinstance(target, ast.Attribute):
+        _lower_member_assign(target, value, inferred, statement, state)
     elif isinstance(target, ast.Subscript):
         _lower_subscript_assign(target, value, statement, state)
     else:
@@ -89,7 +91,7 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
     # reference sets, never binding updates.
     reference = _reference_binding(target.id, state)
     if reference is not None:
-        _lower_reference_set(target, reference, value, inferred, statement, state)
+        _lower_reference_set(target.id, reference, value, inferred, statement, state)
         return
 
     if isinstance(value, ast.Name):
@@ -124,6 +126,29 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
 
     target_access = prepare_name_target(target, inferred, state, statement)
     dispatch.lower_computation(target_access, value, statement, state)
+
+
+def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Inferred, statement: ast.Assign,
+                         state: LoweringState) -> None:
+    """
+    Lower an assignment to a whole structure member (``tracers.vapor = ...``).
+
+    Only :class:`~dace.data.Reference` members can be assigned as a whole —
+    the assignment re-points the member (a :class:`RefSetNode`), matching SDFG
+    reference semantics. Rebinding a non-reference member has no dataflow
+    equivalent (write into a subset instead), and attributes that are not
+    structure members are a feature gap; both degrade to the interpreter.
+    """
+    label = astutils.unparse(target)
+    access = resolve_access(target, state)
+    if access is None:
+        raise UnsupportedFeatureError(f'Assignment to unsupported attribute "{label}"', state.context.filename,
+                                      statement)
+    if not isinstance(access.descriptor, data.Reference):
+        raise UnsupportedFeatureError(
+            f'Cannot rebind non-reference structure member "{label}" (write into a subset instead)',
+            state.context.filename, statement)
+    _lower_reference_set(label, (access.container, access.descriptor), value, inferred, statement, state)
 
 
 def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: ast.Assign,
@@ -193,41 +218,46 @@ def _reference_binding(name: str, state: LoweringState) -> Optional[Tuple[str, d
     return None
 
 
-def _lower_reference_set(target: ast.Name, reference: Tuple[str, data.Data], value: ast.expr, inferred: Inferred,
+def _lower_reference_set(label: str, reference: Tuple[str, data.Data], value: ast.expr, inferred: Inferred,
                          statement: ast.Assign, state: LoweringState) -> None:
     """
-    Emit a :class:`RefSetNode` re-pointing a reference-bound name. Direct
+    Emit a :class:`RefSetNode` re-pointing a reference container (a
+    reference-bound name or a reference-typed structure member). Direct
     container sources re-point in place; computed values materialize into a
     fresh container first and the reference is set to it.
+
+    :param label: Source-level label of the reference (for diagnostics and
+                  value-container name hints).
     """
     container, reference_descriptor = reference
+    hint = f"__{label.replace('.', '_')}_value"
 
     access = None
-    if isinstance(value, (ast.Name, ast.Subscript)):
+    if isinstance(value, (ast.Name, ast.Attribute, ast.Subscript)):
         access = resolve_access(value, state)
     if access is None:
         if inferred.kind == 'static':
-            access = static_values.materialize(inferred.value, state, name_hint=f'__{target.id}_value')
+            access = static_values.materialize(inferred.value, state, name_hint=hint)
         elif inferred.is_data:
             descriptor = _result_descriptor(inferred, state, statement)
             if not isinstance(descriptor, data.Array):
-                raise UnsupportedFeatureError(f'Cannot set reference "{target.id}" to a scalar value',
+                raise UnsupportedFeatureError(f'Cannot set reference "{label}" to a scalar value',
                                               state.context.filename, statement)
-            value_container = state.context.add_container(f'__{target.id}_value', descriptor)
+            value_container = state.context.add_container(hint, descriptor)
             value_access = DataAccess(value_container, subsets.Range.from_array(descriptor), descriptor)
             dispatch.lower_computation(value_access, value, statement, state)
             access = value_access
         else:
             raise UnsupportedFeatureError(
-                f'Cannot set reference "{target.id}" to non-data value "{astutils.unparse(value)}"',
-                state.context.filename, statement)
+                f'Cannot set reference "{label}" to non-data value "{astutils.unparse(value)}"', state.context.filename,
+                statement)
 
     if access.is_scalar_access:
-        raise UnsupportedFeatureError(f'Cannot set reference "{target.id}" to a scalar element', state.context.filename,
+        raise UnsupportedFeatureError(f'Cannot set reference "{label}" to a scalar element', state.context.filename,
                                       statement)
     if list(nondegenerate_shape(access.subset)) != [s for s in reference_descriptor.shape if s != 1]:
         raise UnsupportedFeatureError(
-            f'Reference "{target.id}" of shape {tuple(reference_descriptor.shape)} cannot be set '
+            f'Reference "{label}" of shape {tuple(reference_descriptor.shape)} cannot be set '
             f'to source of shape {tuple(nondegenerate_shape(access.subset))}', state.context.filename, statement)
 
     state.emitter.emit(

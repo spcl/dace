@@ -431,9 +431,9 @@ class ANFTransform(_BodyTransformer):
             expr.comparators = [self._flatten(c, hoisted, level='operand') for c in expr.comparators]
             return expr if level not in ('atom', 'operand') else self._hoist(expr, hoisted)
         if isinstance(expr, ast.Subscript) and isinstance(expr.ctx, ast.Load):
-            if not isinstance(expr.value, ast.Name):
+            if not cpa.is_dataref(expr.value):
                 expr.value = self._flatten(expr.value, hoisted, level='atom')
-            if not isinstance(expr.value, ast.Name):
+            if not cpa.is_dataref(expr.value):
                 raise _ShortCircuitHazard
             expr.slice = self._flatten_index(expr.slice, hoisted)
             return expr if level != 'atom' else self._hoist(expr, hoisted)
@@ -457,7 +457,7 @@ class ANFTransform(_BodyTransformer):
         raise _ShortCircuitHazard
 
     def _flatten_target(self, target: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
-        if isinstance(target, ast.Subscript) and isinstance(target.value, ast.Name):
+        if isinstance(target, ast.Subscript) and cpa.is_dataref(target.value):
             target.slice = self._flatten_index(target.slice, hoisted)
         return target
 

@@ -13,8 +13,10 @@ from dataclasses import dataclass
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from dace import data, dtypes, symbolic
+from dace.sdfg.sdfg import NestedDict
 from dace.frontend.python.nextgen.common import FrontendError
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
+from dace.frontend.python.schedule_tree import structure_support
 
 
 @dataclass
@@ -64,8 +66,10 @@ class ProgramContext:
         self.filename = filename
         self.globals = global_vars
 
-        #: Descriptor repository (attached directly to the tree root).
-        self.containers: Dict[str, data.Data] = {}
+        #: Descriptor repository (attached directly to the tree root). A
+        #: NestedDict so dotted structure-member paths (``tracers.data``)
+        #: resolve through the base Structure, matching ``SDFG.arrays``.
+        self.containers: Dict[str, data.Data] = NestedDict()
         self.symbols: Dict[str, Any] = {}
         #: Compile-time constants as (descriptor, value) tuples, shared with the tree root.
         self.constants: Dict[str, Tuple[data.Data, Any]] = dict(constants)
@@ -90,6 +94,11 @@ class ProgramContext:
 
         #: Stack of function objects currently being inlined (recursion detection).
         self.inline_stack: List[Any] = []
+
+        #: Cache of resolved structure-member descriptors by dotted repository
+        #: path, so repeated accesses to the same member share one descriptor
+        #: object (member resolution clones by contract).
+        self._member_descriptors: Dict[str, data.Data] = {}
 
         self._name_counter = 0
 
@@ -253,6 +262,33 @@ class ProgramContext:
         """Look up the current binding of a source-level name."""
         return self.bindings.get(source_name)
 
+    def member_access_of(self, source_name: str, member: str) -> Optional[Tuple[str, data.Data]]:
+        """
+        Resolve a structure member access (``source_name.member``) when the
+        source name is bound to a container with members (a
+        :class:`~dace.data.Structure`).
+
+        :return: A 2-tuple of (dotted repository data path, member descriptor),
+                 or None if the name is not bound to a structure or the member
+                 does not exist. The member descriptor is cached per path so
+                 repeated accesses share one object.
+        """
+        binding = self.bindings.get(source_name)
+        if binding is None or binding.kind != 'container':
+            return None
+        base_descriptor = self.containers.get(binding.container)
+        if base_descriptor is None:
+            return None
+        path = structure_support.structure_member_path(binding.container, member)
+        cached = self._member_descriptors.get(path)
+        if cached is not None:
+            return path, cached
+        resolved = structure_support.resolve_member_access(binding.container, base_descriptor, member)
+        if resolved is None:
+            return None
+        self._member_descriptors[path] = resolved.descriptor
+        return resolved.data_name, resolved.descriptor
+
     def descriptor_of(self, source_name: str, node: Optional[ast.AST] = None) -> data.Data:
         """
         Return the descriptor a source-level name currently refers to.
@@ -279,11 +315,20 @@ class ProgramContext:
         """
         A flat name-to-value view of everything visible for expression parsing:
         container descriptors under their *source* names, symbols, and
-        symbolic globals. Used by the shared memlet parser.
+        symbolic globals. Structure members appear under their dotted source
+        names (``tracers.data``) so the shared memlet parser can parse member
+        subscripts. Used by the shared memlet parser.
         """
         result: Dict[str, Any] = {}
         for source_name, binding in self.bindings.items():
             if binding.kind == 'container' and binding.container in self.containers:
-                result[source_name] = self.containers[binding.container]
+                descriptor = self.containers[binding.container]
+                result[source_name] = descriptor
+                members = structure_support.descriptor_members(descriptor)
+                if members:
+                    for member_name in members:
+                        member = self.member_access_of(source_name, member_name)
+                        if member is not None:
+                            result[f'{source_name}.{member_name}'] = member[1]
         result.update(self.symbols)
         return result

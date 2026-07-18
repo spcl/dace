@@ -154,6 +154,8 @@ class InferenceService:
             return Inferred(kind='static', value=StaticSequence(elements=list(node.elts), kind=sequence_kind))
         if isinstance(node, ast.Name):
             return self._infer_name(node)
+        if isinstance(node, ast.Attribute):
+            return self._infer_attribute(node)
         if isinstance(node, ast.UnaryOp):
             operand = self.infer(node.operand)
             if isinstance(node.op, ast.Not):
@@ -431,6 +433,16 @@ class InferenceService:
                 return Inferred(kind='symbolic', value=value)
             return Inferred(kind='constant', value=value)
         raise UnsupportedFeatureError(f'Use of undefined name "{node.id}"', self.context.filename, node)
+
+    def _infer_attribute(self, node: ast.Attribute) -> Inferred:
+        """Infer a structure member access (``tracers.data``). Any other
+        attribute read is a feature gap that degrades to the interpreter."""
+        if isinstance(node.value, ast.Name):
+            member = self.context.member_access_of(node.value.id, node.attr)
+            if member is not None:
+                return Inferred(kind='data', descriptor=member[1])
+        raise UnsupportedFeatureError(f'Cannot infer type of expression: {astutils.unparse(node)}',
+                                      self.context.filename, node)
 
     def _infer_subscript(self, node: ast.Subscript) -> Inferred:
         base = self.infer(node.value)

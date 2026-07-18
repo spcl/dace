@@ -26,10 +26,15 @@ def verify_tree(root: tn.ScheduleTreeRoot) -> None:
     """
     problems: List[str] = []
 
+    def _known_container(name: str) -> bool:
+        # The repository is a NestedDict: dotted structure-member paths
+        # (``tracers.data``) resolve through the registered base Structure.
+        return name in root.containers
+
     def _check_memlet(memlet, where: str) -> None:
         if memlet is None:
             return
-        if memlet.data not in root.containers:
+        if not _known_container(memlet.data):
             problems.append(f'{where}: memlet references unknown container "{memlet.data}"')
 
     def _walk(scope: tn.ScheduleTreeScope) -> None:
@@ -44,11 +49,11 @@ def verify_tree(root: tn.ScheduleTreeRoot) -> None:
                     _check_memlet(memlet, where)
             elif isinstance(child, tn.CopyNode):
                 _check_memlet(child.memlet, where)
-                if child.target not in root.containers:
+                if not _known_container(child.target):
                     problems.append(f'{where}: copy target "{child.target}" is not a registered container')
             elif isinstance(child, (tn.ViewNode, tn.RefSetNode, tn.DynScopeCopyNode)):
                 _check_memlet(child.memlet, where)
-                if child.target not in root.containers:
+                if not _known_container(child.target):
                     problems.append(f'{where}: target "{child.target}" is not a registered container')
             elif isinstance(child, tn.PythonCallbackNode):
                 if not child.reason:

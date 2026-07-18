@@ -33,9 +33,10 @@ def nondegenerate_shape(subset: subsets.Range) -> List:
 
 def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]:
     """
-    Resolve a canonical ``Name`` or ``Subscript(Name, ...)`` expression to a
-    repository data access. Returns None if the expression does not refer to a
-    data container (e.g., a symbol or constant).
+    Resolve a canonical data reference (``Name``, structure member
+    ``Attribute(Name)``, or a ``Subscript`` over either) to a repository data
+    access. Returns None if the expression does not refer to a data container
+    (e.g., a symbol or constant).
     """
     if isinstance(node, ast.Name):
         binding = state.context.resolve(node.id)
@@ -43,9 +44,22 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
             return None
         descriptor = state.context.containers[binding.container]
         return DataAccess(binding.container, subsets.Range.from_array(descriptor), descriptor)
-    if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
-        binding = state.context.resolve(node.value.id)
-        if binding is None or binding.kind != 'container':
+    if isinstance(node, ast.Attribute):
+        return _member_access(node, state)
+    if isinstance(node, ast.Subscript):
+        if isinstance(node.value, ast.Name):
+            binding = state.context.resolve(node.value.id)
+            if binding is None or binding.kind != 'container':
+                return None
+            base_container = binding.container
+            base_descriptor = state.context.containers[base_container]
+        elif isinstance(node.value, ast.Attribute):
+            member = _member_access(node.value, state)
+            if member is None:
+                return None
+            base_container = member.container
+            base_descriptor = member.descriptor
+        else:
             return None
         expr = state.inference.parse_access(node)
         subset = expr.subset
@@ -54,8 +68,20 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
         if expr.arrdims:
             raise UnsupportedFeatureError('Advanced (array-valued) indexing is not supported yet',
                                           state.context.filename, node)
-        return DataAccess(binding.container, subset, state.context.containers[binding.container])
+        return DataAccess(base_container, subset, base_descriptor)
     return None
+
+
+def _member_access(node: ast.Attribute, state: LoweringState) -> Optional[DataAccess]:
+    """Resolve a whole structure-member access (``tracers.data``) to its
+    dotted repository data path."""
+    if not isinstance(node.value, ast.Name):
+        return None
+    member = state.context.member_access_of(node.value.id, node.attr)
+    if member is None:
+        return None
+    path, descriptor = member
+    return DataAccess(path, subsets.Range.from_array(descriptor), descriptor)
 
 
 def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:
@@ -99,6 +125,13 @@ def substitute_data_operands(expr: ast.expr,
                 if access is not None:
                     return self._connector_for(subscript_node, access)
             return self.generic_visit(subscript_node)
+
+        def visit_Attribute(self, attribute_node: ast.Attribute) -> ast.AST:
+            if isinstance(attribute_node.ctx, ast.Load):
+                access = resolve_access(attribute_node, state)
+                if access is not None:
+                    return self._connector_for(attribute_node, access)
+            return self.generic_visit(attribute_node)
 
         def visit_Name(self, name_node: ast.Name) -> ast.AST:
             if isinstance(name_node.ctx, ast.Load):

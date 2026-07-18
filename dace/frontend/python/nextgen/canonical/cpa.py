@@ -10,7 +10,7 @@ node shape.
 
 Canonical statement grammar::
 
-    stmt := Assign(target, flat)         # single target: Name | Subscript(Name, idx)
+    stmt := Assign(target, flat)         # single target: Name | Attribute(Name) | Subscript(dataref, idx)
           | AnnAssign(Name, T)           # bare declaration (no value): descriptor hint
           | Expr(Call)                   # call statement (flat call)
           | If(atomexpr, [stmt], [stmt])
@@ -30,7 +30,9 @@ Canonical statement grammar::
               | Compare(operand, [op], [operand])
               | BoolOp([operand...])
 
-    operand := atom | Subscript(Name, idx) | UnaryOp(op, operand)
+    operand := atom | Subscript(dataref, idx) | UnaryOp(op, operand)
+
+    dataref := Name | Attribute(Name)    # container or single-level structure member
 
     atom  := Name | Constant | UnaryOp(op, atom) | Attribute-chain over Name
 
@@ -209,12 +211,20 @@ def is_atom(node: ast.AST) -> bool:
     return False
 
 
+def is_dataref(node: ast.AST) -> bool:
+    """Check whether an expression is a canonical data reference: a name or a
+    single-level attribute over a name (a structure member)."""
+    if isinstance(node, ast.Name):
+        return True
+    return isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+
+
 def is_operand(node: ast.AST) -> bool:
     """Check whether an expression is a canonical operator operand: an atom or a data subscript."""
     if is_atom(node):
         return True
     if isinstance(node, ast.Subscript):
-        return isinstance(node.value, ast.Name) and is_index(node.slice)
+        return is_dataref(node.value) and is_index(node.slice)
     if isinstance(node, ast.UnaryOp):
         return is_operand(node.operand)
     return False
@@ -259,10 +269,10 @@ def is_flat(node: ast.AST) -> bool:
 
 def is_assign_target(node: ast.AST) -> bool:
     """Check whether an expression is a canonical assignment target."""
-    if isinstance(node, ast.Name):
+    if is_dataref(node):
         return True
     if isinstance(node, ast.Subscript):
-        return isinstance(node.value, ast.Name) and is_index(node.slice)
+        return is_dataref(node.value) and is_index(node.slice)
     return False
 
 
