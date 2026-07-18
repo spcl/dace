@@ -89,9 +89,9 @@ def getAcc(pos: dc_float[N, 3], mass: dc_float[N], G: dc_float, softening: dc_fl
     softening is the softening length
     a is N x 3 matrix of accelerations
     """
-    x = pos[:, 0:1]
-    y = pos[:, 1:2]
-    z = pos[:, 2:3]
+    x = pos[:, 0]
+    y = pos[:, 1]
+    z = pos[:, 2]
     dx = np.add.outer(-x, x)
     dy = np.add.outer(-y, y)
     dz = np.add.outer(-z, z)
@@ -120,9 +120,9 @@ def getEnergy(pos: dc_float[N, 3], vel: dc_float[N, 3], mass: dc_float[N], G: dc
     PE is the potential energy of the system
     """
     KE = 0.5 * np.sum(np.reshape(mass, (N, 1)) * vel**2)
-    x = pos[:, 0:1]
-    y = pos[:, 1:2]
-    z = pos[:, 2:3]
+    x = pos[:, 0]
+    y = pos[:, 1]
+    z = pos[:, 2]
     dx = np.add.outer(-x, x)
     dy = np.add.outer(-y, y)
     dz = np.add.outer(-z, z)
