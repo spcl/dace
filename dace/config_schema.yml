@@ -365,6 +365,18 @@ required:
                             generate "#pragma omp parallel sections" code around
                             them.
 
+                    parallel_transfer_min_elements:
+                        type: int
+                        default: 1024
+                        title: Parallel copy/memset element threshold
+                        description: >
+                            A contiguous CPU copy or memset (CopyLibraryNode /
+                            MemsetLibraryNode) whose element count is a compile-time
+                            constant at or above this value expands to an OpenMP element
+                            map (parallel across threads at top level); a smaller -- or a
+                            symbolic, unknown-at-compile-time -- size expands to a single
+                            std::memcpy / std::memset.
+
                     implementation:
                         type: str
                         default: legacy

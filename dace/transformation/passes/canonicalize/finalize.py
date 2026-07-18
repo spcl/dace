@@ -197,25 +197,17 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
             if device == dtypes.DeviceType.GPU:
                 node.implementation = 'pure' if sequential else ('CUDA' if 'CUDA' in impls else node.implementation)
                 continue
-        # ``Copy`` / ``Memset``: a top-level node -> ``Auto`` (its own size gate picks the chunked
-        # ``CPU_Multicore`` parallel transfer for large/symbolic sizes). A sequential (nested) node
-        # must run single-core: ask the node's OWN selector for the correct expansion -- which routes
-        # a non-contiguous / cross-storage transfer to ``MappedTasklet`` / ``pure`` rather than the
-        # contiguous-only ``MemcpyCPU`` / ``CPU`` that would RAISE at codegen -- then downgrade the
-        # parallel chunk-map variant to its serial sibling so a nested transfer opens no OpenMP region.
+        # ``Copy`` / ``Memset`` on CPU: a top-level node stays ``Auto`` (its own size gate routes a
+        # large/symbolic contiguous transfer to the element map, which DaCe parallelizes across
+        # OpenMP threads at top level). A sequential (nested) node asks its OWN selector for a
+        # concrete expansion -- ``MemcpyCPU`` / ``CPU`` for a small contiguous transfer, else the
+        # element map (``MappedTasklet`` / ``pure``), which DaCe schedules sequentially when nested
+        # so it opens no OpenMP region; the contiguous-only single-call forms would RAISE otherwise.
         if isinstance(node, CopyLibraryNode) and device == dtypes.DeviceType.CPU:
-            if sequential:
-                impl = select_copy_implementation(node, state)
-                node.implementation = 'MemcpyCPU' if impl == 'MemcpyParallelCPU' else impl
-            else:
-                node.implementation = 'Auto'
+            node.implementation = select_copy_implementation(node, state) if sequential else 'Auto'
             continue
         if isinstance(node, MemsetLibraryNode) and device == dtypes.DeviceType.CPU:
-            if sequential:
-                impl = select_memset_implementation(node, state)
-                node.implementation = 'CPU' if impl == 'ParallelCPU' else impl
-            else:
-                node.implementation = 'Auto'
+            node.implementation = select_memset_implementation(node, state) if sequential else 'Auto'
             continue
         if 'pure' not in impls:
             continue

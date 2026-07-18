@@ -9,7 +9,8 @@ from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
 
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES, auto_dispatch, collapse_shape_and_strides
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
+                                            auto_dispatch, collapse_shape_and_strides, is_parallel_cpu_transfer_size)
 
 
 def _make_memset_skeleton(node: "MemsetLibraryNode",
@@ -68,9 +69,11 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
 def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
-    ``'pure'`` in device scope (no ``cudaMemsetAsync`` from a kernel) and for
-    non-contiguous subsets; ``'CUDA'`` for host-issued GPU-destination contiguous
-    memsets; otherwise ``'CPU'``.
+    ``'pure'`` in device scope (no ``cudaMemsetAsync`` from a kernel), for
+    non-contiguous subsets, and for a statically-large contiguous CPU zero (the element
+    map parallelizes across OpenMP threads at top level); ``'CUDA'`` for host-issued
+    GPU-destination contiguous memsets; otherwise ``'CPU'`` (a single ``std::memset``),
+    including a small or symbolic-size contiguous CPU zero.
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
@@ -92,6 +95,15 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
 
     if out.storage == dace.dtypes.StorageType.GPU_Global:
         return 'CUDA'
+
+    # Same-side CPU main-memory contiguous zero: only a size KNOWN at compile time to be large
+    # (static element count >= ``compiler.cpu.parallel_transfer_min_elements``) takes the element
+    # map ('pure', parallel across OpenMP threads at top level); a small or symbolic (unknown)
+    # size keeps a single ``std::memset`` ('CPU') -- we do not fork for a size that may be tiny
+    # at runtime. Register / non-main-memory storages also stay serial.
+    allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
+    if out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements()):
+        return 'pure'
     return 'CPU'
 
 
