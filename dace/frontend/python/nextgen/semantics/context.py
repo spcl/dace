@@ -276,9 +276,13 @@ class ProgramContext:
         binding = self.bindings.get(source_name)
         if binding is None or binding.kind != 'container':
             return None
-        base_descriptor = self.containers.get(binding.container)
-        if base_descriptor is None:
+        # NOTE: binding.container may itself be a dotted structure-member path
+        # (a name aliased to a nested structure member); NestedDict.get() does
+        # not resolve dotted keys (only __getitem__/__contains__ do), so use
+        # 'in'/'[]' here rather than dict.get().
+        if binding.container not in self.containers:
             return None
+        base_descriptor = self.containers[binding.container]
         path = structure_support.structure_member_path(binding.container, member)
         cached = self._member_descriptors.get(path)
         if cached is not None:

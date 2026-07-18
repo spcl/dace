@@ -88,6 +88,46 @@ def test_structure_unknown_member():
     assert len(_nodes_of_type(tree, tn.PythonCallbackNode)) == 1
 
 
+MultiTracers = dace.data.Structure(members={
+    "tracers": MyTracers,
+    "counter": dace.data.Array(dace.int32, (1, )),
+},
+                                   name="Tracer_Bundle_Bundle")
+
+
+def test_nested_structure_members():
+
+    @dace.program()
+    def initialize_all_nested(multitracers: MultiTracers, fill_value: int) -> None:
+        multitracers.tracers.vapor = multitracers.tracers.data[:, 2]
+        multitracers.tracers.ice = multitracers.tracers.data[:, 0]
+
+        for index in range(NUMBER_OF_TRACERS):
+            multitracers.tracers.data[:, index] = fill_value
+
+        multitracers.tracers.vapor[:] = fill_value + 1
+
+        multitracers.counter[:] = 0
+
+    tree = nextgen.parse_program(initialize_all_nested)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+    # Nested member chains resolve to multi-level dotted paths.
+    refsets = _nodes_of_type(tree, tn.RefSetNode)
+    assert sorted(node.target for node in refsets) == ['multitracers.tracers.ice', 'multitracers.tracers.vapor']
+    assert all(node.memlet.data == 'multitracers.tracers.data' for node in refsets)
+
+    # Only the base structure is registered.
+    assert sorted(tree.containers) == ['fill_value', 'multitracers']
+
+    writes = [
+        memlet.data for tasklet in _nodes_of_type(tree, tn.TaskletNode) for memlet in tasklet.out_memlets.values()
+    ]
+    assert 'multitracers.tracers.data' in writes
+    assert 'multitracers.tracers.vapor' in writes
+    assert 'multitracers.counter' in writes
+
+
 def test_structure_execution():
     tree = nextgen.parse_program(initialize_all)
     sdfg = tree.as_sdfg()
@@ -110,4 +150,5 @@ if __name__ == '__main__':
     test_structure_members()
     test_structure_vs_old_frontend()
     test_structure_unknown_member()
+    test_nested_structure_members()
     test_structure_execution()

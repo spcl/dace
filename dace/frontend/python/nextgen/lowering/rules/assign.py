@@ -35,6 +35,7 @@ from dace import data, dtypes, subsets
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
+from dace.frontend.python.schedule_tree import structure_support
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
 from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
@@ -94,7 +95,7 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
         _lower_reference_set(target.id, reference, value, inferred, statement, state)
         return
 
-    if isinstance(value, ast.Name):
+    if isinstance(value, (ast.Name, ast.Attribute)):
         source_access = resolve_access(value, state)
         # Assigning from a reference-bound name materializes a fresh reference
         # (pointer copy): the source reference may later be re-set, so a
@@ -108,6 +109,13 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
                               memlet=Memlet(data=source_access.container, subset=source_access.subset),
                               src_desc=source_access.descriptor,
                               ref_desc=copy.deepcopy(reference_descriptor)))
+            return
+        # Whole-structure aliasing (x = outer.inner, including the ANF temps
+        # that reduce nested member chains to single-level datarefs): a
+        # compile-time binding to the dotted member path. Sound because
+        # structure members are embedded, never re-pointed.
+        if source_access is not None and structure_support.supports_member_access(source_access.descriptor):
+            state.context.bind(target.id, source_access.container)
             return
         # Whole-array aliasing: rebind the name. Arrays are mutable in Python,
         # so both names must observe subsequent writes; a binding update
