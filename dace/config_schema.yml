@@ -554,6 +554,37 @@ required:
                                     both generators: every split path is gated on this key, so when it
                                     is off the nest bodies are written inline into the single frame
                                     ``.cpp`` exactly as before.
+                            external_translation_units:
+                                type: bool
+                                default: false
+                                title: Emit each top-level GPU nest as its own standalone SDFG + translation unit
+                                description: >
+                                    Applies to: legacy AND experimental cuda backends.
+
+                                    Model 2 of the per-translation-unit split, for GPU. Where
+                                    ``split_nsdfg_translation_units`` relocates a CPU-only nest's function
+                                    into its own ``.cpp`` (still one codegen pass, one ``.cu`` for the whole
+                                    program), THIS key lifts each top-level nest that contains GPU work into a
+                                    STANDALONE SDFG that is code-generated on its OWN -- a separate codegen
+                                    pass, hence its OWN ``.cu`` with only that nest's kernels. Both cuda
+                                    generators emit exactly one ``.cu`` per generate_code invocation, so one
+                                    ``.cu`` per top-level GPU kernel is only reachable this way; it needs no
+                                    change to either cuda backend.
+
+                                    The parent calls each child through the child SDFG's PUBLIC extern-C
+                                    handle ABI -- ``__dace_init_<child>`` / ``__program_<child>`` /
+                                    ``__dace_exit_<child>`` -- forward-declared and resolved in-binary by the
+                                    static linker (the same one-``.so`` contract as
+                                    ``split_nsdfg_translation_units``; NOT a separate library, NOT
+                                    ``dlopen``). Device pointers are passed straight through: parent and
+                                    child share the process's CUDA context, so a device allocation is valid
+                                    across the call.
+
+                                    DEPTH 1: a child is generated with this key forced off, so a nest inside
+                                    a child is not itself lifted again.
+
+                                    Default ``false`` reproduces today's output byte-identically: the lift
+                                    and the recursive per-child codegen are both gated on this key.
                             index_fn_qualifier:
                                 type: str
                                 default: inline_constexpr

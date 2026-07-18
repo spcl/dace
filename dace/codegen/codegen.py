@@ -205,9 +205,11 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
 
     # Wrap top-level map-nests/loops into no_inline nested SDFGs (own .cpp each, via the do_split path
-    # in _generate_NestedSDFG). Must run before the readable generator's InlineSDFG sweep below (which
-    # would otherwise inline them straight back) and after expand_library_nodes.
-    if config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units'):
+    # in _generate_NestedSDFG; and, for GPU nests, own standalone SDFG + .cu via the do_external path).
+    # Must run before the readable generator's InlineSDFG sweep below (which would otherwise inline them
+    # straight back) and after expand_library_nodes.
+    if (config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units')
+            or config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'external_translation_units')):
         from dace.transformation.passes.outline_top_level_nests import outline_top_level_nests
         outline_top_level_nests(sdfg)
         infer_types.infer_connector_types(sdfg)

@@ -227,10 +227,16 @@ def test_split_readable_index_helpers_are_per_tu():
         assert defines == 1, f'{obj.name} uses A_idx {uses}x but defines it {defines}x'
 
 
+@pytest.mark.parametrize('build_mode', ['cmake', 'native'])
 @pytest.mark.parametrize('implementation', IMPLEMENTATIONS)
-def test_split_compiles_links_and_matches_baseline(implementation):
-    """The real gate: the split .so must LINK (cross-TU nest symbols resolve) and produce exactly the
-    numbers the single-TU build produces."""
+def test_split_compiles_links_and_matches_baseline(implementation, build_mode):
+    """The real gate: the split library must LINK (cross-TU nest symbols resolve) and produce exactly
+    the numbers the single-TU build produces -- under BOTH builders.
+
+    ``build_mode`` crosses the split against the two ways DaCe turns the flat per-TU source list into a
+    library: ``cmake`` (the CMakeLists project) and ``native`` (the no-cmake direct-compile path). Both
+    consume the same ``dace_files.csv``, so the per-nest ``.cpp`` files must link either way; the native
+    path is what would silently drop a nest object if the recursive source collection missed it."""
     rng = np.random.default_rng(0)
     A = rng.random((M, N))
 
@@ -238,14 +244,12 @@ def test_split_compiles_links_and_matches_baseline(implementation):
     for split in (False, True):
         B = np.zeros((M, N))
         C = np.zeros((M, N))
-        with dace.config.set_temporary('compiler', 'cpu', 'implementation', value=implementation):
-            with dace.config.set_temporary('compiler',
-                                           'cpu',
-                                           'codegen_params',
-                                           'split_nsdfg_translation_units',
-                                           value=split):
-                sdfg = two_nest_sdfg(f'link_{implementation}_{int(split)}')
-                sdfg.compile()(A=A.copy(), B=B, C=C)
+        with dace.config.set_temporary('compiler', 'cpu', 'implementation', value=implementation), \
+             dace.config.set_temporary('compiler', 'build_mode', value=build_mode), \
+             dace.config.set_temporary('compiler', 'cpu', 'codegen_params',
+                                       'split_nsdfg_translation_units', value=split):
+            sdfg = two_nest_sdfg(f'link_{implementation}_{build_mode}_{int(split)}')
+            sdfg.compile()(A=A.copy(), B=B, C=C)
         outputs[split] = (B, C)
 
     # Correct against numpy, bit-exactly (no norm_error: these are exact fp operations).
