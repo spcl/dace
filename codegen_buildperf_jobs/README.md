@@ -164,3 +164,23 @@ PYTHONPATH=<repo> OMP_NUM_THREADS=1 python3 run_buildperf.py --preset S --only a
 PYTHONPATH=<repo> python3 run_buildperf_tsvc2.py --preset S --only s000 --out t2.tsv
 python3 plot_buildperf.py --tsv probe.tsv --out-dir plots
 ```
+
+## external-TU build/runtime sweep (`run_external_tu_perf.py`)
+
+Separate driver for the per-nest translation-unit split (`split_nsdfg_translation_units`) crossed with
+the two DaCe builders. Unlike `run_buildperf.py` (whose `compile_ms` is a direct `g++` call, builder-
+agnostic), this times the REAL cold `sdfg.compile()` under each `build_mode`, so cmake's configure
+overhead vs the native no-cmake path is exactly what the number reflects.
+
+Grid: codegen {legacy, experimental} x split {off=single-TU, on=external-TU} x build_mode {cmake, native}.
+Per point: `codegen_ms` (generate_code, incl. outline when split on), `compile_ms` (real cold build),
+`runtime_ms`. New CPU codegen runs at its default (intended-optimal) flags.
+
+```bash
+OMP_NUM_THREADS=1 python3 run_external_tu_perf.py --preset S --only atax --out exttu.tsv
+OMP_NUM_THREADS=1 python3 run_external_tu_perf.py --preset paper --corpus both --out paper_exttu.tsv
+python3 plot_external_tu.py exttu.tsv           # -> p1..p4 + external_tu_overview.png
+```
+
+Plots: P1 old-codegen external-TU native-vs-cmake build, P2 old-codegen single-TU native-vs-cmake,
+P3 runtime new-vs-old (cmake, defaults), P4 runtime of the 4 codegen x split variants.
