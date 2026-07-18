@@ -527,9 +527,68 @@ def test_post_apply_strict_validate_runs_full_sdfg_validate():
     assert sdfg.number_of_nodes() == 1, 'clean RAW fusion under strict_validate should still produce 1 state'
 
 
+def test_reused_transient_multiple_producers_refuses_ambiguous_merge():
+    """The SECOND state writes a transient ``t`` that ALREADY has two separate
+    top-level producer AccessNodes in the FIRST state (canon's reused mean /
+    scratch transient picks up one write per component across successive
+    fusions). Merging would collapse the aliased instances and cross-bind a
+    reader to the wrong producer -- a wrong-value binding that, unlike a missing
+    happens-before edge, no ordering edge can repair. StateFusionExtended must
+    refuse, keeping the states ordered by the interstate edge.
+
+    Pins the nbody KE miscompile: the reused ``__rdo0`` collapsed to several
+    crossed instances and the energy reduction read the wrong component (KE
+    0.507 -> 1.536 after this fusion) until this shape was refused."""
+    sdfg = SDFG('fuse_reused_transient_multi_producer')
+    sdfg.add_array('arr', [8], dtypes.float64)
+    sdfg.add_array('out1', [1], dtypes.float64)
+    sdfg.add_array('out2', [1], dtypes.float64)
+    sdfg.add_transient('t', [2], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('s1', is_start_block=True)
+    s2 = sdfg.add_state('s2')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    # state1: TWO separate producers of t (t[0], t[1]); out1 reads both.
+    a = s1.add_read('arr')
+    ta = s1.add_access('t')
+    tb = s1.add_access('t')
+    o1 = s1.add_write('out1')
+    w0 = s1.add_tasklet('w0', {'i'}, {'o'}, 'o = i')
+    w1 = s1.add_tasklet('w1', {'i'}, {'o'}, 'o = i')
+    rd = s1.add_tasklet('rd', {'i0', 'i1'}, {'o'}, 'o = i0 + i1')
+    s1.add_edge(a, None, w0, 'i', Memlet('arr[0]'))
+    s1.add_edge(w0, 'o', ta, None, Memlet('t[0]'))
+    s1.add_edge(a, None, w1, 'i', Memlet('arr[1]'))
+    s1.add_edge(w1, 'o', tb, None, Memlet('t[1]'))
+    s1.add_edge(ta, None, rd, 'i0', Memlet('t[0]'))
+    s1.add_edge(tb, None, rd, 'i1', Memlet('t[1]'))
+    s1.add_edge(rd, 'o', o1, None, Memlet('out1[0]'))
+
+    # state2: writes t again and reads it into out2.
+    a2 = s2.add_read('arr')
+    tc = s2.add_access('t')
+    o2 = s2.add_write('out2')
+    w2 = s2.add_tasklet('w2', {'i'}, {'o'}, 'o = i')
+    r2 = s2.add_tasklet('r2', {'i'}, {'o'}, 'o = i')
+    s2.add_edge(a2, None, w2, 'i', Memlet('arr[2]'))
+    s2.add_edge(w2, 'o', tc, None, Memlet('t[0]'))
+    s2.add_edge(tc, None, r2, 'i', Memlet('t[0]'))
+    s2.add_edge(r2, 'o', o2, None, Memlet('out2[0]'))
+    sdfg.validate()
+
+    arr = np.arange(8, dtype=np.float64)  # arr[i] = i
+    out1 = np.zeros(1, dtype=np.float64)
+    out2 = np.zeros(1, dtype=np.float64)
+    # Refused (2 states) -> matches the un-fused reference: out1=arr[0]+arr[1]=1, out2=arr[2]=2.
+    _assert_fusion_preserves_semantics(sdfg, 2, arr=arr, out1=out1, out2=out2)
+
+
 if __name__ == '__main__':
     test_extended_fusion()
     test_extended_fusion_refuses_unsafe_write_after_read()
+    test_reused_transient_multiple_producers_refuses_ambiguous_merge()
     test_raw_read_after_write()
     test_waw_write_after_write()
     test_war_write_after_read()

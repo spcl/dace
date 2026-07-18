@@ -298,6 +298,33 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             except StopIteration:
                 pass
 
+            # Reused-transient ambiguity: when BOTH states write into the same
+            # non-view transient that already carries more than one top-level
+            # producer AccessNode in the first state, the two chains feed
+            # distinct values into aliased instances of one name, and the
+            # merge's common-data-node collapse cross-binds a reader to the
+            # wrong producer. Unlike a missing happens-before edge, a
+            # wrong-value binding cannot be repaired by an ordering edge, so
+            # refuse. Pinned by nbody: the reused mean transient ``__rdo0``
+            # accumulates several component writes across successive fusions and
+            # the KE reduction ends up reading the wrong one.
+            first_scope = first_state.scope_dict()
+            first_producers: Dict[str, int] = {}
+            for n in first_state.data_nodes():
+                if first_scope[n] is None and first_state.in_degree(n) > 0:
+                    first_producers[n.data] = first_producers.get(n.data, 0) + 1
+            second_scope = second_state.scope_dict()
+            second_writes = {
+                n.data
+                for n in second_state.data_nodes() if second_scope[n] is None and second_state.in_degree(n) > 0
+            }
+            for dname in second_writes:
+                desc = sdfg.arrays.get(dname)
+                if desc is None or not desc.transient or isinstance(desc, dt.View):
+                    continue
+                if first_producers.get(dname, 0) >= 2:
+                    return False
+
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
             # the first state is an initial state (in which case the new initial
@@ -724,6 +751,14 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         sdutil.change_edge_src(first_state, cand, node)
                         sdutil.change_edge_dest(first_state, cand, node)
                         first_state.remove_node(cand)
+                        # Record the merged-away node so a later ``second_mid`` node with the same
+                        # data does not re-select it: ``candidates`` (above) filters on the stale
+                        # ``order`` / ``top`` snapshots, which still contain this now-removed node.
+                        # Without this, ``memlets_intersect`` re-queries ``first_state.in_edges(cand)``
+                        # on a deleted node -> ``KeyError`` (cloudsc gpu_scc's many same-named
+                        # ``__t0_split_*`` from SplitTasklets). Mirrors the ``merged_nodes.add(n)``
+                        # in the general same-name-merge branch below.
+                        merged_nodes.add(cand)
                 continue
 
             if len(candidates) == 0:
