@@ -2726,17 +2726,18 @@ class ProgramVisitor(ExtNodeVisitor):
         # Generate conditions
         cond, _, _ = self._visit_test(node.test)
 
-        # Register any symbol used purely in the branch condition (e.g. a loop-invariant
-        # config flag ``if K > 0``) as an SDFG symbol. A symbol that never appears in an
-        # array shape or a loop condition is otherwise left unregistered, so ``arglist`` /
-        # codegen raise ``KeyError`` on it. Mirrors the loop-condition handling in
-        # :meth:`visit_While`.
+        # Register any symbol used purely in the branch condition (e.g. a loop-invariant config flag
+        # ``if K > 0``) as an SDFG symbol, else arglist/codegen raise KeyError on it. Exclude data
+        # descriptors -- arrays here or a scalar in an enclosing scope (``scope_arrays``): a scalar in
+        # the condition is NOT a symbol; an index use of it materializes its own ``__sym_x`` (see
+        # ``_promote``), and registering it here would leave the scalar mis-typed and crash that binop.
         symcond = pystr_to_symbolic(cond)
         if symbolic.issymbolic(symcond):
             for atom in symcond.free_symbols:
                 astr = str(atom)
                 if (symbolic.issymbolic(atom, self.sdfg.constants) and astr not in self.sdfg.symbols
-                        and astr not in self.variables and astr not in self.sdfg.arrays):
+                        and astr not in self.variables and astr not in self.sdfg.arrays
+                        and astr not in self.scope_arrays):
                     self.sdfg.add_symbol(astr, atom.dtype)
 
         # Add conditional region
