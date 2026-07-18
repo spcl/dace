@@ -64,7 +64,14 @@ class MpiPackUnpack(ppl.Pass):
         desc = sdfg.arrays[arr]
         name = f"packed_{arr}_{self._counter}"
         self._counter += 1
-        sdfg.add_array(name, list(subset.size()), desc.dtype, transient=True, storage=desc.storage)
+        # SDFG lifetime, not Scope: an async Isend/Irecv buffer must survive from its state to the
+        # matching Wait in a later state (a Scope-lifetime buffer is freed at state exit -> use-after-free).
+        sdfg.add_array(name,
+                       list(subset.size()),
+                       desc.dtype,
+                       transient=True,
+                       storage=desc.storage,
+                       lifetime=dace.dtypes.AllocationLifetime.SDFG)
         return name
 
     def _copy(self, state, arr, subset, packed, pack, arr_node=None, packed_node=None):
@@ -144,7 +151,8 @@ class MpiPackUnpack(ppl.Pass):
         state.add_edge(node, conn, pnode, None, dace.Memlet.from_array(packed, sdfg.arrays[packed]))
         if state.degree(dst) == 0:
             state.remove_node(dst)  # the recv no longer writes it here; the unpack writes arr in a later state
-        post = sdfg.add_state_after(wait_state, f"mpi_unpack_{arr}")
+        # add_state_after on the Wait's own graph, not the top SDFG -- the Wait can live inside a LoopRegion.
+        post = wait_state.parent_graph.add_state_after(wait_state, f"mpi_unpack_{arr}")
         self._copy(post, arr, subset, packed, pack=False)
         return 1
 
