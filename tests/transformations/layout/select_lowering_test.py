@@ -1,11 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """The layout transforms must NOT hardcode a library lowering: they insert relayout library nodes
 (TensorTranspose / TensorDot / LayoutChange) with ``implementation is None``, and the device-driven
-``select_layout_lowering`` step chooses the expansion just before compile. On CPU it picks ``pure``.
-On GPU it PREFERS ``cuTENSOR`` but only where it can build and run (library linkable, operands
-GPU-resident, dtype supported); otherwise it falls back to the pure GPU map. These tests pin that
-contract: the passes leave lowering unset, the step selects it per device with the right gates, an
-explicit choice is preserved, and a bad device is rejected."""
+``select_layout_lowering`` step chooses the expansion just before compile. On CPU a ``TensorDot``
+PREFERS TBLIS (native transpose-free contraction) when the library is linkable and the operand dtype
+is supported, else ``pure``; a ``TensorTranspose``/``LayoutChange`` always gets ``pure`` (TBLIS only
+does contraction). On GPU it PREFERS ``cuTENSOR`` but only where it can build and run (library
+linkable, operands GPU-resident, dtype supported); otherwise it falls back to the pure GPU map. These
+tests pin that contract: the passes leave lowering unset, the step selects it per device with the
+right gates, an explicit choice is preserved, and a bad device is rejected."""
 import numpy
 import pytest
 import dace
@@ -67,6 +69,21 @@ def _layout_change_sdfg(storage):
     return sdfg, lc
 
 
+def _tensordot_sdfg(dtype):
+    """A standalone TensorDot (implementation unset) -- a matmul contraction over the given dtype."""
+    sdfg = dace.SDFG("td_sel")
+    sdfg.add_array("A", [4, 5], dtype)
+    sdfg.add_array("B", [5, 6], dtype)
+    sdfg.add_array("C", [4, 6], dtype)
+    st = sdfg.add_state("s", is_start_block=True)
+    td = TensorDot("td", left_axes=[1], right_axes=[0])
+    st.add_node(td)
+    st.add_edge(st.add_read("A"), None, td, "_left_tensor", dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    st.add_edge(st.add_read("B"), None, td, "_right_tensor", dace.Memlet.from_array("B", sdfg.arrays["B"]))
+    st.add_edge(td, "_out_tensor", st.add_write("C"), None, dace.Memlet.from_array("C", sdfg.arrays["C"]))
+    return sdfg, td
+
+
 def _tds(sdfg):
     return [n for n in sdfg.all_nodes_recursive() if isinstance(n[0], TensorDot)]
 
@@ -100,17 +117,45 @@ def test_permute_leaves_its_transpose_unset_then_select_sets_it():
 
 
 # --------------------------------------------------------------------------- #
-#  CPU selection
+#  CPU selection: TensorDot prefers TBLIS when linkable, else pure
 # --------------------------------------------------------------------------- #
-def test_select_cpu_sets_pure():
+def test_select_cpu_sets_pure(monkeypatch):
+    """No linkable TBLIS -> the pure CPU map (the always-available fallback)."""
+    monkeypatch.setattr(select_lowering, "tblis_is_linkable", lambda: False)
     sdfg, _ = _gemm_sdfg()
     GemmToTensorDot().apply_pass(sdfg, {})
     assert select_layout_lowering(sdfg, "cpu") == 1
     assert _tds(sdfg)[0][0].implementation == "pure"
 
 
-def test_select_over_layout_change_node():
-    """LayoutChange is one of the selected node types -- CPU picks pure."""
+def test_select_cpu_tensordot_prefers_tblis_when_linkable(monkeypatch):
+    """TBLIS available + supported dtype -> the TensorDot is lowered through TBLIS, not pure."""
+    monkeypatch.setattr(select_lowering, "tblis_is_linkable", lambda: True)
+    sdfg, _ = _gemm_sdfg()
+    GemmToTensorDot().apply_pass(sdfg, {})
+    assert select_layout_lowering(sdfg, "cpu") == 1
+    assert _tds(sdfg)[0][0].implementation == "TBLIS"
+
+
+def test_select_cpu_tblis_unsupported_dtype_falls_back_to_pure(monkeypatch):
+    """TBLIS supports float32/float64 only; an int32 contraction falls back to pure even when linkable."""
+    monkeypatch.setattr(select_lowering, "tblis_is_linkable", lambda: True)
+    sdfg, td = _tensordot_sdfg(dace.int32)
+    assert select_layout_lowering(sdfg, "cpu") == 1
+    assert td.implementation == "pure"  # dtype gate
+
+
+def test_select_cpu_transpose_stays_pure_with_tblis(monkeypatch):
+    """TBLIS only implements contraction -- a TensorTranspose stays pure even when TBLIS is linkable."""
+    monkeypatch.setattr(select_lowering, "tblis_is_linkable", lambda: True)
+    sdfg, tt = _transpose_sdfg(dace.StorageType.Default, dace.float64)
+    assert select_layout_lowering(sdfg, "cpu") == 1
+    assert tt.implementation == "pure"  # node-type gate
+
+
+def test_select_over_layout_change_node(monkeypatch):
+    """LayoutChange is one of the selected node types -- CPU picks pure (no TBLIS for a relayout)."""
+    monkeypatch.setattr(select_lowering, "tblis_is_linkable", lambda: True)
     sdfg, lc = _layout_change_sdfg(dace.StorageType.Default)
     assert lc.implementation is None
     assert select_layout_lowering(sdfg, "cpu") == 1
@@ -175,8 +220,9 @@ def test_select_bad_device_rejected():
         select_layout_lowering(sdfg, "tpu")
 
 
-def test_selected_gemm_runs_bitexact_cpu():
-    """End to end: transform (no lowering) -> select CPU -> compile -> matches numpy."""
+def test_selected_gemm_runs_bitexact_cpu(monkeypatch):
+    """End to end: transform (no lowering) -> select CPU pure -> compile -> matches numpy."""
+    monkeypatch.setattr(select_lowering, "tblis_is_linkable", lambda: False)  # pin the pure path
     sdfg, _ = _gemm_sdfg()
     GemmToTensorDot().apply_pass(sdfg, {})
     select_layout_lowering(sdfg, "cpu")

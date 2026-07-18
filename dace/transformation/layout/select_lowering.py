@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Device-aware lowering selection for layout-inserted library nodes: CPU always gets ``pure``; GPU prefers ``cuTENSOR``, falling back to ``pure`` when it can't build/run for the operands."""
+"""Device-aware lowering selection for layout-inserted library nodes: on CPU a ``TensorDot`` prefers TBLIS (native transpose-free contraction) when the library is linkable and the operand dtype is supported, otherwise ``pure``; a ``TensorTranspose``/``LayoutChange`` always gets ``pure`` (TBLIS only does contraction). GPU prefers ``cuTENSOR``, falling back to ``pure`` when it can't build/run for the operands."""
 import ctypes.util
+import os
 from typing import List, Set, Type
 
 import dace
@@ -8,6 +9,7 @@ from dace import dtypes
 from dace.sdfg import nodes as nd
 
 CPU_IMPL = "pure"
+CPU_TENSOR_IMPL = "TBLIS"
 GPU_IMPL = "cuTENSOR"
 
 
@@ -21,6 +23,23 @@ def layout_node_types() -> Set[Type[nd.LibraryNode]]:
 def cutensor_is_linkable() -> bool:
     """Whether ``libcutensor`` is on the loader path -- a cheap linkability proxy; unknown treated as no."""
     return ctypes.util.find_library("cutensor") is not None
+
+
+def tblis_is_linkable() -> bool:
+    """Whether TBLIS is available: ``TBLIS_ROOT`` points at an install, or ``libtblis`` is on the loader path."""
+    return 'TBLIS_ROOT' in os.environ or ctypes.util.find_library("tblis") is not None
+
+
+def cpu_implementation(node: nd.LibraryNode, descs: List[dace.data.Data], tblis_ok: bool) -> str:
+    """TBLIS for a ``TensorDot`` when TBLIS is linkable and every operand dtype is supported
+    (float32/float64); otherwise the pure map. TBLIS only implements contraction, so a
+    ``TensorTranspose``/``LayoutChange`` always gets ``pure``."""
+    from dace.libraries.linalg import TensorDot
+    from dace.libraries.linalg.nodes.tensordot import ExpandTBLIS
+    if (tblis_ok and descs and isinstance(node, TensorDot)
+            and all(desc.dtype.base_type in ExpandTBLIS.TYPE_MAP for desc in descs)):
+        return CPU_TENSOR_IMPL
+    return CPU_IMPL
 
 
 def operand_descriptors(node: nd.LibraryNode, state: dace.SDFGState) -> List[dace.data.Data]:
@@ -49,12 +68,13 @@ def select_layout_lowering(sdfg: dace.SDFG, device: str = "cpu") -> int:
         raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
     types = tuple(layout_node_types())
     cutensor_ok = cutensor_is_linkable() if device == "gpu" else False
+    tblis_ok = tblis_is_linkable() if device == "cpu" else False
     count = 0
     for node, state in sdfg.all_nodes_recursive():
         if isinstance(node, types) and node.implementation is None:
             if device == "gpu":
                 node.implementation = gpu_implementation(operand_descriptors(node, state), cutensor_ok)
             else:
-                node.implementation = CPU_IMPL
+                node.implementation = cpu_implementation(node, operand_descriptors(node, state), tblis_ok)
             count += 1
     return count
