@@ -6,7 +6,8 @@ from typing import List, Optional, Tuple
 import dace
 from dace import data, library, nodes, dtypes, symbolic
 from dace.codegen.common import sym2cpp, get_gpu_backend
-from dace.libraries.standard.helper import CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES, auto_dispatch, collapse_shape_and_strides
+from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
+                                            auto_dispatch, collapse_shape_and_strides, is_parallel_cpu_transfer_size)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.transformation.transformation import ExpandTransformation
 from .. import environments
@@ -119,18 +120,22 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         return 'MappedTasklet'
 
-    # 4. Host-level CPU-resident multi-element copy: a same-shape, contiguous,
-    # same-layout region is a single physical run on both sides, so one
-    # ``std::memcpy`` (MemcpyCPU) is exact -- and it satisfies ExpandMemcpyCPU's
-    # contiguity precondition, so a picked MemcpyCPU always expands cleanly.
-    # Non-contiguous, mixed-layout, mismatched-per-dim-shape (e.g. a transpose),
-    # or rank-changing reshapes have no single flat form and fall through to the
-    # MappedTasklet path below (which rejects transposes and walks reshapes 1-D).
+    # 4. Host-level CPU-resident multi-element copy: a same-shape, contiguous, same-layout
+    # region is a single physical run on both sides, so a single ``std::memcpy`` (MemcpyCPU)
+    # is exact -- and it satisfies ExpandMemcpyCPU's contiguity precondition, so a picked
+    # MemcpyCPU always expands cleanly. Only a copy KNOWN at compile time to be large (static
+    # element count >= ``compiler.cpu.parallel_transfer_min_elements``) instead falls through to
+    # the MappedTasklet path below -- a plain element map DaCe schedules across OpenMP threads at
+    # top level (and sequentially when nested). A small or symbolic (unknown-size) copy keeps the
+    # single memcpy: we do not fork for a size that may be tiny at runtime. Non-contiguous,
+    # mixed-layout, mismatched-per-dim-shape (e.g. a transpose), or rank-changing reshapes also
+    # fall through (MappedTasklet rejects transposes and walks reshapes 1-D).
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = (len(inp.shape) == len(out.shape)
                   and not any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())))
     if ({inp.storage, out.storage} <= host_storages and same_shape and in_subset.is_contiguous_subset(inp)
-            and out_subset.is_contiguous_subset(out) and _both_packed_same_layout(inp, out)):
+            and out_subset.is_contiguous_subset(out) and _both_packed_same_layout(inp, out)
+            and not is_parallel_cpu_transfer_size(in_subset.num_elements())):
         return 'MemcpyCPU'
 
     # 5. Coarse pick by storage pair: any copy touching GPU memory goes through
@@ -796,8 +801,10 @@ class CopyLibraryNode(nodes.LibraryNode):
     Each implementation name describes the C++ it emits: ``MappedTasklet``
     (element-wise tasklet, schedule from storages; also handles rank-mismatch
     reshapes via a 1-D walker when both endpoints are packed-same-layout with
-    contiguous subsets), ``Tasklet`` (bare assignment, no map), ``MemcpyCPU``
-    (``std::memcpy``), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
+    contiguous subsets; a statically-large contiguous CPU copy also routes here so the
+    element map parallelizes across OpenMP threads at top level), ``Tasklet``
+    (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy`` for a small or
+    symbolic-size contiguous CPU copy), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
     ``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided`` (Sequential map of
     ``cudaMemcpyAsync``), ``SharedMemoryCollective`` (``dace::CopyND`` +
     ``__syncthreads()``; the only remaining ``dace::CopyND`` user).

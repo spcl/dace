@@ -46,6 +46,25 @@ def collapse_shape_and_strides(
     return collapsed_shape, collapsed_strides
 
 
+def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> bool:
+    """Whether a contiguous CPU transfer of ``num_elements`` should take the mapped (parallel) path.
+
+    ``True`` ONLY when the count is a compile-time constant ``>=`` the configurable threshold
+    ``compiler.cpu.parallel_transfer_min_elements`` (default 1024). A symbolic size (unknown at
+    compile time) stays serial: we do not fork an OpenMP region for a size that may be tiny at
+    runtime -- an element map schedules parallel at top level regardless, so the guard is what
+    keeps a small/unknown transfer a single libc call.
+
+    :param num_elements: total contiguous element count (constant or symbolic).
+    :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
+    """
+    try:
+        threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
+        return int(dace.symbolic.simplify(num_elements)) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
 def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,
                   select_fn: Callable[[nodes.LibraryNode, dace.SDFGState], str], library_cls: type):
     """Dispatch a library node's ``'Auto'`` implementation to the one picked by ``select_fn``.
