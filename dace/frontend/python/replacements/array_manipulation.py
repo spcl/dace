@@ -210,30 +210,26 @@ def _transpose(pv: ProgramVisitor,
 
     restype = arr1.dtype
     new_shape = [arr1.shape[i] for i in axes]
-    # Strict numpy: a 2D array with a unit dim (``(N, 1)`` / ``(1, N)``) transposes to the swapped
-    # shape. With one axis of length 1 the transpose is a straight positional copy of the N elements
-    # (no permutation) -- squeeze the unit axis on both sides and copy. This is stride-safe (the unit
-    # axis is dropped as a view, unlike a reshape that reinterprets strides), and it sidesteps the
-    # Transpose library node, which squeezes the subset to a vector and then rejects it as "not a matrix".
-    if len(arr1.shape) == 2 and 1 in arr1.shape:
-        if outname is None:
-            outname = pv.get_target_name()
-        outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
-        vec = arr1.shape[0] if arr1.shape[1] == 1 else arr1.shape[1]
-        in_idx = "__i, 0" if arr1.shape[1] == 1 else "0, __i"
-        out_idx = "0, __i" if new_shape[0] == 1 else "__i, 0"
-        state.add_mapped_tasklet("transpose_unit_dim",
-                                 map_ranges={"__i": "0:%s" % vec},
-                                 inputs={"__inp": Memlet("%s[%s]" % (inpname, in_idx))},
-                                 code="__out = __inp",
-                                 outputs={"__out": Memlet("%s[%s]" % (outname, out_idx))},
-                                 external_edges=True)
-        return outname
     if outname is None:
         outname = pv.get_target_name()
     outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
-    if axes == (1, 0):  # Special case for 2D transposition
+    if axes == (1, 0):  # 2D transposition
+        # The Transpose library node squeezes a unit axis to a vector and then rejects it as "not a
+        # matrix", so a ``(N, 1)`` / ``(1, N)`` array cannot use it. Fall back to a plain index-swap
+        # copy (``out[j, i] = in[i, j]``) whenever an extent is 1; it is general over 2D and
+        # stride-safe. Genuine matrices keep the optimized library node.
+        if 1 in arr1.shape:
+            state.add_mapped_tasklet("transpose",
+                                     map_ranges={
+                                         "__i": "0:%s" % arr1.shape[0],
+                                         "__j": "0:%s" % arr1.shape[1]
+                                     },
+                                     inputs={"__inp": Memlet("%s[__i, __j]" % inpname)},
+                                     code="__out = __inp",
+                                     outputs={"__out": Memlet("%s[__j, __i]" % outname)},
+                                     external_edges=True)
+            return outname
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.linalg  # Avoid import loop

@@ -2217,37 +2217,11 @@ class SDFG(ControlFlowRegion):
                 if sym.name not in sdfg.symbols and sym.name not in sdfg.arg_names:
                     sdfg.add_symbol(sym.name, sym.dtype)
 
-        # A shape symbol of the incoming descriptor may already be a data descriptor: a size the frontend
-        # materialized as a scalar (e.g. ``Nt+1`` -> scalar ``Nt_plus_1``) then used symbolically. Promote
-        # that size scalar to a symbol first, so it does not collide with add_symbol below.
-        for sym in datadesc.free_symbols:
-            existing = self._arrays.get(sym.name)
-            if existing is not None and sym.name not in self.symbols and existing.total_size == 1:
-                self._promote_size_scalar_to_symbol(sym.name)
-
         # Add the data descriptor to the SDFG and all symbols that are not yet known.
         self._arrays[name] = datadesc
         _add_symbols(self, datadesc)
 
         return name
-
-    def _promote_size_scalar_to_symbol(self, name: str) -> None:
-        """Promote a size-1 data descriptor used as a shape symbol -- a size the frontend materialized as a
-        scalar (e.g. ``Nt+1`` -> ``Nt_plus_1``) then used symbolically -- into an SDFG symbol, so it can serve
-        as a shape without colliding with :func:`add_symbol`. A length-1 array is reduced to a scalar first.
-        Restricts ScalarToSymbolPromotion to ``name`` (which handles any size-1 descriptor, scalar or len-1
-        array); raises if it is not a promotable size scalar."""
-        # scalar_to_symbol lives under transformation; import lazily to avoid a core<-transformation cycle
-        from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion, find_promotable_scalars
-        props = dict(transients_only=False, readonly_inputs=True, unwrap_integer_casts=True)
-        promotable = find_promotable_scalars(self, **props)
-        if name not in promotable:
-            raise FileExistsError(f'Cannot create symbol "{name}": the like-named data descriptor is not a '
-                                  f'promotable size scalar.')
-        promo = ScalarToSymbolPromotion()
-        promo.transients_only, promo.readonly_inputs, promo.unwrap_integer_casts = False, True, True
-        promo.ignore = promotable - {name}  # promote ONLY this size scalar
-        promo.apply_pass(self, {})
 
     def add_datadesc_view(self, name: str, datadesc: dt.Data, find_new_name=False) -> str:
         """ Adds a view of a given data descriptor to the SDFG array store.

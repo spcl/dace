@@ -1,6 +1,5 @@
-"""A size the numpy frontend materializes as a data descriptor (``np.empty(Nt+1)`` -> ``Nt_plus_1``) and
-then uses as that array's SHAPE must be promoted to a symbol when the next descriptor is added, not collide
-with ``add_symbol`` (which raised ``FileExistsError: ... used by a data descriptor``)."""
+"""A size materialized as a descriptor (``np.empty(Nt+1)`` -> ``Nt_plus_1``) then used as a shape must be
+promoted to a symbol, not collide with ``add_symbol`` (which raised ``FileExistsError``)."""
 import numpy as np
 
 import dace
