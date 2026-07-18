@@ -19,7 +19,7 @@ Pass order matters and is fixed by :func:`default_passes`:
 """
 import ast
 import copy
-from typing import List, Optional, Union
+from typing import List, Optional, Tuple, Union
 
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.canonical.cpa import CANONICAL_LEAVES, ExplicitTasklet, OpaqueStmt
@@ -93,6 +93,14 @@ class RecognizeExplicitDataflow(_BodyTransformer):
     - ``@dace.map``-decorated functions become ``for ... in dace.map[...]``
       loops whose body is a single :class:`ExplicitTasklet` (map + tasklet,
       matching the stable frontend's explicit-dataflow semantics).
+    - ``@dace.mapscope``-decorated functions become ``for ... in dace.map[...]``
+      loops whose body is the function body itself, recursively canonicalized
+      by this same pass (map + arbitrary nested dataflow, rather than a single
+      tasklet).
+
+    ``@dace.consume``/``@dace.consumescope`` are intentionally left
+    unrecognized for now; such decorated functions fall through to the
+    interpreter-callback path until a dedicated commit handles them.
     """
     name = 'recognize-explicit-dataflow'
 
@@ -119,12 +127,20 @@ class RecognizeExplicitDataflow(_BodyTransformer):
                                        **_tasklet_arguments(decorator))
             if _refers_to(decorator_callee, 'dace.map', self.context.global_vars):
                 return self._desugar_map_function(statement, decorator)
+            if _refers_to(decorator_callee, 'dace.mapscope', self.context.global_vars):
+                return self._desugar_mapscope_function(statement, decorator)
         return self._recurse(statement)
 
-    def _desugar_map_function(self, function: ast.FunctionDef, decorator: ast.expr) -> ast.stmt:
-        """Turn ``@dace.map``-decorated functions into dace.map for-loops with a tasklet body."""
-        # Ranges come either from decorator arguments (@dace.map(_[0:N, 0:M]))
-        # or per-argument annotations (def f(i: _[0:N], j: _[0:M])).
+    def _extract_map_ranges(self, function: ast.FunctionDef,
+                            decorator: ast.expr) -> Optional[Tuple[List[str], List[ast.expr]]]:
+        """
+        Extract per-dimension range slices and parameter names shared by
+        ``@dace.map``/``@dace.mapscope``-decorated functions. Ranges come
+        either from decorator arguments (``@dace.map(_[0:N, 0:M])``) or
+        per-argument annotations (``def f(i: _[0:N], j: _[0:M])``). Returns
+        ``None`` if the function is malformed (mismatched dimension count),
+        leaving it for MarkOpaque.
+        """
         dimension_slices: List[ast.expr] = []
         if isinstance(decorator, ast.Call) and decorator.args:
             range_argument = decorator.args[0]
@@ -136,10 +152,14 @@ class RecognizeExplicitDataflow(_BodyTransformer):
                 if isinstance(argument.annotation, ast.Subscript):
                     dimension_slices.append(argument.annotation.slice)
         if len(dimension_slices) != len(function.args.args) or not dimension_slices:
-            # Malformed explicit map: leave for MarkOpaque
-            return function
-
+            return None
         parameter_names = [argument.arg for argument in function.args.args]
+        return parameter_names, dimension_slices
+
+    def _build_map_for_loop(self, function: ast.FunctionDef, parameter_names: List[str],
+                            dimension_slices: List[ast.expr], body: List[ast.stmt]) -> ast.For:
+        """Build the ``for <params> in dace.map[<ranges>]:`` loop shape shared
+        by ``@dace.map`` and ``@dace.mapscope`` desugaring."""
         if len(parameter_names) == 1:
             loop_target = _name_store(parameter_names[0], function)
         else:
@@ -153,8 +173,33 @@ class RecognizeExplicitDataflow(_BodyTransformer):
         else:
             index = _located(ast.Tuple(elts=dimension_slices, ctx=ast.Load()), function)
         iterator = _located(ast.Subscript(value=map_attribute, slice=index, ctx=ast.Load()), function)
+        return _located(ast.For(target=loop_target, iter=iterator, body=body, orelse=[]), function)
+
+    def _desugar_map_function(self, function: ast.FunctionDef, decorator: ast.expr) -> ast.stmt:
+        """Turn ``@dace.map``-decorated functions into dace.map for-loops with a tasklet body."""
+        extraction = self._extract_map_ranges(function, decorator)
+        if extraction is None:
+            # Malformed explicit map: leave for MarkOpaque
+            return function
+        parameter_names, dimension_slices = extraction
         tasklet = ExplicitTasklet(label=function.name, statements=function.body, location=function)
-        return _located(ast.For(target=loop_target, iter=iterator, body=[tasklet], orelse=[]), function)
+        return self._build_map_for_loop(function, parameter_names, dimension_slices, [tasklet])
+
+    def _desugar_mapscope_function(self, function: ast.FunctionDef, decorator: ast.expr) -> ast.stmt:
+        """
+        Turn ``@dace.mapscope``-decorated functions into dace.map for-loops
+        whose body is the function's own statements (rather than a single
+        tasklet), recursively canonicalized by this same pass so nested
+        ``@dace.map``/``@dace.tasklet``/``@dace.mapscope`` functions inside
+        the body desugar too.
+        """
+        extraction = self._extract_map_ranges(function, decorator)
+        if extraction is None:
+            # Malformed explicit mapscope: leave for MarkOpaque
+            return function
+        parameter_names, dimension_slices = extraction
+        body = self._transform_body(function.body)
+        return self._build_map_for_loop(function, parameter_names, dimension_slices, body)
 
 
 def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:
@@ -163,11 +208,22 @@ def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:
     ``dace.tasklet``), rather than merely sharing its name with one. Bare
     names (``from dace import tasklet``) must resolve to the built-in through
     the program globals; attribute accesses must go through the dace module.
+
+    Some explicit-dataflow decorator spellings (``dace.mapscope``,
+    ``dace.consumescope``) are not real attributes of the ``dace`` module —
+    the classic frontend (``newast.py``) recognizes them purely syntactically
+    by their dotted name, not by attribute lookup. When ``qualified_name``
+    names no such attribute, recognition falls back to checking that the
+    attribute access's root resolves to the ``dace`` module itself; bare
+    names cannot be verified this way (there is no built-in object to import)
+    and are rejected.
     """
     import dace  # Deferred to avoid an import cycle during package initialization
     attribute_name = qualified_name.split('.', 1)[1]
-    builtin = getattr(dace, attribute_name)
+    builtin = getattr(dace, attribute_name, None)
     if isinstance(node, ast.Name):
+        if builtin is None:
+            return False
         return global_vars.get(node.id) is builtin
     if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.attr == attribute_name:
         root = global_vars.get(node.value.id)
@@ -175,6 +231,8 @@ def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:
             # Preprocessing rewrites aliased module imports to the real module
             # name, which may be absent from the caller's globals.
             return node.value.id == 'dace'
+        if builtin is None:
+            return root is dace
         return getattr(root, attribute_name, None) is builtin
     return False
 
