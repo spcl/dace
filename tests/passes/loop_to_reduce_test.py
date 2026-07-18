@@ -1032,6 +1032,83 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     assert np.allclose(out, expected), f'recurrence value-preservation broke: got {out[:3]}, expected {expected[:3]}'
 
 
+def _build_scalarised_scan_writeback(n_sym=N):
+    """``c = A[0]; for i in 0..N-2: c = c + A[i]; A[i+1] = c`` -- a prefix-sum scan whose
+    vertical carry has been scalarised into ``c`` (the shape CloudSC's flux integral
+    ``PFLUX(jk+1) = PFLUX(jk) + term`` collapses to after the pipeline stamps out the
+    intra-iteration scalar intermediates). The accumulate ``c = c + A[i]`` looks like a plain
+    reduction, but the running value is written BACK into the folded array ``A`` at ``i+1``
+    every iteration -- a per-iteration output a single ``Reduce`` cannot reproduce.
+    """
+    sdfg = dace.SDFG("scalarised_scan_writeback")
+    sdfg.add_array("A", [n_sym], dace.float64)
+    sdfg.add_scalar("c", dace.float64, transient=True)
+
+    pre = sdfg.add_state("pre", is_start_block=True)
+    pre.add_edge(pre.add_read("A"), None, pre.add_write("c"), None, mm.Memlet("A[0]"))
+
+    loop = LoopRegion("loop",
+                      condition_expr="i < N - 1",
+                      loop_var="i",
+                      initialize_expr="i = 0",
+                      update_expr="i = i + 1")
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+
+    body = loop.add_state("body", is_start_block=True)
+    t = body.add_tasklet("acc", {"cin", "ain"}, {"cout"}, "cout = cin + ain")
+    c_w = body.add_write("c")
+    body.add_edge(body.add_read("c"), None, t, "cin", mm.Memlet("c[0]"))
+    body.add_edge(body.add_read("A"), None, t, "ain", mm.Memlet("A[i]"))
+    body.add_edge(t, "cout", c_w, None, mm.Memlet("c[0]"))
+    # scan output: the running carry written back into the folded array at the next level.
+    body.add_edge(c_w, None, body.add_write("A"), None, mm.Memlet("A[i + 1]"))
+
+    post = sdfg.add_state("post")
+    sdfg.add_edge(loop, post, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def test_scalarised_scan_writeback_into_folded_array_not_lifted(prefer):
+    """A scalarised prefix-sum that writes its running carry BACK into the folded array
+    (``c = c + A[i]; A[i + 1] = c``) must NOT be lifted to a ``Reduce`` in either emit mode.
+
+    Regression: ``_extract`` used to exempt the folded ``array`` from its "writes only the
+    accumulator" guard (``allowed = {accum, array, ...}``), so a writeback into that array
+    slipped through and the vertical scan was collapsed to a single ``Reduce`` -- the CloudSC
+    flux-integral (PFPLSL/PFHPSL) miscompile, ~2.5% error, because a ``Reduce`` emits one final
+    value instead of the running per-level sequence. The array is now NOT exempt; the writeback
+    is recognised as a scan output and the loop is left for ``LoopToScan``.
+    """
+    import numpy as np
+    from dace.libraries.standard.nodes.reduce import Reduce
+
+    sdfg = _build_scalarised_scan_writeback()
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+
+    lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert not lifted, f'scalarised scan writeback must not lift; got {lifted}'
+    assert _count_loops(sdfg) == 1, 'the scan loop must survive for LoopToScan'
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
+
+    # Value preservation: the surviving loop still computes the in-place prefix scan.
+    n = 12
+    rng = np.random.default_rng(3)
+    a = rng.standard_normal(n)
+    expected = a.copy()
+    c = expected[0]
+    for i in range(n - 1):
+        c = c + expected[i]
+        expected[i + 1] = c
+    got = a.copy()
+    sdfg(A=got, N=n)
+    assert np.allclose(got, expected), f'scan value broke: got {got[:4]}, expected {expected[:4]}'
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()

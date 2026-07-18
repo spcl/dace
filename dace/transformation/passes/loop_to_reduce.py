@@ -576,12 +576,19 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         if carried_accum is not None and carried_accum != accum:
             accum, write_subset = carried_accum, carried_sub
 
-        # A pure reduction writes ONLY the accumulator (+ loop-local staging temps). If the
-        # body also writes a non-transient container -- e.g. per-iteration scan output
-        # ``b[i] = sum`` in ``sum = sum + a[i]; b[i] = sum`` -- the running accumulator is
-        # observed every iteration; collapsing to a single ``Reduce`` drops it. Refuse.
+        # A pure reduction READS the folded array and writes ONLY the accumulator, at a slot
+        # that does not move with the loop. A write to any OTHER non-transient array -- or a
+        # write BACK into the folded ``array`` itself -- is a per-iteration output, not part of
+        # the fold: the scalarised prefix-sum ``acc = acc + a[i]; a[i+1] = acc`` writes the
+        # running value into ``a`` every step, and ``sum = sum + a[i]; b[i] = sum`` writes it
+        # into ``b``. A single ``Reduce`` emits one final value, never the running sequence, so
+        # collapsing either shape drops the scan outputs -- leave it for LoopToScan. ``array`` is
+        # deliberately NOT exempt: the writeback into the folded array is exactly the scan tell
+        # (surfaced once the pipeline stamps out intra-iteration scalar intermediates and inlines
+        # NestedSDFGs, so a non-transient writeback is always a visible AccessNode here). Only the
+        # accumulator (and its loop-local transient staging copy) may be written.
         written = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
-        allowed = {accum, array} | ({carried_accum} if carried_accum is not None else set())
+        allowed = {accum} | ({carried_accum} if carried_accum is not None else set())
         if any(w not in allowed and not sdfg.arrays[w].transient for w in written):
             return None
 
