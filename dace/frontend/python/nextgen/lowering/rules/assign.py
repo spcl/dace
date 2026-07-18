@@ -117,10 +117,14 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
             return
 
     # Slice reads bind as views so writes through the new name reach the
-    # original container (NumPy basic-indexing semantics).
+    # original container (NumPy basic-indexing semantics). The result shape
+    # follows NumPy indexing: slice-formed dimensions survive (a[0:20, 1:2]
+    # is (20, 1)), integer-indexed dimensions are dropped (a[0:20, 1] is
+    # (20,)); a fully integer-indexed access is a scalar element read and
+    # lowers as a computation instead.
     if isinstance(value, ast.Subscript):
         access = resolve_access(value, state)
-        if access is not None and not access.is_scalar_access:
+        if access is not None and access.numpy_shape:
             _lower_view_binding(target, access, state)
             return
 
@@ -178,11 +182,12 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
 
 
 def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringState) -> None:
-    """Bind a slice read as a view container."""
-    shape = nondegenerate_shape(access.subset)
+    """Bind a slice read as a view container with its NumPy result shape."""
+    shape = access.numpy_shape
+    selected = access.kept_dims if access.kept_dims is not None else [size != 1 for size in access.subset.size()]
     strides = [
         access.descriptor.strides[i] * step
-        for i, (size, (_, _, step)) in enumerate(zip(access.subset.size(), access.subset.ranges)) if size != 1
+        for i, (keep, (_, _, step)) in enumerate(zip(selected, access.subset.ranges)) if keep
     ] if isinstance(access.descriptor, data.Array) else None
     view_descriptor = data.ArrayView(access.descriptor.dtype, shape, strides=strides)
     view_name = state.context.add_container(target.id, view_descriptor)
