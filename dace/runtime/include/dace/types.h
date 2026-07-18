@@ -30,6 +30,9 @@
 #ifdef __CUDACC__
     #include <cuda_runtime.h>
     #include <cuda_fp16.h>
+    #ifdef DACE_FLOAT16_IS_BFLOAT16
+    #include <cuda_bf16.h>
+    #endif
     #include <thrust/complex.h>
     #include "cuda/multidim_gbar.cuh"
 
@@ -39,6 +42,12 @@
         struct is_scalar<half> : std::integral_constant<bool, true> {};
         template <>
         struct is_fundamental<half> : std::integral_constant<bool, true> {};
+    #ifdef DACE_FLOAT16_IS_BFLOAT16
+        template <>
+        struct is_scalar<__nv_bfloat16> : std::integral_constant<bool, true> {};
+        template <>
+        struct is_fundamental<__nv_bfloat16> : std::integral_constant<bool, true> {};
+    #endif
     }  // namespace std
 #elif defined(__HIPCC__)
     #include <hip/hip_runtime.h>
@@ -89,7 +98,16 @@ namespace dace
     #ifdef __CUDACC__
     typedef thrust::complex<float> complex64;
     typedef thrust::complex<double> complex128;
+    // DACE_FLOAT16_IS_BFLOAT16 retargets the 16-bit float to bfloat16. Both are
+    // two bytes, so every size, stride and descriptor stays valid and the
+    // Python side keeps describing the data as float16; only the arithmetic
+    // the device performs changes. bfloat16 trades mantissa bits for fp32's
+    // exponent range, which suits values that underflow half.
+    #ifdef DACE_FLOAT16_IS_BFLOAT16
+    typedef __nv_bfloat16 float16;
+    #else
     typedef half float16;
+    #endif
     #elif defined(__HIPCC__)
     typedef half float16;
     #else
