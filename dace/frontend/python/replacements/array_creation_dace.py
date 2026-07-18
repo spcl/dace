@@ -19,10 +19,8 @@ from dace import symbolic
 
 
 def promote_size_scalars_in_shape(sdfg: SDFG, shape: Shape) -> None:
-    """Promote a size expression that was materialized as a size-1 descriptor and then used as an array
-    SHAPE (``np.empty(Nt + 1)`` -> the scalar ``Nt_plus_1`` reused symbolically) into an SDFG symbol.
-    Otherwise ``add_datadesc`` tries to ``add_symbol`` the like-named descriptor and raises. Scoped to
-    the shape's own symbols so a plain scalar argument (never used as a shape) is left untouched."""
+    """Promote a size expression that was materialized as a size-1 descriptor and then used as an symbol
+    SHAPE (``np.empty(Nt_plus_1)`` -> ``Nt_plus_1`` has to be a symbol) into an SDFG symbol."""
     names = set()
     for extent in shape:
         if isinstance(extent, Integral):
