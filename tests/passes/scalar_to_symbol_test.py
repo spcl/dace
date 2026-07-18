@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar to symbol promotion functionality. """
 import dace
-from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.sdfg.state import LoopRegion
 from dace.transformation.passes import scalar_to_symbol
 from dace.transformation import interstate as isxf
 
@@ -775,51 +775,27 @@ def test_scalar_index_regression(memlet_volume_n):
     assert np.allclose(a, ref)
 
 
-def _readonly_input_sdfg():
-    """A read-only integer scalar argument ``idx`` consumed by a tasklet
-    (``s = idx + 1``). ``idx`` is non-transient and never written."""
-    sdfg = dace.SDFG('ro_input')
-    sdfg.add_scalar('idx', dace.int64, transient=False)
+def _whole_statement_cast_sdfg(cast='dace.int64'):
+    """A transient scalar written by the WHOLE-statement dtype cast ``s = <cast>(inc)``
+    on the symbol ``inc``; ``s`` is read into an interstate symbol downstream so it is
+    a promotion candidate."""
+    sdfg = dace.SDFG('cast_sdfg')
     sdfg.add_scalar('s', dace.int64, transient=True)
-    st = sdfg.add_state()
-    r = st.add_read('idx')
-    w = st.add_write('s')
-    t = st.add_tasklet('t', {'__i'}, {'__o'}, '__o = __i + 1')
-    st.add_edge(r, None, t, '__i', dace.Memlet('idx[0]'))
-    st.add_edge(t, '__o', w, None, dace.Memlet('s[0]'))
-    # ``s`` is read downstream so it is "seen".
-    st2 = sdfg.add_state()
+    sdfg.add_symbol('inc', dace.int64)
     sdfg.add_symbol('out_sym', dace.int64)
+    st = sdfg.add_state()
+    w = st.add_write('s')
+    t = st.add_tasklet('t', {}, {'__o'}, f'__o = {cast}(inc)')
+    st.add_edge(t, '__o', w, None, dace.Memlet('s[0]'))
+    st2 = sdfg.add_state()
     sdfg.add_edge(st, st2, dace.InterstateEdge(assignments={'out_sym': 's'}))
     return sdfg
 
 
-def test_readonly_input_promoted_only_when_enabled():
-    """A read-only non-transient integer scalar (a const input) is skipped by
-    default (``transients_only``) but promoted under ``readonly_inputs``."""
-    sdfg = _readonly_input_sdfg()
-    assert 'idx' not in scalar_to_symbol.find_promotable_scalars(sdfg)
-    assert 'idx' in scalar_to_symbol.find_promotable_scalars(sdfg, readonly_inputs=True)
-
-
-def test_readonly_input_not_promoted_when_written():
-    """A non-transient scalar that IS written (not a const input) stays skipped
-    even with ``readonly_inputs`` -- the guard only admits read-only inputs."""
-    sdfg = _readonly_input_sdfg()
-    # Make ``idx`` written somewhere -> no longer a read-only input.
-    st3 = sdfg.add_state()
-    wn = st3.add_write('idx')
-    tt = st3.add_tasklet('w', {}, {'__o'}, '__o = 7')
-    st3.add_edge(tt, '__o', wn, None, dace.Memlet('idx[0]'))
-    sdfg.add_edge(list(sdfg.states())[1], st3, dace.InterstateEdge())
-    assert 'idx' not in scalar_to_symbol.find_promotable_scalars(sdfg, readonly_inputs=True)
-
-
-def _integer_cast_sdfg(cast='dace.int64'):
-    """A transient scalar written by a tasklet ``s = k + <cast>(inc)`` with the
-    frontend's defensive dtype cast on the symbol ``inc``; ``s`` is read into an
-    interstate symbol downstream so it is a promotion candidate."""
-    sdfg = dace.SDFG('cast_sdfg')
+def _midexpr_cast_sdfg(cast='dace.int64'):
+    """A transient scalar written by a MID-EXPRESSION cast ``s = k + <cast>(inc)`` --
+    the cast is nested inside a larger expression, NOT the whole statement."""
+    sdfg = dace.SDFG('midexpr_cast_sdfg')
     sdfg.add_scalar('s', dace.int64, transient=True)
     sdfg.add_symbol('k', dace.int64)
     sdfg.add_symbol('inc', dace.int64)
@@ -833,28 +809,28 @@ def _integer_cast_sdfg(cast='dace.int64'):
     return sdfg
 
 
-def test_unwrap_integer_cast_enables_promotion():
-    """``s = k + dace.int64(inc)`` (integer cast on a symbol) blocks promotion by
-    default but is promotable -- with the cast unwrapped -- under
-    ``unwrap_integer_casts``."""
-    sdfg = _integer_cast_sdfg('dace.int64')
-    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg)
-    assert 's' in scalar_to_symbol.find_promotable_scalars(sdfg, unwrap_integer_casts=True)
-    # After promotion the cast is unwrapped: the interstate assignment is ``s = k + inc``.
-    p = scalar_to_symbol.ScalarToSymbolPromotion()
-    p.unwrap_integer_casts = True
-    p.apply_pass(sdfg, {})
+def test_whole_statement_int_cast_promotes_and_keeps_cast():
+    """``s = dace.int64(inc)`` (whole-statement integer cast) promotes by default;
+    the cast survives as a symbolic ``int64(inc)`` in the interstate assignment."""
+    sdfg = _whole_statement_cast_sdfg('dace.int64')
+    assert 's' in scalar_to_symbol.find_promotable_scalars(sdfg)
+    scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
     rhs = next(str(v) for e in sdfg.all_interstate_edges() for kk, v in (e.data.assignments or {}).items() if kk == 's')
-    assert 'int64' not in rhs and 'k' in rhs and 'inc' in rhs, f"cast not unwrapped: s := {rhs}"
+    assert 'int64' in rhs and 'inc' in rhs, f"cast not kept: s := {rhs}"
 
 
-def test_unwrap_only_integer_casts_not_float():
-    """Only INTEGER dtype casts are unwrapped: a float cast ``dace.float64(inc)``
-    on a symbol still blocks promotion even with ``unwrap_integer_casts`` (no
-    silent float-truncation change)."""
-    sdfg = _integer_cast_sdfg('dace.float64')
-    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg, unwrap_integer_casts=True,
-                                                               integers_only=False), "float cast must still block"
+def test_midexpression_int_cast_not_promoted():
+    """``s = k + dace.int64(inc)`` (cast nested in a larger expression) is unsafe:
+    it stays a scalar (not promoted), matching the whole-statement-only rule."""
+    sdfg = _midexpr_cast_sdfg('dace.int64')
+    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg)
+
+
+def test_whole_statement_float_cast_not_promoted():
+    """A whole-statement FLOAT cast ``s = dace.float64(inc)`` is not an integer
+    typecast, so it stays blocked (no silent float-truncation promotion)."""
+    sdfg = _whole_statement_cast_sdfg('dace.float64')
+    assert 's' not in scalar_to_symbol.find_promotable_scalars(sdfg, integers_only=False)
 
 
 def test_promotion_rejects_orphan_condition_scalar():
@@ -888,8 +864,8 @@ def test_promotion_rejects_orphan_condition_scalar():
                 for s in srcs:
                     if isinstance(s, dace.nodes.Tasklet) and s in st.nodes() and st.degree(s) == 0:
                         st.remove_node(s)
-    assert 't' in sdfg.arrays and not any(an.data == 't' and st.in_degree(an) > 0
-                                          for st in sdfg.all_states() for an in st.data_nodes())
+    assert 't' in sdfg.arrays and not any(an.data == 't' and st.in_degree(an) > 0 for st in sdfg.all_states()
+                                          for an in st.data_nodes())
 
     with pytest.raises(ValueError, match='undefined symbol'):
         scalar_to_symbol.ScalarToSymbolPromotion().apply_pass(sdfg, {})
@@ -1022,10 +998,9 @@ if __name__ == '__main__':
     test_promote_simple()
     test_promote_simple_c()
     test_promote_disconnect()
-    test_readonly_input_promoted_only_when_enabled()
-    test_readonly_input_not_promoted_when_written()
-    test_unwrap_integer_cast_enables_promotion()
-    test_unwrap_only_integer_casts_not_float()
+    test_whole_statement_int_cast_promotes_and_keeps_cast()
+    test_midexpression_int_cast_not_promoted()
+    test_whole_statement_float_cast_not_promoted()
     test_promote_copy()
     test_promote_array_assignment()
     test_promote_array_assignment_tasklet()

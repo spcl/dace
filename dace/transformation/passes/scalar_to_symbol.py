@@ -42,30 +42,27 @@ def _is_integer_typecast(node: ast.Call) -> bool:
         return False
 
 
+def is_safe_whole_statement_int_cast(value: ast.AST) -> bool:
+    """True iff ``value`` is a whole-statement integer typecast on a non-constant
+    argument (``dace.int64(inc)`` as the ENTIRE tasklet RHS). Only this form is
+    safe to promote: the typecast survives to the interstate assignment as a
+    symbolic ``int64(inc)`` (a C++ truncating cast). A cast nested inside a larger
+    expression (``k + dace.int64(inc)``) is NOT admitted, and a constant cast
+    (``dace.int64(2)``) folds through the separate constant path."""
+    return isinstance(value, ast.Call) and _is_integer_typecast(value) and not astutils.is_constant(value.args[0])
+
+
 class AttributedCallDetector(ast.NodeVisitor):
-    """
-    Detects calls to functions that are attributes.
+    """Detects calls to functions that are attributes."""
 
-    :param unwrap_integer_casts: When True, a ``dace.<integer typeclass>(x)`` call
-        on a non-constant (e.g. the frontend's defensive ``dace.int64(inc)``) is
-        treated as a transparent, value-preserving cast rather than a blocker --
-        the matching :class:`RemoveConstantAttributes` unwraps it during
-        promotion. Opt-in (default ``False``) so the only callers that loosen the
-        rule are the ones that also unwrap (canonicalization).
-    """
-
-    def __init__(self, unwrap_integer_casts: bool = False):
+    def __init__(self):
         self.detected = False
-        self.unwrap_integer_casts = unwrap_integer_casts
 
     def visit_Call(self, node: ast.Call) -> Any:
         if isinstance(node.func, ast.Attribute):
             # Special case: calling attributed functions on constants (e.g., dace.int64(2))
             if (len(node.args) == 1 and astutils.is_constant(node.args[0])
                     and astutils.rname(node.func.value) == 'dace'):
-                return self.generic_visit(node)
-            # Opt-in: an integer dtype cast on a symbol/expression is unwrappable.
-            if self.unwrap_integer_casts and _is_integer_typecast(node):
                 return self.generic_visit(node)
 
             self.detected = True
@@ -77,32 +74,23 @@ class RemoveConstantAttributes(ast.NodeTransformer):
     """
     Removes calls to functions that are attributes, if they point to a constant value for a cast.
 
-    :param unwrap_integer_casts: When True, ALSO unwrap an integer dtype cast on a
-        non-constant (``dace.int64(inc)`` -> ``inc``) -- value-preserving for the
-        integer index / counter computations promotion targets. Mirrors the casts
-        :class:`AttributedCallDetector` admits under the same flag.
+    A non-constant integer typecast (``dace.int64(inc)``) is KEPT unevaluated: it
+    survives as a symbolic ``int64(inc)`` typecast that renders as a C++ truncating
+    cast, rather than being unwrapped (dropped).
     """
-
-    def __init__(self, unwrap_integer_casts: bool = False):
-        self.unwrap_integer_casts = unwrap_integer_casts
 
     def visit_Call(self, node: ast.Call) -> Any:
         # Assuming AttributedCallDetector already filtered relevant cases
         if isinstance(node.func, ast.Attribute):
-            if (self.unwrap_integer_casts and _is_integer_typecast(node) and not astutils.is_constant(node.args[0])):
-                # Unwrap ``dace.<int>(x)`` -> ``x`` (recurse into the argument first).
+            if _is_integer_typecast(node) and not astutils.is_constant(node.args[0]):
                 self.generic_visit(node)
-                return node.args[0]
+                return node
             val = astutils.evalnode(node, {'dace': dace})
             return astutils.create_constant(val, node)
         return self.generic_visit(node)
 
 
-def find_promotable_scalars(sdfg: sd.SDFG,
-                            transients_only: bool = True,
-                            integers_only: bool = True,
-                            readonly_inputs: bool = False,
-                            unwrap_integer_casts: bool = False) -> Set[str]:
+def find_promotable_scalars(sdfg: sd.SDFG, transients_only: bool = True, integers_only: bool = True) -> Set[str]:
     """
     Finds scalars that can be promoted to symbols in the given SDFG.
     Conditions for matching a scalar for symbol-promotion are as follows:
@@ -122,32 +110,10 @@ def find_promotable_scalars(sdfg: sd.SDFG,
     :param sdfg: The SDFG to query.
     :param transients_only: If False, also considers global data descriptors (e.g., arguments).
     :param integers_only: If False, also considers non-integral descriptors for promotion.
-    :param readonly_inputs: If True, ALSO considers non-transient (argument) scalars that are
-        never written anywhere -- read-only constant inputs (e.g. a loop-stride
-        argument used purely for array indexing). Such a scalar holds one fixed
-        value for the whole SDFG, so promoting it to a symbol is value-preserving
-        and lets downstream passes (induction-variable substitution, argmax lift)
-        see the stride symbolically. Independent of ``transients_only``.
     :return: A set of promotable scalar names.
     """
     # Keep set of active candidates
     candidates: Set[str] = set()
-    # Read-only non-transient (argument) scalars admitted via ``readonly_inputs``.
-    # They are only ever READ (often inside a tasklet, never in a state write or
-    # interstate edge), so the final "seen written / used in interstate" filter
-    # would drop them -- track them here to keep the survivors.
-    readonly_input_candidates: Set[str] = set()
-
-    # Names of data ever written (an AccessNode with inputs, or an interstate
-    # assignment LHS) -- a "read-only input" is a non-transient scalar absent here.
-    written_data: Set[str] = set()
-    if readonly_inputs:
-        for state in sdfg.states():
-            for node in state.nodes():
-                if isinstance(node, nodes.AccessNode) and state.in_degree(node) > 0:
-                    written_data.add(node.data)
-        for edge in sdfg.all_interstate_edges():
-            written_data |= set((edge.data.assignments or {}).keys())
 
     # General array checks
     for aname, desc in sdfg.arrays.items():
@@ -158,17 +124,7 @@ def find_promotable_scalars(sdfg: sd.SDFG,
         if isinstance(desc, dt.Stream):
             continue
         if transients_only and not desc.transient:
-            # A non-transient (argument) scalar is admissible only as a read-only
-            # const input when ``readonly_inputs`` is set -- and only a TRUE scalar
-            # (``dt.Scalar``), never a length-1 ARRAY argument. Promoting an array
-            # argument to a symbol silently changes the external ABI (the caller passes
-            # an array, not a scalar value); a length-1 array is part of the array
-            # signature and must survive canonicalization unchanged. A ``stride: int32``
-            # scalar arg (the intended read-only-input case) is a ``dt.Scalar`` and still
-            # promotes.
-            if not (readonly_inputs and aname not in written_data and isinstance(desc, dt.Scalar)):
-                continue
-            readonly_input_candidates.add(aname)
+            continue
         if desc.total_size != 1:
             continue
         if desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External):
@@ -298,12 +254,15 @@ def find_promotable_scalars(sdfg: sd.SDFG,
                         # Ensure that the candidate is not assigned through
                         # an "attribute" call, e.g., "dace.int64". These calls
                         # are not supported currently by the SymPy-based
-                        # symbolic module.
-                        detector = AttributedCallDetector(unwrap_integer_casts=unwrap_integer_casts)
-                        detector.visit(cb.code[0].value)
-                        if detector.detected:
-                            candidates.remove(candidate)
-                            continue
+                        # symbolic module -- EXCEPT a whole-statement integer
+                        # typecast (``s = dace.int64(inc)``), which survives as a
+                        # symbolic ``int64(inc)`` truncating cast.
+                        if not is_safe_whole_statement_int_cast(cb.code[0].value):
+                            detector = AttributedCallDetector()
+                            detector.visit(cb.code[0].value)
+                            if detector.detected:
+                                candidates.remove(candidate)
+                                continue
                     elif cb.language is dtypes.Language.CPP:
                         # Try to match a single C assignment
                         cstr = cb.as_string.strip()
@@ -366,11 +325,8 @@ def find_promotable_scalars(sdfg: sd.SDFG,
         if sdfg.arrays[candidate].dtype.as_numpy_dtype().kind == 'c':
             candidates.discard(candidate)
 
-    # Only keep candidates that were found in SDFG. Read-only input scalars
-    # (``readonly_inputs``) are read but never written / used in an interstate
-    # edge, so include the survivors explicitly (the ``&=`` still drops any that
-    # the validation loop above removed for a real reason).
-    candidates &= (candidates_seen | interstate_symbols | readonly_input_candidates)
+    # Only keep candidates that were found in SDFG.
+    candidates &= (candidates_seen | interstate_symbols)
 
     return candidates
 
@@ -772,15 +728,6 @@ class ScalarToSymbolPromotion(passes.Pass):
     ignore = props.SetProperty(element_type=str, default=set(), desc='Fields that should not be promoted.')
     transients_only = props.Property(dtype=bool, default=True, desc='Promote only transients.')
     integers_only = props.Property(dtype=bool, default=True, desc='Allow promotion of integer scalars only.')
-    readonly_inputs = props.Property(dtype=bool,
-                                     default=False,
-                                     desc='Also promote non-transient scalars that are never written '
-                                     '(read-only constant inputs, e.g. a loop-stride argument).')
-    unwrap_integer_casts = props.Property(dtype=bool,
-                                          default=False,
-                                          desc='Treat an integer dtype cast on a symbol/expression '
-                                          '(``dace.int64(inc)``) as transparent, unwrapping it during '
-                                          'promotion instead of refusing the candidate.')
 
     def modifies(self) -> passes.Modifies:
         return (passes.Modifies.Descriptors | passes.Modifies.Symbols | passes.Modifies.Nodes | passes.Modifies.Edges)
@@ -815,13 +762,8 @@ class ScalarToSymbolPromotion(passes.Pass):
         ignore = self.ignore
         transients_only = self.transients_only
         integers_only = self.integers_only
-        unwrap_integer_casts = self.unwrap_integer_casts
 
-        to_promote = find_promotable_scalars(sdfg,
-                                             transients_only=transients_only,
-                                             integers_only=integers_only,
-                                             readonly_inputs=self.readonly_inputs,
-                                             unwrap_integer_casts=unwrap_integer_casts)
+        to_promote = find_promotable_scalars(sdfg, transients_only=transients_only, integers_only=integers_only)
         if ignore:
             to_promote -= ignore
         if len(to_promote) == 0:
@@ -833,8 +775,8 @@ class ScalarToSymbolPromotion(passes.Pass):
         # symbols and which promotions are transient, so a promoted *transient*
         # scalar that ends up as a NEW free (undefined) symbol -- e.g. one whose
         # writer was removed while it was referenced only by a control-flow
-        # condition -- is caught here instead of leaking into codegen. Read-only
-        # *input* scalars legitimately become argument symbols and are excluded.
+        # condition -- is caught here instead of leaking into codegen. Only
+        # transient promotions are checked (non-transient args stay arguments).
         before_free: Set[str] = {str(s) for s in sdfg.free_symbols}
         transient_promotions: Set[str] = {s for s in to_promote if s in sdfg.arrays and sdfg.arrays[s].transient}
 
@@ -862,7 +804,7 @@ class ScalarToSymbolPromotion(passes.Pass):
                     newcode: str = ''
                     if input.language is dtypes.Language.Python:
                         # Remove attributed calls of constant values (e.g., dace.int32(2))
-                        RemoveConstantAttributes(unwrap_integer_casts=unwrap_integer_casts).visit(input.code.code[0])
+                        RemoveConstantAttributes().visit(input.code.code[0])
 
                         newcode = astutils.unparse(input.code.code[0].value)
                     elif input.language is dtypes.Language.CPP:

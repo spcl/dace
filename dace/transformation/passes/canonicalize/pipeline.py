@@ -563,16 +563,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Reduce PREP only (the loop-lifting LoopTo* passes moved AFTER fission +
     # LoopStridePermutation -- see 'loop_to_x' below -- so the pipeline shape is
     # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap).
-    # PromoteConstInputs runs FIRST: a read-only integer scalar argument used
-    # purely for indexing (e.g. a loop-stride ``inc``) is a non-transient scalar
-    # the default promotion skips. Promoting it to a symbol -- and unwrapping the
-    # frontend's defensive ``k + dace.int64(inc)`` cast -- lets the following
-    # SimplifyPass collapse the secondary-IV update into a clean symbolic
+    # PromoteConstInputs runs FIRST so any promotable secondary-IV scalar becomes
+    # a symbol before the following SimplifyPass collapses the update into a clean
     # ``k := k + inc`` iedge, which InductionVariableSubstitution then closes to
-    # ``a[k + (i-1)*inc]`` so the strided argmax (TSVC s318) becomes liftable.
+    # ``a[k + (i-1)*inc]`` (the strided-argmax lift).
     _promote_const_inputs = ScalarToSymbolPromotion()
-    _promote_const_inputs.readonly_inputs = True
-    _promote_const_inputs.unwrap_integer_casts = True
     s += [('reduce', _promote_const_inputs), ('reduce', SimplifyPass()), ('reduce', HoistInductionVariableUpdates()),
           ('reduce', InductionVariableSubstitution()), ('reduce', MaterializeLoopExitSymbols()),
           ('reduce', LoopInvariantCodeMotion()), ('reduce', SimplifyPass())]
