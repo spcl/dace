@@ -170,7 +170,22 @@ def _transpose(pv: ProgramVisitor,
         outname = pv.get_target_name()
     outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
-    if axes == (1, 0):  # Special case for 2D transposition
+    if axes == (1, 0):  # 2D transposition
+        # The Transpose library node squeezes a unit axis to a vector and then rejects it as "not a
+        # matrix", so a ``(N, 1)`` / ``(1, N)`` array cannot use it. Fall back to a plain index-swap
+        # copy (``out[j, i] = in[i, j]``) whenever an extent is 1; it is general over 2D and
+        # stride-safe. Genuine matrices keep the optimized library node.
+        if 1 in arr1.shape:
+            state.add_mapped_tasklet("transpose",
+                                     map_ranges={
+                                         "__i": "0:%s" % arr1.shape[0],
+                                         "__j": "0:%s" % arr1.shape[1]
+                                     },
+                                     inputs={"__inp": Memlet("%s[__i, __j]" % inpname)},
+                                     code="__out = __inp",
+                                     outputs={"__out": Memlet("%s[__j, __i]" % outname)},
+                                     external_edges=True)
+            return outname
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
         import dace.libraries.linalg  # Avoid import loop

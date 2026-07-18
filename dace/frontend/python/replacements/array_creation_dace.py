@@ -12,7 +12,38 @@ from copy import deepcopy as dcpy
 from numbers import Integral
 from typing import Any, Optional
 
+import sympy
 import numpy as np
+
+from dace import symbolic
+
+
+def promote_size_scalars_in_shape(sdfg: SDFG, shape: Shape) -> None:
+    """Promote a size expression that was materialized as a size-1 descriptor and then used as an array
+    SHAPE (``np.empty(Nt + 1)`` -> the scalar ``Nt_plus_1`` reused symbolically) into an SDFG symbol.
+    Otherwise ``add_datadesc`` tries to ``add_symbol`` the like-named descriptor and raises. Scoped to
+    the shape's own symbols so a plain scalar argument (never used as a shape) is left untouched."""
+    names = set()
+    for extent in shape:
+        if isinstance(extent, Integral):
+            continue
+        expr = symbolic.pystr_to_symbolic(extent) if isinstance(extent, str) else extent
+        if isinstance(expr, sympy.Basic):
+            names |= {str(s) for s in expr.free_symbols}
+    targets = {n for n in names if n in sdfg.arrays and n not in sdfg.symbols and sdfg.arrays[n].total_size == 1}
+    if not targets:
+        return
+    from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion, find_promotable_scalars
+    promotable = find_promotable_scalars(sdfg, transients_only=False)
+    not_promotable = targets - promotable
+    if not_promotable:
+        raise DaceSyntaxError(
+            None, None, f'Cannot use {sorted(not_promotable)} as an array shape: the like-named size '
+            f'descriptor is not promotable to a symbol.')
+    promo = ScalarToSymbolPromotion()
+    promo.transients_only = False
+    promo.ignore = promotable - targets  # promote ONLY the size scalars used in this shape
+    promo.apply_pass(sdfg, {})
 
 
 @oprepo.replaces('dace.define_local')
@@ -32,6 +63,7 @@ def _define_local_ex(pv: ProgramVisitor,
         if not isinstance(strides, (list, tuple)):
             strides = [strides]
         strides = [int(s) if isinstance(s, Integral) else s for s in strides]
+    promote_size_scalars_in_shape(sdfg, shape)
     name = pv.get_target_name()
     name, _ = sdfg.add_transient(name,
                                  shape,
