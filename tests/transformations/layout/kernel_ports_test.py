@@ -16,12 +16,11 @@ the invariant; timing is not asserted."""
 import numpy
 
 from dace.transformation.layout.brute_force import sweep, best
-from tests.transformations.layout.kernels import (atax, bicg, e1_matrix_add, e6_indirect_stencil, icon_one_loop,
-                                                  icon_zekinh, k01_stream_triad, k02_transpose_blocked,
-                                                  k03_complex_conjugate_zip, k05_spmv, k06_gather_accumulate_scatter,
-                                                  k07_icon_stencil, k08_mesh_scatter, k09_particle_field_affinity,
-                                                  k10_omen_windowed_contraction, k13_conv1x1_channel_layouts,
-                                                  k14_eytzinger_search)
+from tests.transformations.layout.kernels import (
+    atax, bicg, e1_matrix_add, e6_indirect_stencil, icon_one_loop, icon_zekinh, k01_stream_triad, k02_transpose_blocked,
+    k03_complex_conjugate_zip, k05_spmv, k06_gather_accumulate_scatter, k07_icon_stencil, k08_mesh_scatter,
+    k09_particle_field_affinity, k10_omen_windowed_contraction, k13_conv1x1_channel_layouts, k14_eytzinger_search,
+    k16_nbody_force, k17_knn_bruteforce, k18_scattering_self_energies)
 
 
 def _subset(program, candidate_dict, pick):
@@ -111,8 +110,7 @@ def test_k01_stream_triad_block():
     inp = k01_stream_triad.make_inputs(64)
     cand_dict = k01_stream_triad.candidates()
     cands = _subset(k01_stream_triad.triad, cand_dict, list(cand_dict))
-    _assert_all_correct(cands, k01_stream_triad.run_closure(inp, 64),
-                        k01_stream_triad.oracle(inp["b"], inp["c"]))
+    _assert_all_correct(cands, k01_stream_triad.run_closure(inp, 64), k01_stream_triad.oracle(inp["b"], inp["c"]))
 
 
 def test_k02_transpose_block_and_permute():
@@ -178,6 +176,30 @@ def test_k14_eytzinger_search_shuffle():
     _assert_all_correct(cands, k14_eytzinger_search.run_closure(inp, 15), k14_eytzinger_search.oracle(inp["A"]))
 
 
+def test_k16_nbody_force_layout_and_block():
+    inp = k16_nbody_force.make_inputs(32)
+    cand_dict = k16_nbody_force.candidates()
+    cands = _subset(k16_nbody_force.nbody_force, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, k16_nbody_force.run_closure(inp, 32),
+                        k16_nbody_force.oracle(inp["pos"], inp["vel"], inp["mass"]))
+
+
+def test_k17_knn_bruteforce_layout_and_block():
+    inp = k17_knn_bruteforce.make_inputs(32, 12)
+    cand_dict = k17_knn_bruteforce.candidates()
+    cands = _subset(k17_knn_bruteforce.knn, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, k17_knn_bruteforce.run_closure(inp, 32, 12),
+                        k17_knn_bruteforce.oracle(inp["ref"], inp["query"]))
+
+
+def test_k18_scattering_self_energies_permute():
+    inp = k18_scattering_self_energies.make_inputs(6, 4)
+    cand_dict = k18_scattering_self_energies.candidates()
+    cands = _subset(k18_scattering_self_energies.sselfeng, cand_dict, list(cand_dict))
+    _assert_all_correct(cands, k18_scattering_self_energies.run_closure(inp, 6, 4),
+                        k18_scattering_self_energies.oracle(inp["neigh_idx"], inp["dH"], inp["G"], inp["D"]))
+
+
 if __name__ == "__main__":
     test_atax_permute()
     test_bicg_permute()
@@ -196,4 +218,7 @@ if __name__ == "__main__":
     test_k10_omen_windowed_contraction_permute()
     test_k13_conv1x1_channel_layouts()
     test_k14_eytzinger_search_shuffle()
+    test_k16_nbody_force_layout_and_block()
+    test_k17_knn_bruteforce_layout_and_block()
+    test_k18_scattering_self_energies_permute()
     print("kernel ports tests PASS")
