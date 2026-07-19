@@ -11,10 +11,13 @@ The matrix is **3 SDFGs × 3 pipelines = 9 cases**:
 | `fortran`    | ✓ | ✓ | ✓ |
 | `gpu_scc`    | ✓ | ✓ | ✓ |
 
-Every case runs each pipeline **one subphase at a time**: apply → `validate()` → save the
-post-subphase SDFGz. One numeric run at the end compares the fully-transformed graph against the
-untransformed reference on the same inputs. The saved per-subphase SDFGz let you bisect any
-divergence to the exact stage that caused it.
+Each pipeline is grouped into **phases** (consecutive stages sharing a stage label — so canon's
+`loop_to_x` Loop2X lifts and its `parallelize` Loop2Map each form one phase; the `parallelize`
+variant splits into `prep` / `loop_to_x` / `parallelize`). At **every phase boundary**: apply the
+phase's stages → `validate()` → `numeric_check` against the untransformed reference → save a phase
+SDFGz **checkpoint**. A checkpoint on disk therefore means "this phase passed"; a re-run loads the
+furthest good checkpoint and resumes past it, so the multi-minute build/`simplify` is not repeated.
+Every variant drives the loops to **maximum (sound) parallelism** (peeling + anti-dep breaking on).
 
 ## Ownership split
 
@@ -71,36 +74,50 @@ run_pipeline(sdfg, 'canon_cpu', dump_root(),
              numeric_check=runner)                      # from the dace-fortran e2e runner; None = structural-only
 ```
 
-- Each subphase is applied, `validate()`-d (validate-all), and saved as
-  `<tag>_<idx>_<label>.sdfgz` under `$CLOUDSC_E2E_DUMP` (default `$HOME/.cache/cloudsc_e2e`).
-  Re-saving is skipped when an identical-hash SDFGz is already there — the **per-phase cache**.
-- **Verify**: pass the dace-fortran runner as `numeric_check`. It runs the fully-transformed SDFG and
-  the untransformed reference on the *same* physical inputs, single-core IEEE (`-O0 -fno-fast-math
-  -ffp-contract=off`), and asserts they match to tolerance. Leave `numeric_check=None` to prove a
-  pipeline merely *applies + validates* structurally without compiling.
+- Each phase is applied, `validate()`-d, numeric-checked, then saved as
+  `<tag>__<plansig>__p<idx>__<label>.sdfgz` under `$CLOUDSC_E2E_DUMP` (default `$HOME/.cache/cloudsc_e2e`).
+  `<plansig>` digests the phase plan, so a changed pipeline mints fresh checkpoints instead of
+  resuming from a stale one; re-saving is skipped when the identical-hash SDFGz is already there.
+  Resume loads the furthest checkpoint present and continues past it (`resume=False` to force a
+  full rerun).
+- **Verify**: `numeric_check(sdfg, phase_name)` runs at every phase boundary. The self-contained
+  python check comes from `make_numeric_check(reference)` (or the reusable
+  `build_reference_outputs` + `numeric_check_from` pair to share one reference run across variants) —
+  it runs the candidate and the untransformed reference on the *same* physical inputs, single-core
+  IEEE (`-O0 -fno-fast-math -ffp-contract=off`), bit-exact on value-preserving phases and relaxed
+  from the first reassociating phase onward. The dace-fortran runner plugs into the same
+  `(sdfg, phase_name)` hook. Leave `numeric_check=None` to prove a pipeline merely *applies +
+  validates* structurally without compiling.
 - **Config propagation**: the `constants` argument bakes the parameter constants into the SDFG as the
   first `specialize` subphase (via `specialize_symbol`), so the pipelines optimize against fixed
   shapes/physics instead of free symbols.
 
 ## 4. What each pipeline does
 
-Every variant starts with the `specialize` config-prop subphase, then:
+Every variant starts with the `specialize` config-prop phase and a `pretreat` phase (simplify +
+StateFusionExtended), then:
 
-- **`parallelize`** — `ParallelizePipeline`, 12 stages: peel/unroll, simplify, propagate
-  memlets/symbols/constants, privatize scalars, then loop-to-reduce / accumulator-to-map+reduce and
-  a final pattern-match sweep. Turns sequential loops into parallel maps.
-- **`canon_cpu`** — `canonicalize(target='cpu')`, 164 stages: the full canonicalization + optimization
-  stack (clean → loop/reduction normalization → … → codegen-ready), tuned for CPU.
-- **`canon_gpu`** — `canonicalize(target='gpu')`, 165 stages: same stack plus the GPU knob, but it
-  **structurally stops before GPU offload** — `offload_to_gpu`/`finalize_for_target` is *not* part of
-  `_build_stages`, so the graph stays CPU-runnable and every subphase is validated on CPU. This
-  exercises the GPU optimization path without needing a GPU to verify.
+- **`parallelize`** — `ParallelizePipeline` in 3 phases: `prep` (peel/unroll, simplify, propagate
+  memlets/symbols/constants, privatize scalars, aug-assign→WCR), `loop_to_x` (loop-to-reduce /
+  accumulator-to-map+reduce), `parallelize` (loop-to-map). Turns sequential loops into parallel maps
+  (peeling on for max parallelism).
+- **`canon_cpu`** — `canonicalize(target='cpu')`, the full stack grouped by stage label into ~49
+  phases (clean → loop/reduction normalization → `loop_to_x` → `parallelize` → fuse → … →
+  codegen-ready), tuned for CPU.
+- **`canon_gpu`** — `canonicalize(target='gpu')`: same stack plus the GPU knob, but it **structurally
+  stops before GPU offload** — `offload_to_gpu`/`finalize_for_target` is *not* part of `_build_stages`,
+  so the graph stays CPU-runnable and every phase is validated + numeric-checked on CPU. Exercises the
+  GPU optimization path without needing a GPU to verify.
 
 ## Run
 
 ```bash
-# structural, python column only (fortran/gpu SDFGs + runner arrive from the dace-fortran side):
+# structural only (fast, no compile), python column:
 OMP_NUM_THREADS=1 python -m tests.corpus.cloudsc.pipelines --variant parallelize
+
+# with the self-contained python numeric check at every phase boundary (compiles+runs per phase);
+# --no-resume forces a full rerun, otherwise it resumes from saved checkpoints:
+OMP_NUM_THREADS=1 python -m tests.corpus.cloudsc.pipelines --variant canon_cpu --numeric --regime ieee
 
 # full 9-case matrix, once the dace-fortran sources + data init + runner are copied in:
 pytest tests/corpus/cloudsc/ -m integration -v -s -n1
