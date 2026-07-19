@@ -60,6 +60,60 @@ bench(add2d, ["A", "B"], 16, lambda a: a["A"] + a["B"])
 bench(scale2d, ["A"], 16, lambda a: a["A"] * 2.0)
 ```
 
+**(c) End-to-end, one array pulled two ways — `atax` (`y = Aᵀ(Ax)`).** The single shared matrix `A[M, N]` is read *row-major* in the first nest (`tmp = A x`) and *column-major* in the second (`y = Aᵀ tmp`), so no one physical layout is best for both — the global layout decision the sweep explores by permuting `A`.
+
+In BLAS form dace lifts the two products as `MatMul(A, x)` and `MatMul(A_T, tmp)` with an explicit `Transpose` node materializing `A_T`. A library node reads operand shape from the *descriptor*, not the memlet, so a transparent Permute of `A` never reaches its semantics. Instead of transposing physically, a transpose of a BLAS operand is **absorbed into the node's transpose flag** — the vendor kernel reads the relaid-out box and transposes it for free:
+
+- **`FoldTransposeIntoMatMul`** collapses `A --Transpose--> A_T --_a--> MatMul` into a single `MatMul(transA=True)` reading `A` directly. The `atax` body becomes two native gemv calls over one shared `A`, no `Transpose` node (the *Array → Transpose → Gemm stays a Gemm* rule).
+- **`PermuteDimensions`** then treats a `[1, 0]` permute of a Gemm/MatMul operand as a **flag flip** (`flip_operand_transpose`), not a physical transpose: permuting the shared `A` toggles *both* MatMuls' `transA` at once. Row- vs column-major `A` is the same two gemv calls with the flag flipped — so the permutation's importance is found in the gemm form itself, on CPU (OpenBLAS) and GPU (cuBLAS) alike.
+
+Same rule generalizes across BLAS structure: **`Syrk`** toggles `trans` (`N ↔ T`), **`Symm`** toggles `uplo` (`L ↔ U`, transposing a symmetric operand swaps its stored triangle). Layouts a flag *cannot* express are refused loudly rather than miscompiled — `Syr2k` (one `trans` for both operands), a general (`_b`) `Symm` operand, and any non-`[1, 0]` permute — and fall back to a **tensor contraction**: `SyrkToTensorDot` rewrites `C = A Aᵀ` to `ik,jk->ij`, `Symm` to `ik,kj->ij` after symmetrizing `A` (the `GemmToTensorDot` escape hatch, generalized). **Blocking always forces this** — a blocked operand is no longer a 2-D matrix, so the Gemm becomes a `TensorDot`. Note the contraction writes the *whole* symmetric output, not just the `uplo` triangle, so it is only sound for a fresh `C`.
+
+```python
+import numpy
+import dace
+from dace.transformation.layout import PermuteDimensions, FoldTransposeIntoMatMul
+from dace.transformation.layout.brute_force import sweep, best
+
+M, N = dace.symbol("M"), dace.symbol("N")
+
+@dace.program
+def atax(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[N]):
+    tmp = A @ x                                    # nest 1: MatMul(A, x)
+    y[:] = A.T @ tmp                               # nest 2: A.T lifts a Transpose node
+
+m, n = 320, 256
+rng = numpy.random.default_rng(3)
+A, x = rng.random((m, n)), rng.random(n)
+oracle = {"y": A.T @ (A @ x)}                       # y = Aᵀ (A x)
+
+def make(transposed):
+    def build():
+        sdfg = atax.to_sdfg(simplify=True)
+        FoldTransposeIntoMatMul().apply_pass(sdfg, {})              # A.T @ tmp -> MatMul(transA=True)
+        if transposed:                                             # store A column-major: the Permute
+            PermuteDimensions(permute_map={"A": [1, 0]},           # just flips both MatMuls' transA,
+                              add_permute_maps=False).apply_pass(sdfg, {})  # no physical transpose
+        return sdfg
+    return build
+
+def col_major(sdfg):
+    return int(dace.symbolic.evaluate(sdfg.arrays["A"].shape[0], {M: m, N: n})) == n
+
+def run(sdfg):
+    Ain = numpy.asarray(A.T, order="C").copy() if col_major(sdfg) else A.copy()  # same logical A
+    y = numpy.zeros(n)
+    sdfg(A=Ain, x=x.copy(), y=y, M=m, N=n)
+    return {"y": y}
+
+candidates = {"A_row_major": make(False), "A_col_major": make(True)}
+results = sweep(candidates, run, oracle, reps=5, warmup=1, isolate=True)
+assert all(r.correct for r in results)              # both stay two native gemv calls, no Transpose node
+print("fastest layout:", best(results).name)
+```
+
+Witness: [`tests/transformations/layout/blas_flag_rewrite_test.py`](../../../tests/transformations/layout/blas_flag_rewrite_test.py) (fold, flag flips, CPU + cuBLAS, refusals, the `TensorDot` fallback). A **reduction (map) form** `atax` — which keeps `A`'s orientation in the memlets instead of a BLAS flag — lives at [`tests/transformations/layout/kernels/atax.py`](../../../tests/transformations/layout/kernels/atax.py) (with its `bicg` sibling, driven by `kernel_ports_test.py`); to score *that* through the **global-assignment** pipeline (`line_graph` → per-array Viterbi DP → `apply_assignment`) instead of the flat sweep, expand or drop the `tmp` zero-init first — `line_graph` scores map nests only and refuses the memset as non-map work.
+
 ## Design
 
 - **Normal form: packed C-contiguous.** Every array is packed C-contiguous before layout work starts, so a layout change is a real shape / dim-order / dtype change, never a stride trick: Pad grows a dim, Permute reorders, Block adds dims, Zip changes element type.

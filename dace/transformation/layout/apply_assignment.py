@@ -9,7 +9,7 @@ from dace import SDFG
 from dace.libraries.layout import add_layout_change
 from dace.libraries.layout.algebra import Permute, simplify_ops
 from dace.sdfg import nodes
-from dace.transformation.layout.line_graph import KernelState, check_kernel_per_state
+from dace.transformation.layout.line_graph import KernelState, check_kernel_per_state, loop_spans
 from dace.transformation.layout.permute_dimensions import (note_copy_side, retranspose_copies,
                                                            rewrite_state_for_permute, spanned_dims)
 
@@ -133,6 +133,18 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
             raise ValueError(f"apply_assignment: trajectory for '{array}' has {len(trajectory)} "
                              f"entries for {len(kernels)} kernels")
 
+    # Body-uniform guard: a loop span must carry one layout (its back-edge would otherwise feed the wrong
+    # layout into the next iteration -- a silent miscompile). Refuse loudly instead of applying an unsound plan.
+    spans = loop_spans(kernels)
+    for array, trajectory in assignment.items():
+        for start, end in spans:
+            span_tags = sorted({trajectory[k].tag for k in range(start, end)})
+            if len(span_tags) > 1:
+                raise NotImplementedError(
+                    f"apply_assignment: array '{array}' changes layout {span_tags} inside the loop body "
+                    f"spanning kernels [{start},{end}); the body-uniform model needs one layout per loop span "
+                    f"-- solve with per_array_dp(..., locked_before=locked_transitions(kernels)).")
+
     # Plan first (liveness reads pre-rewrite state), then rewrite, then insert conversions.
     # boundary_changes[kernel_index] = {in_name: (out_name, delta_ops)}
     boundary_changes: Dict[int, Dict[str, Tuple[str, List]]] = {}
@@ -228,10 +240,20 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
 
     boundary_states = []
     for kernel_index in sorted(boundary_changes):
-        target = kernels[kernel_index].state
-        boundary = sdfg.add_state_before(target,
-                                         label=f"relayout_before_{target.label}",
-                                         is_start_block=(sdfg.start_block is target))
+        # A conversion entering a loop-span kernel must run ONCE before the whole LoopRegion, not before the
+        # body state (which would re-run every iteration). Body-uniform makes the span one segment, so the only
+        # entry is at the span's first kernel -- hoist it ahead of the region in the region's parent graph.
+        loop = kernels[kernel_index].loop
+        if loop is None:
+            target = kernels[kernel_index].state
+            boundary = sdfg.add_state_before(target,
+                                             label=f"relayout_before_{target.label}",
+                                             is_start_block=(sdfg.start_block is target))
+        else:
+            parent = loop.parent_graph
+            boundary = parent.add_state_before(loop,
+                                               label=f"relayout_before_{loop.label}",
+                                               is_start_block=(parent.start_block is loop))
         for in_name in sorted(boundary_changes[kernel_index]):
             out_name, delta = boundary_changes[kernel_index][in_name]
             add_layout_change(sdfg, boundary, in_name, out_name, delta, create_output=False)
@@ -239,7 +261,12 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
 
     exit_state = None
     if exit_changes:
-        exit_state = sdfg.add_state_after(kernels[-1].state, label="relayout_exit")
+        # Symmetrically, a restore after a last write inside a loop must land after the region, not the body state.
+        last = kernels[-1]
+        if last.loop is None:
+            exit_state = sdfg.add_state_after(last.state, label="relayout_exit")
+        else:
+            exit_state = last.loop.parent_graph.add_state_after(last.loop, label="relayout_exit")
         for in_name in sorted(exit_changes):
             out_name, delta = exit_changes[in_name]
             add_layout_change(sdfg, exit_state, in_name, out_name, delta, create_output=False)

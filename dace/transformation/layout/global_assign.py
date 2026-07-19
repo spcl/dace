@@ -2,7 +2,7 @@
 """Global layout assignment over the line graph: per-array Viterbi DP, brute-force oracle, per-op greedy baseline, and conflict report."""
 import itertools
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from dace.transformation.layout.apply_assignment import Layout
 
@@ -82,8 +82,15 @@ def trajectory_cost(costs: AssignmentCosts, array: str, tags: List[str]) -> floa
     return total
 
 
-def per_array_dp(costs: AssignmentCosts, n_kernels: int, allow_changes: bool = True) -> Dict[str, ArrayTrajectory]:
-    """Viterbi DP: cheapest per-array layout trajectory under `trajectory_cost`; ties resolve to the earlier-enumerated layout."""
+def per_array_dp(costs: AssignmentCosts,
+                 n_kernels: int,
+                 allow_changes: bool = True,
+                 locked_before: Optional[Set[int]] = None) -> Dict[str, ArrayTrajectory]:
+    """Viterbi DP: cheapest per-array layout trajectory under `trajectory_cost`; ties resolve to the
+    earlier-enumerated layout. ``locked_before`` holds kernel indices ``k`` whose transition from ``k-1``
+    may not change layout (loop-span internal transitions, body-uniform); the layout at such ``k`` is forced
+    equal to ``k-1``, so a loop body ends up with one layout and its back-edge is a genuine no-op."""
+    locked_before = locked_before or set()
     costs.check(n_kernels, changes_allowed=allow_changes)
     solution: Dict[str, ArrayTrajectory] = {}
     for array, layouts in costs.layouts.items():
@@ -116,7 +123,7 @@ def per_array_dp(costs: AssignmentCosts, n_kernels: int, allow_changes: bool = T
                         if dp[i][flag] is None:
                             continue
                         if i != j:
-                            if not allow_changes:
+                            if not allow_changes or k in locked_before:
                                 continue
                             exit_moved_here = (lw is not None and k - 1 >= lw and tags[j] == identity and not flag)
                             edge = 0.0 if exit_moved_here else costs.relayout_cost[(array, tags[i], tags[j])]
@@ -146,8 +153,12 @@ def per_array_dp(costs: AssignmentCosts, n_kernels: int, allow_changes: bool = T
 def brute_force_trajectories(costs: AssignmentCosts,
                              n_kernels: int,
                              allow_changes: bool = True,
-                             cap: int = 1_000_000) -> Dict[str, ArrayTrajectory]:
-    """Enumeration oracle: every trajectory per array, raising if the space exceeds `cap`."""
+                             cap: int = 1_000_000,
+                             locked_before: Optional[Set[int]] = None) -> Dict[str, ArrayTrajectory]:
+    """Enumeration oracle: every trajectory per array, raising if the space exceeds `cap`. ``locked_before``
+    (see :func:`per_array_dp`) filters out trajectories that change layout across a locked transition, so this
+    stays a valid oracle for the body-uniform DP."""
+    locked_before = locked_before or set()
     costs.check(n_kernels, changes_allowed=allow_changes)
     solution: Dict[str, ArrayTrajectory] = {}
     for array, layouts in costs.layouts.items():
@@ -160,6 +171,8 @@ def brute_force_trajectories(costs: AssignmentCosts,
                       ((tag, ) * n_kernels for tag in tags))
         best: Optional[ArrayTrajectory] = None
         for trajectory in candidates:
+            if any(trajectory[k] != trajectory[k - 1] for k in locked_before):
+                continue
             c = trajectory_cost(costs, array, list(trajectory))
             if best is None or c < best.cost:  # strict <: enumeration order breaks ties
                 best = ArrayTrajectory(array, list(trajectory), c)

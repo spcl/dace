@@ -511,3 +511,40 @@ With a real transform the same signal appears: `PermuteDimensions` on a transpos
 its messages from ~1.0 to ~0.125 (the 8x the relayout was for); `PadDimensions` leaves a contiguous
 access at ~0.125 — the model does not credit a pad that moved nothing relevant. Pinned in
 `cost_model_transformations_test.py`.
+
+## Extending to distributed MPI: a two-layer LogGP (design note, not implemented)
+
+The model prices one node's core↔memory-controller traffic. The OMEN transpose (SC19 Gordon Bell,
+arXiv:1912.10024 — the `tests/library/mpi/mpi_omen_transpose_test.py` / k10 pattern) needs a *second*
+layer: the inter-node network. Structure it exactly as the intra-node model already treats core and
+memory-controller as two LogP processors — add a network `LogGP(L_net, o_net, g_net, G_net)` layer
+above the memory layer. A remote access pays the network layer (`o_net + L_net + bytes·G_net`), lands,
+then pays the existing memory layer; a local access pays only the memory layer. Same
+`max(bytes·G, messages·L/concurrency)` two-regime form one level up — `nest_memory_time` is reused
+unchanged; only the parameters and a "which layer" tag differ.
+
+**PGAS uniform-latency simplification.** Model every remote location at a single `L_net`, no topology,
+no distance. Verdict for the OMEN transpose: **sound as a first cut** — the transpose is a bytes-bound
+all-to-all in the `T ≈ bytes·G_net` bandwidth regime (BDP > 1), where per-message `L_net` is
+second-order (amortized over the transfer). It correctly ranks *which* layout minimizes exchanged bytes
+— the ~2.58 PiB → ~1.8 TiB decision the transpose exists to make. Two blind spots it must not hide
+(fail-loud on the ranking, never silently misorder):
+
+- **Latency-bound patterns** — halo `Sendrecv`, small messages, the `mpi_pack_unpack_exchange` column
+  swap — sit in the *other* regime, where uniform-`L` with no topology under-orders.
+- **All-to-all congestion / bisection saturation**, the dominant real cost of the transpose at scale,
+  is invisible to an unloaded per-link `G_net`.
+
+The three intra-node gaps above transpose cleanly onto the network layer:
+
+| intra-node gap (What is NOT modelled) | network-layer analogue |
+|---|---|
+| `D·L` span floor | collective latency floor: `log P·L_net` (tree) / the `P`-term (all-to-all) |
+| unloaded `L` (~20% queueing near knee) | congestion-loaded `G_eff = all_to_all_bytes / bisection_BW` |
+| no fast-memory-size `S` (no √S tiling bound) | pack granularity — max contiguous buffer before send; *this is what the transpose optimizes* |
+
+Not implemented (design-note-only) pending a measured comm trace of the transpose (bytes, message
+count, bisection). The all-to-all bytes and the pack granularity are already readable off the SDFG (the
+`Alltoall` buffer subset), so the *ranking* term is derivable without new microbenchmarks; the
+`L_net`/`G_net` absolutes are not — same status as the intra-node `c_core, L, G on a quiet box` Open
+item.

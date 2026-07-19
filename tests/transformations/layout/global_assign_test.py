@@ -87,6 +87,33 @@ def test_dp_matches_oracle_on_random_tables():
             assert dp.cost == pytest.approx(trajectory_cost(costs, "A", dp.tags))
             if not allow:
                 assert dp.changes() == 0
+        # A random subset of transitions is locked (a loop span): the DP must still equal the oracle
+        # restricted to lock-respecting trajectories, and must not change layout across any locked transition.
+        locked = {k for k in range(1, n) if rng.random() < 0.5}
+        dp_locked = per_array_dp(costs, n, locked_before=locked)["A"]
+        oracle_locked = brute_force_trajectories(costs, n, locked_before=locked)["A"]
+        assert dp_locked.cost == pytest.approx(oracle_locked.cost), (trial, sorted(locked))
+        assert all(dp_locked.tags[k] == dp_locked.tags[k - 1] for k in locked), (trial, sorted(locked))
+
+
+def test_body_uniform_pins_a_loop_span():
+    """Kernels 1,2 are a loop body (transition into 2 locked). With relayout cheap, the unconstrained DP flips
+    at every boundary; body-uniform forces kernels 1,2 to one layout while the prologue/epilogue stay free."""
+    node = {}
+    for k in range(4):  # alternating single-layout preference
+        preferred, other = ("identity", "perm10") if k % 2 == 0 else ("perm10", "identity")
+        node[("A", k, preferred)] = 1.0
+        node[("A", k, other)] = 2.0
+    rel = {("A", "identity", "perm10"): 0.1, ("A", "perm10", "identity"): 0.1}
+    costs = table(node, rel)
+
+    free = per_array_dp(costs, 4)["A"]
+    assert free.tags[1] != free.tags[2]  # cheap relayout -> unconstrained flips through the "body"
+
+    locked = {2}  # kernels 1,2 share one enclosing loop; the internal transition is locked
+    dp = per_array_dp(costs, 4, locked_before=locked)["A"]
+    assert dp.tags[1] == dp.tags[2]  # body-uniform
+    assert dp.cost == pytest.approx(brute_force_trajectories(costs, 4, locked_before=locked)["A"].cost)
 
 
 def test_entry_conversion_flips_marginal_preference():

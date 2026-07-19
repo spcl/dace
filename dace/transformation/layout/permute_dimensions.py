@@ -302,8 +302,7 @@ class PermuteDimensions(ppl.Pass):
                     sdfg.add_datadesc(name="permuted_" + arr_name, datadesc=permuted_arr, find_new_name=False)
                 else:
                     sdfg.remove_data(name=arr_name, validate=False)
-                    sdfg.add_datadesc(name=arr_name,
-                                      datadesc=permuted_arr)  # memlets permuted before validation
+                    sdfg.add_datadesc(name=arr_name, datadesc=permuted_arr)  # memlets permuted before validation
 
                 name_map[arr_name] = "permuted_" + arr_name if (add_permute_maps and root == sdfg) else arr_name
 
@@ -543,9 +542,31 @@ def rewrite_state_for_permute(state: dace.SDFGState,
                 new_subset.append(edge.data.subset[permute_indices[i]])
             edge.data.subset = dace.subsets.Range(new_subset)
 
+            flip_gemm_operand_if_transposed(edge, permute_indices)
+
             if note_copy_side is not None:
                 note_copy_side(sides, edge, permute_indices)
     return sides
+
+
+def flip_gemm_operand_if_transposed(edge, permute_indices: List[int]) -> None:
+    """Special rewrite rule: a 2-D transpose (``[1, 0]``) of a BLAS-node operand is absorbed by flipping the node's structural flag (``transA``/``transB`` for Gemm/MatMul, ``trans`` for Syrk, ``uplo`` for Symm) instead of emitting a physical transpose. The native call reads the relaid-out box and transposes it for free -- the pattern stays a single library call with the input marked transposed. Identity permutations are ignored; non-transpose permutations and unabsorbable operands are refused by :func:`flip_operand_transpose`."""
+    from dace.libraries.blas.nodes.gemm import Gemm
+    from dace.libraries.blas.nodes.matmul import MatMul
+    from dace.libraries.blas.nodes.syrk import Syrk
+    from dace.libraries.blas.nodes.syr2k import Syr2k
+    from dace.libraries.blas.nodes.symm import Symm
+    from dace.transformation.layout.rewrite_libnodes import flip_operand_transpose
+
+    if not (isinstance(edge.dst, (Gemm, MatMul, Syrk, Syr2k, Symm)) and edge.dst_conn in ("_a", "_b")):
+        return
+    if list(permute_indices) == list(range(len(permute_indices))):
+        return  # identity permutation -- nothing to absorb
+    if list(permute_indices) != [1, 0]:
+        raise NotImplementedError(
+            f"PermuteDimensions: operand '{edge.dst_conn}' of '{edge.dst.label}' was permuted by "
+            f"{permute_indices}, but only a 2-D transpose [1, 0] can be absorbed into a BLAS flag.")
+    flip_operand_transpose(edge.dst, edge.dst_conn)
 
 
 def permute_args(expr, permute_map: dict[str, list[int]]):

@@ -15,7 +15,8 @@ from dace.transformation.layout.unzip_arrays import UnzipArrays
 from dace.transformation.layout.shuffle_elements import ShuffleElements
 from dace.transformation.layout.rewrite_libnodes import (GemmToTensorDot, RewriteCopyForLayout, transform_einsum,
                                                          remap_contracted_axes, permute_reduce, block_scan_stride,
-                                                         copy_permutation_axes)
+                                                         copy_permutation_axes, FoldTransposeIntoMatMul,
+                                                         flip_matmul_transpose, flip_operand_transpose, SyrkToTensorDot)
 from dace.transformation.layout.split_array import SplitArray
 from dace.transformation.layout.brute_force import (sweep, best, time_cpu, time_gpu, single_default_stream,
                                                     permutation_candidates, block_candidates, shuffle_candidates,
@@ -26,7 +27,7 @@ from dace.transformation.layout.indirect_access import (IndirectAccess, indirect
 from dace.transformation.layout.prepare import prepare_for_layout
 from dace.transformation.layout.externalize import (externalize_nest, nest_arguments, nest_entries, written_array_names)
 from dace.transformation.layout.line_graph import (KernelState, check_kernel_per_state, is_relayout_state,
-                                                   kernel_per_state, line_graph)
+                                                   kernel_per_state, line_graph, locked_transitions, loop_spans)
 from dace.transformation.layout.relayout_boundary import relayout_on_boundary
 from dace.transformation.layout.apply_assignment import (IDENTITY_LAYOUT, AppliedAssignment, Layout, apply_assignment)
 from dace.transformation.layout.nest_eval import (NestEvaluation, default_permutation_candidates, evaluate_nest)
