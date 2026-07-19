@@ -7,12 +7,12 @@ real :class:`~dace.sdfg.nodes.ConsumeEntry` metadata, streams register as
 :class:`~dace.data.Stream` containers (``dace.define_stream``), and the
 popped element enters the body as a dynamic stream read.
 
-``tree_to_sdfg`` does not lower ``ConsumeScope`` yet: consume programs build
-correct schedule trees but converting them to SDFGs raises
-NotImplementedError (an explicit backend gap, like ViewNode/RefSetNode and
-callback nodes before their lowering rounds).
+Consume scopes lower all the way: ``tree_to_sdfg`` builds a real
+ConsumeEntry/ConsumeExit pair (the stream through the fixed
+IN_stream/OUT_stream connectors, everything else through the shared map
+passthrough machinery) and both forms compile and execute.
 """
-import pytest
+import numpy as np
 
 import dace
 from dace import data, nodes
@@ -71,7 +71,6 @@ def test_consume_tasklet_form():
 
 
 def test_consumescope_form():
-    N = dace.symbol('N')
 
     @dace.program
     def consumer(iv: dace.int32[1], out: dace.float32[4]):
@@ -144,10 +143,36 @@ def test_consume_malformed_fallback():
     assert not _nodes_of_type(tree, tn.ConsumeScope)
 
 
-def test_consume_to_sdfg_gap():
+def test_consume_execution():
     tree = nextgen.parse_program(fibonacci)
-    with pytest.raises(NotImplementedError):
-        tree.as_sdfg()
+    func = tree.as_sdfg().compile()
+    iv = np.array([10], dtype=np.int32)
+    res = np.zeros(1, dtype=np.float32)
+    func(iv=iv, res=res)
+    assert res[0] == 55.0  # fib(10)
+
+
+def test_consumescope_execution():
+
+    @dace.program
+    def consumer(iv: dace.int32[1], out: dace.float32[4]):
+        S = dace.define_stream(dace.int32, 0)
+        with dace.tasklet:
+            i << iv
+            s >> S
+            s = i
+
+        @dace.consumescope(S, 4)
+        def scope(elem, p):
+            out[p] = elem * 2.0
+
+    tree = nextgen.parse_program(consumer)
+    func = tree.as_sdfg().compile()
+    iv = np.array([3], dtype=np.int32)
+    out = np.zeros(4, dtype=np.float32)
+    func(iv=iv, out=out)
+    # A single element was pushed; exactly one processing element pops it.
+    assert sorted(out) == [0.0, 0.0, 0.0, 6.0]
 
 
 if __name__ == '__main__':
@@ -155,4 +180,5 @@ if __name__ == '__main__':
     test_consumescope_form()
     test_consume_condition_and_chunksize()
     test_consume_malformed_fallback()
-    test_consume_to_sdfg_gap()
+    test_consume_execution()
+    test_consumescope_execution()

@@ -112,6 +112,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._dataflow_stack: list[tuple[nodes.EntryNode, dict[str, tuple[nodes.AccessNode, Memlet]]]
                                    | tuple[SDFG, dict[str, set[str]]]] = []
 
+        self._consume_streams: dict[int, str] = {}
+        """Consumed stream container per ConsumeEntry (keyed by id(entry)),
+        so tasklet inputs reading the stream route through OUT_stream."""
+
         self._pending_dynamic_inputs: dict[str, Memlet] = {}
         """Dynamic map-range input memlets (from DynScopeCopyNode siblings
         emitted right before a MapScope) that are still waiting to be wired to
@@ -527,6 +531,83 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         access_cache[memlet_data] = self._current_state.add_read(memlet_data)
         self._current_state.add_memlet_path(access_cache[memlet_data], map_entry, dst_conn=connector, memlet=memlet)
 
+    def _connect_scope_exit(self, exit_node, to_connect, outer_map_entry, outer_to_connect, access_cache,
+                            sdfg: SDFG) -> None:
+        """
+        Connect the writes recorded in a dataflow scope's ``to_connect`` to its
+        exit node (map or consume): IN_/OUT_ passthrough connectors on the
+        exit, single-use in-scope access nodes collapsed into direct edges,
+        outside write access nodes (re)cached, and nested-SDFG/outer-scope
+        registration mirrored from the input side.
+        """
+        # connect writes to the scope exit node
+        for name in to_connect:
+            in_connector_name = f"{PREFIX_PASSTHROUGH_IN}{name}"
+            out_connector_name = f"{PREFIX_PASSTHROUGH_OUT}{name}"
+            new_in_connector = exit_node.add_in_connector(in_connector_name)
+            new_out_connector = exit_node.add_out_connector(out_connector_name)
+            assert new_in_connector == new_out_connector
+
+            # connect inside the scope
+            access_node, memlet = to_connect[name]
+            if isinstance(access_node, nodes.NestedSDFG):
+                self._current_state.add_edge(access_node, name, exit_node, in_connector_name, memlet)
+            else:
+                assert isinstance(access_node, nodes.AccessNode)
+                if self._current_state.out_degree(access_node) == 0 and self._current_state.in_degree(access_node) == 1:
+                    # this access_node is not used for anything else.
+                    # let's remove it and add a direct connection instead
+                    edges = [edge for edge in self._current_state.edges() if edge.dst == access_node]
+                    assert len(edges) == 1
+                    self._current_state.add_memlet_path(edges[0].src,
+                                                        exit_node,
+                                                        src_conn=edges[0].src_conn,
+                                                        dst_conn=in_connector_name,
+                                                        memlet=edges[0].data)
+                    self._current_state.remove_node(access_node)  # edge is remove automatically
+                else:
+                    self._current_state.add_memlet_path(access_node,
+                                                        exit_node,
+                                                        dst_conn=in_connector_name,
+                                                        memlet=memlet)
+
+            if isinstance(outer_map_entry, SDFG):
+                if name not in sdfg.arrays:
+                    parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
+
+                    # Support for NView nodes
+                    use_nview = self._apply_nview_array_override(name, sdfg)
+                    if not use_nview:
+                        sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
+
+                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
+                        if parent_sdfg.arrays[name].transient:
+                            sdfg.arrays[name].transient = False
+
+                # Add out_connector in any case if not yet present, e.g. write after read
+                # Dev not: name and nview.target are identical
+                outer_to_connect["outputs"].add(name)
+
+            # connect outside the scope
+            # only re-use cached write-only nodes, e.g. don't create a cycle for
+            # map i=0:20:
+            #  A[i] = tasklet(A[i])
+            if name not in access_cache or self._current_state.out_degree(access_cache[name]) > 0:
+                # cache write access into access_cache
+                write_access_node = self._current_state.add_write(name)
+                access_cache[name] = write_access_node
+
+            access_node = access_cache[name]
+            self._current_state.add_memlet_path(exit_node,
+                                                access_node,
+                                                src_conn=out_connector_name,
+                                                memlet=Memlet.from_array(name, sdfg.arrays[name]))
+
+            if isinstance(outer_map_entry, nodes.EntryNode):
+                outer_to_connect[name] = (access_node, Memlet.from_array(name, sdfg.arrays[name]))
+            else:
+                assert isinstance(outer_map_entry, SDFG) or outer_map_entry is None
+
     def visit_MapScope(self, node: tn.MapScope, sdfg: SDFG) -> None:
         dataflow_stack_size = len(self._dataflow_stack)
         cache_state = self._current_state
@@ -599,73 +680,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         map_exit = nodes.MapExit(node.node.map)
         self._current_state.add_node(map_exit)
 
-        # connect writes to map_exit node
-        for name in to_connect:
-            in_connector_name = f"{PREFIX_PASSTHROUGH_IN}{name}"
-            out_connector_name = f"{PREFIX_PASSTHROUGH_OUT}{name}"
-            new_in_connector = map_exit.add_in_connector(in_connector_name)
-            new_out_connector = map_exit.add_out_connector(out_connector_name)
-            assert new_in_connector == new_out_connector
-
-            # connect "inside the map"
-            access_node, memlet = to_connect[name]
-            if isinstance(access_node, nodes.NestedSDFG):
-                self._current_state.add_edge(access_node, name, map_exit, in_connector_name, memlet)
-            else:
-                assert isinstance(access_node, nodes.AccessNode)
-                if self._current_state.out_degree(access_node) == 0 and self._current_state.in_degree(access_node) == 1:
-                    # this access_node is not used for anything else.
-                    # let's remove it and add a direct connection instead
-                    edges = [edge for edge in self._current_state.edges() if edge.dst == access_node]
-                    assert len(edges) == 1
-                    self._current_state.add_memlet_path(edges[0].src,
-                                                        map_exit,
-                                                        src_conn=edges[0].src_conn,
-                                                        dst_conn=in_connector_name,
-                                                        memlet=edges[0].data)
-                    self._current_state.remove_node(access_node)  # edge is remove automatically
-                else:
-                    self._current_state.add_memlet_path(access_node,
-                                                        map_exit,
-                                                        dst_conn=in_connector_name,
-                                                        memlet=memlet)
-
-            if isinstance(outer_map_entry, SDFG):
-                if name not in sdfg.arrays:
-                    parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
-
-                    # Support for NView nodes
-                    use_nview = self._apply_nview_array_override(name, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
-
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[name].transient:
-                            sdfg.arrays[name].transient = False
-
-                # Add out_connector in any case if not yet present, e.g. write after read
-                # Dev not: name and nview.target are identical
-                outer_to_connect["outputs"].add(name)
-
-            # connect "outside the map"
-            # only re-use cached write-only nodes, e.g. don't create a cycle for
-            # map i=0:20:
-            #  A[i] = tasklet(A[i])
-            if name not in access_cache or self._current_state.out_degree(access_cache[name]) > 0:
-                # cache write access into access_cache
-                write_access_node = self._current_state.add_write(name)
-                access_cache[name] = write_access_node
-
-            access_node = access_cache[name]
-            self._current_state.add_memlet_path(map_exit,
-                                                access_node,
-                                                src_conn=out_connector_name,
-                                                memlet=Memlet.from_array(name, sdfg.arrays[name]))
-
-            if isinstance(outer_map_entry, nodes.EntryNode):
-                outer_to_connect[name] = (access_node, Memlet.from_array(name, sdfg.arrays[name]))
-            else:
-                assert isinstance(outer_map_entry, SDFG) or outer_map_entry is None
+        self._connect_scope_exit(map_exit, to_connect, outer_map_entry, outer_to_connect, access_cache, sdfg)
 
         # TODO If nothing is connected at this point, figure out what's the last thing that
         #      we should connect to. Then, add an empty memlet from that last thing to this
@@ -673,7 +688,77 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         assert len(self._current_state.in_edges(map_exit)) > 0
 
     def visit_ConsumeScope(self, node: tn.ConsumeScope, sdfg: SDFG) -> None:
-        raise NotImplementedError(f"Support for {type(node)} not yet implemented.")
+        """
+        Lower a consume scope: a fresh ConsumeEntry/ConsumeExit pair around the
+        scope body. The consumed stream feeds the entry's fixed ``IN_stream``
+        connector and reaches popped-element reads through ``OUT_stream`` (see
+        visit_TaskletNode); all other reads and writes use the same IN_/OUT_
+        passthrough machinery as map scopes.
+        """
+        # Leading boundaries reflect hazards against nodes BEFORE the scope
+        # (e.g. the producer pushing into the consumed stream) and impose no
+        # ordering within it; boundaries between scope children would require
+        # nesting (as maps do) and are not supported yet.
+        children = list(node.children)
+        while children and isinstance(children[0], tn.StateBoundaryNode):
+            children.pop(0)
+        if any(isinstance(child, tn.StateBoundaryNode) for child in children):
+            raise NotImplementedError('State boundaries inside consume scopes are not supported yet.')
+
+        dataflow_stack_size = len(self._dataflow_stack)
+        cache_state = self._current_state
+
+        consume = copy.deepcopy(node.node.consume)
+        entry = nodes.ConsumeEntry(consume)  # Adds the fixed IN_stream/OUT_stream connectors
+        self._current_state.add_node(entry)
+
+        stream_name = self._consumed_stream(node)
+        self._consume_streams[id(entry)] = stream_name
+
+        self._dataflow_stack.append((entry, dict()))
+        with _TreeScope(node, self._ctx, self._current_state):
+            self.visit(children, sdfg=sdfg)
+
+        cache_key = (cache_state, id(self._ctx.current_scope))
+        if cache_key not in self._ctx.access_cache:
+            self._ctx.access_cache[cache_key] = {}
+        access_cache = self._ctx.access_cache[cache_key]
+
+        _, to_connect = self._dataflow_stack.pop()
+        assert len(self._dataflow_stack) == dataflow_stack_size
+        outer_map_entry, outer_to_connect = self._dataflow_stack[-1] if dataflow_stack_size else (None, None)
+
+        # Source the entry's input connectors: the stream through IN_stream,
+        # everything else through the shared per-connector machinery.
+        for connector in list(entry.in_connectors):
+            if connector == 'IN_stream':
+                memlet = Memlet.from_array(stream_name, sdfg.arrays[stream_name])
+                self._connect_map_input(entry, connector, stream_name, memlet, outer_map_entry, outer_to_connect,
+                                        access_cache, sdfg)
+                continue
+            memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
+            self._connect_map_input(entry, connector, memlet_data,
+                                    Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]), outer_map_entry,
+                                    outer_to_connect, access_cache, sdfg)
+
+        if isinstance(outer_map_entry, nodes.EntryNode) and self._current_state.out_degree(outer_map_entry) < 1:
+            self._current_state.add_nedge(outer_map_entry, entry, Memlet())
+
+        consume_exit = nodes.ConsumeExit(consume)
+        self._current_state.add_node(consume_exit)
+        self._connect_scope_exit(consume_exit, to_connect, outer_map_entry, outer_to_connect, access_cache, sdfg)
+        assert len(self._current_state.in_edges(consume_exit)) > 0
+
+    def _consumed_stream(self, node: tn.ConsumeScope) -> str:
+        """The stream container a consume scope pops from: the (single) stream
+        read by the scope's tasklets."""
+        for child in node.preorder_traversal():
+            if not isinstance(child, tn.TaskletNode):
+                continue
+            for memlet in child.in_memlets.values():
+                if isinstance(self._ctx.root.containers[memlet.data], data.Stream):
+                    return memlet.data
+        raise NotImplementedError('Consume scope without a stream read is not supported.')
 
     def visit_TaskletNode(self, node: tn.TaskletNode, sdfg: SDFG) -> None:
         # Add Tasklet to current state
@@ -694,8 +779,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 self._current_state.add_memlet_path(cached_access, tasklet, dst_conn=name, memlet=memlet)
                 continue
 
-            if isinstance(scope_node, nodes.MapEntry):
-                # get it from outside the map
+            if isinstance(scope_node, nodes.ConsumeEntry) and memlet.data == self._consume_streams.get(id(scope_node)):
+                # The consumed stream enters through the entry's fixed
+                # OUT_stream connector (popped-element reads).
+                self._current_state.add_edge(scope_node, 'OUT_stream', tasklet, name, memlet)
+                continue
+
+            if isinstance(scope_node, nodes.EntryNode):
+                # get it from outside the scope
                 connector_name = f"{PREFIX_PASSTHROUGH_OUT}{memlet.data}"
                 if connector_name not in scope_node.out_connectors:
                     new_in_connector = scope_node.add_in_connector(f"{PREFIX_PASSTHROUGH_IN}{memlet.data}")
@@ -739,7 +830,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # SDFGState.source_nodes() -- breaking scope_dict()/memlet propagation. Keying this off
         # the map_entry's own out-degree (rather than this tasklet's in-degree) would only catch
         # the case where this happens to be the very first child connected to the scope.
-        if isinstance(scope_node, nodes.MapEntry) and self._current_state.in_degree(tasklet) < 1:
+        if isinstance(scope_node, nodes.EntryNode) and self._current_state.in_degree(tasklet) < 1:
             self._current_state.add_nedge(scope_node, tasklet, Memlet())
 
         # Connect output memlets
@@ -754,7 +845,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             access_node = cache[memlet.data]
             self._current_state.add_memlet_path(tasklet, access_node, src_conn=name, memlet=memlet)
 
-            if isinstance(scope_node, nodes.MapEntry):
+            if isinstance(scope_node, nodes.EntryNode):
                 # copy the memlet since we already used it in the memlet path above
                 to_connect[memlet.data] = (access_node, copy.deepcopy(memlet))
                 continue

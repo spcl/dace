@@ -111,8 +111,8 @@ class RecognizeExplicitDataflow(_BodyTransformer):
     indirect (data-dependent) tasklet input/output memlets all lower to
     schedule-tree nodes; WCR-with-indirection, intrinsic-code-with-
     indirection, and nested indirection fall back to interpreter callbacks.
-    ``ConsumeScope`` SDFG lowering (tree_to_sdfg) is not implemented yet —
-    consume programs build correct trees but cannot convert to SDFGs.
+    Consume scopes lower all the way to executable SDFGs (state boundaries
+    *between* consume-scope children are the one unimplemented corner).
     """
     name = 'recognize-explicit-dataflow'
 
