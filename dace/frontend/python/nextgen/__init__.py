@@ -11,6 +11,7 @@ import copy
 from typing import Any, Dict, Optional, Sequence, Tuple
 
 from dace import data, dtypes, symbolic
+from dace.cli.progress import OptionalProgressBar
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import preprocessing
 from dace.frontend.python.nextgen.canonical.passes import default_passes
@@ -81,9 +82,16 @@ def build_schedule_tree(name: str,
                                callback_mapping=dict(callback_mapping or {}),
                                arg_names=list(arg_names or argtypes.keys()))
 
-    # Stage 3: rule-driven lowering through the closed emitter
+    # Stage 3: rule-driven lowering through the closed emitter. Progress
+    # feedback appears only for lengthy parses (threshold- and config-gated);
+    # the statement count is a lower bound (inlined callees also tick).
     state = LoweringState(context, TreeEmitter(root))
-    state.lower_body(program.body)
+    total_statements = sum(1 for node in ast.walk(program) if isinstance(node, ast.stmt))
+    state.progress = OptionalProgressBar(n=total_statements, title=f'Parsing {name}')
+    try:
+        state.lower_body(program.body)
+    finally:
+        state.progress.done()
 
     # Stage 4: verification of the output contract
     verify_tree(root)

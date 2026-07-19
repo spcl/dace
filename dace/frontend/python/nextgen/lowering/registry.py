@@ -28,6 +28,9 @@ class LoweringState:
         self.context = context
         self.emitter = emitter
         self.inference = InferenceService(context)
+        #: Optional progress feedback (dace.cli.progress.OptionalProgressBar),
+        #: ticked once per lowered statement when set.
+        self.progress = None
 
     def lower_body(self, body) -> None:
         """Lower a list of canonical statements into the current scope."""
@@ -66,6 +69,8 @@ def lower_statement(statement: ast.stmt, state: LoweringState) -> None:
         raise CanonicalViolationError(
             f'No lowering rule registered for canonical statement type {type(statement).__name__}',
             state.context.filename, statement)
+    if state.progress is not None:
+        state.progress.next()
     mark = state.emitter.checkpoint()
     saved_bindings = state.context.snapshot()
     try:

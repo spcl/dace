@@ -75,7 +75,11 @@ class CanonicalizationPipeline:
         self.debug = debug
 
     def run(self, tree: ast.FunctionDef, context: PipelineContext) -> ast.FunctionDef:
-        for pass_object in self.passes:
+        # Progress appears only for pathologically long canonicalizations
+        # (threshold- and config-gated; invisible otherwise).
+        from dace.cli.progress import optional_progressbar
+        for pass_object in optional_progressbar(self.passes, title=f'Canonicalizing {context.name}',
+                                                n=len(self.passes)):
             result = pass_object.apply(tree, context)
             tree = result if result is not None else tree
             if self.debug:
