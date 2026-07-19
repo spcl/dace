@@ -1119,12 +1119,17 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             if isinstance(descriptor, PythonClass):
                 pythonclass_names.append(name)
 
+        classic_count = self._classic_callback_count(sdfg)
+        discrepancy = len(callback_nodes) > classic_count
+        self._write_stree_report(statement_nodes, refset_nodes, callback_nodes, pythonclass_names, classic_count,
+                                 discrepancy)
+
         if statement_nodes:
             examples = ', '.join(repr(node.code.as_string) for node in statement_nodes[:3])
             raise RuntimeError(f'Schedule-tree parallel lowering failed for {self.name}: '
                                f'generated {len(statement_nodes)} StatementNode(s); examples: {examples}')
 
-        self._check_callback_discrepancy(sdfg, callback_nodes)
+        self._check_callback_discrepancy(callback_nodes, classic_count, discrepancy)
 
         if refset_nodes:
             if not self._sdfg_contains_reference_descriptors(sdfg):
@@ -1153,7 +1158,15 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                           UserWarning,
                           stacklevel=4)
 
-    def _check_callback_discrepancy(self, sdfg: SDFG, callback_nodes: List['tn.PythonCallbackNode']) -> None:
+    def _classic_callback_count(self, sdfg: SDFG) -> int:
+        """The number of Python callbacks the classic frontend recorded in the
+        generated SDFG (``callback_mapping``, cross-checked against
+        callback-typed symbols)."""
+        callback_symbols = [name for name, stype in sdfg.symbols.items() if isinstance(stype, dtypes.callback)]
+        return max(len(sdfg.callback_mapping), len(callback_symbols))
+
+    def _check_callback_discrepancy(self, callback_nodes: List['tn.PythonCallbackNode'], classic_count: int,
+                                    discrepancy: bool) -> None:
         """
         Compare the classic frontend's Python callbacks against the nextgen
         schedule tree's callback nodes.
@@ -1171,11 +1184,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         ``off`` disables the check.
         """
         mode = Config.get('frontend', 'stree_callback_check')
-        if mode not in ('error', 'warn'):
-            return
-        callback_symbols = [name for name, stype in sdfg.symbols.items() if isinstance(stype, dtypes.callback)]
-        classic_count = max(len(sdfg.callback_mapping), len(callback_symbols))
-        if len(callback_nodes) <= classic_count:
+        if mode not in ('error', 'warn') or not discrepancy:
             return
         reasons = '\n'.join(f'  - {node.reason}' for node in callback_nodes)
         message = (f'Schedule-tree parallel lowering discrepancy for {self.name}: nextgen produced '
@@ -1184,6 +1193,47 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         if mode == 'error':
             raise RuntimeError(message)
         warnings.warn(message, UserWarning, stacklevel=5)
+
+    def _write_stree_report(self, statement_nodes: List['tn.StatementNode'], refset_nodes: List['tn.RefSetNode'],
+                            callback_nodes: List['tn.PythonCallbackNode'], pythonclass_names: List[str],
+                            classic_count: int, discrepancy: bool) -> None:
+        """
+        Append one JSON line describing this parsed program to the gap-report
+        file configured through ``frontend.stree_report`` (no-op when unset).
+
+        Lines are written with a single ``O_APPEND`` write, so concurrent test
+        workers (pytest-xdist) interleave whole records, never partial ones.
+        Aggregate with ``python -m dace.frontend.python.nextgen.coverage
+        report <file>``.
+        """
+        path = Config.get('frontend', 'stree_report')
+        if not path:
+            return
+        import json
+        # Deferred import: the nextgen package imports this module back
+        from dace.frontend.python.nextgen import coverage
+        category_counts: Dict[str, int] = {}
+        for node in callback_nodes:
+            for category in coverage.reason_categories(node.reason):
+                category_counts[category] = category_counts.get(category, 0) + 1
+        record = {
+            'program': self.name,
+            'test': os.environ.get('PYTEST_CURRENT_TEST'),
+            'classic_callbacks': classic_count,
+            'nextgen_nodes': len(callback_nodes),
+            'discrepancy': discrepancy,
+            'reasons': [node.reason for node in callback_nodes],
+            'category_counts': category_counts,
+            'statement_nodes': len(statement_nodes),
+            'refset_warnings': len(refset_nodes),
+            'pythonclass': pythonclass_names,
+        }
+        line = json.dumps(record, default=str) + '\n'
+        descriptor = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
+        try:
+            os.write(descriptor, line.encode('utf-8'))
+        finally:
+            os.close(descriptor)
 
     def _sdfg_contains_reference_descriptors(self, sdfg: SDFG) -> bool:
         return any(

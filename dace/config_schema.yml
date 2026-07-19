@@ -652,6 +652,20 @@ required:
                     warning (useful for triage sessions collecting the full gap
                     picture), and ``off`` disables the check.
 
+            stree_report:
+                type: str
+                title: Schedule-tree lowering gap report path
+                default: ''
+                description: >
+                    When set to a file path, the parallel schedule-tree
+                    lowering check appends one JSON line per parsed program
+                    (program name, owning test, classic/nextgen callback
+                    counts, categorized callback reasons, diagnostic node
+                    counts). Writes are single-line O_APPEND appends, safe
+                    under pytest-xdist. Aggregate the collected lines with
+                    ``python -m dace.frontend.python.nextgen.coverage report
+                    <file>``.
+
             dont_fuse_callbacks:
                 type: bool
                 title: Do not fuse callbacks
