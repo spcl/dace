@@ -679,5 +679,65 @@ def test_refuses_iedge_mediated_rmw():
     assert res is None, (f'PCIA must refuse iedge-mediated RMW; got promotions: {res}')
 
 
+def test_undo_restores_all_arr_nodes_when_state_has_several():
+    """Regression: a speculative promotion that is later reverted must restore EVERY
+    ``arr`` AccessNode it removed, even when one state held more than one.
+
+    The slot-precise rewrite reroutes all of a state's ``arr[c]`` edges onto a single
+    per-state scalar and removes the now-orphaned ``arr`` nodes. The undo used to
+    reconnect that scalar's edges to a single best-guess ``arr`` node found via
+    ``next(...)``; when the state held several removed ``arr`` nodes (cloudsc's species
+    bodies read the same constant slot from multiple AccessNodes), the siblings were
+    left isolated and the SDFG failed validation with "Isolated node". The fix records
+    each endpoint swap precisely and restores every edge to its own origin node.
+
+    Shape: two ``arr[1]`` read nodes + one ``arr[1]`` write node in one body state
+    (slot 1), a sibling ``arr[2]`` read (forces the slot-precise path), and an
+    independent loop-carried ``acc[0]`` reduction so LoopToMap still refuses AFTER the
+    ``arr[1]`` promotion -- which triggers the revert path under test.
+    """
+    sdfg = dace.SDFG('undo_multi_node')
+    sdfg.add_array('arr', [4], dace.float64, transient=False)
+    sdfg.add_array('out', [8], dace.float64, transient=False)
+    sdfg.add_array('acc', [1], dace.float64, transient=False)
+    loop = LoopRegion(label='lp', condition_expr='jl < 8', loop_var='jl',
+                      initialize_expr='jl = 0', update_expr='jl = jl + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    b = loop.add_state(label='body', is_start_block=True)
+
+    # Write arr[1] (from sibling arr[2]) -- no in-body read of arr[1] feeds it, so it is
+    # a privatizable write, not an RMW.
+    ar2 = b.add_read('arr')
+    tw = b.add_tasklet('w', {'a2'}, {'a1'}, 'a1 = a2 + 1.0')
+    aw1 = b.add_access('arr')
+    b.add_edge(ar2, None, tw, 'a2', dace.Memlet(data='arr', subset='2'))
+    b.add_edge(tw, 'a1', aw1, None, dace.Memlet(data='arr', subset='1'))
+
+    # Two SEPARATE arr[1] read nodes in the same state -- the multi-node case.
+    ar1a = b.add_read('arr'); ar1b = b.add_read('arr')
+    t1 = b.add_tasklet('u1', {'a'}, {'o'}, 'o = a * 2.0')
+    t2 = b.add_tasklet('u2', {'a'}, {'o'}, 'o = a * 3.0')
+    o1 = b.add_access('out'); o2 = b.add_access('out')
+    b.add_edge(ar1a, None, t1, 'a', dace.Memlet(data='arr', subset='1'))
+    b.add_edge(ar1b, None, t2, 'a', dace.Memlet(data='arr', subset='1'))
+    b.add_edge(t1, 'o', o1, None, dace.Memlet(data='out', subset='jl'))
+    b.add_edge(t2, 'o', o2, None, dace.Memlet(data='out', subset='jl'))
+
+    # Loop-carried acc reduction: L2M refuses regardless of arr, so the arr promotion is
+    # reverted (the path under test). PCIA itself refuses acc (in-body RMW).
+    ra = b.add_read('acc'); ro = b.add_read('out'); aw = b.add_access('acc')
+    tacc = b.add_tasklet('a', {'p', 'x'}, {'n'}, 'n = p + x')
+    b.add_edge(ra, None, tacc, 'p', dace.Memlet(data='acc', subset='0'))
+    b.add_edge(ro, None, tacc, 'x', dace.Memlet(data='out', subset='jl'))
+    b.add_edge(tacc, 'n', aw, None, dace.Memlet(data='acc', subset='0'))
+
+    PromoteConstantIndexAccess().apply_pass(sdfg, {})
+
+    isolated = [n.data for sd in sdfg.all_sdfgs_recursive() for st in sd.states()
+                for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.degree(n) == 0]
+    assert not isolated, f'reverted promotion left isolated nodes: {isolated}'
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__]))

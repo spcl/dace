@@ -622,6 +622,15 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
             rhs_expr = symbolic.pystr_to_symbolic(rhs)
         except Exception:
             continue
+        # An array-dependent value is a data gather, NOT an induction variable: its
+        # per-iteration value is read from memory, not a closed form of the loop var.
+        # Inlining it would bake the array read into every memlet subset that uses
+        # ``sym`` -- a nested ``Subscript`` codegen can't lower (it emits
+        # ``arr[std::make_tuple(...)]``). The frontend already keeps such indirection
+        # as its own symbol (cloudsc ``LLINDEX1(JL,IORDER(JL,JM))`` -> the interstate
+        # ``iorder_at = IORDER(JL,JM)`` load); leave it a symbol, don't dissolve it.
+        if symbolic.arrays(rhs):
+            continue
         free = {str(s) for s in rhs_expr.free_symbols}
         if sym in free:
             continue  # self-reference -> a recurrence, not a derived symbol

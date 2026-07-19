@@ -97,7 +97,8 @@ class _Promotion:
                  edits: List[Tuple[Memlet, Optional[str], Any]],
                  node_edits: List[Tuple[nodes.AccessNode, str]],
                  introduced_scalar_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
-                 removed_arr_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None):
+                 removed_arr_nodes: Optional[List[Tuple[nodes.AccessNode, Any]]] = None,
+                 endpoint_edits: Optional[List[Tuple[Any, Memlet, str, nodes.AccessNode]]] = None):
         self.sdfg = sdfg
         self.arr_name = arr_name
         self.scalar_name = scalar_name
@@ -106,6 +107,12 @@ class _Promotion:
         self._node_edits = node_edits
         self._introduced_scalar_nodes = introduced_scalar_nodes or []
         self._removed_arr_nodes = removed_arr_nodes or []
+        # Slot-precise endpoint swaps as ``(state, memlet, side, orig_arr_node)``: each rerouted
+        # edge, the side ('src'/'dst') that was moved onto the per-state scalar, and the exact
+        # ``arr`` AccessNode it came from -- so ``undo`` restores each edge to ITS original node
+        # rather than heuristically to "an" arr node (which orphaned sibling nodes in a state
+        # that held more than one ``arr[c]`` access).
+        self._endpoint_edits = endpoint_edits or []
 
     def undo(self):
         """Restore every rewritten access node and memlet, drop the prologue, drop the scalar."""
@@ -119,25 +126,29 @@ class _Promotion:
         for arr_node, state in self._removed_arr_nodes:
             if arr_node not in state.nodes():
                 state.add_node(arr_node)
-        # Drop the new scalar AccessNodes inserted by the multi-slot path. Each was
-        # connected to the arr AccessNode via swapped edges; the memlet-edit undo above
-        # restored the memlet contents, but the scalar AccessNodes themselves are still
-        # in the state and reference the descriptor we are about to drop. Detach them.
+        # Precise endpoint restore: for each edge whose ``arr`` endpoint was moved onto a
+        # per-state scalar, repoint that endpoint back to the SPECIFIC original ``arr``
+        # AccessNode it came from. Identity on the memlet (its data/subset already reverted
+        # above) locates the current edge unambiguously -- and pinning the exact origin node
+        # (not "an" arr node) is what keeps sibling ``arr[c]`` nodes in the same state from
+        # being left isolated.
+        for state, memlet, side, orig_node in self._endpoint_edits:
+            if orig_node not in state.nodes():
+                state.add_node(orig_node)
+            for e in list(state.edges()):
+                if e.data is not memlet:
+                    continue
+                new_src = orig_node if side == 'src' else e.src
+                new_dst = orig_node if side == 'dst' else e.dst
+                state.remove_edge(e)
+                state.add_edge(new_src, e.src_conn, new_dst, e.dst_conn, e.data)
+                break
+        # The per-state scalar AccessNodes are now edge-free; drop them (they reference the
+        # descriptor we are about to remove).
         for scalar_node, state in self._introduced_scalar_nodes:
             if scalar_node in state.nodes():
-                # Re-attach any still-connected edges to the original arr AccessNode.
-                # By the time undo runs, the matching memlets have data=arr_name again
-                # (via the memlet-edit revert above), so the swap target is unambiguous.
-                arr_node = next(
-                    (n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == self.arr_name), None)
-                if arr_node is None:
-                    arr_node = state.add_access(self.arr_name)
                 for e in list(state.in_edges(scalar_node)) + list(state.out_edges(scalar_node)):
-                    is_in = (e.dst is scalar_node)
-                    new_src = arr_node if not is_in else e.src
-                    new_dst = arr_node if is_in else e.dst
                     state.remove_edge(e)
-                    state.add_edge(new_src, e.src_conn, new_dst, e.dst_conn, e.data)
                 state.remove_node(scalar_node)
         # Detach the prologue from the loop body. Its single out-edge re-enters the body's
         # original start block (or a stand-in), which becomes the start block again.
@@ -695,6 +706,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
         node_edits: List[Tuple[nodes.AccessNode, str]] = []
         introduced_scalar_nodes: List[Tuple[nodes.AccessNode, Any]] = []
         removed_arr_nodes: List[Tuple[nodes.AccessNode, Any]] = []
+        endpoint_edits: List[Tuple[Any, Memlet, str, nodes.AccessNode]] = []
         scalar_subset = subsets.Range([(0, 0, 1)])
 
         single_slot = self._arr_accesses_only_at_slot(loop, arr_name, c_subset)
@@ -723,6 +735,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
                             if per_state_scalar is None:
                                 per_state_scalar = state.add_access(scalar_name)
                                 introduced_scalar_nodes.append((per_state_scalar, state))
+                            # Record which arr node this edge's endpoint came from, so undo
+                            # restores THIS edge to THIS node (not a shared best-guess node).
+                            endpoint_edits.append((state, memlet, endpoint, end_node))
                             new_src = per_state_scalar if endpoint == 'src' else edge.src
                             new_dst = per_state_scalar if endpoint == 'dst' else edge.dst
                             state.remove_edge(edge)
@@ -745,4 +760,4 @@ class PromoteConstantIndexAccess(ppl.Pass):
                         removed_arr_nodes.append((node, state))
                         state.remove_node(node)
         return _Promotion(sdfg, arr_name, scalar_name, prologue, edits, node_edits, introduced_scalar_nodes,
-                          removed_arr_nodes)
+                          removed_arr_nodes, endpoint_edits)

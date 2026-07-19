@@ -205,6 +205,28 @@ def test_refuses_extra_non_transient_write():
     assert res is None
 
 
+def test_refuses_double_buffer_ring_carry():
+    """The CloudSC k-caching double-buffer: a 2-slot ring whose carry is read and written at slots
+    toggled per level (``ZP[(i+1)%2] = ZP[i%2] + A[i]``). A ring's modular slot is not the linear
+    ``out[i+k]`` offset a Scan lifts -- it is a genuine sequential recurrence over reused storage --
+    so the matcher must refuse (companion to the LoopToReduce refusal of the same gpu_scc flux shape;
+    a Scan here would drop / OOB the per-level values)."""
+
+    @dace.program
+    def ring(A: dace.float64[N], OUT: dace.float64[N]):
+        ZP = np.zeros((2, ))
+        ZP[0] = A[0]
+        for i in range(N - 1):
+            c = ZP[i % 2] + A[i]
+            ZP[(i + 1) % 2] = c
+            OUT[i] = c
+
+    sdfg = ring.to_sdfg(simplify=True)
+    res = LoopToScan().apply_pass(sdfg, {})
+    assert res is None, f"double-buffer ring must not lift to Scan; got {res}"
+    assert _num_scan_nodes(sdfg) == 0
+
+
 def test_tsvc_s111_inclusive_sum():
     """TSVC s111 shape: ``a[i] = a[i-1] + b[i]``. Same scan as v1 but written with the
     carry read at ``i-1`` and the write at ``i`` (vs ``i+1`` / ``i``)."""

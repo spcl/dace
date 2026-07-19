@@ -587,10 +587,31 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         # (surfaced once the pipeline stamps out intra-iteration scalar intermediates and inlines
         # NestedSDFGs, so a non-transient writeback is always a visible AccessNode here). Only the
         # accumulator (and its loop-local transient staging copy) may be written.
-        written = {an.data for st in loop.all_states() for an in st.data_nodes() if st.in_degree(an) > 0}
+        # A pure reduction writes ONLY the accumulator; any OTHER write is a per-iteration output, and a
+        # single ``Reduce`` (one final value) would drop the running sequence -- leave it for LoopToScan.
+        # Refuse when the body also:
+        #   (a) writes any live (non-transient) array -- the scalarised prefix ``sum = sum + a[i];
+        #       b[i] = sum`` and the writeback ``a[i+1] = c`` (881e55d79); or
+        #   (b) stamps the ACCUMULATOR itself into another container at a MOVING slot -- the hole
+        #       881e55d79 missed: gpu_scc's vertical-flux carry written into the *transient* double-buffer
+        #       ``ZPFPLSX[jk_ip1]`` (slot toggled per level by a loop-iedge symbol), which the plain
+        #       non-transient guard let through. The tell is the running carry (``accum`` /
+        #       ``carried_accum`` AccessNode) flowing to a moving slot; a staging transient written from a
+        #       TASKLET (not the accumulator) is loop-local and stays allowed, so strided reductions that
+        #       stage into a moving-slot temp are not affected.
         allowed = {accum} | ({carried_accum} if carried_accum is not None else set())
-        if any(w not in allowed and not sdfg.arrays[w].transient for w in written):
-            return None
+        for st in loop.all_states():
+            for an in st.data_nodes():
+                if st.in_degree(an) == 0 or an.data in allowed:
+                    continue
+                if not sdfg.arrays[an.data].transient:
+                    return None
+                for e in st.in_edges(an):
+                    src, sub = e.src, (e.data.subset if e.data is not None else None)
+                    if (isinstance(src, nodes.AccessNode) and src.data in allowed and sub is not None
+                            and (_uses(sub, loop_var_sym)
+                                 or any(str(fs) in loop_iedge_assignees for fs in sub.free_symbols))):
+                        return None
 
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, stride)
         if expanded is None:

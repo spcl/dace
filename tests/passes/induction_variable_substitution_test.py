@@ -564,6 +564,77 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
         "outer k-init must not be inlined/altered"
 
 
+# ---------------------------------------------------------------------------
+# Array-dependent symbol is NOT an induction variable
+#
+# An interstate load ``idx := A[jl, jm]`` (a data gather) must NOT be inlined
+# into the loop body: its per-iteration value is read from memory, not a closed
+# form of the loop variable. Inlining it bakes a nested array subscript
+# ``B[jl, A[jl, jm]]`` into the memlet subset -- a ``Subscript`` the codegen
+# lowers to an invalid ``A[std::make_tuple(...)]``. Regression for the cloudsc
+# ``LLINDEX1(JL, IORDER(JL, JM)) = .FALSE.`` indirect scatter.
+# ---------------------------------------------------------------------------
+
+
+def _subset_reads_array(sdfg: dace.SDFG) -> bool:
+    """True iff any memlet subset embeds a data-array access (a nested Subscript)."""
+    return any(e.data is not None and e.data.subset is not None and symbolic.arrays(str(e.data.subset))
+               for state in sdfg.all_states() for e in state.edges())
+
+
+@dace.program
+def _indirect_scatter(A: dace.int64[N, 5], B: dace.float64[N, 5]):
+    for jm in range(5):        # outer -> loop-invariant to the inner loop (as cloudsc JM)
+        for jl in range(N):
+            idx = A[jl, jm]    # a data gather promoted to an interstate load
+            B[jl, idx] = 1.0   # idx used as a subset index -- must STAY a symbol
+
+
+def test_array_load_not_inlined_as_iv_program():
+    """Frontend shape: ``idx = A[jl, jm]`` inside a loop must not be dissolved into the
+    ``B[jl, idx]`` subset by IV substitution -- no array-dependent symbol is an IV."""
+    sdfg = _prep_and_run(_indirect_scatter)
+    assert not _subset_reads_array(sdfg), \
+        "IV substitution inlined an array load into a memlet subset (nested Subscript)"
+    # Codegen must succeed with no un-lowerable ``std::make_tuple`` subscript.
+    assert 'make_tuple' not in '\n'.join(c.clean_code for c in sdfg.generate_code())
+
+    A = np.zeros((6, 5), np.int64)  # every gather index -> column 0
+    B = np.zeros((6, 5), np.float64)
+    sdfg(A=A, B=B, N=6)
+    expected = np.zeros((6, 5))
+    expected[:, 0] = 1.0
+    assert np.array_equal(B, expected)
+
+
+def test_array_load_not_inlined_as_iv_handbuilt():
+    """The exact post-promotion shape -- an interstate load ``idx := A[jl, jm]`` feeding a
+    ``B[jl, idx]`` memlet -- IV substitution must leave alone (direct structural regression)."""
+    sdfg = dace.SDFG('indirect_gather_iv')
+    sdfg.add_array('A', [8, 5], dace.int64)
+    sdfg.add_array('B', [8, 5], dace.float64)
+    sdfg.add_symbol('jm', dace.int64)
+    sdfg.add_symbol('idx', dace.int64)
+    loop = LoopRegion('jlloop', condition_expr='jl < 8', loop_var='jl',
+                      initialize_expr='jl = 0', update_expr='jl = jl + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    s_def = loop.add_state('s_def', is_start_block=True)
+    s_use = loop.add_state('s_use')
+    loop.add_edge(s_def, s_use, dace.InterstateEdge(assignments={'idx': 'A[jl, jm]'}))
+    t = s_use.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    b = s_use.add_access('B')
+    s_use.add_edge(t, 'o', b, None, dace.Memlet('B[jl, idx]'))
+
+    InductionVariableSubstitution().apply_pass(sdfg, {})
+
+    # ``idx`` stays a plain symbol in the subset; the load stays on the interstate edge.
+    b_subsets = [str(e.data.subset) for st in loop.all_states() for e in st.edges()
+                 if e.data is not None and e.data.data == 'B']
+    assert b_subsets == ['jl, idx'], b_subsets
+    assert any('idx' in (e.data.assignments or {}) for e in sdfg.all_interstate_edges()), \
+        "the interstate load 'idx := A[jl, jm]' must survive -- it is not an IV"
+
+
 if __name__ == "__main__":
     test_arithmetic_iv_scalar_slot_collapses_to_closed_form()
     test_geometric_iv_scalar_slot_collapses_to_closed_form()
@@ -577,3 +648,5 @@ if __name__ == "__main__":
     test_iedge_iv_top_symbolic_step()
     test_iedge_iv_bottom_literal_step()
     test_iedge_iv_refuses_loop_variant_step()
+    test_array_load_not_inlined_as_iv_program()
+    test_array_load_not_inlined_as_iv_handbuilt()
