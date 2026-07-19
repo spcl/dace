@@ -14,6 +14,15 @@ import dace
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 
 
+@pytest.fixture(autouse=True)
+def _isolate_stree_config(monkeypatch):
+    """Environment variables override ``set_temporary`` in dace's config
+    (e.g. a triage run exporting DACE_frontend_stree_callback_check=warn);
+    strip them so these tests control the configuration."""
+    monkeypatch.delenv('DACE_frontend_stree_callback_check', raising=False)
+    monkeypatch.delenv('DACE_frontend_stree_report', raising=False)
+
+
 def dace_inhibitor(f):
     return f
 
@@ -96,6 +105,9 @@ def test_discrepancy_off_mode(monkeypatch):
 
 
 if __name__ == '__main__':
+    import os
+    os.environ.pop('DACE_frontend_stree_callback_check', None)
+    os.environ.pop('DACE_frontend_stree_report', None)
     test_clean_program_passes()
     test_intended_callback_passes()
     test_discrepancy_raises(pytest.MonkeyPatch())
