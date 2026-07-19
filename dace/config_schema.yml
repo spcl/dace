@@ -637,6 +637,21 @@ required:
                     folding) on the input code. Set to zero to disable preprocessing
                     optimizations, set to -1 to run until the code has not changed.
 
+            stree_callback_check:
+                type: str
+                title: Schedule-tree callback discrepancy check
+                default: error
+                description: >
+                    Controls the parallel schedule-tree lowering check that
+                    compares the nextgen frontend's Python callback nodes
+                    against the classic frontend's callbacks (the ground truth
+                    for intent, since callback auto-detection happens in shared
+                    preprocessing). A nextgen callback-node count exceeding the
+                    classic callback count indicates a nextgen lowering gap.
+                    ``error`` (default) raises a RuntimeError, ``warn`` emits a
+                    warning (useful for triage sessions collecting the full gap
+                    picture), and ``off`` disables the check.
+
             dont_fuse_callbacks:
                 type: bool
                 title: Do not fuse callbacks

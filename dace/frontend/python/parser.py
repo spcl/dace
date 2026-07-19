@@ -1104,6 +1104,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
 
         statement_nodes: List[tn.StatementNode] = []
         refset_nodes: List[tn.RefSetNode] = []
+        callback_nodes: List[tn.PythonCallbackNode] = []
         pythonclass_names: List[str] = []
 
         for node in stree.preorder_traversal():
@@ -1111,6 +1112,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                 statement_nodes.append(node)
             elif isinstance(node, tn.RefSetNode):
                 refset_nodes.append(node)
+            elif isinstance(node, tn.PythonCallbackNode):
+                callback_nodes.append(node)
 
         for name, descriptor in stree.containers.items():
             if isinstance(descriptor, PythonClass):
@@ -1120,6 +1123,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             examples = ', '.join(repr(node.code.as_string) for node in statement_nodes[:3])
             raise RuntimeError(f'Schedule-tree parallel lowering failed for {self.name}: '
                                f'generated {len(statement_nodes)} StatementNode(s); examples: {examples}')
+
+        self._check_callback_discrepancy(sdfg, callback_nodes)
 
         if refset_nodes:
             if not self._sdfg_contains_reference_descriptors(sdfg):
@@ -1147,6 +1152,38 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
             warnings.warn(f'Schedule-tree parallel lowering warning for {self.name}: PythonClass container "{name}"',
                           UserWarning,
                           stacklevel=4)
+
+    def _check_callback_discrepancy(self, sdfg: SDFG, callback_nodes: List['tn.PythonCallbackNode']) -> None:
+        """
+        Compare the classic frontend's Python callbacks against the nextgen
+        schedule tree's callback nodes.
+
+        The classic frontend is the ground truth for *intent*: preprocessing
+        (where callbacks are auto-detected) is shared by both frontends, and
+        classic records its callbacks in the generated SDFG
+        (``sdfg.callback_mapping`` and callback-typed symbols). Nextgen
+        batching only merges adjacent callbacks, so a nextgen callback-node
+        count exceeding classic's callback-site count proves excess
+        interpreter fallbacks — a nextgen lowering gap by definition.
+
+        Behavior is controlled by the ``frontend.stree_callback_check``
+        configuration entry: ``error`` (default) raises, ``warn`` warns, and
+        ``off`` disables the check.
+        """
+        mode = Config.get('frontend', 'stree_callback_check')
+        if mode not in ('error', 'warn'):
+            return
+        callback_symbols = [name for name, stype in sdfg.symbols.items() if isinstance(stype, dtypes.callback)]
+        classic_count = max(len(sdfg.callback_mapping), len(callback_symbols))
+        if len(callback_nodes) <= classic_count:
+            return
+        reasons = '\n'.join(f'  - {node.reason}' for node in callback_nodes)
+        message = (f'Schedule-tree parallel lowering discrepancy for {self.name}: nextgen produced '
+                   f'{len(callback_nodes)} Python callback node(s) but the classic frontend uses '
+                   f'{classic_count} callback(s). Callback reasons:\n{reasons}')
+        if mode == 'error':
+            raise RuntimeError(message)
+        warnings.warn(message, UserWarning, stacklevel=5)
 
     def _sdfg_contains_reference_descriptors(self, sdfg: SDFG) -> bool:
         return any(
