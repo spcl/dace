@@ -346,7 +346,11 @@ class InterstateEdge(object):
 
         if replace_keys:
             for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+                # Guard as SDFG.replace_dict does: a non-name replacement (e.g. a symbolic
+                # expression, or a Symbol carrying assumptions that maps a name to itself)
+                # must not become an assignment key -- only rename when new_name is a valid name.
+                if validate_name(new_name):
+                    _replace_dict_keys(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
             vast = ast.parse(v)
