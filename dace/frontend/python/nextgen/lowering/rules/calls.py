@@ -162,9 +162,38 @@ def _prepare_callee(call: ast.Call, callee: Any,
         parameter_bindings[reference_name] = container
 
     # Lowering mutates the body (early-return restructuring, annotation
-    # hints), so every call site works on its own copy.
-    body = copy.deepcopy(parse.canonical_body)
+    # hints), so every call site works on its own copy — but objects embedded
+    # by preprocessing (resolved dace programs, SDFGs, arbitrary constants)
+    # must keep their IDENTITY across copies: resolution, convertibility
+    # checks, and the cache key itself are identity-based, and deep-copying a
+    # DaceProgram would clone its entire global namespace.
+    memo: Dict[int, Any] = {}
+    _seed_embedded_objects(parse.canonical_body, memo)
+    body = copy.deepcopy(parse.canonical_body, memo)
     return body, parameter_bindings, parse.program_globals, argument_labels
+
+
+def _seed_embedded_objects(statements: List[ast.stmt], memo: Dict[int, Any]) -> None:
+    """Pre-map every non-literal ``ast.Constant`` value (an object embedded by
+    preprocessing) to itself in a deepcopy memo, so copies share the object.
+    Canonical leaf markers hide their contents from ``ast.walk``
+    (``_fields = ()``), so their statement payloads walk explicitly."""
+    from dace.frontend.python.nextgen.canonical import cpa
+    from dace.frontend.python.nextgen.semantics.inference import is_literal_constant
+    for statement in statements:
+        for node in ast.walk(statement):
+            if isinstance(node, ast.Constant) and not is_literal_constant(node.value):
+                memo[id(node.value)] = node.value
+            if isinstance(node, cpa.OpaqueStmt):
+                _seed_embedded_objects(node.originals, memo)
+            elif isinstance(node, cpa.ExplicitTasklet):
+                _seed_embedded_objects(node.statements, memo)
+                if node.original is not None:
+                    _seed_embedded_objects([node.original], memo)
+            elif isinstance(node, cpa.ExplicitConsume):
+                _seed_embedded_objects(node.statements, memo)
+                if node.original is not None:
+                    _seed_embedded_objects([node.original], memo)
 
 
 def _map_arguments(

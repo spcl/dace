@@ -25,9 +25,10 @@ preserving the per-site callback fallback).
 """
 import ast
 import threading
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Hashable, List
+from types import SimpleNamespace
+from typing import Any, Callable, Dict, Hashable, Iterator, List, Set, Tuple
 
 
 @dataclass
@@ -66,3 +67,126 @@ class CalleeParseCache:
             raise
         future.set_result(result)
         return result
+
+
+def warm_nested_parses(body: List[ast.stmt], context) -> None:
+    """
+    Speculatively pre-parse nested ``@dace.program`` callees of a canonical
+    program body, in parallel, before sequential lowering begins.
+
+    Call sites whose arguments are statically resolvable against the initial
+    binding environment (program arguments, closure arrays, literals) get
+    their exact specialization key computed through the same
+    ``_map_arguments`` code path lowering uses; anything else is skipped and
+    parses inline on demand. Speculation is sound by construction: a
+    mismatched guess is only a cache miss, never a wrong reuse, because
+    lowering always recomputes the authoritative key.
+
+    Unique callees parse in a thread pool (with a progress bar for lengthy
+    parses, matching the old frontend's ``resolve_function_calls``); each
+    worker recursively warms ITS callee's own nested calls depth-first in the
+    same thread — bottom-up ordering without nested executor submission
+    (which could deadlock a saturated pool). Workers touch only their own
+    inputs and the (thread-safe) shared cache; the caller's context is read,
+    never written. Parse failures stay cached and surface per call site as
+    callback fallbacks during lowering.
+
+    :param body: The canonical (post-Stage-1) statement list.
+    :param context: The program's semantic context
+                    (:class:`~dace.frontend.python.nextgen.semantics.context.ProgramContext`);
+                    its ``parse_cache`` receives the warmed entries.
+    """
+    from dace.cli.progress import optional_progressbar
+    tasks = _collect_warm_tasks(body, context, visited=set())
+    if not tasks:
+        return
+    if len(tasks) == 1:
+        _run_warm_task(context.parse_cache, *tasks[0])
+        return
+    with ThreadPoolExecutor() as pool:
+        futures = [pool.submit(_run_warm_task, context.parse_cache, key, thunk) for key, thunk in tasks]
+        for _ in optional_progressbar(as_completed(futures), title='Parsing nested DaCe functions', n=len(futures)):
+            pass
+
+
+def _run_warm_task(cache: CalleeParseCache, key: Hashable, thunk: Callable[[], CalleeParse]) -> None:
+    try:
+        cache.get_or_parse(key, thunk)
+    except Exception:
+        pass  # Cached; the call site falls back to a callback during lowering
+
+
+def _collect_warm_tasks(body: List[ast.stmt], context,
+                        visited: Set[int]) -> List[Tuple[Hashable, Callable[[], CalleeParse]]]:
+    """
+    Warm tasks (cache key + parse thunk) for the statically-resolvable
+    ``@dace.program`` call sites of a canonical body, deduplicated by key.
+    ``visited`` carries the callee functions already on the warm path
+    (recursion guard, mirroring the lowering-time ``inline_stack`` check).
+    """
+    # Deferred imports: this module must stay import-light (the semantic
+    # context imports it), and the rules package imports the semantic layer.
+    from dace.frontend.python.nextgen.lowering.rules import calls
+    from dace.frontend.python.nextgen.semantics.inference import InferenceService
+
+    state = SimpleNamespace(context=context, inference=InferenceService(context))
+    tasks: List[Tuple[Hashable, Callable[[], CalleeParse]]] = []
+    seen: Set[Hashable] = set()
+    for call, callee in _dace_program_calls(body, context):
+        if id(callee.f) in visited:
+            continue
+        try:
+            argtypes, callee_globals, _, _, injected_defaults, spec_key = calls._map_arguments(call, callee, state)
+        except Exception:
+            continue  # Not statically resolvable here; parses inline on demand
+        key = (id(callee), callee.resolve_functions, id(callee.methodobj), spec_key)
+        if key in seen:
+            continue
+        seen.add(key)
+        tasks.append((key,
+                      _warm_thunk(callee, argtypes, callee_globals, injected_defaults, context.parse_cache,
+                                  visited | {id(callee.f)})))
+    return tasks
+
+
+def _warm_thunk(callee: Any, argtypes: Dict[str, Any], callee_globals: Dict[str, Any], injected_defaults: set,
+                cache: CalleeParseCache, visited: Set[int]) -> Callable[[], CalleeParse]:
+    """
+    A parse thunk that, after parsing its callee, synchronously warms the
+    callee's own nested calls (depth-first, in the same worker thread) against
+    the shared cache.
+    """
+
+    def parse() -> CalleeParse:
+        from dace.frontend.python.nextgen.lowering.rules import calls
+        from dace.frontend.python.nextgen.semantics.context import ProgramContext
+        result = calls._parse_callee(callee, argtypes, callee_globals, injected_defaults)
+        child_context = ProgramContext(callee.name, result.filename, argtypes, result.program_globals, {})
+        for child_key, child_thunk in _collect_warm_tasks(result.canonical_body, child_context, visited):
+            _run_warm_task(cache, child_key, child_thunk)
+        return result
+
+    return parse
+
+
+def _dace_program_calls(body: List[ast.stmt], context) -> Iterator[Tuple[ast.Call, Any]]:
+    """
+    The ``@dace.program`` call sites of a canonical body: callees embedded by
+    preprocessing as constant nodes, or names resolving through the program
+    globals. Opaque/tasklet leaves hide their contents (``_fields = ()``), so
+    the walk never descends into interpreter-bound or tasklet code.
+    """
+    from dace.frontend.python.parser import DaceProgram  # Deferred to avoid an import cycle
+    for statement in body:
+        for node in ast.walk(statement):
+            if not isinstance(node, ast.Call):
+                continue
+            callee = None
+            if isinstance(node.func, ast.Constant) and isinstance(node.func.value, DaceProgram):
+                callee = node.func.value
+            elif isinstance(node.func, ast.Name):
+                value = context.globals.get(node.func.id)
+                if isinstance(value, DaceProgram):
+                    callee = value
+            if callee is not None:
+                yield node, callee

@@ -17,6 +17,7 @@ from dace.frontend.python.nextgen.canonical.passes import default_passes
 from dace.frontend.python.nextgen.common import (CanonicalViolationError, FrontendError, TreeVerificationError,
                                                  UnsupportedFeatureError)
 from dace.frontend.python.nextgen.lowering.emitter import TreeEmitter
+from dace.frontend.python.nextgen.lowering.parse_cache import warm_nested_parses
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.pipeline import CanonicalizationPipeline, PipelineContext
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
@@ -67,6 +68,10 @@ def build_schedule_tree(name: str,
     for reference_name, (qualified_name, descriptor) in (closure_arrays or {}).items():
         container = context.register_closure_array(reference_name, qualified_name, descriptor)
         context.bind(reference_name, container)
+
+    # Stage 2.5: speculatively pre-parse nested @dace.program callees in
+    # parallel (bottom-up), so sequential lowering hits the parse cache.
+    warm_nested_parses(program.body, context)
 
     root = tn.ScheduleTreeRoot(name=name,
                                children=[],
