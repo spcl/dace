@@ -60,6 +60,17 @@ class MpiPackUnpack(ppl.Pass):
         from dace.libraries.mpi.utils import is_access_contiguous
         return is_access_contiguous(memlet, sdfg.arrays[memlet.data])
 
+    def _require_access_node(self, endpoint, node) -> None:
+        # The pack/unpack map reuses the buffer's boundary AccessNode. A buffer produced or consumed
+        # directly by a scope (a MapExit/MapEntry) means MPI inside a parallel map -- unsupported: pack
+        # or unpack into a contiguous buffer OUTSIDE the map (before the entry / after the exit) instead.
+        if not isinstance(endpoint, dace.nodes.AccessNode):
+            raise NotImplementedError(
+                f"MpiPackUnpack: the buffer of MPI node '{node.name}' is directly a "
+                f"{type(endpoint).__name__}, not an AccessNode -- an MPI transfer inside a parallel map is "
+                f"not supported. Pack/unpack into a contiguous buffer outside the map (before the map entry "
+                f"or after the map exit), then send/recv that. Add in-map support only if a real case needs it.")
+
     def _add_packed(self, sdfg: dace.SDFG, arr: str, subset) -> str:
         desc = sdfg.arrays[arr]
         name = f"packed_{arr}_{self._counter}"
@@ -114,6 +125,7 @@ class MpiPackUnpack(ppl.Pass):
         self._guard_shuffle(arr)
         if self._contiguous(sdfg, edge.data):
             return 0
+        self._require_access_node(src, node)
         packed = self._add_packed(sdfg, arr, subset)
         state.remove_edge(edge)  # free the source node, then feed it into the pack instead of the send
         pw = self._copy(state, arr, subset, packed, pack=True, arr_node=src)
@@ -128,6 +140,7 @@ class MpiPackUnpack(ppl.Pass):
         self._guard_shuffle(arr)
         if self._contiguous(sdfg, edge.data):
             return 0
+        self._require_access_node(dst, node)
         packed = self._add_packed(sdfg, arr, subset)
         state.remove_edge(edge)
         pnode = state.add_access(packed)
@@ -143,6 +156,7 @@ class MpiPackUnpack(ppl.Pass):
         self._guard_shuffle(arr)
         if self._contiguous(sdfg, edge.data):
             return 0
+        self._require_access_node(dst, node)
         req = self._request_array(state, node)
         wait_state, _ = self._find_wait(sdfg, req)
         packed = self._add_packed(sdfg, arr, subset)

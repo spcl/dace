@@ -69,6 +69,24 @@ def test_shuffled_buffer_refused():
         MpiPackUnpack().apply_pass(sdfg, {})
 
 
+def test_map_produced_buffer_refused():
+    """A send buffer produced directly by a map (MapExit), not an AccessNode, is refused (MPI-in-map YAGNI)."""
+    sdfg = dace.SDFG("mpu_map_send")
+    sdfg.add_array("A", [8, 8], dace.float64)
+    sdfg.add_array("dest", [1], dace.dtypes.int32)
+    sdfg.add_array("tag", [1], dace.dtypes.int32)
+    st = sdfg.add_state("s", is_start_block=True)
+    snd = Send("send")
+    st.add_node(snd)
+    me, mx = st.add_map("m", {"i": "0:8"})
+    tsk = st.add_tasklet("t", {}, {"__o"}, "__o = 0.0")
+    st.add_edge(me, None, tsk, None, Memlet())
+    # MapExit feeds the Send buffer directly (a strided column) -> src is not an AccessNode.
+    st.add_memlet_path(tsk, mx, snd, src_conn="__o", dst_conn="_buffer", memlet=Memlet.simple("A", "0:8, 2:3"))
+    with pytest.raises(NotImplementedError):
+        MpiPackUnpack().apply_pass(sdfg, {})
+
+
 def test_unpack_noncontiguous_recv():
     """A strided recv buffer gets a packed transient + an unpack map; the Recv writes the packed transient."""
     sdfg = dace.SDFG("mpu_recv")
@@ -93,5 +111,6 @@ if __name__ == "__main__":
     test_pack_noncontiguous_send()
     test_contiguous_send_untouched()
     test_shuffled_buffer_refused()
+    test_map_produced_buffer_refused()
     test_unpack_noncontiguous_recv()
     print("mpi_pack_unpack offline tests PASS")

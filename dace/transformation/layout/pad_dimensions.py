@@ -61,10 +61,14 @@ class PadDimensions(ppl.Pass):
                 for inner in inner_names:
                     self._grow_recursive(node.sdfg, inner, pads)
 
-    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List]:
+        # Record each array's pre-pad shape so a following PadZeroFill knows the live extent (the boundary
+        # between real and pad cells) and can refuse to zero-fill an array that was never grown.
+        originals: Dict[str, List] = {}
         for arr_name, pads in self._pad_map.items():
+            originals[arr_name] = list(sdfg.arrays[arr_name].shape)
             self._grow_recursive(sdfg, arr_name, pads)
-        return 0
+        return originals
 
 
 @dataclass
@@ -75,10 +79,17 @@ class PadZeroFill(ppl.Pass):
     axis is refused -- ``0`` is not its identity, so zero-fill would silently miscompile.
 
     Takes the same ``pad_map`` as :class:`PadDimensions` (``{array: [p_0, .., p_{d-1}]}``); run it right after.
+    Precondition: :class:`PadDimensions` must have grown the arrays first. This pass needs its result -- the
+    pre-pad shapes -- to locate the dead pad cells; zeroing ``A[extent-p:extent]`` off the *current* shape
+    would wipe live data if the array was never grown, so an absent record (or a shape that does not match
+    ``original + pad``) is a hard error rather than a silent miscompile.
     """
 
     def __init__(self, pad_map: Dict[str, List[int]]):
         self._pad_map = pad_map
+
+    def depends_on(self):
+        return [PadDimensions]
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.States | ppl.Modifies.AccessNodes | ppl.Modifies.Edges | ppl.Modifies.Memlets
@@ -87,19 +98,32 @@ class PadZeroFill(ppl.Pass):
         return False
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results: Dict[str, Any]) -> int:
+        if "PadDimensions" not in pipeline_results:
+            raise ValueError(
+                "PadZeroFill must run after PadDimensions: it needs the pre-pad shapes to know which cells "
+                "are dead. Run both in a Pipeline, or pass PadDimensions' result as "
+                "pipeline_results={'PadDimensions': {array: original_shape}}. Zeroing without it would wipe "
+                "live data if the array was never grown.")
+        originals = pipeline_results["PadDimensions"]
         self._refuse_nonsum_reductions(sdfg)
         init = None
         for arr, pads in self._pad_map.items():
             desc = sdfg.arrays[arr]
             if len(pads) != len(desc.shape):
                 raise ValueError(f"PadZeroFill: pad {pads} length != rank {len(desc.shape)} of '{arr}'")
-            new_shape = list(desc.shape)
+            if arr not in originals:
+                raise ValueError(f"PadZeroFill: '{arr}' was not grown by PadDimensions; refusing to zero-fill "
+                                 f"(the pad slab would overlap live data).")
+            orig = originals[arr]
             for dim, p in enumerate(pads):
                 if p == 0:
                     continue
+                if (desc.shape[dim] - orig[dim] - p) != 0:
+                    raise ValueError(f"PadZeroFill: '{arr}' dim {dim} extent {desc.shape[dim]} != original "
+                                     f"{orig[dim]} + pad {p}; the shape was not grown by this pad_map.")
                 if init is None:
                     init = sdfg.add_state_before(sdfg.start_state, "pad_zero_fill")
-                self._zero_slab(init, arr, new_shape, dim, new_shape[dim] - p)
+                self._zero_slab(init, arr, list(desc.shape), dim, orig[dim])
         return 0
 
     def _zero_slab(self, state, arr: str, new_shape: List, dim: int, old_extent) -> None:

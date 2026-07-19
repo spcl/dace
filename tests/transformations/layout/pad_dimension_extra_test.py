@@ -216,7 +216,7 @@ def test_pad_length_mismatch_raises():
 
 
 def test_pass_metadata_and_return_value():
-    """The pass reports Descriptors-only modification, never re-applies, and returns 0."""
+    """The pass reports Descriptors-only modification, never re-applies, and returns the pre-pad shapes."""
     empty = PadDimensions(pad_map={})
     assert empty.modifies() == ppl.Modifies.Descriptors
     assert empty.should_reapply(ppl.Modifies.Descriptors) is False
@@ -224,7 +224,9 @@ def test_pass_metadata_and_return_value():
 
     sdfg = dace.SDFG("return_pad")
     sdfg.add_array("Q", [2], dace.float64)
-    assert PadDimensions(pad_map={"Q": [1]}).apply_pass(sdfg, {}) == 0
+    # The record is the live (pre-pad) shape, consumed by PadZeroFill to locate the dead cells.
+    originals = PadDimensions(pad_map={"Q": [1]}).apply_pass(sdfg, {})
+    assert [str(s) for s in originals["Q"]] == ["2"]
     assert [str(s) for s in sdfg.arrays["Q"].shape] == ["3"]
 
 
