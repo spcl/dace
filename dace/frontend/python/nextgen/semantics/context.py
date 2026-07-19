@@ -17,7 +17,7 @@ from dace.sdfg.sdfg import NestedDict
 from dace.frontend.python.nextgen.common import FrontendError
 from dace.frontend.python.nextgen.lowering.parse_cache import CalleeParseCache
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
-from dace.frontend.python.schedule_tree import structure_support
+from dace.frontend.python.nextgen.semantics import structures as structure_support
 
 
 @dataclass

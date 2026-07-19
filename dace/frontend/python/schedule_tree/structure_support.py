@@ -9,49 +9,17 @@ callers migrate to this boundary.
 from __future__ import annotations
 
 import ast
-import copy
 import inspect
-from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, Optional, Sequence
 
 from dace import data, dtypes
 from dace.data.pydata import PythonClass, PythonList, PythonTuple
 
-
-def clone_descriptor(descriptor: data.Data) -> data.Data:
-    return copy.deepcopy(descriptor)
-
-
-def structure_member_path(base_path: str, member_name: str) -> str:
-    return f'{base_path}.{member_name}'
-
-
-@dataclass(frozen=True)
-class StructureMemberAccess:
-    data_name: str
-    descriptor: data.Data
-
-
-def descriptor_members(descriptor: data.Data) -> Optional[Mapping[str, data.Data]]:
-    if hasattr(descriptor, 'members'):
-        return descriptor.members
-    stype = getattr(descriptor, 'stype', None)
-    if stype is not None and hasattr(stype, 'members'):
-        return stype.members
-    return None
-
-
-def supports_member_access(descriptor: data.Data) -> bool:
-    return descriptor_members(descriptor) is not None
-
-
-def member_descriptor(descriptor: data.Data, member_name: str) -> Optional[data.Data]:
-    members = descriptor_members(descriptor)
-    if members is None or member_name not in members:
-        return None
-    result = clone_descriptor(members[member_name])
-    result.transient = descriptor.transient
-    return result
+# Canonical implementations live in the next-generation frontend; re-exported
+# here for the legacy frontend until its removal.
+from dace.frontend.python.nextgen.semantics.structures import (  # noqa: F401
+    StructureMemberAccess, clone_descriptor, descriptor_members, member_descriptor, resolve_member_access,
+    structure_member_path, supports_member_access)
 
 
 def nested_member_descriptor(descriptor: data.Data, member_names: Sequence[str]) -> Optional[data.Data]:
@@ -61,13 +29,6 @@ def nested_member_descriptor(descriptor: data.Data, member_names: Sequence[str])
         if current is None:
             return None
     return current
-
-
-def resolve_member_access(base_name: str, descriptor: data.Data, member_name: str) -> Optional[StructureMemberAccess]:
-    member = member_descriptor(descriptor, member_name)
-    if member is None:
-        return None
-    return StructureMemberAccess(data_name=structure_member_path(base_name, member_name), descriptor=member)
 
 
 def ensure_nested_member_descriptor(descriptor: data.Data, member_names: Sequence[str],

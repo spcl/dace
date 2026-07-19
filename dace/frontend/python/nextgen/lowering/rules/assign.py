@@ -35,7 +35,7 @@ from dace import data, dtypes, subsets
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
-from dace.frontend.python.schedule_tree import structure_support
+from dace.frontend.python.nextgen.semantics import structures as structure_support
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
 from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access

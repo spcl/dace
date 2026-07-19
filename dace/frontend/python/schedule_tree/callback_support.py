@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import ast
 import inspect
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Set, Tuple
 
 from dace import data
 from dace.properties import CodeBlock
@@ -30,94 +30,9 @@ from dace.frontend.python import astutils
 from dace.frontend.python.schedule_tree.callable_support import CallableResolver
 from dace.frontend.python.schedule_tree.static_evaluation import UNRESOLVED, try_resolve_static_value
 
-CallbackBody = Union[ast.AST, Sequence[ast.stmt]]
-
-
-class CallbackOutliner:
-    """Build callback scaffolding and basic name-flow metadata.
-
-    The helper accepts either a single AST node or a list of statements. This
-    lets the current frontend keep wrapping individual callback statements while
-    also providing an API that can later outline larger statement groups.
-    """
-
-    @staticmethod
-    def analyze_name_flow(body: CallbackBody) -> Tuple[set[str], set[str]]:
-        """Return ``(load_names, store_names)`` for a callback body."""
-        inputs: set[str] = set()
-        outputs: set[str] = set()
-        for node in CallbackOutliner._body_nodes(body):
-            for child in ast.walk(node):
-                if isinstance(child, ast.Name):
-                    if isinstance(child.ctx, ast.Store):
-                        outputs.add(child.id)
-                    elif isinstance(child.ctx, ast.Load):
-                        inputs.add(child.id)
-                elif isinstance(child, ast.alias):
-                    if child.asname:
-                        outputs.add(child.asname)
-                    else:
-                        outputs.add(child.name.split('.')[0])
-                elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                    outputs.add(child.name)
-                elif isinstance(child, ast.ExceptHandler) and isinstance(child.name, str):
-                    outputs.add(child.name)
-        return inputs, outputs
-
-    @staticmethod
-    def code_block(body: CallbackBody) -> CodeBlock:
-        """Return a ``CodeBlock`` for the original callback body."""
-        return CodeBlock(CallbackOutliner._body_nodes(body))
-
-    @staticmethod
-    def outline(body: CallbackBody, *, callback_name: str, input_names: Sequence[str],
-                output_names: Sequence[str]) -> Tuple[CodeBlock, CodeBlock]:
-        """Build outlined function and call-site scaffolding for ``body``."""
-        input_names = list(input_names)
-        output_names = list(output_names)
-        function_body = CallbackOutliner._body_nodes(body)
-        if output_names:
-            returned = ast.Name(id=output_names[0], ctx=ast.Load())
-            if len(output_names) > 1:
-                returned = ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Load()) for name in output_names], ctx=ast.Load())
-            function_body.append(ast.Return(value=returned))
-
-        function_def = ast.FunctionDef(name=callback_name,
-                                       args=ast.arguments(posonlyargs=[],
-                                                          args=[ast.arg(arg=name) for name in input_names],
-                                                          vararg=None,
-                                                          kwonlyargs=[],
-                                                          kw_defaults=[],
-                                                          kwarg=None,
-                                                          defaults=[]),
-                                       body=function_body or [ast.Pass()],
-                                       decorator_list=[])
-        function_code = CodeBlock([ast.fix_missing_locations(function_def)])
-
-        call_expr = ast.Call(func=ast.Name(id=callback_name, ctx=ast.Load()),
-                             args=[ast.Name(id=name, ctx=ast.Load()) for name in input_names],
-                             keywords=[])
-        if not output_names:
-            call_stmt: ast.stmt = ast.Expr(value=call_expr)
-        elif len(output_names) == 1:
-            call_stmt = ast.Assign(targets=[ast.Name(id=output_names[0], ctx=ast.Store())], value=call_expr)
-        else:
-            call_stmt = ast.Assign(targets=[
-                ast.Tuple(elts=[ast.Name(id=name, ctx=ast.Store()) for name in output_names], ctx=ast.Store())
-            ],
-                                   value=call_expr)
-        call_code = CodeBlock([ast.fix_missing_locations(call_stmt)])
-        return function_code, call_code
-
-    @staticmethod
-    def _body_nodes(body: CallbackBody) -> List[ast.stmt]:
-        if isinstance(body, Sequence) and not isinstance(body, ast.AST):
-            return [astutils.copy_tree(statement) for statement in body]
-        if isinstance(body, ast.stmt):
-            return [astutils.copy_tree(body)]
-        if isinstance(body, ast.AST):
-            return [ast.Expr(value=astutils.copy_tree(body))]
-        return [ast.Pass()]
+# The outliner's canonical implementation lives in the next-generation
+# frontend; re-exported here for the legacy frontend until its removal.
+from dace.frontend.python.nextgen.lowering.outliner import CallbackBody, CallbackOutliner  # noqa: F401
 
 
 class CallbackHandler:

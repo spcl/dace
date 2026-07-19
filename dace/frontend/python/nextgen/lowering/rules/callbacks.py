@@ -133,8 +133,7 @@ def _outline(renamed: list,
     can connect it directly; the node's ``code`` field keeps the source-level
     statement text.
     """
-    # Reuses the staged frontend's outliner, which is builder-independent.
-    from dace.frontend.python.schedule_tree.callback_support import CallbackOutliner
+    from dace.frontend.python.nextgen.lowering.outliner import CallbackOutliner
     function_code, call_code = CallbackOutliner.outline(renamed,
                                                         callback_name=function_name,
                                                         input_names=input_names,
