@@ -630,7 +630,7 @@ def symtype(expr):
     else:
         raise TypeError('Cannot infer symbolic type from expression "%s"'
                         ' with symbols [%s]' %
-                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr)])))
+                        (str(expr), ', '.join([str(s) + ": " + str(s.dtype) for s in symlist(expr).values()])))
 
 
 def symlist(values):

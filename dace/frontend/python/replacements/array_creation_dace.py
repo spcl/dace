@@ -225,7 +225,12 @@ def _literal_code(value: Any) -> str:
 @oprepo.infers_descriptor('dace.ndarray')
 @oprepo.infers_descriptor('numpy.ndarray')
 @oprepo.infers_descriptor('numpy.empty')
-def _infer_local_array_descriptor(input_descs, shape: Shape, dtype: Optional[dtypes.typeclass] = None, **_kw):
+def _infer_local_array_descriptor(input_descs,
+                                  shape: Shape,
+                                  dtype: Optional[dtypes.typeclass] = None,
+                                  storage: dtypes.StorageType = dtypes.StorageType.Default,
+                                  lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                                  **_kw):
     del input_descs
     out_shape = _normalize_allocator_shape(shape)
     if out_shape is None:
@@ -237,11 +242,15 @@ def _infer_local_array_descriptor(input_descs, shape: Shape, dtype: Optional[dty
             dtype = dtypes.dtype_to_typeclass(dtype)
         except (TypeError, ValueError):
             return None
-    return data.Array(dtype, out_shape, transient=True)
+    return data.Array(dtype, out_shape, transient=True, storage=storage, lifetime=lifetime)
 
 
 @oprepo.infers_descriptor('dace.define_local_scalar')
-def _infer_local_scalar_descriptor(input_descs, dtype: dtypes.typeclass, **_kw):
+def _infer_local_scalar_descriptor(input_descs,
+                                   dtype: dtypes.typeclass,
+                                   storage: dtypes.StorageType = dtypes.StorageType.Default,
+                                   lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
+                                   **_kw):
     del input_descs
     if dtype is None:
         return None
@@ -250,7 +259,7 @@ def _infer_local_scalar_descriptor(input_descs, dtype: dtypes.typeclass, **_kw):
             dtype = dtypes.dtype_to_typeclass(dtype)
         except (TypeError, ValueError):
             return None
-    return data.Scalar(dtype, transient=True)
+    return data.Scalar(dtype, transient=True, storage=storage, lifetime=lifetime)
 
 
 @oprepo.infers_descriptor('dace.define_local_structure')

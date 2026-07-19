@@ -74,7 +74,7 @@ def test_spmv_execution():
     b = np.zeros(20, dtype=np.float32)
     func(A_row=matrix.indptr.astype(np.uint32),
          A_col=matrix.indices.astype(np.uint32),
-         A_val=matrix.data,
+         A_val=np.copy(matrix.data),
          x=x,
          b=b,
          W=25,

@@ -30,6 +30,7 @@ class BindingSnapshot:
     """
     bindings: Dict[str, 'Binding']
     static_values: Dict[str, StaticSequence]
+    constant_values: Dict[str, Any]
 
 
 @dataclass
@@ -81,6 +82,11 @@ class ProgramContext:
         #: Compile-time Python sequence values for 'static' bindings.
         self.static_values: Dict[str, StaticSequence] = {}
 
+        #: Compile-time Python values for 'constant' bindings (opaque
+        #: compile-time objects such as enum classes that cannot materialize
+        #: as containers).
+        self.constant_values: Dict[str, Any] = {}
+
         #: Names of generated return containers, in return-value order.
         self.return_names: List[str] = []
 
@@ -100,6 +106,14 @@ class ProgramContext:
         #: path, so repeated accesses to the same member share one descriptor
         #: object (member resolution clones by contract).
         self._member_descriptors: Dict[str, data.Data] = {}
+
+        #: Compile-time symbolic values of materialized single-assignment ANF
+        #: scalar temporaries, keyed by repository container name. Lets
+        #: registry-call arguments (e.g. computed symbolic shapes) pass the
+        #: symbolic expression by value instead of rejecting the data
+        #: container. Only ANF temps are recorded: they are written exactly
+        #: once and used immediately, so the alias can never go stale.
+        self.symbolic_scalar_values: Dict[str, Any] = {}
 
         #: Per-parse cache of preprocessed+canonicalized callees, shared by
         #: all call sites (including nested inline scopes, which reuse this
@@ -165,6 +179,14 @@ class ProgramContext:
         self.bindings[source_name] = Binding(kind='static', version=version)
         self.static_values[source_name] = value
 
+    def bind_constant(self, source_name: str, value: Any) -> None:
+        """Bind a source-level name to an arbitrary compile-time Python value
+        (no container is materialized)."""
+        existing = self.bindings.get(source_name)
+        version = existing.version + 1 if existing is not None else 0
+        self.bindings[source_name] = Binding(kind='constant', version=version)
+        self.constant_values[source_name] = value
+
     def static_value_of(self, source_name: str) -> Optional[StaticSequence]:
         """Return the static value a name is bound to, if any."""
         binding = self.bindings.get(source_name)
@@ -218,13 +240,16 @@ class ProgramContext:
 
     def snapshot(self) -> BindingSnapshot:
         """Capture the current binding state (shallow copies)."""
-        return BindingSnapshot(bindings=dict(self.bindings), static_values=dict(self.static_values))
+        return BindingSnapshot(bindings=dict(self.bindings),
+                               static_values=dict(self.static_values),
+                               constant_values=dict(self.constant_values))
 
     def restore(self, saved: BindingSnapshot) -> None:
         """Restore a previously captured binding state. The snapshot itself
         stays intact, so it can be restored multiple times."""
         self.bindings = dict(saved.bindings)
         self.static_values = dict(saved.static_values)
+        self.constant_values = dict(saved.constant_values)
 
     # ------------------------------------------------------------------ #
     # Nested-program inlining support
@@ -248,13 +273,15 @@ class ProgramContext:
         :yield: The callee's ``return_names`` list, populated as return
                 statements are lowered (read it before the scope exits).
         """
-        saved = (self.bindings, self.static_values, self.globals, self.return_prefix, self.return_names)
+        saved = (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
+                 self.return_names)
         self.inline_stack.append(function)
         self.bindings = {
             name: Binding(kind='container', container=container)
             for name, container in parameter_bindings.items()
         }
         self.static_values = {}
+        self.constant_values = {}
         self.globals = callee_globals
         self.return_prefix = return_prefix
         self.return_names = []
@@ -262,7 +289,8 @@ class ProgramContext:
             yield self.return_names
         finally:
             self.inline_stack.pop()
-            (self.bindings, self.static_values, self.globals, self.return_prefix, self.return_names) = saved
+            (self.bindings, self.static_values, self.constant_values, self.globals, self.return_prefix,
+             self.return_names) = saved
 
     def resolve(self, source_name: str) -> Optional[Binding]:
         """Look up the current binding of a source-level name."""

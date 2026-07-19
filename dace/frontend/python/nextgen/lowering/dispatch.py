@@ -178,7 +178,8 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     if creation_name not in creation.CREATION_CALLS:
         creation_name = getattr(call.func, 'qualname', None) or astutils.rname(call.func)
     if creation_name in creation.CREATION_CALLS:
-        if any(keyword.arg not in ('dtype', 'fill_value', 'shape') for keyword in call.keywords):
+        if any(keyword.arg not in ('dtype', 'fill_value', 'shape', 'storage', 'lifetime', 'buffer_size')
+               for keyword in call.keywords):
             return False
         target_access = _call_target_access(target, inferred, statement, state)
         creation.lower_creation(creation_name, target_access, call, statement, state)

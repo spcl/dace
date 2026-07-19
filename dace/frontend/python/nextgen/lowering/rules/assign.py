@@ -138,7 +138,19 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
             _lower_view_binding(target, access, state)
             return
 
+    # Constants with no C representation (enum classes, type objects, ...)
+    # cannot materialize as containers; they bind as compile-time values so
+    # downstream attribute reads and call arguments resolve at compile time.
+    if inferred.kind == 'constant' and not _representable_constant(inferred.value):
+        state.context.bind_constant(target.id, inferred.value)
+        return
+
     target_access = prepare_name_target(target, inferred, state, statement)
+    # Pure-symbolic values of ANF temporaries stay visible to inference (e.g.
+    # as computed shape arguments) alongside the materialized scalar. ANF
+    # temps are single-assignment, so the recorded value cannot go stale.
+    if inferred.kind == 'symbolic' and target.id.startswith('__anf'):
+        state.context.symbolic_scalar_values[target_access.container] = inferred.value
     dispatch.lower_computation(target_access, value, statement, state)
 
 
@@ -379,12 +391,34 @@ def _result_descriptor(inferred: Inferred, state: LoweringState, statement: ast.
             # Streams keep their full descriptor (buffer size etc.)
             return copy.deepcopy(descriptor)
         if isinstance(descriptor, data.Array):
-            return data.Array(descriptor.dtype, list(descriptor.shape))
-        return data.Scalar(descriptor.dtype)
-    dtype = inferred.dtype
+            return data.Array(descriptor.dtype,
+                              list(descriptor.shape),
+                              storage=descriptor.storage,
+                              lifetime=descriptor.lifetime)
+        return data.Scalar(descriptor.dtype, storage=descriptor.storage, lifetime=descriptor.lifetime)
+    dtype = state.inference.dtype_of(inferred)
     if dtype is None:
-        dtype = dtypes.int64 if inferred.kind == 'symbolic' else dtypes.typeclass(type(inferred.value))
+        if inferred.kind == 'symbolic':
+            dtype = dtypes.int64
+        else:
+            try:
+                dtype = dtypes.typeclass(type(inferred.value))
+            except (KeyError, TypeError):
+                # Constants of non-C-representable types (enum classes, ...)
+                raise UnsupportedFeatureError(
+                    f'Cannot represent constant of type {type(inferred.value).__name__} in a container',
+                    node=statement,
+                    category='type-inference')
     return data.Scalar(dtype)
+
+
+def _representable_constant(value) -> bool:
+    """Whether a constant value's type has a C container representation."""
+    try:
+        dtypes.typeclass(type(value))
+        return True
+    except (KeyError, TypeError):
+        return False
 
 
 def _compatible(existing: data.Data, new: data.Data) -> bool:

@@ -71,7 +71,7 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
         return return_name
 
     inferred = state.inference.infer(value)
-    dtype = inferred.dtype
+    dtype = state.inference.dtype_of(inferred)
     if dtype is None:
         raise UnsupportedFeatureError(f'Cannot determine return value type: {astutils.unparse(value)}',
                                       state.context.filename,

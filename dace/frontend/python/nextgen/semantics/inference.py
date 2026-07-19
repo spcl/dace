@@ -69,7 +69,12 @@ class Inferred:
         if self.descriptor is not None:
             return self.descriptor.dtype
         if self.kind == 'symbolic':
-            return symbolic.symtype(self.value)
+            try:
+                return symbolic.symtype(self.value)
+            except (TypeError, AttributeError) as error:
+                # Mixed or missing symbol dtypes in the expression
+                raise UnsupportedFeatureError(f'Cannot infer symbolic expression type of "{self.value}": {error}',
+                                              category='type-inference')
         if self.kind == 'constant' and isinstance(self.value, tuple(dtypes.dtype_to_typeclass().keys())):
             return dtypes.dtype_to_typeclass(type(self.value))
         return None
@@ -166,7 +171,7 @@ class InferenceService:
                 except TypeError:
                     pass
             if operand.kind == 'symbolic':
-                return Inferred(kind='symbolic', value=symbolic.pystr_to_symbolic(astutils.unparse(node)))
+                return Inferred(kind='symbolic', value=self._symbolic_expression(node))
             # Data operands: sign/inversion preserves descriptor shape and dtype
             return operand
         if isinstance(node, ast.Subscript):
@@ -294,7 +299,12 @@ class InferenceService:
             if inferred.is_pyobject:
                 return False, None
             if inferred.is_data:
-                name = astutils.rname(argument)
+                try:
+                    name = astutils.rname(argument)
+                except TypeError:
+                    # Data-valued compound expression (e.g. UnaryOp over an
+                    # array) — cannot be passed to the registry by name
+                    return False, None
                 input_descs[name] = inferred.descriptor
                 return True, name
             if inferred.kind in ('constant', 'symbolic'):
@@ -426,11 +436,19 @@ class InferenceService:
         binding = self.context.resolve(node.id)
         if binding is not None:
             if binding.kind == 'container':
+                # Materialized ANF scalar temps with a known pure-symbolic
+                # value stay symbolic to inference, so computed shape
+                # expressions and derived temps keep compile-time values.
+                symbolic_value = self.context.symbolic_scalar_values.get(binding.container)
+                if symbolic_value is not None:
+                    return Inferred(kind='symbolic', value=symbolic_value)
                 return Inferred(kind='data', descriptor=self.context.containers[binding.container])
             if binding.kind == 'symbol':
                 return Inferred(kind='symbolic', value=self.context.symbols[node.id])
             if binding.kind == 'static':
                 return Inferred(kind='static', value=self.context.static_values[node.id])
+            if binding.kind == 'constant':
+                return Inferred(kind='constant', value=self.context.constant_values[node.id])
         if node.id in self.context.symbols:
             return Inferred(kind='symbolic', value=self.context.symbols[node.id])
         if node.id in self.context.constants:
@@ -454,6 +472,23 @@ class InferenceService:
             member = self.context.member_access_of(node.value.id, node.attr)
             if member is not None:
                 return Inferred(kind='data', descriptor=member[1])
+            binding = self.context.resolve(node.value.id)
+            # Attribute on a compile-time constant value (e.g. an enum member
+            # of a constant-bound enum class)
+            if binding is not None and binding.kind == 'constant':
+                base_value = self.context.constant_values[node.value.id]
+                if hasattr(base_value, node.attr):
+                    return Inferred(kind='constant', value=getattr(base_value, node.attr))
+            # Compile-time descriptor properties of data-bound names
+            # (``A.dtype``, ``A.shape``, ``A.ndim``)
+            if binding is not None and binding.kind == 'container':
+                descriptor = self.context.containers[binding.container]
+                if node.attr == 'dtype':
+                    return Inferred(kind='constant', value=descriptor.dtype)
+                if node.attr == 'shape' and isinstance(descriptor, data.Array):
+                    return Inferred(kind='constant', value=tuple(descriptor.shape))
+                if node.attr == 'ndim' and isinstance(descriptor, data.Array):
+                    return Inferred(kind='constant', value=len(descriptor.shape))
         _, resolved = self.resolve_callee(node)
         if resolved is not None:
             if isinstance(resolved, symbolic.symbol):
@@ -506,6 +541,66 @@ class InferenceService:
                                           node,
                                           category='data-dependent-subscript')
 
+    def dtype_of(self, inferred: Inferred) -> Optional[dtypes.typeclass]:
+        """
+        Context-aware dtype of an inferred value. Symbolic expressions resolve
+        their symbols' dtypes by name through the context: sympy symbol
+        identity ignores the dace dtype attribute, so the objects embedded in
+        an expression may carry stale defaults from the process-wide cache.
+        """
+        if inferred.kind == 'symbolic':
+            return self.symbolic_dtype(inferred.value)
+        return inferred.dtype
+
+    def symbolic_dtype(self, expression: Any) -> dtypes.typeclass:
+        """The result dtype of a pure symbolic expression, resolving each free
+        symbol by name through the context (with NumPy promotion when the
+        symbol dtypes differ)."""
+        found: List[dtypes.typeclass] = []
+        for free_symbol in getattr(expression, 'free_symbols', ()):
+            name = str(free_symbol)
+            registered = self.context.symbols.get(name)
+            if registered is None:
+                global_value = self.context.globals.get(name)
+                if isinstance(global_value, symbolic.symbol):
+                    registered = global_value
+            candidate = registered if registered is not None else free_symbol
+            found.append(getattr(candidate, 'dtype', symbolic.DEFAULT_SYMBOL_TYPE))
+        if not found:
+            return symbolic.DEFAULT_SYMBOL_TYPE
+        return dtypes.result_type_of(found[0], *found[1:]) if len(found) > 1 else found[0]
+
+    def _symbolic_expression(self, node: ast.expr) -> Any:
+        """
+        Build the symbolic value of a purely symbolic/constant expression.
+
+        Parsing the source text mints fresh default-typed symbols for every
+        name, so free symbols are substituted with their known context values:
+        the recorded symbolic values of materialized ANF scalar temps, and the
+        registered (correctly typed) symbol objects for program symbols.
+        """
+        expr = symbolic.pystr_to_symbolic(astutils.unparse(node))
+        if not hasattr(expr, 'free_symbols'):
+            return expr
+        replacements = {}
+        for free_symbol in expr.free_symbols:
+            name = str(free_symbol)
+            binding = self.context.resolve(name)
+            if binding is not None and binding.kind == 'container':
+                value = self.context.symbolic_scalar_values.get(binding.container)
+                if value is not None:
+                    replacements[free_symbol] = value
+                    continue
+            registered = self.context.symbols.get(name)
+            if registered is None:
+                # Symbols of inlined callees resolve through their globals
+                global_value = self.context.globals.get(name)
+                if isinstance(global_value, symbolic.symbol):
+                    registered = global_value
+            if registered is not None and registered is not free_symbol:
+                replacements[free_symbol] = registered
+        return expr.subs(replacements) if replacements else expr
+
     def _infer_operator(self, node: ast.expr) -> Inferred:
         if isinstance(node, ast.BinOp):
             operands = [self.infer(node.left), self.infer(node.right)]
@@ -537,9 +632,7 @@ class InferenceService:
         data_operands = [op for op in operands if op.is_data]
         if not data_operands:
             # Purely symbolic/constant expression
-            if boolean_result:
-                return Inferred(kind='symbolic', value=symbolic.pystr_to_symbolic(astutils.unparse(node)))
-            return Inferred(kind='symbolic', value=symbolic.pystr_to_symbolic(astutils.unparse(node)))
+            return Inferred(kind='symbolic', value=self._symbolic_expression(node))
 
         result_dtype = self._result_dtype(operands, boolean_result)
         shape: Tuple[Any, ...] = ()
@@ -553,7 +646,7 @@ class InferenceService:
     def _result_dtype(self, operands: List[Inferred], boolean_result: bool) -> dtypes.typeclass:
         if boolean_result:
             return dtypes.bool_
-        known = [op.dtype for op in operands if op.dtype is not None]
+        known = [dtype for dtype in (self.dtype_of(op) for op in operands) if dtype is not None]
         if not known:
             raise UnsupportedFeatureError('Cannot determine operator result type',
                                           self.context.filename,
