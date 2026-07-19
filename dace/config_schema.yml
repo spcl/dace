@@ -217,6 +217,20 @@ required:
                     Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
                     anything it cannot resolve without cmake.
 
+            static_archive:
+                type: bool
+                default: false
+                title: Also emit a static archive
+                description: >
+                    When true, the build additionally emits ``lib<name>.a`` (the
+                    compiled object files archived with ``ar rcs``) next to the
+                    runnable ``lib<name>.so``. The ``.so`` is untouched -- the SDFG
+                    still loads and runs exactly as before -- so this only ADDS an
+                    artifact. Used to link an offloaded loop-nest into a parent
+                    SDFG's shared library as a static member instead of a second
+                    dlopen. Off by default; supported in both ``native`` and
+                    ``cmake`` build modes.
+
             build_jobs:
                 type: int
                 default: 4

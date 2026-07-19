@@ -730,6 +730,18 @@ def build_native(program_folder: str,
         with open(lib_path + '.cmd', 'w') as f:
             f.write(' '.join(link_cmd))
 
+    # --- optional static archive -------------------------------------------
+    # Archive the SAME objects the shared library was linked from, so the .a and the .so stay in
+    # lockstep. Additive: the .so above is untouched. The device-link members ride in via cuda_archive
+    # (already ``ar``-built above), extracted and re-archived so the .a is a single self-contained lib.
+    if Config.get_bool('compiler', 'static_archive'):
+        archive_path = os.path.join(build_folder, f'lib{program_name}.a')
+        archive_objs = host_objs + cuda_objs
+        if not up_to_date(archive_path, *archive_objs):
+            if os.path.exists(archive_path):
+                os.remove(archive_path)  # ar r APPENDS; start clean so a rebuild drops stale members
+            run(['ar', 'rcs', archive_path] + archive_objs)
+
     # --- loader stub (rebuilt only when missing; dacestub.cpp never changes) -
     stub_path = os.path.join(build_folder, f'libdacestub_{program_name}.{lib_ext}')
     stub_src = os.path.join(dace_root, 'codegen', 'tools', 'dacestub.cpp')

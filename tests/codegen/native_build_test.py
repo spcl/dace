@@ -472,6 +472,53 @@ def test_native_build_cublas_matmul(tmp_path):
         blas.default_implementation = old
 
 
+def _archive_path(lib: str) -> str:
+    """The ``lib<name>.a`` that sits next to the runnable ``lib<name>.so`` at ``lib``."""
+    return os.path.join(os.path.dirname(lib), os.path.basename(lib)[:-len('.so')] + '.a')
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_native_static_archive_emitted_alongside_so(tmp_path):
+    """With ``compiler.static_archive`` on, native mode ALSO emits ``lib<name>.a``; the runnable
+    ``.so`` is untouched and still runs bit-exact -- the archive is purely additive."""
+
+    @dace.program
+    def axpy_ar(a: dace.float64[32], b: dace.float64[32], c: dace.float64[32]):
+        c[:] = 2.0 * a + b
+
+    a, b, c = np.random.rand(32), np.random.rand(32), np.zeros(32)
+    sdfg = axpy_ar.to_sdfg()
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'build_mode', value='native'):
+        with set_temporary('compiler', 'static_archive', value=True):
+            csdfg = sdfg.compile()
+    lib = str(csdfg._lib._library_filename)
+    archive = _archive_path(lib)
+    assert os.path.isfile(lib)  # .so still built
+    assert os.path.isfile(archive)  # .a additionally emitted
+    # the archive is a real ar archive carrying the program's object(s)
+    members = subprocess.check_output(['ar', 't', archive]).decode()
+    assert members.strip() and any(m.endswith('.o') for m in members.split())
+    csdfg(a=a, b=b, c=c)  # .so runs unchanged
+    assert np.allclose(c, 2.0 * a + b)
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='native build mode is Linux-only')
+def test_native_no_static_archive_by_default(tmp_path):
+    """Default (``static_archive`` off): native mode emits NO ``.a`` -- no regression for every build
+    that does not ask for one."""
+
+    @dace.program
+    def axpy_noar(a: dace.float64[16], b: dace.float64[16], c: dace.float64[16]):
+        c[:] = a + b
+
+    sdfg = axpy_noar.to_sdfg()
+    sdfg.build_folder = str(tmp_path / 'cache')
+    with set_temporary('compiler', 'build_mode', value='native'):
+        csdfg = sdfg.compile()
+    assert not os.path.isfile(_archive_path(str(csdfg._lib._library_filename)))
+
+
 if __name__ == '__main__':
     test_classify_library()
     test_is_deferred()
