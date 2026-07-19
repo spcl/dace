@@ -38,7 +38,7 @@ def lower_expr(statement: ast.Expr, state: LoweringState) -> None:
     if isinstance(statement.value, ast.Call):
         dispatch.lower_call(None, statement.value, statement, state)
         return
-    dispatch.fallback_to_callback(statement, state, 'bare expression statement')
+    dispatch.fallback_to_callback(statement, state, 'bare expression statement', category='opaque-syntax:Expr')
 
 
 def is_sdfg_convertible(callee: Any) -> bool:
@@ -73,13 +73,16 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     if not isinstance(callee, DaceProgram):
         sdfg = callee if isinstance(callee, SDFG) else _convertible_to_sdfg(callee, call, state)
         if sdfg is None:
-            fallback_to_callback(statement, state, 'SDFG-convertible callee could not produce an SDFG')
+            fallback_to_callback(statement,
+                                 state,
+                                 'SDFG-convertible callee could not produce an SDFG',
+                                 category='inline-fallback:no-sdfg')
             return
         _lower_sdfg_call(target, call, sdfg, statement, state)
         return
 
     if callee.f in state.context.inline_stack:
-        fallback_to_callback(statement, state, 'recursive @dace.program call')
+        fallback_to_callback(statement, state, 'recursive @dace.program call', category='inline-fallback:recursion')
         return
 
     # Steps 1-3 (argument mapping, preprocessing, canonicalization) emit
@@ -88,11 +91,17 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     try:
         callee_body, parameter_bindings, callee_globals, argument_labels = _prepare_callee(call, callee, state)
     except Exception as reason:  # Unparseable callee, unsupported argument, ...
-        fallback_to_callback(statement, state, f'cannot inline call to "{callee.name}": {reason}')
+        fallback_to_callback(statement,
+                             state,
+                             f'cannot inline call to "{callee.name}": {reason}',
+                             category=getattr(reason, 'category', None) or 'inline-fallback:parse-failure')
         return
     unsupported = _unsupported_return_shape(callee_body)
     if unsupported is not None:
-        fallback_to_callback(statement, state, f'{unsupported} in nested dace program "{callee.name}"')
+        fallback_to_callback(statement,
+                             state,
+                             f'{unsupported} in nested dace program "{callee.name}"',
+                             category='inline-fallback:return-shape')
         return
 
     # Restructure early returns into tail positions (statements following a
@@ -100,8 +109,10 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     # coincides with falling off the scope end everywhere.
     callee_body = _normalize_early_returns(callee_body)
     if _has_non_tail_return(callee_body):
-        fallback_to_callback(statement, state,
-                             f'early return that cannot be restructured in nested dace program "{callee.name}"')
+        fallback_to_callback(statement,
+                             state,
+                             f'early return that cannot be restructured in nested dace program "{callee.name}"',
+                             category='inline-fallback:early-return')
         return
 
     return_prefix = state.context.fresh_name(f'__{callee.name}_ret')
@@ -211,12 +222,17 @@ def _map_arguments(
     """
     parameter_names = list(callee.argnames)
     if len(call.args) > len(parameter_names):
-        raise UnsupportedFeatureError(f'Too many arguments in call to "{callee.name}"', state.context.filename, call)
+        raise UnsupportedFeatureError(f'Too many arguments in call to "{callee.name}"',
+                                      state.context.filename,
+                                      call,
+                                      category='inline-fallback:arguments')
     provided: Dict[str, ast.expr] = dict(zip(parameter_names, call.args))
     for keyword in call.keywords:
         if keyword.arg is None or keyword.arg in provided or keyword.arg not in parameter_names:
             raise UnsupportedFeatureError(f'Unsupported keyword argument in call to "{callee.name}"',
-                                          state.context.filename, call)
+                                          state.context.filename,
+                                          call,
+                                          category='inline-fallback:arguments')
         provided[keyword.arg] = keyword.value
 
     callee_globals = dict(callee.global_vars)
@@ -233,7 +249,9 @@ def _map_arguments(
         if parameter not in provided:
             if parameter not in callee.default_args:
                 raise UnsupportedFeatureError(f'Missing argument "{parameter}" in call to "{callee.name}"',
-                                              state.context.filename, call)
+                                              state.context.filename,
+                                              call,
+                                              category='inline-fallback:arguments')
             default_value = callee.default_args[parameter]
             callee_globals[parameter] = default_value
             injected_defaults.add(parameter)
@@ -243,12 +261,16 @@ def _map_arguments(
         argument_labels[parameter] = astutils.unparse(argument)
         inferred = state.inference.infer(argument)
         if inferred.is_pyobject:
-            raise UnsupportedFeatureError(f'Opaque Python object passed to "{callee.name}"', state.context.filename,
-                                          argument)
+            raise UnsupportedFeatureError(f'Opaque Python object passed to "{callee.name}"',
+                                          state.context.filename,
+                                          argument,
+                                          category='pyobject-propagation')
         if inferred.is_data:
             if not isinstance(argument, ast.Name):
                 raise UnsupportedFeatureError(f'Unsupported data argument form in call to "{callee.name}"',
-                                              state.context.filename, argument)
+                                              state.context.filename,
+                                              argument,
+                                              category='inline-fallback:arguments')
             container = state.context.container_of(argument.id, argument)
             argtypes[parameter] = state.context.containers[container]  # By reference: shared repository
             parameter_bindings[parameter] = container
@@ -262,7 +284,9 @@ def _map_arguments(
             specialization.append((parameter, 'static', repr(callee_globals[parameter])))
         else:
             raise UnsupportedFeatureError(f'Unsupported argument kind in call to "{callee.name}"',
-                                          state.context.filename, argument)
+                                          state.context.filename,
+                                          argument,
+                                          category='inline-fallback:arguments')
     return argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, tuple(specialization)
 
 
@@ -473,8 +497,10 @@ def _bind_call_results(target: Optional[ast.expr], returned: List[str], statemen
                                           other_subset=target_access.subset)))
             return
 
-    raise UnsupportedFeatureError('Unsupported assignment target for a nested program call', state.context.filename,
-                                  statement)
+    raise UnsupportedFeatureError('Unsupported assignment target for a nested program call',
+                                  state.context.filename,
+                                  statement,
+                                  category='inline-fallback:result-binding')
 
 
 def _convertible_to_sdfg(callee: Any, call: ast.Call, state: LoweringState) -> Optional[Any]:
@@ -529,7 +555,10 @@ def _lower_sdfg_call(target: Optional[ast.expr], call: ast.Call, sdfg: Any, stat
             for name, descriptor in sdfg.arrays.items() if name.startswith('__return')
         }
         if not isinstance(target, ast.Name) or len(return_descriptors) != 1:
-            fallback_to_callback(statement, state, 'unsupported result binding for an SDFG call')
+            fallback_to_callback(statement,
+                                 state,
+                                 'unsupported result binding for an SDFG call',
+                                 category='inline-fallback:result-binding')
             return
         descriptor = copy.deepcopy(next(iter(return_descriptors.values())))
         container = state.context.add_container(target.id, descriptor)

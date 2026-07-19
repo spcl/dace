@@ -45,8 +45,11 @@ def iteration_shape(target: DataAccess, operands: List[Tuple[str, DataAccess]], 
         operand_shape = broadcast_shapes(operand_shape, tuple(nondegenerate_shape(access.subset)))
     if len(operand_shape) > len(target_shape):
         raise UnsupportedFeatureError(
-            f'Broadcast operand shape {operand_shape} has higher rank than the write target '
-            f'shape {tuple(target_shape)}', state.context.filename, statement)
+            f'Broadcast operand shape {operand_shape} has higher rank than the write '
+            f'target shape {tuple(target_shape)}',
+            state.context.filename,
+            statement,
+            category='broadcast')
     return target_shape
 
 
@@ -74,15 +77,22 @@ def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], s
     from dace.frontend.python.replacements.ufunc import ufuncs  # Deferred to avoid an import cycle
     specification = ufuncs.get(ufunc_name)
     if specification is None:
-        raise UnsupportedFeatureError(f'Unknown NumPy ufunc "{ufunc_name}"', state.context.filename, statement)
+        raise UnsupportedFeatureError(f'Unknown NumPy ufunc "{ufunc_name}"',
+                                      state.context.filename,
+                                      statement,
+                                      category='ufunc')
     if len(specification['outputs']) != 1 or len(arguments) != len(specification['inputs']):
-        raise UnsupportedFeatureError(f'Unsupported call form for NumPy ufunc "{ufunc_name}"', state.context.filename,
-                                      statement)
+        raise UnsupportedFeatureError(f'Unsupported call form for NumPy ufunc "{ufunc_name}"',
+                                      state.context.filename,
+                                      statement,
+                                      category='ufunc')
     code = specification['code']
     prefix = f'{specification["outputs"][0]} ='
     if '\n' in code or not code.startswith(prefix):
         raise UnsupportedFeatureError(f'NumPy ufunc "{ufunc_name}" has no single-expression tasklet form',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='ufunc')
     expression = code[len(prefix):].strip()
 
     operands: List[Tuple[str, DataAccess]] = []
@@ -93,8 +103,10 @@ def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], s
             continue
         inferred = state.inference.infer(argument)
         if inferred.kind not in ('constant', 'symbolic'):
-            raise UnsupportedFeatureError(f'Unsupported ufunc argument type for "{ufunc_name}"', state.context.filename,
-                                          statement)
+            raise UnsupportedFeatureError(f'Unsupported ufunc argument type for "{ufunc_name}"',
+                                          state.context.filename,
+                                          statement,
+                                          category='ufunc')
         expression = re.sub(rf'\b{connector}\b', f'({inferred.value})', expression)
     emit_elementwise(target, expression, operands, statement, state)
 

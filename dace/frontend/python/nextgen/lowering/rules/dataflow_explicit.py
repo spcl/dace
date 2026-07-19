@@ -100,7 +100,9 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
     if intrinsic_code is not None:
         if prelude or epilogue:
             raise UnsupportedFeatureError('Indirect memlets are not supported with intrinsic tasklet code',
-                                          state.context.filename, statement)
+                                          state.context.filename,
+                                          statement,
+                                          category='indirect-memlet')
         code = intrinsic_code
     else:
         code = '\n'.join(prelude + [astutils.unparse(s) for s in code_statements] + epilogue)
@@ -181,22 +183,30 @@ def _lower_indirect_memlet(connector_expression: ast.expr, array_expression: ast
     cannot be indirected this way and fall back.
     """
     if not isinstance(connector_expression, ast.Name):
-        raise UnsupportedFeatureError('Indirect memlets require a plain connector name', state.context.filename,
-                                      statement)
+        raise UnsupportedFeatureError('Indirect memlets require a plain connector name',
+                                      state.context.filename,
+                                      statement,
+                                      category='indirect-memlet')
     if not isinstance(array_expression.value, (ast.Name, ast.Attribute)):
         # e.g. a WCR/volume call form b(1, lambda a, b: ...)[...] — the
         # write-conflict semantics cannot move into the tasklet code.
         raise UnsupportedFeatureError('Indirect memlets do not support write-conflict or volume annotations',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='indirect-memlet')
     array_access = resolve_access(array_expression.value, state)
     if array_access is None:
         raise UnsupportedFeatureError(
             f'Indirect memlet references unknown container "{astutils.unparse(array_expression.value)}"',
-            state.context.filename, statement)
+            state.context.filename,
+            statement,
+            category='indirect-memlet')
     if isinstance(array_access.descriptor.dtype, dtypes.pyobject):
         raise UnsupportedFeatureError(
             f'Indirect memlet references interpreter-only container "{astutils.unparse(array_expression.value)}"',
-            state.context.filename, statement)
+            state.context.filename,
+            statement,
+            category='indirect-memlet')
 
     connector = connector_expression.id
     _check_connector(connector + '__arr', in_memlets, out_memlets, state, statement)
@@ -207,7 +217,9 @@ def _lower_indirect_memlet(connector_expression: ast.expr, array_expression: ast
         access = resolve_access(read, state)
         if isinstance(access.descriptor.dtype, dtypes.pyobject):
             raise UnsupportedFeatureError('Indirect memlet index references an interpreter-only container',
-                                          state.context.filename, statement)
+                                          state.context.filename,
+                                          statement,
+                                          category='indirect-memlet')
         synthetic = _fresh_connector('__ind', in_memlets, out_memlets)
         _check_connector(synthetic, in_memlets, out_memlets, state, statement)
         in_memlets[synthetic] = Memlet(data=access.container, subset=access.subset)
@@ -261,7 +273,10 @@ def _parse_tasklet_memlet(memlet_expression: ast.expr, connector_expression: ast
     except UnsupportedFeatureError:
         raise
     except Exception as error:
-        raise UnsupportedFeatureError(f'Cannot parse tasklet memlet: {error}', state.context.filename, statement)
+        raise UnsupportedFeatureError(f'Cannot parse tasklet memlet: {error}',
+                                      state.context.filename,
+                                      statement,
+                                      category='memlet-parse')
 
 
 def _memlet_binop(statement: ast.stmt) -> Optional[ast.BinOp]:
@@ -275,8 +290,10 @@ def _memlet_binop(statement: ast.stmt) -> Optional[ast.BinOp]:
 def _check_connector(connector: Optional[str], in_memlets: Dict[str, Memlet], out_memlets: Dict[str, Memlet],
                      state: LoweringState, statement: ast.stmt) -> None:
     if connector is None:
-        raise UnsupportedFeatureError('Memlet statements require a local connector name', state.context.filename,
-                                      statement)
+        raise UnsupportedFeatureError('Memlet statements require a local connector name',
+                                      state.context.filename,
+                                      statement,
+                                      category='memlet-parse')
     if connector in in_memlets or connector in out_memlets:
         raise FrontendError(f'Local variable "{connector}" is already a tasklet input or output',
                             state.context.filename, statement)
@@ -287,12 +304,16 @@ def _to_repository(memlet: Memlet, state: LoweringState, statement: ast.stmt) ->
     binding = state.context.resolve(memlet.data)
     if binding is None or binding.kind != 'container':
         raise UnsupportedFeatureError(f'Tasklet memlet references unknown container "{memlet.data}"',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='memlet-parse')
     if isinstance(state.context.containers[binding.container].dtype, dtypes.pyobject):
         # The producer of this name fell back to the interpreter; its typed
         # form is unavailable, so the tasklet must replay there too.
         raise UnsupportedFeatureError(f'Tasklet memlet references interpreter-only container "{memlet.data}"',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='pyobject-propagation')
     memlet.data = binding.container
     return memlet
 
@@ -315,12 +336,16 @@ def lower_explicit_consume(statement: ExplicitConsume, state: LoweringState) -> 
     if stream_access is None or not isinstance(stream_access.descriptor, data.Stream):
         raise UnsupportedFeatureError(
             f'Consume scope requires a stream input (got "{astutils.unparse(statement.stream)}")',
-            state.context.filename, statement)
+            state.context.filename,
+            statement,
+            category='explicit-consume')
     try:
         num_pes = symbolic.pystr_to_symbolic(statement.num_pes_src)
     except Exception:
         raise UnsupportedFeatureError(f'Cannot parse consume processing-element count "{statement.num_pes_src}"',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='explicit-consume')
     chunksize = state.inference.constant_int(ast.parse(statement.chunksize_src, mode='eval').body) or 1
     condition = CodeBlock(statement.condition_src) if statement.condition_src is not None else None
 

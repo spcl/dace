@@ -65,7 +65,7 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     try:
         inferred = state.inference.infer(value)
     except UnsupportedFeatureError as reason:
-        dispatch.fallback_to_callback(statement, state, str(reason))
+        dispatch.fallback_to_callback(statement, state, reason)
         return
     if inferred.kind == 'static':
         if isinstance(target, ast.Name) and _reference_binding(target.id, state) is None:
@@ -83,7 +83,9 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
         _lower_subscript_assign(target, value, statement, state)
     else:
         raise UnsupportedFeatureError(f'Unsupported assignment target: {astutils.unparse(target)}',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='assign-target')
 
 
 def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, statement: ast.Assign,
@@ -154,12 +156,16 @@ def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Infer
     label = astutils.unparse(target)
     access = resolve_access(target, state)
     if access is None:
-        raise UnsupportedFeatureError(f'Assignment to unsupported attribute "{label}"', state.context.filename,
-                                      statement)
+        raise UnsupportedFeatureError(f'Assignment to unsupported attribute "{label}"',
+                                      state.context.filename,
+                                      statement,
+                                      category='structure-member')
     if not isinstance(access.descriptor, data.Reference):
         raise UnsupportedFeatureError(
             f'Cannot rebind non-reference structure member "{label}" (write into a subset instead)',
-            state.context.filename, statement)
+            state.context.filename,
+            statement,
+            category='structure-member')
     _lower_reference_set(label, (access.container, access.descriptor), value, inferred, statement, state)
 
 
@@ -168,11 +174,13 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
     try:
         target_access = resolve_access(target, state)
     except UnsupportedFeatureError as reason:
-        dispatch.fallback_to_callback(statement, state, str(reason))
+        dispatch.fallback_to_callback(statement, state, reason)
         return
     if target_access is None:
         raise UnsupportedFeatureError(f'Assignment to unknown container "{astutils.unparse(target)}"',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='undefined-name')
 
     # Subset-to-subset copy
     if isinstance(value, (ast.Name, ast.Subscript)):
@@ -255,23 +263,33 @@ def _lower_reference_set(label: str, reference: Tuple[str, data.Data], value: as
             descriptor = _result_descriptor(inferred, state, statement)
             if not isinstance(descriptor, data.Array):
                 raise UnsupportedFeatureError(f'Cannot set reference "{label}" to a scalar value',
-                                              state.context.filename, statement)
+                                              state.context.filename,
+                                              statement,
+                                              category='reference-set')
             value_container = state.context.add_container(hint, descriptor)
             value_access = DataAccess(value_container, subsets.Range.from_array(descriptor), descriptor)
             dispatch.lower_computation(value_access, value, statement, state)
             access = value_access
         else:
             raise UnsupportedFeatureError(
-                f'Cannot set reference "{label}" to non-data value "{astutils.unparse(value)}"', state.context.filename,
-                statement)
+                f'Cannot set reference "{label}" to non-data value '
+                f'"{astutils.unparse(value)}"',
+                state.context.filename,
+                statement,
+                category='reference-set')
 
     if access.is_scalar_access:
-        raise UnsupportedFeatureError(f'Cannot set reference "{label}" to a scalar element', state.context.filename,
-                                      statement)
+        raise UnsupportedFeatureError(f'Cannot set reference "{label}" to a scalar element',
+                                      state.context.filename,
+                                      statement,
+                                      category='reference-set')
     if list(nondegenerate_shape(access.subset)) != [s for s in reference_descriptor.shape if s != 1]:
         raise UnsupportedFeatureError(
             f'Reference "{label}" of shape {tuple(reference_descriptor.shape)} cannot be set '
-            f'to source of shape {tuple(nondegenerate_shape(access.subset))}', state.context.filename, statement)
+            f'to source of shape {tuple(nondegenerate_shape(access.subset))}',
+            state.context.filename,
+            statement,
+            category='reference-set')
 
     state.emitter.emit(
         tn.RefSetNode(target=container,

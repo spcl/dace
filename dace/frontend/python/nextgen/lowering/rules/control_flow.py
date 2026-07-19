@@ -45,7 +45,7 @@ def lower_if(statement: ast.If, state: LoweringState) -> None:
     except UnsupportedFeatureError as reason:
         state.emitter.rollback(mark)
         state.context.restore(before)
-        dispatch.fallback_to_callback(statement, state, str(reason))
+        dispatch.fallback_to_callback(statement, state, reason)
 
 
 def _lower_if_chain(statement: ast.If, before: BindingSnapshot,
@@ -125,13 +125,13 @@ def _lower_loop_with_stability_check(statement: ast.stmt, emit_loop, state: Lowe
     except UnsupportedFeatureError as reason:
         state.emitter.rollback(mark)
         state.context.restore(before)
-        dispatch.fallback_to_callback(statement, state, str(reason))
+        dispatch.fallback_to_callback(statement, state, reason)
         return
     reason = _loop_instability(before, state)
     if reason is not None:
         state.emitter.rollback(mark)
         state.context.restore(before)
-        dispatch.fallback_to_callback(statement, state, reason)
+        dispatch.fallback_to_callback(statement, state, reason, category='loop-stability')
 
 
 def _loop_instability(before: BindingSnapshot, state: LoweringState) -> Optional[str]:
@@ -175,7 +175,9 @@ def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     ranges = _parse_map_ranges(statement.iter, state, dynamic_inputs)
     if len(params) != len(ranges):
         raise UnsupportedFeatureError('Number of dace.map indices does not match number of ranges',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='explicit-map')
     for param in params:
         state.context.bind_symbol(param)
     # Dynamic-range inputs (data-dependent bounds) are emitted as siblings
@@ -202,13 +204,18 @@ def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState,
     ranges = []
     for dimension in dimensions:
         if not isinstance(dimension, ast.Slice):
-            raise UnsupportedFeatureError('dace.map dimensions must be slices', state.context.filename, iterator)
+            raise UnsupportedFeatureError('dace.map dimensions must be slices',
+                                          state.context.filename,
+                                          iterator,
+                                          category='explicit-map')
         start = _bound(dimension.lower, 0, state, dynamic_inputs)
         stop = _bound(dimension.upper, None, state, dynamic_inputs)
         step = _bound(dimension.step, 1, state, dynamic_inputs)
         if stop is None:
-            raise UnsupportedFeatureError('dace.map dimensions require an upper bound', state.context.filename,
-                                          iterator)
+            raise UnsupportedFeatureError('dace.map dimensions require an upper bound',
+                                          state.context.filename,
+                                          iterator,
+                                          category='explicit-map')
         ranges.append((start, stop - 1, step))
     return ranges
 
@@ -239,8 +246,10 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
     except Exception:
         # Not symbolizable (e.g. references a value only the interpreter
         # knows); the loop falls back to a callback.
-        raise UnsupportedFeatureError(f'Cannot parse loop bound "{expression}" symbolically', state.context.filename,
-                                      node)
+        raise UnsupportedFeatureError(f'Cannot parse loop bound "{expression}" symbolically',
+                                      state.context.filename,
+                                      node,
+                                      category='dynamic-bound')
 
 
 def _dynamic_bound(node: ast.expr, access: DataAccess, state: LoweringState,
@@ -259,7 +268,10 @@ def _dynamic_bound(node: ast.expr, access: DataAccess, state: LoweringState,
     if not access.is_scalar_access or access.descriptor.dtype not in dtypes.INTEGER_TYPES:
         raise UnsupportedFeatureError(
             f'Data-dependent dace.map bound "{astutils.unparse(node)}" must be a scalar integer '
-            f'element (got subset {access.subset} of {access.descriptor})', state.context.filename, node)
+            f'element (got subset {access.subset} of {access.descriptor})',
+            state.context.filename,
+            node,
+            category='dynamic-bound')
     symbol_name = state.context.fresh_name('__dyn')
     # A repository-only symbol: registered directly in the symbol table (which
     # *is* the tree root's symbol table), without a source-level name binding.

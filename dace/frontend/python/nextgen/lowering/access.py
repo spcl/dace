@@ -103,14 +103,18 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
             subset = subsets.Range.from_indices(subset)
         if expr.arrdims:
             raise UnsupportedFeatureError('Advanced (array-valued) indexing is not supported yet',
-                                          state.context.filename, node)
+                                          state.context.filename,
+                                          node,
+                                          category='data-dependent-subscript')
         scalar_reads, array_reads = data_dependent_container_names(subset, state.context)
         if array_reads:
             # An array element read inside the index (x[A_col[j]]): genuine
             # indirection, only supported by the explicit-tasklet rule.
             raise UnsupportedFeatureError(
                 f'Data-dependent subscript index (reads {", ".join(sorted(array_reads))}) is not supported here',
-                state.context.filename, node)
+                state.context.filename,
+                node,
+                category='data-dependent-subscript')
         if scalar_reads and state.emitter.in_dataflow_scope:
             # Scalar containers in subsets are legitimate at control-flow
             # level (scalar-to-symbol promotion turns them into symbols), but
@@ -118,7 +122,10 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
             # would reference a runtime scalar as if it were a symbol.
             raise UnsupportedFeatureError(
                 f'Subscript index reads scalar container(s) {", ".join(sorted(scalar_reads))} inside a '
-                'dataflow scope', state.context.filename, node)
+                'dataflow scope',
+                state.context.filename,
+                node,
+                category='data-dependent-subscript')
         kept = None if expr.new_axes else _kept_dimensions(node.slice, len(subset.ranges))
         return DataAccess(base_container, subset, base_descriptor, kept_dims=kept)
     return None
@@ -257,8 +264,10 @@ def indexed_subset(access: DataAccess, params: List[str], result_shape: List) ->
     operand_size = access.subset.size()
     nondegenerate = [dim for dim, size in enumerate(operand_size) if size != 1]
     if len(nondegenerate) > len(params):
-        raise UnsupportedFeatureError('Operand has more nondegenerate dimensions than the broadcast result '
-                                      f'({len(nondegenerate)} > {len(params)})')
+        raise UnsupportedFeatureError(
+            'Operand has more nondegenerate dimensions than the broadcast result '
+            f'({len(nondegenerate)} > {len(params)})',
+            category='broadcast')
     # Right-align operand dims against result dims. When the operand carries
     # more raw dimensions than the result (integer-indexed dimensions kept as
     # size-1 subset entries), align its nondegenerate dims instead.

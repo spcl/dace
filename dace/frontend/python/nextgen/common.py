@@ -19,8 +19,24 @@ class FrontendError(Exception):
 
 
 class UnsupportedFeatureError(FrontendError):
-    """Raised when a program uses a Python feature the frontend does not support yet."""
-    pass
+    """
+    Raised when a program uses a Python feature the frontend does not support
+    yet.
+
+    :param category: Stable kebab-case gap category (e.g. ``memlet-parse``,
+        ``join-merge``) used for callback provenance: when the error falls back
+        to a Python callback, the category is rendered as a ``[category]``
+        prefix on the callback reason. ``None`` lets the catch site supply its
+        own default.
+    """
+
+    def __init__(self,
+                 message: str,
+                 filename: Optional[str] = None,
+                 node: Optional[ast.AST] = None,
+                 category: Optional[str] = None):
+        super().__init__(message, filename, node)
+        self.category = category
 
 
 class CanonicalViolationError(FrontendError):

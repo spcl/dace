@@ -15,9 +15,36 @@ callback mechanism, preserving totality: no user program fails to lower merely
 because a construct has no dedicated mechanism yet. Future registry entries
 (NumPy functions, library nodes, user dunders) plug in here rather than as
 separate per-library rule sets.
+
+Callback provenance: every fallback reason carries a stable kebab-case
+``[category]`` prefix (set at the raise site via
+``UnsupportedFeatureError(category=...)`` or at the fallback call site), so
+discrepancy checks and gap reports can aggregate interpreter fallbacks by
+cause. The taxonomy in use:
+
+- ``detected-callback`` — the callee was already wrapped as a Python callback
+  by preprocessing (intended interpreter work, mirrored in the classic
+  frontend's ``callback_mapping``),
+- ``unknown-call:<qualname>`` — a call with no lowering (the
+  missing-replacements worklist),
+- ``opaque-syntax:<stmt-type>`` — statement outside the CPA subset (marked
+  during canonicalization),
+- ``pyobject-propagation`` — a consumed operand/callee is an opaque Python
+  object produced by an earlier callback,
+- ``inline-fallback:<subreason>`` — a nested ``@dace.program`` call that
+  could not be inlined,
+- ``memlet-parse`` / ``indirect-memlet`` — explicit-tasklet memlet gaps,
+- ``data-dependent-subscript``, ``dynamic-bound``, ``broadcast``,
+  ``explicit-map``, ``explicit-consume``, ``join-merge``, ``loop-stability``,
+  ``type-inference``, ``undefined-name``, ``static-sequence``, ``ufunc``,
+  ``array-creation``, ``reduction``, ``reference-set``, ``structure-member``,
+  ``assign-target`` — per-feature semantic gaps,
+- ``safety-net`` — an uncategorized error reaching the totality net in
+  ``registry.lower_statement`` (highest bug suspicion),
+- ``uncategorized`` — a fallback site with no assigned category yet.
 """
 import ast
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from dace import dtypes
 from dace.frontend.python import astutils
@@ -55,12 +82,15 @@ def lower_computation(target: DataAccess, value: ast.expr, statement: ast.stmt, 
     try:
         value = static_values.fold_static_subscripts(value, state)
         if _consumes_pyobject(value, state):
-            fallback_to_callback(statement, state, 'operates on an opaque Python object')
+            fallback_to_callback(statement,
+                                 state,
+                                 'operates on an opaque Python object',
+                                 category='pyobject-propagation')
             return
         rewritten = static_values.materialize_operands(value, state)
         elementwise.emit_computation(target, rewritten, statement, state)
     except UnsupportedFeatureError as reason:
-        fallback_to_callback(statement, state, str(reason))
+        fallback_to_callback(statement, state, reason)
 
 
 def lower_call(target: Optional[ast.expr], call: ast.Call, statement: ast.stmt, state: LoweringState) -> None:
@@ -81,9 +111,40 @@ def lower_call(target: Optional[ast.expr], call: ast.Call, statement: ast.stmt, 
         if _lower_registry_call(target, call, qualname, callee, statement, state):
             return
     except UnsupportedFeatureError as reason:
-        fallback_to_callback(statement, state, str(reason))
+        fallback_to_callback(statement, state, reason)
         return
-    fallback_to_callback(statement, state, f'no lowering for call "{qualname}"')
+    category = _call_gap_category(call, qualname, state)
+    if category == 'detected-callback':
+        message = f'call to Python callback "{qualname}"'
+    else:
+        message = f'no lowering for call "{qualname}"'
+    fallback_to_callback(statement, state, message, category=category)
+
+
+def _call_gap_category(call: ast.Call, qualname: str, state: LoweringState) -> str:
+    """
+    The provenance category of a call with no lowering: calls whose callee
+    preprocessing already wrapped as a Python callback are *intended*
+    interpreter work (``detected-callback``, mirrored in the classic
+    frontend's ``callback_mapping``); callees that are themselves opaque
+    Python objects are downstream of an earlier gap
+    (``pyobject-propagation``); everything else is a genuine missing-lowering
+    gap, recorded with its qualified name (``unknown-call:<qualname>``).
+    """
+    callback_mapping = state.emitter.root.callback_mapping
+    # Preprocessing rewrites detected-callable call sites to the callback
+    # name and records it on the Call node's qualname (or leaves the name as
+    # the callee for coroutine/decorated callables).
+    detected_names = {astutils.rname(call.func), getattr(call.func, 'qualname', None), getattr(call, 'qualname', None)}
+    if detected_names & set(callback_mapping):
+        return 'detected-callback'
+    if isinstance(call.func, ast.Name):
+        binding = state.context.resolve(call.func.id)
+        if binding is not None and binding.kind == 'container':
+            descriptor = state.context.containers[binding.container]
+            if isinstance(descriptor.dtype, dtypes.pyobject):
+                return 'pyobject-propagation'
+    return f'unknown-call:{qualname}'
 
 
 def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: str, callee: object, statement: ast.stmt,
@@ -181,18 +242,36 @@ def _call_target_access(target: ast.expr, inferred, statement: ast.stmt, state: 
         return prepare_name_target(target, inferred, state, statement)
     access = resolve_access(target, state)
     if access is None:
-        raise UnsupportedFeatureError('Unsupported call assignment target', state.context.filename, statement)
+        raise UnsupportedFeatureError('Unsupported call assignment target',
+                                      state.context.filename,
+                                      statement,
+                                      category='assign-target')
     return access
 
 
-def fallback_to_callback(statement: ast.stmt, state: LoweringState, reason: str) -> None:
-    """Wrap a statement in a fully specified Python callback."""
+def fallback_to_callback(statement: ast.stmt,
+                         state: LoweringState,
+                         reason: Union[str, Exception],
+                         category: Optional[str] = None) -> None:
+    """
+    Wrap a statement in a fully specified Python callback.
+
+    :param reason: Why the statement runs in the interpreter — either a plain
+        string or the :class:`UnsupportedFeatureError` that triggered the
+        fallback.
+    :param category: Stable kebab-case gap category for callback provenance,
+        rendered as a ``[category]`` prefix on the callback reason. A category
+        carried by the ``reason`` exception (set at the raise site) takes
+        precedence; without either, the reason is ``[uncategorized]``.
+    """
     from dace.frontend.python.nextgen.lowering.rules.callbacks import lower_opaque
+    resolved = getattr(reason, 'category', None) or category or 'uncategorized'
+    reason_text = f'[{resolved}] {reason}'
     if isinstance(statement, ast.Return):
-        _fallback_return(statement, state, reason)
+        _fallback_return(statement, state, reason_text)
         return
     reads, writes = statement_io_sets(statement)
-    lower_opaque(OpaqueStmt(statement, reason, reads, writes), state)
+    lower_opaque(OpaqueStmt(statement, reason_text, reads, writes), state)
 
 
 def _fallback_return(statement: ast.Return, state: LoweringState, reason: str) -> None:

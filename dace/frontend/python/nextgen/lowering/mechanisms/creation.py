@@ -46,14 +46,19 @@ def lower_creation(qualname: str, target: DataAccess, call: ast.Call, statement:
         return
     if function in ('full', 'full_like'):
         if len(call.args) < 2:
-            raise UnsupportedFeatureError(f'"{qualname}" requires an explicit fill value', state.context.filename,
-                                          statement)
+            raise UnsupportedFeatureError(f'"{qualname}" requires an explicit fill value',
+                                          state.context.filename,
+                                          statement,
+                                          category='array-creation')
         _emit_fill(target, call.args[1], statement, state)
         return
     if function == 'copy':
         source = resolve_access(call.args[0], state) if call.args else None
         if source is None:
-            raise UnsupportedFeatureError(f'"{qualname}" requires a data source', state.context.filename, statement)
+            raise UnsupportedFeatureError(f'"{qualname}" requires a data source',
+                                          state.context.filename,
+                                          statement,
+                                          category='array-creation')
         state.emitter.emit(
             tn.CopyNode(target=target.container,
                         memlet=Memlet(data=source.container, subset=source.subset, other_subset=target.subset)))
@@ -61,7 +66,10 @@ def lower_creation(qualname: str, target: DataAccess, call: ast.Call, statement:
     if function == 'arange':
         _emit_arange(target, call, statement, state)
         return
-    raise UnsupportedFeatureError(f'Unsupported creation call "{qualname}"', state.context.filename, statement)
+    raise UnsupportedFeatureError(f'Unsupported creation call "{qualname}"',
+                                  state.context.filename,
+                                  statement,
+                                  category='array-creation')
 
 
 def _emit_fill(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> None:
@@ -74,8 +82,10 @@ def _emit_arange(target: DataAccess, call: ast.Call, statement: ast.stmt, state:
     """Emit ``__out = start + __i0 * step`` over the 1-D target extent."""
     from dace.frontend.python.nextgen.lowering.access import nondegenerate_shape
     if len(nondegenerate_shape(target.subset)) != 1:
-        raise UnsupportedFeatureError('numpy.arange requires a one-dimensional result', state.context.filename,
-                                      statement)
+        raise UnsupportedFeatureError('numpy.arange requires a one-dimensional result',
+                                      state.context.filename,
+                                      statement,
+                                      category='array-creation')
     start: Optional[str] = None
     step: Optional[str] = None
     if len(call.args) == 1:
@@ -87,7 +97,9 @@ def _emit_arange(target: DataAccess, call: ast.Call, statement: ast.stmt, state:
         step = _scalar_code(call.args[2], state)
     if start is None or step is None:
         raise UnsupportedFeatureError('numpy.arange bounds must be constants or symbolic expressions',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='array-creation')
     elementwise.emit_elementwise(target, f'({start}) + __i0 * ({step})', [], statement, state)
 
 

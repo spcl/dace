@@ -675,7 +675,9 @@ class MarkOpaque(_BodyTransformer):
 
     def _wrap(self, statement: ast.stmt, reason: str) -> OpaqueStmt:
         reads, writes = cpa.statement_io_sets(statement)
-        return OpaqueStmt(statement, reason, reads, writes)
+        # Callback provenance: statements opaque by *syntax* (never reached
+        # lowering) carry the statement type in their category prefix.
+        return OpaqueStmt(statement, f'[opaque-syntax:{type(statement).__name__}] {reason}', reads, writes)
 
 
 class BatchOpaque(_BodyTransformer):

@@ -41,21 +41,29 @@ def emit_reduction(target: DataAccess,
     from dace.frontend.python.replacements.ufunc import ufuncs  # Deferred to avoid an import cycle
     specification = ufuncs.get(ufunc_name)
     if specification is None or not specification.get('reduce'):
-        raise UnsupportedFeatureError(f'No reduction form for ufunc "{ufunc_name}"', state.context.filename, statement)
+        raise UnsupportedFeatureError(f'No reduction form for ufunc "{ufunc_name}"',
+                                      state.context.filename,
+                                      statement,
+                                      category='reduction')
 
     if axis is not None:
         rank = len(source.subset.ranges)
         normalized_axis = axis + rank if axis < 0 else axis
         if not 0 <= normalized_axis < rank:
             raise UnsupportedFeatureError(f'Reduction axis {axis} is out of range for rank {rank}',
-                                          state.context.filename, statement)
+                                          state.context.filename,
+                                          statement,
+                                          category='reduction')
         # A 1-D source reduced over its only axis is the full reduction
         if rank > 1:
             _emit_axis_reduction(target, specification, ufunc_name, source, normalized_axis, statement, state)
             return
 
     if not target.is_scalar_access:
-        raise UnsupportedFeatureError('Full reductions require a scalar target', state.context.filename, statement)
+        raise UnsupportedFeatureError('Full reductions require a scalar target',
+                                      state.context.filename,
+                                      statement,
+                                      category='reduction')
 
     line = getattr(statement, 'lineno', 0)
     source_shape = nondegenerate_shape(source.subset)
@@ -101,7 +109,9 @@ def _emit_axis_reduction(target: DataAccess, specification: dict, ufunc_name: st
     kept_dims = [dim for dim in range(rank) if dim != axis]
     if len(target.subset.ranges) != len(kept_dims):
         raise UnsupportedFeatureError('Per-axis reduction target rank does not match the reduced source',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='reduction')
 
     line = getattr(statement, 'lineno', 0)
 

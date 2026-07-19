@@ -178,7 +178,9 @@ class InferenceService:
             if inferred is not None:
                 return inferred
         raise UnsupportedFeatureError(f'Cannot infer type of expression: {astutils.unparse(node)}',
-                                      self.context.filename, node)
+                                      self.context.filename,
+                                      node,
+                                      category='type-inference')
 
     def resolve_callee(self, func: ast.expr) -> Tuple[str, Optional[Any]]:
         """
@@ -373,7 +375,9 @@ class InferenceService:
             raise
         except Exception as error:
             raise UnsupportedFeatureError(f'Unsupported access expression "{astutils.unparse(node)}": {error}',
-                                          self.context.filename, node)
+                                          self.context.filename,
+                                          node,
+                                          category='memlet-parse')
 
     def constant_int(self, node: ast.expr) -> Optional[int]:
         """Resolve a canonical atom to a compile-time integer, or None."""
@@ -405,7 +409,9 @@ class InferenceService:
             if value is None:
                 raise UnsupportedFeatureError(
                     f'Python sequence element "{astutils.unparse(element)}" is not a compile-time constant',
-                    self.context.filename, element)
+                    self.context.filename,
+                    element,
+                    category='static-sequence')
             result.append(value)
         return result
 
@@ -434,7 +440,10 @@ class InferenceService:
             if isinstance(value, symbolic.symbol):
                 return Inferred(kind='symbolic', value=value)
             return Inferred(kind='constant', value=value)
-        raise UnsupportedFeatureError(f'Use of undefined name "{node.id}"', self.context.filename, node)
+        raise UnsupportedFeatureError(f'Use of undefined name "{node.id}"',
+                                      self.context.filename,
+                                      node,
+                                      category='undefined-name')
 
     def _infer_attribute(self, node: ast.Attribute) -> Inferred:
         """Infer a structure member access (``tracers.data``) or an attribute
@@ -451,7 +460,9 @@ class InferenceService:
                 return Inferred(kind='symbolic', value=resolved)
             return Inferred(kind='constant', value=resolved)
         raise UnsupportedFeatureError(f'Cannot infer type of expression: {astutils.unparse(node)}',
-                                      self.context.filename, node)
+                                      self.context.filename,
+                                      node,
+                                      category='type-inference')
 
     def _infer_subscript(self, node: ast.Subscript) -> Inferred:
         base = self.infer(node.value)
@@ -461,7 +472,10 @@ class InferenceService:
                 return self.infer(element)
             return Inferred(kind='static', value=element)
         if not base.is_data:
-            raise UnsupportedFeatureError('Subscript of a non-container value', self.context.filename, node)
+            raise UnsupportedFeatureError('Subscript of a non-container value',
+                                          self.context.filename,
+                                          node,
+                                          category='type-inference')
         expr = self.parse_access(node)
         # Deferred import: avoids an import cycle (lowering.access ->
         # lowering.registry -> semantics.inference). See the soundness-guard
@@ -474,7 +488,9 @@ class InferenceService:
         if array_reads:
             raise UnsupportedFeatureError(
                 f'Data-dependent subscript index (reads {", ".join(sorted(array_reads))}) is not supported here',
-                self.context.filename, node)
+                self.context.filename,
+                node,
+                category='data-dependent-subscript')
         try:
             shape = [s for s in expr.subset.size() if s != 1]
             if not shape:
@@ -486,7 +502,9 @@ class InferenceService:
             # Exotic subsets produce non-real symbolic sizes (e.g. sympy zoo)
             # that crash descriptor validation; treat them as feature gaps.
             raise UnsupportedFeatureError(f'Cannot infer subscript shape of "{astutils.unparse(node)}": {error}',
-                                          self.context.filename, node)
+                                          self.context.filename,
+                                          node,
+                                          category='data-dependent-subscript')
 
     def _infer_operator(self, node: ast.expr) -> Inferred:
         if isinstance(node, ast.BinOp):
@@ -537,7 +555,9 @@ class InferenceService:
             return dtypes.bool_
         known = [op.dtype for op in operands if op.dtype is not None]
         if not known:
-            raise UnsupportedFeatureError('Cannot determine operator result type', self.context.filename)
+            raise UnsupportedFeatureError('Cannot determine operator result type',
+                                          self.context.filename,
+                                          category='type-inference')
         return dtypes.result_type_of(known[0], *known[1:]) if len(known) > 1 else known[0]
 
     def _demote_to_bool(self, operand: Inferred) -> Inferred:

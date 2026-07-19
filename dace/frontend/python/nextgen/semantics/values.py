@@ -74,18 +74,23 @@ def fold_subscript(sequence: StaticSequence, node: ast.Subscript,
             else:
                 constant = constant_of(part)
                 if constant is None:
-                    raise UnsupportedFeatureError('Slicing a Python sequence requires compile-time bounds', node=node)
+                    raise UnsupportedFeatureError('Slicing a Python sequence requires compile-time bounds',
+                                                  node=node,
+                                                  category='static-sequence')
                 parts.append(constant)
         return sequence.getslice(*parts)
     constant = constant_of(index_node)
     if constant is None:
-        raise UnsupportedFeatureError('Indexing a Python sequence requires a compile-time index', node=node)
+        raise UnsupportedFeatureError('Indexing a Python sequence requires a compile-time index',
+                                      node=node,
+                                      category='static-sequence')
     try:
         return sequence.getitem(constant)
     except IndexError:
         raise UnsupportedFeatureError(f'Static sequence index {constant} out of range '
                                       f'(length {len(sequence)})',
-                                      node=node)
+                                      node=node,
+                                      category='static-sequence')
 
 
 def fold_binop(node: ast.BinOp, left: Optional[StaticSequence], right: Optional[StaticSequence],
@@ -104,4 +109,6 @@ def fold_binop(node: ast.BinOp, left: Optional[StaticSequence], right: Optional[
             count = constant_of(count_node)
             if count is not None:
                 return sequence.repeat(count)
-    raise UnsupportedFeatureError(f'Unsupported operation on a Python sequence: {type(node.op).__name__}', node=node)
+    raise UnsupportedFeatureError(f'Unsupported operation on a Python sequence: {type(node.op).__name__}',
+                                  node=node,
+                                  category='static-sequence')

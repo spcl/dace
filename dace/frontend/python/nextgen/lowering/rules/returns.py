@@ -74,7 +74,9 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
     dtype = inferred.dtype
     if dtype is None:
         raise UnsupportedFeatureError(f'Cannot determine return value type: {astutils.unparse(value)}',
-                                      state.context.filename, statement)
+                                      state.context.filename,
+                                      statement,
+                                      category='type-inference')
     if return_name not in state.context.containers:
         return_name = state.context.add_container(return_name, data.Array(dtype, [1]), transient=transient)
     tasklet = nodes.Tasklet(f'return_{statement.lineno}', set(), {'__out'}, f'__out = {astutils.unparse(value)}')

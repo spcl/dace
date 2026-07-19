@@ -87,7 +87,10 @@ def merge_branches(before: BindingSnapshot, branch_ends: List[BindingSnapshot],
         if not kinds <= {'container', 'static'}:
             raise UnsupportedFeatureError(
                 f'Cannot merge conditional rebinding of "{name}" across branches '
-                f'(diverging binding kinds: {sorted(kinds)})', state.context.filename, statement)
+                f'(diverging binding kinds: {sorted(kinds)})',
+                state.context.filename,
+                statement,
+                category='join-merge')
 
         # Per-path container names; compile-time sequences materialize as
         # constant containers so they can join the container merge. Sequences
@@ -162,13 +165,19 @@ def _merged_descriptor(name: str, descriptors: List[data.Data], statement, state
     for descriptor in descriptors[1:]:
         if descriptor.dtype != first.dtype:
             raise UnsupportedFeatureError(f'Cannot merge conditional rebinding of "{name}": dtype mismatch',
-                                          state.context.filename, statement)
+                                          state.context.filename,
+                                          statement,
+                                          category='join-merge')
         if tuple(descriptor.shape) != tuple(first.shape):
             raise UnsupportedFeatureError(f'Cannot merge conditional rebinding of "{name}": shape mismatch',
-                                          state.context.filename, statement)
+                                          state.context.filename,
+                                          statement,
+                                          category='join-merge')
         if isinstance(descriptor, data.View) or isinstance(first, data.View):
             raise UnsupportedFeatureError(f'Cannot merge conditional rebinding of "{name}" through views',
-                                          state.context.filename, statement)
+                                          state.context.filename,
+                                          statement,
+                                          category='join-merge')
     if isinstance(first, data.Scalar):
         return data.Scalar(first.dtype)
     return data.Array(first.dtype, list(first.shape))

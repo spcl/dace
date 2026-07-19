@@ -79,4 +79,6 @@ def lower_statement(statement: ast.stmt, state: LoweringState) -> None:
         from dace.frontend.python.nextgen.lowering import dispatch  # Deferred: dispatch imports this module
         state.emitter.rollback(mark)
         state.context.restore(saved_bindings)
-        dispatch.fallback_to_callback(statement, state, str(reason))
+        # An error reaching this net without a raise-site category has the
+        # highest bug suspicion: no rule anticipated it.
+        dispatch.fallback_to_callback(statement, state, reason, category='safety-net')
