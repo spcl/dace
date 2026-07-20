@@ -194,12 +194,14 @@ def main() -> None:
     parser.add_argument('--out', required=True, help='CSV path')
     parser.add_argument('--reps', type=int, default=5)
     parser.add_argument('--skip-cloudsc', action='store_true')
+    parser.add_argument('--cloudsc-only', action='store_true', help='skip the kernel corpus')
     parser.add_argument('--limit', type=int, default=0, help='only the first N kernels (smoke test)')
     args = parser.parse_args()
 
     os.environ.setdefault('DACE_compiler_use_cache', '0')
     rows: List[dict] = []
-    bench_kernels(rows, args.label, args.reps, args.limit)
+    if not args.cloudsc_only:
+        bench_kernels(rows, args.label, args.reps, args.limit)
     if not args.skip_cloudsc:
         bench_cloudsc(rows, args.label, args.reps)
 
