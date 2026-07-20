@@ -3,7 +3,7 @@
 
 from typing import Dict, List, Set
 
-import networkx as nx
+from dace import graphlib as nx
 
 from dace import data as dt, sdfg, subsets, memlet
 from dace.config import Config

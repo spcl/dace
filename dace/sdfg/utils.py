@@ -4,7 +4,7 @@
 import collections
 import copy
 import warnings
-import networkx as nx
+from dace import graphlib as nx
 import time
 
 import dace.sdfg.nodes

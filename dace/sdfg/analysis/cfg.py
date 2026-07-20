@@ -2,7 +2,7 @@
 """ Various analyses related to control flow in SDFGs. """
 from collections import defaultdict
 from dace.sdfg import SDFGState, InterstateEdge, graph as gr, utils as sdutil
-import networkx as nx
+from dace import graphlib as nx
 import sympy as sp
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 

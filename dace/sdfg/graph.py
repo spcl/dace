@@ -5,6 +5,7 @@ from collections import deque, OrderedDict
 import itertools
 import uuid
 import networkx as nx
+from dace import graphlib
 from dace.dtypes import deduplicate
 import dace.serialize
 from typing import Any, Callable, Generic, Iterable, List, Optional, Sequence, TypeVar, Union
@@ -410,10 +411,11 @@ class Graph(Generic[NodeT, EdgeT]):
         :param as_edges: If True, returns list of edges instead of nodes.
         """
         if as_edges:
-            for path in map(nx.utils.pairwise, nx.all_simple_paths(self._nx, source_node, dest_node)):
-                yield [Edge(e[0], e[1], self._nx.edges[e]['data']) for e in path]
+            for path in graphlib.all_simple_paths(self._nx, source_node, dest_node):
+                path = list(path)
+                yield [Edge(u, v, self._nx.edges[u, v]['data']) for u, v in zip(path[:-1], path[1:])]
         else:
-            yield from nx.all_simple_paths(self._nx, source_node, dest_node)
+            yield from graphlib.all_simple_paths(self._nx, source_node, dest_node)
 
     def all_nodes_between(self, begin: NodeT, end: NodeT) -> Sequence[NodeT]:
         """Finds all nodes between begin and end. Returns None if there is any
@@ -535,7 +537,7 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def __init__(self):
         super().__init__()
-        self._nx = nx.DiGraph()
+        self._nx = graphlib.DiGraph()
 
     def nodes(self):
         return self._nx.nodes()
@@ -587,13 +589,13 @@ class DiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return [e for e in self.out_edges(source) if e.dst == destination]
 
     def find_cycles(self):
-        return nx.simple_cycles(self._nx)
+        return graphlib.simple_cycles(self._nx)
 
     def has_cycles(self) -> bool:
         try:
-            nx.find_cycle(self._nx, self.source_nodes())
+            graphlib.find_cycle(self._nx, self.source_nodes())
             return True
-        except nx.NetworkXNoCycle:
+        except graphlib.NetworkXNoCycle:
             return False
 
 
@@ -601,7 +603,7 @@ class MultiDiGraph(DiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
 
     def __init__(self):
         super().__init__()
-        self._nx = nx.MultiDiGraph()
+        self._nx = graphlib.MultiDiGraph()
 
     @staticmethod
     def _from_nx(edge) -> MultiEdge[EdgeT]:
@@ -736,17 +738,17 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         return False
 
     def find_cycles(self):
-        return nx.simple_cycles(self._nx)
+        return graphlib.simple_cycles(self._nx)
 
     def has_cycles(self) -> bool:
         try:
             sources = self.source_nodes()
             if len(sources) == 0:
-                nx.find_cycle(self._nx)
+                graphlib.find_cycle(self._nx)
             else:
-                nx.find_cycle(self._nx, sources)
+                graphlib.find_cycle(self._nx, sources)
             return True
-        except nx.NetworkXNoCycle:
+        except graphlib.NetworkXNoCycle:
             return False
 
     def edges_between(self, source: NodeT, destination: NodeT) -> List[Edge[EdgeT]]:

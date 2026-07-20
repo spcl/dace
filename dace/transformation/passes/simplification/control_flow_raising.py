@@ -4,7 +4,7 @@ import ast
 from typing import Dict, List, Optional, Tuple
 import warnings
 
-import networkx as nx
+from dace import graphlib as nx
 import sympy
 
 from dace import properties

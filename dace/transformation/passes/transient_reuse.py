@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Optional, Set
 
-import networkx as nx
+from dace import graphlib as nx
 
 from dace import SDFG, properties
 from dace.sdfg import nodes

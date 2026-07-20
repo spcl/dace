@@ -11,8 +11,8 @@ from dace.config import Config
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import graph as gr, nodes as nd
 from dace.sdfg.state import ControlFlowRegion
-import networkx as nx
-from networkx.algorithms import isomorphism as iso
+from dace import graphlib as nx
+from dace.graphlib import isomorphism as iso
 from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Type, Union
 from dace.sdfg.validation import InvalidSDFGError
 from dace.transformation import transformation as xf, pass_pipeline as ppl

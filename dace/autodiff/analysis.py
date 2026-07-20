@@ -5,7 +5,7 @@ Analysis helpers for autodiff
 from typing import Dict, Set, Tuple, Optional
 import collections
 
-import networkx as nx
+from dace import graphlib as nx
 
 from dace.sdfg import SDFG, SDFGState, nodes, utils as sdfg_utils
 from dace.transformation.passes import analysis

@@ -7,7 +7,7 @@ import warnings
 from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Set
 
-import networkx as nx
+from dace import graphlib as nx
 
 from dace import dtypes, subsets, symbolic
 from dace.dtypes import DebugInfo

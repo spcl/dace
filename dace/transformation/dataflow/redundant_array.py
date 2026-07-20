@@ -6,8 +6,8 @@ import copy
 import warnings
 from typing import Dict, List, Optional, Tuple, Sequence
 
-import networkx as nx
-from networkx.exception import NetworkXError, NodeNotFound
+from dace import graphlib as nx
+from dace.graphlib import NetworkXError, NodeNotFound
 
 from dace import data, dtypes
 from dace import memlet as mm

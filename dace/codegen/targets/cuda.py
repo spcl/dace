@@ -4,7 +4,7 @@ import functools
 import warnings
 from typing import TYPE_CHECKING, Dict, List, Optional, Set, Tuple, Union
 
-import networkx as nx
+from dace import graphlib as nx
 import sympy
 from io import StringIO
 

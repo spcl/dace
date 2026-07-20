@@ -4,7 +4,7 @@ import ast
 import copy
 import itertools
 import warnings
-from networkx import MultiDiGraph
+from dace.graphlib import MultiDiGraph
 
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock

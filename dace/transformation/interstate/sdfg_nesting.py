@@ -4,7 +4,7 @@
 import ast
 from copy import deepcopy as dc
 import itertools
-import networkx as nx
+from dace import graphlib as nx
 from typing import Callable, Dict, Iterable, List, Set, Tuple, Union
 from functools import reduce
 import operator

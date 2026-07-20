@@ -810,6 +810,29 @@ required:
                     saves all fields.
 
     #############################################
+    # Graph backend
+
+    graph:
+        type: dict
+        title: Graph
+        description: Settings for DaCe's internal graph representation and algorithms.
+        required:
+            backend:
+                type: str
+                default: 'networkx'
+                title: Graph backend
+                description: >
+                    Backend used for DaCe's internal graph data structures and algorithms
+                    ('networkx' for the reference/safe implementation, or 'rustworkx' for
+                    an accelerated, opt-in implementation -- requires the 'fastgraph' extra).
+                    Applies uniformly: algorithm calls made through an SDFG's or state's
+                    '.nx'/'._nx' escape hatch are also accelerated under 'rustworkx' (via an
+                    on-the-fly, currently uncached conversion), except for the couple of
+                    algorithms rustworkx has no implementation of at all (transitive closure,
+                    max-flow/min-cut), which always use networkx regardless of this setting;
+                    see dace/graphlib for details.
+
+    #############################################
     # DaCe library settings
 
     library:
