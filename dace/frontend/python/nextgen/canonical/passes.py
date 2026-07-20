@@ -44,6 +44,32 @@ def _assign(target_name: str, value: ast.expr, template: ast.AST) -> ast.Assign:
     return _located(ast.Assign(targets=[_name_store(target_name, template)], value=value), template)
 
 
+def _is_python_callback_callee(callee: ast.expr, global_vars: dict) -> bool:
+    """
+    Whether a call target resolves to a plain Python function, which lowers to
+    an interpreter callback rather than to dataflow.
+
+    Used to keep sequence-unpacking assignments off callback results: NumPy
+    ufuncs, ``@dace.program`` callees, and registered replacements all produce
+    data and unpack by index, but a Python callable produces an opaque object
+    that must stay a single multi-output callback.
+    """
+    import types
+
+    resolved = None
+    if isinstance(callee, ast.Constant):
+        resolved = callee.value  # Preprocessing embeds resolved callees as constants
+    else:
+        root = callee
+        while isinstance(root, ast.Attribute):
+            root = root.value
+        if isinstance(root, ast.Name):
+            resolved = global_vars.get(root.id)
+            if isinstance(callee, ast.Attribute) and resolved is not None:
+                resolved = getattr(resolved, callee.attr, None)
+    return isinstance(resolved, (types.FunctionType, types.LambdaType))
+
+
 class _BodyTransformer:
     """
     Base class for passes that rewrite statement lists. Subclasses override
@@ -332,6 +358,8 @@ class DesugarStatements(_BodyTransformer):
             return self._transform_body(statements)
         if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
             unpacked = self._desugar_tuple_swap(statement)
+            if unpacked is None:
+                unpacked = self._desugar_sequence_unpack(statement)
             if unpacked is not None:
                 return self._transform_body(unpacked)
         if isinstance(statement, ast.AugAssign):
@@ -367,7 +395,12 @@ class DesugarStatements(_BodyTransformer):
         """
         Unpack a tuple-to-tuple assignment (``a, b = c, d``) into temporaries
         followed by individual assignments, or None if the statement is not of
-        that shape. Starred and nested-tuple targets are left untouched.
+        that shape. Starred targets are left untouched.
+
+        Nested sequence elements (``b, (c, d) = x, (y, z)``) are handled by
+        re-processing the generated assignments: the nested pair becomes
+        ``(c, d) = __unpackN``, which this pass then desugars again through
+        :meth:`_desugar_sequence_unpack`.
         """
         target = statement.targets[0]
         value = statement.value
@@ -375,7 +408,7 @@ class DesugarStatements(_BodyTransformer):
             return None
         if len(target.elts) != len(value.elts):
             return None
-        if any(isinstance(element, (ast.Starred, ast.Tuple, ast.List)) for element in target.elts + value.elts):
+        if any(isinstance(element, ast.Starred) for element in target.elts + value.elts):
             return None
         statements: List[ast.stmt] = []
         temporaries: List[str] = []
@@ -385,6 +418,52 @@ class DesugarStatements(_BodyTransformer):
             statements.append(_assign(temp, element, statement))
         for element, temp in zip(target.elts, temporaries):
             statements.append(_located(ast.Assign(targets=[element], value=_name_load(temp, statement)), statement))
+        return statements
+
+    def _desugar_sequence_unpack(self, statement: ast.Assign) -> Optional[List[ast.stmt]]:
+        """
+        Unpack a multi-target assignment from a single value (``b, c = a``)
+        into indexed reads along the leading axis, or None if the statement is
+        not of that shape.
+
+        This is NumPy iteration semantics, not tuple destructuring: ``b, c = a``
+        for ``a: float64[2, 3, 4]`` binds ``b = a[0]`` and ``c = a[1]``. The
+        target count is *not* checked here — canonicalization has no shape
+        information — so a mismatch surfaces downstream as an out-of-range
+        subscript, matching the classic frontend's rejection of ``b, c, d = a``
+        when ``a`` has two leading elements.
+
+        Starred targets are left untouched; nested sequence targets recurse
+        through the caller's re-processing of the generated statements.
+
+        A call to a plain Python function is left alone: it lowers to an
+        interpreter callback, and a callback returning a tuple is emitted as a
+        single multi-output call. Rewriting it into per-index reads would
+        instead index an opaque Python object, turning one callback into
+        several.
+        """
+        target = statement.targets[0]
+        value = statement.value
+        if not isinstance(target, (ast.Tuple, ast.List)) or isinstance(value, (ast.Tuple, ast.List)):
+            return None
+        if any(isinstance(element, ast.Starred) for element in target.elts):
+            return None
+        if isinstance(value, ast.Call) and _is_python_callback_callee(value.func, self.context.global_vars):
+            return None
+
+        statements: List[ast.stmt] = []
+        source = value
+        if not isinstance(value, ast.Name):
+            # Evaluate the sequence once, then index it per target.
+            temp = self.context.fresh_name('__unpack')
+            statements.append(_assign(temp, value, statement))
+            source = _name_load(temp, statement)
+        for index, element in enumerate(target.elts):
+            item = _located(
+                ast.Subscript(value=_located(copy.deepcopy(source), statement),
+                              slice=_located(ast.Constant(value=index), statement),
+                              ctx=ast.Load()), statement)
+            statements.append(_located(ast.Assign(targets=[element], value=item), statement))
         return statements
 
     def _desugar_loop_else(self, loop: Union[ast.For, ast.While]) -> List[ast.stmt]:

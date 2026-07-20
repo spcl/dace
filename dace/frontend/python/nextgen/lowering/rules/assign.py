@@ -44,15 +44,22 @@ from dace.frontend.python.nextgen.lowering.mechanisms import static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import Inferred
 
-#: Augmented operators that map to a conflict-resolution lambda, mirroring the
-#: classic frontend's ``newast.py::augassign_ops`` table.
+#: Augmented operators that may become a conflict-resolution lambda. A write is
+#: only safe to conflict-resolve when repeatedly folding the accumulator on the
+#: left is order-independent — ``f(f(x, a), b) == f(f(x, b), a)`` — because WCR
+#: applies the combiner in arbitrary thread order.
+#:
+#: This is classic's ``newast.py::augassign_ops`` table MINUS ``%``, which is
+#: not order-independent (``(30 % 17) % 27 == 13`` but ``(30 % 27) % 17 == 3``)
+#: and is therefore miscompiled by classic's WCR. ``/`` is kept: it reorders
+#: only within floating-point rounding, the same tolerance WCR already accepts
+#: for ``+`` and ``*``.
 _WCR_OPERATORS = {
     ast.Add: '+',
     ast.Sub: '-',
     ast.Mult: '*',
     ast.Div: '/',
     ast.FloorDiv: '//',
-    ast.Mod: '%',
     ast.Pow: '**',
     ast.LShift: '<<',
     ast.RShift: '>>',
