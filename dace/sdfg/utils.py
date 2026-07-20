@@ -2553,13 +2553,31 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # -> For 2: Rm. dynamic in connector, remove the edge and the node if the degree is None
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
-    # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
+    # -> then create a [tasklet] that uses the scalar_val as a constant value inside
+    import re
+
+    def _token_replace(code: str, src: str, dst: str) -> str:
+        # Split while keeping delimiters
+        tokens = re.split(r'(\s+|[()\[\]])', code)
+
+        # Replace tokens that exactly match src
+        tokens = [dst if token.strip() == src else token for token in tokens]
+
+        # Recombine everything
+        return ''.join(tokens).strip()
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
-            return CodeBlock(input.as_string.replace(src, dst))
+            return CodeBlock(_token_replace(input.as_string, src, dst))
         else:
             return input.replace(src, dst)
+
+    nsdfgs = []
+    # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                nsdfgs.append((node, state, state.in_edges(node), state.out_edges(node)))
 
     # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
     # For nestedSDFGs we will remove
@@ -2570,7 +2588,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if scalar_name in sdfg.symbols:
             sdfg.remove_symbol(scalar_name)
 
-    nsdfgs = set()
     c = 0
     for state in sdfg.all_states():
         # Check dynamic inputs
@@ -2588,22 +2605,37 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             assert e.data.data == scalar_name
 
             if isinstance(e.dst, nd.Tasklet):
-                assign_tasklet = state.add_tasklet(f"assign_{scalar_name}",
-                                                   inputs={},
-                                                   outputs={"_out"},
-                                                   code=f"_out = {scalar_val}")
-                tmp_name = f"__tmp_{scalar_name}_{c}"
-                c += 1
-                copydesc = copy.deepcopy(sdfg.arrays[scalar_name])
-                copydesc.transient = True
-                copydesc.storage = dace.StorageType.Register
-                sdfg.add_datadesc(tmp_name, copydesc)
-                scl_an = state.add_access(tmp_name)
+                in_tasklet_name = e.dst_conn
+                if e.dst.code.language == dace.dtypes.Language.Python:
+                    import sympy
+                    try:
+                        lhs, rhs = e.dst.code.as_string.split("=")
+                        lhs = lhs.strip()
+                        rhs = rhs.strip()
+                        subs_rhs = str(sympy.pycode(dace.symbolic.SymExpr(rhs).subs({in_tasklet_name:
+                                                                                     scalar_val}))).strip()
+                        new_code = CodeBlock(code=f"{lhs} = {subs_rhs}", language=dace.dtypes.Language.Python)
+                    except Exception:
+                        # Real tasklet code can contain constructs sympy's expression parser does
+                        # not round-trip -- e.g. a Python cast like ``dace.int32(x)`` is misparsed
+                        # as an attribute-access node and then called, raising "'Attr' object is
+                        # not callable" (confirmed on CloudSC's kidia/kfdia-consuming tasklets).
+                        # Fall back to the same plain token substitution the non-Python branch below
+                        # already relies on: exact-token matching, no parsing, always applicable.
+                        new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name,
+                                                                 str(scalar_val)),
+                                             language=dace.dtypes.Language.Python)
+                    e.dst.code = new_code
+                else:
+
+                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, str(scalar_val)),
+                                         language=e.dst.code.language)
+                    e.dst.code = new_code
                 state.remove_edge(e)
-                state.add_edge(assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc))
-                state.add_edge(scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc))
                 if e.src_conn is not None:
                     src.remove_out_connector(e.src_conn)
+                if e.dst_conn is not None:
+                    dst.remove_in_connector(e.dst_conn)
             else:
                 state.remove_edge(e)
                 if e.src_conn is not None:
@@ -2635,8 +2667,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                     _s = s.subs(scalar_name, scalar_val)
                     new_range_list.append((_b, _e, _s))
                 node.map.range = dace.subsets.Range(new_range_list)
-            elif isinstance(node, nd.NestedSDFG):
-                nsdfgs.add(node.sdfg)
 
     # Replace on for CFGs as
     for cfg in sdfg.all_control_flow_regions():
@@ -2658,13 +2688,38 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if scalar_name in sdfg.parent_nsdfg_node.symbol_mapping:
             del sdfg.parent_nsdfg_node.symbol_mapping[scalar_name]
 
-    for nsdfg in nsdfgs:
-        _specialize_scalar_impl(root, nsdfg, scalar_name, scalar_val)
+    for nsdfg_node, state, in_edges, out_edges in nsdfgs:
+        in_data_mapping = {ie.data.data: ie.dst_conn for ie in in_edges if ie.data.data is not None}
+        out_data_mapping = {oe.data.data: oe.src_conn for oe in out_edges if oe.data.data is not None}
+        assert scalar_name not in out_data_mapping
+        if scalar_name in in_data_mapping:
+            _specialize_scalar_impl(root, nsdfg_node.sdfg, in_data_mapping[scalar_name], scalar_val)
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
-    assert isinstance(scalar_name, str)
-    assert isinstance(scalar_val, (float, int, str))
+    import sympy
+
+    assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_val)}"
+
+    def _sympy_to_python_number(val):
+        """Convert any SymPy numeric type to a native Python int or float."""
+        if isinstance(val, sympy.Integer):
+            return int(val)
+        elif isinstance(val, (sympy.Float, sympy.Rational)):
+            return float(val)
+        elif isinstance(val, sympy.Number):
+            # Fallback for any other sympy numeric type
+            return float(val.evalf())
+        return val  # unchanged if not a number
+
+    assert isinstance(
+        scalar_val,
+        (float, int, str,
+         sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(scalar_val)}"
+    if not isinstance(scalar_val, (float, int, str)):
+        if isinstance(scalar_val, sympy.Number):
+            scalar_val = _sympy_to_python_number(scalar_val)
+
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
 
 

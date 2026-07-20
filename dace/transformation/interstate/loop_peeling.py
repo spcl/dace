@@ -69,17 +69,16 @@ class LoopPeeling(LoopUnroll):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         stride = loop_analysis.get_loop_stride(self.loop)
-        is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
 
         if self.begin:
             # Create states for loop subgraph
             peeled_iterations: List[ControlFlowRegion] = []
             for i in range(self.count):
-                # Instantiate loop contents as a new control flow region with iterate value.
+                # Instantiate loop contents as a new control flow region with iterate value. `i`
+                # is always non-negative here (plain range(self.count)), so it doubles as the
+                # label-safety fallback index -- see instantiate_loop_iteration.
                 current_index = start + (i * stride)
-                is_symbolic |= symbolic.issymbolic(current_index)
-                iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
-                                                                   str(i) if is_symbolic else None)
+                iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index, i)
 
                 # Connect iterations with unconditional edges
                 if len(peeled_iterations) > 0:
@@ -99,11 +98,11 @@ class LoopPeeling(LoopUnroll):
             # Create states for loop subgraph
             peeled_iterations: List[ControlFlowRegion] = []
             for i in reversed(range(self.count)):
-                # Instantiate loop contents as a new control flow region with iterate value.
+                # Instantiate loop contents as a new control flow region with iterate value. `i`
+                # is always non-negative here (reversed(range(n)) still only covers 0..n-1), so
+                # it doubles as the label-safety fallback index -- see instantiate_loop_iteration.
                 current_index = pystr_to_symbolic(self.loop.loop_variable) + (i * stride)
-                is_symbolic |= symbolic.issymbolic(current_index)
-                iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
-                                                                   str(i) if is_symbolic else None)
+                iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index, i)
 
                 # Connect iterations with unconditional edges
                 if len(peeled_iterations) > 0:

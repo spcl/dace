@@ -201,6 +201,47 @@ def test_replace_dict_inner_loop():
     assert "jn" not in {str(s) for s in sdfg.arglist()}
 
 
+def test_unroll_loop_with_negative_iterate_values():
+    """A loop counting DOWN into negative territory (``i`` from 0 to -5, several
+    iterations so the loop's own 0-based enumeration index ALSO goes negative, not
+    just the iterate value) produces a concrete -- not symbolic -- iterate value whose
+    ``str()`` contains a bare ``-`` (e.g. ``-1``). ``instantiate_loop_iteration``'s
+    label previously used this string directly whenever the value was non-symbolic,
+    producing an invalid state/region name (e.g. ``size_5_loop_i-1``) that only
+    ``SDFG.validate()`` catches -- and it caught exactly this, unrolling a real
+    CloudSC loop that counts down. A first fix (falling back to the loop's raw
+    enumeration index, i.e. ``range(0, loop_diff, stride)``'s own ``i``) was NOT
+    enough: for a negative stride ``i`` itself walks 0, -1, -2, ... and is just as
+    unsafe. Regression: must fall back to a strictly non-negative position (e.g. via
+    ``enumerate``) instead.
+    """
+    sdfg = dace.SDFG('negative_iterate_loop_sdfg')
+    for_cfg = LoopRegion(label='size_3_countdown',
+                         condition_expr=CodeBlock('i > -5'),
+                         loop_var='i',
+                         initialize_expr=CodeBlock('i = 0'),
+                         update_expr=CodeBlock('i = i - 1'),
+                         sdfg=sdfg)
+    sdfg.add_node(for_cfg, is_start_block=True)
+    body = ControlFlowRegion(label='for_body', sdfg=sdfg, parent=for_cfg)
+    for_cfg.add_node(body, is_start_block=True)
+    body.add_state(label='s1', is_start_block=True)
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations_repeated(LoopUnroll, validate_all=True)
+    assert applied == 1
+    sdfg.validate()
+
+    loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
+    assert len(loops) == 0
+    # 5 unrolled iterations (i = 0, -1, -2, -3, -4), each its own inlined state, plus the
+    # empty start-block predecessor LoopUnroll prepends (the loop is its region's start block).
+    assert sdfg.number_of_nodes() == 6
+
+    loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
+    assert len(loops) == 0
+
+
 if __name__ == "__main__":
     test_if_block_inside_for()
     test_empty_loop()
@@ -209,3 +250,4 @@ if __name__ == "__main__":
     test_melt_kernel()
     test_triang_elim()
     test_replace_dict_inner_loop()
+    test_unroll_loop_with_negative_iterate_values()

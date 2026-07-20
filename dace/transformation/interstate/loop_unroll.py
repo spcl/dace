@@ -5,11 +5,11 @@ import ast
 import copy
 from typing import List, Optional, Union
 
-from dace import sdfg as sd, symbolic, serialize, version
+from dace import dtypes, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import InterstateEdge, utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState
 from dace.frontend.python.astutils import ASTFindReplace
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -66,21 +66,28 @@ class LoopUnroll(xf.MultiStateTransformation):
         try:
             stride = symbolic.evaluate(stride, sdfg.constants)
             loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
-            is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
+
+        # A start-block loop has no in-edges, so the unrolled chain would inherit none and leave the
+        # parent with an ambiguous start. Prepend an empty ``pre -> loop`` start state so the loop is a
+        # normal interior block; ``pre`` stays the single start and is absorbed by the following fusion.
+        if loop_diff > 0 and graph.start_block is self.loop:
+            pre_state = graph.add_state(self.loop.label + '_unroll_pre', is_start_block=True)
+            graph.add_edge(pre_state, self.loop, sd.InterstateEdge())
 
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
         unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
-        for i in range(0, loop_diff, stride):
+        for position, i in enumerate(range(0, loop_diff, stride)):
             # Instantiate loop contents as a new control flow region with iterate value.
+            # `position` (0, 1, 2, ...) is instantiate_loop_iteration's label-safety fallback,
+            # NOT `i` itself: for a decrementing loop (negative stride) `i` walks 0, -1, -2, ...
+            # and is just as unsafe to embed in a name as a symbolic iterate value would be.
             current_index = start + i
-            is_symbolic |= symbolic.issymbolic(current_index)
-            iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
-                                                               str(i) if is_symbolic else None)
+            iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index, position)
             iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
-            iteration_region.replace_meta_accesses({self.loop.loop_variable: str(current_index)})
+            iteration_region.replace_meta_accesses({self.loop.loop_variable: symbolic.symstr(current_index)})
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
@@ -103,22 +110,9 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert oe.dst in graph.nodes()
                 graph.add_edge(unrolled_iterations[-1], oe.dst, oe.data)
 
-        # If we remove start block we need to update the new start-block
-        was_start_block = graph.start_block == self.loop
-        oes = graph.out_edges(self.loop)
+        # The loop is never the start block here (a start-block loop got an empty ``pre`` predecessor
+        # above), so removing it cannot orphan the parent's start -- no start-block re-designation needed.
         graph.remove_node(self.loop)
-        if was_start_block:
-            if len(oes) > 0:
-                oe = oes[0]
-                oes2 = graph.out_edges(oe.dst)
-                graph.remove_node(oe.dst)
-                assert len(oes2) <= 1
-                if len(oes2) == 1:
-                    graph.add_node(oe.dst, is_start_block=True)
-                    for oe2 in oes2:
-                        graph.add_edge(oe.dst, oe2.dst, copy.deepcopy(oe2.data))
-                else:
-                    graph.add_node(oe.dst, is_start_block=True)
 
         if self.inline_iterations:
             for it in unrolled_iterations:
@@ -131,24 +125,56 @@ class LoopUnroll(xf.MultiStateTransformation):
                                    graph: ControlFlowRegion,
                                    loop: LoopRegion,
                                    value: symbolic.SymbolicType,
+                                   index: int,
                                    label_suffix: Optional[str] = None) -> ControlFlowRegion:
-        it_label = loop.label + '_' + loop.loop_variable + (label_suffix if label_suffix is not None else str(value))
+        it_label = loop.label + '_' + loop.loop_variable + (label_suffix
+                                                             if label_suffix is not None else symbolic.symstr(value))
+        if not dtypes.validate_name(it_label):
+            # A concrete (non-symbolic) iterate value can still render into an invalid
+            # identifier -- e.g. a negative int's ``str()`` contains a bare ``-``
+            # (confirmed on a real CloudSC loop counting down: label
+            # ``for_1260_jn-1`` rejected by validate_name). The enumeration index is
+            # always a small non-negative int, always identifier-safe; fall back to it
+            # rather than trying to enumerate every character ``str(value)`` could ever
+            # produce.
+            it_label = loop.label + '_' + loop.loop_variable + str(index)
         iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
 
-        graph.add_node(iteration_region)
+        # ``ensure_unique_name``: the label is derived from the loop label + iterate value, which is
+        # NOT unique when several sibling loops share a label (e.g. many deepcopies of one inner loop
+        # left by unrolling an enclosing loop). Without this, every such loop emits the same
+        # ``<label>_<var><value>`` iteration regions into one parent -- a "multiple blocks with the
+        # same name" validation failure. On inline the unique region label prefixes its promoted
+        # children too, so the fix carries through both the inline and no-inline paths.
+        graph.add_node(iteration_region, ensure_unique_name=True)
 
         block_map = {}
 
         for block in loop.nodes():
-            # Using to/from JSON is faster for copying blocks than deep copying.
-            new_block = serialize.from_json(serialize.to_json(block),
-                                            context={
-                                                'sdfg': graph.sdfg,
-                                                'version': version.__version__,
-                                            })
+            # A deepcopy copies a block ~9x faster than a to/from JSON round-trip (measured on a
+            # CloudSC loop body: 0.38ms vs 3.37ms). ``ControlFlowBlock.__deepcopy__`` detaches the
+            # parent SDFG on the whole subtree, where the old JSON path carried it in via the
+            # deserialization context. Restore the two pointers deepcopy drops, before
+            # ``replace_dict`` dereferences them:
+            #  * every control-flow block's ``.sdfg``. ``all_control_flow_blocks`` (non-recursive)
+            #    reaches nested regions at any depth but stops at nested-SDFG boundaries, whose
+            #    states must keep pointing at their own SDFG.
+            #  * each DIRECT nested SDFG's ``parent_sdfg``: the block's own memo had no reference to
+            #    the outer SDFG, so ``SDFG.__deepcopy__`` nulled it (``parent`` and
+            #    ``parent_nsdfg_node`` survived via the memo). Deeper nested SDFGs, whose parents
+            #    were inside the memo, keep their own SDFG. Mirrors ``SDFGState.add_node``.
+            new_block = copy.deepcopy(block)
+            cfg_blocks = [new_block]
+            if isinstance(new_block, AbstractControlFlowRegion):
+                cfg_blocks.extend(new_block.all_control_flow_blocks())
+            for cfg_block in cfg_blocks:
+                cfg_block.sdfg = graph.sdfg
+                if isinstance(cfg_block, SDFGState):
+                    for nsdfg_node in cfg_block.nodes():
+                        if isinstance(nsdfg_node, NestedSDFG):
+                            nsdfg_node.sdfg.parent_sdfg = graph.sdfg
             assert block not in block_map
             block_map[block] = new_block
-            # The JSON copy is created with SDFG context, so replacement can run before insertion.
             new_block.replace_dict({loop.loop_variable: value})
             iteration_region.add_node(new_block, is_start_block=(block is loop.start_block))
 
@@ -159,6 +185,11 @@ class LoopUnroll(xf.MultiStateTransformation):
             data = copy.deepcopy(edge.data)
             iteration_region.add_edge(src, dst, data)
 
+        # A raw str() on a symbolic expression can misrender it (e.g. an operator-function like
+        # ``__right_shift`` prints as its sympy class name, not the operator) -- symstr renders
+        # the DaCe-printable form, so the substituted code stays parseable either way.
+        value_str = symbolic.symstr(value)
+
         # Replace occurences of the loop variables on all interstate edges
         for edge, parent_graph in iteration_region.all_edges_recursive():  # Recursion needed for nested SDFGs
             if isinstance(edge.data, InterstateEdge):
@@ -167,14 +198,14 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert src in parent_graph.nodes()
                 assert dst in parent_graph.nodes()
                 if not edge.data.is_unconditional():
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(edge.data.condition)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(edge.data.condition)
 
                 new_assignments = dict()
                 for k, v in edge.data.assignments.items():
                     k_ast = ast.parse(k)
                     v_ast = ast.parse(v)
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(k_ast)
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(v_ast)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(k_ast)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(v_ast)
                     new_assignments[ast.unparse(k_ast)] = ast.unparse(v_ast)
                 edge.data.assignments = new_assignments
 
@@ -182,7 +213,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             if isinstance(node, NestedSDFG):
                 if loop.loop_variable in node.symbol_mapping:
                     node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
-                        loop.loop_variable: str(value)
+                        loop.loop_variable: value_str
                     }).visit(node.symbol_mapping[loop.loop_variable])
                 if loop.loop_variable in node.symbol_mapping:
                     del node.symbol_mapping[loop.loop_variable]
