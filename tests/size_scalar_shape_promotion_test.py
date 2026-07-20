@@ -5,6 +5,8 @@
 symbol, and minting a symbol of the same name collided with the descriptor (``FileExistsError``).
 The size is now read into a ``__sym_`` symbol on an interstate edge and substituted into the shape,
 leaving the descriptor in place so the program can keep reading or reassigning the size afterwards.
+Each shape captures its own symbol, so two arrays sized from the same reused variable at different
+values keep the values they were created with.
 """
 import numpy as np
 import dace
@@ -40,6 +42,28 @@ def size_reassigned_after_use(a: dace.float64[N], Nt: dace.int64, out: dace.floa
         out[i] = a[i] + m
 
 
+@dace.program
+def two_arrays_from_reassigned_size(Nt: dace.int64, out: dace.float64[1]):
+    m = Nt
+    b = np.empty(m, dace.float64)
+    for i in range(64):
+        b[i] = 1.0
+    m = 2  # a second array from the same name at a different value
+    c = np.empty(m, dace.float64)
+    c[0] = 0.0
+    out[0] = np.sum(b)  # must sum all 64 of b, not be truncated to c's size
+
+
+@dace.program
+def size_reused_as_index(out: dace.float64[1]):
+    m = 8
+    a = np.empty(m, dace.float64)
+    for i in range(8):
+        a[i] = i * 1.0
+    m = 2
+    out[0] = a[m]  # the shape symbol must not be the one this index reassigns
+
+
 def test_scalar_size_as_shape():
     n, nt = 5, 7
     a = np.arange(n, dtype=np.float64)
@@ -65,17 +89,64 @@ def test_size_can_be_reassigned_after_use_as_a_shape():
     assert np.allclose(out, a + 99)
 
 
+def test_two_arrays_from_a_reassigned_size_keep_their_own_extents():
+    """A per-shape symbol: reusing one size name for two arrays must not collapse their extents.
+
+    A single shared symbol gave both arrays the last value written to it, so ``np.sum(b)`` read
+    ``b`` as length 2 and returned 2.0 instead of 64.0.
+    """
+    out = np.zeros(1)
+    two_arrays_from_reassigned_size(np.int64(64), out)
+    assert np.isclose(out[0], 64.0)
+
+
+def test_a_size_reused_as_an_index_does_not_rebind_the_extent():
+    """The shape's symbol must differ from the one a later index access of the same name binds.
+
+    Both a shape and an index promote the size scalar to a symbol; if they share it, indexing with
+    the reassigned value re-binds the array's extent (here to 2), so ``a`` is allocated too small
+    and the access goes out of bounds.
+    """
+    out = np.zeros(1)
+    size_reused_as_index(out)
+    assert np.isclose(out[0], 2.0)
+
+
 def test_promotion_leaves_the_descriptor_in_place():
     sdfg = size_read_after_use.to_sdfg(simplify=False)
-    promoted = [s for s in sdfg.symbols if s.startswith('__sym_')]
-    assert promoted, 'the size scalar must be read into a symbol'
-    # The descriptor stays: deleting it is what broke later reads of the size.
-    assert any(s[len('__sym_'):] in sdfg.arrays for s in promoted)
+    # Each promotion assigns `__sym_... = <scalar>` on an interstate edge; the scalar it reads must
+    # still be a data descriptor afterwards, since deleting it is what broke later reads of the size.
+    sources = {
+        rhs
+        for e in sdfg.all_interstate_edges()
+        for lhs, rhs in e.data.assignments.items() if lhs.startswith('__sym_')
+    }
+    assert sources, 'the size scalar must be read into a symbol'
+    assert all(src in sdfg.arrays for src in sources), 'the size descriptor must survive promotion'
     sdfg.validate()
+
+
+def test_shape_stays_correct_through_simplify():
+    """simplify() may rewrite the promotion, but the array must keep the right extent either way.
+
+    This is the coverage the structural test cannot give: the original test asserted the descriptor
+    was deleted, which hid that a later read of the size crashed. Here the whole program is run once
+    unsimplified and once simplified, and both must agree with numpy.
+    """
+    n, nt = 6, 9
+    a = np.arange(n, dtype=np.float64)
+    for simplify in (False, True):
+        sdfg = size_from_empty.to_sdfg(simplify=simplify)
+        out = np.zeros(n)
+        sdfg(a=a, Nt=np.int64(nt), out=out, N=n)
+        assert np.allclose(out, a * 2.0), f'wrong result with simplify={simplify}'
 
 
 if __name__ == '__main__':
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
     test_size_can_be_reassigned_after_use_as_a_shape()
+    test_two_arrays_from_a_reassigned_size_keep_their_own_extents()
+    test_a_size_reused_as_an_index_does_not_rebind_the_extent()
     test_promotion_leaves_the_descriptor_in_place()
+    test_shape_stays_correct_through_simplify()

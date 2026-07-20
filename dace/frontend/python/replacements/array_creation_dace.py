@@ -20,12 +20,17 @@ from dace import symbolic
 
 def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) -> Shape:
     """
-    Rewrites a shape so that scalars used as extents are read through symbols.
+    Rewrites a shape so that a size scalar used as an extent is read through a symbol.
 
     An extent must be a symbol, but a size computed in the program (``nt = Nt + 1`` then
-    ``np.empty(nt)``) is a scalar data descriptor. Each such scalar is read into a symbol on an
-    interstate edge and substituted into the shape. The descriptor itself is left alone, so the
-    program may keep reading or reassigning the size afterwards.
+    ``np.empty(nt)``) is a size-1 data descriptor. Each such name is read into a symbol on an
+    interstate edge and substituted into the shape, leaving the descriptor in place so the program
+    may keep reading the size afterwards.
+
+    The size is captured into a symbol minted for this shape (``fresh``): the frontend reuses one
+    temporary for a size expression across calls, so ``m = ...; np.empty(m); m = ...; np.empty(m)``
+    would otherwise give both arrays whichever value was written to the shared symbol last. A
+    per-shape symbol records the value at the point each array is created.
 
     :param pv: The program visitor, which owns symbol promotion and the state machine.
     :param sdfg: The SDFG being built.
@@ -33,19 +38,20 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
     :return: The shape with scalar extents replaced by symbols.
     """
     resolved = [symbolic.pystr_to_symbolic(e) if isinstance(e, str) else e for e in shape]
-    replacements = {}
+    names = set()
     for extent in resolved:
         if not isinstance(extent, sympy.Basic):
             continue
         for sym in extent.free_symbols:
             name = str(sym)
-            if name in replacements or name in sdfg.symbols or name not in sdfg.arrays:
-                continue
-            desc = sdfg.arrays[name]
-            if isinstance(desc, data.Scalar) or desc.total_size == 1:
-                replacements[sym] = pv.promote_scalar_to_symbol(name)
-    if not replacements:
+            if name in sdfg.arrays and name not in sdfg.symbols and sdfg.arrays[name].total_size == 1:
+                names.add(name)
+    if not names:
         return shape
+
+    # One symbol per distinct name in this shape (np.empty((m, m)) shares it); sorted() keeps the
+    # promotion states deterministic when several size scalars appear.
+    replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}
     return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved]
 
 

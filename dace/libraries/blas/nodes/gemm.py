@@ -466,7 +466,11 @@ class ExpandGemmPBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        (_, adesc, ashape, _, _, _), (_, bdesc, bshape, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+        # Read the same matrix view the dispatcher and validate agreed on; reading the raw subset
+        # would mis-size an operand (e.g. an (NQ, 1, NP) reshape) that validate has already accepted.
+        adata, bdata, _ = _get_matmul_operands(node, state, sdfg)
+        _, adesc, ashape, _ = _matrix_operand(adata)
+        _, bdesc, bshape, _ = _matrix_operand(bdata)
         dtype = adesc.dtype.base_type
 
         if not equal_valued(0, node.beta):
