@@ -9,7 +9,7 @@ callers such as ``mpi.py`` feed the result straight back into ``new_symbols``).
 import dace
 import pytest
 from dace import dtypes
-from dace.codegen.symbol_scopes import defined_at, symbol_scopes
+from dace.transformation.passes.analysis.scopes import SymbolScopes, defined_at
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -17,7 +17,7 @@ M = dace.symbol('M')
 
 def assert_matches(sdfg: dace.SDFG):
     """Every node of every state must get the identical table from both routes."""
-    scopes = symbol_scopes(sdfg)
+    scopes = SymbolScopes().apply_pass(sdfg, {})
     checked = 0
     for nested in sdfg.all_sdfgs_recursive():
         for state in nested.states():
@@ -53,7 +53,7 @@ def test_loop_region_iterator_is_visible():
     tasklet = body.add_tasklet('w', {}, {'o'}, 'o = i')
     body.add_edge(tasklet, 'o', body.add_access('A'), None, dace.Memlet('A[i]'))
 
-    scopes = symbol_scopes(sdfg)
+    scopes = SymbolScopes().apply_pass(sdfg, {})
     assert 'i' in defined_at(scopes, body, tasklet), 'loop iterator must be in scope'
     assert_matches(sdfg)
 
@@ -71,7 +71,7 @@ def test_dynamic_map_range_connector():
     state.add_nedge(entry, tasklet, dace.Memlet())
     state.add_memlet_path(tasklet, exit_, state.add_access('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
 
-    scopes = symbol_scopes(sdfg)
+    scopes = SymbolScopes().apply_pass(sdfg, {})
     inner = defined_at(scopes, state, tasklet)
     assert 'i' in inner and 'bound' in inner, f'dynamic range connector missing: {sorted(inner)}'
     # The entry itself sees its OUTER scope, not its own parameters
@@ -117,7 +117,7 @@ def test_scalar_free_symbols_reach_every_scope():
     state.add_nedge(entry, tasklet, dace.Memlet())
     state.add_memlet_path(tasklet, exit_, state.add_access('A'), src_conn='o', memlet=dace.Memlet('A[i]'))
 
-    scopes = symbol_scopes(sdfg)
+    scopes = SymbolScopes().apply_pass(sdfg, {})
     inner = defined_at(scopes, state, tasklet)
     assert 'N' in inner and 'M' in inner
     assert isinstance(inner['N'], dtypes.typeclass)

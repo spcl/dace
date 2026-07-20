@@ -13,8 +13,7 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.codegen.allocation_scopes import allocation_scopes
-from dace.codegen.symbol_scopes import SymbolScopes, symbol_scopes
+from dace.transformation.passes.analysis.scopes import AllocationScopes, SymbolScopes
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
 from dace.sdfg.type_inference import infer_expr_type
@@ -57,7 +56,7 @@ class DaCeCodeGenerator(object):
         self.fsyms: Dict[int, Set[str]] = {}
         # Filled by determine_allocation_lifetime; targets read it through symbol_scopes.defined_at,
         # which falls back to symbols_defined_at for anything built after the pass ran.
-        self.symbol_scopes: SymbolScopes = {}
+        self.symbol_scopes: Dict = {}
         # cfg_id -> whether that SDFG's control flow is fully structured (line-graph regions only).
         # Consulted by state_needs_brace to gate the experimental readable state-scope elision.
         self._structured_cfg: Dict[int, bool] = {}
@@ -725,10 +724,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         # Lookup tables for the per-descriptor decisions below, so each one is a dict hit rather
         # than another walk of the whole SDFG. Pure analysis -- the decisions stay here.
-        alloc_scopes = allocation_scopes(top_sdfg, self.free_symbols)
+        alloc_scopes = AllocationScopes().apply_pass(top_sdfg, {})
 
         # Same idea for the per-node symbol tables the targets ask for while emitting tasklets.
-        self.symbol_scopes = symbol_scopes(top_sdfg)
+        self.symbol_scopes = SymbolScopes().apply_pass(top_sdfg, {})
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
@@ -813,7 +812,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             elif top_lifetime == dtypes.AllocationLifetime.State:
                 # State memory is either allocated in the beginning of the
                 # containing state or the SDFG (if used in more than one state)
-                states_with_data = alloc_scopes.uses_data(sdfg.cfg_id, name)
+                states_with_data = alloc_scopes['data_states'][sdfg.cfg_id].get(name, [])
                 curstate: SDFGState = states_with_data[0] if states_with_data else None
                 multistate = len(states_with_data) > 1
                 if multistate:
@@ -830,20 +829,22 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 multistate = False
 
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
-                multistate = alloc_scopes.in_meta_code(sdfg.cfg_id, name)
+                multistate = name in alloc_scopes['meta_symbols'][sdfg.cfg_id]
 
                 # Code nodes reading the container directly from their code (no
                 # AccessNode) count as uses for the scope decision as well.
                 code_users = code_instances[sdfg.cfg_id].get(name, [])
                 # A state with neither an access node for `name` nor a code user of it contributes
                 # nothing below, so skipping it avoids its scope_dict and node walk.
-                relevant = alloc_scopes.uses_root_data(sdfg.cfg_id, name) | {s for s, _ in code_users}
+                relevant = alloc_scopes['root_data_states'][sdfg.cfg_id].get(name,
+                                                                             frozenset()) | {s
+                                                                                             for s, _ in code_users}
                 for state in sdfg.states():
                     if multistate:
                         break
                     if state not in relevant:
                         continue
-                    sdict = alloc_scopes.scope_dicts[state]
+                    sdict = alloc_scopes['scope_dicts'][state]
                     state_code_users = {n for s, n in code_users if s is state}
                     for node in state.nodes():
                         if node not in state_code_users:
