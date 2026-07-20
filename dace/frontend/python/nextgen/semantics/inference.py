@@ -315,11 +315,16 @@ class InferenceService:
             if inferred.kind in ('constant', 'symbolic'):
                 return True, inferred.value
             if inferred.kind == 'static':
+                # A static sequence's elements may themselves be data
+                # containers (e.g. the ``(A, B)`` in ``numpy.concatenate((A,
+                # B))``): each is passed through by name, exactly like a
+                # top-level data argument, matching the classic frontend's
+                # convention of passing lists of container names here.
                 elements = []
                 for element in inferred.value.elements:
                     ok, value = convert(element)
-                    if not ok or isinstance(value, str) and value in input_descs:
-                        return False, None  # Data elements cannot be passed by value
+                    if not ok:
+                        return False, None
                     elements.append(value)
                 return True, tuple(elements) if inferred.value.kind == 'tuple' else elements
             return False, None
