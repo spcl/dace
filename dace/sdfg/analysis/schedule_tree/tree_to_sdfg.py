@@ -1058,6 +1058,52 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
 
+    def visit_ReplacementCallNode(self, node: tn.ReplacementCallNode, sdfg: SDFG) -> None:
+        """
+        Expand a deferred frontend replacement call by invoking the registered
+        replacement (:class:`~dace.frontend.common.op_repository.Replacements`)
+        on the current state and copying its result into the target container.
+        """
+        from dace.frontend.common import op_repository as oprepo  # Deferred: frontend import from IR module
+        import dace.frontend.python.replacements  # noqa: F401 -- importing populates the registry
+
+        if self._dataflow_stack:
+            raise NotImplementedError("Replacement calls inside dataflow scopes are not supported.")
+
+        function = oprepo.Replacements.get(node.qualname)
+        if function is None:
+            raise NotImplementedError(f"No replacement registered for '{node.qualname}'.")
+
+        shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
+        result = function(shim, sdfg, self._current_state, *node.arguments, **node.keyword_arguments)
+
+        # Multi-state replacements return a (NestedCall, result) pair and/or
+        # advance the shim's last block; follow them.
+        if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
+            shim.last_block = result[0].last_state or shim.last_block
+            result = result[1]
+        self._current_state = shim.last_block
+
+        if shim.views:
+            raise NotImplementedError(
+                f"Replacement '{node.qualname}' records view bindings, which deferred expansion does not support.")
+
+        if isinstance(result, str) and result in sdfg.arrays:
+            # The replacement allocated its own result container: copy it into
+            # the frontend-declared target (simplify collapses the copy). The
+            # copy goes into a fresh state so it orders after the
+            # replacement's own writes.
+            self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
+            state = self._current_state
+            state.add_nedge(state.add_read(result), state.add_write(node.target),
+                            Memlet.from_array(result, sdfg.arrays[result]))
+        elif result is not None and result != []:
+            raise NotImplementedError(
+                f"Replacement '{node.qualname}' returned an unsupported result form: {type(result).__name__}")
+
+        self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
+                                                     self._pending_interstate_assignments())
+
     def visit_SDFGCallNode(self, node: tn.SDFGCallNode, sdfg: SDFG) -> None:
         """
         Lower an explicit SDFG-valued call to a nested SDFG node, connecting
@@ -1374,6 +1420,52 @@ def _create_state_boundary(
     label = "cf_state_boundary" if boundary_node.due_to_control_flow else "state_boundary"
     assignments = assignments if assignments is not None else {}
     return _insert_and_split_assignments(state, label=label, assignments=assignments)
+
+
+class ReplacementVisitorShim:
+    """
+    Stand-in for the classic ``ProgramVisitor`` interface consumed by frontend
+    replacements invoked at tree-to-SDFG time (see
+    ``visit_ReplacementCallNode``). Covers the surface replacements actually
+    use: naming/allocation helpers, state chaining, and inert bookkeeping
+    dictionaries. View recordings are checked after expansion (dropping them
+    would miscompile); anything else is deliberately absent so unsupported
+    replacements fail loudly instead of miscompiling.
+    """
+
+    def __init__(self, sdfg: SDFG, state: SDFGState, target_name: str):
+        self.sdfg = sdfg
+        self._target_name = target_name
+        #: Most recently added control flow block (replacements chain states
+        #: through ``_add_state``/``last_block``).
+        self.last_block = state
+        #: Python-name registrations; the expansion connects results through
+        #: the returned container name instead, so entries are inert.
+        self.variables: dict[str, str] = {}
+        #: View bindings a replacement may record; must stay empty (checked
+        #: by the caller after expansion).
+        self.views: dict = {}
+        #: Program globals; empty — replacements resolving global objects
+        #: (e.g. MPI communicators) fail loudly on lookup.
+        self.globals: dict = {}
+        self.current_lineinfo = None
+
+    @property
+    def cfg_target(self):
+        return self.last_block.parent_graph
+
+    def get_target_name(self, output_index=None, default=None) -> str:
+        return self._target_name or default or self.sdfg.temp_data_name()
+
+    def add_temp_transient(self, *args, output_index=None, **kwargs):
+        kwargs['find_new_name'] = True
+        return self.sdfg.add_transient(self.get_target_name(output_index), *args, **kwargs)
+
+    def _add_state(self, label=None) -> SDFGState:
+        state = self.cfg_target.add_state(label)
+        self.cfg_target.add_edge(self.last_block, state, InterstateEdge())
+        self.last_block = state
+        return state
 
 
 def _insert_and_split_assignments(

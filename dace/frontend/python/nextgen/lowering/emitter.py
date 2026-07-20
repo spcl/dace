@@ -19,6 +19,7 @@ from dace.frontend.python.nextgen.common import TreeVerificationError
 FRONTEND_LEGAL_NODES: FrozenSet[Type[tn.ScheduleTreeNode]] = frozenset({
     tn.TaskletNode,
     tn.LibraryCall,
+    tn.ReplacementCallNode,
     tn.CopyNode,
     tn.ViewNode,
     tn.RefSetNode,

@@ -1131,6 +1131,49 @@ class RefSetNode(ScheduleTreeNode):
 
 
 @dataclass
+class ReplacementCallNode(ScheduleTreeNode):
+    """
+    A deferred call to a function-replacement from the frontend replacement
+    registry (:class:`dace.frontend.common.op_repository.Replacements`).
+
+    The frontend records the registry-qualified name and the resolved
+    arguments; lowering to an SDFG invokes the registered replacement on the
+    target state and copies its result into ``target``. This lets schedule-tree
+    frontends reuse the classic replacement implementations without
+    reimplementing each call as tree emission.
+
+    :param qualname: Replacement registry key (e.g. ``numpy.sum``).
+    :param target: Repository container the call result is written to.
+    :param arguments: Positional arguments; entries listed in
+                      ``data_arguments`` are repository container names, all
+                      other entries are compile-time Python values.
+    :param keyword_arguments: Keyword arguments, same convention.
+    :param data_arguments: The container-name argument values.
+    """
+    qualname: str = ''
+    target: str = ''
+    arguments: List[Any] = field(default_factory=list)
+    keyword_arguments: Dict[str, Any] = field(default_factory=dict)
+    data_arguments: Set[str] = field(default_factory=set)
+
+    def as_string(self, indent: int = 0):
+        rendered = [str(argument) for argument in self.arguments]
+        rendered += [f'{name}={value}' for name, value in self.keyword_arguments.items()]
+        return indent * INDENTATION + f'{self.target} = replacement {self.qualname}({", ".join(rendered)})'
+
+    def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        return MemletSet(
+            Memlet.from_array(name, root.containers[name]) for name in self.data_arguments if name in root.containers)
+
+    def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
+        root = root if root is not None else self.get_root()
+        if self.target not in root.containers:
+            return MemletSet()
+        return MemletSet({Memlet.from_array(self.target, root.containers[self.target])})
+
+
+@dataclass
 class StateBoundaryNode(ScheduleTreeNode):
     """
     A node that represents a state boundary (e.g., when a write-after-write is encountered). This node
