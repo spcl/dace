@@ -10,7 +10,7 @@ registry entries all converge here.
 """
 import ast
 import re
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 from dace import subsets, symbolic
 from dace.memlet import Memlet
@@ -55,13 +55,21 @@ def iteration_shape(target: DataAccess, operands: List[Tuple[str, DataAccess]], 
     return target_shape
 
 
-def emit_computation(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> None:
+def emit_computation(target: DataAccess,
+                     value: ast.expr,
+                     statement: ast.stmt,
+                     state: LoweringState,
+                     wcr: Optional[str] = None) -> None:
     """
     Emit a tasklet (scalar result) or map-with-tasklet (array result) that
     computes a canonical flat expression into the target access.
+
+    :param wcr: Conflict-resolution lambda applied to the write, for
+                accumulations inside a dataflow scope (see
+                ``rules/assign.py::accumulation_wcr``).
     """
     code, operands = substitute_data_operands(value, state)
-    emit_elementwise(target, code, operands, statement, state)
+    emit_elementwise(target, code, operands, statement, state, wcr=wcr)
 
 
 def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], statement: ast.stmt,
@@ -113,13 +121,20 @@ def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], s
     emit_elementwise(target, expression, operands, statement, state)
 
 
-def emit_elementwise(target: DataAccess, expression: str, operands: List[Tuple[str, DataAccess]], statement: ast.stmt,
-                     state: LoweringState) -> None:
+def emit_elementwise(target: DataAccess,
+                     expression: str,
+                     operands: List[Tuple[str, DataAccess]],
+                     statement: ast.stmt,
+                     state: LoweringState,
+                     wcr: Optional[str] = None) -> None:
     """
     Emit a tasklet (scalar result) or map-with-tasklet (array result) that
     computes ``expression`` — scalar code over the given (connector, access)
     operands — into the target access. Map parameters ``__i0..__iN`` are in
     scope inside the expression for array results.
+
+    :param wcr: Conflict-resolution lambda applied to the write memlet, for
+                accumulations inside a dataflow scope.
     """
     code = expression
     line = getattr(statement, 'lineno', 0)
@@ -130,7 +145,7 @@ def emit_elementwise(target: DataAccess, expression: str, operands: List[Tuple[s
         tasklet = nodes.Tasklet(f'assign_{line}', {connector
                                                    for connector, _ in operands}, {'__out'}, f'__out = {code}')
         in_memlets = {connector: Memlet(data=access.container, subset=access.subset) for connector, access in operands}
-        out_memlets = {'__out': Memlet(data=target.container, subset=target.subset)}
+        out_memlets = {'__out': Memlet(data=target.container, subset=target.subset, wcr=wcr)}
         state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
         return
 
@@ -146,7 +161,7 @@ def emit_elementwise(target: DataAccess, expression: str, operands: List[Tuple[s
             in_memlets[connector] = Memlet(data=access.container, subset=access.subset)
         else:
             in_memlets[connector] = Memlet(data=access.container, subset=indexed_subset(access, params, result_shape))
-    out_memlets = {'__out': Memlet(data=target.container, subset=target_indexed_subset(target.subset, params))}
+    out_memlets = {'__out': Memlet(data=target.container, subset=target_indexed_subset(target.subset, params), wcr=wcr)}
 
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))

@@ -340,7 +340,14 @@ class DesugarStatements(_BodyTransformer):
                 if hasattr(node, 'ctx'):
                     node.ctx = ast.Load()
             value = _located(ast.BinOp(left=read_target, op=statement.op, right=statement.value), statement)
-            return _located(ast.Assign(targets=[statement.target], value=value), statement)
+            assign = _located(ast.Assign(targets=[statement.target], value=value), statement)
+            # An accumulation inside a dataflow scope needs conflict resolution
+            # on its write (classic: the ``op`` argument threaded through
+            # newast.py::_visit_assign). Once desugared, the read-modify-write
+            # form is indistinguishable from an ordinary assignment, so carry
+            # the operator forward for the lowering stage.
+            assign.augmented_op = statement.op
+            return assign
         if isinstance(statement, ast.AnnAssign):
             if statement.value is None:
                 # Bare declaration: canonical as-is (a descriptor hint for the

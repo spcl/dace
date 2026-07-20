@@ -62,6 +62,17 @@ class TreeEmitter:
         promotion cannot apply."""
         return any(isinstance(scope, tn.DataflowScope) for scope in self._scope_stack)
 
+    @property
+    def enclosing_map_params(self) -> List[str]:
+        """The parameters of every map scope currently on the emission stack,
+        outermost first. A write whose subset does not vary with all of these
+        is executed concurrently by several iterations."""
+        params: List[str] = []
+        for scope in self._scope_stack:
+            if isinstance(scope, tn.MapScope):
+                params.extend(scope.node.map.params)
+        return params
+
     def emit(self, node: tn.ScheduleTreeNode) -> tn.ScheduleTreeNode:
         """
         Append a node to the current scope.

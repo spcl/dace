@@ -168,6 +168,45 @@ def prog_pyobject_multi(A: dace.float64[N]):
     A[0] = y
 
 
+@dace.program
+def prog_map_accumulate_scalar(A: dace.float64[N]):
+    # Accumulation into a map-invariant element: every iteration writes the
+    # same location, so the write needs conflict resolution. Without it this
+    # compiles to a racing read-modify-write and silently returns a partial
+    # sum -- a defect no callback-count check can observe.
+    b = np.zeros([1], dtype=np.float64)
+    for i in dace.map[0:N]:
+        b[0] += A[i]
+    return b
+
+
+@dace.program
+def prog_map_accumulate_indexed(A: dace.float64[N], B: dace.float64[N]):
+    # The target varies with the map parameter, so iterations never collide.
+    for i in dace.map[0:N]:
+        B[i] += A[i]
+
+
+@dace.program
+def prog_map_accumulate_nested(A: dace.float64[N], B: dace.float64[N]):
+    # Nested maps accumulating into one element: conflict resolution must
+    # survive more than one enclosing dataflow scope.
+    b = np.zeros([1], dtype=np.float64)
+    for i in dace.map[0:N]:
+        for j in dace.map[0:N]:
+            b[0] += A[i] * B[j]
+    return b
+
+
+@dace.program
+def prog_map_accumulate_product(A: dace.float64[N]):
+    # A non-additive conflict resolution (``*=`` -> Product).
+    b = np.ones([1], dtype=np.float64)
+    for i in dace.map[0:N]:
+        b[0] *= A[i]
+    return b
+
+
 #: (program, nextgen callback budget). The budget is a hard ceiling recording
 #: current coverage; a failing budget means a lowering regression, a
 #: too-generous budget hides progress.
@@ -190,6 +229,10 @@ CORPUS = [
     pytest.param(prog_view_read, 0, id='view_read'),
     pytest.param(prog_view_write, 0, id='view_write'),
     pytest.param(prog_callee_early_return, 0, id='callee_early_return'),
+    pytest.param(prog_map_accumulate_scalar, 0, id='map_accumulate_scalar'),
+    pytest.param(prog_map_accumulate_indexed, 0, id='map_accumulate_indexed'),
+    pytest.param(prog_map_accumulate_nested, 0, id='map_accumulate_nested'),
+    pytest.param(prog_map_accumulate_product, 0, id='map_accumulate_product'),
 ]
 
 
@@ -260,6 +303,10 @@ def _while_inputs():
     return {'A': np.random.rand(12)}, {'N': 12}
 
 
+def _elementwise_accumulate_inputs():
+    return {'A': np.random.rand(12), 'B': np.random.rand(12)}, {'N': 12}
+
+
 #: (program, input factory, reference function computing the expected outputs
 #: from copies of the input arrays; '__return' holds an expected return value).
 EXECUTION_CORPUS = [
@@ -326,6 +373,26 @@ EXECUTION_CORPUS = [
                  }),
                  lambda a: {'A': np.concatenate(([1.0], a['A'][1:]))},
                  id='callee_early_return'),
+    pytest.param(prog_map_accumulate_scalar,
+                 _accumulate_inputs,
+                 lambda a: {'__return': a['A'].sum()},
+                 id='map_accumulate_scalar'),
+    pytest.param(prog_map_accumulate_indexed,
+                 _elementwise_accumulate_inputs,
+                 lambda a: {'B': a['B'] + a['A']},
+                 id='map_accumulate_indexed'),
+    pytest.param(prog_map_accumulate_nested,
+                 _elementwise_accumulate_inputs,
+                 lambda a: {'__return': a['A'].sum() * a['B'].sum()},
+                 id='map_accumulate_nested'),
+    pytest.param(prog_map_accumulate_product,
+                 lambda: ({
+                     'A': np.random.rand(12) + 0.5
+                 }, {
+                     'N': 12
+                 }),
+                 lambda a: {'__return': a['A'].prod()},
+                 id='map_accumulate_product'),
 ]
 
 

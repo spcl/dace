@@ -91,10 +91,17 @@ def _replacement_registered(name: str) -> bool:
     return oprepo.Replacements.get_descriptor_inference(name) is not None
 
 
-def lower_computation(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> None:
+def lower_computation(target: DataAccess,
+                      value: ast.expr,
+                      statement: ast.stmt,
+                      state: LoweringState,
+                      wcr: Optional[str] = None) -> None:
     """
     Lower a canonical flat expression into a target access, dispatching on
     operand types.
+
+    :param wcr: Conflict-resolution lambda for the write, when the statement is
+                an accumulation inside a dataflow scope.
     """
     try:
         value = static_values.fold_static_subscripts(value, state)
@@ -105,7 +112,7 @@ def lower_computation(target: DataAccess, value: ast.expr, statement: ast.stmt, 
                                  category='pyobject-propagation')
             return
         rewritten = static_values.materialize_operands(value, state)
-        elementwise.emit_computation(target, rewritten, statement, state)
+        elementwise.emit_computation(target, rewritten, statement, state, wcr=wcr)
     except UnsupportedFeatureError as reason:
         fallback_to_callback(statement, state, reason)
 
