@@ -7,17 +7,6 @@ import warnings
 from math import prod
 
 
-def unit_extent_dims(desc):
-    """Dimensions that are size-1 in the descriptor itself.
-
-    A subset entry of size 1 is ambiguous: it is either a rank-reducing index into a larger
-    dimension (``A[r, 0:N]`` on ``A[R, N]`` -- the dimension is gone) or a full read of a
-    dimension the data actually has (``V[0:N, 0, 0:P]`` on a ``(N, 1, P)`` view -- the dimension
-    is part of the shape). Only the former may be squeezed away.
-    """
-    return [i for i, extent in enumerate(desc.shape) if extent == 1]
-
-
 def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
@@ -26,9 +15,9 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
         if edge.dst_conn in [name_lhs, name_rhs]:
             size = edge.data.subset.size()
             squeezed = dc(edge.data.subset)
-            outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
-            squeezed_dims = squeezed.squeeze(ignore_indices=unit_extent_dims(outer_array))
+            squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
+            outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
             strides = list(outer_array.strides)
             squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
             res = edge, outer_array, size, strides, squeezed_size, squeezed_strides
@@ -39,9 +28,9 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
         elif edge.src_conn == name_out:
             size = edge.data.subset.size()
             squeezed = dc(edge.data.subset)
-            outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
-            squeezed_dims = squeezed.squeeze(ignore_indices=unit_extent_dims(outer_array))
+            squeezed_dims = squeezed.squeeze()
             squeezed_size = squeezed.size()
+            outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             strides = list(outer_array.strides)
             squeezed_strides = [s for i, s in enumerate(outer_array.strides) if i in squeezed_dims]
             res_out = edge, outer_array, size, strides, squeezed_size, squeezed_strides

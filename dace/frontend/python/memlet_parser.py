@@ -69,7 +69,9 @@ def _ndslice_to_subset(ndslice):
         for i in range(len(ndslice)):
             if not is_tuple[i]:
                 ndslice[i] = (ndslice[i], ndslice[i], 1)
-    return subsets.Range(ndslice)
+    # Record which dimensions the user wrote as an integer index. Widening them to (i, i, 1) above
+    # makes them indistinguishable from a ``i:i+1`` slice, but numpy gives the two different ranks.
+    return subsets.Range(ndslice, index_dims=[not t for t in is_tuple])
 
 
 def _parse_dim_atom(das, atom):
