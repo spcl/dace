@@ -47,12 +47,14 @@ def max_layout_delta(desc: data.Array, p: LogGP, written: bool = False) -> sp.Ba
 def break_even_uses(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout: sp.Basic) -> Optional[int]:
     """Uses needed before the relayout pays for itself; None if the new layout is not faster."""
     delta = sp.simplify(sp.sympify(t_nest_before) - sp.sympify(t_nest_after))
-    if not delta.is_number:
-        raise ValueError(f"break_even_uses needs concrete times; got a symbolic delta {delta}. "
-                         "Substitute the nest's symbols first.")
+    relayout = sp.sympify(t_relayout)
+    for name, value in (("delta", delta), ("t_relayout", relayout)):
+        if not value.is_number:
+            raise ValueError(f"break_even_uses needs concrete times; got a symbolic {name} {value}. "
+                             "Substitute the nest's symbols first.")
     if float(delta) <= 0.0:
         return None
-    return int(math.ceil(float(sp.sympify(t_relayout)) / float(delta)))
+    return int(math.ceil(float(relayout) / float(delta)))
 
 
 def relayout_pays(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout: sp.Basic, uses: int = 1) -> bool:

@@ -85,7 +85,15 @@ def add_state_kernel(sdfg: SDFG, block: SDFGState, kernels: List[KernelState], l
         check_kernel_per_state(sdfg)  # raises with the A6 message
     if len(entries) == 1:
         kernels.append(KernelState(state=block, map_entry=entries[0], index=len(kernels), loop=loop))
-    elif state_does_work(block) and not is_relayout_state(block):
+    elif is_relayout_state(block):
+        # a relayout takes no kernel position, which is right at top level but WRONG inside a loop body: the
+        # kernels on either side would fuse into one span (pinning one layout) while the LayoutChange it sits
+        # between silently re-runs every iteration, unmodelled
+        if loop is not None:
+            raise NotImplementedError(f"line_graph: relayout state '{block.label}' inside loop '{loop.label}' "
+                                      f"-- a LayoutChange in a loop body re-runs every iteration and is not "
+                                      f"modelled; hoist it out of the loop.")
+    elif state_does_work(block):
         raise NotImplementedError(f"line_graph: state '{block.label}' does non-map work at top level -- v1 scores "
                                   f"map nests only (expand/canonicalize the state first).")
 

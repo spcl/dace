@@ -9,6 +9,7 @@ import dace
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg.analysis.cutout import SDFGCutout
+from dace.utils import prod
 
 
 def nest_entries(state: SDFGState):
@@ -47,6 +48,30 @@ def written_array_names(ext: SDFG):
     return written
 
 
+def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
+    """Smallest extent of any array an index array could subscript -- the tightest in-bounds cap for an
+    integer fill; None when the nest has no such access.
+
+    Two signals are needed because the frontend lowers indirection differently per source form:
+      * a DYNAMIC (data-dependent) memlet -- e.g. a masked gather, where the condition propagates it;
+      * a WHOLE-array read handed to the map BODY -- a plain ``data[idx[i]]`` becomes a nested SDFG
+        receiving all of ``data`` through a STATIC full-range memlet, so the dynamic flag never gets set.
+    An ordinary elementwise or stencil read enters the body with a point/partial subset and trips neither.
+    """
+    extents = []
+    for state in ext.states():
+        for edge in state.edges():
+            name = edge.data.data
+            if name is None or name not in ext.arrays:
+                continue
+            shape = [int(dace.symbolic.evaluate(s, symbols)) for s in ext.arrays[name].shape]
+            whole = (isinstance(edge.src, nodes.MapEntry) and edge.data.subset is not None
+                     and int(dace.symbolic.evaluate(edge.data.subset.num_elements(), symbols)) == prod(shape))
+            if edge.data.dynamic or whole:
+                extents += shape
+    return min(extents) if extents else None
+
+
 def nest_arguments(ext: SDFG,
                    symbols: Dict[str, int],
                    provided: Optional[Dict[str, numpy.ndarray]] = None,
@@ -54,6 +79,8 @@ def nest_arguments(ext: SDFG,
     """Deterministic argument buffers for an externalized nest. ``provided`` arrays are copied verbatim; everything else gets a deterministic fill from ``seed`` (sorted name order)."""
     provided = provided or {}
     rng = numpy.random.default_rng(seed)
+    bound = indexed_extent_bound(ext, symbols)
+    integer_high = 8 if bound is None else max(1, min(8, bound))
     args: Dict[str, numpy.ndarray] = {}
     for aname in sorted(ext.arrays):
         desc = ext.arrays[aname]
@@ -64,10 +91,15 @@ def nest_arguments(ext: SDFG,
             continue
         shape = tuple(int(dace.symbolic.evaluate(s, symbols)) for s in desc.shape)
         dtype = desc.dtype.as_numpy_dtype()
-        if numpy.issubdtype(dtype, numpy.floating):
+        if numpy.issubdtype(dtype, numpy.complexfloating):
+            args[aname] = (rng.random(shape) + 1j * rng.random(shape)).astype(dtype)
+        elif numpy.issubdtype(dtype, numpy.floating):
             args[aname] = rng.random(shape).astype(dtype)
         elif numpy.issubdtype(dtype, numpy.integer):
-            args[aname] = rng.integers(0, 8, size=shape, dtype=dtype)
+            # this array may BE the index of an indirect access; capping the fill at the smallest indexed
+            # extent keeps it in bounds whichever axis it subscripts. Verification alone cannot catch an
+            # out-of-bounds index -- reference and candidates read the same wrong slot and agree.
+            args[aname] = rng.integers(0, integer_high, size=shape, dtype=dtype)
         else:
             raise NotImplementedError(f"nest_arguments: no deterministic fill for dtype {dtype} of '{aname}'")
     return args

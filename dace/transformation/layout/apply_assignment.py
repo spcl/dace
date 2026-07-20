@@ -43,6 +43,15 @@ def composed_permutation(ops, ndim: int) -> List[int]:
 
 def segments_of(trajectory: List[Layout]) -> List[Tuple[int, int, Layout]]:
     """Runs of equal layout: ``[(first_kernel, last_kernel_exclusive, layout), ...]``."""
+    # a tag must DETERMINE its ops: the grouping below (and the body-uniform check) compares tags only, so
+    # two same-tag/different-ops layouts would silently collapse into one segment and the applied plan would
+    # quietly differ from the requested one -- exactly the divergence the cost model is priced against
+    ops_of: Dict[str, Tuple] = {}
+    for layout in trajectory:
+        if ops_of.setdefault(layout.tag, layout.ops) != layout.ops:
+            raise ValueError(f"segments_of: layout tag '{layout.tag}' is used for two different op "
+                             f"sequences ({ops_of[layout.tag]} and {layout.ops}); a tag must identify its "
+                             f"ops, otherwise the segment grouping silently drops one of them")
     segments = []
     start = 0
     for k in range(1, len(trajectory) + 1):
@@ -64,6 +73,21 @@ def state_touches(state: dace.SDFGState, array: str) -> bool:
     return any(node.data == array for node in state.data_nodes())
 
 
+def covers_dimension(begin, end, step, extent) -> bool:
+    """True iff the range ``begin:end:step`` spans dimension ``0..extent-1`` whole."""
+    return (dace.symbolic.simplify(begin) == 0 and dace.symbolic.simplify(step - 1) == 0
+            and dace.symbolic.simplify(end - (extent - 1)) == 0)
+
+
+def covers_full_array(memlet, desc) -> bool:
+    """True iff one memlet writes every element of ``desc`` -- the coverage proof for a non-map producer."""
+    if memlet is None or memlet.wcr is not None or memlet.dynamic:
+        return False
+    if not isinstance(memlet.subset, dace.subsets.Range) or len(memlet.subset.ranges) != len(desc.shape):
+        return False
+    return all(covers_dimension(b, e, s, extent) for (b, e, s), extent in zip(memlet.subset.ranges, desc.shape))
+
+
 def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
     """Conservative proof that ``state`` writes every element of ``array``; False whenever coverage is unprovable (skipping the entry conversion on a false positive would be a silent miscompile)."""
     desc = state.sdfg.arrays[array]
@@ -71,11 +95,15 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
     if len(sinks) != 1:
         return False
     edges_in = state.in_edges(sinks[0])
-    if len(edges_in) != 1 or not isinstance(edges_in[0].src, nodes.MapExit):
+    if len(edges_in) != 1:
         return False
+    if state.scope_dict()[sinks[0]] is not None:  # the sink (and so its producer) must be top-level
+        return False
+    if not isinstance(edges_in[0].src, nodes.MapExit):
+        # a non-map producer (copy library node, tasklet) has no map params to reason about, so it proves
+        # coverage only by declaring the whole array in one memlet -- the common `Y[:] = X` writer
+        return covers_full_array(edges_in[0].data, desc)
     exit_node = edges_in[0].src
-    if state.scope_dict()[sinks[0]] is not None:  # the sink (and so the map) must be top-level
-        return False
     param_ranges = dict(zip(exit_node.map.params, exit_node.map.range.ranges))
     for leaf in state.memlet_tree(edges_in[0]).leaves():
         memlet = leaf.data
@@ -84,7 +112,9 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
             continue
         used = set()
         proven = True
-        for d, (begin, end, _) in enumerate(memlet.subset.ranges):
+        for d, (begin, end, step) in enumerate(memlet.subset.ranges):
+            if covers_dimension(begin, end, step, desc.shape[d]):
+                continue  # written whole by this memlet alone (a row-wise writer), no param needed
             if dace.symbolic.simplify(end - begin) != 0:
                 proven = False
                 break
@@ -128,10 +158,14 @@ def apply_region_layout(sdfg: SDFG, kernels: List[KernelState], region_layouts: 
 
     A region is a contiguous line ``[start, end)`` of top-level kernels. Each array in ``region_layouts``
     is stored in the given layout for the region's kernels and in its original (identity) layout outside;
-    the enter relayout lands before the region and the restore relayout at the region's end, both at the
-    TOP LEVEL -- so any loop nested inside the region runs entirely in the region's layout (its back-edge
-    stays a no-op). This is the imposed, region-scoped counterpart of a global :func:`apply_assignment`
-    trajectory; the region must contain whole loop spans (a relayout may not land inside a loop body).
+    the enter relayout lands before the region, at the TOP LEVEL -- so any loop nested inside the region
+    runs entirely in the region's layout (its back-edge stays a no-op). This is the imposed, region-scoped
+    counterpart of a global :func:`apply_assignment` trajectory; the region must contain whole loop spans
+    (a relayout may not land inside a loop body).
+
+    An array WRITTEN inside the region is restored to its original layout at the region's end (a following
+    identity segment, or the exit conversion). A READ-ONLY array needs no restore: the region reads a
+    transposed clone and the original buffer is left untouched, so it is already valid after the region.
     """
     start, end = region
     n = len(kernels)
@@ -184,6 +218,12 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         ndim = len(desc.shape)
         segments = segments_of(trajectory)
 
+        # A read-only array (no kernel writes it) keeps its original identity buffer valid throughout,
+        # so every clone is made from the original and identity segments alias it -- no chained restore
+        # transpose. Only a written array advances the live holder into its clone.
+        read_only = not any(node.data == array and kernels[k].state.in_degree(node) > 0 for k in range(len(kernels))
+                            for node in kernels[k].state.data_nodes())
+
         # Walk segments carrying the LIVE holder: untouched stay unmaterialized, aliasing segments
         # skip conversion, others materialize a holder and chain entry conversion from it.
         live_name, live_ops = array, []
@@ -216,7 +256,8 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
                     boundary_changes.setdefault(start, {})[live_name] = (name, delta)
                     entry_targets.append((start, name))
             holders.append((name, ops))
-            live_name, live_ops = name, ops
+            if not read_only:  # read-only: live holder stays the (valid) original, so clones/aliases derive from it
+                live_name, live_ops = name, ops
             if name != array:
                 perm = composed_permutation(ops, ndim)
                 for k in touched:

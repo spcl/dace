@@ -73,8 +73,9 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
           device: str = "cpu",
           timer: Optional[Callable[[dace.SDFG, Callable, int, int], Optional[float]]] = None,
           attempt_log: Optional[str] = None,
-          isolate: bool = False) -> List[SweepResult]:
-    """Compile, run, verify, and (optionally) time each candidate; return results ranked (correct first, then by time). ``isolate`` forks each candidate (CPU only) so a crash doesn't kill the sweep."""
+          isolate: bool = False,
+          isolate_timeout: float = 900.0) -> List[SweepResult]:
+    """Compile, run, verify, and (optionally) time each candidate; return results ranked (correct first, then by time). ``isolate`` forks each candidate (CPU only) so a crash doesn't kill the sweep, giving each child at most ``isolate_timeout`` seconds -- lower it for a wide sweep of small kernels, where the default would stall 15 min per hang."""
     if device not in ("cpu", "gpu"):
         raise ValueError(f"device must be 'cpu' or 'gpu', got {device!r}")
     if isolate and device == "gpu":
@@ -133,7 +134,7 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
                 staged.append((result, sdfg))
             for result, sdfg in staged:
                 log_attempt("run", result.name)
-                fold(result, run_isolated(lambda sdfg=sdfg: verify_and_time(sdfg)))
+                fold(result, run_isolated(lambda sdfg=sdfg: verify_and_time(sdfg), timeout=isolate_timeout))
         else:
             # phase 1: verify all (compiles on first run); phase 2: time the verified ones back-to-back
             verified: List[Tuple[SweepResult, dace.SDFG]] = []
@@ -157,7 +158,7 @@ def sweep(candidates: Dict[str, Callable[[], dace.SDFG]],
                     try:
                         t = timer(sdfg, run, reps, warmup) if timer is not None else default_timer(
                             lambda: run(sdfg), reps, warmup)
-                        if isinstance(t, tuple):  # stats timer: (median, metadata)
+                        if isinstance(t, (tuple, list)):  # stats timer: (median, metadata)
                             t, timer_metadata = t
                             result.metadata.update(timer_metadata)
                         result.time = t
@@ -173,10 +174,15 @@ def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Opt
         from dace.transformation.layout.timing import SPREAD_CONTENDED_THRESHOLD
         noise_floor = SPREAD_CONTENDED_THRESHOLD
     timed = [r for r in results if r.correct and r.time is not None]
-    if not timed:
+    if not timed:  # nothing measured: fall back to the earliest-enumerated correct candidate
         return next((r for r in results if r.correct), None)
     fastest = min(r.time for r in timed)
-    window = [r for r in timed if r.time <= fastest * (1.0 + noise_floor)]
+    if fastest <= 0.0:
+        # a non-positive median means the timer resolved nothing, and a RELATIVE window around it collapses
+        # to {0.0}; keep every timed candidate in the tie and let enumeration order decide
+        window = timed
+    else:
+        window = [r for r in timed if r.time <= fastest * (1.0 + noise_floor)]
     return min(window, key=lambda r: r.order)
 
 

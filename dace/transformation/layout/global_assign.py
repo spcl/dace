@@ -40,11 +40,14 @@ class AssignmentCosts:
             if len(layouts) > 1:
                 if changes_allowed:
                     pairs = itertools.permutations(tags, 2)
-                elif self.entry_conversion_needed.get(array, False) or lw is not None:
-                    # single-layout regime still prices entry/exit conversions
-                    pairs = [(tags[0], t) for t in tags[1:]] + [(t, tags[0]) for t in tags[1:]]
                 else:
+                    # single-layout regime prices only the conversions it can actually charge, and the two
+                    # are independent: entry is gated on entry_conversion_needed, exit on last_write_kernel
                     pairs = []
+                    if self.entry_conversion_needed.get(array, False):
+                        pairs += [(tags[0], t) for t in tags[1:]]
+                    if lw is not None:
+                        pairs += [(t, tags[0]) for t in tags[1:]]
                 for a, b in pairs:
                     if (array, a, b) not in self.relayout_cost:
                         raise ValueError(f"AssignmentCosts: missing relayout cost ({array}, "
@@ -107,15 +110,17 @@ def per_array_dp(costs: AssignmentCosts,
                 c += costs.relayout_cost[(array, tags[j], identity)]
             return c
 
-        # dp[j][flag]: best cost at kernel k, layout j; flag = identity visited in tags[lw..k]
-        dp: List[List[Optional[float]]] = [[None, None] for _ in tags]
+        # dp[j][flag]: (best cost, tag-index path) at kernel k, layout j; flag = identity visited in
+        # tags[lw..k]. The path rides along in the state so a tie compares as (cost, path) and resolves to
+        # the lexicographically-first trajectory by layout-enumeration order -- the SAME law the brute-force
+        # oracle gets for free from itertools.product. Keeping only the min prefix per state is exact: the
+        # future cost depends on (j, flag) alone, so a costlier prefix can never win later.
+        dp: List[List[Optional[Tuple[float, Tuple[int, ...]]]]] = [[None, None] for _ in tags]
         for j in range(len(tags)):
             flag = lw == 0 and tags[j] == identity
-            dp[j][flag] = node(0, j)
-        back: List[List[List[Optional[Tuple[int, int]]]]] = [[[None, None] for _ in tags]]
+            dp[j][flag] = (node(0, j), (j, ))
         for k in range(1, n_kernels):
-            new_dp: List[List[Optional[float]]] = [[None, None] for _ in tags]
-            new_back: List[List[Optional[Tuple[int, int]]]] = [[None, None] for _ in tags]
+            new_dp: List[List[Optional[Tuple[float, Tuple[int, ...]]]]] = [[None, None] for _ in tags]
             for j in range(len(tags)):
                 new_flag_base = lw is not None and k >= lw and tags[j] == identity
                 for i in range(len(tags)):
@@ -130,23 +135,15 @@ def per_array_dp(costs: AssignmentCosts,
                         else:
                             edge = 0.0
                         new_flag = flag or new_flag_base
-                        c = dp[i][flag] + edge
-                        if new_dp[j][new_flag] is None or c < new_dp[j][new_flag]:  # strict <
-                            new_dp[j][new_flag] = c
-                            new_back[j][new_flag] = (i, flag)
-                for flag in (False, True):
+                        candidate = (dp[i][flag][0] + edge, dp[i][flag][1] + (j, ))
+                        if new_dp[j][new_flag] is None or candidate < new_dp[j][new_flag]:  # strict <
+                            new_dp[j][new_flag] = candidate
+                for flag in (False, True):  # node cost is common to every path into (j, flag)
                     if new_dp[j][flag] is not None:
-                        new_dp[j][flag] += node(k, j)
+                        new_dp[j][flag] = (new_dp[j][flag][0] + node(k, j), new_dp[j][flag][1])
             dp = new_dp
-            back.append(new_back)
-        final = min(((j, flag) for j in range(len(tags)) for flag in (False, True) if dp[j][flag] is not None),
-                    key=lambda jf: (dp[jf[0]][jf[1]], jf[0], jf[1]))
-        chosen = [final]
-        for k in range(n_kernels - 1, 0, -1):
-            j, flag = chosen[-1]
-            chosen.append(back[k][j][flag])
-        trajectory = [tags[j] for j, _ in reversed(chosen)]
-        solution[array] = ArrayTrajectory(array, trajectory, dp[final[0]][final[1]])
+        cost, path = min(dp[j][flag] for j in range(len(tags)) for flag in (False, True) if dp[j][flag] is not None)
+        solution[array] = ArrayTrajectory(array, [tags[j] for j in path], cost)
     return solution
 
 
@@ -180,15 +177,30 @@ def brute_force_trajectories(costs: AssignmentCosts,
     return solution
 
 
-def greedy_assignment(costs: AssignmentCosts, n_kernels: int) -> Dict[str, ArrayTrajectory]:
-    """Greedy baseline: each kernel picks its lowest node-cost layout, paying whatever boundary conversions that implies."""
+def greedy_assignment(costs: AssignmentCosts,
+                      n_kernels: int,
+                      locked_before: Optional[Set[int]] = None) -> Dict[str, ArrayTrajectory]:
+    """Greedy baseline: each kernel picks its lowest node-cost layout, paying whatever boundary conversions
+    that implies. Kernels welded by a ``locked_before`` transition (a loop body, see :func:`per_array_dp`) must
+    share ONE layout, so such a run picks the layout with the lowest summed node cost -- that keeps the
+    baseline applicable and its cost comparable to the DP's instead of quoting an infeasible plan."""
+    locked_before = locked_before or set()
     costs.check(n_kernels, changes_allowed=True)
+    runs: List[List[int]] = []  # maximal groups of kernels joined by locked transitions
+    for k in range(n_kernels):
+        if k in locked_before and runs:
+            runs[-1].append(k)
+        else:
+            runs.append([k])
     solution: Dict[str, ArrayTrajectory] = {}
     for array, layouts in costs.layouts.items():
         tags = [l.tag for l in layouts]
-        trajectory = []
-        for k in range(n_kernels):
-            trajectory.append(min(tags, key=lambda tag: (costs.node_cost[(array, k, tag)], tags.index(tag))))
+        trajectory: List[Optional[str]] = [None] * n_kernels
+        for run in runs:
+            totals = {tag: sum(costs.node_cost[(array, k, tag)] for k in run) for tag in tags}
+            pick = min(tags, key=lambda tag: (totals[tag], tags.index(tag)))
+            for k in run:
+                trajectory[k] = pick
         solution[array] = ArrayTrajectory(array, trajectory, trajectory_cost(costs, array, trajectory))
     return solution
 
@@ -206,11 +218,18 @@ class ConflictRow:
     untrusted: bool = False
 
 
-def conflict_report(costs: AssignmentCosts, n_kernels: int) -> List[ConflictRow]:
-    """Per-array report: per-kernel preferences, whether they disagree, and the greedy/global/single cost triad."""
-    greedy = greedy_assignment(costs, n_kernels)
-    dp = per_array_dp(costs, n_kernels, allow_changes=True)
-    single = per_array_dp(costs, n_kernels, allow_changes=False)
+def conflict_report(costs: AssignmentCosts,
+                    n_kernels: int,
+                    locked_before: Optional[Set[int]] = None) -> List[ConflictRow]:
+    """Per-array report: per-kernel preferences, whether they disagree, and the greedy/global/single cost triad.
+
+    ``locked_before`` (see :func:`per_array_dp`) MUST be passed for a looped SDFG -- pass
+    ``line_graph.locked_transitions(kernels)``. Without it the report advertises a plan that changes layout
+    inside a loop body, which ``apply_assignment`` refuses (body-uniform), and quotes its lower cost.
+    """
+    greedy = greedy_assignment(costs, n_kernels, locked_before)
+    dp = per_array_dp(costs, n_kernels, allow_changes=True, locked_before=locked_before)
+    single = per_array_dp(costs, n_kernels, allow_changes=False, locked_before=locked_before)
     rows = []
     for array in sorted(costs.layouts):
         preferences = greedy[array].tags

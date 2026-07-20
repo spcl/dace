@@ -32,8 +32,13 @@ def average_blocks_touched(
     extents = {}
     for param in params:
         begin, end, step = ranges[param]
-        extents[param] = int_floor(pystr_to_symbolic(end) - pystr_to_symbolic(begin),
-                                   pystr_to_symbolic(step)) + 1
+        extent = int_floor(pystr_to_symbolic(end) - pystr_to_symbolic(begin), pystr_to_symbolic(step)) + 1
+        # an empty level makes total_iters 0, and the per-iteration average below divides by it (-> zoo)
+        if extent.is_number and extent <= 0:
+            raise ValueError(f"loop parameter {param!r} has range {ranges[param]}, i.e. {extent} iterations; "
+                             f"a per-iteration block average is undefined for an empty nest -- skip the nest "
+                             f"instead of costing it")
+        extents[param] = extent
     total_iters = sp.Mul(*[extents[p] for p in params]) if params else sp.Integer(1)
 
     results: Dict[str, sp.Basic] = {}
@@ -51,6 +56,15 @@ def average_blocks_touched(
             step = pystr_to_symbolic(ranges[param][2])
             # byte-address movement per step
             stride = sp.simplify(addr.subs(psym, psym + step) - addr)
+            # affine in psym <=> the step delta is free of psym; '//' and '%' indices are not, and would
+            # leak the loop variable into the "per-iteration" cost, crashing the later float()
+            if psym in stride.free_symbols:
+                raise ValueError(f"array {arr!r}: index {subset} is not affine in loop parameter {param!r} "
+                                 f"(e.g. '//' or '%'), so the per-step address delta {stride} still depends "
+                                 f"on {param!r} and the block count is not constant per iteration. Replay the "
+                                 f"materialized access sequence with blocks_touched.replayed_blocks_touched "
+                                 f"and pass the chosen bound via replayed_counts={{'{arr}': "
+                                 f"(messages_per_iter, sectors_per_iter)}}.")
             # fraction of a new block per step; rational in [0,1], NOT int_floor (would zero sub-block reuse)
             frac = sp.Min(1, sp.Abs(stride) / block_size)
             # each outer-loop combination revisits this loop afresh

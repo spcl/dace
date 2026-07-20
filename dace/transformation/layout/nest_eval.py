@@ -16,6 +16,10 @@ from dace.transformation.layout.timing import compute_region_stats_timer
 #: identity candidate's tag; must be enumerated first (tie-break law)
 IDENTITY_TAG = "identity"
 
+#: v1 bound on full permutation enumeration (d!); refused loudly above. Shared with the modelled path
+#: (``assignment_costs.permutation_layouts``) so the measured and modelled candidate spaces cannot drift.
+MAX_PERMUTE_NDIM = 3
+
 
 def default_permutation_candidates(ext: SDFG) -> Dict[str, Callable[[SDFG], None]]:
     """Wrap-mode permutation family: identity first, then every non-identity dimension permutation of each >=2-D non-transient array."""
@@ -27,6 +31,11 @@ def default_permutation_candidates(ext: SDFG) -> Dict[str, Callable[[SDFG], None
         if desc.transient or len(desc.shape) < 2:
             continue
         ndim = len(desc.shape)
+        if ndim > MAX_PERMUTE_NDIM:
+            # each candidate here is deepcopy'd, compiled, run and timed -- d! of them wedges a campaign
+            raise NotImplementedError(f"default_permutation_candidates: array {aname!r} has rank {ndim} > "
+                                      f"{MAX_PERMUTE_NDIM} -- the full-enumeration candidate space explodes; "
+                                      f"pass an explicit candidate dict, or prune by stride (task B1) first")
         for perm in itertools.permutations(range(ndim)):
             if list(perm) == list(range(ndim)):
                 continue

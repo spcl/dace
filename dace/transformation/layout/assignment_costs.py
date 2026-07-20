@@ -17,7 +17,7 @@ from dace.transformation.layout.cost_model.relayout import streaming_relayout_ti
 from dace.transformation.layout.externalize import externalize_nest, nest_entries
 from dace.transformation.layout.global_assign import AssignmentCosts
 from dace.transformation.layout.line_graph import KernelState
-from dace.transformation.layout.nest_eval import evaluate_nest
+from dace.transformation.layout.nest_eval import MAX_PERMUTE_NDIM, evaluate_nest
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 #: Illustrative CPU parameters; shared so both providers price relayouts identically.
@@ -46,10 +46,6 @@ EXAMPLE_GPU = LogGP(L=500e-9,
                     sector_bytes=32,
                     bw_saturated=1.555e12,
                     bw_core=25e9)
-
-#: v1 bound on full permutation enumeration (d!); refused loudly above.
-MAX_PERMUTE_NDIM = 3
-
 
 def permutation_tag(perm) -> str:
     return "perm" + "".join(map(str, perm))
@@ -110,8 +106,15 @@ def relayout_edge_costs(sdfg: SDFG, arrays: Dict[str, List[Layout]], symbols: Di
 def model_costs(sdfg: SDFG,
                 kernels: List[KernelState],
                 symbols: Dict[str, int],
-                p: LogGP = EXAMPLE_CPU) -> AssignmentCosts:
-    """Model provider: externalizes each nest, permutes in place, prices with count_loop_nest/nest_memory_time."""
+                p: LogGP = EXAMPLE_CPU,
+                n_cores: Optional[int] = None) -> AssignmentCosts:
+    """Model provider: externalizes each nest, permutes in place, prices with count_loop_nest/nest_memory_time.
+
+    ``n_cores`` bounds the exposed concurrency of a PARALLEL nest to ``n_cores * per-core MLP``. Left None it
+    is unbounded, which zeroes the latency term -- and the layout penalty of a strided (uncoalesced) access is
+    a LATENCY effect, so a GPU nest priced without n_cores under-values every relayout. Pass the SM count for
+    a GPU ``p``; a sequential nest is unaffected either way.
+    """
     arrays = assignment_arrays(sdfg, kernels)
     layouts = {a: permutation_layouts(len(sdfg.arrays[a].shape)) for a in arrays}
     subs = {dace.symbol(s): v for s, v in symbols.items()}
@@ -136,7 +139,7 @@ def model_costs(sdfg: SDFG,
                 own = counts.arrays[array]
                 messages = float(dace.symbolic.evaluate(own.messages_per_iter * counts.total_iters, subs))
                 moved = float(dace.symbolic.evaluate(own.bytes_moved_per_iter * counts.total_iters, subs))
-                concurrency = exposed_concurrency(state, entry, p)
+                concurrency = exposed_concurrency(state, entry, p, n_cores)
                 node_cost[key] = float(nest_memory_time(p, moved, messages, concurrency))
     entry_needed, last_write = liveness_facts(sdfg, kernels, arrays)
     return AssignmentCosts(layouts=layouts,
