@@ -135,8 +135,11 @@ def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
     Each stage feeds the next, so they are timed on progressively transformed graphs rather than
     all on the pristine one -- that is the order a real compile runs them in.
     """
-    if str(CORPUS) not in sys.path:
-        sys.path.insert(0, str(CORPUS))
+    # Both roots: `cloudsc.*` resolves against tests/corpus, while generate_data_for_cloudsc
+    # imports `tests.corpus.cloudsc.cloudsc` absolutely, which needs the repo root.
+    for root in (str(CORPUS), str(REPO)):
+        if root not in sys.path:
+            sys.path.insert(0, root)
     try:
         from cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
         build = lambda: build_cloudsc_sdfg(simplify=False)
