@@ -34,7 +34,9 @@ export OMP_NUM_THREADS="${SLURM_CPUS_ON_NODE:-1}"
 # named 'tests.corpus').
 export PYTHONPATH="${REPO}:${PYTHONPATH:-}"
 
-PYTHON_BIN="${PYTHON_BIN:-${HOME}/.pyenv/versions/py12/bin/python3}"
+# Whatever `python3` resolves to in the calling environment (matches tests/perf/run_perf_ab.sh's
+# own convention) -- set PYTHON_BIN explicitly to override, e.g. for a specific pyenv/venv.
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 cd "${REPO}"
 
