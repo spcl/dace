@@ -372,6 +372,26 @@ class Scalar(Data):
         return True
 
 
+def strides_equal(packed, actual) -> bool:
+    """Stride-tuple equality that survives canonicalization.
+
+    ``RelaxIntegerPowers`` respells a packed ``N**2`` stride as ``ipow(N, 2)``, which is structurally
+    unequal but the same value -- comparing raw would misread a genuinely packed array as padded. The
+    structural fast path keeps the common case off sympy; an un-comparable expression refuses conservatively.
+    """
+    packed, actual = tuple(packed), tuple(actual)
+    if packed == actual:
+        return True
+    if len(packed) != len(actual):
+        return False
+    try:
+        return all(
+            symbolic.simplify(symbolic.relax_ipow(p) - symbolic.relax_ipow(a)).is_zero
+            for p, a in zip(packed, actual))
+    except (TypeError, AttributeError):
+        return False
+
+
 @make_properties
 class Array(Data):
     """
@@ -525,6 +545,7 @@ class Array(Data):
 
         self._packed_c_strides = None
         self._packed_fortran_strides = None
+        self._packed_strides_shape = tuple(shape)
 
         self.validate()
 
@@ -703,6 +724,7 @@ class Array(Data):
         # Clear cached values and recompute
         self._packed_c_strides = None
         self._packed_fortran_strides = None
+        self._packed_strides_shape = tuple(self.shape)
         self._packed_c_strides = self._get_packed_c_strides()
         self._packed_fortran_strides = self._get_packed_fortran_strides()
 
@@ -720,9 +742,24 @@ class Array(Data):
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
 
+    def refresh_packed_strides_cache(self) -> None:
+        """Drop both cached packed-stride tuples if they were built from a different shape.
+
+        Only ``set_shape`` refreshed them before, but plenty of passes assign ``.shape`` directly -- and a
+        symbol replacement (canonicalize re-registers symbols carrying nonnegative assumptions) rebuilds the
+        shape entries as NEW sympy objects even where the names are unchanged. A stale cache then compares
+        unequal to identical strides, so a packed array reads as padded and callers such as ``copy_node`` /
+        ``subsets`` choose a layout path on a false answer.
+        """
+        if self._packed_strides_shape != tuple(self.shape):
+            self._packed_c_strides = None
+            self._packed_fortran_strides = None
+            self._packed_strides_shape = tuple(self.shape)
+
     def _get_packed_fortran_strides(self) -> Tuple[int]:
         """Compute packed strides for Fortran-style (column-major) layout."""
         # Strides increase along the leading dimensions
+        self.refresh_packed_strides_cache()
         if self._packed_fortran_strides is None:
             strides = [1]
             accum = 1
@@ -736,6 +773,7 @@ class Array(Data):
     def _get_packed_c_strides(self) -> Tuple[int]:
         """Compute packed strides for C-style (row-major) layout."""
         # Strides increase along the trailing dimensions
+        self.refresh_packed_strides_cache()
         if self._packed_c_strides is None:
             strides = [1]
             accum = 1
@@ -748,13 +786,11 @@ class Array(Data):
 
     def is_packed_fortran_strides(self) -> bool:
         """Return True if strides match Fortran-contiguous (column-major) layout."""
-        strides = self._get_packed_fortran_strides()
-        return tuple(strides) == tuple(self.strides)
+        return strides_equal(self._get_packed_fortran_strides(), self.strides)
 
     def is_packed_c_strides(self) -> bool:
-        """Return True if strides match Fortran-contiguous (row-major) layout."""
-        strides = self._get_packed_c_strides()
-        return tuple(strides) == tuple(self.strides)
+        """Return True if strides match C-contiguous (row-major) layout."""
+        return strides_equal(self._get_packed_c_strides(), self.strides)
 
 
 @make_properties

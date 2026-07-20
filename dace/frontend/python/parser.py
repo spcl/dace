@@ -131,8 +131,7 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                 # ``ipow`` is a codegen-only spelling of ``Pow``; restore ``Pow`` so ``solve`` can
                 # invert the shape. A Function-head rewrite can't ride in ``repldict`` (symbol
                 # rename), so do it here.
-                if isinstance(sym_dim, sympy.Basic):
-                    sym_dim = sym_dim.replace(symbolic.ipow, lambda b, e: b**e)
+                sym_dim = symbolic.relax_ipow(sym_dim)
 
                 # Replace symbols with __SOLVE_ symbols so as to allow
                 # the same symbol in the called SDFG

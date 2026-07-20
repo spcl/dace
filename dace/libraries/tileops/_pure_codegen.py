@@ -256,12 +256,9 @@ def _strides_match_packed(shape, strides, order):
     expected = 1
     for d in order_range:
         try:
-            # ``.rewrite(Pow)`` unwraps ``ipow(N, k)`` (the integer-power form
-            # RelaxIntegerPowers freezes a symbolic size / stride into) to ``N**k``
-            # so the packed-C stride ``ipow(N, 2)`` compares equal to ``N*N``;
-            # without it the opaque ``ipow`` never simplifies against ``expected``
-            # and a genuinely packed layout is misread as padded (heat3d).
-            diff = dace.symbolic.simplify(sympy.sympify(strides[d] - expected).rewrite(sympy.Pow))
+            # relax_ipow so the canonicalized packed-C stride ``ipow(N, 2)`` compares equal to
+            # ``N*N``; the opaque ``ipow`` never simplifies against ``expected`` (heat3d).
+            diff = dace.symbolic.simplify(dace.symbolic.relax_ipow(sympy.sympify(strides[d] - expected)))
             if diff != 0:
                 return False
         except Exception:  # noqa: BLE001 -- conservative refusal on un-comparable expressions.

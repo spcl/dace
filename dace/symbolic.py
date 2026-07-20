@@ -1207,6 +1207,18 @@ class ipow(sympy.Function):
         return sympy.Pow(base, exp)
 
 
+def relax_ipow(expr: SymbolicType) -> SymbolicType:
+    """Rewrite every ``ipow(b, e)`` back to ``b ** e`` -- the inverse of ``RelaxIntegerPowers``.
+
+    ``ipow`` is a bare ``Function`` to SymPy, so it never simplifies against an equal ``Pow``: a packed
+    stride respelled ``ipow(N, 2)`` by canonicalization compares unequal to ``N**2`` and the array is
+    misread as padded. Normalize both sides through this before comparing or solving.
+    """
+    if not isinstance(expr, sympy.Basic):
+        return expr
+    return expr.rewrite(sympy.Pow)
+
+
 class fma(sympy.Function):
     """Fused multiply-add ``a * b + c``.
 
