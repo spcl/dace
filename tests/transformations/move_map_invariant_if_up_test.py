@@ -255,6 +255,147 @@ def test_body_defined_condition_symbol_is_never_stranded():
     assert np.allclose(_run(sdfg, a=a), ref, rtol=1e-9, atol=1e-9, equal_nan=True)
 
 
+def test_require_full_hoist_refuses_a_partial_hoist():
+    """GPU mode: a guard that would stall between two maps is left alone.
+
+    ``a[i]`` clears ``map j`` but not ``map i``, so hoisting it splits the nest
+    between the two levels -- one kernel would become a branch around several
+    launches. All-or-nothing mode declines it entirely.
+    """
+
+    @dace.program
+    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+        for i in dace.map[0:N]:
+            for j in dace.map[0:N]:
+                if a[i] > 0.0:
+                    b[i, j] = 1.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    assert MoveMapInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) is None
+    assert sdfg.to_json() == before, "declining must not mutate the graph"
+    # The permissive (CPU) mode does take it.
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) == 1
+
+
+def test_require_full_hoist_takes_a_whole_chain_hoist():
+    """GPU mode still accepts a guard invariant w.r.t. every enclosing map."""
+    K = dace.symbol('K')
+
+    @dace.program
+    def kern(b: dace.float64[N, N]):
+        for i in dace.map[0:N]:
+            for j in dace.map[0:N]:
+                if K > 0:
+                    b[i, j] = 1.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    assert MoveMapInvariantIfUp(require_full_hoist=True).apply_pass(sdfg, {}) == 2
+    sdfg.validate()
+    assert _guard_depth(sdfg) == 0
+
+    out = np.zeros((N, N))
+    copy.deepcopy(sdfg)(b=out, K=1)
+    assert np.allclose(out, np.ones((N, N)), rtol=1e-9, atol=1e-9, equal_nan=True)
+
+
+def test_does_not_ping_pong_with_move_if_into_map():
+    """The two passes must not trade the same guard back and forth.
+
+    ``MoveIfIntoMap`` pushes a guard down into inner maps to co-locate them for
+    fusion, producing ``map i: { if c: { map j } }``. Hoisting that guard back
+    one level would undo the push, and repeatedly applying both would never
+    converge. Hoisting is therefore only taken when the guard clears the whole
+    chain -- a move ``MoveIfIntoMap`` does not reverse.
+    """
+    from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
+    from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+
+    @dace.program
+    def kern(a: dace.float64[N], b: dace.float64[N, N], thr: dace.float64):
+        for i in dace.map[0:N]:
+            if a[i] > thr:
+                for j in dace.map[0:N]:
+                    b[i, j] = 1.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    a = np.array([1.0, -1.0] * (N // 2))
+    ref = np.where((a > 0.0)[:, None], 1.0, 0.0)
+
+    for _round in range(4):
+        pushed = PatternMatchAndApplyRepeated([MoveIfIntoMap()]).apply_pass(sdfg, {})
+        hoisted = MoveMapInvariantIfUp().apply_pass(sdfg, {})
+        if not pushed and not hoisted:
+            break
+    else:
+        pytest.fail('MoveIfIntoMap and MoveMapInvariantIfUp did not converge')
+
+    sdfg.validate()
+    out = np.zeros((N, N))
+    copy.deepcopy(sdfg)(a=a, b=out, thr=0.0)
+    assert np.allclose(out, ref, rtol=1e-9, atol=1e-9, equal_nan=True)
+
+
+def test_partial_hoist_over_a_branch_with_maps_is_refused():
+    """A guard over a branch holding a map is only hoisted if it clears the
+    whole chain; a partial hoist would undo ``MoveIfIntoMap``'s co-location."""
+
+    @dace.program
+    def kern(a: dace.float64[N], b: dace.float64[N, N]):
+        for i in dace.map[0:N]:
+            if a[i] > 0.0:
+                for j in dace.map[0:N]:
+                    b[i, j] = 1.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    # ``a[i]`` cannot clear ``map i``, and its branch holds ``map j``.
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None
+    assert sdfg.to_json() == before, 'refusing must not mutate the graph'
+
+
+def test_unrelated_dataflow_in_the_state_blocks_the_hoist():
+    """A map-free component sharing the state must not be swept into the guard.
+
+    Replacing the whole state with ``if c: {state}`` would make an
+    unconditional copy conditional -- it would stop running when the guard is
+    false. Being an ``AccessNode`` is not enough; it has to be wired through
+    the map.
+    """
+    sdfg = dace.SDFG('unrelated')
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('b', [N], dace.float64)
+    sdfg.add_array('c', [N], dace.float64)
+    sdfg.add_array('d', [N], dace.float64)
+    st = sdfg.add_state('main', is_start_block=True)
+
+    # Guarded map writing b from a.
+    inner = dace.SDFG('body')
+    inner.add_array('ai', [1], dace.float64)
+    inner.add_array('bo', [1], dace.float64)
+    cb = ConditionalBlock('guard')
+    inner.add_node(cb, is_start_block=True)
+    region = dace.sdfg.state.ControlFlowRegion('then', sdfg=inner)
+    bs = region.add_state('w', is_start_block=True)
+    t = bs.add_tasklet('cp', {'i'}, {'o'}, 'o = i')
+    bs.add_edge(bs.add_access('ai'), None, t, 'i', dace.Memlet('ai[0]'))
+    bs.add_edge(t, 'o', bs.add_access('bo'), None, dace.Memlet('bo[0]'))
+    cb.add_branch(dace.properties.CodeBlock('K > 0'), region)
+
+    me, mx = st.add_map('m', dict(i='0:%d' % N))
+    nsdfg = st.add_nested_sdfg(inner, {'ai'}, {'bo'}, symbol_mapping={'K': 'K'})
+    st.add_memlet_path(st.add_access('a'), me, nsdfg, dst_conn='ai', memlet=dace.Memlet('a[i]'))
+    st.add_memlet_path(nsdfg, mx, st.add_access('b'), src_conn='bo', memlet=dace.Memlet('b[i]'))
+
+    # Unrelated, unconditional copy in the SAME state: d[:] = c[:].
+    st.add_edge(st.add_access('c'), None, st.add_access('d'), None, dace.Memlet('c[0:%d]->[0:%d]' % (N, N)))
+
+    before = sdfg.to_json()
+    assert MoveMapInvariantIfUp().apply_pass(sdfg, {}) is None, 'must not sweep unrelated dataflow into the guard'
+    assert sdfg.to_json() == before
+
+
 def test_idempotent():
     """Re-running finds nothing new once the guard has settled."""
 

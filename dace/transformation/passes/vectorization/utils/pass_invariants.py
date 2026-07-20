@@ -23,6 +23,7 @@ from typing import Optional, Tuple
 import dace
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
+from dace.sdfg.state import LoopRegion
 
 
 def assert_invariant(violation: Optional[str], pass_name: str, description: str) -> None:
@@ -307,6 +308,62 @@ def _is_reduction_boundary_wcr(sdfg, state, map_entry, edge) -> bool:
     return isinstance(desc, dace.data.Array) and (desc.total_size == 1) == True
 
 
+def no_multi_array_carried_sweep_in_map(scope) -> Optional[str]:
+    """No tileable map body may run several simultaneous array recurrences.
+
+    **Tile-vectorizer precondition (conservative refusal).** The tile widener
+    lane-widens a map by giving each lane its own copy of the body's carried
+    state. It does this correctly for a SINGLE carried array recurrence (an
+    inner sequential loop that read-modify-writes one non-scalar array across
+    iterations -- e.g. trmm's ``B[i] = f(B[k<i])`` triangular sweep). It does
+    NOT do it correctly when the body runs SEVERAL such recurrences over
+    DISTINCT arrays at once: the per-lane copies of the several carried tiles
+    alias, and the lanes read each other's partial state. This is the ADI
+    tridiagonal pattern -- one row-map whose body forward- and back-sweeps
+    ``p``, ``q`` and ``v`` -- which the widener mis-lowers into a silent data
+    race (validated wrong at every tile width).
+
+    Detection: a top-level map whose body nested SDFG contains at least two
+    ``LoopRegion`` s that together in-place read-modify-write at least two
+    distinct non-scalar arrays. A single such sweep is allowed (the widener
+    handles it); zero is ordinary elementwise dataflow.
+
+    This is a conservative refusal, not a lowering fix: the correct fix is to
+    lane-privatise each carried array tile independently so multiple sweeps do
+    not alias. Until then, refusing keeps the kernel correct and un-tiled
+    (exactly the shape canonicalisation already produces and validates) rather
+    than emitting a racing kernel.
+
+    :param scope: The SDFG (or single state) to inspect.
+    :returns: A description of the first violation, or ``None``.
+    """
+    for _sd, state in _iter_states(scope):
+        for node in state.nodes():
+            if not isinstance(node, MapEntry) or state.entry_node(node) is not None:
+                continue
+            for body_node in state.all_nodes_between(node, state.exit_node(node)):
+                if not isinstance(body_node, NestedSDFG):
+                    continue
+                inner = body_node.sdfg
+                loops = [b for b in inner.all_control_flow_regions(recursive=True) if isinstance(b, LoopRegion)]
+                if len(loops) < 2:
+                    continue
+                swept: set = set()
+                for loop in loops:
+                    for st in loop.all_states():
+                        written = {n.data for n in st.nodes() if isinstance(n, AccessNode) and st.in_degree(n) > 0}
+                        read = {n.data for n in st.nodes() if isinstance(n, AccessNode) and st.out_degree(n) > 0}
+                        for arr in written & read:
+                            desc = inner.arrays.get(arr)
+                            if isinstance(desc, dace.data.Array) and desc.total_size != 1:
+                                swept.add(arr)
+                if len(swept) >= 2:
+                    return (f"{state.label}: map[{', '.join(str(p) for p in node.map.params)}] body runs "
+                            f"simultaneous carried recurrences over {sorted(swept)} -- the tile widener "
+                            f"cannot lane-privatise several aliasing array sweeps at once (leave un-tiled)")
+    return None
+
+
 def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
     """No edge INSIDE any nested SDFG may carry a write-conflict resolution.
 
@@ -400,8 +457,8 @@ def no_strided_map_param_in_surviving_condition(sdfg: SDFG, K: int) -> Optional[
     :param K: number of tiled (innermost) dims.
     :returns: an error string, or ``None`` when the invariant holds.
     """
-    from dace.transformation.passes.vectorization.utils.map_predicates import (
-        map_body_has_tiled_param_dependent_branch)
+    from dace.transformation.passes.vectorization.utils.map_predicates import (map_body_has_tiled_param_dependent_branch
+                                                                               )
     for sd in sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():

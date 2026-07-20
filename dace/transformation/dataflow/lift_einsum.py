@@ -6,7 +6,7 @@ from typing import Dict
 
 import sympy
 
-from dace import SDFG, SDFGState, dtypes, nodes, symbolic
+from dace import SDFG, SDFGState, dtypes, nodes, properties, symbolic
 from dace.frontend.operations import detect_reduction_type
 from dace.frontend.python import astutils
 from dace.sdfg import utils as sdutil
@@ -14,6 +14,7 @@ from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation as xf
 
 
+@properties.make_properties
 class LiftEinsum(xf.SingleStateTransformation):
     """
     Detects a tensor operation that can be represented by an Einstein-notation sum (einsum, e.g., matrix
@@ -23,6 +24,20 @@ class LiftEinsum(xf.SingleStateTransformation):
 
     map_entry = xf.PatternNode(nodes.MapEntry)
     tasklet = xf.PatternNode(nodes.Tasklet)
+
+    contraction_only = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Only lift a genuine contraction (a summed index). Refuse a pure outer product '
+        '(``a[i]*b[j] -> i,j->ij``): it has no contracted axis, so it is elementwise dataflow, '
+        'and lifting it to a degenerate K=1 GEMM is no BLAS win -- and the tile vectorizer '
+        'mis-lowers that GEMM (unbound inner dims -> illegal DGEMM leading dimension). Left as a '
+        'map, an outer product tiles per-lane like any other broadcast. Used by the vectorizer; '
+        'off by default so the standalone lift still hoists outer products.')
+
+    def __init__(self, contraction_only: bool = False):
+        super().__init__()
+        self.contraction_only = contraction_only
 
     @classmethod
     def expressions(cls):
@@ -134,6 +149,14 @@ class LiftEinsum(xf.SingleStateTransformation):
         # (``a[i]*b[j]`` -> ``i,j->ij``, no input matching the FULL output index) is preserved.
         out_idx = output_chars - {'0'}
         if not (input_chars - output_chars) and any(ci == out_idx for ci in tensor_input_chars):
+            return False
+
+        # In ``contraction_only`` mode (the vectorizer), refuse any op with NO contracted index
+        # -- a pure outer product ``a[i]*b[j] -> i,j->ij``. It is elementwise (every output
+        # element independent, no sum), so it tiles per-lane like any broadcast; lifting it to a
+        # degenerate K=1 GEMM is no BLAS win and the tile widener mis-lowers it (unbound inner
+        # dims -> illegal DGEMM leading dimension, the gemver rank-2 update).
+        if self.contraction_only and not (input_chars - output_chars):
             return False
 
         # At most one runtime scalar coefficient is supported (wired as the

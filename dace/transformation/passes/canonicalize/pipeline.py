@@ -189,9 +189,18 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
        merges guards that are already adjacent -- it cannot push one inward.)
     6. structural cleanup -- fuse the states the steps above just freed and
        inline the nestings, so the maps genuinely share a state.
-    7. ``MapFusionVertical`` / ``MapFusionHorizontal`` -- the payoff.
-    8. ``MapCollapse`` -- fusion can leave a freshly-perfect nest; folding it
-       to one N-dimensional map is the canonical fully-parallel form.
+    7. ``MinimizeStridePermutation`` then ``MapCollapse`` -- BEFORE fusing, in
+       that order, for two separate reasons. The permuter only walks chains of
+       single-parameter maps (``_collect_perfect_nest`` breaks on a multi-param
+       map and ``_reorder_nest`` needs two levels), so collapsing first would
+       hide every nest it exists to reorder. And collapsing before fusing is
+       what keeps differently-parallel statements apart: an N-dimensional map
+       no longer matches a sibling 1-D map for horizontal fusion, so a parallel
+       ``map[i, j]`` beside a carried ``map i: { loop j }`` survives instead of
+       being re-merged into one mixed-parallelism map.
+    8. ``MapFusionVertical`` / ``MapFusionHorizontal`` -- the payoff.
+    9. ``MapCollapse`` again -- fusion can leave a freshly-perfect nest; folding
+       it to one N-dimensional map is the canonical fully-parallel form.
 
     :returns: ``(stage_label, pass)`` pairs for the phase, in order.
     """
@@ -201,6 +210,8 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
                                      ('coalesce', EmptyLoopElimination()),
                                      ('coalesce', PatternMatchAndApplyRepeated([MoveIfIntoMap()]))]
     s += _structural_cleanup('coalesce')
+    s += [('coalesce', MinimizeStridePermutation())]
+    s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
     return s
@@ -528,6 +539,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # bare loop -> MoveIfIntoLoop's clean single-loop path applies.
     s += [('lower', EmptyStateElimination())]
 
+    # NormalizeNegativeStride again, now that every map is a LoopRegion. The
+    # pass only ever rewrites LoopRegions, so the earlier 'clean' invocation
+    # reached the loops the frontend emitted but not the maps -- a negative-
+    # stride Map became a negative-stride loop here, after its only chance to
+    # be normalized. Downstream (RerollUnrolledLoops, LoopToScan's stride != 1
+    # refusal, LoopToMap's affine subset classifier) all run past this point
+    # and do rely on the positive-stride invariant.
+    s += [('lower', NormalizeNegativeStride())]
+
     # reroll: re-roll a hand-unrolled lane chain (a step-``S`` loop whose body is
     # ``m`` lanes at equally-spaced offsets ``{0, g, ..., (m-1)g}``) back to a
     # step-``g`` loop, so the lanes do not survive normalization as a strided
@@ -697,6 +717,21 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         s += [('fission', BreakAntiDependence())]
     s += [('fission', PerfectLoopNesting()), ('fission', _uniq_fis)]
 
+    # untrivialize: splice out the single-iteration trivial-loop scaffold (the
+    # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
+    # before LoopToMap turns it into a sticky NestedSDFG.
+    #
+    # Runs HERE, right after fission, not just before LoopToMap: every matcher
+    # between this point and LoopToMap expects a loop body to be one SDFGState
+    # and refuses a body that is a LoopRegion. ``LoopStridePermutation``'s
+    # ``_perfect_nests`` would absorb the wrapper as a real nest level and
+    # bubble it as if it were an axis; ``AssignmentAndCopyKernelToMemsetAndMemcpy``
+    # and the ``LoopTo*`` lifts refuse outright on ``not isinstance(blocks[0],
+    # SDFGState)``. Leaving the scaffold in place through those stages silently
+    # disabled them. Fission runs first because ``PerfectLoopNesting`` needs the
+    # uniform all-siblings-are-loops shape the scaffold provides.
+    s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
+
     # normalize: dropped from the pipeline. ``NormalizeLoopsAndMaps`` rewrites
     # ``for i in b:e:s`` into ``for j in 0:(e-b)//s:1`` with body
     # ``i -> b+s*j``. In a corpus-wide measurement (TSVC, 151 kernels) this
@@ -767,11 +802,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', LoopToReduce()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
           ('loop_to_x', LoopToConditionalReduce())]
-
-    # untrivialize: splice out the single-iteration trivial-loop scaffold (the
-    # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
-    # before LoopToMap turns it into a sticky NestedSDFG.
-    s += [('untrivialize', PatternMatchAndApplyRepeated([TrivialLoopElimination()]))]
 
     # cascade_iedges_up (pre-parallelize): re-run after fission / normalize rewrite
     # the CFG; MUST precede LoopToMap. Re-unique the iterators (ssa) so the
@@ -1030,7 +1060,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # depend on the map parameters is lifted out of the map, one map copy per
     # branch (``map[i, j]: { if c: A else B }`` -> ``if c: { map[i, j]: A } else
     # { map[i, j]: B }``), so each branch is a clean unconditional parallel map.
-    s += [('hoist_guards', MoveMapInvariantIfUp())]
+    # Same target gate as the loop-side hoist above: on GPU a guard that stalls
+    # between two levels of a map chain splits the nest there, so take the
+    # hoist only when it clears the whole chain and the nest stays one kernel.
+    s += [('hoist_guards', MoveMapInvariantIfUp(require_full_hoist=(target == 'gpu')))]
 
     # normalize_wcr: WCR edges sourced from a Tasklet/NestedSDFG get an intermediate
     # private AccessNode inserted, so every WCR edge sources from an AccessNode (the
@@ -1157,13 +1190,36 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 StageFactory = Callable[[], List[ppl.Pass]]
 
 
-def _stage_factory(label: str) -> StageFactory:
-    """Return a factory yielding fresh passes for the named stage.
+def _stage_runs() -> List[Tuple[str, int, int]]:
+    """Split the flat recipe into contiguous runs of one stage label.
 
-    :param label: The stage label to filter the recipe by.
-    :returns: A factory that builds that stage's passes in order.
+    A label may appear in several places in the recipe (``clean``,
+    ``cascade_iedges_up`` and ``peel`` all do). Grouping by label alone would
+    gather those separated occurrences at the position of the first one and so
+    reorder the recipe -- which silently breaks documented constraints, e.g.
+    ``LiftInv`` must run before ``LowerITEToFpFactor`` rewrites the identity
+    tasklet it matches on, but both are ``clean`` passes on opposite sides of
+    the ``lift_inv`` stage. Runs preserve the real order.
+
+    :returns: ``(label, start, stop)`` index ranges into the flat recipe.
     """
-    return lambda: [p for lbl, p in _build_stages() if lbl == label]
+    runs: List[List] = []
+    for i, (lbl, _p) in enumerate(_build_stages()):
+        if runs and runs[-1][0] == lbl and runs[-1][2] == i:
+            runs[-1][2] = i + 1
+        else:
+            runs.append([lbl, i, i + 1])
+    return [(lbl, a, b) for lbl, a, b in runs]
+
+
+def _stage_factory(start: int, stop: int) -> StageFactory:
+    """Return a factory yielding fresh passes for one run of the recipe.
+
+    :param start: Index of the run's first pass in the flat recipe.
+    :param stop: Index one past the run's last pass.
+    :returns: A factory that builds that run's passes in order.
+    """
+    return lambda: [p for _lbl, p in _build_stages()[start:stop]]
 
 
 #: Grouped view of :func:`_build_stages`: ``(label,
@@ -1172,8 +1228,8 @@ def _stage_factory(label: str) -> StageFactory:
 #: truth used by the pipeline; this view exists for callers that iterate
 #: stage-by-stage (``for name, factory in CANONICALIZE_STAGES:
 #: for unit in factory(): ...``).
-CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [(label, _stage_factory(label))
-                                                       for label in dict.fromkeys(lbl for lbl, _ in _build_stages())]
+CANONICALIZE_STAGES: List[Tuple[str, StageFactory]] = [(label, _stage_factory(start, stop))
+                                                       for label, start, stop in _stage_runs()]
 
 
 def _assert_self_contained(unit: ppl.Pass):

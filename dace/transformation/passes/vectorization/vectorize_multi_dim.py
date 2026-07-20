@@ -38,7 +38,8 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.utils.pass_invariants import (no_wcr_in_map_body,
-                                                                            no_wcr_inside_nested_sdfgs)
+                                                                            no_wcr_inside_nested_sdfgs,
+                                                                            no_multi_array_carried_sweep_in_map)
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
@@ -280,20 +281,32 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        """Widen body-NSDFG boundary memlets, then repair the widened connectors.
+
+        :returns: The number of widenings applied; ``0`` when nothing widened but the two
+                  repairs below still edited the graph; ``None`` only when the SDFG was left
+                  untouched. ``apply_pass`` returning ``None`` means "did not modify the
+                  SDFG" -- the pipeline then skips its per-stage ``validate()`` and leaves
+                  ``self._modified`` alone (stale analyses, early ``FixedPointPipeline``
+                  exit) -- and both repairs run unconditionally.
+        """
         applied = sdfg.apply_transformations_repeated(ExpandNestedSDFGInputs, permissive=False, validate=False)
         # ``ExpandNestedSDFGInputs`` re-derives each widened connector descriptor by deep-copying
         # the outer array inward (``_replace_desc_and_uncollapse_dims``) and only clearing
         # ``transient`` -- so a frontend reshape/flatten ``View`` parent (e.g. ``C_0`` viewing
         # ``C``) re-introduces an invalid inner ``View`` connector (no viewing edge in the body).
         # Re-demote every connector ``View`` to a plain array so the widened bodies validate.
+        demoted = 0
         for node, _parent in sdfg.all_nodes_recursive():
             if isinstance(node, dace.nodes.NestedSDFG):
-                demote_connector_views(node)
-        self._bind_missing_free_symbols(sdfg)
-        return applied or None
+                demoted += demote_connector_views(node)
+        bound = self._bind_missing_free_symbols(sdfg)
+        if applied:
+            return applied
+        return 0 if (demoted or bound) else None
 
     @staticmethod
-    def _bind_missing_free_symbols(sdfg: dace.SDFG) -> None:
+    def _bind_missing_free_symbols(sdfg: dace.SDFG) -> int:
         """Identity-bind every body-NSDFG free symbol still absent from its ``symbol_mapping``.
 
         ``ExpandNestedSDFGInputs`` widens a per-iteration boundary memlet (``a[i]`` →
@@ -307,7 +320,9 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
         descriptor (default ``int64``).
 
         :param sdfg: The SDFG whose body NSDFGs to repair in place.
+        :returns: The number of symbols identity-bound.
         """
+        bound = 0
         for node, parent in sdfg.all_nodes_recursive():
             if not isinstance(node, dace.nodes.NestedSDFG) or node.sdfg is None:
                 continue
@@ -327,6 +342,8 @@ class _RunExpandNestedSDFGInputs(ppl.Pass):
                 if sym_name not in inner.symbols:
                     inner.add_symbol(sym_name, sym_type)
                 node.symbol_mapping[sym_name] = symbolic.pystr_to_symbolic(sym_name)
+                bound += 1
+        return bound
 
 
 class _RunWCRToAugAssign(ppl.Pass):
@@ -400,7 +417,7 @@ class _AssertNoBodyWCR(ppl.Pass):
         return None
 
 
-def _promote_read_output_connectors_to_inout(sdfg: dace.SDFG) -> None:
+def _promote_read_output_connectors_to_inout(sdfg: dace.SDFG) -> int:
     """Promote a single-state NestedSDFG output connector also read internally to a full inout.
 
     Branch lowering rewrites a same-write-set masked write ``if cond: arr[s] = f(...)`` into
@@ -420,7 +437,10 @@ def _promote_read_output_connectors_to_inout(sdfg: dace.SDFG) -> None:
     write whose fused output name/subset diverges from any live input (no in-place read; e.g.
     a per-lane rename) has no such source and is left nested — correct where its result feeds
     the checked output, else numerically stale (lane 0 only) until a general re-route lands.
+
+    :returns: The number of output connectors promoted to inout.
     """
+    promoted = 0
     for node, parent in list(sdfg.all_nodes_recursive()):
         if not isinstance(node, dace.nodes.NestedSDFG) or not isinstance(parent, dace.SDFGState):
             continue
@@ -445,6 +465,8 @@ def _promote_read_output_connectors_to_inout(sdfg: dace.SDFG) -> None:
                 continue
             node.add_in_connector(oc)
             parent.add_edge(template.src, template.src_conn, node, oc, copy.deepcopy(out_edge.data))
+            promoted += 1
+    return promoted
 
 
 class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
@@ -475,12 +497,24 @@ class _RunInlineBranchLoweredNSDFGs(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
-        sdfg.apply_transformations_repeated(StateFusionExtended, permissive=False, validate=False)
-        _promote_read_output_connectors_to_inout(sdfg)
+        """Fuse, promote, then inline the branch-lowered body NestedSDFGs.
+
+        :returns: The number of inlines applied; ``0`` when nothing inlined but the state
+                  fusion or the inout promotion below still edited the graph; ``None`` only
+                  when the SDFG was left untouched. ``apply_pass`` returning ``None`` means
+                  "did not modify the SDFG" -- the pipeline then skips its per-stage
+                  ``validate()`` and leaves ``self._modified`` alone (stale analyses, early
+                  ``FixedPointPipeline`` exit) -- and both preprocess steps run
+                  unconditionally.
+        """
+        fused = sdfg.apply_transformations_repeated(StateFusionExtended, permissive=False, validate=False)
+        promoted = _promote_read_output_connectors_to_inout(sdfg)
         applied = sdfg.apply_transformations_repeated([InlineSDFG, InlineMultistateSDFG],
                                                       permissive=False,
                                                       validate=False)
-        return applied or None
+        if applied:
+            return applied
+        return 0 if (fused or promoted) else None
 
 
 def _is_power_of_two(n: int) -> bool:
@@ -906,6 +940,17 @@ class VectorizeMultiDim(ppl.Pipeline):
         # correct input and leave it un-tiled -- a clean refusal instead of a crash or a
         # half-transformed SDFG. Cheap relative to the compile that follows; taken once per call.
         snapshot = copy.deepcopy(sdfg)
+        # Refuse the multi-array carried-sweep shape (ADI's simultaneous p/q/v tridiagonal
+        # recurrences) on the PRISTINE input, before the prep passes inline the body loops and
+        # the shape is no longer recognisable. The tile widener cannot lane-privatise several
+        # aliasing array sweeps at once and mis-lowers them into a silent race, so leave the
+        # kernel un-tiled (correct) rather than emit a racing one. Restore + return like any
+        # other ``VectorizeUnsupported`` refusal.
+        multi_sweep = no_multi_array_carried_sweep_in_map(sdfg)
+        if multi_sweep is not None:
+            warnings.warn(f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
+                          f"un-tiled (correct, un-optimized): {multi_sweep}")
+            return None
         # Always simplify first (user direction): callers may hand us an un-simplified SDFG
         # (``to_sdfg(simplify=False)``) with FunctionCallRegions / redundant states / un-inlined
         # wrappers. Up-front simplify gives every downstream pass a canonical flat-state body;
@@ -1001,7 +1046,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # lifting removes the map (and its WCR) from the tile path, and the node carries its
         # own fast (BLAS / ``pure``) expansion, selected in ``_finalize_lifted_library_nodes``.
         # No-op on non-contraction kernels (``LiftEinsum`` needs ≥2 tensor operands).
-        PatternMatchAndApplyRepeated([LiftEinsum()]).apply_pass(sdfg, {})
+        PatternMatchAndApplyRepeated([LiftEinsum(contraction_only=True)]).apply_pass(sdfg, {})
         # WCRToAugAssign converts every WCR memlet that isn't a recognised reduction into an
         # in-place RMW tasklet. Recognised tile-path reductions land as ``tile → scalar
         # -[wcr]→ sink`` and are left for TileReduce; everything else converts so no stray

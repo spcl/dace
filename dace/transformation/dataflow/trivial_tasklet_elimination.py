@@ -8,6 +8,44 @@ from dace.transformation import transformation
 from dace.properties import make_properties
 
 
+def _is_carried_reduction_accumulator(sdfg, name: str) -> bool:
+    """Report whether ``name`` is a transient scalar that carries a reduction
+    across states -- it appears in more than one state and is the target of a
+    write-conflict-resolution (WCR) edge somewhere.
+
+    Such a scalar is a loop-carried accumulator: it is staged from an array
+    element in one state (``w = A[i, j]``), reduced via a WCR in another
+    (``w (+)= ...``) and written back (``A[i, j] = w``). The staging and
+    write-back copies are the boundary that sequences the cross-state carry;
+    eliminating either splices the array element straight onto the WCR-written
+    scalar, which drops the accumulator's initial value / reduction ordering
+    and miscompiles (polybench ludcmp's LU update collapses to zero).
+
+    :param sdfg: The SDFG owning ``name``.
+    :param name: The data descriptor name to classify.
+    :returns: ``True`` if ``name`` is a cross-state WCR accumulator.
+    """
+    desc = sdfg.arrays.get(name)
+    if desc is None or not desc.transient:
+        return False
+    if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and desc.total_size == 1)):
+        return False
+    seen_states = 0
+    is_wcr_target = False
+    for sub in sdfg.all_sdfgs_recursive():
+        if name not in sub.arrays:
+            continue
+        for state in sub.states():
+            nodes_here = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == name]
+            if not nodes_here:
+                continue
+            seen_states += 1
+            if not is_wcr_target:
+                is_wcr_target = any(e.data is not None and e.data.wcr is not None for n in nodes_here
+                                    for e in state.in_edges(n))
+    return seen_states > 1 and is_wcr_target
+
+
 @make_properties
 class TrivialTaskletElimination(transformation.SingleStateTransformation):
     """ Implements the Trivial-Tasklet Elimination pattern.
@@ -70,6 +108,14 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
         # StateFusionExtended's post-apply check). Keep the trivial copy tasklet at the map
         # boundary; it is exactly the shape InsertAssignTaskletsAtMapBoundary re-creates.
         if expr_index == 2 and write_memlet.data != read.data:
+            return False
+
+        # A copy bridging a cross-state reduction accumulator (a transient scalar
+        # staged from an array, reduced via WCR, and written back) must survive:
+        # eliminating it splices the array element straight onto the WCR-written
+        # scalar and drops the accumulator's carry (ludcmp's LU update -> zero).
+        if _is_carried_reduction_accumulator(sdfg, read_memlet.data) or \
+                _is_carried_reduction_accumulator(sdfg, write_memlet.data):
             return False
 
         return True

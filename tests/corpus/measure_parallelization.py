@@ -53,6 +53,10 @@ import dace
 # import through the vectorization pipeline's top-level interstate import.
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.parallelize import parallelize
+from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.enums import ISA
+from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
 from dace.libraries.standard.nodes import Reduce
 from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg import nodes as nd
@@ -177,8 +181,17 @@ def _tsvc25_case(name):
     program = [p for p in _T25.collect() if p.name == name][0]
     arrays, scalars = _T25.make_inputs(program)
     oracle = _tsvc25_oracle(program)
-    pool = {**{n: a.copy() for n, a in arrays.items()}, **scalars,
-            **{s.lower(): v for s, v in _T25.SIZES.items()}, "n": _T25.SIZES["LEN_1D"]}
+    pool = {
+        **{
+            n: a.copy()
+            for n, a in arrays.items()
+        },
+        **scalars,
+        **{
+            s.lower(): v
+            for s, v in _T25.SIZES.items()
+        }, "n": _T25.SIZES["LEN_1D"]
+    }
     oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
     ref = {n: pool[n] for n in arrays}
     base = program.to_sdfg(simplify=True)
@@ -205,8 +218,46 @@ CORPORA: Dict[str, Tuple[Callable, Callable]] = {
     'tsvc25': (_tsvc25_names, _tsvc25_case),
 }
 
+#: Pipeline configurations under measurement. Each maps an SDFG in place.
+#:
+#: * ``canon``          -- the production canonicalize recipe.
+#: * ``canon+vec``      -- canonicalize, then the multi-dimensional CPU vectorizer.
+#: * ``parallelize+vec``-- the lighter ``parallelize`` recipe, then the vectorizer.
+#:
+#: The vectorizer runs at a fixed width with the scalar ISA so the measurement
+#: is machine-independent: what is being compared is how much of each corpus
+#: each recipe leaves parallel, not the throughput of a particular target.
+CONFIGS = ('canon', 'canon+vec', 'parallelize+vec')
 
-def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool = True) -> Dict:
+
+def _vectorize(sdfg):
+    """Apply the CPU multi-dim vectorizer in place."""
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR)).apply_pass(sdfg, {})
+    return sdfg
+
+
+def apply_config(sdfg, config: str, params: Dict):
+    """Run one pipeline configuration over ``sdfg`` in place.
+
+    :param sdfg: The SDFG to transform.
+    :param config: One of :data:`CONFIGS`.
+    :param params: Canonicalize knob set from :func:`cpu_params`.
+    :returns: The transformed SDFG.
+    """
+    if config == 'canon':
+        canonicalize(sdfg, validate=True, validate_all=False, **params)
+    elif config == 'canon+vec':
+        canonicalize(sdfg, validate=True, validate_all=False, **params)
+        _vectorize(sdfg)
+    elif config == 'parallelize+vec':
+        parallelize(sdfg, validate=True, validate_all=False, peel_limit=params.get('peel_limit', 4))
+        _vectorize(sdfg)
+    else:
+        raise ValueError(f'unknown config {config!r}')
+    return sdfg
+
+
+def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool = True, config: str = 'canon') -> Dict:
     """Measure one corpus. :returns: a result dict with per-kernel rows."""
     names_fn, case_fn = CORPORA[corpus]
     names = names_fn()
@@ -222,7 +273,7 @@ def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool =
             l2m.apply_transformations_repeated(LoopToMap, validate=False, validate_all=False)
             row['l2m'] = count(l2m)
             canon = copy.deepcopy(base)
-            canonicalize(canon, validate=True, validate_all=False, **params)
+            apply_config(canon, config, params)
             row['canon'] = count(canon)
             row['guarded'] = guarded_fallback_loops(canon)
             if check:
@@ -242,10 +293,16 @@ def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool =
         if verbose:
             flag = 'OK ' if row['correct'] else ('.. ' if row['correct'] is None and not row['error'] else
                                                  ('ERR' if row['error'] else 'BAD'))
-            print(f"[{corpus} p{peel_limit} {i:3d}/{len(names)}] {flag} {name:28s} "
-                  f"base={row['base']} l2m={row['l2m']} canon={row['canon']} g={row['guarded']} "
-                  f"{row['error'] or ''}", flush=True)
-    return dict(corpus=corpus, peel_limit=peel_limit, seconds=round(time.perf_counter() - t0, 1), rows=rows)
+            print(
+                f"[{corpus} {config} p{peel_limit} {i:3d}/{len(names)}] {flag} {name:28s} "
+                f"base={row['base']} l2m={row['l2m']} canon={row['canon']} g={row['guarded']} "
+                f"{row['error'] or ''}",
+                flush=True)
+    return dict(corpus=corpus,
+                config=config,
+                peel_limit=peel_limit,
+                seconds=round(time.perf_counter() - t0, 1),
+                rows=rows)
 
 
 def _agg(rows, key) -> List[int]:
@@ -266,7 +323,8 @@ def summarize(res: Dict) -> None:
     b, l, c = _agg(rows, 'base'), _agg(rows, 'l2m'), _agg(rows, 'canon')
     guarded = sum(r.get('guarded') or 0 for r in rows.values())
     eff = c[0] - guarded
-    print(f"\n===== {res['corpus']} peel_limit={res['peel_limit']} ({len(rows)} kernels, {res['seconds']}s) =====")
+    print(f"\n===== {res['corpus']} [{res.get('config', 'canon')}] peel_limit={res['peel_limit']} "
+          f"({len(rows)} kernels, {res['seconds']}s) =====")
     if ok or bad or err:
         print(f"  CORRECT: {len(ok)}/{len(ok) + len(bad)}   WRONG: {len(bad)}   ERROR: {len(err)}")
         if bad:
@@ -276,7 +334,7 @@ def summarize(res: Dict) -> None:
     print(f"  {'strategy':14s} {'loops':>6s} {'maps':>6s} {'reduce':>7s} {'scan':>5s}")
     print(f"  {'baseline':14s} {b[0]:6d} {b[1]:6d} {b[2]:7d} {b[3]:5d}")
     print(f"  {'LoopToMap':14s} {l[0]:6d} {l[1]:6d} {l[2]:7d} {l[3]:5d}")
-    print(f"  {'canonicalize':14s} {c[0]:6d} {c[1]:6d} {c[2]:7d} {c[3]:5d}")
+    print(f"  {res.get('config', 'canon'):14s} {c[0]:6d} {c[1]:6d} {c[2]:7d} {c[3]:5d}")
     print(f"  residual sequential loops: baseline={b[0]}  L2M={l[0]}  canon={c[0]}")
     print(f"  guarded (if cond: map else: seq) fallbacks counted as parallel: {guarded}")
     print(f"  EFFECTIVE residual sequential (canon - guarded): {eff}  "
@@ -298,10 +356,16 @@ def main() -> None:
     ap.add_argument('corpus', nargs='?', choices=list(CORPORA) + ['all'], default='all')
     ap.add_argument('--peel', type=int, default=4, help='peel_limit (default 4; 0 disables peeling)')
     ap.add_argument('--check', action='store_true', help='also compile+run and assert value-preserving')
+    ap.add_argument('--config',
+                    default='canon',
+                    choices=list(CONFIGS) + ['all'],
+                    help='pipeline configuration to measure (default canon)')
     args = ap.parse_args()
     targets = list(CORPORA) if args.corpus == 'all' else [args.corpus]
-    for corpus in targets:
-        summarize(sweep(corpus, peel_limit=args.peel, check=args.check))
+    configs = list(CONFIGS) if args.config == 'all' else [args.config]
+    for config in configs:
+        for corpus in targets:
+            summarize(sweep(corpus, peel_limit=args.peel, check=args.check, config=config))
 
 
 if __name__ == '__main__':
