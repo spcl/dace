@@ -39,7 +39,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "intrastate_copies: mark graphs which require intrastate copies")
     config.addinivalue_line("markers", "non_polybench: mark test as non-Polybench NPBench SDFG")
 
-VIEW_ORG = False
+VIEW_ORG = True
 VIEW_MOD = False
 
 # Some NPBench initializers (e.g., scipy CSR `.data`) can return NumPy views.
@@ -142,7 +142,9 @@ def _generate_inputs_for_sdfg(sdfg: dace.SDFG) -> dict[str, object]:
 
 def _run_generic_offloading_test(sdfg: dace.SDFG):
     sdfg.validate()
-    if VIEW_ORG: sdfg.view()
+    if VIEW_ORG: pass
+    print("hi")
+    sdfg.view()
 
     baseline_inputs = _generate_inputs_for_sdfg(sdfg)
     offload_inputs = deepcopy(baseline_inputs)
@@ -340,6 +342,7 @@ PYTRAN_BENCHMARKS = [
 # Small SDFGs
 @pytest.mark.polybench
 @pytest.mark.polybench_small
+@pytest.mark.current
 def test_polybench_atax(): test_polybench_offload("atax") # fine
 
 @pytest.mark.polybench
@@ -568,8 +571,8 @@ def test_mandelbrot2(): test_offload("mandelbrot2", program_name="mandelbrot") #
 @pytest.mark.non_polybench
 def test_nbody(): test_offload("nbody") # fine
 
-#@pytest.mark.non_polybench
-#def test_scattering_self_energies(): test_offload("scattering_self_energies")  # FAILS
+@pytest.mark.non_polybench
+def test_scattering_self_energies(): test_offload("scattering_self_energies")  # FAILS
 # HANGS in run(orig) for 8+ minutes -> just needs to run longer, its 10 or so nested loops; offload looks correct
 # FAILS in run(offl) with wcr-related compiler failure
 
@@ -578,7 +581,6 @@ def test_arc_distance(): test_offload("arc_distance", "pythran") # fine
 
 @pytest.mark.no_offload
 @pytest.mark.non_polybench
-@pytest.mark.current
 def test_spmv(): test_offload("spmv") # fine
 
 @pytest.mark.non_polybench
@@ -604,9 +606,9 @@ VIEW_MOD = False
 
 if __name__ == "__main__":
     # Run with: python npbench_testsuite.py
-    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
-    pytest.main([__file__, "-v", "--tb=short", "-m", "polybench"])
-    pytest.main([__file__, "-v", "--tb=short", "-m", "non_polybench"])
+    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    #pytest.main([__file__, "-v", "--tb=short", "-m", "polybench"])
+    #pytest.main([__file__, "-v", "--tb=short", "-m", "non_polybench"])
 
     #create_graph(gather_polybench_runtime_data(POLYBENCH_NAMES))
 
@@ -648,13 +650,11 @@ E   /home/finn/Desktop/ETH/BachelorThesis/dace/dace/codegen/../runtime/include/d
 
 
 """
-1) cholesky2                        fail due to bad OpenBlas
-2) contour integral
-
-3) lenet                            fail with compiler error and dimensionality mismatch
 4) stockham_fft
 
-5) test_scattering_self_energies    fail with wrc-related compiler error
+5) test_scattering_self_energies    fails with wrc-related compiler error
+-> check all lib nodes are set to GPU
+-> --expt-relaxed-constexpr
 
-6) vadv                             fail with data mismatch
+6) XXX vadv                             fails with data mismatch
 """

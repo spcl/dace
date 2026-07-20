@@ -102,6 +102,12 @@ required:
                     When an exception is raised in a transformation "can_be_applied"
                     function, if True the exception is raised further. Otherwise
                     the exception is printed as a warning.
+
+            new_gpu_offloading_pass:
+                type: bool
+                default: false
+                title: "Use new GPU offloading transformation"
+                description: "Use new GPU offloading transformation"
     compiler:
         type: dict
         title: Compiler
@@ -310,7 +316,7 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
+                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter --expt-relaxed-constexpr'
                         default_Windows: '-O3 --use_fast_math'
 
                     hip_args:

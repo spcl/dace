@@ -2926,7 +2926,16 @@ class SDFG(ControlFlowRegion):
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
 
-        self.apply_transformations(GPUTransformSDFG,
+        if dace.config.Config.get_bool("optimizer", "new_gpu_offloading_pass"):
+            from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
+            assert host_maps is None or host_maps == set()
+            #print("NEW PASS")
+            OtA().apply_pass(self, {})
+            #self.sdfg.view()
+        
+        else:
+            #print("OLD PASS")
+            self.apply_transformations(GPUTransformSDFG,
                                    options=dict(sequential_innermaps=sequential_innermaps,
                                                 register_trans=register_transients,
                                                 simplify=simplify,
