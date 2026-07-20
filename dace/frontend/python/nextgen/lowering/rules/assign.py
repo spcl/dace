@@ -291,6 +291,8 @@ def _create_pythonclass_member(target: ast.Attribute, inferred: Inferred,
 
 def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: ast.Assign,
                             state: LoweringState) -> None:
+    if _lower_advanced_index_write(target, value, statement, state):
+        return
     try:
         target_access = resolve_access(target, state)
     except UnsupportedFeatureError as reason:
@@ -315,6 +317,55 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
             return
 
     dispatch.lower_computation(target_access, value, statement, state)
+
+
+def _lower_advanced_index_write(target: ast.Subscript, value: ast.expr, statement: ast.Assign,
+                                state: LoweringState) -> bool:
+    """
+    Lower a write through NumPy advanced indexing (``A[indices] = B``) as a
+    scatter. Returns False when the target uses no array-valued index, so the
+    caller falls through to the ordinary subscript-assignment paths.
+
+    An accumulation always takes conflict resolution here regardless of scope:
+    the index array may name the same element twice (``A[[0, 0]] += 1``), so the
+    map iterations collide on data the frontend cannot inspect. That is a
+    stronger rule than :func:`conflict.accumulation_wcr` applies elsewhere,
+    where collision is decided from the subset.
+    """
+    from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+
+    if not isinstance(target.value, (ast.Name, ast.Attribute)):
+        return False
+    try:
+        base = resolve_access(target.value, state)
+        if base is None:
+            return False
+        expr = state.inference.parse_access(target)
+        if not expr.arrdims:
+            return False
+        # An accumulation reaches lowering desugared into ``t = <t read> op v``;
+        # both write paths re-apply the operator themselves, so strip the
+        # self-read down to the accumulated operand first.
+        operator = getattr(statement, 'augmented_op', None)
+        symbol = conflict.WCR_OPERATORS.get(type(operator)) if operator is not None else None
+        accumulated = value
+        if symbol is not None and isinstance(value, ast.BinOp):
+            accumulated = (value.left if getattr(statement, 'accumulator_side', 'left') == 'right' else value.right)
+
+        if advanced_indexing.has_boolean_index(expr, state.context):
+            # A mask writes in place through a guarded update, so it needs
+            # neither a gather nor conflict resolution.
+            advanced_indexing.emit_masked_write(target, expr, base.container, base.descriptor, accumulated, statement,
+                                                state)
+            return True
+        access = advanced_indexing.analyze(target, expr, base.container, base.descriptor, state.context,
+                                           state.inference)
+        wcr = f'lambda x, y: x {symbol} y' if symbol is not None else None
+        advanced_indexing.emit_scatter(access, accumulated, statement, state, wcr=wcr)
+        return True
+    except UnsupportedFeatureError as reason:
+        dispatch.fallback_to_callback(statement, state, reason)
+        return True
 
 
 def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringState) -> None:

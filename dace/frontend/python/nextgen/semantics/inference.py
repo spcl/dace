@@ -13,6 +13,7 @@ call-lowering rules through the replacement registry; this module only covers
 the operator core.
 """
 import ast
+import copy
 import types
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -380,7 +381,7 @@ class InferenceService:
             every failure at this boundary is a feature gap, not a crash.
         """
         try:
-            return ParseMemlet(self._shim, self.context.defined_view(), node)
+            return ParseMemlet(self._shim, self.context.defined_view(), self._restore_index_sequences(node))
         except UnsupportedFeatureError:
             raise
         except Exception as error:
@@ -388,6 +389,54 @@ class InferenceService:
                                           self.context.filename,
                                           node,
                                           category='memlet-parse')
+
+    def _restore_index_sequences(self, node: Union[ast.Name, ast.Subscript]) -> Union[ast.Name, ast.Subscript]:
+        """
+        Put literal index sequences back into a subscript before parsing it.
+
+        ``A[:, (1, 2, 3)]`` is an advanced-indexing access, but ANF hoists the
+        tuple into a temporary bound to a compile-time sequence, leaving
+        ``A[:, __anf0]``. The shared memlet parser recognizes an array index
+        only from a literal or a registered container, so it would classify the
+        temporary as a scalar symbol and silently produce a subset referring to
+        a name that has no runtime value. Substituting the literal back keeps
+        the two spellings equivalent, and is a no-op for every other access.
+
+        The literal is re-encoded the way the parser expects it
+        (``memlet_parser.py::_fill_missing_slices``): an ``ast.Name`` whose
+        ``id`` is the Python list itself, which is what the classic frontend's
+        global resolver leaves in the AST.
+        """
+        if not isinstance(node, ast.Subscript):
+            return node
+        replacements: Dict[str, ast.expr] = {}
+        for name in {n.id for n in ast.walk(node.slice) if isinstance(n, ast.Name)}:
+            binding = self.context.resolve(name)
+            if binding is None or binding.kind != 'static':
+                continue
+            sequence = self.context.static_values.get(name)
+            if sequence is None:
+                continue
+            try:
+                values = self.sequence_constants(sequence)
+            except UnsupportedFeatureError:
+                continue
+            if not values or not all(isinstance(value, int) and not isinstance(value, bool) for value in values):
+                continue
+            replacements[name] = list(values)
+        if not replacements:
+            return node
+
+        class _Substituter(ast.NodeTransformer):
+
+            def visit_Name(self, name_node: ast.Name) -> ast.AST:
+                if name_node.id not in replacements:
+                    return name_node
+                return ast.Name(id=list(replacements[name_node.id]), ctx=ast.Load())
+
+        restored = copy.deepcopy(node)
+        restored.slice = _Substituter().visit(restored.slice)
+        return ast.copy_location(restored, node)
 
     def constant_int(self, node: ast.expr) -> Optional[int]:
         """Resolve a canonical atom to a compile-time integer, or None."""
@@ -520,6 +569,15 @@ class InferenceService:
         # consumer that cannot handle indirection (e.g. an assignment target,
         # or a ufunc/creation-call argument) re-resolves the same expression
         # through ``resolve_access``, which keeps rejecting it there.
+        if expr.arrdims:
+            # Advanced (array-valued) indexing: the result shape follows NumPy's
+            # own rules, not the subset's -- index arrays broadcast together and
+            # collapse the indexed dimensions into one chunk.
+            from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+            shape = [s for s in advanced_indexing.output_shape(expr, self.context, self, node) if s != 1]
+            if not shape:
+                return Inferred(kind='data', descriptor=data.Scalar(base.descriptor.dtype))
+            return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, shape))
         try:
             shape = [s for s in expr.subset.size() if s != 1]
             if not shape:
