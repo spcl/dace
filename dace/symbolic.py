@@ -1383,53 +1383,42 @@ class fortran_mod(sympy.Function):
         return self.args[0].is_integer and self.args[1].is_integer
 
 
-class int32(sympy.Function):
-    """Explicit ``INTEGER(4)`` typecast in a symbolic expression.
+def _make_typecast_class(name: str) -> type:
+    """Build the first-grade symbolic typecast function ``<name>(x)`` -- the sympy spelling of a
+    ``dace.<name>(x)`` cast.
 
-    The Fortran frontend emits ``dace.int{32,64}(x)`` / ``dace.float{32,
-    64}(x)`` for a kind coercion in a tasklet body, where cppunparse
-    lowers the ``dace`` attribute to ``dace::int32(x)``.  When the SAME
-    coercion lands in an INTERSTATE-EDGE / memlet expression (a float
-    index symbol ``i = dace.int32(qm) + 1``, a condition over a widened
-    int) it must be sympy-parseable -- ``dace.int32`` is an attribute
-    call sympy cannot evaluate (``'Attr' object is not callable``).
-    These first-grade typecast functions are the symbolic spelling: the
-    frontend drops the ``dace.`` prefix in symbolic contexts so the cast
-    survives, unevaluated, to C++ as ``dace::int32(x)`` (a TRUNCATING
-    cast, matching Fortran ``INT`` -- semantically exact, unlike a
-    floored / stripped approximation)."""
-    nargs = 1
+    The frontend emits ``dace.<type>(x)`` for a numeric coercion in a tasklet body (cppunparse lowers the
+    ``dace`` attribute to ``dace::<type>(x)``). When the SAME coercion lands in an INTERSTATE-EDGE / memlet /
+    condition expression -- a float index symbol ``i = dace.int32(qm) + 1``, ``dace.uint16(byte & 1)`` in a
+    CRC step -- it must be sympy-parseable: ``dace.<type>`` is an attribute call sympy cannot evaluate
+    (``'Attr' object is not callable``). These functions are the symbolic spelling; the frontend drops the
+    ``dace.`` prefix in symbolic contexts so the cast survives, unevaluated, to C++ as ``dace::<type>(x)`` (a
+    TRUNCATING cast -- semantically exact, not a floored/stripped approximation).
 
-    def _eval_is_integer(self):
-        return True
-
-
-class int64(sympy.Function):
-    """Explicit ``INTEGER(8)`` typecast -- see :class:`int32`."""
-    nargs = 1
-
-    def _eval_is_integer(self):
-        return True
+    The sympy assumption (``is_integer`` for int/uint/bool, ``is_real`` for float) is load-bearing: it lets
+    downstream reasoning -- Min/Max same-kind checks, index-dtype inference -- see the cast's result kind.
+    """
+    if name.startswith(('int', 'uint', 'bool')):
+        methods = {'nargs': 1, '_eval_is_integer': lambda self: True}
+    elif name.startswith(('float', 'bfloat')):
+        methods = {'nargs': 1, '_eval_is_real': lambda self: True}
+    else:  # complex widths -- neither integer nor real
+        methods = {'nargs': 1}
+    return type(name, (sympy.Function, ), methods)
 
 
-class float32(sympy.Function):
-    """Explicit ``REAL(4)`` typecast -- see :class:`int32`."""
-    nargs = 1
+# Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``. ALL DaCe scalar typecasts
+# (every int/uint/float/complex width), built from the canonical typeclass->string map -- the SAME source
+# ``cppunparse._typecast_func_to_cpp`` uses, so a ``dace.<type>(x)`` cast parses and prints identically in a
+# tasklet body and in any symbolic context. A hardcoded subset (previously int32/int64/float32/float64) let
+# ``dace.uint16(x)`` & friends fall through to ``Attr(dace, uint16)(x)`` -> ``'Attr' object is not callable``.
+_TYPECAST_CPP = {s.split('::')[-1]: s for s in dtypes.TYPECLASS_TO_STRING.values()}
 
-    def _eval_is_real(self):
-        return True
-
-
-class float64(sympy.Function):
-    """Explicit ``REAL(8)`` typecast -- see :class:`int32`."""
-    nargs = 1
-
-    def _eval_is_real(self):
-        return True
-
-
-# Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``.
-_TYPECAST_CPP = {'int32': 'dace::int32', 'int64': 'dace::int64', 'float32': 'dace::float32', 'float64': 'dace::float64'}
+# One symbolic typecast function per name, generated once. Exposed as module globals (``symbolic.int32`` ...
+# stay importable) and folded into the parse locals + built-in user-function set below.
+_CAST_CLASSES = {name: _make_typecast_class(name) for name in _TYPECAST_CPP}
+globals().update(_CAST_CLASSES)
+_builtin_userfunctions.update(_CAST_CLASSES)
 
 
 class bitwise_and(sympy.Function):
@@ -1986,8 +1975,33 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                                 args=[self.visit(a) for a in node.args],
                                 keywords=[])
             return ast.copy_location(new_node, node)
+        # ``math.sin(x)`` / ``numpy.sqrt(x)`` / ``np.exp(x)`` / ``dace.math.floor(x)`` -- a LIBRARY function,
+        # not a cast.  The module qualifier is noise in a symbolic context: strip it to the bare name
+        # (``sin``/``sqrt``/``floor`` are sympy's own functions) so the call parses, instead of falling to
+        # ``visit_Attribute`` -> ``Attr(math, sin)(x)`` -> ``'Attr' object is not callable``.  Same gap the
+        # dace-cast branch above closes, for the function modules.
+        mod = self._call_module(func)
+        if mod is not None:
+            new_node = ast.Call(func=ast.Name(id=func.attr, ctx=ast.Load),
+                                args=[self.visit(a) for a in node.args],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
         self.generic_visit(node)
         return node
+
+    @staticmethod
+    def _call_module(func) -> Optional[str]:
+        """The math/numpy library-module qualifier of an attribute call ``<mod>.<fn>(...)`` to strip, or
+        ``None`` if ``func`` is not such a call. Handles the ``dace.math`` / ``dace.cmath`` nested spelling."""
+        if not isinstance(func, ast.Attribute):
+            return None
+        base = func.value
+        if isinstance(base, ast.Name) and base.id in ('math', 'cmath', 'numpy', 'np'):
+            return base.id
+        if (isinstance(base, ast.Attribute) and isinstance(base.value, ast.Name) and base.value.id == 'dace'
+                and base.attr in ('math', 'cmath')):
+            return 'dace.' + base.attr
+        return None
 
     def visit_Attribute(self, node):
         new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
@@ -2553,10 +2567,6 @@ _PYSTR2SYM_locals = {
     'ITE': ITE,
     'Mod': sympy.Mod,
     'fortran_mod': fortran_mod,
-    'int32': int32,
-    'int64': int64,
-    'float32': float32,
-    'float64': float64,
     'Attr': Attr,
     'conj': conj,
     'Subscript': Subscript,
@@ -2567,6 +2577,7 @@ _PYSTR2SYM_locals = {
 }
 # _clash1 enables all one-letter variables like N as symbols
 # _clash also allows pi, beta, zeta and other common greek letters
+_PYSTR2SYM_locals.update(_CAST_CLASSES)  # int32/uint16/float64/... typecast functions (all widths)
 _PYSTR2SYM_locals.update(_sympy_clash)
 
 
