@@ -47,6 +47,7 @@ EXAMPLE_GPU = LogGP(L=500e-9,
                     bw_saturated=1.555e12,
                     bw_core=25e9)
 
+
 def permutation_tag(perm) -> str:
     return "perm" + "".join(map(str, perm))
 

@@ -41,8 +41,7 @@ class AssignmentCosts:
                 if changes_allowed:
                     pairs = itertools.permutations(tags, 2)
                 else:
-                    # single-layout regime prices only the conversions it can actually charge, and the two
-                    # are independent: entry is gated on entry_conversion_needed, exit on last_write_kernel
+                    # entry and exit are charged independently, so require only the pairs actually priced
                     pairs = []
                     if self.entry_conversion_needed.get(array, False):
                         pairs += [(tags[0], t) for t in tags[1:]]
@@ -111,10 +110,9 @@ def per_array_dp(costs: AssignmentCosts,
             return c
 
         # dp[j][flag]: (best cost, tag-index path) at kernel k, layout j; flag = identity visited in
-        # tags[lw..k]. The path rides along in the state so a tie compares as (cost, path) and resolves to
-        # the lexicographically-first trajectory by layout-enumeration order -- the SAME law the brute-force
-        # oracle gets for free from itertools.product. Keeping only the min prefix per state is exact: the
-        # future cost depends on (j, flag) alone, so a costlier prefix can never win later.
+        # tags[lw..k]. Carrying the path makes a tie compare as (cost, path), i.e. the same
+        # lexicographic-by-enumeration law the oracle gets from itertools.product. Keeping only the min
+        # prefix per state is exact: future cost depends on (j, flag) alone.
         dp: List[List[Optional[Tuple[float, Tuple[int, ...]]]]] = [[None, None] for _ in tags]
         for j in range(len(tags)):
             flag = lw == 0 and tags[j] == identity

@@ -386,8 +386,7 @@ def strides_equal(packed, actual) -> bool:
         return False
     try:
         return all(
-            symbolic.simplify(symbolic.relax_ipow(p) - symbolic.relax_ipow(a)).is_zero
-            for p, a in zip(packed, actual))
+            symbolic.simplify(symbolic.relax_ipow(p) - symbolic.relax_ipow(a)).is_zero for p, a in zip(packed, actual))
     except (TypeError, AttributeError):
         return False
 

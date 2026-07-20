@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Externalize one loop nest into a standalone runnable SDFG (GLOBAL_LAYOUT_DESIGN.md, task A1); a thin wrapper over ``SDFGCutout`` that cuts the nest's scope subgraph out and gives it a stable unique name."""
+import math
 import re
 from typing import Dict, Optional
 
@@ -9,7 +10,6 @@ import dace
 from dace import SDFG, SDFGState
 from dace.sdfg import nodes
 from dace.sdfg.analysis.cutout import SDFGCutout
-from dace.utils import prod
 
 
 def nest_entries(state: SDFGState):
@@ -17,9 +17,7 @@ def nest_entries(state: SDFGState):
     return [n for n in state.scope_children()[None] if isinstance(n, nodes.MapEntry)]
 
 
-def externalize_nest(state: SDFGState,
-                     map_entry: Optional[nodes.MapEntry] = None,
-                     name: Optional[str] = None) -> SDFG:
+def externalize_nest(state: SDFGState, map_entry: Optional[nodes.MapEntry] = None, name: Optional[str] = None) -> SDFG:
     """Cut the loop nest under ``map_entry`` out of ``state`` into a standalone runnable SDFG; promotes boundary transients to non-transient inputs/outputs."""
     if map_entry is None:
         entries = nest_entries(state)
@@ -66,7 +64,7 @@ def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
                 continue
             shape = [int(dace.symbolic.evaluate(s, symbols)) for s in ext.arrays[name].shape]
             whole = (isinstance(edge.src, nodes.MapEntry) and edge.data.subset is not None
-                     and int(dace.symbolic.evaluate(edge.data.subset.num_elements(), symbols)) == prod(shape))
+                     and int(dace.symbolic.evaluate(edge.data.subset.num_elements(), symbols)) == math.prod(shape))
             if edge.data.dynamic or whole:
                 extents += shape
     return min(extents) if extents else None

@@ -30,8 +30,7 @@ class ArrayLogP:
     is_local: bool  # free: skipped in latency/bandwidth sums
     messages_per_iter: sp.Basic  # new blocks at REQUEST granularity (line): latency events
     sectors_per_iter: sp.Basic  # new blocks at TRANSFER granularity (sector)
-    # bytes crossing channels = sectors_per_iter * sector_bytes, DOUBLED for a WRITTEN array (its block is
-    # fetched before it is modified: read-for-ownership) -- see the write_factor note in count_loop_nest
+    # sectors_per_iter * sector_bytes, doubled for a WRITTEN array (see write_factor in count_loop_nest)
     bytes_moved_per_iter: sp.Basic
 
 
@@ -260,12 +259,9 @@ def count_loop_nest(state: dace.SDFGState,
             else:
                 sectors = average_blocks_touched(state, loop_ranges, {name: subset}, sector_elems)[name]
                 sectors = sectors * sector_span
-        # A written block moves twice (fetch + writeback); messages stay 1x (writeback posted, no reply).
-        # Unconditional 2x is deliberate: an ordinary store to a write-back line takes read-for-ownership even
-        # when the line ends up fully overwritten, so only a non-temporal store earns 1x. relayout.block_traffic
-        # exposes that as ``covers_full_block`` because its caller knows the access shape; here we could only
-        # infer it from ``sectors``, and that count carries a 1/N-order edge term whose sign sympy will not
-        # resolve -- so a derived coverage test would answer "unprovable" for even a plainly contiguous write.
+        # written block moves twice (fetch + writeback); messages stay 1x (writeback posted, no reply).
+        # Unconditional: only a non-temporal store avoids the fetch, and `sectors` carries a 1/N edge term
+        # whose sign sympy cannot resolve, so coverage is not derivable here (cf. relayout.block_traffic).
         write_factor = 2 if name in written else 1
         bytes_moved = sectors * sector_bytes * write_factor
         arrays[name] = ArrayLogP(name, False, messages, sectors, bytes_moved)

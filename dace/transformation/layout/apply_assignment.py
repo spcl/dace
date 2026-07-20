@@ -43,9 +43,7 @@ def composed_permutation(ops, ndim: int) -> List[int]:
 
 def segments_of(trajectory: List[Layout]) -> List[Tuple[int, int, Layout]]:
     """Runs of equal layout: ``[(first_kernel, last_kernel_exclusive, layout), ...]``."""
-    # a tag must DETERMINE its ops: the grouping below (and the body-uniform check) compares tags only, so
-    # two same-tag/different-ops layouts would silently collapse into one segment and the applied plan would
-    # quietly differ from the requested one -- exactly the divergence the cost model is priced against
+    # grouping compares tags only, so a tag reused for other ops would silently drop a segment
     ops_of: Dict[str, Tuple] = {}
     for layout in trajectory:
         if ops_of.setdefault(layout.tag, layout.ops) != layout.ops:
@@ -100,8 +98,7 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
     if state.scope_dict()[sinks[0]] is not None:  # the sink (and so its producer) must be top-level
         return False
     if not isinstance(edges_in[0].src, nodes.MapExit):
-        # a non-map producer (copy library node, tasklet) has no map params to reason about, so it proves
-        # coverage only by declaring the whole array in one memlet -- the common `Y[:] = X` writer
+        # no map params to reason about: a non-map producer proves coverage only by one whole-array memlet
         return covers_full_array(edges_in[0].data, desc)
     exit_node = edges_in[0].src
     param_ranges = dict(zip(exit_node.map.params, exit_node.map.range.ranges))
@@ -218,9 +215,8 @@ def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[st
         ndim = len(desc.shape)
         segments = segments_of(trajectory)
 
-        # A read-only array (no kernel writes it) keeps its original identity buffer valid throughout,
-        # so every clone is made from the original and identity segments alias it -- no chained restore
-        # transpose. Only a written array advances the live holder into its clone.
+        # A read-only array keeps its original buffer valid throughout: clones derive from it and identity
+        # segments alias it, so no restore transpose is needed. Only a written array advances live_name.
         read_only = not any(node.data == array and kernels[k].state.in_degree(node) > 0 for k in range(len(kernels))
                             for node in kernels[k].state.data_nodes())
 
