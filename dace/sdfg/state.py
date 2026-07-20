@@ -1713,9 +1713,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         debuginfo = _get_debug_info(debuginfo or self._default_lineinfo)
 
         # Make dictionary of autodetect connector types from set
-        if isinstance(inputs, (set, collections.abc.KeysView)):
+        if isinstance(inputs, set) or isinstance(outputs, set):
+            warnings.warn("Using sets as inputs is discouraged as it leads to indeterministic behavior.")
+        if isinstance(inputs, (set, collections.abc.KeysView, collections.abc.Set)):
             inputs = {k: None for k in inputs}
-        if isinstance(outputs, (set, collections.abc.KeysView)):
+        if isinstance(outputs, (set, collections.abc.KeysView, collections.abc.Set)):
             outputs = {k: None for k in outputs}
 
         tasklet = nd.Tasklet(
