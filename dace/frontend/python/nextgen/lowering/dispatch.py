@@ -47,7 +47,7 @@ import ast
 import copy
 from typing import List, Optional, Tuple, Union
 
-from dace import data, dtypes
+from dace import data, dtypes, subsets
 from dace.memlet import Memlet
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -111,10 +111,96 @@ def lower_computation(target: DataAccess,
                                  'operates on an opaque Python object',
                                  category='pyobject-propagation')
             return
+        # NumPy advanced indexing gathers through its own map: the result index
+        # space comes from the broadcast index arrays, not from the subset, so
+        # the elementwise mechanism cannot express it.
+        if _lower_advanced_index(target, value, statement, state):
+            return
+        value = _materialize_advanced_indices(value, statement, state)
         rewritten = static_values.materialize_operands(value, state)
         elementwise.emit_computation(target, rewritten, statement, state, wcr=wcr)
     except UnsupportedFeatureError as reason:
         fallback_to_callback(statement, state, reason)
+
+
+def _lower_advanced_index(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> bool:
+    """
+    Emit a bare advanced-indexing read (``b = A[indices]``) straight into the
+    target as a gather. Returns False when the value is not such an access, so
+    the caller falls through to the ordinary computation paths.
+
+    Nested occurrences (``A[indices] + B``) are handled by
+    :func:`_materialize_advanced_indices` instead, which gathers each one into a
+    temporary; only the top-level form can write the target directly.
+    """
+    from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+    access = _advanced_index_access(value, state)
+    if access is None:
+        return False
+    advanced_indexing.emit_gather(target, access, statement, state)
+    return True
+
+
+def _advanced_index_access(value: ast.expr, state: LoweringState):
+    """The resolved advanced-indexing access an expression performs, or None if
+    it is not an array-valued subscript of a container."""
+    from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+    if not isinstance(value, ast.Subscript) or not isinstance(value.value, (ast.Name, ast.Attribute)):
+        return None
+    base = resolve_access(value.value, state)
+    if base is None:
+        return None
+    expr = state.inference.parse_access(value)
+    if not expr.arrdims:
+        return None
+    return advanced_indexing.analyze(value, expr, base.container, base.descriptor, state.context, state.inference)
+
+
+def _materialize_advanced_indices(value: ast.expr, statement: ast.stmt, state: LoweringState) -> ast.expr:
+    """
+    Gather every advanced-indexing subscript nested inside an expression into a
+    temporary container, returning the expression rewritten to read the
+    temporaries.
+
+    ANF leaves these in operand position -- a data subscript is a legal operand,
+    and canonicalization has no type information with which to tell
+    ``A[scalar_i]`` from ``A[index_array]`` -- so the split has to happen here,
+    where the index's descriptor is known.
+    """
+    from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+
+    if isinstance(value, ast.Subscript):
+        return value  # A top-level access writes the real target directly
+
+    replacements: List[Tuple[ast.Subscript, ast.Name]] = []
+    for node in ast.walk(value):
+        if not isinstance(node, ast.Subscript):
+            continue
+        access = _advanced_index_access(node, state)
+        if access is None:
+            continue
+        shape = [size for size in access.output_shape if size != 1]
+        descriptor = (data.Array(access.descriptor.dtype, shape) if shape else data.Scalar(access.descriptor.dtype))
+        container = state.context.add_container('__advidx', descriptor)
+        # Bound to itself so the substituted name resolves as an ordinary
+        # container read when the enclosing expression is lowered.
+        state.context.bind(container, container)
+        temporary = DataAccess(container, subsets.Range.from_array(descriptor), descriptor)
+        advanced_indexing.emit_gather(temporary, access, statement, state)
+        replacements.append((node, ast.copy_location(ast.Name(id=container, ctx=ast.Load()), node)))
+
+    if not replacements:
+        return value
+
+    class _Substituter(ast.NodeTransformer):
+
+        def visit_Subscript(self, subscript: ast.Subscript) -> ast.AST:
+            for original, replacement in replacements:
+                if original is subscript:
+                    return replacement
+            return self.generic_visit(subscript)
+
+    return _Substituter().visit(value)
 
 
 def lower_call(target: Optional[ast.expr], call: ast.Call, statement: ast.stmt, state: LoweringState) -> None:
