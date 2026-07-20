@@ -25,7 +25,10 @@ BASE_REF=${1:?usage: $0 <base-ref> <new-ref> [reps] [outdir]}
 NEW_REF=${2:?usage: $0 <base-ref> <new-ref> [reps] [outdir]}
 REPS=${3:-5}
 OUTDIR=${4:-$PWD/codegen_scopes_ab}
-HARNESS_REF=${5:-extended}
+CORPUS_REF=${5:-extended}
+# The scripts live on the branch under test; the corpus lives on `extended`. They are
+# separate refs because a ref can easily have one and not the other.
+HARNESS_REF=${6:-$NEW_REF}
 
 REPO=$(git rev-parse --show-toplevel)
 mkdir -p "$OUTDIR"
@@ -33,6 +36,17 @@ mkdir -p "$OUTDIR"
 # Anti-hang settings for anything that pulls in mpi4py.
 export OMPI_MCA_pml=ob1 OMPI_MCA_btl=self,vader UCX_VFS_ENABLE=n MPI4PY_RC_INITIALIZE=0
 export DACE_compiler_use_cache=0
+
+checkout_path() {
+    local wt=$1 ref=$2 path=$3
+    if ! git -C "$wt" cat-file -e "$ref:$path" 2>/dev/null; then
+        echo "ERROR: '$path' does not exist in ref '$ref'." >&2
+        echo "       Pass a ref that has it, e.g. a branch where it is committed AND pushed." >&2
+        echo "       corpus-ref (arg 5) supplies tests/corpus; harness-ref (arg 6) supplies tests/perf." >&2
+        exit 1
+    fi
+    git -C "$wt" checkout "$ref" -- "$path"
+}
 
 run_one() {
     local label=$1 ref=$2 wt="$OUTDIR/wt-$1"
@@ -45,7 +59,8 @@ run_one() {
     done
 
     # Identical workload and identical measurement code on both arms.
-    git -C "$wt" checkout "$HARNESS_REF" -- tests/corpus tests/perf
+    checkout_path "$wt" "$CORPUS_REF" tests/corpus
+    checkout_path "$wt" "$HARNESS_REF" tests/perf
 
     echo "=== $label ($ref @ $(git -C "$wt" rev-parse --short HEAD)) ==="
     ( cd "$wt" && PYTHONPATH="$wt" DACE_default_build_folder="$OUTDIR/dc-$label" \
