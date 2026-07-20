@@ -66,7 +66,7 @@ def emit_computation(target: DataAccess,
 
     :param wcr: Conflict-resolution lambda applied to the write, for
                 accumulations inside a dataflow scope (see
-                ``rules/assign.py::accumulation_wcr``).
+                ``mechanisms/conflict.py::accumulation_wcr``).
     """
     code, operands = substitute_data_operands(value, state)
     emit_elementwise(target, code, operands, statement, state, wcr=wcr)

@@ -32,7 +32,6 @@ import copy
 from typing import Optional, Tuple
 
 from dace import data, dtypes, subsets
-from dace.config import Config
 from dace.memlet import Memlet
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
@@ -40,33 +39,9 @@ from dace.frontend.python.nextgen.semantics import structures as structure_suppo
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
 from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
-from dace.frontend.python.nextgen.lowering.mechanisms import static_values
+from dace.frontend.python.nextgen.lowering.mechanisms import conflict, static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import Inferred
-
-#: Augmented operators that may become a conflict-resolution lambda. A write is
-#: only safe to conflict-resolve when repeatedly folding the accumulator on the
-#: left is order-independent — ``f(f(x, a), b) == f(f(x, b), a)`` — because WCR
-#: applies the combiner in arbitrary thread order.
-#:
-#: This is classic's ``newast.py::augassign_ops`` table MINUS ``%``, which is
-#: not order-independent (``(30 % 17) % 27 == 13`` but ``(30 % 27) % 17 == 3``)
-#: and is therefore miscompiled by classic's WCR. ``/`` is kept: it reorders
-#: only within floating-point rounding, the same tolerance WCR already accepts
-#: for ``+`` and ``*``.
-_WCR_OPERATORS = {
-    ast.Add: '+',
-    ast.Sub: '-',
-    ast.Mult: '*',
-    ast.Div: '/',
-    ast.FloorDiv: '//',
-    ast.Pow: '**',
-    ast.LShift: '<<',
-    ast.RShift: '>>',
-    ast.BitOr: '|',
-    ast.BitXor: '^',
-    ast.BitAnd: '&',
-}
 
 
 @rule(ast.Assign)
@@ -88,9 +63,12 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     # Accumulation inside a dataflow scope: several iterations write the same
     # element, so the write carries conflict resolution and the tasklet drops
     # the self-read (``b[0] += x`` becomes ``b[0] (CR: Sum) = tasklet(x)``).
-    wcr = accumulation_wcr(statement, state)
+    wcr = conflict.accumulation_wcr(statement, state)
     if wcr is not None and _lower_accumulation(target, statement, wcr, state):
         return
+    # A self-referential write canonicalization could not reduce to an
+    # accumulation races here with no way to express the update as a WCR.
+    conflict.report_unresolved(statement, target, state)
 
     # Value-domain handling: sequence literals and operations on them that
     # fold at compile time bind statically without emitting nodes.
@@ -120,57 +98,22 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
                                       category='assign-target')
 
 
-def accumulation_wcr(statement: ast.Assign, state: LoweringState) -> Optional[str]:
-    """
-    The conflict-resolution lambda for an augmented assignment lowered inside a
-    dataflow scope, or None when the write needs no conflict resolution.
-
-    Mirrors the classic frontend (``newast.py:3799-3812``): inside a map, an
-    accumulation is conflict-resolved unless ``frontend.avoid_wcr`` is set and
-    the write subset provably varies with every enclosing map parameter (in
-    which case no two iterations touch the same element).
-
-    :param statement: A canonical assignment; only statements carrying the
-                      ``augmented_op`` marker attached by
-                      ``canonical/passes.py::DesugarStatements`` qualify.
-    """
-    operator = getattr(statement, 'augmented_op', None)
-    if operator is None or not state.emitter.in_dataflow_scope:
-        return None
-    symbol = _WCR_OPERATORS.get(type(operator))
-    if symbol is None:
-        return None
-    if Config.get_bool('frontend', 'avoid_wcr') and _varies_with_every_map_param(statement.targets[0], state):
-        return None
-    return f'lambda x, y: x {symbol} y'
-
-
-def _varies_with_every_map_param(target: ast.expr, state: LoweringState) -> bool:
-    """
-    Whether a write target's subset provably varies with every enclosing map
-    parameter, so distinct iterations write distinct elements. Anything that
-    cannot be resolved to a plain subset answers False (conflict assumed).
-    """
-    params = state.emitter.enclosing_map_params
-    if not params:
-        return False
-    try:
-        access = resolve_access(target, state)
-    except UnsupportedFeatureError:
-        return False  # e.g. an indirect target: iterations may well collide
-    if access is None:
-        return False
-    free_symbols = {str(symbol) for symbol in access.subset.free_symbols}
-    return all(param in free_symbols for param in params)
-
-
 def _lower_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state: LoweringState) -> bool:
     """
-    Lower an accumulation as a conflict-resolved write of the added value
-    alone. Returns False when the target does not resolve to a data access, so
-    the caller falls through to the ordinary assignment paths.
+    Lower an accumulation as a conflict-resolved write of the accumulated value
+    alone, dropping the self-read that the WCR subsumes. Returns False when the
+    target does not resolve to a data access, so the caller falls through to the
+    ordinary assignment paths.
+
+    Falling through is what keeps the commuted form (``b = x + b``, detected by
+    ``canonical/passes.py::DetectAccumulations``) safe for non-numeric values:
+    swapping the operands of ``+`` would reverse a Python sequence
+    concatenation, but a compile-time list or string never resolves to a
+    container here, so the swap only ever happens on numeric data.
     """
     if not isinstance(target, (ast.Name, ast.Subscript, ast.Attribute)):
+        return False
+    if not isinstance(statement.value, ast.BinOp):
         return False
     try:
         target_access = resolve_access(target, state)
@@ -178,9 +121,11 @@ def _lower_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state
         return False
     if target_access is None:
         return False
-    # The desugared form is always ``target = <target read> op <value>``; the
-    # conflict-resolved write consumes only the right operand.
-    dispatch.lower_computation(target_access, statement.value.right, statement, state, wcr=wcr)
+    # The accumulated value is whichever operand is not the self-read. A
+    # desugared ``AugAssign`` carries no side marker and is always left-folded.
+    accumulated = (statement.value.left
+                   if getattr(statement, 'accumulator_side', 'left') == 'right' else statement.value.right)
+    dispatch.lower_computation(target_access, accumulated, statement, state, wcr=wcr)
     return True
 
 

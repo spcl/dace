@@ -207,6 +207,29 @@ def prog_map_accumulate_product(A: dace.float64[N]):
     return b
 
 
+@dace.program
+def prog_map_accumulate_spelled_out(A: dace.float64[N]):
+    # The same reduction written without ``+=``. Canonicalization normalizes it
+    # to an accumulation so it is conflict-resolved like the ``+=`` spelling;
+    # the classic frontend keys conflict resolution off the ``+=`` token alone
+    # and races here.
+    b = np.zeros([1], dtype=np.float64)
+    for i in dace.map[0:N]:
+        b[0] = b[0] + A[i]
+    return b
+
+
+@dace.program
+def prog_map_accumulate_commuted(A: dace.float64[N], B: dace.float64[N]):
+    # The accumulator as the trailing term of a chain (``x + y + b``). Rotating
+    # it to the front is exact -- only the top-level ``+`` commutes, and the
+    # grouping of ``A[i] + B[i]`` is preserved.
+    b = np.zeros([1], dtype=np.float64)
+    for i in dace.map[0:N]:
+        b[0] = A[i] + B[i] + b[0]
+    return b
+
+
 #: (program, nextgen callback budget). The budget is a hard ceiling recording
 #: current coverage; a failing budget means a lowering regression, a
 #: too-generous budget hides progress.
@@ -233,6 +256,8 @@ CORPUS = [
     pytest.param(prog_map_accumulate_indexed, 0, id='map_accumulate_indexed'),
     pytest.param(prog_map_accumulate_nested, 0, id='map_accumulate_nested'),
     pytest.param(prog_map_accumulate_product, 0, id='map_accumulate_product'),
+    pytest.param(prog_map_accumulate_spelled_out, 0, id='map_accumulate_spelled_out'),
+    pytest.param(prog_map_accumulate_commuted, 0, id='map_accumulate_commuted'),
 ]
 
 
@@ -393,6 +418,14 @@ EXECUTION_CORPUS = [
                  }),
                  lambda a: {'__return': a['A'].prod()},
                  id='map_accumulate_product'),
+    pytest.param(prog_map_accumulate_spelled_out,
+                 _accumulate_inputs,
+                 lambda a: {'__return': a['A'].sum()},
+                 id='map_accumulate_spelled_out'),
+    pytest.param(prog_map_accumulate_commuted,
+                 _elementwise_accumulate_inputs,
+                 lambda a: {'__return': (a['A'] + a['B']).sum()},
+                 id='map_accumulate_commuted'),
 ]
 
 
