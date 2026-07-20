@@ -6,14 +6,14 @@ import dace
 import numpy
 import sympy as sp
 
-from dace.symbolic import int_floor, pystr_to_symbolic
+from dace.symbolic import int_floor, pystr_to_symbolic, simplify
 
 
 def average_blocks_touched(
-    state: dace.SDFGState,
-    loop_ranges: List[Dict[str, dace.subsets.Range]],  # outer-to-inner: param -> range
-    access_subsets: Dict[str, dace.subsets.Subset],  # array -> accessed subset
-    block_size: int,  # transfer granularity in ELEMENTS (cache line / GPU sector)
+        state: dace.SDFGState,
+        loop_ranges: List[Dict[str, dace.subsets.Range]],  # outer-to-inner: param -> range
+        access_subsets: Dict[str, dace.subsets.Subset],  # array -> accessed subset
+        block_size: int,  # transfer granularity in ELEMENTS (cache line / GPU sector)
 ) -> Dict[str, sp.Basic]:
     """``{array: average new blocks touched per iteration}`` (symbolic); loop_ranges is outer-to-inner."""
     sdfg = state.sdfg
@@ -71,7 +71,18 @@ def average_blocks_touched(
             outer = sp.Mul(*[extents[params[k]] for k in range(depth)]) if depth else sp.Integer(1)
             total_new += outer * (extents[param] - 1) * frac
 
-        results[arr] = sp.simplify(total_new / total_iters)  # a rational average, '/' is exact here
+        average = simplify(total_new / total_iters)  # a rational average, '/' is exact here
+        # The per-step guard above only sees one parameter at a time, so a cross-parameter index like
+        # A[i*j] clears it twice and still leaks both into the average. Catch it on the result, where
+        # the caller's float() would otherwise fail naming neither the array nor the index.
+        leaked = sorted({str(s) for s in average.free_symbols} & set(params))
+        if leaked:
+            raise ValueError(f"array {arr!r}: index {subset} is not affine in {leaked} together (e.g. a "
+                             f"product of two loop parameters), so the per-iteration block average "
+                             f"{average} still depends on them. Replay the materialized access sequence "
+                             f"with blocks_touched.replayed_blocks_touched and pass the chosen bound via "
+                             f"replayed_counts={{'{arr}': (messages_per_iter, sectors_per_iter)}}.")
+        results[arr] = average
 
     return results
 

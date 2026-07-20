@@ -148,8 +148,8 @@ def test_formula_ranks_layouts_the_same_as_the_brute_force_oracle():
         ((16, 16), (1, 16)),  # 2D col-major
         ((8, 8, 4, 4), (128, 16, 4, 1)),  # 4D contiguous tile
         ((8, 8, 4, 4), (128, 16, 64, 1)),  # 4D scattered tile
-        ((32,), (1,)),  # 1D contiguous
-        ((32,), (3,)),  # 1D strided
+        ((32, ), (1, )),  # 1D contiguous
+        ((32, ), (3, )),  # 1D strided
     ]
     block = 8
     brute = [_brute_force_avg_blocks(e, s, block) for e, s in cases]
@@ -264,3 +264,15 @@ def test_replayed_blocks_bounds_an_indirect_access():
     assert replayed_blocks_touched(numpy.array([], dtype=int), 8) == (0.0, 0.0)
     with pytest.raises(ValueError):
         replayed_blocks_touched(numpy.arange(4), 0)
+
+
+def test_cross_parameter_nonaffine_index_is_refused():
+    """``A[i*j]`` is affine in i for fixed j and vice versa, so the per-step guard clears it twice.
+    The average still carries both parameters, which would crash the caller's float()."""
+    sdfg = dace.SDFG("cross_param")
+    sdfg.add_array("A", [64], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    loop_ranges = [{"i": (0, 7, 1)}, {"j": (0, 7, 1)}]
+    ij = pystr_to_symbolic("i*j")
+    with pytest.raises(ValueError, match="not affine in"):
+        average_blocks_touched(state, loop_ranges, {"A": dace.subsets.Range([(ij, ij, 1)])}, 8)
