@@ -51,11 +51,14 @@ class LiftTrivialIf(ppl.Pass):
 
         :param sdfg: SDFG whose blocks are relabeled in place.
         """
-        all_blocks = {
-            n
-            for n, _ in sdfg.all_nodes_recursive()
+        # List, not a set: blocks hash by id(), so a set would iterate in allocation order. Two blocks
+        # sharing a label make this first-come-wins -- whoever is visited first keeps the base name and
+        # the other gets the ``_0`` suffix -- so a set makes that assignment vary run to run.
+        # ``all_nodes_recursive`` already yields a deterministic traversal; keep it.
+        all_blocks = [
+            n for n, _ in sdfg.all_nodes_recursive()
             if isinstance(n, dace.SDFGState) or isinstance(n, ControlFlowRegion) or isinstance(n, ControlFlowBlock)
-        }
+        ]
         all_labels: Set[str] = set()
         for n in all_blocks:
             new_label = dace.utils.find_new_name(n.label, all_labels)
