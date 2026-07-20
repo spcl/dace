@@ -970,13 +970,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if same_or_unreachable_nodes and no_wcr:
                         subsets_intersect = subsets.intersects(writes[i]['subset'], writes[j]['subset'])
                         if subsets_intersect:
-                            warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
+                            warnings.warn(
+                                f'Memlet range overlap while writing to "{node_label}" in state "{state.label}"')
             # Check read-write data races.
             for write in writes:
                 for read in reads:
                     if (not nx.has_path(state.nx, read['node'], write['node'])
                             and subsets.intersects(write['subset'], read['subset'])):
-                        warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
+                        warnings.warn(f'Memlet range overlap while writing to "{node_label}" in state "{state.label}"')
 
     ########################################
 
