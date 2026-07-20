@@ -53,12 +53,22 @@ that reuse the relaid array. Long phase groups (many consuming nests) clear brea
 not. Bigger arrays raise the absolute saving and, on real machines, deepen the strided penalty, so the
 threshold gets easier, not harder, with size.
 
-**Why GPUs make layout matter MORE here, not less.** The current `EXAMPLE_CPU` LogGP params understate
-it. On GPU an uncoalesced (strided) access can cost up to a full warp's worth of transactions vs one
-coalesced — a far larger `t_nest_row - t_nest_col` gap than on CPU. That *shrinks* break-even, so the
-mid-flight transpose pays after fewer nests. The 85/5 ablation and "layout matters" are consistent: per-
-nest layout is 5%, but the phase-boundary transpose is a separate, larger lever the ablation never
-varied. Quantifying it needs GPU LogGP params (`EXAMPLE_GPU`) — the open follow-up.
+**Why GPUs make layout matter more here — but only in the latency regime.** `EXAMPLE_GPU` (A100-class:
+128B line, 32B coalescing sector, ~500 ns latency, ~1.55 TB/s) makes this precise. On the transposed
+witness nest (N=256, `t(row-major, read transposed) / t(column-major)`):
+
+    CPU  bandwidth (inf conc)       7.76x        CPU  latency (core_mlp=24)    7.76x
+    GPU  bandwidth (inf conc)       3.94x        GPU  latency (core_mlp=500)  15.06x
+
+Two facts fall out. (1) CPU is regime-invariant — `line == sector`, so bytes and messages scale together.
+(2) On GPU the small 32B sector makes a strided read RELATIVELY CHEAPER than CPU's 64B line under pure
+bandwidth (3.94x < 7.76x); the real coalescing penalty is the TRANSACTION COUNT (messages), which binds
+only in the latency term `messages * L / concurrency`, i.e. under FINITE device MLP — there it explodes
+to 15x. So the mid-flight transpose pays MOST on a latency/occupancy-bound GPU nest, and the model prices
+that correctly ONLY when fed a finite concurrency (`n_cores * core_mlp`), never the parallel-schedule
+`inf` default. Locked in `cost_model_gpu_relayout_test.py`. The 85/5 ablation and "layout matters" are
+consistent: per-nest layout is 5%, but the phase-boundary transpose is a separate lever — up to 15x on a
+latency-bound array — the ablation never varied.
 
 ## Related work
 
@@ -84,6 +94,24 @@ varied. Quantifying it needs GPU LogGP params (`EXAMPLE_GPU`) — the open follo
 2. The mid-flight lever needs opposite-preference phase groups: `phased_relayout_test` (synthetic 4+4),
    `conflict3` (1 producer + 2 transposed readers), and the OMEN transpose (distributed). These are the
    witnesses that actually move the needle.
-3. Next: `EXAMPLE_GPU` LogGP params so the model quantifies the GPU strided penalty, and a schedule x
-   layout brute-force to reproduce the 85/5 split directly and show the phase-boundary transpose as the
-   third axis the ablation omitted.
+3. `EXAMPLE_GPU` LogGP params landed; the model quantifies the GPU strided penalty (up to 15x on a
+   latency-bound nest) once given a finite concurrency. Still open: a schedule x layout brute-force to
+   reproduce the 85/5 split directly and show the phase-boundary transpose as the third axis the
+   ablation omitted; and a measured microbenchmark fit (`fit_message_size` + `validate`) to replace the
+   illustrative `EXAMPLE_GPU` numbers on a real device.
+
+## How to make the LogGP model actually price a GPU relayout
+
+The model already prices layout structurally: `count_loop_nest` derives per-array `(messages, sectors,
+bytes)` from the access subset by counting UNIQUE blocks touched, so a strided/transposed read counts
+more blocks -> higher cost, no measurement needed. What was missing was not modelling but instantiation:
+
+1. **GPU parameters** — `EXAMPLE_GPU` in `assignment_costs.py` (line/sector split is load-bearing).
+2. **Finite concurrency** — `exposed_concurrency` returns `inf` for a parallel schedule with
+   `n_cores=None`, which collapses the latency term and hides coalescing. Pass `n_cores` (or a device MLP
+   cap) so `messages * L / concurrency` engages; that term IS the coalescing penalty.
+3. **Regime awareness** — report which term binds (`LoopNestLogP.regime`). A relayout that looks marginal
+   under bandwidth can be decisive under latency; the decision must be made in the regime the nest runs in.
+
+The break-even and per-array DP are unchanged — they consume whatever node/relayout costs the parameter
+set produces. So "making it work" for GPU is parameters + finite MLP, not new machinery.

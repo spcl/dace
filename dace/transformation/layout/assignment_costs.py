@@ -29,6 +29,24 @@ EXAMPLE_CPU = LogGP(L=95e-9,
                     bw_saturated=100e9,
                     bw_core=40e9)
 
+#: Illustrative NVIDIA A100-class parameters (HBM2e ~1.55 TB/s, 128B L2 line, 32B coalescing sector,
+#: ~500 ns global-memory latency, ~500 warp-slots of device MLP). Illustrative like EXAMPLE_CPU --
+#: replace with a measured microbenchmark fit (fit_message_size + validate) for a real device.
+#: ``sector_bytes=32`` is load-bearing: it is the coalescing granularity, so an uncoalesced (strided/
+#: transposed) access is counted as one sector PER element. Under the bandwidth regime that small
+#: sector makes a strided GPU read CHEAPER (relatively) than on CPU's 64B line; the real coalescing
+#: penalty lives in the LATENCY term (messages * L / concurrency) and only engages under FINITE device
+#: MLP -- see cost_model_gpu_relayout_test. Feed a finite ``concurrency`` (n_cores * core_mlp), never
+#: the parallel-schedule ``inf`` default, when pricing GPU nests.
+EXAMPLE_GPU = LogGP(L=500e-9,
+                    o=0.0,
+                    g=1e-9,
+                    G=gap_from_bandwidth(1.555e12),
+                    line_bytes=128,
+                    sector_bytes=32,
+                    bw_saturated=1.555e12,
+                    bw_core=25e9)
+
 #: v1 bound on full permutation enumeration (d!); refused loudly above.
 MAX_PERMUTE_NDIM = 3
 
