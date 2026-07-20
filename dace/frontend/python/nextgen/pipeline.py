@@ -85,5 +85,5 @@ class CanonicalizationPipeline:
             if self.debug:
                 ast.fix_missing_locations(tree)
         ast.fix_missing_locations(tree)
-        verify_canonical(tree, filename=context.filename)
+        verify_canonical(tree, filename=context.filename, global_vars=context.global_vars)
         return tree

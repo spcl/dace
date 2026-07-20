@@ -691,6 +691,11 @@ class ANFTransform(_BodyTransformer):
                     statement.iter.args = [self._flatten(a, hoisted, level='atom') for a in statement.iter.args]
                 elif isinstance(statement.iter, ast.Subscript):
                     statement.iter.slice = self._flatten_index(statement.iter.slice, hoisted)
+                elif (isinstance(statement.iter, ast.BinOp) and isinstance(statement.iter.op, ast.MatMult)
+                      and isinstance(statement.iter.left, ast.Subscript)):
+                    # dace.map[...] @ ScheduleType: flatten the range subscript only,
+                    # the schedule-type operand is already atomic (a name/attribute chain).
+                    statement.iter.left.slice = self._flatten_index(statement.iter.left.slice, hoisted)
                 self._recurse(statement)
             elif isinstance(statement, ast.Return) and statement.value is not None:
                 if isinstance(statement.value, ast.Tuple):
@@ -872,7 +877,7 @@ class MarkOpaque(_BodyTransformer):
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
         if isinstance(statement, CANONICAL_LEAVES):
             return statement
-        violations = list(cpa._violations_in_statement(statement))
+        violations = list(cpa._violations_in_statement(statement, self.context.global_vars))
         if violations:
             return self._wrap(statement, violations[0])
         return self._recurse(statement)

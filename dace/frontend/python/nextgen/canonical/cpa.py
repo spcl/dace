@@ -16,7 +16,7 @@ Canonical statement grammar::
           | If(atomexpr, [stmt], [stmt])
           | While(atomexpr, [stmt])      # test is atomic (complex tests are pre-hoisted)
           | For(Name, range(atom, atom, atom), [stmt])
-          | For([Name...], dace.map[...], [stmt])
+          | For([Name...], dace.map[...] [@ atom], [stmt])   # optional schedule-type annotation
           | Return(atom | Tuple[atom] | None)
           | Break | Continue | Pass
           | ExplicitTasklet              # explicit-dataflow tasklet (opaque body)
@@ -56,7 +56,7 @@ unparseable Python function is resolved by the *call lowering rule*, which
 falls back to the same callback outlining path.
 """
 import ast
-from typing import Iterable, List, Optional, Set, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 from dace.frontend.python.nextgen.common import CanonicalViolationError
 
@@ -352,15 +352,53 @@ def is_assign_target(node: ast.AST) -> bool:
     return False
 
 
-def is_dace_map_iterator(node: ast.AST) -> bool:
-    """Check whether a for-loop iterator is a ``dace.map[...]`` subscript."""
-    if not isinstance(node, ast.Subscript):
+def is_dace_map_iterator(node: ast.AST, global_vars: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Check whether a for-loop iterator is a ``dace.map[...]`` subscript,
+    optionally decorated with a schedule-type annotation
+    (``dace.map[...] @ ScheduleType``, a ``BinOp`` with ``ast.MatMult``).
+
+    :param global_vars: When given, the subscript's root is additionally
+        resolved through it (mirroring the alias resolution
+        :func:`~dace.frontend.python.nextgen.canonical.passes._refers_to`
+        already performs for ``dace.tasklet``/``dace.map`` decorators), so
+        module aliases (``import dace as dc`` -> ``dc.map[...]``) are
+        recognized. Without it, only the literal ``dace.map``/``map``
+        spellings are recognized.
+    """
+    target = node.left if isinstance(node, ast.BinOp) and isinstance(node.op, ast.MatMult) else node
+    if not isinstance(target, ast.Subscript):
         return False
     try:
         from dace.frontend.python.astutils import rname
-        return rname(node.value) in ('dace.map', 'map')
+        if rname(target.value) in ('dace.map', 'map'):
+            return True
     except (AttributeError, TypeError):
-        return False
+        pass
+    return global_vars is not None and _resolves_to_dace_map(target.value, global_vars)
+
+
+def _resolves_to_dace_map(node: ast.expr, global_vars: Dict[str, Any]) -> bool:
+    """
+    Resolve a candidate ``dace.map`` subscript root through import aliases.
+
+    Duplicates (rather than imports) the relevant part of
+    :func:`~dace.frontend.python.nextgen.canonical.passes._refers_to`'s
+    alias-resolution logic, specialized to ``dace.map``: importing that
+    function here would create a ``cpa`` <-> ``passes`` import cycle, since
+    ``passes.py`` already imports this module.
+    """
+    import dace  # Deferred to avoid an import cycle during package initialization
+    if isinstance(node, ast.Name):
+        return global_vars.get(node.id) is dace.map
+    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.attr == 'map':
+        root = global_vars.get(node.value.id)
+        if root is None:
+            # Preprocessing rewrites aliased module imports to the real module
+            # name, which may be absent from the caller's globals.
+            return node.value.id == 'dace'
+        return getattr(root, 'map', None) is dace.map
+    return False
 
 
 def is_range_iterator(node: ast.AST) -> bool:
@@ -376,8 +414,13 @@ def is_return_value(node: ast.AST) -> bool:
     return is_atom(node)
 
 
-def _violations_in_statement(node: ast.stmt) -> Iterable[str]:
-    """Yield CPA violations for a single statement (non-recursive)."""
+def _violations_in_statement(node: ast.stmt, global_vars: Optional[Dict[str, Any]] = None) -> Iterable[str]:
+    """
+    Yield CPA violations for a single statement (non-recursive).
+
+    :param global_vars: Passed through to :func:`is_dace_map_iterator` so
+        ``dace.map`` for-iterators are recognized through import aliases.
+    """
     if isinstance(node, CANONICAL_LEAVES):
         return
     if isinstance(node, ast.Assign):
@@ -404,7 +447,7 @@ def _violations_in_statement(node: ast.stmt) -> Iterable[str]:
         if is_range_iterator(node.iter):
             if not isinstance(node.target, ast.Name):
                 yield 'range-loop target must be a single name'
-        elif is_dace_map_iterator(node.iter):
+        elif is_dace_map_iterator(node.iter, global_vars):
             targets = node.target.elts if isinstance(node.target, ast.Tuple) else [node.target]
             if not all(isinstance(t, ast.Name) for t in targets):
                 yield 'dace.map loop targets must be names'
@@ -426,10 +469,14 @@ def _violations_in_statement(node: ast.stmt) -> Iterable[str]:
         yield f'Statement type {type(node).__name__} is not part of the canonical subset'
 
 
-def verify_canonical(tree: ast.FunctionDef, filename: Optional[str] = None) -> None:
+def verify_canonical(tree: ast.FunctionDef,
+                     filename: Optional[str] = None,
+                     global_vars: Optional[Dict[str, Any]] = None) -> None:
     """
     Verify the CPA postcondition of the canonicalization stage.
 
+    :param global_vars: Passed through to :func:`is_dace_map_iterator` so
+        ``dace.map`` for-iterators are recognized through import aliases.
     :raises CanonicalViolationError: If any statement violates the contract.
         This indicates a canonicalization bug — the stage is required to be
         total over arbitrary input.
@@ -438,7 +485,7 @@ def verify_canonical(tree: ast.FunctionDef, filename: Optional[str] = None) -> N
 
     def _walk(body: List[ast.stmt]) -> None:
         for statement in body:
-            for violation in _violations_in_statement(statement):
+            for violation in _violations_in_statement(statement, global_vars):
                 line = getattr(statement, 'lineno', '?')
                 violations.append(f'line {line}: {violation}')
             if isinstance(statement, CANONICAL_LEAVES):
