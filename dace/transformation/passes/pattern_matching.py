@@ -105,12 +105,15 @@ class PatternMatchAndApply(ppl.Pass):
         if not isinstance(match, xf.SingleStateTransformation) or match.state_id < 0:
             sdfg.validate()
             return
+        # The match may live in a nested SDFG, and validate_state rejects a state whose .sdfg is
+        #  not the one passed in, so the owning SDFG is the one to check against -- not the root.
+        owner = graph.sdfg
         # A single state has no cross-state context: a transient another state initialized
         #  looks uninitialized here, which warns -- and raises outright for a Reference. Seed
         #  every descriptor as initialized so only the state-local invariants are checked
         #  (connectors, memlets, scopes, views, subsets), which is what a dataflow
         #  transformation can break.
-        validate_state(graph, graph.parent_graph.node_id(graph), sdfg, initialized_transients=set(sdfg.arrays.keys()))
+        validate_state(graph, graph.parent_graph.node_id(graph), owner, initialized_transients=set(owner.arrays.keys()))
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Dict[str, List[Any]]:
         applied_transformations = collections.defaultdict(list)
@@ -149,8 +152,7 @@ class PatternMatchAndApply(ppl.Pass):
             if self.validate_all:
                 self.validate_after_match(match, graph, sdfg)
 
-        # Nothing matched -> the SDFG is untouched, so it is still as valid as it arrived
-        if self.validate and applied_transformations:
+        if self.validate:
             sdfg.validate()
 
         if (len(applied_transformations) > 0
@@ -279,8 +281,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                     applied = True
                     break
 
-        # Nothing matched -> the SDFG is untouched, so it is still as valid as it arrived
-        if self.validate and applied_transformations:
+        if self.validate:
             try:
                 sdfg.validate()
             except InvalidSDFGError as err:

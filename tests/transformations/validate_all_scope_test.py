@@ -20,7 +20,7 @@ from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.sdfg import nodes as dnodes
 from dace.sdfg.validation import InvalidSDFGError
 from dace.transformation import transformation as xf
-from dace.transformation.dataflow import MapFusionVertical
+from dace.transformation.dataflow import MapCollapse, MapFusionVertical
 from dace.transformation.passes.pattern_matching import PatternMatchAndApply
 
 M = 8
@@ -124,6 +124,32 @@ def test_scoped_check_does_not_warn_about_transients_initialized_elsewhere():
         checker.validate_after_match(match, consumer, sdfg)
     spurious = [str(w.message) for w in caught if 'uninitialized transient' in str(w.message)]
     assert not spurious, f'scoped validation warned about a transient another state initializes: {spurious}'
+
+
+def test_scoped_check_accepts_a_match_inside_a_nested_sdfg():
+    """The state a match rewrites may belong to a NESTED SDFG. validate_state rejects a state
+    whose ``.sdfg`` is not the one passed in, so the scoped check must use the OWNING SDFG --
+    passing the root turns every nested match into a bogus 'does not point to the correct parent'."""
+    inner = SDFG('inner')
+    inner.add_array('A', [M, M], dtypes.float64)
+    body = inner.add_state('body', is_start_block=True)
+    read, write = body.add_access('A'), body.add_access('A')
+    entry_i, exit_i = body.add_map('mi', {'i': f'0:{M}'})
+    entry_j, exit_j = body.add_map('mj', {'j': f'0:{M}'})
+    tasklet = body.add_tasklet('x2', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    body.add_memlet_path(read, entry_i, entry_j, tasklet, dst_conn='_in', memlet=Memlet('A[i, j]'))
+    body.add_memlet_path(tasklet, exit_j, exit_i, write, src_conn='_out', memlet=Memlet('A[i, j]'))
+
+    sdfg = SDFG('outer')
+    sdfg.add_array('A', [M, M], dtypes.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    nested = state.add_nested_sdfg(inner, {'A'}, {'A'})
+    state.add_edge(state.add_access('A'), None, nested, 'A', Memlet(f'A[0:{M}, 0:{M}]'))
+    state.add_edge(nested, 'A', state.add_access('A'), None, Memlet(f'A[0:{M}, 0:{M}]'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations_repeated(MapCollapse, validate=True, validate_all=True)
+    assert applied == 1, f'MapCollapse must fire inside the nested SDFG, applied={applied}'
 
 
 if __name__ == '__main__':
