@@ -360,7 +360,13 @@ class SplitTasklets(ppl.Pass):
         Register interstate-edge assignment targets that are not yet declared symbols.
 
         The dtype is inferred from the arrays/symbols referenced on the right-hand side,
-        preferring the widest float and falling back to ``float64`` when nothing matches.
+        preferring the widest float and falling back to ``float64`` when nothing matches --
+        UNLESS the whole right-hand side is an explicit dace integer typecast
+        (``dace.int64(x)`` etc., parsed to the ``symbolic.int64`` sympy ``Function``), in which
+        case the cast's kind wins outright: a ``dace.int64(<float expr>)`` truncates to an
+        integer in C++ even though every atom in ``<float expr>`` is float64, so the atom-priority
+        heuristic below (which always prefers float64 over int64) would silently drop the cast
+        and hand back a float-typed symbol.
 
         :param sdfg: The SDFG to scan (recursively into nested SDFGs).
         """
@@ -372,6 +378,12 @@ class SplitTasklets(ppl.Pass):
             for k, v in e.data.assignments.items():
                 if k not in sdfg.symbols:
                     symexpr = dace.symbolic.SymExpr(v)
+                    cast_name = getattr(getattr(symexpr, 'func', None), '__name__', None)
+                    if cast_name in dace.dtypes.TYPECLASS_STRINGS:
+                        cast_dtype = getattr(dace, cast_name)
+                        if cast_dtype in dace.dtypes.INTEGER_TYPES:
+                            sdfg.add_symbol(k, cast_dtype)
+                            continue
                     dtypes = set()
                     # Array accesses ``arr[i]`` are ``Subscript`` nodes; their names
                     # come from ``arrays`` (the old ``atoms(Function).name`` form no

@@ -7,6 +7,7 @@ import numpy
 import pytest
 import ast
 from dace.transformation.passes.split_tasklets import SplitTasklets
+from dace.transformation.passes.canonicalize import canonicalize
 
 # Format: (expression, expected_num_statements_after_split)
 example_expressions = [
@@ -1178,3 +1179,58 @@ def test_split_anchors_symbol_only_substatement_into_map_scope():
         if isinstance(n, dace.nodes.Tasklet):
             assert state.in_degree(n) >= 1, f"sub-tasklet {n.label!r} has no incoming edge (floats outside map)"
             assert scope[n] is me, f"sub-tasklet {n.label!r} is not inside the map scope"
+
+
+def test_add_missing_symbols_honors_integer_cast():
+    """A scalar defined as ``dace.int64(<float expr>)`` (a whole-statement integer typecast,
+    e.g. the azimint_hist ``compute_bin`` histogram-bin index) gets lifted to an SDFG symbol by
+    ``SplitTasklets._add_missing_symbols`` when canonicalize's interstate-edge fission leaves it
+    undeclared. Every atom in ``<float expr>`` is float64, so the atom-priority dtype heuristic
+    (which always prefers float64 over int64) used to hand back a FLOAT-typed symbol despite the
+    explicit int64 cast wrapping the whole right-hand side. That symbol then reaches
+    ``min(int64_symbol, BINS - 1)`` as a histogram index: codegen emits ``Min(double, int64_t)``,
+    which trips the ``dace::Min`` static_assert (mixing floating-point and integer arguments) at
+    COMPILE time -- this is a compile-time regression, not just a numeric one.
+
+    Regression test for the ``compute_bin``/``histogram`` shape in
+    ``tests/corpus/npbench/map_reduce/azimint_hist.py``, reduced to its essentials: a
+    single-argument int64 cast of a float expression, called through a nested ``@dace.program``,
+    then min'd against an integer symbol and used to index+increment an array.
+    """
+    N = dace.symbol('N', dtype=dace.int64)
+    BINS = dace.symbol('BINS', dtype=dace.int64)
+
+    @dace.program
+    def _compute_bin(x: dace.float64, lo: dace.float64, hi: dace.float64):
+        return dace.int64(BINS * (x - lo) / (hi - lo))
+
+    @dace.program
+    def cast_min_index_kernel(a: dace.float64[N], lo: dace.float64, hi: dace.float64, hist: dace.int64[BINS]):
+        hist[:] = 0
+        for i in dace.map[0:N]:
+            b = min(_compute_bin(a[i], lo, hi, BINS=BINS), BINS - 1)
+            hist[b] += 1
+
+    n, bins = 200, 10
+    lo, hi = 0.0, 1.0
+    rng = numpy.random.default_rng(0)
+    a = rng.random(n)
+
+    sdfg = cast_min_index_kernel.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+
+    # The promoted symbol carrying the ``int64(...)`` cast must be integer-typed, not
+    # float64 -- this is the direct regression assertion (compilation below would also
+    # catch it, via the C++ static_assert, but this pins the root cause).
+    for nsdfg in sdfg.all_sdfgs_recursive():
+        for name, dtype in nsdfg.symbols.items():
+            if name.lower().startswith('int64_'):
+                assert dtype in dace.dtypes.INTEGER_TYPES, \
+                    f"symbol {name!r} promoted from an int64(...) cast has non-integer dtype {dtype}"
+
+    hist = numpy.zeros(bins, dtype=numpy.int64)
+    sdfg(a=a.copy(), lo=lo, hi=hi, hist=hist, N=n, BINS=bins)
+
+    idx = numpy.minimum((bins * (a - lo) / (hi - lo)).astype(numpy.int64), bins - 1)
+    ref = numpy.bincount(idx, minlength=bins).astype(numpy.int64)
+    assert numpy.array_equal(hist, ref), f"hist={hist} ref={ref}"
