@@ -32,16 +32,14 @@ from dace.transformation.interstate import LoopUnroll
 
 REPO = Path(__file__).resolve().parents[2]
 
-#: Kernel corpora live in different places on different branches: tests/corpus/<name> on the
-#: extended branch, tests/<name> upstream. Search both so the same script works on either, and so a
-#: base/new pair across the two layouts still lines up (kernel keys use the file stem).
-CORPUS_ROOTS = [REPO / 'tests' / 'corpus', REPO / 'tests']
+#: The kernel corpus is the workload, so it must be identical on both arms of a comparison. The
+#: A/B driver checks tests/corpus out of a fixed ref into every worktree; this script just reads it.
+CORPUS = REPO / 'tests' / 'corpus'
 
 
-def load_module(path: Path, corpus: Path):
-    """Import a corpus file by path. The upstream layout has no ``__init__.py``, so a dotted
-    module name only resolves on branches where the corpus dirs are packages."""
-    name = 'dacebench_' + '_'.join(path.relative_to(corpus).with_suffix('').parts)
+def load_module(path: Path):
+    """Import a corpus file by path, so no assumption is made about package layout."""
+    name = 'dacebench_' + '_'.join(path.relative_to(CORPUS).with_suffix('').parts)
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
         return None
@@ -52,31 +50,26 @@ def load_module(path: Path, corpus: Path):
 
 
 def discover_programs(subdir: str) -> List[Tuple[str, 'dace.frontend.python.parser.DaceProgram']]:
-    """Every ``DaceProgram`` under any corpus root's ``<subdir>``, as (kernel, program)."""
+    """Every ``DaceProgram`` under ``tests/corpus/<subdir>``, as (kernel, program)."""
     found: List[Tuple[str, object]] = []
-    seen: set = set()
-    for corpus in CORPUS_ROOTS:
-        root = corpus / subdir
-        if not root.is_dir():
+    root = CORPUS / subdir
+    if not root.is_dir():
+        return found
+    if str(CORPUS) not in sys.path:
+        sys.path.insert(0, str(CORPUS))
+    for path in sorted(root.rglob('*.py')):
+        if path.name.startswith('_') or 'generate_data' in path.name:
             continue
-        if str(corpus) not in sys.path:
-            sys.path.insert(0, str(corpus))
-        for path in sorted(root.rglob('*.py')):
-            if path.name.startswith('_') or 'generate_data' in path.name:
-                continue
-            try:
-                module = load_module(path, corpus)
-            except Exception:
-                continue
-            if module is None:
-                continue
-            for attr in sorted(dir(module)):
-                obj = getattr(module, attr, None)
-                if isinstance(obj, dace.frontend.python.parser.DaceProgram):
-                    key = f'{path.stem}:{attr}'
-                    if key not in seen:
-                        seen.add(key)
-                        found.append((key, obj))
+        try:
+            module = load_module(path)
+        except Exception:
+            continue
+        if module is None:
+            continue
+        for attr in sorted(dir(module)):
+            obj = getattr(module, attr, None)
+            if isinstance(obj, dace.frontend.python.parser.DaceProgram):
+                found.append((f'{path.stem}:{attr}', obj))
     return found
 
 
@@ -99,8 +92,9 @@ def bench_kernels(rows: List[dict], label: str, reps: int, limit: int = 0) -> No
     if limit:
         programs = programs[:limit]
     if not programs:
-        raise SystemExit(f'[{label}] no kernels found under any of {[str(r) for r in CORPUS_ROOTS]} -- '
-                         f'refusing to write an empty CSV that would look like a clean run')
+        raise SystemExit(f'[{label}] no kernels under {CORPUS} -- refusing to write an empty CSV '
+                         f'that would look like a clean run. Check tests/corpus out of a branch that '
+                         f'has it (see run_codegen_scopes_ab.sh --corpus-ref).')
     print(f'[{label}] discovered {len(programs)} kernels', flush=True)
 
     for name, program in programs:
@@ -141,25 +135,14 @@ def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
     Each stage feeds the next, so they are timed on progressively transformed graphs rather than
     all on the pristine one -- that is the order a real compile runs them in.
     """
-    for corpus in CORPUS_ROOTS:
-        if (corpus / 'cloudsc').is_dir():
-            sys.path.insert(0, str(corpus))
-            break
+    if str(CORPUS) not in sys.path:
+        sys.path.insert(0, str(CORPUS))
     try:
         from cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
         build = lambda: build_cloudsc_sdfg(simplify=False)
     except Exception:
-        try:
-            from cloudsc.cloudsc import cloudsc_py
-            build = lambda: cloudsc_py.to_sdfg(simplify=False)
-        except Exception:
-            print(
-                f'[{label}] NOTE: cloudsc corpus not present on this checkout, so the three '
-                f'cloudsc stages are absent from this CSV. It exists only on branches carrying '
-                f'tests/corpus/cloudsc; a base/new pair where only one side has it will simply '
-                f'have no cloudsc rows in common.',
-                flush=True)
-            return
+        raise SystemExit(f'[{label}] tests/corpus/cloudsc is missing or unimportable -- check the '
+                         f'corpus out of a branch that has it, or pass --skip-cloudsc')
 
     print(f'[{label}] building cloudsc SDFG...', flush=True)
     start = time.perf_counter()

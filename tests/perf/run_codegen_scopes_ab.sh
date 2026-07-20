@@ -1,12 +1,17 @@
 #!/bin/bash
 # Compare optimization and codegen wall time between two checkouts.
 #
-#   tests/perf/run_codegen_scopes_ab.sh <base-ref> <new-ref> [reps] [outdir]
-#   tests/perf/run_codegen_scopes_ab.sh origin/main HEAD 5 /scratch/ab
+#   tests/perf/run_codegen_scopes_ab.sh <base-ref> <new-ref> [reps] [outdir] [harness-ref]
+#   tests/perf/run_codegen_scopes_ab.sh origin/main HEAD 5 /scratch/ab extended
 #
-# Builds a throwaway worktree per ref, links the git submodules into it (worktrees do NOT get them,
-# and without dace/external/{cub,moodycamel} every test or build that compiles C++ fails), runs the
-# benchmark in each, then writes markdown tables and a plot.
+# Builds a throwaway worktree per ref, then in each one:
+#   * links the git submodules (worktrees do NOT get them, and without
+#     dace/external/{cub,moodycamel} everything that compiles C++ fails)
+#   * checks tests/corpus and tests/perf out of <harness-ref>, so BOTH arms use the identical
+#     workload AND the identical measurement code. Neither is the thing under test; letting them
+#     vary per branch would compare two different benchmarks. It is also what makes a base ref
+#     that predates these files (e.g. origin/main) runnable at all.
+# Then runs the benchmark in each and writes markdown tables and a plot.
 #
 # Run it on an idle node: the numbers are medians of wall time and a busy box moves them by tens of
 # percent.
@@ -16,6 +21,7 @@ BASE_REF=${1:?usage: $0 <base-ref> <new-ref> [reps] [outdir]}
 NEW_REF=${2:?usage: $0 <base-ref> <new-ref> [reps] [outdir]}
 REPS=${3:-5}
 OUTDIR=${4:-$PWD/codegen_scopes_ab}
+HARNESS_REF=${5:-extended}
 
 REPO=$(git rev-parse --show-toplevel)
 mkdir -p "$OUTDIR"
@@ -33,6 +39,9 @@ run_one() {
         rm -rf "$wt/dace/external/$sub"
         ln -s "$REPO/dace/external/$sub" "$wt/dace/external/$sub"
     done
+
+    # Identical workload and identical measurement code on both arms.
+    git -C "$wt" checkout "$HARNESS_REF" -- tests/corpus tests/perf
 
     echo "=== $label ($ref @ $(git -C "$wt" rev-parse --short HEAD)) ==="
     ( cd "$wt" && PYTHONPATH="$wt" DACE_default_build_folder="$OUTDIR/dc-$label" \
