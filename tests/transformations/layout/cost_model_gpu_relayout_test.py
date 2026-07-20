@@ -38,9 +38,9 @@ def transposed_read(A: dace.float64[N, N], P: dace.float64[N, N], O: dace.float6
         O[i, j] = A[j, i] + P[i, j]  # A read transposed; P straight pins the schedule to (i, j)
 
 
-def a_time(p, perm, concurrency, n=256):
-    """Model time attributed to ``A`` in the nest under params ``p``, storage ``perm`` (None=identity/
-    row-major, [1,0]=column-major), and ``concurrency`` outstanding requests."""
+def a_cost(p, perm, concurrency, n=256):
+    """``(time, messages)`` attributed to ``A`` in the nest under params ``p``, storage ``perm``
+    (None=identity/row-major, [1,0]=column-major), and ``concurrency`` outstanding requests."""
     sdfg = transposed_read.to_sdfg(simplify=True)
     prepare_for_layout(sdfg)
     kernel_per_state(sdfg)
@@ -54,12 +54,12 @@ def a_time(p, perm, concurrency, n=256):
     subs = {dace.symbol("N"): n}
     messages = float((a.messages_per_iter * counts.total_iters).subs(subs))
     bytes_moved = float((a.bytes_moved_per_iter * counts.total_iters).subs(subs))
-    return float(nest_memory_time(p, bytes_moved, messages, concurrency))
+    return float(nest_memory_time(p, bytes_moved, messages, concurrency)), messages
 
 
 def penalty(p, concurrency):
     """t(row-major, read transposed = strided) / t(column-major = contiguous) for A."""
-    return a_time(p, None, concurrency) / a_time(p, [1, 0], concurrency)
+    return a_cost(p, None, concurrency)[0] / a_cost(p, [1, 0], concurrency)[0]
 
 
 def test_gpu_coalescing_penalty_is_a_latency_effect():
@@ -79,28 +79,43 @@ def test_gpu_coalescing_penalty_is_a_latency_effect():
     assert gpu_lat > cpu_lat
 
     # The GPU latency penalty IS the transaction-count ratio (messages), not the byte ratio.
-    m_id = float((count_a_messages(None)))
-    m_cm = float((count_a_messages([1, 0])))
+    m_id = a_cost(EXAMPLE_GPU, None, EXAMPLE_GPU.core_mlp)[1]
+    m_cm = a_cost(EXAMPLE_GPU, [1, 0], EXAMPLE_GPU.core_mlp)[1]
     assert gpu_lat == pytest.approx(m_id / m_cm, rel=0.02)
 
 
-def count_a_messages(perm, n=256):
+def test_model_costs_needs_n_cores_to_see_the_gpu_penalty():
+    """The takeaway above, enforced on the PROVIDER. ``model_costs`` prices a nest at
+    ``exposed_concurrency(...)``, and for any parallel schedule that is ``inf`` unless ``n_cores`` is
+    given -- which zeroes the latency term the whole coalescing penalty lives in. Without the parameter
+    the provider could only ever report the byte ratio, i.e. exactly the under-valuation this file exists
+    to warn about, with no way for a caller to override it.
+
+    ``EXAMPLE_GPU.core_mlp`` is DEVICE-wide MLP (~500 warp slots), so ``n_cores=1`` is the whole device;
+    feeding an SM count on top would multiply the concurrency back into the bandwidth regime."""
+    from dace.transformation.layout.assignment_costs import model_costs
+
     sdfg = transposed_read.to_sdfg(simplify=True)
     prepare_for_layout(sdfg)
     kernel_per_state(sdfg)
-    kernel = line_graph(sdfg)[0]
-    ext = externalize_nest(kernel.state, kernel.map_entry, name=f"msg_{perm}")
-    if perm is not None:
-        PermuteDimensions(permute_map={"A": perm}, add_permute_maps=False).apply_pass(ext, {})
-    state = next(iter(ext.states()))
-    counts = count_loop_nest(state,
-                             nest_entries(state)[0],
-                             line_bytes=EXAMPLE_GPU.line_bytes,
-                             sector_bytes=EXAMPLE_GPU.sector_bytes)
-    a = counts.arrays["A"]
-    return float((a.messages_per_iter * counts.total_iters).subs({dace.symbol("N"): n}))
+    kernels = line_graph(sdfg)
+    kernels[0].map_entry.map.schedule = dace.dtypes.ScheduleType.GPU_Device
+
+    def ratio(**kwargs):
+        costs = model_costs(sdfg, kernels, {"N": 256}, p=EXAMPLE_GPU, **kwargs)
+        return costs.node_cost[("A", 0, "identity")] / costs.node_cost[("A", 0, "perm10")]
+
+    unbounded, device = ratio(), ratio(n_cores=1)
+    assert unbounded == pytest.approx(penalty(EXAMPLE_GPU, float("inf")), rel=0.02)  # bytes only
+    assert device == pytest.approx(penalty(EXAMPLE_GPU, EXAMPLE_GPU.core_mlp), rel=0.02)  # transactions
+    assert device > 3.0 * unbounded  # the penalty the unbounded pricing silently drops
+    # it really is the transaction-count ratio, not the byte ratio
+    messages_identity = a_cost(EXAMPLE_GPU, None, EXAMPLE_GPU.core_mlp)[1]
+    messages_colmajor = a_cost(EXAMPLE_GPU, [1, 0], EXAMPLE_GPU.core_mlp)[1]
+    assert device == pytest.approx(messages_identity / messages_colmajor, rel=0.02)
 
 
 if __name__ == "__main__":
     test_gpu_coalescing_penalty_is_a_latency_effect()
+    test_model_costs_needs_n_cores_to_see_the_gpu_penalty()
     print("gpu relayout cost-model test PASS")

@@ -14,6 +14,24 @@ from dace.transformation.layout.global_assign import (AssignmentCosts, brute_for
 
 CM = Layout("perm10", (Permute((1, 0)), ))
 
+# A THREE-layout candidate set. With two layouts identity sits at index 0, so almost any tie-break looks
+# identity-first by accident; three is the smallest set that can tell a whole-trajectory lexicographic
+# tie-break apart from a per-kernel one.
+P120 = Layout("perm120", (Permute((1, 2, 0)), ))
+P201 = Layout("perm201", (Permute((2, 0, 1)), ))
+THREE = {"A": [IDENTITY_LAYOUT, P120, P201]}
+
+
+def three_layout_table(node, relayout, **kwargs):
+    return AssignmentCosts(layouts=THREE, node_cost=node, relayout_cost=relayout, **kwargs)
+
+
+def flat_three(n_kernels, relayout_cost=0.0):
+    """Every layout equally good at every kernel, every conversion free: EVERY trajectory ties."""
+    node = {("A", k, l.tag): 1.0 for k in range(n_kernels) for l in THREE["A"]}
+    rel = {("A", a.tag, b.tag): relayout_cost for a in THREE["A"] for b in THREE["A"] if a is not b}
+    return node, rel
+
 
 def table(node, relayout, layouts=None):
     layouts = layouts or {"A": [IDENTITY_LAYOUT, CM]}
@@ -84,6 +102,7 @@ def test_dp_matches_oracle_on_random_tables():
             dp = per_array_dp(costs, n, allow_changes=allow)["A"]
             oracle = brute_force_trajectories(costs, n, allow_changes=allow)["A"]
             assert dp.cost == pytest.approx(oracle.cost), (trial, allow)
+            assert dp.tags == oracle.tags, (trial, allow, dp.tags, oracle.tags)
             assert dp.cost == pytest.approx(trajectory_cost(costs, "A", dp.tags))
             if not allow:
                 assert dp.changes() == 0
@@ -211,6 +230,131 @@ def test_refusals_are_loud():
     per_array_dp(missing_edge, 2, allow_changes=False)  # no edges needed in the no-change regime
 
 
+def test_dp_tie_breaks_toward_identity_not_toward_the_last_kernel():
+    """The regression pin for the tie-break. Both trajectories below cost exactly 5.0, but only one
+    starts at identity -- and starting at identity is what makes the entry conversion disappear, so the
+    tie is not cosmetic. Resolving the final tie on the LAST kernel's layout index (or on the
+    identity-visited flag) picks all-perm120 here, which pays for a clone the plan does not need."""
+    node = {
+        ("A", 0, "identity"): 1.5, ("A", 0, "perm120"): 1.0, ("A", 0, "perm201"): 1.5,
+        ("A", 1, "identity"): 1.5, ("A", 1, "perm120"): 1.5, ("A", 1, "perm201"): 1.5,
+        ("A", 2, "identity"): 1.5, ("A", 2, "perm120"): 1.5, ("A", 2, "perm201"): 1.0,
+        ("A", 3, "identity"): 1.5, ("A", 3, "perm120"): 1.0, ("A", 3, "perm201"): 1.0,
+    }  # yapf: disable
+    rel = {
+        ("A", "identity", "perm120"): 0.0, ("A", "identity", "perm201"): 0.0,
+        ("A", "perm120", "identity"): 0.5, ("A", "perm120", "perm201"): 0.5,
+        ("A", "perm201", "identity"): 0.0, ("A", "perm201", "perm120"): 0.5,
+    }  # yapf: disable
+    costs = three_layout_table(node, rel, entry_conversion_needed={"A": True})
+    dp = per_array_dp(costs, 4)["A"]
+    oracle = brute_force_trajectories(costs, 4)["A"]
+    assert dp.cost == pytest.approx(5.0) and oracle.cost == pytest.approx(5.0)
+    assert dp.tags == oracle.tags
+    assert dp.tags == ["identity", "identity", "perm201", "perm201"]
+    assert trajectory_cost(costs, "A", ["perm120"] * 4) == pytest.approx(5.0)  # the equal-cost rival
+
+
+def test_dp_tie_breaks_lexicographically_with_three_layouts():
+    """Identity-first is a WHOLE-TRAJECTORY law, and it still holds when every trajectory ties."""
+    node, rel = flat_three(3)
+    dp = per_array_dp(three_layout_table(node, rel), 3)["A"]
+    oracle = brute_force_trajectories(three_layout_table(node, rel), 3)["A"]
+    assert dp.tags == ["identity"] * 3 and dp.tags == oracle.tags
+    # ...and it is genuinely lexicographic, not "always identity": let kernel 0 strictly prefer perm201
+    node[("A", 0, "perm201")] = 0.5
+    dp2 = per_array_dp(three_layout_table(node, rel), 3)["A"]
+    oracle2 = brute_force_trajectories(three_layout_table(node, rel), 3)["A"]
+    assert dp2.tags == oracle2.tags
+    assert dp2.tags == ["perm201", "identity", "identity"]  # forced first, then identity-first again
+
+
+def test_dp_tie_break_survives_the_exit_conversion_flag():
+    """The identity-visited flag doubles every DP state; the tie-break must order on the trajectory, not
+    on that bookkeeping bit."""
+    node, rel = flat_three(2)
+    costs = three_layout_table(node, rel, last_write_kernel={"A": 0})
+    dp = per_array_dp(costs, 2)["A"]
+    oracle = brute_force_trajectories(costs, 2)["A"]
+    assert dp.tags == oracle.tags and dp.tags == ["identity", "identity"]
+
+
+def test_dp_tags_match_the_oracle_with_three_layouts():
+    """Asserting COST agreement alone is what let the tie-break bug through -- assert the TRAJECTORY.
+    Costs come from a tiny discrete set so ties are common AND every sum is exact in binary (the DP
+    accumulates incrementally, the oracle does not; inexact costs would tie-break on the last ulp)."""
+    rng = random.Random(2027)
+    for trial in range(400):
+        n = rng.randint(1, 4)
+        node = {("A", k, l.tag): rng.choice([1.0, 1.5]) for k in range(n) for l in THREE["A"]}
+        rel = {("A", a.tag, b.tag): rng.choice([0.0, 0.5]) for a in THREE["A"] for b in THREE["A"] if a is not b}
+        lw = rng.choice([None, 0, n - 1])
+        costs = three_layout_table(node,
+                                   rel,
+                                   entry_conversion_needed={"A": rng.random() < 0.5},
+                                   last_write_kernel={} if lw is None else {"A": lw})
+        for allow in (True, False):
+            dp = per_array_dp(costs, n, allow_changes=allow)["A"]
+            oracle = brute_force_trajectories(costs, n, allow_changes=allow)["A"]
+            assert dp.cost == pytest.approx(oracle.cost), (trial, allow)
+            assert dp.tags == oracle.tags, (trial, allow, dp.tags, oracle.tags)
+
+
+def test_conflict_report_respects_loop_locks():
+    """The report is the user-facing decision surface. Without the loop locks it advertises a plan that
+    changes layout INSIDE a loop body -- which apply_assignment refuses outright -- and quotes its cost."""
+    costs = k17_table(n_kernels=4, delta=0.5, relayout=0.1)
+    free = {r.array: r for r in conflict_report(costs, 4)}["A"]
+    locked = {r.array: r for r in conflict_report(costs, 4, locked_before={2})}["A"]
+    assert free.chosen == ["identity", "perm10", "identity", "perm10"]  # flips freely: relayout is cheap
+    assert locked.chosen[1] == locked.chosen[2]  # kernels 1,2 are one loop body -> one layout
+    assert locked.chosen == per_array_dp(costs, 4, locked_before={2})["A"].tags
+    assert locked.global_cost > free.global_cost  # the feasible plan is dearer, and now quoted honestly
+    # the greedy baseline must stay applicable too, else the triad compares against an infeasible plan
+    assert locked.greedy_cost == pytest.approx(greedy_assignment(costs, 4, {2})["A"].cost)
+    assert greedy_assignment(costs, 4, {2})["A"].tags[1] == greedy_assignment(costs, 4, {2})["A"].tags[2]
+
+
+def test_check_requires_only_the_conversions_it_charges():
+    """Entry and exit are charged independently in the single-layout regime, so demanding BOTH pairs
+    falsely refuses a complete table."""
+    node = {("A", 0, "identity"): 1.0, ("A", 0, "perm10"): 1.0}
+    layouts = {"A": [IDENTITY_LAYOUT, CM]}
+    exit_only = AssignmentCosts(layouts=layouts,
+                                node_cost=node,
+                                relayout_cost={("A", "perm10", "identity"): 2.0},
+                                entry_conversion_needed={"A": False},
+                                last_write_kernel={"A": 0})
+    assert per_array_dp(exit_only, 1, allow_changes=False)["A"].tags == ["identity"]
+    entry_only = AssignmentCosts(layouts=layouts,
+                                 node_cost=node,
+                                 relayout_cost={("A", "identity", "perm10"): 2.0},
+                                 entry_conversion_needed={"A": True})
+    assert per_array_dp(entry_only, 1, allow_changes=False)["A"].tags == ["identity"]
+    # ...while an edge the solver WILL consult is still refused loudly
+    with pytest.raises(ValueError, match="missing relayout"):
+        per_array_dp(AssignmentCosts(layouts=layouts, node_cost=node, entry_conversion_needed={"A": True}),
+                     1,
+                     allow_changes=False)
+
+
+def test_single_kernel_charges_entry_and_exit_together():
+    """n=1 with an entry conversion AND a last write is the only path charging both on one kernel; the
+    random oracle draws n >= 2 and never reaches it."""
+    node = {("A", 0, "identity"): 5.0, ("A", 0, "perm10"): 1.0}
+    rel = {("A", "identity", "perm10"): 1.0, ("A", "perm10", "identity"): 1.0}
+    costs = AssignmentCosts(layouts={"A": [IDENTITY_LAYOUT, CM]},
+                            node_cost=node,
+                            relayout_cost=rel,
+                            entry_conversion_needed={"A": True},
+                            last_write_kernel={"A": 0})
+    dp = per_array_dp(costs, 1)["A"]
+    oracle = brute_force_trajectories(costs, 1)["A"]
+    assert dp.tags == oracle.tags and dp.tags == ["perm10"]  # 1 (node) + 1 (entry) + 1 (exit) beats 5
+    assert dp.cost == pytest.approx(3.0)
+    assert oracle.cost == pytest.approx(3.0)
+
+
 if __name__ == "__main__":
     test_greedy_pays_for_edge_blindness()
     test_trajectory_wins_when_relayout_is_cheap()
@@ -220,4 +364,11 @@ if __name__ == "__main__":
     test_conflict_report_triad()
     test_to_assignment_drops_identity_only()
     test_refusals_are_loud()
+    test_dp_tie_breaks_toward_identity_not_toward_the_last_kernel()
+    test_dp_tie_breaks_lexicographically_with_three_layouts()
+    test_dp_tie_break_survives_the_exit_conversion_flag()
+    test_dp_tags_match_the_oracle_with_three_layouts()
+    test_conflict_report_respects_loop_locks()
+    test_check_requires_only_the_conversions_it_charges()
+    test_single_kernel_charges_entry_and_exit_together()
     print("global_assign tests PASS")

@@ -32,6 +32,10 @@ import dace.libraries.mpi as mpi
 # small static toy dims; P must divide NA and NE
 P, NA, NE, M, W = 2, 4, 4, 2, 2
 NAl, NEl, NEO = NA // P, NE // P, NE - W
+# not decorative: an indivisible NA/NE leaves the tail of every rank's local block untouched by the pack,
+# so the numpy.empty buffers carry uninitialized values into the comparison and the test passes or fails
+# on garbage instead of on the transpose
+assert NA % P == 0 and NE % P == 0, f"P={P} must divide NA={NA} and NE={NE}"
 
 
 @dace.program

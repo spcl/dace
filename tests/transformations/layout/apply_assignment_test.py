@@ -71,14 +71,18 @@ def test_parallel_conversions_share_one_boundary(n=32):
 
 
 def test_return_to_identity_conflict2(n=32):
-    """A enters column-major for nest 1 and returns to identity for nest 2: an entry conversion
-    before the FIRST kernel and a conversion back into the original descriptor."""
+    """A enters column-major for nest 1 and returns to identity for nest 2. A is READ-ONLY (conflict2
+    only writes B and C), so the original A buffer is never mutated: the return to identity is FREE --
+    nest 2 reads the untouched original, with only the ONE entry conversion (the column-major clone)
+    and no restore transpose."""
     sdfg, kernels = split_program("conflict2")
     applied = apply_assignment(sdfg, kernels, {"A": [CM, ID]})
     assert applied.segment_names["A"] == ["A__seg0_perm10", "A"]
-    assert len(applied.boundary_states) == 2  # entry into seg0 + back before kernel 2
+    assert len(applied.boundary_states) == 1  # only the clone entry; read-only return-to-identity is free
     datas0 = {node.data for node in kernels[0].state.data_nodes()}
     assert "A__seg0_perm10" in datas0 and "A" not in datas0  # kernel 1 was rewritten onto the clone
+    datas1 = {node.data for node in kernels[1].state.data_nodes()}
+    assert "A" in datas1  # kernel 2 reads the untouched original A directly (no restore)
     sdfg.validate()
     run_and_check(sdfg, "conflict2", n, seed=20)
 

@@ -13,8 +13,6 @@ ICON indirect stencil (connectivity-table gather, transparent Permute). For the 
 candidate set (k02: 9, k13: 25) a representative SUBSET is swept so the test stays fast -- the
 module's ``candidates()`` still enumerates the full family for a real (timed) sweep. Correctness is
 the invariant; timing is not asserted."""
-import numpy
-
 from dace.transformation.layout.brute_force import sweep, best
 from tests.transformations.layout.kernels import (
     atax, bicg, e1_matrix_add, e6_indirect_stencil, icon_one_loop, icon_zekinh, k01_stream_triad, k02_transpose_blocked,
@@ -176,7 +174,7 @@ def test_k14_eytzinger_search_shuffle():
     _assert_all_correct(cands, k14_eytzinger_search.run_closure(inp, 15), k14_eytzinger_search.oracle(inp["A"]))
 
 
-def test_k16_nbody_force_layout_and_block():
+def test_k16_nbody_force_permute():
     inp = k16_nbody_force.make_inputs(32)
     cand_dict = k16_nbody_force.candidates()
     cands = _subset(k16_nbody_force.nbody_force, cand_dict, list(cand_dict))
@@ -184,7 +182,7 @@ def test_k16_nbody_force_layout_and_block():
                         k16_nbody_force.oracle(inp["pos"], inp["vel"], inp["mass"]))
 
 
-def test_k17_knn_bruteforce_layout_and_block():
+def test_k17_knn_bruteforce_permute():
     inp = k17_knn_bruteforce.make_inputs(32, 12)
     cand_dict = k17_knn_bruteforce.candidates()
     cands = _subset(k17_knn_bruteforce.knn, cand_dict, list(cand_dict))
@@ -218,7 +216,7 @@ if __name__ == "__main__":
     test_k10_omen_windowed_contraction_permute()
     test_k13_conv1x1_channel_layouts()
     test_k14_eytzinger_search_shuffle()
-    test_k16_nbody_force_layout_and_block()
-    test_k17_knn_bruteforce_layout_and_block()
+    test_k16_nbody_force_permute()
+    test_k17_knn_bruteforce_permute()
     test_k18_scattering_self_energies_permute()
     print("kernel ports tests PASS")

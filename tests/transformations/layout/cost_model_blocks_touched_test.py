@@ -8,8 +8,10 @@ innermost-only fraction could not express."""
 import itertools
 
 import dace
+import pytest
 import sympy as sp
 
+from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.transformation.layout.cost_model.blocks_touched import average_blocks_touched
 from dace.transformation.layout.cost_model.access_subsets import get_access_subsets
 
@@ -74,6 +76,19 @@ def _blocks_tiled(ii_stride, block_size=8):
     st.add_memlet_path(t, mx, st.add_write("D"), src_conn="b", memlet=dace.Memlet("D[I,J,ii,jj]"))
     lr = [{p: r for p, r in zip(me.map.params, me.map.range)}]
     return float(sp.simplify(average_blocks_touched(st, lr, get_access_subsets(st, me), block_size)["C"]).subs(T, 64))
+
+
+def nest_1d(index_expr, loop_range="0:N"):
+    """1-D nest reading ``A[index_expr]`` over ``loop_range``; returns (state, loop_ranges, access_subsets)."""
+    sdfg = dace.SDFG("bt_1d")
+    sdfg.add_array("A", [N], dace.float64)
+    sdfg.add_array("B", [N], dace.float64)
+    st = sdfg.add_state("s", is_start_block=True)
+    me, mx = st.add_map("m", {"i": loop_range})
+    t = st.add_tasklet("t", {"a"}, {"b"}, "b = a")
+    st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=dace.Memlet(f"A[{index_expr}]"))
+    st.add_memlet_path(t, mx, st.add_write("B"), src_conn="b", memlet=dace.Memlet("B[i]"))
+    return st, [{p: r for p, r in zip(me.map.params, me.map.range)}], get_access_subsets(st, me)
 
 
 def test_contiguous_inner_reaches_one_over_block_size():
@@ -165,6 +180,40 @@ def test_formula_overcounts_small_tiles_ranking_still_holds():
     assert _formula_avg_blocks(extents, strides, 8) < _formula_avg_blocks((8, 8, 4, 4), (128, 16, 64, 1), 8)
 
 
+def test_non_affine_index_is_refused():
+    """``A[i//2]`` and ``A[i%4]`` have a per-step address delta that still depends on i, so no
+    constant per-iteration block count exists. It must be refused where it is detected: the loop
+    symbol used to leak into the returned expression and only surface at the caller's float(), as a
+    conversion error naming neither the array nor the index that caused it."""
+    for index_expr in ("i//2", "i%4"):
+        state, loop_ranges, subsets = nest_1d(index_expr)
+        with pytest.raises(ValueError, match="not affine"):
+            average_blocks_touched(state, loop_ranges, subsets, 8)
+
+
+def test_empty_loop_range_is_refused():
+    """A zero-iteration level makes total_iters 0, so the per-iteration average divided by it into
+    sympy.zoo -- a poison value that compares as neither better nor worse than any real layout, and
+    so silently corrupts a ranking. dace Range ends are INCLUSIVE, so "5:5" is (5, 4, 1): the end
+    lies BELOW the begin, which is the zero-extent case."""
+    state, loop_ranges, subsets = nest_1d("i", loop_range="5:5")
+    begin, end, step = loop_ranges[0]["i"]
+    extent = int_floor(pystr_to_symbolic(end) - pystr_to_symbolic(begin), pystr_to_symbolic(step)) + 1
+    assert int(extent) == 0  # the nest really is empty, not merely short
+    with pytest.raises(ValueError, match="empty nest"):
+        average_blocks_touched(state, loop_ranges, subsets, 8)
+
+
+def test_affine_result_never_contains_the_loop_parameter():
+    """The property the non-affine bug violated, stated positively: a per-ITERATION average must not
+    depend on the iteration. Only the shape symbol may survive, and substituting it must yield a
+    plain float -- that float() is what every caller does, and what a leaked loop symbol broke."""
+    state, loop_ranges, subsets = nest_1d("i")
+    result = average_blocks_touched(state, loop_ranges, subsets, 8)["A"]
+    assert pystr_to_symbolic("i") not in result.free_symbols
+    assert float(result.subs({N: 4096})) == pytest.approx(1.0 / 8, rel=0.01)
+
+
 if __name__ == "__main__":
     test_contiguous_inner_reaches_one_over_block_size()
     test_permute_is_creditable_in_2d()
@@ -174,6 +223,9 @@ if __name__ == "__main__":
     test_formula_ranks_layouts_the_same_as_the_brute_force_oracle()
     test_formula_converges_to_the_oracle_for_large_extents()
     test_formula_overcounts_small_tiles_ranking_still_holds()
+    test_non_affine_index_is_refused()
+    test_empty_loop_range_is_refused()
+    test_affine_result_never_contains_the_loop_parameter()
     print("blocks_touched tests PASS")
 
 

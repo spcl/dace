@@ -10,16 +10,21 @@ These complement ``brute_force_test.py`` by exercising the parts of
   * the ``timer`` and ``compare`` hooks and the ``do_time=False`` path are honoured;
   * a candidate that returns outputs missing a reference key is flagged incorrect (not crashed);
   * ``permutation_candidates`` (3-D), ``block_candidates`` (multi-dim + default factors) and
-    ``shuffle_candidates`` emit exactly the expected named candidate set; and
+    ``shuffle_candidates`` emit exactly the expected named candidate set;
   * the permutation / block / shuffle families sweep end-to-end and every candidate is BIT-EXACT
-    against a numpy oracle.
+    against a numpy oracle; and
+  * the ``isolate_timeout`` deadline, the list-shaped stats-timer result, and ``best``'s tie window
+    around a non-positive fastest time (all three regressions) hold.
 
 Only correctness invariants are asserted; timing magnitudes are never asserted (noisy on a shared
 host)."""
+import inspect
+
 import numpy
 
 import dace
 from dace.libraries.layout.shuffle import register_shuffle
+from dace.transformation.layout import brute_force
 from dace.transformation.layout.brute_force import (SweepResult, best, block_candidates, permutation_candidates,
                                                     shuffle_candidates, sweep, time_cpu)
 
@@ -61,6 +66,13 @@ def eval_shape(desc, n):
     return tuple(int(dace.symbolic.evaluate(s, {N: n})) for s in desc.shape)
 
 
+def trivial_sdfg(name):
+    """Smallest COMPILABLE candidate: one empty state (the isolate path compiles in the parent)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_state("s0", is_start_block=True)
+    return sdfg
+
+
 # --------------------------------------------------------------------------- #
 #  time_cpu
 # --------------------------------------------------------------------------- #
@@ -92,6 +104,34 @@ def test_best_selects_first_correct_or_none():
 
     picked = best([SweepResult("bad", False), SweepResult("good", True, 0.1), SweepResult("also", True, 0.2)])
     assert picked is not None and picked.name == "good" and picked.correct
+
+
+def test_best_keeps_the_whole_tie_when_the_fastest_time_is_not_positive():
+    """A RELATIVE tie window around a non-positive fastest time is degenerate: ``0.0 * (1 + floor)``
+    collapses it to exactly {0.0}, so a 1e-9 candidate could never win, and a negative fastest emptied
+    the window outright and crashed ``min`` on an empty sequence. A non-positive median means the timer
+    resolved nothing, so every timed candidate stays in the tie and enumeration order decides."""
+    zero_and_positive = [SweepResult("tiny", True, 1e-9, order=0), SweepResult("zero", True, 0.0, order=1)]
+    assert best(zero_and_positive).name == "tiny"
+
+    all_zero = [SweepResult("late", True, 0.0, order=2), SweepResult("early", True, 0.0, order=0)]
+    assert best(all_zero).name == "early"
+
+    negative = [SweepResult("first", True, 1e-9, order=0), SweepResult("glitch", True, -1e-6, order=1)]
+    assert best(negative).name == "first"
+
+
+def test_best_still_applies_the_relative_window_for_positive_times():
+    """The zero-median rule must not swallow the ordinary case: with a positive fastest time the
+    relative ``noise_floor`` window still excludes genuinely slower candidates, and the
+    earliest-enumerated candidate INSIDE the window -- not the numerically fastest -- wins."""
+    results = [
+        SweepResult("slow", True, 2.0, order=0),
+        SweepResult("near", True, 1.05, order=1),
+        SweepResult("fastest", True, 1.0, order=2),
+    ]
+    assert best(results, noise_floor=0.10).name == "near"  # "slow" is outside the 10% window
+    assert best(results, noise_floor=0.0).name == "fastest"  # no window -> only the exact minimum ties
 
 
 # --------------------------------------------------------------------------- #
@@ -218,6 +258,70 @@ def test_do_time_flag_controls_timing():
 
     on = sweep(candidates, run, reference, do_time=True, reps=1, warmup=0)
     assert on[0].correct and on[0].time is not None and on[0].time >= 0.0
+
+
+# --------------------------------------------------------------------------- #
+#  isolate deadline and list-shaped timer results
+# --------------------------------------------------------------------------- #
+def test_isolate_timeout_is_threaded_to_run_isolated():
+    """``sweep(isolate=True)`` must hand its own ``isolate_timeout`` to every ``run_isolated`` fork.
+    The deadline was hard-wired to ``run_isolated``'s 900 s default, so a single hung candidate stalled
+    a wide sweep of small kernels for 15 minutes. ``run_isolated`` is stubbed here: the deadline is
+    pinned, never waited on."""
+    params = inspect.signature(sweep).parameters
+    assert "isolate_timeout" in params
+    assert params["isolate_timeout"].default == 900.0
+
+    reference = {"C": numpy.zeros(2)}
+    candidates = {"iso_a": lambda: trivial_sdfg("bf_iso_a"), "iso_b": lambda: trivial_sdfg("bf_iso_b")}
+
+    def run(sdfg):
+        return {"C": numpy.zeros(2)}
+
+    deadlines = []
+
+    def recording_run_isolated(work_fn, timeout):
+        deadlines.append(timeout)
+        return work_fn()  # in-process stand-in: no fork, no wait
+
+    original = brute_force.run_isolated
+    brute_force.run_isolated = recording_run_isolated
+    try:
+        results = sweep(candidates, run, reference, do_time=False, isolate=True, isolate_timeout=1.5)
+    finally:
+        brute_force.run_isolated = original
+
+    assert deadlines == [1.5, 1.5]  # one per staged candidate, the caller's value
+    assert all(r.correct for r in results), [(r.name, r.error) for r in results]
+
+
+def test_list_timer_result_is_unpacked_like_a_tuple():
+    """A stats timer returning ``[median, metadata]`` must unpack exactly like the ``(median, metadata)``
+    tuple. Only ``tuple`` was unpacked, so ``result.time`` stayed a LIST; the terminal ``results.sort``
+    then died with ``TypeError: '<' not supported between instances of 'list' and 'float'`` as soon as
+    one correct candidate went untimed and sorted under the ``inf`` key."""
+    reference = {"C": numpy.full(2, 3.0)}
+    candidates = {tag: (lambda tag=tag: dace.SDFG(f"bf_listtimer_{tag}")) for tag in ("a", "b", "untimed")}
+
+    def run(sdfg):
+        return {"C": numpy.full(2, 3.0)}
+
+    def list_timer(sdfg, run_fn, reps, warmup):
+        if sdfg.name.endswith("untimed"):
+            return None  # correct but untimed -> sort key inf, i.e. the list-vs-float comparison
+        return [0.25 if sdfg.name.endswith("_a") else 0.5, {"spread": 0.01, "contended": False}]
+
+    results = sweep(candidates, run, reference, do_time=True, timer=list_timer)
+    by_name = {r.name: r for r in results}
+
+    for tag in ("a", "b"):
+        assert isinstance(by_name[tag].time, float), (tag, type(by_name[tag].time))
+        assert by_name[tag].metadata["spread"] == 0.01
+        assert by_name[tag].metadata["contended"] is False
+    assert by_name["untimed"].time is None and by_name["untimed"].correct
+
+    assert [r.name for r in results] == ["a", "b", "untimed"]  # ranked by the unpacked float
+    assert best(results).name == "a"
 
 
 # --------------------------------------------------------------------------- #
@@ -351,11 +455,15 @@ def test_shuffle_family_sweep_bit_exact():
 if __name__ == "__main__":
     test_time_cpu_invokes_fn_reps_plus_warmup()
     test_best_selects_first_correct_or_none()
+    test_best_keeps_the_whole_tie_when_the_fastest_time_is_not_positive()
+    test_best_still_applies_the_relative_window_for_positive_times()
     test_sweep_ranks_fastest_correct_first()
     test_incorrect_and_build_failure_never_timed_never_best()
     test_custom_compare_is_consulted()
     test_missing_output_key_is_incorrect()
     test_do_time_flag_controls_timing()
+    test_isolate_timeout_is_threaded_to_run_isolated()
+    test_list_timer_result_is_unpacked_like_a_tuple()
     test_permutation_candidates_3d_named_set()
     test_block_candidates_named_set()
     test_shuffle_candidates_named_set()

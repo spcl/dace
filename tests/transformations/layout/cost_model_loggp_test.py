@@ -1,8 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """LogP/LogGP parameters, the message-size fit, and the regime model. Pure -- no measurement, so
 these run anywhere and pin the algebra the measured parameters flow through."""
-import math
-
 import pytest
 
 from dace.transformation.layout.cost_model.loggp import (LogGP, Fit, gap_from_bandwidth, lines_touched,
@@ -104,6 +102,25 @@ def test_validate_flags_each_inconsistency():
     over_peak = _dram(bw_sat=250e9)
     over_fit = Fit(alpha=95e-9, beta=1.0 / over_peak.bw_core, residual=0.01)
     assert any("exceeds hardware peak" in r for r in validate(over_peak, over_fit, 102.4e9, over_peak.concurrency))
+
+
+def test_validate_short_circuits_on_a_non_positive_parameter():
+    """L, G and g are divisors of everything downstream (L/g, 1/G, the achievable rate), so once one
+    is non-positive every other cross-check is derived noise built on a degenerate number. validate
+    must return that ONE reason and stop; the control shows the same fit and peak would otherwise
+    pile on several more, burying the actual fault for anyone reading the list."""
+    unusable = Fit(alpha=1e-9, beta=1.0 / 5e9, residual=0.9)  # disagrees with every other check
+    peak, knee = 1e9, 1e6
+
+    control = validate(_dram(), unusable, peak_bytes_per_s=peak, knee_concurrency=knee)
+    assert len(control) > 1  # the other checks really do fire on this input
+
+    def with_gap(gap):
+        return LogGP(L=95e-9, o=0.0, g=4e-9, G=gap, line_bytes=64, bw_saturated=100e9, bw_core=40e9)
+
+    degenerate = (_dram(L=0.0), _dram(L=-95e-9), _dram(g=0.0), _dram(g=-4e-9), with_gap(0.0), with_gap(-1e-11))
+    for p in degenerate:
+        assert validate(p, unusable, peak_bytes_per_s=peak, knee_concurrency=knee) == ["non-positive L, G, or g"]
 
 
 def test_bandwidth_delay_product_is_the_saturation_threshold():
@@ -286,6 +303,7 @@ if __name__ == "__main__":
     test_fit_rejects_degenerate_input()
     test_validate_accepts_a_consistent_parametrization()
     test_validate_flags_each_inconsistency()
+    test_validate_short_circuits_on_a_non_positive_parameter()
     test_bandwidth_delay_product_is_the_saturation_threshold()
     test_regime_flips_at_the_bandwidth_delay_product()
     test_regime_matches_which_term_of_achievable_rate_binds()

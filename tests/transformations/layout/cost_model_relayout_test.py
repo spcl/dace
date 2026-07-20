@@ -107,6 +107,19 @@ def test_break_even_refuses_a_symbolic_delta():
         break_even_uses(sp.sympify(N), 0.0, 1.0)
 
 
+def test_break_even_refuses_a_symbolic_relayout_time():
+    """t_relayout gets the same concreteness check as the delta -- a symbolic value in EITHER
+    argument is the same caller mistake and must surface as the same ValueError. Unchecked, a
+    symbolic t_relayout reached float() and raised a bare TypeError that named neither the argument
+    at fault nor the fix (substitute the nest's symbols)."""
+    N = dace.symbol("N")
+    with pytest.raises(ValueError, match="concrete times"):
+        break_even_uses(2.0, 1.0, sp.sympify(N))
+    with pytest.raises(ValueError, match="concrete times"):
+        break_even_uses(sp.sympify(N), 0.0, 1.0)
+    assert break_even_uses(4.0, 1.0, 10.0) == 4  # both concrete: ceil(10 / (4 - 1)) == 4
+
+
 def test_cache_efficiency_is_a_ratio_of_useful_to_moved():
     """One fp64 element used out of every 64-byte block = 1/8."""
     assert float(cache_efficiency(8, block_traffic(1, CPU, written=False, covers_full_block=False))) == 1.0 / 8

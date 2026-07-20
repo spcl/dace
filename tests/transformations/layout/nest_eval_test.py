@@ -6,6 +6,7 @@ import numpy
 import pytest
 
 import dace
+from dace.transformation.layout import assignment_costs, nest_eval
 from dace.transformation.layout.externalize import nest_entries
 from dace.transformation.layout.nest_eval import (IDENTITY_TAG, default_permutation_candidates, evaluate_nest)
 from dace.transformation.layout.prepare import prepare_for_layout
@@ -98,6 +99,50 @@ def test_default_candidates_identity_first():
     assert all(tag.startswith("permute_") for tag in list(cands)[1:])
 
 
+def test_rank_above_max_permute_ndim_is_refused():
+    """A non-transient array of rank > MAX_PERMUTE_NDIM is refused loudly. The enumeration was
+    unguarded, so a rank-d array yielded d! candidates -- 766 measured on one nest -- each deepcopy'd,
+    compiled, RUN and TIMED, while the modelled path refused the same rank outright. The transient
+    check still comes first: a transient of any rank is simply skipped."""
+    over_rank = dace.SDFG("nest_eval_rank4")
+    over_rank.add_array("X", [2, 2, 2, 2], dace.float64)
+    with pytest.raises(NotImplementedError, match="rank"):
+        default_permutation_candidates(over_rank)
+
+    transient_only = dace.SDFG("nest_eval_rank4_transient")
+    transient_only.add_array("T", [2, 2, 2, 2], dace.float64, transient=True)
+    assert list(default_permutation_candidates(transient_only)) == [IDENTITY_TAG]
+
+
+def test_max_permute_ndim_is_shared_with_the_modelled_path():
+    """MAX_PERMUTE_NDIM lives in nest_eval and assignment_costs imports it, so the MEASURED and the
+    MODELLED candidate spaces cannot drift: both must accept the same top rank -- with the same
+    candidate count -- and refuse the next one."""
+    assert assignment_costs.MAX_PERMUTE_NDIM is nest_eval.MAX_PERMUTE_NDIM
+    top = nest_eval.MAX_PERMUTE_NDIM
+
+    accepted = dace.SDFG("nest_eval_shared_top")
+    accepted.add_array("X", [2] * top, dace.float64)
+    assert len(default_permutation_candidates(accepted)) == len(assignment_costs.permutation_layouts(top))
+
+    refused = dace.SDFG("nest_eval_shared_over")
+    refused.add_array("X", [2] * (top + 1), dace.float64)
+    with pytest.raises(NotImplementedError, match="rank"):
+        default_permutation_candidates(refused)
+    with pytest.raises(NotImplementedError, match="rank"):
+        assignment_costs.permutation_layouts(top + 1)
+
+
+def test_rank3_array_still_enumerates_every_permutation():
+    """The rank guard must not shrink the space it allows: a rank-3 non-transient array still yields
+    identity plus all 5 non-identity permutations, identity first (the tie-break law)."""
+    sdfg = dace.SDFG("nest_eval_rank3")
+    sdfg.add_array("X", [2, 2, 2], dace.float64)
+    assert list(default_permutation_candidates(sdfg)) == [
+        IDENTITY_TAG, "permute_X_021", "permute_X_102", "permute_X_120", "permute_X_201", "permute_X_210"
+    ]
+
+
 N = dace.symbol("N")
 
 
@@ -135,5 +180,8 @@ if __name__ == "__main__":
     test_provided_inputs_reach_the_reference()
     test_identity_must_come_first()
     test_default_candidates_identity_first()
+    test_rank_above_max_permute_ndim_is_refused()
+    test_max_permute_ndim_is_shared_with_the_modelled_path()
+    test_rank3_array_still_enumerates_every_permutation()
     test_pure_copy_nest_identity_is_timed()
     print("nest_eval tests PASS")
