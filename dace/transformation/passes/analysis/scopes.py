@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Set
 from dace import properties
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import SDFGState, enclosing_region_symbols, sdfg_scope_symbols
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 from dace.transformation.passes.analysis.analysis import StateReachability
@@ -35,10 +35,10 @@ class SymbolScopes(ppl.Pass):
         """
         result: Dict[int, StateSymbolScopes] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            base = sdfg_symbols(sdfg)
+            base = sdfg_scope_symbols(sdfg)
             per_sdfg: StateSymbolScopes = {}
             for state in sdfg.states():
-                per_scope = {None: state_symbols(state, base)}
+                per_scope = {None: enclosing_region_symbols(state, base)}
                 children = state.scope_children()
                 stack: List[Optional[nodes.EntryNode]] = [None]
                 while stack:  # outer to inner: each entry inherits its parent's finished table
@@ -53,37 +53,6 @@ class SymbolScopes(ppl.Pass):
                 per_sdfg[state] = per_scope
             result[sdfg.cfg_id] = per_sdfg
         return result
-
-
-def sdfg_symbols(sdfg: SDFG) -> Dict[str, 'dace.dtypes.typeclass']:
-    """Symbols visible anywhere in ``sdfg``: its own symbols, array extents, and interstate edges."""
-    symbols = collections.OrderedDict(sdfg.symbols)
-    for desc in sdfg.arrays.values():
-        symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
-
-    # Mirrors symbols_defined_at, including the start-state argument that yields nothing on an
-    #  acyclic CFG; changing it would newly define symbols and needs its own change and test.
-    try:
-        start_state = sdfg.start_state
-        for e in sdfg.predecessor_state_transitions(start_state):
-            symbols.update(e.data.new_symbols(sdfg, symbols))
-    except ValueError:  # starting state ambiguous (some interstate edges may not exist yet)
-        for e in sdfg.edges():
-            symbols.update(e.data.new_symbols(sdfg, symbols))
-    return symbols
-
-
-def state_symbols(state: SDFGState, base: Dict[str, 'dace.dtypes.typeclass']) -> Dict[str, 'dace.dtypes.typeclass']:
-    """``base`` plus whatever the control-flow regions enclosing ``state`` bind, outermost first."""
-    symbols = collections.OrderedDict(base)
-    enclosing_regions = []
-    cfg = state.parent_graph
-    while cfg is not None:
-        enclosing_regions.append(cfg)
-        cfg = cfg.parent_graph
-    for region in reversed(enclosing_regions):
-        symbols.update(region.new_symbols(symbols))
-    return symbols
 
 
 def defined_at(scopes: Dict[int, StateSymbolScopes], state: SDFGState,
@@ -116,20 +85,17 @@ class AllocationScopes(ppl.Pass):
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[str, Dict]:
         """
-        :return: ``data_states``, ``root_data_states`` and ``meta_symbols`` keyed by CFG id, plus
-                 ``scope_dicts`` keyed by state.
+        :return: ``data_states``, ``root_data_states`` and ``meta_symbols`` keyed by CFG id.
         """
         data_states: Dict[int, Dict[str, List[SDFGState]]] = {}
         root_data_states: Dict[int, Dict[str, Set[SDFGState]]] = {}
         meta_symbols: Dict[int, Set[str]] = {}
-        scope_dicts: Dict[SDFGState, Dict] = {}
 
         for sdfg in top_sdfg.all_sdfgs_recursive():
             by_data: Dict[str, List[SDFGState]] = collections.defaultdict(list)
             by_root: Dict[str, Set[SDFGState]] = collections.defaultdict(set)
             # ``sdfg.states()`` order (not topological); the consumer relies on it to place allocations.
             for state in sdfg.states():
-                scope_dicts[state] = state.scope_dict()
                 seen: Set[str] = set()
                 for node in state.data_nodes():
                     if node.data not in seen:
@@ -151,7 +117,6 @@ class AllocationScopes(ppl.Pass):
             'data_states': data_states,
             'root_data_states': root_data_states,
             'meta_symbols': meta_symbols,
-            'scope_dicts': scope_dicts,
         }
 
 
@@ -202,11 +167,9 @@ class AccessInstances(ppl.Pass):
                         instances[used].append((state, nodes.AccessNode(used)))
                         code_uses[used].append((state, node))
 
-                edge_fsyms: Set[str] = set()
                 for e in state.parent_graph.all_edges(state):
-                    edge_fsyms |= e.data.free_symbols
-                for edge_array in edge_fsyms & array_names:
-                    instances[edge_array].append((state, nodes.AccessNode(edge_array)))
+                    for edge_array in e.data.used_arrays(sdfg.arrays):
+                        instances[edge_array].append((state, nodes.AccessNode(edge_array)))
 
             access_instances[sdfg.cfg_id] = instances
             code_instances[sdfg.cfg_id] = code_uses
