@@ -22,7 +22,7 @@ from typing import Dict, Optional, Union
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import LoopRegion, SDFGState
+from dace.sdfg.state import SDFGState
 
 #: Per state, the symbols visible at each scope entry; ``None`` keys the state's own top level.
 SymbolScopes = Dict[SDFGState, Dict[Optional[nodes.EntryNode], Dict[str, dtypes.typeclass]]]
@@ -50,16 +50,15 @@ def sdfg_symbols(sdfg: SDFG) -> Dict[str, dtypes.typeclass]:
 
 
 def state_symbols(state: SDFGState, base: Dict[str, dtypes.typeclass]) -> Dict[str, dtypes.typeclass]:
-    """``base`` plus the iterators of the loop regions enclosing ``state``, outermost first."""
+    """``base`` plus whatever the control-flow regions enclosing ``state`` bind, outermost first."""
     symbols = collections.OrderedDict(base)
-    enclosing_loops = []
+    enclosing_regions = []
     cfg = state.parent_graph
     while cfg is not None:
-        if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-            enclosing_loops.append(cfg)
+        enclosing_regions.append(cfg)
         cfg = cfg.parent_graph
-    for loop in reversed(enclosing_loops):
-        symbols.update(loop.new_symbols(symbols))
+    for region in reversed(enclosing_regions):
+        symbols.update(region.new_symbols(symbols))
     return symbols
 
 

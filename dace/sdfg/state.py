@@ -1668,19 +1668,19 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for e in sdfg.edges():
                 symbols.update(e.data.new_symbols(sdfg, symbols))
 
-        # Add the loop variables of the control-flow loops enclosing this state,
-        # outermost first. Without this only global, inter-state-edge and dataflow-scope
-        # (map) symbols are seen; a node inside a LoopRegion must also see the loop
-        # variable as defined -- e.g. so memlet propagation keeps a ``jk``-indexed
-        # nested-SDFG access parametric instead of widening it to the whole array.
-        enclosing_loops = []
+        # Symbols bound by the enclosing control-flow regions, outermost first -- a LoopRegion
+        # binds its iterator, and `new_symbols` returns {} for regions that bind nothing. Without
+        # this a node inside a loop does not see the loop variable as defined, and memlet
+        # propagation widens a ``jk``-indexed nested-SDFG access to the whole array.
+        # Control-flow scope is resolved exactly like the dataflow scope below: walk the nesting
+        # outward, then fold inward so each level types its bindings against the enclosing ones.
+        enclosing_regions = []
         cfg = self.parent_graph
         while cfg is not None:
-            if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-                enclosing_loops.append(cfg)
+            enclosing_regions.append(cfg)
             cfg = cfg.parent_graph
-        for loop in reversed(enclosing_loops):
-            symbols.update(loop.new_symbols(symbols))
+        for region in reversed(enclosing_regions):
+            symbols.update(region.new_symbols(symbols))
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()
