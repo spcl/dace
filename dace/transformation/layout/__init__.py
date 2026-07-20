@@ -29,7 +29,8 @@ from dace.transformation.layout.externalize import (externalize_nest, nest_argum
 from dace.transformation.layout.line_graph import (KernelState, check_kernel_per_state, is_relayout_state,
                                                    kernel_per_state, line_graph, locked_transitions, loop_spans)
 from dace.transformation.layout.relayout_boundary import relayout_on_boundary
-from dace.transformation.layout.apply_assignment import (IDENTITY_LAYOUT, AppliedAssignment, Layout, apply_assignment)
+from dace.transformation.layout.apply_assignment import (IDENTITY_LAYOUT, AppliedAssignment, Layout, apply_assignment,
+                                                         apply_region_layout)
 from dace.transformation.layout.nest_eval import (NestEvaluation, default_permutation_candidates, evaluate_nest)
 from dace.transformation.layout.global_assign import (ArrayTrajectory, AssignmentCosts, ConflictRow,
                                                       brute_force_trajectories, conflict_report, format_conflict_report,

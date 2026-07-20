@@ -122,6 +122,32 @@ class AppliedAssignment:
     exit_state: Optional[dace.SDFGState]
 
 
+def apply_region_layout(sdfg: SDFG, kernels: List[KernelState], region_layouts: Dict[str, Layout],
+                        region: Tuple[int, int]) -> AppliedAssignment:
+    """Apply a layout to arrays ONLY within a top-level region, restoring the original layout at its end.
+
+    A region is a contiguous line ``[start, end)`` of top-level kernels. Each array in ``region_layouts``
+    is stored in the given layout for the region's kernels and in its original (identity) layout outside;
+    the enter relayout lands before the region and the restore relayout at the region's end, both at the
+    TOP LEVEL -- so any loop nested inside the region runs entirely in the region's layout (its back-edge
+    stays a no-op). This is the imposed, region-scoped counterpart of a global :func:`apply_assignment`
+    trajectory; the region must contain whole loop spans (a relayout may not land inside a loop body).
+    """
+    start, end = region
+    n = len(kernels)
+    if not 0 <= start < end <= n:
+        raise ValueError(f"apply_region_layout: region [{start}, {end}) out of range for {n} kernels")
+    for s, e in loop_spans(kernels):
+        if s < start < e or s < end < e:
+            raise ValueError(f"apply_region_layout: region [{start}, {end}) splits loop span [{s}, {e}); "
+                             f"a region must contain whole loops so the relayout lands at the top level")
+    assignment = {
+        array: [IDENTITY_LAYOUT] * start + [layout] * (end - start) + [IDENTITY_LAYOUT] * (n - end)
+        for array, layout in region_layouts.items()
+    }
+    return apply_assignment(sdfg, kernels, assignment)
+
+
 def apply_assignment(sdfg: SDFG, kernels: List[KernelState], assignment: Dict[str, List[Layout]]) -> AppliedAssignment:
     """Applies one layout trajectory per array across the line graph, in place, with paid conversions on the boundaries; the program interface stays logical."""
     check_kernel_per_state(sdfg)
