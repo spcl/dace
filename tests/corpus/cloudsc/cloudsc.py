@@ -2,9 +2,6 @@ import numpy as np
 import dace
 from pathlib import Path
 
-from dace.transformation.passes import ScalarToSymbolPromotion
-from dace.transformation.layout.split_array import SplitArray
-
 klon = dace.symbol('klon', dtype=dace.int32)
 klev = dace.symbol('klev', dtype=dace.int32)
 nclv = dace.symbol('nclv', dtype=dace.int32)
@@ -1361,6 +1358,11 @@ def cloudsc_py(
 
 
 if __name__ == '__main__':
+    # Imported here, not at module scope: this file is also the kernel corpus, and
+    # importing it to reach `cloudsc_py` must not require the transformation stack.
+    from dace.transformation.passes import ScalarToSymbolPromotion
+    from dace.transformation.layout.split_array import SplitArray
+
     NAME_ORDER = ["ncldql", "ncldqi", "ncldqr", "ncldqs", "ncldqv"]
     NAME_MAP = {i: NAME_ORDER[i] for i in range(5)}
     # Split along the first dimension (size = nclv-1) into separate 2D arrays
