@@ -1110,22 +1110,6 @@ def test_nanobind_interface_vector_uses_base_scalar():
     assert 'reinterpret_cast<dace::vec<float, 2> *>' in code  # true pointer type kept
 
 
-def test_nanobind_interface_float16_rejected():
-    """float16 arrays are refused with a clear error (dace::half is not a valid nanobind dtype).
-
-    Out of scope for now (absent from the CI failures); rejecting explicitly beats
-    an opaque compile error. A future slice can map it.
-    """
-    import pytest
-    from dace import dtypes
-    from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    sdfg = dace.SDFG('float16_reject_probe')
-    sdfg.add_array('h', [4], dtypes.float16)
-    with pytest.raises(NotImplementedError, match='float16'):
-        generate_bindings_code(sdfg)
-
-
 def test_nanobind_interface_filename():
     """`filename` returns the resolved absolute path to the built .so (parity with CompiledSDFG)."""
     import pathlib
@@ -1572,6 +1556,86 @@ def test_nanobind_interface_finalize_error_translation(monkeypatch):
     handle.exit_code = 700
     with pytest.raises(RuntimeError, match='an illegal memory access was encountered. Consider'):
         make_wrapper(handle).finalize()
+
+
+def test_nanobind_interface_float16_array_binding():
+    """A float16 array binds as nb::ndarray<dace::float16> and the TU carries a
+    dtype_traits specialization teaching nanobind that dace::float16 is a
+    16-bit float (its own dtype detection uses std::is_floating_point, false
+    for the dace::half struct)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('float16_array_probe')
+    sdfg.add_array('A', [10], dace.float16)
+
+    code = generate_bindings_code(sdfg)
+    assert 'nb::ndarray<dace::float16' in code
+    assert 'struct dtype_traits<dace::float16>' in code
+    assert 'dlpack::dtype_code::Float' in code
+
+
+def test_nanobind_interface_float16_trait_only_when_needed():
+    """A float16-free module does not emit the dtype_traits specialization."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('float16_absent_probe')
+    sdfg.add_array('A', [10], dace.float64)
+
+    code = generate_bindings_code(sdfg)
+    assert 'dtype_traits<dace::float16>' not in code
+
+
+def test_nanobind_interface_float16_scalar_still_rejected():
+    """A float16 *scalar* argument stays unsupported (it would need a value
+    type-caster, not an ndarray dtype trait) and points at the ctypes interface."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('float16_scalar_probe')
+    sdfg.add_array('A', [10], dace.float64)
+    sdfg.add_scalar('s', dace.float16)
+
+    with pytest.raises(NotImplementedError, match='float16'):
+        generate_bindings_code(sdfg)
+
+
+@pytest.mark.skipif(sys.platform == 'win32', reason='half compile probe uses g++')
+def test_nanobind_interface_float16_end_to_end():
+    """E2E: a float16[N] in / float16[N] out program round-trips through the
+    real compiled nanobind module, and a passed float16 array is by-reference."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def add_half_nanobind(A: dace.float16[N], B: dace.float16[N]):
+            B[:] = A + dace.float16(1.0)
+
+        csdfg = add_half_nanobind.to_sdfg().compile()
+        assert isinstance(csdfg, dace.codegen.nanobind_compiled_sdfg.NanobindCompiledSDFG)
+
+        n = 16
+        a = (np.arange(n) * 0.5).astype(np.float16)
+        b = np.zeros(n, dtype=np.float16)
+        csdfg(A=a, B=b, N=np.int32(n))
+        assert b.dtype == np.float16
+        assert np.allclose(b.astype(np.float32), a.astype(np.float32) + 1.0)
+
+
+def test_nanobind_interface_float16_return_value():
+    """E2E: a float16 return array comes back as a numpy float16 array."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def add_one_half_nanobind(A: dace.float16[N]):
+            return A + dace.float16(1.0)
+
+        csdfg = add_one_half_nanobind.to_sdfg().compile()
+        n = 12
+        a = (np.arange(n) * 0.25).astype(np.float16)
+        result = csdfg(A=a, N=np.int32(n))
+        assert isinstance(result, np.ndarray)
+        assert result.dtype == np.float16
+        assert np.allclose(result.astype(np.float32), a.astype(np.float32) + 1.0)
 
 
 def test_nanobind_interface_strict_scalar_cast_binding():

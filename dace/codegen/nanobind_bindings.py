@@ -38,6 +38,21 @@ _PYBUFFER_HELPER = '''    struct _DacePyBuffer {
     };
 '''
 
+# dtype_traits specialization advertising dace::float16 (= dace::half) as a
+# 16-bit DLPack float, so nb::ndarray<dace::float16, ...> accepts a numpy/cupy
+# float16 array. nanobind's own detection uses std::is_floating_point, false for
+# the half struct. Emitted only when a float16 ndarray argument exists.
+_FLOAT16_TRAITS = '''
+namespace nanobind { namespace detail {
+template <> struct dtype_traits<dace::float16> {
+    static constexpr dlpack::dtype value{
+        (uint8_t) dlpack::dtype_code::Float, 16, 1
+    };
+    static constexpr auto name = const_name("float16");
+};
+}}
+'''
+
 
 def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
                       symbol_names: Set[str]) -> Tuple[Set[str], Dict[str, str]]:
@@ -220,11 +235,13 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
             raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                       f'{type(desc).__name__} is not supported; returns are arrays only.')
 
-        # float16 maps to dace::half, which nanobind's ndarray cannot take as a
-        # scalar dtype; a proper mapping is a TODO.
-        if desc.dtype.base_type == dtypes.float16:
-            raise NotImplementedError(f'Nanobind interface: float16 argument/return value "{name}" is not '
-                                      f'supported yet (dace::half is not a valid nanobind ndarray dtype); '
+        # A float16 *scalar* would need a nanobind value type-caster for
+        # dace::half (Python float <-> half); float16 arrays are handled via a
+        # dtype_traits specialization (see _uses_half_ndarray). Scalars are rare
+        # and ctypes only maps them to raw c_ushort, so refuse them clearly.
+        if isinstance(desc, dt.Scalar) and desc.dtype.base_type == dtypes.float16:
+            raise NotImplementedError(f'Nanobind interface: float16 scalar argument "{name}" is not '
+                                      f'supported (dace::half needs a value type-caster); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
 
         ctype = desc.dtype.ctype
@@ -367,6 +384,22 @@ def _ndarray_scalar_ctype(dtype):
     return dtype.ctype
 
 
+def _uses_half_ndarray(arglist) -> bool:
+    """True iff some argument binds a ``dace::float16`` ndarray scalar.
+
+    Only the plain-array branch binds an ``nb::ndarray<scalar, ...>``; container
+    arrays (uint64 pointer tables) and struct arrays (raw buffers) never do, so
+    they cannot pull in the half dtype. When this holds the generated TU needs
+    the ``dtype_traits<dace::float16>`` specialization.
+    """
+    for desc in arglist.values():
+        if (isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
+                and not isinstance(desc.dtype, dtypes.struct)
+                and _ndarray_scalar_ctype(desc.dtype) == dtypes.float16.ctype):
+            return True
+    return False
+
+
 def _structure_forward_decls(arglist):
     """Forward declarations for the C structs referenced by Structure / ContainerArray arguments.
 
@@ -507,6 +540,14 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     struct_decls = _structure_forward_decls(arglist)
     struct_fwd_block = f'\n{struct_decls}' if struct_decls else ''
 
+    # nanobind's ndarray dtype detection uses std::is_floating_point, which is
+    # false for dace::half (on the host path a 2-byte struct of raw IEEE-754
+    # half bits). Teach it that dace::float16 is a 16-bit DLPack float so a
+    # numpy/cupy float16 array binds by reference - its bytes are exactly an
+    # array of dace::half, so the reinterpret_cast is a no-op. Emitted only when
+    # a float16 ndarray argument exists.
+    float16_traits_block = _FLOAT16_TRAITS if _uses_half_ndarray(arglist) else ''
+
     # setup_stmts (struct pointer extraction, callback pointer recovery) may
     # need the Python API, so with them the GIL is released only around the
     # kernel call - the RAII buffer guards outlive that nested scope and
@@ -564,7 +605,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 #include <nanobind/stl/string.h>
 
 namespace nb = nanobind;
-
+{float16_traits_block}
 // The generated types live in dace::generated::<name>, mirroring the Python-side
 // dace.generated.<name> module. The per-SDFG namespace also keeps the identically
 // structured handle types from different modules from colliding in-process.
