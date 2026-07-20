@@ -52,7 +52,7 @@ from dace.memlet import Memlet
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
-from dace.frontend.python.nextgen.common import UnsupportedFeatureError
+from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values
@@ -356,6 +356,188 @@ def _reshape_shape(shape_args: List[ast.expr], source_subset, state: LoweringSta
     except Exception:
         return None
     return dims
+
+
+def resolve_attribute_data(base: DataAccess, attr_name: str, state: LoweringState) -> Optional[DataAccess]:
+    """
+    Materialize a registered data-descriptor ATTRIBUTE access (``A.T``,
+    ``A.real``, ``A.imag``, ``A.flat``) of ``base`` into a fresh transient
+    container.
+
+    Attribute access is an expression, not a call, so it cannot go through
+    ``_lower_registry_call``/``_lower_replacement_call`` (which only trigger
+    from ``ast.Call`` nodes): this is the attribute-family counterpart,
+    called from dedicated frontend entry points (``lower_attribute_assign``
+    below, and the ``ast.Attribute`` branch of
+    ``rules.returns._materialize_return_value``) tried before generic
+    dispatch -- the same placement principle as ``_lower_reshape_call``.
+
+    A CONTIGUOUS ``.flat`` binds a :class:`~...treenodes.ViewNode`: NumPy's
+    flatiter is, for DaCe's purposes, an aliasing flattened view of a
+    contiguous source, so writes through it must reach the original array --
+    the same "view bindings are frontend-visible state a deferred
+    ``ReplacementCallNode`` cannot represent" reasoning that makes
+    ``_lower_reshape_call`` a dedicated view-binding path instead of a
+    deferred call. Everything else (``.T``, ``.real``, ``.imag``, and
+    non-contiguous ``.flat``, which the registry implementation copies
+    through an explicit map) computes a fresh array and is safe to defer
+    through a :class:`~...treenodes.ReplacementCallNode` running the exact
+    classic ATTRIBUTE registry implementation.
+
+    :return: The resolved access, or None when ``attr_name`` is not in
+             :data:`~dace.frontend.python.nextgen.common.SUPPORTED_DATA_ATTRIBUTES`,
+             or the registry call is not viable here (the caller falls back
+             to a callback).
+    """
+    if attr_name not in SUPPORTED_DATA_ATTRIBUTES:
+        return None
+    if attr_name == 'flat' and isinstance(base.descriptor, data.Array) and _is_contiguous_flat(base.descriptor):
+        return _materialize_flat_view(base, state)
+    return _materialize_attribute_replacement(base, attr_name, state)
+
+
+def _is_contiguous_flat(descriptor: data.Array) -> bool:
+    """Whether ``descriptor`` is contiguous in the sense NumPy's ``.flat``
+    requires to be representable as a plain reshape-to-1D view (mirrors the
+    check in the classic ``flat()`` replacement,
+    ``replacements/array_manipulation.py``)."""
+    shape = descriptor.shape
+    total = data._prod(shape)
+    contiguous_strides = tuple(data._prod(shape[i + 1:]) for i in range(len(shape)))
+    return bool(descriptor.total_size == total) and tuple(descriptor.strides) == contiguous_strides
+
+
+def _materialize_flat_view(base: DataAccess, state: LoweringState) -> DataAccess:
+    """Bind ``.flat`` of a contiguous array as a 1-D view, the same mechanism
+    ``_lower_reshape_call`` uses for a single-dimension reshape."""
+    total = data._prod(base.descriptor.shape) if isinstance(base.descriptor, data.Array) else 1
+    view_descriptor = data.ArrayView(base.descriptor.dtype, [total])
+    view_name = state.context.add_container('__flat', view_descriptor)
+    # Self-bound so a caller that substitutes this name back into an
+    # expression (e.g. rewriting a ``.flat[...]`` subscript's base, see
+    # ``rewrite_flat_subscript_base``) resolves it as an ordinary container.
+    state.context.bind(view_name, view_name)
+    state.emitter.emit(
+        tn.ViewNode(target=view_name,
+                    source=base.container,
+                    memlet=Memlet(data=base.container, subset=base.subset),
+                    src_desc=base.descriptor,
+                    view_desc=view_descriptor))
+    return DataAccess(view_name, subsets.Range.from_array(view_descriptor), view_descriptor)
+
+
+def _materialize_attribute_replacement(base: DataAccess, attr_name: str, state: LoweringState) -> Optional[DataAccess]:
+    """Defer an ATTRIBUTE-family replacement that computes a fresh array
+    (everything :func:`resolve_attribute_data` does not bind as a view) to a
+    :class:`~...treenodes.ReplacementCallNode`, after checking on a scratch
+    SDFG that the deferred expansion will actually succeed (the same
+    trial-before-commit shape as ``_expansion_viable``, generalized in
+    :func:`_run_attribute_trial` to look the implementation up by
+    ``(classname, attr_name)`` instead of a free-function qualname)."""
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    typename = type(base.descriptor).__name__
+    function = oprepo.Replacements.get_attribute(typename, attr_name)
+    if function is None:
+        return None
+    result_descriptor = _run_attribute_trial(function, base.container, state)
+    if result_descriptor is None:
+        return None
+    descriptor = copy.deepcopy(result_descriptor)
+    container = state.context.add_container('__attr', descriptor)
+    state.context.bind(container, container)  # Self-bound, see _materialize_flat_view
+    state.emitter.emit(
+        tn.ReplacementCallNode(qualname=oprepo.attribute_qualname(typename, attr_name),
+                               target=container,
+                               arguments=[base.container],
+                               keyword_arguments={},
+                               data_arguments={base.container}))
+    return DataAccess(container, subsets.Range.from_array(descriptor), descriptor)
+
+
+def _run_attribute_trial(function, container: str, state: LoweringState) -> Optional[data.Data]:
+    """
+    Run an ATTRIBUTE-family replacement on a scratch SDFG with a single data
+    argument (every registered attribute implementation takes exactly the
+    base container, plus attribute-specific defaulted keyword arguments) and
+    return the resulting descriptor when deferred expansion will succeed at
+    SDFG-build time (``tree_to_sdfg.visit_ReplacementCallNode`` runs the exact
+    same call): no recorded view bindings, and a single named result. Returns
+    None otherwise, including on any exception the trial call raises.
+
+    Mirrors ``_expansion_viable``, specialized to the attribute calling
+    convention and returning the scratch-computed descriptor directly (rather
+    than a separate inference call) so the emitted container's shape is
+    guaranteed consistent with what expansion will actually produce.
+    """
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import ReplacementVisitorShim
+    from dace.sdfg.sdfg import SDFG
+
+    scratch = SDFG('__attribute_viability')
+    descriptor = copy.deepcopy(state.context.containers[container])
+    descriptor.transient = False
+    scratch.add_datadesc(container, descriptor)
+    scratch_state = scratch.add_state()
+    shim = ReplacementVisitorShim(scratch, scratch_state, '__viability_target')
+    try:
+        result = function(shim, scratch, scratch_state, container)
+    except Exception:
+        return None
+    if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
+        result = result[1]
+    if shim.views or not isinstance(result, str) or result not in scratch.arrays:
+        return None
+    return scratch.arrays[result]
+
+
+def lower_attribute_assign(target: ast.Name, value: ast.Attribute, state: LoweringState) -> bool:
+    """
+    Lower ``<name> = <data>.<attr>`` through :func:`resolve_attribute_data`,
+    tried before the generic Name/Attribute aliasing path in
+    ``rules.assign._lower_name_assign`` -- the same placement principle as
+    ``_lower_reshape_call`` being tried before ``_lower_registry_call``.
+
+    Returns False when the value's base is not a resolvable data access or
+    the attribute has no viable lowering (the caller falls through to the
+    ordinary assignment paths, ultimately a callback).
+    """
+    base = resolve_access(value.value, state)
+    if base is None:
+        return False
+    access = resolve_attribute_data(base, value.attr, state)
+    if access is None:
+        return False
+    state.context.bind(target.id, access.container)
+    return True
+
+
+def rewrite_flat_subscript_base(target: ast.Subscript, state: LoweringState) -> ast.Subscript:
+    """
+    Rewrite a ``A.flat[...]`` subscript target to reference the materialized
+    flat-view container directly, so the ordinary subscript-assignment
+    machinery (``rules.assign._lower_subscript_assign``/``access.resolve_access``,
+    neither of which know about the ATTRIBUTE registry) can resolve it.
+
+    Only the CONTIGUOUS case is rewritten: NumPy's flatiter is an aliasing
+    view there (see :func:`resolve_attribute_data`), so a write through it
+    must reach the source array. A non-contiguous ``.flat`` computes a
+    disposable copy -- subscripting it as a write target would silently
+    discard the write, so it is deliberately left unrewritten and falls
+    through to the ordinary (and, for this form, unsupported) paths, which
+    degrade to a callback instead of miscompiling.
+
+    Returns ``target`` unchanged when it is not a rewritable ``.flat`` base.
+    """
+    if not isinstance(target.value, ast.Attribute) or target.value.attr != 'flat':
+        return target
+    base = resolve_access(target.value.value, state)
+    if base is None or not isinstance(base.descriptor, data.Array) or not _is_contiguous_flat(base.descriptor):
+        return target
+    access = resolve_attribute_data(base, 'flat', state)
+    if access is None:
+        return target
+    rewritten = copy.copy(target)
+    rewritten.value = ast.copy_location(ast.Name(id=access.container, ctx=ast.Load()), target.value)
+    return rewritten
 
 
 def _call_gap_category(call: ast.Call, qualname: str, state: LoweringState) -> str:

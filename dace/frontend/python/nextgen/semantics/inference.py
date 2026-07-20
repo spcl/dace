@@ -21,7 +21,7 @@ import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
-from dace.frontend.python.nextgen.common import UnsupportedFeatureError
+from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError
 from dace.frontend.python.nextgen.semantics import values
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
@@ -560,6 +560,27 @@ class InferenceService:
                     return Inferred(kind='constant', value=tuple(descriptor.shape))
                 if node.attr == 'ndim' and isinstance(descriptor, data.Array):
                     return Inferred(kind='constant', value=len(descriptor.shape))
+                # Registry-backed attributes needing an actual data operation
+                # (``.T``/``.real``/``.imag``/``.flat``): typed through the
+                # ATTRIBUTE family of the replacement registry so
+                # ``lowering.dispatch``'s dedicated frontend paths (mirroring
+                # the reshape view precedent, ``dispatch._lower_reshape_call``)
+                # can materialize them. Scoped to ``SUPPORTED_DATA_ATTRIBUTES``
+                # -- see its docstring for why a registered attribute outside
+                # that set must keep failing inference here rather than typing
+                # successfully with no matching lowering path.
+                if node.attr in SUPPORTED_DATA_ATTRIBUTES:
+                    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population
+                    infer_fn = oprepo.Replacements.get_attribute_descriptor_inference(type(descriptor), node.attr)
+                    if infer_fn is not None:
+                        try:
+                            result = infer_fn(descriptor)
+                        except Exception:
+                            result = None
+                        if isinstance(result, (tuple, list)) and len(result) == 1:
+                            result = result[0]
+                        if isinstance(result, data.Data):
+                            return Inferred(kind='data', descriptor=result)
         _, resolved = self.resolve_callee(node)
         if resolved is not None:
             if isinstance(resolved, symbolic.symbol):

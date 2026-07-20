@@ -152,6 +152,24 @@ class Replacements(object):
         return Replacements._dtype_op_rep.get((None, None, optype), None)
 
 
+#: Marker separating a data-descriptor classname from an attribute name in a
+#: :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+#: qualname when the deferred call targets the ATTRIBUTE family
+#: (:meth:`Replacements.get_attribute`) rather than the free-function family
+#: (:meth:`Replacements.get`). Chosen to be unambiguous against real
+#: qualnames, which are dotted Python identifiers and never contain ``@``.
+ATTRIBUTE_QUALNAME_MARKER = '.@'
+
+
+def attribute_qualname(classname: str, attr_name: str) -> str:
+    """
+    The :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+    qualname encoding an ATTRIBUTE-family replacement (e.g. ``Array.@T``),
+    decoded back by ``tree_to_sdfg.visit_ReplacementCallNode``.
+    """
+    return f'{classname}{ATTRIBUTE_QUALNAME_MARKER}{attr_name}'
+
+
 def _get_inference_operand_types(operand: Any) -> List[Optional[str]]:
     if operand is _INFERENCE_MISSING:
         return [None]

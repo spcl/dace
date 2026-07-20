@@ -138,6 +138,15 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
         _lower_reference_set(target.id, reference, value, inferred, statement, state)
         return
 
+    # Registry ATTRIBUTE-family reads (``b = A.T``/``.real``/``.imag``/
+    # ``.flat``) that need an actual data operation: tried before the
+    # generic Name/Attribute aliasing path below (which only recognizes
+    # structure members), the same placement principle as
+    # ``dispatch._lower_reshape_call`` being tried before generic call
+    # dispatch.
+    if isinstance(value, ast.Attribute) and dispatch.lower_attribute_assign(target, value, state):
+        return
+
     if isinstance(value, (ast.Name, ast.Attribute)):
         source_access = resolve_access(value, state)
         # Assigning from a reference-bound name materializes a fresh reference
@@ -291,6 +300,13 @@ def _create_pythonclass_member(target: ast.Attribute, inferred: Inferred,
 
 def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: ast.Assign,
                             state: LoweringState) -> None:
+    # ``A.flat[idx] = ...`` on a contiguous array: rewrite the base to the
+    # materialized flat-view container (see
+    # ``dispatch.rewrite_flat_subscript_base``) so the ordinary machinery
+    # below, which only resolves a plain-name or structure-member base,
+    # can write through it -- NumPy's flatiter aliases the source, so this
+    # must reach ``A``, not a disposable copy.
+    target = dispatch.rewrite_flat_subscript_base(target, state)
     if _lower_advanced_index_write(target, value, statement, state):
         return
     try:
