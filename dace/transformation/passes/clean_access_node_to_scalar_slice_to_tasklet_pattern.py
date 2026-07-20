@@ -161,14 +161,19 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
             return None, None
         return an1.data, copy.deepcopy(ie.data.other_subset)
 
-    def _apply_recursive(self, sdfg: dace.SDFG):
+    def _apply_recursive(self, sdfg: dace.SDFG) -> int:
+        """Fold every matching pattern in ``sdfg`` and its nested SDFGs.
+
+        :returns: Number of patterns folded.
+        """
+        folded = 0
         for state in list(sdfg.all_states()):
             pre_transform_state_nodes = list(state.nodes())
             for node in pre_transform_state_nodes:
                 if node not in state.nodes():
                     continue
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply_recursive(node.sdfg)
+                    folded += self._apply_recursive(node.sdfg)
                     continue
                 for e in list(state.out_edges(node)):
                     an1, an2, tasklet = self._check_pattern(state, e, node)
@@ -230,5 +235,14 @@ class CleanAccessNodeToScalarSliceToTaskletPattern(ppl.Pass):
                         state.add_edge(ie.src, ie.src_conn, oe.dst, oe.dst_conn,
                                        dace.memlet.Memlet(data=array_name, subset=read_subset))
 
+                    folded += 1
+
+        return folded
+
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
-        self._apply_recursive(sdfg)
+        """Fold every ``A -> A_slice -> tasklet`` pattern in the SDFG hierarchy.
+
+        :returns: Number of patterns folded, or ``None`` if none matched.
+        """
+        folded = self._apply_recursive(sdfg)
+        return folded or None

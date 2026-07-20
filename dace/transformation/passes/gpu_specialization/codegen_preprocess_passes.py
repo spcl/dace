@@ -73,15 +73,44 @@ class ReinferConnectorTypes(ppl.Pass):
     """
 
     def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.Connectors | ppl.Modifies.Descriptors
+        # ``Modifies`` has no ``Connectors`` flag; connectors live on the code nodes that carry
+        # them. ``Descriptors`` is kept as a conservative over-declaration (the pass only reads
+        # them, but over-declaring costs re-runs, never correctness).
+        return ppl.Modifies.Tasklets | ppl.Modifies.NestedSDFGs | ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]):
+    @staticmethod
+    def _connector_types(sdfg: SDFG) -> Dict[Any, Any]:
+        """Snapshot every dataflow-node connector type, keyed by ``(node, direction, connector)``.
+
+        Re-inference is the only signal of change available -- neither
+        ``invalidate_array_connectors`` nor ``infer_connector_types`` reports what it touched --
+        so the pass diffs a before/after snapshot.
+        """
+        snapshot: Dict[Any, Any] = {}
+        for node, _ in sdfg.all_nodes_recursive():
+            if not isinstance(node, nodes.Node):
+                continue
+            for cname, ctype in node.in_connectors.items():
+                snapshot[(node, 'in', cname)] = ctype
+            for cname, ctype in node.out_connectors.items():
+                snapshot[(node, 'out', cname)] = ctype
+        return snapshot
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Re-derive NestedSDFG connector types from their inner descriptors.
+
+        :returns: Number of connectors whose type changed, or ``None`` if none did.
+        """
         from dace.sdfg import infer_types
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import invalidate_array_connectors
+        before = self._connector_types(sdfg)
         invalidate_array_connectors(sdfg)
         for nsdfg in sdfg.all_sdfgs_recursive():
             infer_types.infer_connector_types(nsdfg)
-        return None
+        after = self._connector_types(sdfg)
+
+        changed = sum(1 for key, ctype in after.items() if before.get(key) != ctype)
+        return changed or None

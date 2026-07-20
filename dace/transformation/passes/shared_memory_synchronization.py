@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that inserts ``__syncthreads()`` barriers around GPU shared-memory accesses."""
 import warnings
-from typing import Dict, Set, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, SDFGState, dtypes, properties
@@ -39,10 +39,11 @@ class DefaultSharedMemorySync(ppl.Pass):
     instead); nested TB maps sync only at the outermost TB exit.
     """
 
-    def apply_pass(self, sdfg: SDFG, _):
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """Insert ``__syncthreads()`` barriers so shared-memory writes are visible to subsequent reads.
 
         :param sdfg: SDFG to insert barriers into (modified in place).
+        :returns: Number of barrier tasklets inserted, or ``None`` if none were needed.
         """
 
         # Collect TB MapExits and collaborative shared-memory writes.
@@ -55,8 +56,10 @@ class DefaultSharedMemorySync(ppl.Pass):
                 collaborative_smem_copies[node] = parent_state
 
         sync_requiring_exits = self.identify_synchronization_tb_exits(tb_map_exits)
-        self.insert_synchronization_after_nodes(sync_requiring_exits)
-        self.insert_synchronization_after_nodes(collaborative_smem_copies)
+        inserted = self.insert_synchronization_after_nodes(sync_requiring_exits)
+        inserted += self.insert_synchronization_after_nodes(collaborative_smem_copies)
+
+        return inserted or None
 
     def is_collaborative_smem_write(self, node: AccessNode, state: SDFGState) -> bool:
         """Whether ``node`` is a collaborative shared-memory write: written
@@ -217,8 +220,12 @@ class DefaultSharedMemorySync(ppl.Pass):
 
         return False
 
-    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]):
-        """Insert a ``__syncthreads()`` tasklet after each given node."""
+    def insert_synchronization_after_nodes(self, nodes: Dict[Node, SDFGState]) -> int:
+        """Insert a ``__syncthreads()`` tasklet after each given node.
+
+        :returns: Number of barrier tasklets inserted.
+        """
+        inserted = 0
         for node, state in nodes.items():
 
             sync_tasklet = state.add_tasklet(name="sync_threads",
@@ -231,3 +238,6 @@ class DefaultSharedMemorySync(ppl.Pass):
                 state.add_edge(sync_tasklet, None, succ, None, dace.Memlet())
 
             state.add_edge(node, None, sync_tasklet, None, dace.Memlet())
+            inserted += 1
+
+        return inserted

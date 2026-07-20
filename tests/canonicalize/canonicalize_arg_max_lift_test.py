@@ -389,8 +389,15 @@ def test_loop_to_reduce_doesnt_lift_an_argmax_loop():
     sdfg = argmax_kernel.to_sdfg(simplify=True)
     res = LoopToReduce().apply_pass(sdfg, {})
     assert res is None, "LoopToReduce must not lift conditional argmax loops (two accumulators in the branch)"
-    res_wcr = LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
-    assert res_wcr is None, "LoopToReduce(wcr-scalar) must also refuse argmax: branch body has two accumulator writes"
+
+    # ``wcr-scalar`` mode normalizes before matching (TrivialTaskletElimination +
+    # AugAssignToWCR), and those rewrites are real modifications the pass must report -- so
+    # assert what this test is actually about, that NO reduction was lifted, rather than that
+    # the pass returned None. See the ``apply_pass`` docstring in loop_to_reduce.py.
+    reduces_before = _num_reduces(sdfg)
+    LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    assert _num_reduces(sdfg) == reduces_before, \
+        "LoopToReduce(wcr-scalar) must also refuse argmax: branch body has two accumulator writes"
 
 
 def test_loop_to_scan_doesnt_lift_an_argmax_loop():

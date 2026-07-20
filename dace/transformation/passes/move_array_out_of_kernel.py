@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Pass that hoists kernel-local transients out of GPU kernels into device-global allocations."""
-from typing import Dict, FrozenSet, Set, Tuple, List
+from typing import Dict, FrozenSet, Optional, Set, Tuple, List
 import copy
 import functools
 
@@ -55,10 +55,11 @@ class MoveArrayOutOfKernel(Pass):
         self._node_to_state_cache: Dict[nodes.Node, SDFGState] = dict()
 
     # Entry point
-    def apply_pass(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str):
+    def apply_pass(self, root_sdfg: SDFG, kernel_entry: nodes.MapEntry, array_name: str) -> Optional[int]:
         """Move a transient ``GPU_Global`` array out of a ``GPU_Device`` map.
 
         :param array_name: Transient array to move; all same-named arrays are lifted.
+        :returns: Number of array descriptors lifted out of the kernel, or ``None`` if nothing moved.
         """
         # Cache every nodes parent state and parent sdfg
         for node, parent in root_sdfg.all_nodes_recursive():
@@ -76,15 +77,17 @@ class MoveArrayOutOfKernel(Pass):
 
         if simple_case:
             access_nodes = [an for an, _, _ in self.get_access_nodes_within_map(kernel_entry, array_name)]
-            self.move_array_out_of_kernel_flat(kernel_entry, array_name, access_nodes)
+            lifted = self.move_array_out_of_kernel_flat(kernel_entry, array_name, access_nodes)
         else:
             # Access nodes span nested maps or SDFGs --  more involved (more checks, naming conflicts, several seperate
             # array descriptors with the same array_name)
-            self.move_array_out_of_kernel_nested(kernel_entry, array_name)
+            lifted = self.move_array_out_of_kernel_nested(kernel_entry, array_name)
+
+        return lifted or None
 
     # Main transformation algorithms and helpers
     def move_array_out_of_kernel_flat(self, kernel_entry: nodes.MapEntry, array_name: str,
-                                      access_nodes: List[nodes.AccessNode]):
+                                      access_nodes: List[nodes.AccessNode]) -> int:
         """Move a transient ``GPU_Global`` array out of a kernel (flat case).
 
         Flat = all access nodes share the kernel map's SDFG/state, so no
@@ -92,6 +95,7 @@ class MoveArrayOutOfKernel(Pass):
         slice per map iteration (see :meth:`get_new_shape_info`).
 
         :param access_nodes: Access nodes referring to the array inside the map.
+        :returns: Number of array descriptors lifted (always 1 -- the flat case handles one).
         """
         # Use the AccessNode closest to the kernel exit
         parent_state = self._node_to_state_cache[kernel_entry]
@@ -130,23 +134,28 @@ class MoveArrayOutOfKernel(Pass):
         parent_state.add_edge(kernel_exit, out_connector, access_node_outside, None,
                               Memlet.from_array(array_name, array_desc))
 
-    def move_array_out_of_kernel_nested(self, kernel_entry: nodes.MapEntry, array_name: str):
+        return 1
+
+    def move_array_out_of_kernel_nested(self, kernel_entry: nodes.MapEntry, array_name: str) -> int:
         """Move a transient ``GPU_Global`` array out of a kernel when its accesses span nested SDFGs.
 
         Reshapes/rewrites memlets, renames on descriptor-name conflicts, and
         lifts the array through every intermediate nested SDFG.
+
+        :returns: Number of array descriptors lifted out of the kernel.
         """
         # Info on every distinct descriptor sharing the name ``array_name``
         array_descriptor_usage = self.collect_array_descriptor_usage(kernel_entry, array_name)
         original_array_name = array_name
         kernel_parent_sdfg = self._node_to_state_cache[kernel_entry].sdfg
+        lifted = 0
 
         for array_desc, outermost_sdfg, sdfg_defined, access_nodes in array_descriptor_usage:
 
             if outermost_sdfg == kernel_parent_sdfg:
                 # Nested access nodes, but the descriptor is defined in the kernel's
                 # SDFG -- the flat algorithm suffices.
-                self.move_array_out_of_kernel_flat(kernel_entry, original_array_name, list(access_nodes))
+                lifted += self.move_array_out_of_kernel_flat(kernel_entry, original_array_name, list(access_nodes))
                 continue
 
             nsdfg_node = outermost_sdfg.parent_nsdfg_node
@@ -185,6 +194,9 @@ class MoveArrayOutOfKernel(Pass):
                                  "be the kernel's parent SDFG.")
 
             self.lift_array_through_nested_sdfgs(array_name, kernel_entry, sdfg_hierarchy)
+            lifted += 1
+
+        return lifted
 
     def lift_array_through_nested_sdfgs(self, array_name: str, kernel_entry: nodes.MapEntry,
                                         sdfg_hierarchy: List[SDFG]):

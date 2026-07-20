@@ -1,5 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Set, Union
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import properties, transformation
@@ -143,8 +143,7 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
                 return False
 
         # We will now check if the two maps are parallel.
-        if not mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry):
-            return False
+        maps_are_parallel = mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry)
 
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
@@ -159,6 +158,18 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
         )
         if param_repl is None:
             return False
+
+        # Maps that are only ordered by happens-before edges, the shape `StateFusionExtended`
+        #  produces for a WAR/WAW hazard, are not parallel but can still be fused if no
+        #  iteration can collide with a different one. See `analyze_happens_before_fusion()`.
+        if not maps_are_parallel:
+            return mfhelper.analyze_happens_before_fusion(
+                state=graph,
+                sdfg=sdfg,
+                first_map_entry=first_map_entry,
+                second_map_entry=second_map_entry,
+                param_repl=param_repl,
+            ) is not None
 
         return True
 
@@ -188,6 +199,24 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
                 iedge.data.try_initialize(sdfg, graph, iedge)
             for oedge in graph.out_edges(map_exit):
                 oedge.data.try_initialize(sdfg, graph, oedge)
+
+        # If the two Maps are not parallel but merely ordered by happens-before edges, then
+        #  those edges have to go (they would become a self loop on the fused Map) and the
+        #  ordering they encoded has to be re-established inside the fused scope, where it
+        #  now only has to hold per iteration. `can_be_applied()` proved that this is enough.
+        inner_ordering_pairs: List[Tuple[nodes.Node, nodes.Node]] = []
+        if not mfhelper.is_parallel(graph=graph, node1=first_map_entry, node2=second_map_entry):
+            plan = mfhelper.analyze_happens_before_fusion(
+                state=graph,
+                sdfg=sdfg,
+                first_map_entry=first_map_entry,
+                second_map_entry=second_map_entry,
+                param_repl=mfhelper.find_parameter_remapping(first_map_entry.map, second_map_entry.map),
+            )
+            assert plan is not None, "The Maps are neither parallel nor safely ordered."
+            ordering_edges, inner_ordering_pairs = plan
+            for ordering_edge in ordering_edges:
+                graph.remove_edge(ordering_edge)
 
         # We have to get the scope_dict before we start mutating the graph.
         scope_dict: Dict = graph.scope_dict().copy()
@@ -224,6 +253,11 @@ class MapFusionHorizontal(transformation.SingleStateTransformation):
             )
             # The relocate function does not remove the node, so we must do it.
             graph.remove_node(from_node)
+
+        # Now that both bodies live in the same scope the per-iteration ordering can be
+        #  expressed. Adding the edges earlier would have made them cross a scope boundary.
+        for first_node, second_node in inner_ordering_pairs:
+            graph.add_nedge(first_node, second_node, dace.Memlet())
 
         # If we have "consolidated" edges, i.e. reused existing edges, then the set
         #  of that might have expanded, thus we have to propagate them. However,

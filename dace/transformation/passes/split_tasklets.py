@@ -355,7 +355,7 @@ class SplitTasklets(ppl.Pass):
         tokens = re.split(r'(\s+|[()\[\]])', string_to_check)
         return {token.strip() for token in tokens if token not in ["[", "]", "(", ")"] and token.isidentifier()}
 
-    def _add_missing_symbols(self, sdfg: SDFG):
+    def _add_missing_symbols(self, sdfg: SDFG) -> Set[str]:
         """
         Register interstate-edge assignment targets that are not yet declared symbols.
 
@@ -369,11 +369,13 @@ class SplitTasklets(ppl.Pass):
         and hand back a float-typed symbol.
 
         :param sdfg: The SDFG to scan (recursively into nested SDFGs).
+        :returns: The names of the symbols that were added (empty if the symbol table was already complete).
         """
+        added: Set[str] = set()
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._add_missing_symbols(node.sdfg)
+                    added |= self._add_missing_symbols(node.sdfg)
         for e in sdfg.all_interstate_edges():
             for k, v in e.data.assignments.items():
                 if k not in sdfg.symbols:
@@ -383,6 +385,7 @@ class SplitTasklets(ppl.Pass):
                         cast_dtype = getattr(dace, cast_name)
                         if cast_dtype in dace.dtypes.INTEGER_TYPES:
                             sdfg.add_symbol(k, cast_dtype)
+                            added.add(k)
                             continue
                     dtypes = set()
                     # Array accesses ``arr[i]`` are ``Subscript`` nodes; their names
@@ -427,6 +430,8 @@ class SplitTasklets(ppl.Pass):
                     if ktype is None:
                         ktype = dace.float64
                     sdfg.add_symbol(k, ktype)
+                    added.add(k)
+        return added
 
     def _symbol_lifted_data(self, sdfg: SDFG) -> Set[str]:
         """
@@ -688,9 +693,10 @@ class SplitTasklets(ppl.Pass):
 
         :param sdfg: The SDFG to transform in place.
         :param pipeline_results: Results of prior passes in the pipeline (unused).
-        :returns: Always ``None`` (the result map is not tracked).
+        :returns: ``{'added_symbols': <symbol names>, 'split_tasklets': <names of the tasklets that were split>}``,
+                  or ``None`` if nothing was declared and no tasklet was split.
         """
-        self._add_missing_symbols(sdfg)
+        added_symbols = self._add_missing_symbols(sdfg)
         split_access_counter = 0
 
         symbol_lifted_data = self._symbol_lifted_data(sdfg)
@@ -807,6 +813,9 @@ class SplitTasklets(ppl.Pass):
                         inferred = _infer_ssa_intermediate_types(ssa_statements, leaf_types, input_type)
                         tasklets_to_split.append((n, g, ssa_statements, input_type, inferred))
 
+        # Names are collected here, before the rewrites below detach the tasklets from their states.
+        split_names = {t.name for t, *_ in tasklets_to_split} | {t.name for t, *_ in multi_output_to_split}
+
         # Previous tasklet:
         # i1 -> |         |
         # i2 -> | tasklet | -> o1
@@ -918,7 +927,11 @@ class SplitTasklets(ppl.Pass):
                                     storage=dace.dtypes.StorageType.Register,
                                     transient=True,
                                 )
-                                assert array_name not in added_accesses
+                            # Independently of whether the descriptor already existed: a
+                            # second run of this pass over the same SDFG (canonicalize
+                            # splits, then the vectorizer splits again) finds the scalar
+                            # present but has no access node for it in THIS invocation.
+                            if array_name not in added_accesses:
                                 added_accesses[array_name] = state.add_access(array_name)
                             state.add_edge(
                                 added_accesses[array_name], None, t, in_conn,
@@ -951,7 +964,7 @@ class SplitTasklets(ppl.Pass):
                             storage=dace.dtypes.StorageType.Register,
                             transient=True,
                         )
-                        assert array_name not in added_accesses
+                    if array_name not in added_accesses:
                         added_accesses[array_name] = state.add_access(array_name)
                     state.add_edge(
                         t, out_conn, added_accesses[array_name], None,
@@ -982,4 +995,6 @@ class SplitTasklets(ppl.Pass):
             self._apply_multi_output_split(tasklet, state, ordered)
 
         sdfg.validate()
-        return None
+        if not added_symbols and not split_names:
+            return None
+        return {'added_symbols': added_symbols, 'split_tasklets': split_names}

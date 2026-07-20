@@ -64,9 +64,35 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
+    @staticmethod
+    def _schedules_and_storages(sdfg: SDFG) -> Dict[Any, Any]:
+        """Snapshot every slot ``set_default_schedule_and_storage_types`` can write.
+
+        Those are descriptor storages (keyed by ``(SDFG, name)``) and the schedules of scope
+        entry nodes / library nodes. The inference function reports nothing about what it
+        resolved, so the pass diffs a before/after snapshot. Exit nodes are skipped: their
+        schedule proxies the same :class:`~dace.sdfg.nodes.Map` as the matching entry node.
+        """
+        snapshot: Dict[Any, Any] = {}
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for name, desc in nsdfg.arrays.items():
+                snapshot[(nsdfg, name)] = desc.storage
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
+                snapshot[node] = node.schedule
+        return snapshot
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Resolve every ``Default`` schedule and storage in the SDFG hierarchy.
+
+        :returns: Number of schedule/storage slots whose value changed, or ``None`` if none did.
+        """
+        before = self._schedules_and_storages(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        return None
+        after = self._schedules_and_storages(sdfg)
+
+        changed = sum(1 for key, value in after.items() if before.get(key) != value)
+        return changed or None
 
 
 @properties.make_properties

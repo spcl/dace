@@ -2,7 +2,7 @@
 import copy
 import re
 import dace
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 import sympy
 from sympy.printing.pycode import pycode
 from dace import SDFG
@@ -234,7 +234,13 @@ class OffsetLoopsAndMaps(ppl.Pass):
         #except Exception as e:
         #    raise ValueError(f"Failed to process expression '{expr}': {e}")
 
-    def _apply(self, cfg: dace.ControlFlowRegion):
+    def _apply(self, cfg: dace.ControlFlowRegion) -> int:
+        """Offset every matching loop / map in ``cfg`` and everything nested below it.
+
+        :param cfg: The region to rewrite in place.
+        :returns: Number of loop regions and map entries that were offset.
+        """
+        offset_count = 0
         for node in cfg.nodes():
             if isinstance(node, LoopRegion):
                 node.init_statement
@@ -261,6 +267,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     repldict = {node.loop_variable: v}
 
                     self._repl_recursive(node, repldict)
+                    offset_count += 1
             elif isinstance(node, dace.SDFGState):
                 state = node
                 for state_node in state.nodes():
@@ -310,14 +317,15 @@ class OffsetLoopsAndMaps(ppl.Pass):
                             for n in nodes_between:
                                 if isinstance(n, dace.nodes.NestedSDFG):
                                     self._repl_recursive(n.sdfg, repldict)
+                            offset_count += 1
 
         for node in cfg.nodes():
             if isinstance(node, ConditionalBlock):
                 for _, body in node.branches:
-                    self._apply(body)
+                    offset_count += self._apply(body)
             elif isinstance(node, ControlFlowRegion):
                 # Covers LoopRegion and any other control flow region.
-                self._apply(node)
+                offset_count += self._apply(node)
             elif isinstance(node, dace.SDFGState):
                 # Descend into NestedSDFGs so their maps/loops get
                 # offset too -- not just the ones at the enclosing
@@ -325,9 +333,10 @@ class OffsetLoopsAndMaps(ppl.Pass):
                 # promoted into a ``loop_body`` nested SDFG).
                 for state_node in node.nodes():
                     if isinstance(state_node, dace.nodes.NestedSDFG):
-                        self._apply(state_node.sdfg)
+                        offset_count += self._apply(state_node.sdfg)
             # Other control flow blocks (break/continue/return) hold no
             # states or regions to offset and are skipped.
+        return offset_count
 
     def _split_expr_str_opt_rhs(self, expr_str: str, op_to_split: str) -> str:
         exprs = expr_str.split(op_to_split)
@@ -344,7 +353,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
         expr_str = lhs + op_to_split + sympy.pycode(dace.symbolic.SymExpr(rhs).simplify()) + (")" * (opens - exits))
         return expr_str
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[int]:
+        """Shift every matching loop / map in ``sdfg`` by ``offset_expr``.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes in the pipeline, forwarded to the unit-copy sub-pass.
+        :returns: Number of rewrites made (unit copies split + loops/maps offset + loop expressions simplified),
+                  or ``None`` if nothing matched.
+        """
         # Cross-array unit copies (memlets with ``other_subset``) carry a
         # second subset that ``_create_new_memlet`` cannot offset alongside
         # the primary one. Rewrite each such single-element copy as an
@@ -353,16 +369,18 @@ class OffsetLoopsAndMaps(ppl.Pass):
         # canonicalize pipeline's ordering.
         from dace.transformation.passes.insert_unit_copy_assign_tasklets import (
             InsertAssignTaskletsForUnitCopies, )
-        InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, pipeline_results or {})
+        unit_copies = InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, pipeline_results or {})
 
         # Do it for LoopRegions and Maps
-        self._apply(sdfg)
+        rewrites = self._apply(sdfg)
+        rewrites += unit_copies or 0
         sdfg.validate()
 
         # Simplify <= loop conditions to use < if set
         if self.convert_leq_to_lt:
             for n, g in sdfg.all_nodes_recursive():
                 if isinstance(n, LoopRegion) and n.loop_condition.language == dace.dtypes.Language.Python:
+                    old_condition = n.loop_condition.as_string
                     expr = dace.symbolic.SymExpr(n.loop_condition.as_string)
                     if isinstance(expr, sympy.core.relational.Relational) and isinstance(expr, sympy.LessThan):
                         lhs, rhs = expr.lhs, expr.rhs
@@ -372,17 +390,22 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     # Then simplify it and add back
                     expr_str = self._split_expr_str_opt_rhs(n.loop_condition.as_string, " < ")
                     n.loop_condition = CodeBlock(expr_str)
+                    if n.loop_condition.as_string != old_condition:
+                        rewrites += 1
         sdfg.validate()
 
         # Try to simplify loop init statements, expressions such as ((-1) + 1)
         for n, g in sdfg.all_nodes_recursive():
             if isinstance(n, LoopRegion) and n.init_statement.language == dace.dtypes.Language.Python:
+                old_init = n.init_statement.as_string
                 try:
                     expr_str = self._split_expr_str_opt_rhs(n.init_statement.as_string, " = ")
                 except Exception as e:
                     print(str(e))
                     expr_str = n.init_statement.as_string
                 n.init_statement = CodeBlock(expr_str)
+                if n.init_statement.as_string != old_init:
+                    rewrites += 1
         sdfg.validate()
 
-        return None
+        return rewrites or None

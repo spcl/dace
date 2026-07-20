@@ -2,8 +2,10 @@
 import copy
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
+import sympy
+
 import dace
-from dace import symbolic
+from dace import subsets, symbolic
 from dace.sdfg import graph, nodes as nodes, validation
 from dace.transformation import helpers
 
@@ -357,6 +359,7 @@ def is_node_reachable_from(
     graph: dace.SDFGState,
     begin: nodes.Node,
     end: nodes.Node,
+    ignore_empty_edges: bool = False,
 ) -> bool:
     """Test if the node `end` can be reached from `begin`.
 
@@ -367,10 +370,13 @@ def is_node_reachable_from(
     :param graph: The graph to operate on.
     :param begin: The start of the DFS.
     :param end: The node that should be located.
+    :param ignore_empty_edges: Do not traverse empty Memlets, i.e. only follow real
+        data flow. Used to tell an ordering-only connection apart from a data one.
     """
 
     def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-        return (edge.dst for edge in graph.out_edges(node))
+        return (edge.dst for edge in graph.out_edges(node)
+                if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty()))
 
     to_visit: List[nodes.Node] = [begin]
     seen: Set[nodes.Node] = set()
@@ -410,6 +416,241 @@ def is_parallel(
     elif is_node_reachable_from(graph=graph, begin=node2, end=node1):
         return False
     return True
+
+
+def find_happens_before_connection(
+    state: dace.SDFGState,
+    first_map_entry: nodes.MapEntry,
+    second_map_entry: nodes.MapEntry,
+) -> Optional[List[graph.MultiConnectorEdge[dace.Memlet]]]:
+    """The empty Memlets that are the *only* connection between the two Map scopes.
+
+    ``StateFusionExtended`` collapses an interstate edge and re-imposes the ordering it
+    used to enforce with empty (happens-before) Memlets. Two Maps that were in separate
+    states and had a WAR/WAW hazard therefore end up ordered but *not* connected by data.
+    Such Maps look non-parallel to `is_parallel()` even though fusing them may well be
+    legal, so this function recognises that situation.
+
+    The function returns the ordering edges if, and only if, `first_map_entry` is the
+    upstream Map and every connection to `second_map_entry` is an empty Memlet that
+    goes *directly* from the first Map (its MapExit, or an AccessNode that only the
+    first Map writes) into `second_map_entry`. In every other case -- the Maps are
+    parallel, the direction is reversed, real data flows between them, or a third node
+    sits in between and would lose its own ordering -- `None` is returned.
+
+    :param state: The state in which the two Maps are.
+    :param first_map_entry: Entry of the Map that must be the upstream one.
+    :param second_map_entry: Entry of the Map that must be the downstream one.
+    """
+    first_map_exit: nodes.MapExit = state.exit_node(first_map_entry)
+    second_map_exit: nodes.MapExit = state.exit_node(second_map_entry)
+
+    # `first` has to be the upstream Map. If it is the downstream one we bail out; the
+    #  matcher also offers the swapped pair, which is the one that is handled.
+    if not is_node_reachable_from(graph=state, begin=first_map_exit, end=second_map_entry):
+        return None
+    if is_node_reachable_from(graph=state, begin=second_map_exit, end=first_map_entry):
+        return None
+
+    # If the Maps stay connected once the empty Memlets are ignored, then real data flows
+    #  between them. That is `MapFusionVertical`'s business, not ours.
+    if is_node_reachable_from(graph=state, begin=first_map_exit, end=second_map_entry, ignore_empty_edges=True):
+        return None
+
+    # Nodes that the first Map alone writes; an ordering edge may also start there
+    #  (that is the shape a WAW hazard produces).
+    own_outputs: Set[nodes.Node] = {
+        e.dst
+        for e in state.out_edges(first_map_exit)
+        if isinstance(e.dst, nodes.AccessNode) and all(ie.src is first_map_exit for ie in state.in_edges(e.dst))
+    }
+
+    ordering_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = []
+    for edge in state.edges():
+        if edge.data is None or not edge.data.is_empty():
+            continue
+        if edge.dst is not second_map_entry:
+            continue
+        if edge.src is not first_map_exit and edge.src not in own_outputs:
+            # Something else orders the second Map as well. Dropping the edge would
+            #  silently drop that dependency, so refuse.
+            return None
+        ordering_edges.append(edge)
+
+    # Every path from the first to the second Map must be covered, otherwise the Maps
+    #  would still not be parallel after the edges are removed.
+    if not ordering_edges:
+        return None
+    reachable_without = _is_reachable_ignoring(state, first_map_exit, second_map_entry, set(ordering_edges))
+    return None if reachable_without else ordering_edges
+
+
+def _is_reachable_ignoring(
+    state: dace.SDFGState,
+    begin: nodes.Node,
+    end: nodes.Node,
+    ignored_edges: Set[graph.MultiConnectorEdge[dace.Memlet]],
+) -> bool:
+    """`is_node_reachable_from()` with a set of edges cut out of the graph."""
+    to_visit: List[nodes.Node] = [begin]
+    seen: Set[nodes.Node] = set()
+    while to_visit:
+        node = to_visit.pop()
+        if node is end:
+            return True
+        if node in seen:
+            continue
+        seen.add(node)
+        to_visit.extend(e.dst for e in state.out_edges(node) if e not in ignored_edges)
+    return False
+
+
+def _scope_boundary_accesses(
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    param_repl: Optional[Dict[str, str]],
+) -> Tuple[Dict[str, List[Tuple[nodes.Node, subsets.Subset]]], Dict[str, List[Tuple[nodes.Node, subsets.Subset]]]]:
+    """Per-iteration reads and writes of a Map scope, keyed by data name.
+
+    The subsets are taken from the edges immediately *inside* the scope nodes, so they
+    describe what a single iteration touches (for a nested Map the propagated subset
+    covers all of its iterations, which is the conservative and correct thing here).
+    The node returned alongside a subset is the one an ordering edge has to attach to.
+
+    :param state: The state in which the Map is.
+    :param map_entry: The entry node of the Map.
+    :param param_repl: Renaming applied to the subsets, see `find_parameter_remapping()`.
+    """
+    map_exit: nodes.MapExit = state.exit_node(map_entry)
+    reads: Dict[str, List[Tuple[nodes.Node, subsets.Subset]]] = {}
+    writes: Dict[str, List[Tuple[nodes.Node, subsets.Subset]]] = {}
+
+    read_side = (state.out_edges(map_entry), lambda e: e.dst, reads)
+    write_side = (state.in_edges(map_exit), lambda e: e.src, writes)
+    for edges, node_of, target in (read_side, write_side):
+        for edge in edges:
+            if edge.data is None or edge.data.is_empty() or edge.data.data is None:
+                continue
+            subset = edge.data.subset
+            if subset is None:
+                return {}, {}
+            subset = copy.deepcopy(subset)
+            if param_repl:
+                symbolic.safe_replace(param_repl, subset.replace)
+            target.setdefault(edge.data.data, []).append((node_of(edge), subset))
+    return reads, writes
+
+
+def _is_iteration_private(
+    first_subset: subsets.Subset,
+    second_subset: subsets.Subset,
+    params: List[sympy.Symbol],
+) -> bool:
+    """Whether two accesses of one array can only collide within the *same* iteration.
+
+    Fusing two Maps replaces a whole-Map ordering ("all of the first Map, then all of the
+    second") with a per-iteration one, so a hazard is only still covered if no iteration
+    can collide with a *different* iteration. That holds when some dimensions pin every
+    Map parameter: a dimension pins `p` if both accesses reduce to the same single point
+    there and that point is an injective function of `p` alone (`p`, `p + 1`, `2 * p`,
+    ...). Two distinct parameter tuples then differ in some `p`, hence differ in the
+    dimension that pins `p`, hence touch different elements.
+
+    :param first_subset: Subset accessed by the first Map, in its own parameters.
+    :param second_subset: Subset accessed by the second Map, already renamed.
+    :param params: The (common) Map parameters.
+    """
+    if first_subset is None or second_subset is None:
+        return False
+    if isinstance(first_subset, subsets.Indices):
+        first_subset = subsets.Range.from_indices(first_subset)
+    if isinstance(second_subset, subsets.Indices):
+        second_subset = subsets.Range.from_indices(second_subset)
+    if not isinstance(first_subset, subsets.Range) or not isinstance(second_subset, subsets.Range):
+        return False
+    if first_subset.dims() != second_subset.dims():
+        return False
+
+    pinned: Set[sympy.Symbol] = set()
+    for (first_begin, first_end, _), (second_begin, second_end, _) in zip(first_subset.ranges, second_subset.ranges):
+        first_begin, first_end = sympy.sympify(first_begin), sympy.sympify(first_end)
+        second_begin, second_end = sympy.sympify(second_begin), sympy.sympify(second_end)
+        # Only a single point in this dimension, and the same one on both sides, tells
+        #  us anything about iterations that are not the same.
+        if symbolic.simplify(first_begin - first_end) != 0 or symbolic.simplify(second_begin - second_end) != 0:
+            continue
+        if symbolic.simplify(first_begin - second_begin) != 0:
+            continue
+        for param in params:
+            if param not in first_begin.free_symbols:
+                continue
+            if any(other in first_begin.free_symbols for other in params if other is not param):
+                continue
+            # Injective in `param` iff shifting it by one always moves the point.
+            step = symbolic.simplify(first_begin.subs(param, param + 1) - first_begin)
+            if step != 0 and not step.free_symbols:
+                pinned.add(param)
+    return all(param in pinned for param in params)
+
+
+def analyze_happens_before_fusion(
+    state: dace.SDFGState,
+    sdfg: dace.SDFG,
+    first_map_entry: nodes.MapEntry,
+    second_map_entry: nodes.MapEntry,
+    param_repl: Dict[str, str],
+) -> Optional[Tuple[List[graph.MultiConnectorEdge[dace.Memlet]], List[Tuple[nodes.Node, nodes.Node]]]]:
+    """Plan the fusion of two Maps that are ordered by happens-before edges only.
+
+    Returns `None` if the Maps are not in that situation or if fusing them would not be
+    safe. Otherwise it returns the ordering edges that have to be *removed* (they would
+    become a self loop on the fused Map) together with the pairs of body nodes that have
+    to be re-connected by an empty Memlet *inside* the fused scope: the whole-Map
+    ordering the removed edges provided degenerates into a per-iteration one, and it is
+    those inner edges that provide it.
+
+    :param state: The state in which the two Maps are.
+    :param sdfg: The SDFG on which we operate.
+    :param first_map_entry: Entry of the upstream Map.
+    :param second_map_entry: Entry of the downstream Map.
+    :param param_repl: Renaming of the second Map's parameters, see `find_parameter_remapping()`.
+    """
+    ordering_edges = find_happens_before_connection(state, first_map_entry, second_map_entry)
+    if ordering_edges is None:
+        return None
+
+    # Data that does not cross the scope nodes is invisible to the subset analysis below,
+    #  so an inner AccessNode to non-transient data (which the other Map might also touch)
+    #  makes the analysis incomplete. Refuse instead of guessing.
+    for map_entry in (first_map_entry, second_map_entry):
+        for node in state.scope_subgraph(map_entry, False, False).nodes():
+            if isinstance(node, nodes.AccessNode) and not sdfg.arrays[node.data].transient:
+                return None
+
+    first_reads, first_writes = _scope_boundary_accesses(state, first_map_entry, None)
+    second_reads, second_writes = _scope_boundary_accesses(state, second_map_entry, param_repl)
+    params = [symbolic.pystr_to_symbolic(param) for param in first_map_entry.map.params]
+
+    # An ordering edge must end up in front of the second Map's access, and a nested scope
+    #  is ordered as a whole, i.e. after its exit resp. before its entry.
+    def order_source(node: nodes.Node) -> nodes.Node:
+        return state.exit_node(node) if isinstance(node, nodes.EntryNode) else node
+
+    def order_target(node: nodes.Node) -> nodes.Node:
+        return state.entry_node(node) if isinstance(node, nodes.ExitNode) else node
+
+    inner_pairs: List[Tuple[nodes.Node, nodes.Node]] = []
+    # Read/read is not a hazard, the other three combinations are (WAW, RAW, WAR).
+    hazards = [(first_writes, second_writes), (first_writes, second_reads), (first_reads, second_writes)]
+    for first_side, second_side in hazards:
+        for data, first_accesses in first_side.items():
+            for first_node, first_subset in first_accesses:
+                for second_node, second_subset in second_side.get(data, []):
+                    if not _is_iteration_private(first_subset, second_subset, params):
+                        return None
+                    inner_pairs.append((order_source(first_node), order_target(second_node)))
+
+    return ordering_edges, list(dict.fromkeys(inner_pairs))
 
 
 def can_topologically_be_fused(

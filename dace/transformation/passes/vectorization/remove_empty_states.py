@@ -1,7 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Remove empty states, splicing their interstate edges and assignments together."""
 import copy
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from dace import SDFG, InterstateEdge, properties
 from dace.sdfg import nodes
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock
@@ -27,11 +27,13 @@ class RemoveEmptyStates(ppl.Pass):
     def depends_on(self):
         return {}
 
-    def _apply(self, sdfg: SDFG):
+    def _apply(self, sdfg: SDFG) -> int:
         """Remove empty states recursively, merging assignments across the spliced edge.
 
         :param sdfg: The SDFG to transform in place.
+        :returns: Number of empty states removed, including those in nested SDFGs.
         """
+        removed = 0
         for state in sdfg.all_states():
             # If empty state
             if len(state.nodes()) != 0:
@@ -57,6 +59,7 @@ class RemoveEmptyStates(ppl.Pass):
                         g.add_node(dst_node, is_start_block=True)
                         for e in dst_node_out_edges:
                             g.add_edge(dst_node, e.dst, copy.deepcopy(e.data))
+                        removed += 1
             else:
                 if len(g.in_edges(state)) == 1:
                     if len(g.out_edges(state)) == 1:
@@ -69,6 +72,7 @@ class RemoveEmptyStates(ppl.Pass):
                             dst = out_edge.dst
                             g.remove_node(state)
                             g.add_edge(src, dst, InterstateEdge(assignments=joined_assignments))
+                            removed += 1
 
         # A region's start block is stored as an integer index (``_start_block``) with a
         # cached object (``_cached_start_block``); ``remove_node`` maintains neither. Removing
@@ -83,7 +87,9 @@ class RemoveEmptyStates(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, nodes.NestedSDFG):
-                    self._apply(node.sdfg)
+                    removed += self._apply(node.sdfg)
+
+        return removed
 
     def _repair_start_block(self, region: AbstractControlFlowRegion) -> None:
         """Re-establish ``region``'s start block from its unique source node.
@@ -107,10 +113,12 @@ class RemoveEmptyStates(ppl.Pass):
         elif region._cached_start_block is not None and region._cached_start_block not in block_nodes:
             region._cached_start_block = None
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> None:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Remove all empty states from the SDFG and validate the result.
 
         :param sdfg: The SDFG to transform in place.
         :param pipeline_results: Results from previously run passes (unused).
+        :returns: Number of empty states removed, or ``None`` if none were.
         """
-        self._apply(sdfg)
+        removed = self._apply(sdfg)
+        return removed or None

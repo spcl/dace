@@ -128,11 +128,25 @@ class LoopToReduce(ppl.Pass):
         return bool(modified & ppl.Modifies.CFG)
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        """Lift reduction loops to ``Reduce`` library nodes.
+
+        :returns: The number of modifications made -- reductions lifted PLUS the
+                  normalization rewrites below, which edit the graph whether or not any
+                  reduction is then found. ``None`` only when the SDFG was left untouched.
+
+        ``apply_pass`` returning ``None`` means "did not modify the SDFG", and callers act
+        on it: the pipeline skips its per-stage ``validate()`` and leaves ``self._modified``
+        alone, so cached analyses are reused and a ``FixedPointPipeline`` stops iterating.
+        Counting only the lifts would report ``None`` for a run that rewrote hundreds of WCR
+        edges -- on cloudsc this pass normalizes ~400 sites while lifting nothing.
+        """
         # WCR edges -> in-body augassign so the matcher sees a uniform
         # ``acc <op>= arr[f(i)]`` tasklet. No-op if already augassign.
         from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+        normalized = 0
+        applied = PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+        normalized += sum(len(v) for v in applied.values()) if applied else 0
 
         # D4 (CleanAccessNode + CleanTasklet) deliberately NOT applied: matcher already
         # handles scalar-slice intermediates, WCRToAugAssign above covers normalization.
@@ -148,7 +162,10 @@ class LoopToReduce(ppl.Pass):
         if self.prefer == 'wcr-scalar':
             for node, _p in list(sdfg.all_nodes_recursive()):
                 if isinstance(node, LoopRegion) and node.loop_variable and _nested_in_sequential_loop(node):
-                    node.pinned_sequential = True
+                    # Only a flag that is not already set is a modification.
+                    if not node.pinned_sequential:
+                        node.pinned_sequential = True
+                        normalized += 1
 
         count = 0
         for node, parent in list(sdfg.all_nodes_recursive()):
@@ -179,13 +196,17 @@ class LoopToReduce(ppl.Pass):
             # TTE collapses the frontend's trivial ``out = in`` passthrough tasklets
             # around the accumulator load/store so ``AugAssignToWCR`` (matches the 5-node
             # ``arr -> copy_in -> tasklet -> copy_out -> arr`` shape) sees a clean pattern.
-            PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+            applied = PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+            normalized += sum(len(v) for v in applied.values()) if applied else 0
             # ``permissive=False`` required: permissive mode matches scan-shape bodies
             # (TSVC recurrence_down ``b[i] = b[i+1] + a[i]`` after ``LoopToScan``) as
             # reductions and rewrites them to WCR writes later parallelised -> carried
             # dependence lost, off-by-one. Pinned by the descending-recurrence value-
             # preservation test.
-            sdfg.apply_transformations_repeated(AugAssignToWCR, validate=False, validate_all=False, permissive=False)
+            normalized += sdfg.apply_transformations_repeated(AugAssignToWCR,
+                                                              validate=False,
+                                                              validate_all=False,
+                                                              permissive=False)
             for node, parent in list(sdfg.all_nodes_recursive()):
                 if not isinstance(node, LoopRegion):
                     continue
@@ -218,7 +239,13 @@ class LoopToReduce(ppl.Pass):
             # range so codegen / DCE see the tight subset.
             from dace.sdfg.propagation import propagate_memlets_sdfg
             propagate_memlets_sdfg(sdfg)
-        return count or None
+        # ``count`` is the number of reductions LIFTED -- callers/tests read it as exactly that,
+        #  so it must not absorb the normalization edits. When nothing was lifted but the
+        #  normalization above still changed the graph, report ``0`` (non-None = "modified", but
+        #  zero lifts); only a wholly untouched SDFG is ``None``. Mirrors LoopToScan.
+        if count:
+            return count
+        return 0 if normalized else None
 
 
 def _one_elem(subset) -> Optional[int]:
@@ -608,9 +635,8 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
                     return None
                 for e in st.in_edges(an):
                     src, sub = e.src, (e.data.subset if e.data is not None else None)
-                    if (isinstance(src, nodes.AccessNode) and src.data in allowed and sub is not None
-                            and (_uses(sub, loop_var_sym)
-                                 or any(str(fs) in loop_iedge_assignees for fs in sub.free_symbols))):
+                    if (isinstance(src, nodes.AccessNode) and src.data in allowed and sub is not None and
+                        (_uses(sub, loop_var_sym) or any(str(fs) in loop_iedge_assignees for fs in sub.free_symbols))):
                         return None
 
         expanded = _expand_over_loop(arr_subset, loop_var_sym, start, end, stride)

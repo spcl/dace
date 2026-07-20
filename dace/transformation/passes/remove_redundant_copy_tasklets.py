@@ -1,6 +1,6 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 import dace
 from dace import SDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -38,10 +38,16 @@ class RemoveReduntantCopyTasklets(ppl.Pass):
                     1,
                 ])))
 
-    def _apply(self, sdfg: SDFG):
+    def _apply(self, sdfg: SDFG) -> int:
+        """Fold every scalar copy tasklet in ``sdfg`` into a direct edge to its consumers.
+
+        :param sdfg: The SDFG to rewrite in place, recursing into nested SDFGs.
+        :returns: Number of copy tasklets removed.
+        """
         # If AccessNode (A1) -> CopyTasklet -> AccessNode (A2)
         # If copy tasklet matches the pattern e.g. `{rhs} = {lhs}` or `vector_copy({rhs}, {lhs});`
         # If access node is not accessed anywhere at all (not appearing as a memlet data, interstate edge read, for/ifblocks)
+        removed = 0
         replacement_dict = dict()
         for state in sdfg.all_states():
             for tasklet in {n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)}:
@@ -65,6 +71,7 @@ class RemoveReduntantCopyTasklets(ppl.Pass):
                             dst_out_edges = state.out_edges(dst_node)
                             state.remove_node(tasklet)
                             state.remove_node(dst_node)
+                            removed += 1
                             in_edge = in_edges[0]
 
                             # Subset needs to be 0 so no need to change
@@ -83,10 +90,18 @@ class RemoveReduntantCopyTasklets(ppl.Pass):
 
         for state in sdfg.all_states():
             for n in {n for n in state.nodes() if isinstance(n, dace.nodes.NestedSDFG)}:
-                self._apply(n.sdfg)
+                removed += self._apply(n.sdfg)
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        self._apply(sdfg)
+        return removed
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Remove every redundant scalar copy tasklet in ``sdfg``.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: Number of tasklets removed, or ``None`` if there were none.
+        """
+        return self._apply(sdfg) or None
 
     def report(self, pass_retval: Any) -> Optional[str]:
-        return f''
+        return f'Removed {pass_retval} redundant copy tasklets.'

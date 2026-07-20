@@ -104,7 +104,7 @@ def _parallelize_phase_of(names: set) -> str:
     phases (per the user's request), everything else is ``prep``."""
     if names & {'LoopToMap'}:
         return 'parallelize'
-    if names & {'LoopToReduce', 'AccumulatorToMapAndReduce'}:
+    if names & {'LoopToReduce'}:
         return 'loop_to_x'
     return 'prep'
 
@@ -152,6 +152,10 @@ _CANON_SUPER_PHASE: Dict[str, str] = {
     'parallelize': 'parallelize', 'parallelize_guarded': 'parallelize', 'reduction_to_wcr_map': 'parallelize',
     'scatter': 'parallelize', 'post_l2m': 'parallelize', 'loop_fuse': 'parallelize', 'lift_copy': 'parallelize',
     'interchange': 'parallelize', 'reorder': 'parallelize', 'collapse': 'parallelize',
+    # ``coalesce`` runs between ``post_l2m`` and ``loop_fuse`` (pipeline.py ``_coalesce``): graph
+    # prep for maximal fusion once loops are maps, so it belongs to the same super-phase as its
+    # neighbours rather than opening a new checkpoint boundary.
+    'coalesce': 'parallelize',
     # finalize: map fusion + einsum lift + guard hoist + WCR normalize + terminal simplify / parallelize.
     'fuse': 'finalize', 'lift': 'finalize', 'licm': 'finalize', 'hoist_guards': 'finalize',
     'normalize_wcr': 'finalize', 'revert_nonreduction_wcr': 'finalize', 'relax_powers': 'finalize', 'end': 'finalize',

@@ -114,11 +114,16 @@ class SplitArray(ppl.Pass):
     # ------------------------------------------------------------------ #
     #  Phase 0: Unroll loops/maps over split dimensions
     # ------------------------------------------------------------------ #
-    def _unroll_loops_that_depend_only_on_split_dimensions(self, sdfg: dace.SDFG):
-        """Unroll maps/loops whose range matches a split extent, one at a time (unrolling invalidates node refs)."""
+    def _unroll_loops_that_depend_only_on_split_dimensions(self, sdfg: dace.SDFG) -> int:
+        """Unroll maps/loops whose range matches a split extent, one at a time (unrolling invalidates node refs).
+
+        :param sdfg: The SDFG to specialize and unroll in place.
+        :returns: Number of maps/loops unrolled.
+        """
         assert self._array_dim_map, "Expected _array_dim_map to be populated before unrolling loops/maps"
         sdfg.replace_dict(self._symbol_map)
         potential_ranges = set(self._symbol_map.values())
+        unrolled = 0
 
         while True:
             target = None
@@ -169,6 +174,9 @@ class SplitArray(ppl.Pass):
                 MapUnroll().apply_to(sdfg=g.sdfg, options={}, map_entry=n)
             else:
                 LoopUnroll().apply_to(sdfg=n.sdfg, options={"inline_iterations": True}, loop=n)
+            unrolled += 1
+
+        return unrolled
 
     # ------------------------------------------------------------------ #
     #  Phase 1: Identify which arrays/dimensions to split
@@ -570,11 +578,21 @@ class SplitArray(ppl.Pass):
     # ------------------------------------------------------------------ #
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        """Split every array whose shape carries a mapped symbol into one array per index.
+
+        :param sdfg: The SDFG to transform in place.
+        :param _: Pipeline results (unused).
+        :returns: Number of changes made (arrays split + symbols specialized + maps/loops unrolled), or ``None``
+                  if the SDFG uses none of the mapped symbols.
+        """
         # needs symbolic shapes, before symbol replacement
         split_map = self._collect_arrays_to_split(sdfg)
+        # Phase 0 specializes ``_symbol_map`` into the SDFG, so it modifies the graph even when no
+        # array ends up being split. Count the symbols it will substitute before they disappear.
+        specialized = sum(1 for sym in self._symbol_map if sym in sdfg.symbols)
 
         # Phase 0
-        self._unroll_loops_that_depend_only_on_split_dimensions(sdfg)
+        unrolled = self._unroll_loops_that_depend_only_on_split_dimensions(sdfg)
         sdfg.validate()
 
         # Phase 2
@@ -589,3 +607,5 @@ class SplitArray(ppl.Pass):
         self._pass_to_nsdfgs(sdfg, split_map)
         # Phase 5
         self._remove_split_arrays(sdfg, split_map)
+
+        return (len(split_map) + specialized + unrolled) or None

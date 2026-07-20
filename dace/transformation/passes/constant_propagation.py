@@ -81,6 +81,17 @@ class ConstantPropagation(ppl.Pass):
         if specialized_scalars:
             initial_symbols = {k: v for k, v in initial_symbols.items() if k not in specialized_scalars}
 
+        # Records the two graph edits that ``result`` does NOT witness: a nested-SDFG
+        # modification (whose surviving symbols do not bubble up here) and a loop-update rewrite
+        # (whose folded symbol may live only in the update statement). ``result`` already covers
+        # every block/edge substitution in THIS SDFG, so those are deliberately NOT flagged here
+        # -- flagging them broke idempotence (``block.replace_dict`` runs whenever a constant is
+        # known at the block, i.e. every fixpoint iteration, even when it substitutes nothing),
+        # which made SimplifyPass's FixedPointPipeline never converge. Both edits recorded here
+        # are idempotent (a re-run finds nothing to fold), so convergence matches the original.
+        # Bound before the early-exit branch so it is in scope on both paths.
+        mutated = False
+
         # Early exit if no constants can be propagated
         if not initial_symbols and not self.should_apply(sdfg):
             result = {}
@@ -152,7 +163,12 @@ class ConstantPropagation(ppl.Pass):
                         e.data.replace_dict(out_mapping, replace_keys=False)
 
                 if isinstance(block, LoopRegion):
-                    self._propagate_loop(block, post_constants, multivalue_desc_symbols)
+                    # Rewriting the loop's update expression is a graph edit that ``result`` does
+                    #  not witness (the folded symbol may live only in the update statement), so
+                    #  fold its outcome into ``mutated`` -- else apply_pass can report ``None``
+                    #  after changing the loop's stride representation.
+                    if self._propagate_loop(block, post_constants, multivalue_desc_symbols):
+                        mutated = True
 
             # Gather initial propagated symbols
             result = {k: v for k, v in symbols_replaced.items() if k not in remaining_unknowns}
@@ -192,23 +208,38 @@ class ConstantPropagation(ppl.Pass):
                         nested_id = node.sdfg.cfg_id
                         const_syms = {k: v for k, v in node.symbol_mapping.items() if not symbolic.issymbolic(v)}
                         internal = self.apply_pass(node.sdfg, _, const_syms)
-                        if internal:
+                        # ``is not None``, not truthiness: a nested run that edited the graph but
+                        #  propagated no surviving symbol returns an EMPTY collection (mutated but
+                        #  empty). Testing ``if internal:`` would drop that signal and this SDFG
+                        #  could then report ``None`` (= untouched) despite ``node.sdfg`` changing.
+                        if internal is not None:
+                            mutated = True
                             for nid, removed in internal:
                                 result.add((nid, removed))
                                 # Remove symbol mapping if constant was completely propagated
                                 if nid == nested_id and removed in node.symbol_mapping:
                                     del node.symbol_mapping[removed]
 
-        # Return result
+        # Return result. An empty SET distinguishes "edited the graph but propagated no symbol
+        # that survived filtering" from "did nothing at all" -- only the latter is None. Must be a
+        # set, not a dict: the non-empty return is a Set[str] (line above) / Set[Tuple] when
+        # recursive, report() is typed Set[str], and a future consumer may do set algebra on it.
         if not result:
-            return None
+            return set() if mutated else None
         return result
 
     def report(self, pass_retval: Set[str]) -> str:
         return f'Propagated {len(pass_retval)} constants.'
 
     def _propagate_loop(self, loop: LoopRegion, post_constants: BlockConstsT,
-                        multivalue_desc_symbols: Set[str]) -> None:
+                        multivalue_desc_symbols: Set[str]) -> bool:
+        """Fold post-loop constants into the loop's update expression.
+
+        :returns: Whether a substitution actually rewrote the update RHS. Idempotent: a second
+                  run finds the constant already folded, replaces nothing, and returns False --
+                  so a caller can safely OR this into a "modified" flag without breaking a
+                  FixedPointPipeline's convergence.
+        """
         if loop in post_constants and post_constants[loop] is not None:
             if loop.update_statement is not None and (loop.inverted and loop.update_before_condition
                                                       or not loop.inverted):
@@ -220,9 +251,14 @@ class ConstantPropagation(ppl.Pass):
                 }
                 update_stmt = loop.update_statement
                 updates = update_stmt.code if isinstance(update_stmt.code, list) else [update_stmt.code]
+                replaced = 0
                 for update in updates:
-                    astutils.ASTReplaceAssignmentRHS(post_mapping).visit(update)
+                    visitor = astutils.ASTReplaceAssignmentRHS(post_mapping)
+                    visitor.visit(update)
+                    replaced += visitor.repl_visitor.replace_count
                 loop.update_statement.code = updates
+                return replaced > 0
+        return False
 
     def _collect_constants_for_conditional(self, conditional: ConditionalBlock, arrays: Set[str],
                                            in_const_dict: BlockConstsT, pre_const_dict: BlockConstsT,

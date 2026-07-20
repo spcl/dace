@@ -43,13 +43,15 @@ class LiftTrivialIf(ppl.Pass):
     def depends_on(self):
         return []
 
-    def _make_unique_names(self, sdfg: dace.SDFG):
+    def _make_unique_names(self, sdfg: dace.SDFG) -> int:
         """Relabel every block so labels are unique across the whole SDFG.
 
         Lifting a branch up splices its blocks into the parent region, which can
         collide with existing labels; uniquifying first keeps the result valid.
 
         :param sdfg: SDFG whose blocks are relabeled in place.
+        :returns: Number of blocks whose label actually changed. Zero on an already-unique SDFG, which makes the
+                  step idempotent -- required for the ``FixedPointPipeline`` this pass runs in to converge.
         """
         # List, not a set: blocks hash by id(), so a set would iterate in allocation order. Two blocks
         # sharing a label make this first-come-wins -- whoever is visited first keeps the base name and
@@ -60,10 +62,14 @@ class LiftTrivialIf(ppl.Pass):
             if isinstance(n, dace.SDFGState) or isinstance(n, ControlFlowRegion) or isinstance(n, ControlFlowBlock)
         ]
         all_labels: Set[str] = set()
+        renamed = 0
         for n in all_blocks:
             new_label = dace.utils.find_new_name(n.label, all_labels)
             all_labels.add(new_label)
+            if new_label != n.label:
+                renamed += 1
             n.label = new_label
+        return renamed
 
     def _trivial_cond_check(self, code: CodeBlock, val: bool) -> bool:
         """Whether ``code`` provably evaluates to the constant truth value ``val``.
@@ -369,11 +375,21 @@ class LiftTrivialIf(ppl.Pass):
 
         return rmed_count
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, int]]:
+        """Collapse every statically-decidable conditional in ``sdfg`` into its taken branch.
+
+        :param sdfg: The SDFG to simplify in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: ``{'lifted_conditionals': <removed>, 'relabeled_blocks': <renamed>}``, or ``None`` if the pass
+                  left the SDFG untouched. Relabeling counts as a modification because it does rewrite the graph;
+                  it is idempotent, so a ``FixedPointPipeline`` still converges after one uniquifying round.
+        """
         # Start with top level nodes and continue further to ensure a trivial if within another trivial if
         # can be processed correctly
-        self._make_unique_names(sdfg)
+        relabeled = self._make_unique_names(sdfg)
         sdfg.reset_cfg_list()
-        self._detect_trivial_ifs_and_rm_cfg(sdfg)
+        rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
         sdfg.reset_cfg_list()
-        return None
+        if not rmed_count and not relabeled:
+            return None
+        return {'lifted_conditionals': rmed_count, 'relabeled_blocks': relabeled}

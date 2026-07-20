@@ -15,7 +15,7 @@ programs leave the iterator at. ON by default as it does not affect
 Python/SDFG API inputs.
 """
 
-from typing import Optional, Union
+from typing import Optional, Set, Union
 
 import dace
 from dace.sdfg.replace import replace_properties_dict
@@ -214,7 +214,13 @@ class UniqueLoopIterators(ppl.Pass):
         # emitting the assignment would shadow it (a hard C++ compile error). Skip.
         return False
 
-    def _apply_recursive(self, sdfg: dace.SDFG):
+    def _apply_recursive(self, sdfg: dace.SDFG) -> Set[str]:
+        """Rename the loop iterators of ``sdfg`` and of every nested SDFG below it.
+
+        :param sdfg: The SDFG to rewrite in place.
+        :returns: The new iterator names that were assigned (empty if every iterator was already unique).
+        """
+        renamed: Set[str] = set()
         array_names = frozenset(sdfg.arrays.keys())
         # Loop-variable names that more than one LoopRegion in THIS SDFG shares.
         # LoopFission clones a loop into siblings that keep the same
@@ -245,6 +251,7 @@ class UniqueLoopIterators(ppl.Pass):
                 continue
             new_name = f"{_LOOP_ITER_NAME_PREFIX}_{self._next_id}"
             self._rename_one_loop_var(cfg, old_name, new_name)
+            renamed.add(new_name)
 
             if self.assign_loop_iterator_post_value:
                 # Only materialise the post-value write when the original
@@ -283,7 +290,9 @@ class UniqueLoopIterators(ppl.Pass):
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply_recursive(node.sdfg)
+                    renamed |= self._apply_recursive(node.sdfg)
+
+        return renamed
 
     @staticmethod
     def _first_free_id(sdfg: dace.SDFG) -> int:
@@ -322,11 +331,12 @@ class UniqueLoopIterators(ppl.Pass):
                             max_id = max(max_id, _id_of(param))
         return max_id + 1
 
-    def apply_pass(self, sdfg: dace.SDFG, _):
+    def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[Set[str]]:
         """Rename every ``LoopRegion`` iterator in ``sdfg`` and its nested SDFGs.
 
         :param sdfg: SDFG to mutate in place.
         :param _: Pipeline results (unused).
+        :returns: The new iterator names assigned, or ``None`` if every iterator was already unique.
         """
         self._next_id = self._first_free_id(sdfg)
         # The post-value assignment must only be emitted for a loop variable
@@ -348,4 +358,4 @@ class UniqueLoopIterators(ppl.Pass):
             if loop_vars:
                 self._block_reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
                 self._blocks_reading = self._collect_symbol_readers(sdfg, loop_vars)
-        self._apply_recursive(sdfg)
+        return self._apply_recursive(sdfg) or None

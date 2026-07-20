@@ -72,9 +72,9 @@ def test_parallelize_runs_once_idempotent():
             C[i] = A[i] + B[i]
 
     sdfg = add.to_sdfg(simplify=True)
-    assert ParallelizePipeline().apply_pass(sdfg, {}) == 12  # composed stages
+    assert ParallelizePipeline().apply_pass(sdfg, {}) == 11  # composed stages
     # Re-running is harmless (nothing left to parallelize).
-    assert ParallelizePipeline().apply_pass(sdfg, {}) == 12
+    assert ParallelizePipeline().apply_pass(sdfg, {}) == 11
     sdfg.validate()
 
     A = np.random.default_rng(2).random(8)

@@ -145,15 +145,29 @@ class ShortLoopUnroll(ppl.Pass):
         return set()
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Unroll short constant-trip loops; returns the number unrolled or None.
+        """Unroll short constant-trip loops.
 
         Re-collects after each unroll since unrolling rewrites the control-flow
         structure (and may expose newly-constant inner loops).
+
+        :returns: The number of loops unrolled; ``0`` when no unroll completed but one raised
+                  part-way through ``apply`` (see below), leaving a possibly half-rewritten
+                  loop; ``None`` only when the SDFG was left untouched.
+
+        ``apply_pass`` returning ``None`` means "did not modify the SDFG", and callers act
+        on it: the pipeline skips its per-stage ``validate()`` and leaves ``self._modified``
+        alone (stale analyses, early ``FixedPointPipeline`` exit). A partial rewrite reported
+        as ``None`` would therefore go unvalidated, so it reports ``0`` -- "modified, but
+        nothing of my own kind completed".
         """
         if self.unroll_limit <= 0:
             return None
         from dace.transformation.interstate.loop_unroll import LoopUnroll
         unrolled = 0
+        # Unrolls that raised part-way through ``LoopUnroll.apply``. Counted separately from
+        # ``unrolled`` so they feed the return value (the graph may be half-rewritten) without
+        # triggering the completed-unroll propagation below.
+        partial = 0
         changed = True
         while changed:
             changed = False
@@ -164,6 +178,18 @@ class ShortLoopUnroll(ppl.Pass):
                 if trip is None or trip > self.unroll_limit:
                     continue
                 parent = loop.parent_graph
+                # Applicability is decided FIRST, on its own, so a refusal is distinguishable
+                # from a failure raised part-way through ``apply``. A refusal leaves the graph
+                # untouched and must not be reported as a modification; a mid-``apply`` failure
+                # can leave the loop half-rewritten and must be. ``apply_to`` below therefore
+                # runs with ``verify=False`` -- ``can_be_applied`` still runs exactly once, so
+                # this is the same check sequence as before, just with the outcome visible here.
+                try:
+                    applicable = LoopUnroll.can_be_applied_to(sdfg=loop.sdfg, loop=loop)
+                except Exception:
+                    applicable = False
+                if not applicable:
+                    continue  # not unrollable in this context; leave it for LoopToMap
                 try:
                     # ``annotate=False``: skip the per-apply full-SDFG memlet/state
                     # propagation. The transformation framework otherwise re-runs it
@@ -173,9 +199,12 @@ class ShortLoopUnroll(ppl.Pass):
                     # re-collection below reads only loop bounds, not memlets, so
                     # the interim annotations are never observed; one propagation
                     # after the whole fixpoint (below) refreshes them.
-                    LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop, annotate=False)
+                    LoopUnroll().apply_to(sdfg=loop.sdfg, loop=loop, annotate=False, verify=False)
                 except Exception:
-                    continue  # not unrollable in this context; leave it for LoopToMap
+                    # Raised from inside ``apply``: the rewrite may be half-done, so this
+                    # counts as a modification even though no loop was fully unrolled.
+                    partial += 1
+                    continue
                 unrolled += 1
                 changed = True
                 if parent is not None:
@@ -186,7 +215,8 @@ class ShortLoopUnroll(ppl.Pass):
             # Propagate once, at the end of the pass (not per-apply).
             from dace.sdfg.propagation import propagate_memlets_sdfg
             propagate_memlets_sdfg(sdfg)
-        return unrolled or None
+            return unrolled
+        return 0 if partial else None
 
 
 @properties.make_properties

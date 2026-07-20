@@ -101,7 +101,7 @@ class NormalizeBranchConditions(ppl.Pass):
                     necessary_assignment = f"{new_cond_name}: {cond_str}"
                     return (new_cond_str, necessary_assignment)
 
-    def _apply(self, sdfg: dace.SDFG):
+    def _apply(self, sdfg: dace.SDFG) -> int:
         """
         Normalize branch conditions into the form ``if (cond1 == 1)``, where ``cond1`` is a symbol or variable.
 
@@ -114,7 +114,9 @@ class NormalizeBranchConditions(ppl.Pass):
         where ``expr`` does not contain a ``==`` operator.
 
         :param sdfg: The SDFG to normalize, recursing into nested SDFGs.
+        :returns: Number of branch conditions rewritten.
         """
+        normalized = 0
         for cb in sdfg.all_control_flow_blocks():
             if not isinstance(cb, ConditionalBlock):
                 continue
@@ -141,19 +143,21 @@ class NormalizeBranchConditions(ppl.Pass):
                         # A new name
                         assert assignment_lhs not in in_edge.data.assignments
                         in_edge.data.assignments[assignment_lhs] = assignment_rhs
+                    normalized += 1
 
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply(node.sdfg)
+                    normalized += self._apply(node.sdfg)
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
+        return normalized
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """
         Rewrite branch conditions into the canonical form ``if (cond1 == 1)``, where ``cond1`` is a symbol or variable.
 
         :param sdfg: The SDFG to normalize.
         :param pipeline_results: Results of prior passes in the pipeline (unused).
-        :returns: ``None`` (this pass reports no per-element results).
+        :returns: Number of branch conditions rewritten, or ``None`` if all were already normalized.
         """
-        self._apply(sdfg)
-        return None
+        return self._apply(sdfg) or None

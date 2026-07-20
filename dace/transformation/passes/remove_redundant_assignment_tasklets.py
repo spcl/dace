@@ -1,7 +1,7 @@
 import copy
 import dace
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 from dace import SDFG
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -51,7 +51,13 @@ class RemoveRedundantAssignmentTasklets(ppl.Pass):
             return False
         return True
 
-    def _apply(self, sdfg: dace.SDFG):
+    def _apply(self, sdfg: dace.SDFG) -> int:
+        """Fold every redundant ``_out = _in`` tasklet in ``sdfg`` into a direct copy edge.
+
+        :param sdfg: The SDFG to rewrite in place, recursing into nested SDFGs.
+        :returns: Number of tasklets removed.
+        """
+        removed = 0
         for state in sdfg.all_states():
             nodes_to_rm = set()
             for node in state.nodes():
@@ -79,12 +85,22 @@ class RemoveRedundantAssignmentTasklets(ppl.Pass):
                         other_subset=copy.deepcopy(ie.data.subset),
                     ))
 
+            removed += len(nodes_to_rm)
+
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply(node.sdfg)
+                    removed += self._apply(node.sdfg)
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        self._apply(sdfg)
+        return removed
+
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Remove every redundant assignment tasklet in ``sdfg``.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: Number of tasklets removed, or ``None`` if there were none.
+        """
+        return self._apply(sdfg) or None
 
     def report(self, pass_retval: Any) -> Optional[str]:
-        return f''
+        return f'Removed {pass_retval} redundant assignment tasklets.'

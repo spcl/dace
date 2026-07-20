@@ -25,10 +25,20 @@ class ContinueToCondition(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Any]:
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Turn every eligible ``continue`` into a guard on the rest of the loop body.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes in the pipeline (unused).
+        :returns: Number of continue blocks converted, or ``None`` if there were none.
+        """
+        converted = 0
         for node, parent in sdfg.all_nodes_recursive():
             if self.can_be_applied(node):
                 self.apply(node, sdfg)
+                converted += 1
+
+        return converted or None
 
     def can_be_applied(self, cb: ContinueBlock) -> bool:
         # Must be a continue block...

@@ -148,7 +148,11 @@ def test_refuses_non_constant_write_index():
 
     sdfg = per_iter.to_sdfg(simplify=True)
     rewritten = AccumulatorToMapAndReduce().apply_pass(sdfg, {})
-    assert rewritten is None
+    # Falsy, not ``is None``: the pass's internal trivial-tasklet cleanup may still have
+    # edited the graph, and it reports that with an empty dict so callers that treat
+    # ``None`` as "SDFG untouched" (the canonicalization pipeline skips validation on it)
+    # are not misled. What this test pins is that no ACCUMULATOR was rewritten.
+    assert not rewritten
     assert not _has_buf_transient(sdfg)
 
 
@@ -162,7 +166,8 @@ def test_refuses_non_associative_op():
 
     sdfg = left_sub.to_sdfg(simplify=True)
     rewritten = AccumulatorToMapAndReduce().apply_pass(sdfg, {})
-    assert rewritten is None
+    assert not rewritten  # falsy, not ``is None`` -- see test_refuses_non_constant_write_index
+    assert not _has_buf_transient(sdfg)
 
 
 def test_map_wcr_scalar_sum_rewritten_to_buffer_and_reduce():
@@ -269,10 +274,14 @@ def test_seeded_inplace_accumulator_distinct_subsets():
     assert np.allclose(acc, ref)
 
 
-def test_idempotent_on_already_rewritten():
-    """Re-running the pass on its own output is a no-op (the matcher skips loops
-    whose accumulator is a ``_accum_buf_`` transient, but more fundamentally the
-    rewritten loops are gone after the first run)."""
+def test_converges_on_already_rewritten():
+    """Re-running the pass rewrites no further accumulator, and settles to a true no-op.
+
+    Not a no-op on the *second* run: the first run's rewrite emits ``out = other_in``
+    tasklets, which the second run's internal ``TrivialTaskletElimination`` then collapses.
+    So run 2 legitimately reports a modification (empty dict = "changed, no accumulator")
+    and run 3 is the first ``None``. Asserting ``second is None`` -- as this test used to --
+    only held while the pass under-reported its own cleanup as no modification."""
 
     @dace.program
     def sum_reduce(acc: dace.float64[1], src: dace.float64[7]):
@@ -280,9 +289,14 @@ def test_idempotent_on_already_rewritten():
             acc[0] = acc[0] + src[i]
 
     sdfg = sum_reduce.to_sdfg(simplify=True)
-    AccumulatorToMapAndReduce().apply_pass(sdfg, {})
+    first = AccumulatorToMapAndReduce().apply_pass(sdfg, {})
+    assert first, 'the accumulator loop should have been rewritten on the first run'
+
     second = AccumulatorToMapAndReduce().apply_pass(sdfg, {})
-    assert second is None
+    assert not second, 'no further accumulator may be rewritten'
+
+    third = AccumulatorToMapAndReduce().apply_pass(sdfg, {})
+    assert third is None, 'the pass must settle to a genuine no-op'
 
 
 def test_map_wcr_in_state_consumer_dependency_ordering():

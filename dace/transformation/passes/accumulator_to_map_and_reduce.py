@@ -137,14 +137,22 @@ class AccumulatorToMapAndReduce(ppl.Pass):
 
         :param sdfg: The SDFG to transform in place.
         :param _pipeline_results: Unused; kept for the Pass interface.
-        :returns: ``{location_label: accumulator_name}`` for each pattern rewritten,
-                  or ``None`` if nothing matched.
+        :returns: ``{location_label: accumulator_name}`` for each pattern rewritten; an EMPTY
+                  dict when no accumulator matched but the trivial-tasklet cleanup below still
+                  changed the graph; ``None`` only when the SDFG was left untouched.
         """
         # Eliminate the frontend's ``__out = __inp`` copy tasklets first so the matcher
         # sees the bare RMW shape. ``TrivialTaskletElimination`` is value-preserving.
+        #
+        # Its result must be folded into this pass's return value. ``apply_pass`` returning
+        # ``None`` means "did not modify the SDFG", and callers act on that -- the
+        # canonicalization pipeline skips its per-stage ``validate()`` for a ``None`` stage.
+        # Reporting ``None`` after this cleanup has rewritten tasklets would hide those edits
+        # from validation (cloudsc hit exactly this: no accumulator matched, yet the graph
+        # changed).
         from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
+        cleaned = PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
 
         rewritten: Dict[str, str] = {}
 
@@ -172,7 +180,11 @@ class AccumulatorToMapAndReduce(ppl.Pass):
             innermost_label = mmatch.map_entries[0].label if mmatch.map_entries else state.label
             rewritten[innermost_label] = mmatch.accum
 
-        return rewritten or None
+        if rewritten:
+            return rewritten
+        # Nothing matched, but the cleanup above may still have edited the graph -- an empty
+        # dict keeps the "not None means modified" contract without inventing a fake entry.
+        return {} if cleaned else None
 
     def report(self, pass_retval: Any) -> Optional[str]:
         if not pass_retval:

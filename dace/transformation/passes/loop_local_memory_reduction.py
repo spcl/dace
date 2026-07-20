@@ -11,7 +11,7 @@ from dace.transformation.passes.analysis import loop_analysis, StateReachability
 from dace.symbolic import pystr_to_symbolic, issymbolic
 from dace.subsets import Range
 import copy
-from typing import Union, Set, Optional, Dict, Any
+from typing import Union, Optional, Dict, Any
 
 
 @properties.make_properties
@@ -128,7 +128,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
     def depends_on(self):
         return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
-    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
+    def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Shrink loop-local arrays to the circular buffer their access pattern needs.
+
+        :param sdfg: The SDFG to transform in place.
+        :param pipeline_results: Results of prior passes, reused as analyses when present.
+        :returns: Number of arrays reduced (also kept on ``self.num_applications``), or ``None`` if none were.
+        """
+        # Kept as an instance attribute as well: tests read ``num_applications`` off the pass object.
         self.num_applications = 0
         self.out_of_loop_states_cache = {}
         self.write_before_read_cache = {}
@@ -168,6 +175,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         self.out_of_loop_states_cache = {}
         self.write_before_read_cache = {}
         self.intra_loop_reach_cache = {}
+
+        return self.num_applications or None
 
     def _get_edge_indices(self, subset: Range, loop: LoopRegion) -> list[Union[tuple, None]]:
         # list of tuples of (a, b) for a*i + b, None if cannot be determined
