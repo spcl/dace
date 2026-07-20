@@ -26,11 +26,6 @@ import copy
 
 import pytest
 
-pytestmark = pytest.mark.skip(
-    reason=
-    "WIP corpus: run-phase at preset-S is heavy and xfails not yet populated; canon passes on ~49/54 kernels. Enable after size-cap + full sweep. See project memory."
-)
-
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -38,6 +33,27 @@ from tests.corpus.polybench import polybench
 
 _KERNELS = [k.name for k in polybench.collect()]
 _PHASES = ("canon", "canon_vec")
+
+# Genuine per-(kernel, phase) gaps, marked xfail(strict) with the tracking reason -- NOT a blanket skip:
+# a case that starts passing flips the suite red so the entry is removed. Populated from the full sweep.
+# All canon_vec-phase, all in the multidim-vectorizer (canon alone passes every polybench kernel).
+_XFAIL: dict = {
+    ("adi", "canon_vec"): "multidim-vectorize: output diverges from baseline",
+    ("deriche", "canon_vec"): "multidim-vectorize: CompilationError post-vectorize",
+    ("durbin", "canon_vec"): "multidim-vectorize: KeyError __t0_split_0 (tile split)",
+    ("gramschmidt", "canon_vec"): "multidim-vectorize: InvalidSDFG (state pointer) post-vectorize",
+    ("lu", "canon_vec"): "multidim-vectorize: InvalidSDFG (state pointer) post-vectorize",
+}
+
+
+def _cases():
+    out = []
+    for name in _KERNELS:
+        for phase in _PHASES:
+            marks = (pytest.mark.xfail(reason=_XFAIL[(name, phase)], strict=True), ) if (name, phase) in _XFAIL else ()
+            out.append(pytest.param(name, phase, id=f"{name}-{phase}", marks=marks))
+    return out
+
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the
 # TSVC / npbench corpus tests.
@@ -68,8 +84,7 @@ def _base(name):
     return _BASE[name]
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("phase", _PHASES)
+@pytest.mark.parametrize("name,phase", _cases())
 def test_polybench_corpus(name, phase):
     canon, call_arrays, psize, ref = _base(name)
     sdfg = copy.deepcopy(canon)

@@ -26,11 +26,6 @@ import copy
 
 import pytest
 
-pytestmark = pytest.mark.skip(
-    reason=
-    "WIP corpus: run-phase at preset-S is heavy and xfails not yet populated; canon passes on ~49/54 kernels. Enable after size-cap + full sweep. See project memory."
-)
-
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -39,6 +34,30 @@ from tests.corpus.npbench import npbench
 _CORPUS = {c["name"]: c for c in npbench.collect()}
 _KERNELS = sorted(_CORPUS)
 _PHASES = ("canon", "canon_vec")
+
+# Genuine per-(kernel, phase) gaps, marked xfail(strict) with the tracking reason -- NOT a blanket skip:
+# a case that starts passing flips the suite red so the entry is removed. Populated from the full sweep.
+# Two classes: canon-phase = real canon/codegen bugs (dace lane); canon_vec-phase = multidim-vectorize gaps.
+_XFAIL: dict = {
+    ("azimint_naive", "canon_vec"): "multidim-vectorize: output diverges from reference",
+    ("cavity_flow", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
+    ("lenet", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
+    ("nbody", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
+    ("mandelbrot1", "canon_vec"): "multidim-vectorize: KeyError __t0_split_0 (tile split)",
+    ("mandelbrot2", "canon_vec"): "multidim-vectorize WidenAccesses invariant: lane-dep transients",
+    ("spmv", "canon_vec"): "multidim-vectorize: indirect-access node validation fails post-vectorize",
+    ("stockham_fft", "canon_vec"): "multidim-vectorize: worker crash (segfault) during vectorize",
+}
+
+
+def _cases():
+    out = []
+    for name in _KERNELS:
+        for phase in _PHASES:
+            marks = (pytest.mark.xfail(reason=_XFAIL[(name, phase)], strict=True), ) if (name, phase) in _XFAIL else ()
+            out.append(pytest.param(name, phase, id=f"{name}-{phase}", marks=marks))
+    return out
+
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the
 # TSVC / polybench corpus tests.
@@ -69,8 +88,7 @@ def _base(name):
     return _BASE[name]
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("phase", _PHASES)
+@pytest.mark.parametrize("name,phase", _cases())
 def test_npbench_corpus(name, phase):
     canon, arrays, params, ref = _base(name)
     sdfg = copy.deepcopy(canon)
