@@ -86,7 +86,18 @@ def symbol_scopes(top_sdfg: SDFG) -> SymbolScopes:
 
 
 def defined_at(scopes: SymbolScopes, state: SDFGState, node: Union[nodes.Node, None]) -> Dict[str, dtypes.typeclass]:
-    """Table for ``node``, i.e. the one for its innermost enclosing scope entry."""
+    """Table for ``node``, i.e. the one for its innermost enclosing scope entry.
+
+    Falls back to ``symbols_defined_at`` for a state or scope the pass never saw. Codegen is
+    supposed to leave the SDFG alone, but ``_generate_ConsumeEntry`` still rewrites dataflow
+    mid-run, so a miss means "built after the pass" rather than an error.
+    """
     if node is None:
         return collections.OrderedDict()
-    return scopes[state][state.entry_node(node)]
+    per_scope = scopes.get(state)
+    if per_scope is None:
+        return state.symbols_defined_at(node)
+    table = per_scope.get(state.entry_node(node))
+    if table is None:
+        return state.symbols_defined_at(node)
+    return table

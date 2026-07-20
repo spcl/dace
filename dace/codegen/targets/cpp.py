@@ -17,7 +17,7 @@ from typing import IO, TYPE_CHECKING, Optional, Tuple, Union
 
 import dace
 from dace import data, subsets, symbolic, dtypes, memlet as mmlt, nodes
-from dace.codegen import common, cppunparse
+from dace.codegen import common, cppunparse, symbol_scopes
 from dace.codegen.common import (sym2cpp, find_incoming_edges, codeblock_to_cpp)
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
@@ -1036,7 +1036,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             memlets[vconn] = (memlet, False, None, conntype)
 
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
-    defined_symbols = state_dfg.symbols_defined_at(node)
+    defined_symbols = symbol_scopes.defined_at(codegen._frame.symbol_scopes, state_dfg, node)
 
     defined_symbols.update({
         k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
