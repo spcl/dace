@@ -731,7 +731,11 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
                                                   if_subsets_are_not_equal: bool) -> bool:
     applied = False
     for _i, out_conn in enumerate(list(map_entry.out_connectors.keys())):
-        out_edges_of_out_conn = set(state.out_edges_by_connector(map_entry, out_conn))
+        # Ordered, not a set: the naming loop below allocates connector names first-come-wins, and
+        # ``MultiConnectorEdge`` hashes by id(), so a set would order it by allocation history --
+        # which varies run to run and would swap which edge keeps the base name.
+        out_edges_of_out_conn = sorted(state.out_edges_by_connector(map_entry, out_conn),
+                                       key=lambda e: (state.node_id(e.dst), e.dst_conn or ''))
         if len(out_edges_of_out_conn) > 1:
             if if_subsets_are_not_equal:
                 subsets = {e.data.subset for e in out_edges_of_out_conn}
@@ -749,11 +753,13 @@ def duplicate_memlets_sharing_single_in_connector(state: dace.SDFGState, map_ent
 
             # Need it to find unique names
             all_existing_connector_names = set()
-            for map_entry in parent_maps:
-                for in_conn in map_entry.in_connectors:
-                    all_existing_connector_names.add(in_conn[len("IN_"):])
-                for out_conn in map_entry.out_connectors:
-                    all_existing_connector_names.add(out_conn[len("OUT_"):])
+            # Distinct names: rebinding ``map_entry``/``out_conn`` here would clobber the enclosing
+            # loop variables for every later connector.
+            for pmap in parent_maps:
+                for conn in pmap.in_connectors:
+                    all_existing_connector_names.add(conn[len("IN_"):])
+                for conn in pmap.out_connectors:
+                    all_existing_connector_names.add(conn[len("OUT_"):])
 
             # Get the edge before the split, ensure all of them are the same
             prev_src_edge = None
