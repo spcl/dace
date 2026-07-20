@@ -23,6 +23,12 @@ REPO=$(git rev-parse --show-toplevel)
 OUTDIR="${2:-${REPO}/cloudsc_backend_results}"
 mkdir -p "${OUTDIR}"
 
+# submit_cloudsc_backend.sh's #SBATCH --output is a fixed path relative to the submit dir
+# (SLURM can't expand $OUTDIR in a #SBATCH line), so it lands outside OUTDIR whenever a
+# custom outdir is passed. Mirror everything into OUTDIR/run.log too, so the log is always
+# findable next to dacecache/scratch regardless of where SLURM's own -o file went.
+exec > >(tee -a "${OUTDIR}/run.log") 2>&1
+
 export OMPI_MCA_pml=ob1 OMPI_MCA_btl=self,vader UCX_VFS_ENABLE=n MPI4PY_RC_INITIALIZE=0
 export NOSTATUSBAR=1
 export DACE_cache=unique
