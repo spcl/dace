@@ -372,6 +372,8 @@ def _replace_desc_and_uncollapse_dims(nsdfg_node: nodes.NestedSDFG,
     for cfg in inner_sdfg.all_control_flow_blocks():
         if isinstance(cfg, ConditionalBlock):
             for i, (cond, body) in enumerate(cfg.branches):
+                if cond is None:  # else branch -- nothing to rewrite
+                    continue
                 cfg.branches[i] = (CodeBlock(
                     symbolic.symstr(_rewrite_connector_refs(symbolic.pystr_to_symbolic(cond.as_string)))), body)
 

@@ -393,6 +393,48 @@ def test_widened_shape_introduces_symbol_already_in_inner_table():
     sdfg.validate()
 
 
+def test_conditional_block_else_branch_not_dereferenced():
+    """A ``ConditionalBlock`` else branch has ``cond is None``. The branch-condition
+    uncollapse loop in ``_replace_desc_and_uncollapse_dims`` iterated every branch
+    unconditionally and dereferenced ``cond.as_string`` -- ``AttributeError:
+    'NoneType' object has no attribute 'as_string'`` on the else branch. Hit by any
+    if/else guard living inside a body NSDFG that ``ExpandNestedSDFGInputs`` widens
+    (e.g. TSVC 2.5 quasi-affine-mod-k stripe kernels). Fix: skip branches whose
+    ``cond is None`` -- nothing to rewrite, leave the branch untouched."""
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+    from dace.properties import CodeBlock as PropCodeBlock
+
+    sdfg = dace.SDFG("cond_else_repro")
+    sdfg.add_array("A", (10, ), dace.float64)
+    state = sdfg.add_state("s")
+    a_an = state.add_access("A")
+
+    inner = dace.SDFG("inner")
+    inner.add_array("A_conn", (1, ), dace.float64)  # narrowed -> pass must widen to trigger apply()
+
+    cb = ConditionalBlock("cb", sdfg=inner, parent=inner)
+    inner.add_node(cb, is_start_block=True)
+
+    then_cfr = ControlFlowRegion("then_cfr", sdfg=inner)
+    then_cfr.add_state("then_state", is_start_block=True)
+    cb.add_branch(PropCodeBlock("A_conn[0] > 0"), then_cfr)
+
+    else_cfr = ControlFlowRegion("else_cfr", sdfg=inner)
+    else_cfr.add_state("else_state", is_start_block=True)
+    cb.add_branch(None, else_cfr)  # else branch -- cond is None
+
+    nsdfg = state.add_nested_sdfg(inner, {"A_conn"}, set(), symbol_mapping={})
+    state.add_edge(a_an, None, nsdfg, "A_conn", dace.Memlet("A[0]"))
+
+    applied = PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
+    assert applied, "expected ExpandNestedSDFGInputs to widen the narrowed connector"
+    sdfg.validate()
+
+    # The else branch must remain untouched: still present with cond is None.
+    else_conds = [cond for cond, region in cb.branches if region is else_cfr]
+    assert else_conds == [None], f"else branch condition must stay None; got {else_conds}"
+
+
 def test_scalar_source_not_subscripted_in_interstate_assignment():
     """Per user direction 2026-06-10: ``on codeblocks we treat scalar as if it is a
     symbol``. ``_uncollapse_scalar`` was unconditionally wrapping references to
