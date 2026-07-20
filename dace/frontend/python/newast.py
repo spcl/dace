@@ -5373,6 +5373,39 @@ class ProgramVisitor(ExtNodeVisitor):
                        wcr=expr.wcr))
         return tmp
 
+    def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None) -> symbolic.symbol:
+        """
+        Reads a scalar into a symbol so its value can be used where only symbols are allowed.
+
+        A fresh ``__sym_<scalar>`` symbol is assigned from the scalar on an interstate edge. The
+        scalar's data descriptor is deliberately left in place: it may still be read or reassigned
+        later in the program, and the visitor's own bookkeeping still refers to it by name.
+
+        :param scalar: Name of the scalar data descriptor to read.
+        :param key: Cache key for the promotion, defaulting to the scalar name. Repeated promotions
+                    of the same expression reuse the symbol instead of minting a new one.
+        :return: The symbol carrying the scalar's value.
+        """
+        key = key if key is not None else scalar
+        desc = self.sdfg.arrays[scalar]
+        sym = self.indirections.get(key)
+        if sym is None:
+            sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
+            self.indirections[key] = sym
+            try:
+                self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
+            except FileExistsError:
+                # By design this may re-add an existing symbol; the exception is benign.
+                pass
+            # A promoted size can end up in an array shape, and nested scopes resolve the free
+            # symbols of their scope arrays through `globals`, so the symbol has to be visible
+            # there as well as on the SDFG.
+            self.globals[str(sym)] = sym
+        state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
+        edge = state.parent_graph.in_edges(state)[0]
+        edge.data.assignments = {str(sym): scalar}
+        return sym
+
     def _parse_subscript_slice(self,
                                s: ast.AST,
                                multidim: bool = False) -> Union[Any, Tuple[Union[Any, str, symbolic.symbol]]]:
@@ -5382,29 +5415,13 @@ class ProgramVisitor(ExtNodeVisitor):
 
         def _promote(node: ast.AST) -> Union[Any, str, symbolic.symbol]:
             node_str = astutils.unparse(node)
-            sym = None
-            if node_str in self.indirections:
-                sym = self.indirections[node_str]
             if isinstance(node, str):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
-                desc = self.sdfg.arrays[scalar]
-                if isinstance(desc, data.Scalar):
-                    if not sym:
-                        sym = dace.symbol(f'__sym_{scalar}', dtype=desc.dtype)
-                        self.indirections[node_str] = sym
-                        try:
-                            self.sdfg.add_symbol(f'__sym_{scalar}', desc.dtype)
-                        except FileExistsError:
-                            # NOTE: By design, it is possible to try here to add an already existing symbol even if
-                            # `not sym` returns True. This exception is benign.
-                            pass
-                    state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
-                    edge = state.parent_graph.in_edges(state)[0]
-                    edge.data.assignments = {str(sym): scalar}
-                    return sym
+                if isinstance(self.sdfg.arrays[scalar], data.Scalar):
+                    return self.promote_scalar_to_symbol(scalar, key=node_str)
             return scalar
 
         if isinstance(s, (Number, bool, numpy.bool_, sympy.Basic)):
