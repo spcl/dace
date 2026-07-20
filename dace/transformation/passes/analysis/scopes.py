@@ -14,6 +14,7 @@ from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
+from dace.transformation.passes.analysis.analysis import StateReachability
 
 #: Per state, the symbols visible at each scope entry; ``None`` keys the state's own top level.
 StateSymbolScopes = Dict[SDFGState, Dict[Optional[nodes.EntryNode], Dict[str, 'dace.dtypes.typeclass']]]
@@ -190,3 +191,18 @@ class AllocationScopes(ppl.Pass):
             'meta_symbols': meta_symbols,
             'scope_dicts': scope_dicts,
         }
+
+
+class CodegenAnalysisPipeline(ppl.Pipeline):
+    """The read-only analyses code generation needs before it starts emitting.
+
+    Grouping them is not cosmetic: ``StateReachability`` depends on ``ControlFlowBlockReachability``,
+    so running the analyses separately recomputes that dependency once per consumer. A pipeline
+    resolves ``depends_on`` and shares every result through ``pipeline_results``.
+
+    All three declare ``Modifies.Nothing``, so this is safe to run on a frozen SDFG and its results
+    stay valid for as long as nothing mutates the graph.
+    """
+
+    def __init__(self):
+        super().__init__([StateReachability(), SymbolScopes(), AllocationScopes()])

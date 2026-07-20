@@ -13,7 +13,7 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.transformation.passes.analysis.scopes import AllocationScopes, SymbolScopes
+from dace.transformation.passes.analysis.scopes import (AllocationScopes, CodegenAnalysisPipeline, SymbolScopes)
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
 from dace.sdfg.type_inference import infer_expr_type
@@ -680,7 +680,10 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
         fsyms = {}
-        reachability = StateReachability().apply_pass(top_sdfg, {})
+        analysis_results = CodegenAnalysisPipeline().apply_pass(top_sdfg, {})
+        reachability = analysis_results[StateReachability.__name__]
+        alloc_scopes = analysis_results[AllocationScopes.__name__]
+        self.symbol_scopes = analysis_results[SymbolScopes.__name__]
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         code_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.Node]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
@@ -721,13 +724,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             access_instances[sdfg.cfg_id] = instances
             code_instances[sdfg.cfg_id] = code_uses
-
-        # Lookup tables for the per-descriptor decisions below, so each one is a dict hit rather
-        # than another walk of the whole SDFG. Pure analysis -- the decisions stay here.
-        alloc_scopes = AllocationScopes().apply_pass(top_sdfg, {})
-
-        # Same idea for the per-node symbol tables the targets ask for while emitting tasklets.
-        self.symbol_scopes = SymbolScopes().apply_pass(top_sdfg, {})
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
