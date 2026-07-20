@@ -1354,6 +1354,35 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
         return self.parent_graph.node_id(self)
 
 
+def sdfg_scope_symbols(sdfg) -> Dict[str, dtypes.typeclass]:
+    """Symbols visible at ``sdfg`` scope: its own symbols, array extents, and interstate edges."""
+    symbols = collections.OrderedDict(sdfg.symbols)
+    for desc in sdfg.arrays.values():
+        symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
+    try:
+        for e in sdfg.predecessor_state_transitions(sdfg.start_state):
+            symbols.update(e.data.new_symbols(sdfg, symbols))
+    except ValueError:  # starting state ambiguous (some interstate edges may not exist yet)
+        for e in sdfg.edges():
+            symbols.update(e.data.new_symbols(sdfg, symbols))
+    return symbols
+
+
+def enclosing_region_symbols(state, base: Dict[str, dtypes.typeclass]) -> Dict[str, dtypes.typeclass]:
+    """``base`` plus what the control-flow regions enclosing ``state`` bind, outermost first (a
+    LoopRegion binds its iterator; ``new_symbols`` returns {} otherwise). Without it a node in a loop
+    body does not see the loop variable and memlet propagation widens a jk-indexed access to the whole array."""
+    symbols = collections.OrderedDict(base)
+    enclosing_regions = []
+    cfg = state.parent_graph
+    while cfg is not None:
+        enclosing_regions.append(cfg)
+        cfg = cfg.parent_graph
+    for region in reversed(enclosing_regions):
+        symbols.update(region.new_symbols(symbols))
+    return symbols
+
+
 @make_properties
 class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlock, DataflowGraphView):
     """ An acyclic dataflow multigraph in an SDFG, corresponding to a
@@ -1621,39 +1650,11 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         :param node: The given node.
         :return: A dictionary mapping symbol names to their types.
         """
-        from dace.sdfg.sdfg import SDFG
-
         if node is None:
             return collections.OrderedDict()
 
-        sdfg: SDFG = self.sdfg
-
-        # Start with global symbols
-        symbols = collections.OrderedDict(sdfg.symbols)
-        for desc in sdfg.arrays.values():
-            symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
-
-        # Add symbols from inter-state edges along the path to the state
-        try:
-            start_state = sdfg.start_state
-            for e in sdfg.predecessor_state_transitions(start_state):
-                symbols.update(e.data.new_symbols(sdfg, symbols))
-        except ValueError:
-            # Cannot determine starting state (possibly some inter-state edges
-            # do not yet exist)
-            for e in sdfg.edges():
-                symbols.update(e.data.new_symbols(sdfg, symbols))
-
-        # Symbols bound by the enclosing control-flow regions, outermost first (a LoopRegion binds
-        # its iterator; new_symbols returns {} otherwise). Without it a node in a loop body does not
-        # see the loop variable and memlet propagation widens a jk-indexed access to the whole array.
-        enclosing_regions = []
-        cfg = self.parent_graph
-        while cfg is not None:
-            enclosing_regions.append(cfg)
-            cfg = cfg.parent_graph
-        for region in reversed(enclosing_regions):
-            symbols.update(region.new_symbols(symbols))
+        sdfg = self.sdfg
+        symbols = enclosing_region_symbols(self, sdfg_scope_symbols(sdfg))
 
         # Find scopes this node is situated in
         sdict = self.scope_dict()

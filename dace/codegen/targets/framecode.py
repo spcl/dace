@@ -686,7 +686,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                         break
                     if state not in relevant:
                         continue
-                    sdict = alloc_scopes['scope_dicts'][state]
+                    sdict = state.scope_dict()
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
                             continue
