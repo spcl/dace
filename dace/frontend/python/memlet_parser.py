@@ -148,6 +148,25 @@ def _fill_missing_slices(das, ast_ndslice, shape):
     for dim in ast_ndslice:
         if isinstance(dim, (str, list, slice)):
             dim = ast.Name(id=dim)
+        elif isinstance(dim, ast.Tuple):
+            # A literal tuple written directly in a dimension slot (e.g. the
+            # second dimension of "A[:, (1, 2, 3)]") is unambiguously an index
+            # array, never a (start, stop, step) slice range: Python's own
+            # grammar makes "A[(1, 2, 3)]" and "A[1, 2, 3]" identical ASTs, so
+            # a bare tuple that is the *entire* subscript is already unpacked
+            # into separate per-dimension entries before this loop ever runs
+            # (see astutils.subscript_to_ast_slice). The only way an
+            # ast.Tuple node survives as a single `dim` here is if the source
+            # had an explicit nested tuple among multiple indices/slices
+            # ("A[:, (1, 2, 3)]") or a trailing comma ("A[(1, 2, 3),]"), and
+            # both spellings mean advanced indexing in NumPy. The
+            # (start, stop, step) sugar is represented elsewhere in this
+            # module as a plain Python tuple of AST nodes (see the
+            # `isinstance(dim, tuple)` branch below), never as an ast.Tuple,
+            # so there is no ambiguity left to resolve. Re-encode it the way
+            # the array-index path below expects (an ast.Name whose `id` is
+            # the literal Python sequence).
+            dim = ast.Name(id=[_parse_dim_atom(das, elt) for elt in dim.elts])
 
         if isinstance(dim, tuple):
             dim_extent = shape[idx]
