@@ -4,7 +4,7 @@
 Three workloads:
   1. ``opt``            -- ``sdfg.simplify()`` over every npbench/polybench kernel
   2. ``codegen``        -- ``generate_code`` on the same kernels, after simplify
-  3. ``cloudsc_unroll`` -- loop unrolling on the cloudsc SDFG, then codegen
+  3. ``cloudsc``        -- initial simplify, then loop unrolling, then codegen on cloudsc
 
 Writes one CSV. Run it once per checkout and give the two files to plot_codegen_scopes.py.
 
@@ -109,38 +109,59 @@ def bench_kernels(rows: List[dict], label: str, reps: int, limit: int = 0) -> No
 
 
 def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
-    """Loop unrolling on cloudsc, then codegen on the unrolled graph."""
+    """cloudsc: initial simplify, then loop unrolling, then codegen on the unrolled graph.
+
+    Each stage feeds the next, so they are timed on progressively transformed graphs rather than
+    all on the pristine one -- that is the order a real compile runs them in.
+    """
     sys.path.insert(0, str(CORPUS))
     try:
-        from cloudsc.cloudsc import cloudsc_py
+        from cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
+        build = lambda: build_cloudsc_sdfg(simplify=False)
     except Exception:
-        print(f'[{label}] cloudsc unavailable, skipping', flush=True)
-        traceback.print_exc()
-        return
+        try:
+            from cloudsc.cloudsc import cloudsc_py
+            build = lambda: cloudsc_py.to_sdfg(simplify=False)
+        except Exception:
+            print(f'[{label}] cloudsc unavailable, skipping', flush=True)
+            traceback.print_exc()
+            return
 
     print(f'[{label}] building cloudsc SDFG...', flush=True)
     start = time.perf_counter()
-    pristine = cloudsc_py.to_sdfg(simplify=False)
+    pristine = build()
     print(
         f'[{label}] cloudsc built in {time.perf_counter() - start:.1f}s '
         f'({len(pristine.arrays)} arrays, {len(list(pristine.states()))} states)',
         flush=True)
 
+    stages = []
+
     clones = [copy.deepcopy(pristine) for _ in range(reps)]
     it = iter(clones)
-    unroll = timed(lambda: next(it).apply_transformations_repeated(LoopUnroll, validate=False), reps)
-    if unroll:
-        rows.append({'workload': 'cloudsc_unroll', 'kernel': 'cloudsc', **unroll})
-        print(f'[{label}] cloudsc unroll: {unroll["median_s"] * 1000:.1f}ms', flush=True)
+    stages.append(('cloudsc_simplify', timed(lambda: next(it).simplify(validate=False), reps)))
 
-    unrolled = copy.deepcopy(pristine)
+    simplified = copy.deepcopy(pristine)
+    simplified.simplify(validate=False)
+
+    clones = [copy.deepcopy(simplified) for _ in range(reps)]
+    it = iter(clones)
+    stages.append(
+        ('cloudsc_unroll', timed(lambda: next(it).apply_transformations_repeated(LoopUnroll, validate=False), reps)))
+
+    unrolled = copy.deepcopy(simplified)
     unrolled.apply_transformations_repeated(LoopUnroll, validate=False)
-    cg_clones = [copy.deepcopy(unrolled) for _ in range(reps)]
-    cit = iter(cg_clones)
-    cg = timed(lambda: codegen.generate_code(next(cit)), reps)
-    if cg:
-        rows.append({'workload': 'cloudsc_codegen_after_unroll', 'kernel': 'cloudsc', **cg})
-        print(f'[{label}] cloudsc codegen after unroll: {cg["median_s"] * 1000:.1f}ms', flush=True)
+
+    clones = [copy.deepcopy(unrolled) for _ in range(reps)]
+    it = iter(clones)
+    stages.append(('cloudsc_codegen_after_unroll', timed(lambda: codegen.generate_code(next(it)), reps)))
+
+    for workload, result in stages:
+        if result:
+            rows.append({'workload': workload, 'kernel': 'cloudsc', **result})
+            print(f'[{label}] {workload}: {result["median_s"] * 1000:.1f}ms', flush=True)
+        else:
+            print(f'[{label}] {workload}: FAILED', flush=True)
 
 
 def main() -> None:
