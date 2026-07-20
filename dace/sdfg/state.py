@@ -1668,12 +1668,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             for e in sdfg.edges():
                 symbols.update(e.data.new_symbols(sdfg, symbols))
 
-        # Symbols bound by the enclosing control-flow regions, outermost first -- a LoopRegion
-        # binds its iterator, and `new_symbols` returns {} for regions that bind nothing. Without
-        # this a node inside a loop does not see the loop variable as defined, and memlet
-        # propagation widens a ``jk``-indexed nested-SDFG access to the whole array.
-        # Control-flow scope is resolved exactly like the dataflow scope below: walk the nesting
-        # outward, then fold inward so each level types its bindings against the enclosing ones.
+        # Symbols bound by the enclosing control-flow regions, outermost first (a LoopRegion binds
+        # its iterator; new_symbols returns {} otherwise). Without it a node in a loop body does not
+        # see the loop variable and memlet propagation widens a jk-indexed access to the whole array.
         enclosing_regions = []
         cfg = self.parent_graph
         while cfg is not None:

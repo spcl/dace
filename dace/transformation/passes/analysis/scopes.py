@@ -1,10 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Analysis passes that precompute per-scope tables other stages would otherwise rederive per node.
-
-Both answer a question that is asked once per node or per descriptor but whose answer is invariant
-across most of the SDFG, so the naive form is quadratic. They only build dictionaries -- no
-decisions, no mutation -- and both declare ``Modifies.Nothing``.
-"""
+"""Analysis passes precomputing per-scope tables that code generation would otherwise rederive per node."""
 import collections
 from typing import Dict, List, Optional, Set
 
@@ -23,21 +18,7 @@ StateSymbolScopes = Dict[SDFGState, Dict[Optional[nodes.EntryNode], Dict[str, 'd
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class SymbolScopes(ppl.Pass):
-    """
-    Symbols visible at every scope of every state.
-
-    :meth:`~dace.sdfg.state.SDFGState.symbols_defined_at` answers this per node by replaying the
-    whole chain -- the SDFG's symbols, every array's free symbols, the interstate edges, the
-    enclosing control-flow regions, then the scope entries down to the node. Only the last step
-    depends on the node, so a per-node call redoes an O(#arrays) sympy walk that is invariant across
-    the SDFG.
-
-    Symbols are *defined going down*: a control-flow region binds what ``new_symbols`` reports (a
-    loop its iterator), a map entry its parameters and dynamic-range connectors, a consume entry its
-    PE index. So one top-down pass computes each scope's table once by inheriting its parent's,
-    which is also what correctness wants -- ``new_symbols`` receives the accumulated table because
-    it types a map range against the symbols already in scope.
-    """
+    """For each scope of each state, the symbols visible there (the per-node answer of ``symbols_defined_at``)."""
 
     CATEGORY: str = 'Analysis'
 
@@ -45,10 +26,8 @@ class SymbolScopes(ppl.Pass):
         return ppl.Modifies.Nothing
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
-        # Descriptors contribute their free symbols, interstate edges and regions their assignments,
-        #  and scope nodes their parameters.
-        return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.Symbols | ppl.Modifies.CFG
-                                | ppl.Modifies.Scopes))
+        return bool(modified
+                    & (ppl.Modifies.Descriptors | ppl.Modifies.Symbols | ppl.Modifies.CFG | ppl.Modifies.Scopes))
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, StateSymbolScopes]:
         """
@@ -62,7 +41,7 @@ class SymbolScopes(ppl.Pass):
                 per_scope = {None: state_symbols(state, base)}
                 children = state.scope_children()
                 stack: List[Optional[nodes.EntryNode]] = [None]
-                while stack:  # outer to inner, so each entry inherits a finished parent table
+                while stack:  # outer to inner: each entry inherits its parent's finished table
                     parent = stack.pop()
                     for node in children[parent]:
                         if not isinstance(node, nodes.EntryNode):
@@ -82,16 +61,13 @@ def sdfg_symbols(sdfg: SDFG) -> Dict[str, 'dace.dtypes.typeclass']:
     for desc in sdfg.arrays.values():
         symbols.update([(str(s), s.dtype) for s in desc.free_symbols])
 
-    # NOTE: mirrors symbols_defined_at exactly, INCLUDING passing the start state to
-    #  predecessor_state_transitions -- which walks backwards from it and so yields nothing on an
-    #  acyclic CFG. Fixing that here would define symbols consumers do not currently see; it needs
-    #  its own change and its own test.
+    # Mirrors symbols_defined_at, including the start-state argument that yields nothing on an
+    #  acyclic CFG; changing it would newly define symbols and needs its own change and test.
     try:
         start_state = sdfg.start_state
         for e in sdfg.predecessor_state_transitions(start_state):
             symbols.update(e.data.new_symbols(sdfg, symbols))
-    except ValueError:
-        # Starting state is ambiguous (some interstate edges may not exist yet)
+    except ValueError:  # starting state ambiguous (some interstate edges may not exist yet)
         for e in sdfg.edges():
             symbols.update(e.data.new_symbols(sdfg, symbols))
     return symbols
@@ -112,11 +88,7 @@ def state_symbols(state: SDFGState, base: Dict[str, 'dace.dtypes.typeclass']) ->
 
 def defined_at(scopes: Dict[int, StateSymbolScopes], state: SDFGState,
                node: Optional[nodes.Node]) -> Dict[str, 'dace.dtypes.typeclass']:
-    """Table for ``node``, i.e. the one for its innermost enclosing scope entry.
-
-    Falls back to ``symbols_defined_at`` for a state or scope the pass never saw, so a consumer that
-    mutates after running it degrades to the slow path instead of raising.
-    """
+    """Table for ``node``'s innermost enclosing scope; falls back to ``symbols_defined_at`` on a miss."""
     if node is None:
         return collections.OrderedDict()
     per_scope = scopes.get(state.sdfg.cfg_id, {}).get(state)
@@ -131,17 +103,7 @@ def defined_at(scopes: Dict[int, StateSymbolScopes], state: SDFGState,
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AllocationScopes(ppl.Pass):
-    """
-    Lookup tables for :meth:`DaCeCodeGenerator.determine_allocation_lifetime`.
-
-    That routine decides, per transient, where to declare/allocate/deallocate it, and its scans are
-    written per descriptor so each re-walks the whole SDFG. The worst is loop-invariant in a
-    stronger sense: ``cfg.used_symbols(...)`` parses conditions through sympy/ast and does not
-    depend on the descriptor at all -- only the ``name in`` test does.
-
-    Tables are ordered exactly like the scans they replace (``sdfg.states()`` order, not
-    topological), because that order decides which state emits an allocation.
-    """
+    """Lookup tables for :meth:`DaCeCodeGenerator.determine_allocation_lifetime`, replacing its per-descriptor scans."""
 
     CATEGORY: str = 'Analysis'
 
@@ -165,6 +127,7 @@ class AllocationScopes(ppl.Pass):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             by_data: Dict[str, List[SDFGState]] = collections.defaultdict(list)
             by_root: Dict[str, Set[SDFGState]] = collections.defaultdict(set)
+            # ``sdfg.states()`` order (not topological); the consumer relies on it to place allocations.
             for state in sdfg.states():
                 scope_dicts[state] = state.scope_dict()
                 seen: Set[str] = set()
@@ -174,7 +137,6 @@ class AllocationScopes(ppl.Pass):
                         by_data[node.data].append(state)
                     by_root[node.root_data].add(state)
 
-            # Descriptor-independent: once per SDFG rather than once per (descriptor, CFG)
             meta: Set[str] = set()
             for isedge in sdfg.all_interstate_edges():
                 meta |= isedge.data.free_symbols
@@ -196,16 +158,7 @@ class AllocationScopes(ppl.Pass):
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AccessInstances(ppl.Pass):
-    """
-    Where every data container is used, in block-topological order, plus each SDFG's shared
-    transients.
-
-    ``determine_allocation_lifetime`` takes the FIRST and LAST entry of the per-container list to
-    decide which state declares and which frees a transient, so the order here is load-bearing: it
-    must stay ``blockorder_topological_sort``. A container is "used" by an access node, by a code
-    node naming it as a free symbol without any memlet, or by a surrounding interstate edge -- the
-    last two are recorded with a synthetic AccessNode because the consumer only needs the state.
-    """
+    """Per container, the states using it in block-topological order, plus each SDFG's shared transients."""
 
     CATEGORY: str = 'Analysis'
 
@@ -219,6 +172,8 @@ class AccessInstances(ppl.Pass):
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[str, Dict]:
         """
         :return: ``access_instances``, ``code_instances`` and ``shared_transients``, keyed by CFG id.
+                 The consumer takes the first and last ``access_instances`` entry, so the order is
+                 load-bearing and must stay ``blockorder_topological_sort``.
         """
         from dace.sdfg.analysis import cfg as cfg_analysis
 
@@ -238,9 +193,8 @@ class AccessInstances(ppl.Pass):
                         continue
                     instances[node.data].append((state, node))
 
-                # A code node may reference a container directly in its code (a free symbol with no
-                # connector/memlet/AccessNode); those states are uses too, otherwise the declaration
-                # can land in a scope that does not enclose the reading code.
+                # A code node naming a container as a free symbol (no memlet) is also a use; a
+                #  synthetic AccessNode records it since the consumer only needs the state.
                 for node in state.nodes():
                     if not isinstance(node, nodes.CodeNode):
                         continue
@@ -265,15 +219,7 @@ class AccessInstances(ppl.Pass):
 
 
 class CodegenAnalysisPipeline(ppl.Pipeline):
-    """The read-only analyses code generation needs before it starts emitting.
-
-    Grouping them is not cosmetic: ``StateReachability`` depends on ``ControlFlowBlockReachability``,
-    so running the analyses separately recomputes that dependency once per consumer. A pipeline
-    resolves ``depends_on`` and shares every result through ``pipeline_results``.
-
-    All three declare ``Modifies.Nothing``, so this is safe to run on a frozen SDFG and its results
-    stay valid for as long as nothing mutates the graph.
-    """
+    """The read-only analyses code generation runs on a frozen SDFG before emitting; shares ``depends_on`` results."""
 
     def __init__(self):
         super().__init__([StateReachability(), SymbolScopes(), AllocationScopes(), AccessInstances()])
