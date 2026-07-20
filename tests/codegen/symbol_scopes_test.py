@@ -53,8 +53,8 @@ def test_loop_region_iterator_is_visible():
     tasklet = body.add_tasklet('w', {}, {'o'}, 'o = i')
     body.add_edge(tasklet, 'o', body.add_access('A'), None, dace.Memlet('A[i]'))
 
-    # Whether the iterator itself lands in the table is symbols_defined_at's business; the pass
-    # only has to agree with it.
+    scopes = symbol_scopes(sdfg)
+    assert 'i' in defined_at(scopes, body, tasklet), 'loop iterator must be in scope'
     assert_matches(sdfg)
 
 

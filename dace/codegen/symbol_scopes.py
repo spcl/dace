@@ -7,8 +7,8 @@ edges, the enclosing loop variables, then the scope entries on the path down to 
 last step depends on the node, so a per-node call redoes an O(#arrays) sympy walk that is invariant
 across the entire SDFG.
 
-Symbols are *defined going down* -- a map entry binds its parameters and dynamic-range connectors
-and a consume entry its PE index -- so the natural shape is one top-down pass
+Symbols are *defined going down* -- a map entry binds its parameters and dynamic-range connectors, a
+consume entry its PE index, a loop region its iterator -- so the natural shape is one top-down pass
 that inherits the enclosing scope's table and adds what the scope itself binds. That is also what
 correctness wants: ``new_symbols`` receives the accumulated table because it types a map range
 against the symbols already in scope.
@@ -22,7 +22,7 @@ from typing import Dict, Optional, Union
 from dace import dtypes
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import SDFG
-from dace.sdfg.state import SDFGState
+from dace.sdfg.state import LoopRegion, SDFGState
 
 #: Per state, the symbols visible at each scope entry; ``None`` keys the state's own top level.
 SymbolScopes = Dict[SDFGState, Dict[Optional[nodes.EntryNode], Dict[str, dtypes.typeclass]]]
@@ -50,9 +50,17 @@ def sdfg_symbols(sdfg: SDFG) -> Dict[str, dtypes.typeclass]:
 
 
 def state_symbols(state: SDFGState, base: Dict[str, dtypes.typeclass]) -> Dict[str, dtypes.typeclass]:
-    """Per-state table. Mirrors ``symbols_defined_at``, which folds in nothing state-specific here."""
-    del state  # kept in the signature so a per-state contribution has an obvious home
-    return collections.OrderedDict(base)
+    """``base`` plus the iterators of the loop regions enclosing ``state``, outermost first."""
+    symbols = collections.OrderedDict(base)
+    enclosing_loops = []
+    cfg = state.parent_graph
+    while cfg is not None:
+        if isinstance(cfg, LoopRegion) and cfg.loop_variable:
+            enclosing_loops.append(cfg)
+        cfg = cfg.parent_graph
+    for loop in reversed(enclosing_loops):
+        symbols.update(loop.new_symbols(symbols))
+    return symbols
 
 
 def symbol_scopes(top_sdfg: SDFG) -> SymbolScopes:
