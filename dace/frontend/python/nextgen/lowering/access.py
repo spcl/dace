@@ -202,6 +202,17 @@ def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> Li
     computation mechanism to detect and lower genuine indirection
     (``x[A_col[j]]``) as a full-array connector plus synthetic index
     connectors, rather than falling back to the interpreter.
+
+    Only *scalar* index reads count. A whole-array index (``A[indices]``) is
+    NumPy advanced indexing — a different feature, with its own broadcasting
+    and result-shape rules — and is left to :func:`resolve_access`, which
+    rejects it as ``arrdims``. Treating it as indirection produces a tree that
+    passes the callback-discrepancy check but cannot be converted to a valid
+    SDFG: the index array inherits the *base* array's subset, so ``A[indices]``
+    with ``A: float64[20]`` and ``indices: int32[3]`` emits ``indices[0:20]``,
+    an out-of-bounds memlet. Verified for ``A[indices, 4]``,
+    ``A[rows, columns]`` and ``A[indices, 2:7:2, [15, 10, 1]]`` — all three
+    fail SDFG construction, two of them while scoring as successes.
     """
     if not isinstance(array_expression, ast.Subscript):
         return []
@@ -214,7 +225,7 @@ def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> Li
             if not isinstance(getattr(node, 'ctx', ast.Load()), ast.Load):
                 return False
             access = resolve_access(node, state)  # UnsupportedFeatureError propagates (nested indirection)
-            if access is None:
+            if access is None or not access.is_scalar_access:
                 return False
             key = astutils.unparse(node)
             if key not in seen:
@@ -324,9 +335,11 @@ def substitute_data_operands(expr: ast.expr,
                 seen[base_key] = connector
             connector = seen[base_key]
             index_node = self.visit(copy.deepcopy(node.slice))
-            index_code = astutils.unparse(ast.fix_missing_locations(index_node))
-            replacement = ast.parse(f'{connector}[{index_code}]', mode='eval').body
-            return ast.copy_location(replacement, node)
+            # Built as an AST rather than round-tripped through source: an
+            # unparsed index tuple carries parentheses, and ``base[(i, 1:3)]``
+            # is not valid Python even though ``base[i, 1:3]`` is.
+            replacement = ast.Subscript(value=ast.Name(id=connector, ctx=ast.Load()), slice=index_node, ctx=ast.Load())
+            return ast.fix_missing_locations(ast.copy_location(replacement, node))
 
         def _connector_for(self, original: ast.expr, access: DataAccess) -> ast.Name:
             key = astutils.unparse(original)
