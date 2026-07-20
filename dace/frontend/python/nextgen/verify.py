@@ -75,6 +75,9 @@ def verify_tree(root: tn.ScheduleTreeRoot) -> None:
                 for name in child.data_arguments:
                     if not _known_container(name):
                         problems.append(f'{where}: replacement call references unknown container "{name}"')
+                if child.receiver is not None and child.receiver not in child.data_arguments:
+                    problems.append(f'{where}: replacement receiver "{child.receiver}" is not a registered data '
+                                    'argument')
             elif isinstance(child, tn.ReturnNode):
                 for name in child.values:
                     if name not in root.containers:

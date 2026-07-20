@@ -1142,19 +1142,32 @@ class ReplacementCallNode(ScheduleTreeNode):
     frontends reuse the classic replacement implementations without
     reimplementing each call as tree emission.
 
-    :param qualname: Replacement registry key (e.g. ``numpy.sum``).
+    :param qualname: Replacement registry key (e.g. ``numpy.sum``). For a
+                     bound-method call (``receiver`` set), this is the bare
+                     method name (e.g. ``copy``), looked up through
+                     ``Replacements.get_method`` against the receiver's
+                     descriptor type rather than through ``Replacements.get``.
     :param target: Repository container the call result is written to.
     :param arguments: Positional arguments; entries listed in
                       ``data_arguments`` are repository container names, all
-                      other entries are compile-time Python values.
+                      other entries are compile-time Python values. For a
+                      bound-method call, the receiver is already included as
+                      the first entry (matching the classic frontend's
+                      convention of prepending ``self`` to the replacement's
+                      argument list).
     :param keyword_arguments: Keyword arguments, same convention.
-    :param data_arguments: The container-name argument values.
+    :param data_arguments: The container-name argument values (includes the
+                           receiver, when set).
+    :param receiver: For a bound-method call (``obj.method(...)``), the
+                     repository container ``obj`` resolves to. ``None`` for a
+                     free-function replacement.
     """
     qualname: str = ''
     target: str = ''
     arguments: List[Any] = field(default_factory=list)
     keyword_arguments: Dict[str, Any] = field(default_factory=dict)
     data_arguments: Set[str] = field(default_factory=set)
+    receiver: Optional[str] = None
 
     def as_string(self, indent: int = 0):
         rendered = [str(argument) for argument in self.arguments]
