@@ -1070,6 +1070,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._dataflow_stack:
             raise NotImplementedError("Replacement calls inside dataflow scopes are not supported.")
 
+        shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
         if node.receiver is not None:
             # METHOD-family replacement (e.g. ``A.copy()``, see
             # ``lowering.dispatch._lower_replacement_call``'s method-call arm).
@@ -1078,6 +1079,17 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             if function is None:
                 raise NotImplementedError(
                     f"No method replacement registered for '{node.qualname}' on '{receiver_type.__name__}'.")
+            result = function(shim, sdfg, self._current_state, *node.arguments, **node.keyword_arguments)
+        elif node.ufunc_name is not None:
+            # NumPy universal functions live in a separate registry keyspace
+            # (keyed on the reduce/accumulate/outer method) with their own
+            # calling convention: a single positional (ast_node, ufunc_name,
+            # args, kwargs) rather than the generic *args/**kwargs unpacking.
+            function = oprepo.Replacements.get_ufunc(node.ufunc_method)
+            if function is None:
+                raise NotImplementedError(f"No ufunc replacement registered for '{node.qualname}'.")
+            result = function(shim, None, sdfg, self._current_state, node.ufunc_name, list(node.arguments),
+                              dict(node.keyword_arguments))
         else:
             function = oprepo.Replacements.get(node.qualname)
             if function is None and oprepo.ATTRIBUTE_QUALNAME_MARKER in node.qualname:
@@ -1089,9 +1101,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 function = oprepo.Replacements.get_attribute(classname, attr_name)
             if function is None:
                 raise NotImplementedError(f"No replacement registered for '{node.qualname}'.")
-
-        shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
-        result = function(shim, sdfg, self._current_state, *node.arguments, **node.keyword_arguments)
+            result = function(shim, sdfg, self._current_state, *node.arguments, **node.keyword_arguments)
 
         # Multi-state replacements return a (NestedCall, result) pair and/or
         # advance the shim's last block; follow them.
@@ -1099,6 +1109,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             shim.last_block = result[0].last_state or shim.last_block
             result = result[1]
         self._current_state = shim.last_block
+
+        if isinstance(result, list) and len(result) == 1 and isinstance(result[0], str):
+            # Ufunc implementations always return a single-element list of
+            # output datanames (List[UfuncOutput]); normalize to the same
+            # bare-string form the generic replacement convention uses below.
+            result = result[0]
 
         if shim.views:
             raise NotImplementedError(

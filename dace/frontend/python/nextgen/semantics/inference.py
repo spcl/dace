@@ -230,6 +230,35 @@ class InferenceService:
             return f'{root.__name__}.{".".join(parts[1:])}', resolved
         return '.'.join(parts), resolved
 
+    #: Ufunc methods with dedicated registry entries (``get_ufunc(method)``).
+    _UFUNC_METHODS = ('reduce', 'accumulate', 'outer')
+
+    def resolve_ufunc_call(self, node: ast.Call) -> Optional[Tuple[Any, Optional[str]]]:
+        """
+        Resolve a canonical call as a NumPy universal function invocation,
+        either direct (``numpy.add(...)``) or through one of its
+        ``reduce``/``accumulate``/``outer`` methods (``numpy.add.reduce(...)``
+        — an ``ast.Attribute`` call whose *base* resolves to a
+        ``numpy.ufunc``, not the callee itself, which resolves to a bound
+        method object instead).
+
+        Shared by inference (:meth:`infer_call`) and lowering
+        (``dispatch._lower_registry_call``) so both stages agree on which
+        calls are ufunc invocations and which method they use.
+
+        :return: A 2-tuple of (ufunc object, method name, or ``None`` for a
+                 direct call), or ``None`` if the call is not a ufunc
+                 invocation.
+        """
+        _, callee = self.resolve_callee(node.func)
+        if isinstance(callee, numpy.ufunc):
+            return callee, None
+        if isinstance(node.func, ast.Attribute) and node.func.attr in self._UFUNC_METHODS:
+            _, base = self.resolve_callee(node.func.value)
+            if isinstance(base, numpy.ufunc):
+                return base, node.func.attr
+        return None
+
     def infer_call(self, node: ast.Call) -> Optional[Inferred]:
         """
         Descriptor inference for a canonical flat call through the
@@ -264,12 +293,15 @@ class InferenceService:
 
         qualname, callee = self.resolve_callee(node.func)
 
-        # NumPy universal functions (np.add, np.sin, ...)
-        if isinstance(callee, numpy.ufunc):
-            infer_fn = oprepo.Replacements.get_ufunc_descriptor_inference()
+        # NumPy universal functions (np.add, np.sin, ...), direct or through
+        # one of their reduce/accumulate/outer methods (np.add.reduce(...)).
+        ufunc_form = self.resolve_ufunc_call(node)
+        if ufunc_form is not None:
+            ufunc, ufunc_method = ufunc_form
+            infer_fn = oprepo.Replacements.get_ufunc_descriptor_inference(ufunc_method)
             if infer_fn is None:
                 return None
-            return self._registry_inference(infer_fn, input_descs, callee.__name__, *args, **kwargs)
+            return self._registry_inference(infer_fn, input_descs, ufunc.__name__, *args, **kwargs)
 
         # Free functions by qualified name (numpy.zeros, numpy.sum, ...).
         # Fall back to the source-level name: the qualname preprocessing

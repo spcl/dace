@@ -97,6 +97,72 @@ def test_scalar_axis_keeps_wcr_mechanism():
     assert not _nodes_of_type(tree, tn.ReplacementCallNode)
 
 
+def test_ufunc_reduce_method_structure():
+    """``numpy.add.reduce(...)`` -- an ast.Attribute call whose base resolves
+    to a numpy.ufunc -- routes through the ufunc registry keyspace
+    (get_ufunc('reduce')/get_ufunc_descriptor_inference('reduce')) via a
+    ReplacementCallNode tagged with ufunc_name/ufunc_method, rather than
+    going untyped as a plain "reduce" free-function call."""
+
+    @dace.program
+    def prog(A: dace.int32[10]):
+        return np.add.reduce(A)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].ufunc_name == 'add'
+    assert calls[0].ufunc_method == 'reduce'
+    assert calls[0].data_arguments == {'A'}
+
+
+def test_ufunc_reduce_axis_execution():
+
+    @dace.program
+    def prog(A: dace.int32[2, 3, 4]):
+        return np.add.reduce(A, axis=(0, 2))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(2, 3, 4)).astype(np.int32)
+    assert np.array_equal(func(A=A), np.add.reduce(A, axis=(0, 2)))
+
+
+def test_ufunc_accumulate_execution():
+    # A 2-D (not 1-D) array: implement_ufunc_accumulate's map over the
+    # non-accumulated dimensions degenerates to a zero-parameter map for a
+    # 1-D input, an unrelated pre-existing gap in the registry
+    # implementation itself (shared with classic, not a nextgen routing
+    # issue) -- matches the shapes ufunc_support_test.py's own accumulate
+    # coverage uses (never 1-D).
+
+    @dace.program
+    def prog(A: dace.int32[3, 4]):
+        return np.add.accumulate(A)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(3, 4)).astype(np.int32)
+    assert np.array_equal(func(A=A), np.add.accumulate(A))
+
+
+def test_ufunc_outer_execution():
+
+    @dace.program
+    def prog(A: dace.int32[3], B: dace.int32[3]):
+        return np.add.outer(A, B)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(3, )).astype(np.int32)
+    B = np.random.randint(1, 10, size=(3, )).astype(np.int32)
+    assert np.array_equal(func(A=A, B=B), np.add.outer(A, B))
+
+
 def test_concatenate_sequence_of_containers_structure():
     """A static sequence whose elements are data containers (e.g. the
     ``(A, B)`` in ``numpy.concatenate((A, B))``) passes through as a list of
@@ -165,6 +231,10 @@ if __name__ == '__main__':
     test_mean_execution()
     test_transpose_execution()
     test_scalar_axis_keeps_wcr_mechanism()
+    test_ufunc_reduce_method_structure()
+    test_ufunc_reduce_axis_execution()
+    test_ufunc_accumulate_execution()
+    test_ufunc_outer_execution()
     test_concatenate_sequence_of_containers_structure()
     test_concatenate_sequence_of_containers_execution()
     test_hstack_list_of_containers_execution()
