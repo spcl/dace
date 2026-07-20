@@ -319,16 +319,15 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             f'Transient data container "{name}" contains undefined symbol in dimension {i}, '
                             f'which is required for memory allocation', sdfg, None)
 
-                # Check strides if array
-                if hasattr(desc, 'strides'):
-                    for i, stride in enumerate(desc.strides):
-                        if symbolic.is_undefined(stride):
-                            raise InvalidSDFGError(
-                                f'Transient data container "{name}" contains undefined symbol in stride {i}, '
-                                f'which is required for memory allocation', sdfg, None)
+                # Check strides (every Data has strides/total_size, so no hasattr guard is needed)
+                for i, stride in enumerate(desc.strides):
+                    if symbolic.is_undefined(stride):
+                        raise InvalidSDFGError(
+                            f'Transient data container "{name}" contains undefined symbol in stride {i}, '
+                            f'which is required for memory allocation', sdfg, None)
 
                 # Check total size
-                if hasattr(desc, 'total_size') and symbolic.is_undefined(desc.total_size):
+                if symbolic.is_undefined(desc.total_size):
                     raise InvalidSDFGError(
                         f'Transient data container "{name}" has undefined total size, '
                         f'which is required for memory allocation', sdfg, None)
@@ -442,9 +441,12 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
 
-    # Obtain whether we are already in an accelerator context
-    if not hasattr(context, 'in_gpu'):
+    # Obtain whether we are already in an accelerator context ('context' is a dict, so not hasattr)
+    if 'in_gpu' not in context:
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
+
+    # Hoisted out of the per-edge loop: the config cannot change mid-validation
+    validate_undefs = Config.get_bool('experimental', 'validate_undefs')
 
     # Reference check
     if id(state) in references:
@@ -852,7 +854,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
 
             # Test subset and other_subset for undefined symbols
-            if Config.get_bool('experimental', 'validate_undefs'):
+            if validate_undefs:
                 # TODO: Traverse by scopes and accumulate data
                 defined_symbols = state.symbols_defined_at(e.dst)
                 undefs = (e.data.subset.free_symbols - set(defined_symbols.keys()))
