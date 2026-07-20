@@ -22,6 +22,10 @@ set -euo pipefail
 
 REPO=$(git rev-parse --show-toplevel)
 
+# SBATCH --output writes to perf_ab/ relative to the submit directory, so it must exist
+# before the job is scheduled -- sbatch does not create it.
+mkdir -p perf_ab
+
 # Toolchain: the cloudsc build and any C++ the corpus touches need a current compiler.
 # `spack` is a shell function; in a non-interactive sbatch shell it may not be defined yet, so
 # source the setup if `spack load` is not already available.
