@@ -580,19 +580,19 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
         return False
 
     # NumPy universal functions, direct (numpy.add(...)) or through one of
-    # their reduce/accumulate/outer methods (numpy.add.reduce(...)). A direct
-    # call with no method lowers through the lightweight elementwise
-    # mechanism (a single tasklet expression); reduce/accumulate/outer need
-    # real reduction/scan/broadcast dataflow, which the elementwise mechanism
-    # cannot express, so they defer to the actual registry ufunc
-    # implementation through the same deferred-expansion mechanism used for
-    # other replacements below.
+    # their reduce/accumulate/outer methods (numpy.add.reduce(...)). A plain
+    # elementwise call with no keywords lowers through the lightweight
+    # elementwise mechanism (a single tasklet expression); everything that
+    # mechanism cannot express -- reduce/accumulate/outer (which need real
+    # reduction/scan/broadcast dataflow) or any keyword argument (out=/
+    # where=/axis=/keepdims=/initial=, which the elementwise mechanism has no
+    # way to honor) -- defers to the actual registry ufunc implementation
+    # through the same deferred-expansion mechanism used for other
+    # replacements below.
     ufunc_form = state.inference.resolve_ufunc_call(call)
     if ufunc_form is not None:
         ufunc, ufunc_method = ufunc_form
-        if ufunc_method is None:
-            if call.keywords:
-                return False  # out=/where=/dtype= change semantics; run in the interpreter
+        if ufunc_method is None and not call.keywords:
             target_access = _call_target_access(target, inferred, statement, state)
             elementwise.emit_ufunc(target_access, ufunc.__name__, call.args, statement, state)
             return True

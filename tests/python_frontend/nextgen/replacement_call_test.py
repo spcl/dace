@@ -163,6 +163,45 @@ def test_ufunc_outer_execution():
     assert np.array_equal(func(A=A, B=B), np.add.outer(A, B))
 
 
+def test_ufunc_keyword_argument_execution():
+    """A direct ufunc call (no method) with a keyword argument, previously
+    rejected outright, now defers to the registry ufunc implementation
+    instead of the lightweight no-keyword elementwise mechanism. (A bare
+    `np.add(A, B, out=C)` statement, with no assignment, hits the separate
+    and unrelated `target is None` gap -- use a return instead, matching
+    ufunc_support_test.py::test_ufunc_add_where's pattern.)"""
+
+    @dace.program
+    def prog(A: dace.int32[10], B: dace.int32[10], W: dace.bool_[10]):
+        return np.add(A, B, where=W)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].ufunc_name == 'add'
+    assert calls[0].ufunc_method is None
+    func = tree.as_sdfg().compile()
+    A = np.random.randint(1, 10, size=(10, )).astype(np.int32)
+    B = np.random.randint(1, 10, size=(10, )).astype(np.int32)
+    W = np.random.randint(2, size=(10, )).astype(np.bool_)
+    C = func(A=A, B=B, W=W)
+    assert np.array_equal((A + B)[W], C[W])
+
+
+def test_ufunc_unsupported_keyword_falls_back():
+    """A keyword the registry ufunc implementation does not understand stays
+    a callback rather than silently being dropped."""
+
+    @dace.program
+    def prog(A: dace.int32[10], B: dace.int32[10]):
+        return np.add(A, B, casting='unsafe', nonexistent_kwarg=1)
+
+    tree = nextgen.parse_program(prog)
+    assert _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+
+
 def test_concatenate_sequence_of_containers_structure():
     """A static sequence whose elements are data containers (e.g. the
     ``(A, B)`` in ``numpy.concatenate((A, B))``) passes through as a list of
@@ -235,6 +274,8 @@ if __name__ == '__main__':
     test_ufunc_reduce_axis_execution()
     test_ufunc_accumulate_execution()
     test_ufunc_outer_execution()
+    test_ufunc_keyword_argument_execution()
+    test_ufunc_unsupported_keyword_falls_back()
     test_concatenate_sequence_of_containers_structure()
     test_concatenate_sequence_of_containers_execution()
     test_hstack_list_of_containers_execution()
