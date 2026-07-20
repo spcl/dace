@@ -866,8 +866,8 @@ def isolate_nested_sdfg(
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
     #  The first is that the node does not belong to any other set.
-    post_nodes: OrderedSet[nodes.Node] = OrderedSet(
-        node for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes))
+    post_nodes: OrderedSet[nodes.Node] = OrderedSet(node for node in state.nodes()
+                                                    if (node not in pre_nodes) and (node not in middle_nodes))
 
     # The second reason, are read dependencies, for this we have to look at the incoming
     #  edges and add any node that we need.
