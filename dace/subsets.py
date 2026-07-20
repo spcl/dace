@@ -305,20 +305,7 @@ def _tuple_to_symexpr(val):
 class Range(Subset):
     """ Subset defined in terms of a fixed range. """
 
-    def __init__(self, ranges, index_dims: Optional[Sequence[bool]] = None):
-        """
-        :param ranges: The per-dimension (begin, end, step[, tile]) tuples.
-        :param index_dims: Which dimensions were written as an integer index rather than a slice.
-                           numpy drops those dimensions from the result rank (``a[0]`` is one rank
-                           lower than ``a[0:1]``), and ``(begin, end, step)`` cannot express the
-                           difference on its own since both are ``(i, i, 1)``. Defaults to all
-                           slices, which is what a full-array access means.
-
-        :note: The flags survive JSON serialization but not the string form, which renders a
-               degenerate range as ``i`` either way. Subset strings are re-parsed as symbolic
-               expressions in places that reject slice syntax (see
-               ``dace.transformation.passes.scalar_to_symbol``), so the rendering cannot change.
-        """
+    def __init__(self, ranges):
         parsed_ranges = []
         parsed_tiles = []
         for r in ranges:
@@ -331,63 +318,14 @@ class Range(Subset):
                 parsed_tiles.append(symbolic.pystr_to_symbolic(r[3]))
         self.ranges = parsed_ranges
         self.tile_sizes = parsed_tiles
-        if index_dims is None:
-            self.index_dims = [False] * len(parsed_ranges)
-        else:
-            index_dims = list(index_dims)
-            if len(index_dims) != len(parsed_ranges):
-                raise ValueError(f"Expected {len(parsed_ranges)} index flags, got {len(index_dims)}")
-            self.index_dims = index_dims
-
-    def is_index_dim(self, dim: int) -> bool:
-        """
-        Returns True if the given dimension was accessed with an integer index.
-
-        Only a degenerate range can be an index, so the flag is cross-checked against the range
-        itself rather than trusted outright: ``ranges`` is mutable through ``__setitem__`` and
-        direct assignment, and widening a dimension must not leave it looking indexed.
-
-        :param dim: The dimension to query.
-        :return: True if the dimension was written as an integer index.
-        """
-        if not self.index_dims[dim]:
-            return False
-        rng = self.ranges[dim]
-        if not isinstance(rng, tuple):
-            # A degenerate dimension may hold the bare index expression instead of a triple
-            # (see ``add_indirection_subgraph``), which is degenerate by construction.
-            return True
-        rb, re, _ = rng
-        return symbolic.equal_valued(0, re - rb)
-
-    def rank_dims(self) -> List[int]:
-        """
-        Returns the dimensions that survive numpy rank reduction, i.e. those not indexed away.
-
-        An integer index removes its dimension (``a[0, 0:N]`` has rank 1); a slice never does, not
-        even when its extent is 1 (``a[0:1, 0:N]`` has rank 2). This is the numpy rule, and it is
-        independent of :meth:`squeeze`, which removes every extent-1 dimension regardless of how it
-        was written (``np.squeeze``).
-
-        :return: The indices of the dimensions that are not indexed away.
-        """
-        return [i for i in range(len(self.ranges)) if not self.is_index_dim(i)]
-
-    def rank(self) -> int:
-        """
-        Returns the numpy rank of this access: the number of dimensions not indexed away.
-
-        :return: The number of dimensions that survive rank reduction.
-        """
-        return len(self.ranges) - sum(1 for i in range(len(self.ranges)) if self.is_index_dim(i))
 
     @staticmethod
     def from_indices(indices: Union["Indices", Sequence[int | str | symbolic.SymbolicType]]):
         if isinstance(indices, Indices):
-            return Range([(i, i, 1) for i in indices.indices], index_dims=[True] * len(indices.indices))
+            return Range([(i, i, 1) for i in indices.indices])
 
         indices = [symbolic.pystr_to_symbolic(i) for i in indices]
-        return Range([(i, i, 1) for i in indices], index_dims=[True] * len(indices))
+        return Range([(i, i, 1) for i in indices])
 
     def to_json(self):
         ret = []
@@ -395,11 +333,8 @@ class Range(Subset):
         def a2s(obj):
             return symbolic.serialize_symbolic(obj)
 
-        for (start, end, step), tile, indexed in zip(self.ranges, self.tile_sizes, self.index_dims):
-            entry = {'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)}
-            if indexed:
-                entry['indexed'] = True
-            ret.append(entry)
+        for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
+            ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
 
         return {'type': 'Range', 'ranges': ret}
 
@@ -414,16 +349,12 @@ class Range(Subset):
 
         ranges = obj['ranges']
         tuples = []
-        index_dims = []
 
         for r in ranges:
             tuples.append((_symbolic_deserializer(r['start'], context), _symbolic_deserializer(r['end'], context),
                            _symbolic_deserializer(r['step'], context), _symbolic_deserializer(r['tile'], context)))
-            # Absent in SDFGs written before index dimensions were tracked; a slice is the safe
-            # default there, since it preserves the rank the file was saved with.
-            index_dims.append(bool(r.get('indexed', False)))
 
-        return Range(tuples, index_dims=index_dims)
+        return Range(tuples)
 
     @staticmethod
     def from_array(array: 'dace.data.Data'):
@@ -438,8 +369,7 @@ class Range(Subset):
 
     def __add__(self, other):
         return Range(
-            ((*ranges, tile) for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + other.tile_sizes)),
-            index_dims=self.index_dims + other.index_dims)
+            ((*ranges, tile) for ranges, tile in zip(self.ranges + other.ranges, self.tile_sizes + other.tile_sizes)))
 
     def __deepcopy__(self, memo) -> 'Range':
         """Performs a deepcopy of ``self``.
@@ -451,7 +381,6 @@ class Range(Subset):
         node = object.__new__(Range)
         node.ranges = self.ranges.copy()
         node.tile_sizes = self.tile_sizes.copy()
-        node.index_dims = self.index_dims.copy()
 
         return node
 
@@ -578,7 +507,7 @@ class Range(Subset):
 
     def offset_new(self, other, negative, indices=None, offset_end=True):
         if other is None:
-            return Range(self.ranges, index_dims=self.index_dims)
+            return Range(self.ranges)
         if not isinstance(other, Subset):
             if isinstance(other, (list, tuple)):
                 other = Range.from_indices(other)
@@ -588,11 +517,8 @@ class Range(Subset):
         if indices is None:
             indices = set(range(len(self.ranges)))
         off = other.min_element()
-        # Offsetting shifts a subset, it never changes how a dimension was written, so the index
-        # flags follow the dimensions that are kept.
         return Range([(self.ranges[i][0] + mult * off[i], self.ranges[i][1] if not offset_end else
-                       (self.ranges[i][1] + mult * off[i]), self.ranges[i][2]) for i in indices],
-                     index_dims=[self.index_dims[i] for i in indices])
+                       (self.ranges[i][1] + mult * off[i]), self.ranges[i][2]) for i in indices])
 
     def dims(self):
         return len(self.ranges)
@@ -647,10 +573,8 @@ class Range(Subset):
         """
         new_ranges = [self.ranges[o] for o in order]
         new_tile_sizes = [self.tile_sizes[o] for o in order]
-        new_index_dims = [self.index_dims[o] for o in order]
         self.ranges = new_ranges
         self.tile_sizes = new_tile_sizes
-        self.index_dims = new_index_dims
 
     @staticmethod
     def dim_to_string(d, t=1):
@@ -688,7 +612,6 @@ class Range(Subset):
         # regtile_j * rs_j : min(K, regtile_j * rs_j + rs_j)
 
         ranges = []
-        index_dims = []
 
         # Split string to tokens separated by colons.
         # tokens = [
@@ -747,7 +670,6 @@ class Range(Subset):
             if len(uni_dim_tokens) < 2:
                 value = symbolic.pystr_to_symbolic(uni_dim_tokens[0].strip())
                 ranges.append((value, value, 1))
-                index_dims.append(True)
                 continue
                 #return Range(ranges)
             # If dimension has more than 4 tokens, the range is invalid
@@ -794,9 +716,8 @@ class Range(Subset):
                 raise SyntaxError("Invalid range: {}".format(string))
             # Append range
             ranges.append((begin, end, step, tsize))
-            index_dims.append(False)
 
-        return Range(ranges, index_dims=index_dims)
+        return Range(ranges)
 
     @staticmethod
     def ndslice_to_string(slice, tile_sizes=None):
@@ -826,8 +747,6 @@ class Range(Subset):
         return self.ranges.__getitem__(key)
 
     def __setitem__(self, key, value):
-        # A widened dimension stops being an index; `is_index_dim` cross-checks the range itself,
-        # so replacing an entry here needs no bookkeeping of its own.
         return self.ranges.__setitem__(key, value)
 
     def __eq__(self, other):
@@ -846,25 +765,18 @@ class Range(Subset):
             raise TypeError("Cannot compose ranges with non-subsets")
 
         new_subset = []
-        # A composed dimension is an index exactly when the dimension it originates from is: a
-        # degenerate dimension of ``self`` keeps its own flag, a dimension consumed from ``other``
-        # takes ``other``'s.
-        new_index_dims = []
-        other_index_dims = other.index_dims if isinstance(other, Range) else [True] * other.dims()
         if self.data_dims() == other.dims():
             # case 1: subsets may differ in dimensions, but data_dims correspond
             #         to other dims -> all non-data dims are cut out
             idx = 0
-            for dim, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
+            for (rb, re, rs), rt in zip(self.ranges, self.tile_sizes):
                 if re - rb == 0:
                     new_subset.append((rb, re, rs, rt))
-                    new_index_dims.append(self.index_dims[dim])
                 else:
                     if isinstance(other[idx], tuple):
                         new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-                    new_index_dims.append(other_index_dims[idx])
                     idx += 1
         elif self.dims() == other.dims():
             # case 2: subsets have the same dimensions (but possibly different
@@ -872,13 +784,11 @@ class Range(Subset):
             for idx, ((rb, re, rs), rt) in enumerate(zip(self.ranges, self.tile_sizes)):
                 if re - rb == 0:
                     new_subset.append((rb, re, rs, rt))
-                    new_index_dims.append(self.index_dims[idx])
                 else:
                     if isinstance(other[idx], tuple):
                         new_subset.append((rb + rs * other[idx][0], rb + rs * other[idx][1], rs * other[idx][2], rt))
                     else:
                         new_subset.append(rb + rs * other[idx])
-                    new_index_dims.append(other_index_dims[idx])
         elif (other.data_dims() == 0 and all([r == (0, 0, 1) if isinstance(other, Range) else r == 0 for r in other])):
             # NOTE: This is a special case where the other subset is the
             # (potentially multidimensional) index zero.
@@ -888,7 +798,6 @@ class Range(Subset):
                 new_subset.extend(self.ranges)
             else:
                 new_subset.extend([rb for rb, _, _ in self.ranges])
-            new_index_dims.extend(self.index_dims)
         else:
             raise ValueError("Dimension mismatch in composition: "
                              "Subset composed must be either completely "
@@ -896,7 +805,7 @@ class Range(Subset):
                              "or be not stripped of latter at all.")
 
         if isinstance(other, Range):
-            return Range(new_subset, index_dims=new_index_dims)
+            return Range(new_subset)
         else:
             raise NotImplementedError
 
@@ -928,14 +837,11 @@ class Range(Subset):
                 pass
         squeezed_ranges = [self.ranges[i] for i in non_ones]
         squeezed_tsizes = [self.tile_sizes[i] for i in non_ones]
-        squeezed_index_dims = [self.index_dims[i] for i in non_ones]
         if not squeezed_ranges:
             squeezed_ranges = [(0, 0, 1)]
             squeezed_tsizes = [1]
-            squeezed_index_dims = [False]
         self.ranges = squeezed_ranges
         self.tile_sizes = squeezed_tsizes
-        self.index_dims = squeezed_index_dims
         if offset:
             self.offset(self, True, indices=offset_indices)
         return non_ones
@@ -962,7 +868,6 @@ class Range(Subset):
         for axis in sorted(axes):
             self.ranges.insert(axis, (0, 0, 1))
             self.tile_sizes.insert(axis, 1)
-            self.index_dims.insert(axis, False)
 
             if len(result) > 0 and result[-1] >= axis:
                 result.append(result[-1] + 1)
@@ -973,19 +878,15 @@ class Range(Subset):
     def pop(self, dimensions):
         new_ranges = []
         new_tsizes = []
-        new_index_dims = []
         for i in range(len(self.ranges)):
             if i not in dimensions:
                 new_ranges.append(self.ranges[i])
                 new_tsizes.append(self.tile_sizes[i])
-                new_index_dims.append(self.index_dims[i])
         if not new_ranges:
             new_ranges = [(symbolic.pystr_to_symbolic(0), symbolic.pystr_to_symbolic(0), symbolic.pystr_to_symbolic(1))]
             new_tsizes = [symbolic.pystr_to_symbolic(1)]
-            new_index_dims = [False]
         self.ranges = new_ranges
         self.tile_sizes = new_tsizes
-        self.index_dims = new_index_dims
 
     def string_list(self):
         return Range.ndslice_to_string_list(self.ranges, self.tile_sizes)
@@ -1112,7 +1013,7 @@ class Indices(Range):
             raise TypeError("Expected collection of index expression: got SymExpr")
 
         indices = [symbolic.pystr_to_symbolic(i) for i in indices]
-        super().__init__([(idx, idx, 1) for idx in indices], index_dims=[True] * len(indices))
+        super().__init__([(idx, idx, 1) for idx in indices])
 
     @property
     def indices(self) -> List[symbolic.SymbolicType]:
