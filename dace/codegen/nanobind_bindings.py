@@ -631,12 +631,12 @@ struct DaceHandle_{name} {{
         {initialize_body}
     }}
 
-    void finalize() {{
-        if (!m_state) return;
-        int rc = exit_impl();
-        if (rc != 0)
-            throw std::runtime_error("An error was detected after running '{name}': exit code " +
-                                     std::to_string(rc));
+    // Returns __dace_exit's code (0 on success, or if already finalized);
+    // raising is left to the Python wrapper, which can translate GPU error
+    // codes through the GPU runtime.
+    int finalize() {{
+        if (!m_state) return 0;
+        return exit_impl();
     }}
 
     void call({call_param_list}) {{

@@ -1511,6 +1511,69 @@ def test_nanobind_interface_gpu_error_check(monkeypatch):
     assert any('Could not get last error' in str(w.message) for w in caught)
 
 
+def test_nanobind_interface_finalize_exit_code_binding():
+    """The generated finalize() hands the __dace_exit code back to Python
+    instead of throwing - only the wrapper can translate GPU error codes
+    (it needs the Python-side GPU runtime)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('finalize_code_probe')
+    sdfg.add_array('A', [10], dace.float64)
+
+    code = generate_bindings_code(sdfg)
+    assert 'int finalize()' in code
+    assert 'An error was detected after running' not in code
+
+
+def test_nanobind_interface_finalize_error_translation(monkeypatch):
+    """A nonzero __dace_exit code raises from the wrapper's finalize(); with
+    GPU code the numeric code is translated through the GPU runtime and the
+    syncdebug hint is appended (ctypes parity: CompiledSDFG.finalize /
+    _get_error_text)."""
+    import types
+    from dace.codegen import common
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+
+    class FakeHandle:
+        has_gpu_code = False
+        return_names = ()
+        is_single_value_ret = False
+        callback_names = ()
+        exit_code = 0
+
+        def finalize(self):
+            return self.exit_code
+
+    def make_wrapper(handle):
+        stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: handle, __file__='<stub>')
+        return NanobindCompiledSDFG(dace.SDFG('finalize_error_probe'), stub_module, [])
+
+    # Exit code 0: nothing raises.
+    make_wrapper(FakeHandle()).finalize()
+
+    # CPU-only: the raw code is reported as-is (no GPU runtime involved).
+    handle = FakeHandle()
+    handle.exit_code = 1
+    with pytest.raises(RuntimeError, match='An error was detected after running "finalize_error_probe": 1'):
+        make_wrapper(handle).finalize()
+
+    # GPU code: the code goes through the runtime's get_error_string.
+    class GpuHandle(FakeHandle):
+        has_gpu_code = True
+
+    class FakeRuntime:
+
+        def get_error_string(self, code):
+            assert code == 700
+            return 'an illegal memory access was encountered'
+
+    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime())
+    handle = GpuHandle()
+    handle.exit_code = 700
+    with pytest.raises(RuntimeError, match='an illegal memory access was encountered. Consider'):
+        make_wrapper(handle).finalize()
+
+
 def test_nanobind_interface_strict_scalar_cast_binding():
     """The strict option adds .noconvert() to a numeric scalar arg; default does not."""
     from dace.codegen.nanobind_bindings import generate_bindings_code

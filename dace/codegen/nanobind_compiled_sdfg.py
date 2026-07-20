@@ -321,7 +321,24 @@ class NanobindCompiledSDFG:
         Note that this is not thread safe and needs synchronization.
         It is possible to reinitialize a previously finalized compiled SDFG.
         """
-        self._handle.finalize()
+        rc = self._handle.finalize()
+        if rc != 0:
+            raise RuntimeError(f'An error was detected after running "{self._sdfg.name}": {self._get_error_text(rc)}')
+
+    def _get_error_text(self, result: Union[int, str]) -> str:
+        """Translates a ``__dace_exit`` code into text (ctypes ``_get_error_text`` parity).
+
+        With GPU code the numeric code is a GPU error code and goes through the
+        GPU runtime's ``get_error_string``; without, it is reported as-is.
+        """
+        from dace.codegen import common  # Circular import
+        if self._has_gpu_code:
+            if isinstance(result, int):
+                result = common.get_gpu_runtime().get_error_string(result)
+            return (f'{result}. Consider enabling synchronous debugging mode (environment variable: '
+                    'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
+        else:
+            return result
 
     def safe_call(self, *args: Any, **kwargs: Any) -> Any:
         """Runs the SDFG in a separate process, so a crash raises here instead of killing the caller.
