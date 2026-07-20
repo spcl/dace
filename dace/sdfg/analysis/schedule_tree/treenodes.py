@@ -1147,6 +1147,9 @@ class ReplacementCallNode(ScheduleTreeNode):
                      method name (e.g. ``copy``), looked up through
                      ``Replacements.get_method`` against the receiver's
                      descriptor type rather than through ``Replacements.get``.
+                     For a ufunc call (``ufunc_name`` set), this is a display
+                     name only -- the registry lookup goes through
+                     ``ufunc_name``/``ufunc_method`` instead.
     :param target: Repository container the call result is written to.
     :param arguments: Positional arguments; entries listed in
                       ``data_arguments`` are repository container names, all
@@ -1160,7 +1163,24 @@ class ReplacementCallNode(ScheduleTreeNode):
                            receiver, when set).
     :param receiver: For a bound-method call (``obj.method(...)``), the
                      repository container ``obj`` resolves to. ``None`` for a
-                     free-function replacement.
+                     free-function or ufunc replacement.
+    :param ufunc_name: When set, this is a NumPy universal function call
+                       (``numpy.<ufunc_name>(...)`` or one of its
+                       ``reduce``/``accumulate``/``outer`` methods) instead of
+                       an ordinary qualname-keyed replacement: the registry
+                       entry is looked up through
+                       :meth:`~dace.frontend.common.op_repository.Replacements.get_ufunc`
+                       (keyed on ``ufunc_method``) rather than
+                       :meth:`~dace.frontend.common.op_repository.Replacements.get`,
+                       and invoked with the ufunc calling convention
+                       (``function(visitor, ast_node, sdfg, state, ufunc_name,
+                       arguments, keyword_arguments)``) rather than the
+                       generic ``function(visitor, sdfg, state, *arguments,
+                       **keyword_arguments)`` convention. ``None`` for an
+                       ordinary (non-ufunc) replacement call.
+    :param ufunc_method: ``'reduce'``, ``'accumulate'``, or ``'outer'`` for a
+                         ufunc method call; ``None`` for a direct ufunc call
+                         or a non-ufunc replacement.
     """
     qualname: str = ''
     target: str = ''
@@ -1168,6 +1188,8 @@ class ReplacementCallNode(ScheduleTreeNode):
     keyword_arguments: Dict[str, Any] = field(default_factory=dict)
     data_arguments: Set[str] = field(default_factory=set)
     receiver: Optional[str] = None
+    ufunc_name: Optional[str] = None
+    ufunc_method: Optional[str] = None
 
     def as_string(self, indent: int = 0):
         rendered = [str(argument) for argument in self.arguments]

@@ -573,21 +573,30 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     NumPy mechanisms. Returns False when no mechanism applies (the caller
     falls back to a callback).
     """
-    import numpy  # Deferred; keep module import light
-
     inferred = state.inference.infer_call(call)
     if inferred is None or not inferred.is_data or target is None:
         # No registry entry, a multi-output result, or an unused result:
         # the interpreter fallback preserves semantics in all three cases.
         return False
 
-    # NumPy universal functions: elementwise map from the shared ufunc table
-    if isinstance(callee, numpy.ufunc):
-        if call.keywords:
-            return False  # out=/where=/dtype= change semantics; run in the interpreter
-        target_access = _call_target_access(target, inferred, statement, state)
-        elementwise.emit_ufunc(target_access, callee.__name__, call.args, statement, state)
-        return True
+    # NumPy universal functions, direct (numpy.add(...)) or through one of
+    # their reduce/accumulate/outer methods (numpy.add.reduce(...)). A direct
+    # call with no method lowers through the lightweight elementwise
+    # mechanism (a single tasklet expression); reduce/accumulate/outer need
+    # real reduction/scan/broadcast dataflow, which the elementwise mechanism
+    # cannot express, so they defer to the actual registry ufunc
+    # implementation through the same deferred-expansion mechanism used for
+    # other replacements below.
+    ufunc_form = state.inference.resolve_ufunc_call(call)
+    if ufunc_form is not None:
+        ufunc, ufunc_method = ufunc_form
+        if ufunc_method is None:
+            if call.keywords:
+                return False  # out=/where=/dtype= change semantics; run in the interpreter
+            target_access = _call_target_access(target, inferred, statement, state)
+            elementwise.emit_ufunc(target_access, ufunc.__name__, call.args, statement, state)
+            return True
+        return _lower_ufunc_replacement_call(target, call, ufunc.__name__, ufunc_method, inferred, statement, state)
 
     # Array/stream creation. Resolution may yield the callee's real module
     # path (dace.define_stream lives in dace.frontend.python.wrappers), so
@@ -725,6 +734,27 @@ def _lower_replacement_call(target: ast.expr, call: ast.Call, qualname: str, inf
     return True
 
 
+def _replacement_trial_scratch(data_arguments: set, state: LoweringState):
+    """
+    Build the scratch SDFG/state/shim triple shared by the build-time
+    replacement-viability trials (:func:`_expansion_viable` and
+    :func:`_ufunc_expansion_viable`): a standalone SDFG carrying copies of
+    just the data arguments a replacement call touches, on which the
+    replacement can be trial-run without mutating the real program.
+    """
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import ReplacementVisitorShim
+    from dace.sdfg.sdfg import SDFG
+
+    scratch = SDFG('__replacement_viability')
+    for data_name in data_arguments:
+        descriptor = copy.deepcopy(state.context.containers[data_name])
+        descriptor.transient = False
+        scratch.add_datadesc(data_name, descriptor)
+    scratch_state = scratch.add_state()
+    shim = ReplacementVisitorShim(scratch, scratch_state, '__viability_target')
+    return scratch, scratch_state, shim
+
+
 def _expansion_viable(name: str,
                       arguments: List,
                       keywords: dict,
@@ -740,20 +770,12 @@ def _expansion_viable(name: str,
     unsupported return forms.
     """
     from dace.frontend.common import op_repository as oprepo
-    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import ReplacementVisitorShim
-    from dace.sdfg.sdfg import SDFG
 
     if receiver is not None:
         function = oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
     else:
         function = oprepo.Replacements.get(name)
-    scratch = SDFG('__replacement_viability')
-    for data_name in data_arguments:
-        descriptor = copy.deepcopy(state.context.containers[data_name])
-        descriptor.transient = False
-        scratch.add_datadesc(data_name, descriptor)
-    scratch_state = scratch.add_state()
-    shim = ReplacementVisitorShim(scratch, scratch_state, '__viability_target')
+    scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
         result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
     except Exception:
@@ -765,6 +787,81 @@ def _expansion_viable(name: str,
     if isinstance(result, str):
         return result in scratch.arrays
     return result is None or result == []
+
+
+#: Keyword arguments the registry ufunc implementations
+#: (:mod:`dace.frontend.python.replacements.ufunc`) understand, across all of
+#: the direct-call/reduce/accumulate/outer forms. Anything else changes
+#: semantics in a way the registry does not implement, so it is rejected
+#: rather than silently ignored.
+_SUPPORTED_UFUNC_KEYWORDS = frozenset({'out', 'where', 'axis', 'keepdims', 'initial', 'dtype'})
+
+
+def _lower_ufunc_replacement_call(target: ast.expr, call: ast.Call, ufunc_name: str, ufunc_method: Optional[str],
+                                  inferred, statement: ast.stmt, state: LoweringState) -> bool:
+    """
+    Emit a deferred ``ReplacementCallNode`` for a NumPy ufunc call that the
+    lightweight elementwise mechanism cannot express: ``reduce``/
+    ``accumulate``/``outer`` (which need real reduction/scan/broadcast
+    dataflow, not a single tasklet expression), or any keyword argument.
+    Reuses the same deferred-expansion machinery as :func:`_lower_replacement_call`,
+    but through the ufunc registry keyspace (``get_ufunc``/``get_ufunc``
+    calling convention) rather than the free-function one. Returns False when
+    the call is not viable (an argument cannot be resolved, an unsupported
+    keyword is present, or the trial expansion fails), matching
+    :func:`_lower_replacement_call`'s contract.
+    """
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    if oprepo.Replacements.get_ufunc(ufunc_method) is None:
+        return False
+    unsupported = {keyword.arg for keyword in call.keywords} - _SUPPORTED_UFUNC_KEYWORDS
+    if unsupported:
+        return False  # Keywords the registry ufunc implementation does not accept
+    if state.emitter.in_dataflow_scope:
+        return False  # Expansion adds state machinery; no CFG inside dataflow scopes
+
+    converted = _replacement_arguments(call, state)
+    if converted is None:
+        return False
+    arguments, keywords, data_arguments = converted
+    if not _ufunc_expansion_viable(ufunc_name, ufunc_method, arguments, keywords, data_arguments, state):
+        return False
+    target_access = _call_target_access(target, inferred, statement, state)
+    display_name = f'numpy.{ufunc_name}' + (f'.{ufunc_method}' if ufunc_method else '')
+    state.emitter.emit(
+        tn.ReplacementCallNode(qualname=display_name,
+                               target=target_access.container,
+                               arguments=arguments,
+                               keyword_arguments=keywords,
+                               data_arguments=data_arguments,
+                               ufunc_name=ufunc_name,
+                               ufunc_method=ufunc_method))
+    return True
+
+
+def _ufunc_expansion_viable(ufunc_name: str, ufunc_method: Optional[str], arguments: List, keywords: dict,
+                            data_arguments: set, state: LoweringState) -> bool:
+    """
+    Trial-run a ufunc replacement on a scratch SDFG, mirroring
+    :func:`_expansion_viable` but for the ufunc calling convention (a single
+    ``(ast_node, ufunc_name, args, kwargs)`` positional group instead of
+    ``*args``/``**kwargs``) and its ``List[UfuncOutput]`` return form (a
+    single-element list of the output dataname, rather than a bare string).
+    """
+    from dace.frontend.common import op_repository as oprepo
+
+    function = oprepo.Replacements.get_ufunc(ufunc_method)
+    scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
+    try:
+        result = function(shim, None, scratch, scratch_state, ufunc_name, copy.deepcopy(list(arguments)),
+                          copy.deepcopy(dict(keywords)))
+    except Exception:
+        return False
+    if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
+        result = result[1]
+    if shim.views:
+        return False  # View bindings are frontend state; expansion cannot defer them
+    return isinstance(result, list) and len(result) == 1 and isinstance(result[0], str) and result[0] in scratch.arrays
 
 
 def _replacement_arguments(call: ast.Call, state: LoweringState) -> Optional[Tuple[List, dict, set]]:

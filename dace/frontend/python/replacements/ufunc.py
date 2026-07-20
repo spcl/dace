@@ -1995,21 +1995,6 @@ def _infer_reduce_shape(desc: data.Data, axis, keepdims: bool) -> Optional[List[
     return [dim for i, dim in enumerate(shape) if i not in axis]
 
 
-def _infer_reduce_dtype(ufunc_name: str, desc: data.Data, method_name: str) -> Optional[dtypes.typeclass]:
-    try:
-        sample_array = np.array([representative_num(desc.dtype)], dtype=desc.dtype.as_numpy_dtype())
-        ufunc = getattr(np, ufunc_name)
-        if method_name == 'reduce':
-            result = ufunc.reduce(sample_array)
-        elif method_name == 'accumulate':
-            result = ufunc.accumulate(sample_array)
-        else:
-            result = ufunc.outer(sample_array, sample_array)
-        return dtypes.dtype_to_typeclass(np.asarray(result).dtype.type)
-    except Exception:
-        return None
-
-
 @infers_ufunc_descriptor('ufunc')
 def _infer_ufunc_descriptor(input_descs: Dict[str, data.Data], ufunc_name: str, *args, **kwargs):
     impl = ufuncs.get(ufunc_name)
@@ -2077,7 +2062,15 @@ def _infer_ufunc_reduce_descriptor(input_descs: Dict[str, data.Data],
     if explicit_result is not None:
         return explicit_result
 
-    out_dtype = _resolve_dtype_override(dtype) or _infer_reduce_dtype(ufunc_name, desc, 'reduce') or desc.dtype
+    # NOTE: deliberately NOT NumPy's own reduce dtype-promotion rule (e.g.
+    # int32 -> int64 for numpy.add.reduce): implement_ufunc_reduce's actual
+    # execution below always uses the input dtype verbatim (`result_type =
+    # datadesc.dtype`), with no such promotion. Inferring a wider dtype here
+    # than execution actually produces would allocate the target container
+    # too wide, and the raw memlet copy between them has no cast -- a
+    # dtype-inference/execution mismatch that miscompiles (reads garbage from
+    # the extra bytes), not merely a precision mismatch. Match execution.
+    out_dtype = _resolve_dtype_override(dtype) or desc.dtype
     out_shape = _infer_reduce_shape(desc, axis, keepdims)
     if out_shape is None:
         return None
@@ -2101,7 +2094,10 @@ def _infer_ufunc_accumulate_descriptor(input_descs: Dict[str, data.Data],
         return explicit_result
 
     del axis
-    out_dtype = _resolve_dtype_override(dtype) or _infer_reduce_dtype(ufunc_name, desc, 'accumulate') or desc.dtype
+    # See the matching NOTE in _infer_ufunc_reduce_descriptor above:
+    # implement_ufunc_accumulate also always uses the input dtype verbatim,
+    # with no NumPy-style promotion.
+    out_dtype = _resolve_dtype_override(dtype) or desc.dtype
     shape = list(getattr(desc, 'shape', []))
     return _descriptor_from_dtype_and_shape(out_dtype, shape)
 
