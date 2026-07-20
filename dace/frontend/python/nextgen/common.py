@@ -56,3 +56,20 @@ class TreeVerificationError(FrontendError):
     This always indicates a frontend bug, not a user error.
     """
     pass
+
+
+#: Data-descriptor attributes (``A.T``, ``A.real``, ...) whose replacement-
+#: registry ATTRIBUTE-family entries (``Replacements.get_attribute`` /
+#: ``get_attribute_descriptor_inference``, see
+#: ``dace.frontend.common.op_repository``) the next-generation frontend has
+#: dedicated lowering for (``lowering.dispatch.resolve_attribute_data``).
+#:
+#: Shared between ``semantics.inference`` and ``lowering.dispatch`` so the two
+#: stay in lockstep: inference must only report a ``'data'`` result for an
+#: attribute name in this set, because dispatch is only guaranteed to handle
+#: those names before an expression reaches the generic elementwise
+#: computation mechanism. A registry attribute with inference support but no
+#: matching lowering path would otherwise be typed successfully and then have
+#: its (unresolved) attribute access substituted verbatim into generated
+#: tasklet code instead of degrading cleanly to a callback.
+SUPPORTED_DATA_ATTRIBUTES = frozenset({'T', 'real', 'imag', 'flat'})

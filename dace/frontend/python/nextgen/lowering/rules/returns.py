@@ -23,6 +23,7 @@ from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
+from dace.frontend.python.nextgen.lowering import dispatch
 from dace.frontend.python.nextgen.lowering.access import resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 
@@ -56,7 +57,17 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
     # returns are internal temporaries.
     transient = bool(state.context.return_prefix)
 
-    access = resolve_access(value, state) if isinstance(value, (ast.Name, ast.Subscript)) else None
+    access = None
+    if isinstance(value, (ast.Name, ast.Subscript)):
+        access = resolve_access(value, state)
+    elif isinstance(value, ast.Attribute):
+        # Registry ATTRIBUTE-family reads (``return A.T``/``.real``/
+        # ``.imag``/``.flat``): ``resolve_access`` only resolves structure
+        # members for a bare attribute, so materialize through the same
+        # dedicated path ``rules.assign.lower_attribute_assign`` uses.
+        base = resolve_access(value.value, state)
+        if base is not None:
+            access = dispatch.resolve_attribute_data(base, value.attr, state)
     if access is not None:
         shape = [s for s in access.subset.size() if s != 1] or [1]
         if return_name not in state.context.containers:

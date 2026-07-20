@@ -1071,6 +1071,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             raise NotImplementedError("Replacement calls inside dataflow scopes are not supported.")
 
         if node.receiver is not None:
+            # METHOD-family replacement (e.g. ``A.copy()``, see
+            # ``lowering.dispatch._lower_replacement_call``'s method-call arm).
             receiver_type = type(sdfg.arrays[node.receiver])
             function = oprepo.Replacements.get_method(receiver_type, node.qualname)
             if function is None:
@@ -1078,6 +1080,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                     f"No method replacement registered for '{node.qualname}' on '{receiver_type.__name__}'.")
         else:
             function = oprepo.Replacements.get(node.qualname)
+            if function is None and oprepo.ATTRIBUTE_QUALNAME_MARKER in node.qualname:
+                # ATTRIBUTE-family replacement (e.g. ``Array.@T``, see
+                # ``lowering.dispatch.resolve_attribute_data``): the free-function
+                # keyspace lookup above never finds these, so decode the qualname
+                # and look the implementation up by (classname, attr_name) instead.
+                classname, _, attr_name = node.qualname.partition(oprepo.ATTRIBUTE_QUALNAME_MARKER)
+                function = oprepo.Replacements.get_attribute(classname, attr_name)
             if function is None:
                 raise NotImplementedError(f"No replacement registered for '{node.qualname}'.")
 
