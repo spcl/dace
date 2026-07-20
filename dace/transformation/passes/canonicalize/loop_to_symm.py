@@ -112,7 +112,9 @@ class LoopToSymm(ppl.Pass):
         body = state.all_nodes_between(me, mx)
         if body is None or len(body) != 1:
             return None
-        nsdfg = next(iter(body))
+        # ``all_nodes_between`` returns a SET; the len==1 guard above makes this pick unambiguous today, but
+        # take it by a stable key so relaxing the guard cannot silently make the choice hash-order dependent.
+        nsdfg = min(body, key=state.node_id)
         if not isinstance(nsdfg, nodes.NestedSDFG):
             return None
 
@@ -151,7 +153,7 @@ class LoopToSymm(ppl.Pass):
                 p_col = str(b)
                 p_row_axis = tri[1 - i]
                 # the other axis must be the triangle 0:p_row for some param p_row
-                for cand in params - {p_col}:
+                for cand in sorted(params - {p_col}):  # set of param-name strings -> stable order
                     if _is_lower_tri(p_row_axis, cand):
                         p_row = cand
                 break
@@ -226,7 +228,7 @@ class LoopToSymm(ppl.Pass):
     def _replace(self, sdfg: SDFG, state: SDFGState, me: nodes.MapEntry, match: SymmMatch) -> None:
         from dace.libraries.blas.nodes.symm import Symm
         mx = state.exit_node(me)
-        nsdfg = next(iter(state.all_nodes_between(me, mx)))
+        nsdfg = min(state.all_nodes_between(me, mx), key=state.node_id)  # set -> stable pick (see _match)
         # One read AccessNode per array feeding the map; the frontend may stage the
         # same array through several duplicate read nodes -- keep one, drop the rest.
         reads = {e.data.data: e.src for e in state.in_edges(me) if isinstance(e.src, nodes.AccessNode)}

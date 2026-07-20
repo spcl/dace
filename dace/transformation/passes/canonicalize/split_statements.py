@@ -31,7 +31,7 @@ whatever should recombine.
 import copy
 from typing import Any, Dict, List, Optional, Set
 
-from dace import SDFG, Memlet
+from dace import SDFG, Memlet, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -163,9 +163,11 @@ class SplitStatements(ppl.Pass):
         out_edges = list(state.out_edges(node))
         for grp in groups:
             clone_sdfg = copy.deepcopy(node.sdfg)
+            # dicts/sorted, not sets: these become the clone's connector dicts, which are
+            # observable in validation and codegen order.
             clone = state.add_nested_sdfg(clone_sdfg,
-                                          inputs=set(node.in_connectors),
-                                          outputs=set(grp),
+                                          inputs=dict.fromkeys(node.in_connectors),
+                                          outputs=dict.fromkeys(sorted(grp)),
                                           symbol_mapping=dict(node.symbol_mapping))
             for e in in_edges:
                 state.add_edge(e.src, e.src_conn, clone, e.dst_conn, copy.deepcopy(e.data))
@@ -245,7 +247,9 @@ class SplitStatements(ppl.Pass):
                                          find_new_name=True)
             pre = loop.parent_graph.add_state_before(loop, label=f'{arr}_split_snapshot')
             pre.add_nedge(pre.add_read(arr), pre.add_write(snap), Memlet.from_array(arr, desc))
-            for expr in sym_guards:
+            # sorted: ``sym_guards`` is a set of sympy exprs (hashed via symbol-name strings). It is iterated
+            # to EMIT tasklets into ``pre``, so its order fixes their node names/ids and the emitted C order.
+            for expr in sorted(sym_guards, key=symbolic.symstr):
                 # STRICT (>0) guard -- NOT the >=0 that BreakAntiDependence's whole-array
                 # pure-WAR rename uses. There every read of ``arr`` moves to the snapshot and
                 # a same-index read ``arr[i]`` equals the pre-loop original (only iteration i

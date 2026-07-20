@@ -68,7 +68,10 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     updated = 0
     for g in sdfg.all_sdfgs_recursive():
         repl = {}
-        for name in g.free_symbols:
+        # sorted: ``free_symbols`` is a set of STRINGS (per-process randomized hashing). The substitutions
+        # happen to commute here, but the replacement dict's order is otherwise arbitrary -- sorting is free
+        # and matches _signed_integer_free_symbols below.
+        for name in sorted(g.free_symbols):
             dtype = g.symbols.get(name)
             if dtype not in _SIGNED_INTEGER_DTYPES:
                 continue

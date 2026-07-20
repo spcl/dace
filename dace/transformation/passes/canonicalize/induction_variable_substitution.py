@@ -422,7 +422,13 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
 
         per = [branch_increments(br) for br in branches]
         common = set.intersection(*[set(p) for p in per]) if per else set()
-        for sym in common:
+        # sorted(): this loop RETURNS on the first symbol it hoists, and the pass is a first-match/restart
+        # fixpoint -- so with two co-incrementing IVs (s124/s126/s128) the pick decides whether the OTHER one
+        # still passes its guards afterwards, i.e. whether the loop reaches closed form and becomes a Map.
+        # Iterating the raw set made that a PYTHONHASHSEED coin-flip (str hashing is per-process randomized).
+        # ``set.intersection`` has no meaningful insertion order to preserve, so a stable sort -- not an
+        # ordered set -- is the canonical, branch-independent choice.
+        for sym in sorted(common):
             if sym == loop.loop_variable or (sym not in sdfg.symbols and sym not in sdfg_free_symbols):
                 continue
             if any(len(p[sym]) != 1 for p in per):

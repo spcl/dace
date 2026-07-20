@@ -32,7 +32,11 @@ def _map_body_nsdfgs(state: SDFGState, map_entry: nodes.MapEntry) -> List[nodes.
     (topological) order so a producer is always merged before its consumer."""
     body = set(state.all_nodes_between(map_entry, state.exit_node(map_entry)))
     order = {n: i for i, n in enumerate(sdutil.dfs_topological_sort(state))}
-    return sorted((n for n in body if isinstance(n, nodes.NestedSDFG)), key=lambda n: order.get(n, 0))
+    # Total key: ``sorted`` is stable, so a tie (a body node the topological sort did not cover) would fall
+    # back to ``body``'s order -- a set of NODE objects, hashed by id(). That decides which sibling becomes
+    # the merge base, so break ties on the node id instead of leaving it to allocation order.
+    return sorted((n for n in body if isinstance(n, nodes.NestedSDFG)),
+                  key=lambda n: (order.get(n, len(order)), state.node_id(n)))
 
 
 def _map_body_size(state: SDFGState, map_entry: nodes.MapEntry) -> int:

@@ -145,7 +145,12 @@ def _build_probe(loop: LoopRegion, root: SDFG) -> Optional[SDFG]:
     live = _live_outside(loop, root, referenced)
 
     probe = SDFG('probe_' + loop.label)
-    for name in referenced:
+    # sorted(): this fixes the probe's ARRAY INSERTION ORDER, which the probe pipeline (SimplifyPass +
+    # apply_transformations_repeated + LiftEinsum) walks when enumerating matches. The lift test is
+    # all-or-nothing, so a different order flips lift <-> no-lift for a whole nest -- a nest either collapses
+    # into a library node or stays a loop that later becomes a Map. Iterating the raw set made that a
+    # PYTHONHASHSEED coin-flip. Names are unique strings, so a stable sort is the canonical order.
+    for name in sorted(referenced):
         if name not in root.arrays:
             return None
         desc = copy.deepcopy(root.arrays[name])
@@ -155,9 +160,9 @@ def _build_probe(loop: LoopRegion, root: SDFG) -> Optional[SDFG]:
 
     # Carry over the symbols the loop and the descriptors depend on.
     needed: Set[str] = set(loop.used_symbols(all_symbols=True))
-    for name in referenced:
+    for name in sorted(referenced):
         needed |= set(map(str, root.arrays[name].free_symbols))
-    for sym in needed:
+    for sym in sorted(needed):  # symbol insertion order feeds free_symbols / arglist order in the probe
         if sym in root.symbols and sym not in probe.symbols and sym not in probe.arrays:
             probe.add_symbol(sym, root.symbols[sym])
 

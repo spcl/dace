@@ -704,7 +704,14 @@ class ScalarWriteShadowScopes(ppl.Pass):
                 # SDFG's ``idom_dict`` -- ``_find_dominating_write`` then walks up into a
                 # missing region and raises ``KeyError``. Mirrors the foreign-block guard on
                 # the interstate-edge loop below (``if block.sdfg is not sdfg``).
-                desc_states_with_nodes = {s for s in access_nodes[desc].keys() if s.sdfg is sdfg}
+                # Ordered, not a set: ``SDFGState`` has no ``__hash__``, so a set iterates by id()
+                # -- an order that varies run to run (it tracks allocation history, so it shifts
+                # with whatever ran earlier in the process). That order becomes the key insertion
+                # order of ``result[desc]``, which ScalarFission consumes to allocate new
+                # descriptors, so it decides ``find_new_name`` suffixes. Membership is never
+                # tested here, so a list costs nothing.
+                desc_states_with_nodes = sorted((s for s in access_nodes[desc].keys() if s.sdfg is sdfg),
+                                                key=lambda s: (s.parent_graph.cfg_id, s.block_id))
                 for state in desc_states_with_nodes:
                     for read_node in access_nodes[desc][state][0]:
                         write = self._find_dominating_write(desc, state, read_node, access_nodes, idom_dict,

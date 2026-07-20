@@ -442,9 +442,12 @@ class LoopToConditionalReduce(ppl.Pass):
         acc_desc = sdfg.arrays[m.acc_name]
         masked_val, _ = sdfg.add_scalar(f'{m.acc_name}_masked_val', acc_desc.dtype, transient=True, find_new_name=True)
         mask_body = self._build_mask_body(cond_expr_resolved, m.identity_value)
+        # dict.fromkeys, not a set: ``guard_inputs`` is already in AST-walk order and add_tasklet turns
+        # the argument into the connector dict -- a set would randomize the emitted ``const T __guardN``
+        # declaration order per process.
         mask_tasklet = true_state.add_tasklet(name=f'{m.acc_name}_mask',
-                                              inputs={'__addend'} | set(guard_inputs),
-                                              outputs={'__out'},
+                                              inputs=dict.fromkeys(['__addend', *guard_inputs]),
+                                              outputs=dict.fromkeys(['__out']),
                                               code=mask_body,
                                               language=dtypes.Language.Python)
 

@@ -1078,7 +1078,9 @@ class LoopToMap(xf.MultiStateTransformation):
 
         # Direct edges among source and sink access nodes must pass through a tasklet.
         # We first gather them and handle them later.
-        direct_edges: Set[gr.MultiConnectorEdge[memlet.Memlet]] = set()
+        # List, not a set: ``MultiConnectorEdge`` hashes by id(), so set order varies run to run
+        # (it tracks allocation history) and would perturb the node insertion order below.
+        direct_edges: List[gr.MultiConnectorEdge[memlet.Memlet]] = []
         for n1 in source_nodes:
             if not isinstance(n1, nodes.AccessNode):
                 continue
@@ -1087,7 +1089,7 @@ class LoopToMap(xf.MultiStateTransformation):
                     continue
                 for e in body.edges_between(n1, n2):
                     e.data.try_initialize(sdfg, body, e)
-                    direct_edges.add(e)
+                    direct_edges.append(e)
                     body.remove_edge(e)
 
         # Reroute all memlets through the entry and exit nodes
@@ -1127,7 +1129,7 @@ class LoopToMap(xf.MultiStateTransformation):
             src: str = e.src.data
             dst: str = e.dst.data
             if e.data.subset.num_elements() == 1:
-                t = body.add_tasklet(f"{n1}_{n2}", {'__inp'}, {'__out'}, "__out =  __inp")
+                t = body.add_tasklet(f"{src}_{dst}", {'__inp'}, {'__out'}, "__out =  __inp")
                 src_conn, dst_conn = '__out', '__inp'
             else:
                 desc = sdfg.arrays[src]
@@ -1138,14 +1140,16 @@ class LoopToMap(xf.MultiStateTransformation):
                                               find_new_name=True)
                 t = body.add_access(tname)
                 src_conn, dst_conn = None, None
-            body.add_memlet_path(n1,
+            # Endpoints must come from ``e``; ``n1``/``n2`` here are the leftover values of the
+            # collection loops above, so every edge would be wired to the same last-seen pair.
+            body.add_memlet_path(e.src,
                                  entry,
                                  t,
                                  memlet=memlet.Memlet(data=src, subset=e.data.src_subset),
                                  dst_conn=dst_conn)
             body.add_memlet_path(t,
                                  exit,
-                                 n2,
+                                 e.dst,
                                  memlet=memlet.Memlet(data=dst,
                                                       subset=e.data.dst_subset,
                                                       wcr=e.data.wcr,

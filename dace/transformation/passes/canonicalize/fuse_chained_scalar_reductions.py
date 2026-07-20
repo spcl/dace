@@ -297,7 +297,11 @@ class FuseChainedScalarReductions(ppl.Pass):
         for idx in range(1, len(inc_edges)):
             left_edge = inc_edges[idx - 1] if cur_scalar_node is None else None
             right_edge = inc_edges[idx]
-            fold_t = st.add_tasklet(f'_fuse_red_{idx}', {'__in1', '__in2'}, {'__out'},
+            # Ordered dicts, not set literals: ``add_tasklet`` turns a set into the connector dict, so the
+            # set's hash order becomes the in_connectors order and codegen emits the connector declarations
+            # in that order -- byte-different C for the same input on every run. ``dict.fromkeys`` is the
+            # declared ``Dict[str, typeclass]`` form and matches what the set branch builds ({k: None}).
+            fold_t = st.add_tasklet(f'_fuse_red_{idx}', dict.fromkeys(['__in1', '__in2']), dict.fromkeys(['__out']),
                                     f'__out = (__in1 {op_str} __in2)')
             if cur_scalar_node is None:
                 st.add_edge(left_edge.src, left_edge.src_conn, fold_t, '__in1', copy.deepcopy(left_edge.data))

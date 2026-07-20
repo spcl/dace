@@ -51,6 +51,7 @@ References:
   (PLDI '08) -- Pluto, the affine-schedule generalisation.
 """
 import copy
+import zlib
 from typing import Dict, List, Optional, Tuple
 
 import dace
@@ -116,7 +117,10 @@ def split_var(expr, name: str) -> Tuple[object, object]:
     """``(coeff, remainder)`` splitting the named symbol out of an affine expr;
     ``remainder`` no longer contains that symbol. Matches by name."""
     e = symbolic.simplify(expr)
-    for s in e.free_symbols:
+    # sorted: sympy allows two distinct Symbol objects with the SAME name but different assumptions in one
+    # expression, and this returns on the first name match -- which one we split on would otherwise be
+    # hash-order dependent, changing the skew decision.
+    for s in sorted(e.free_symbols, key=lambda s: (s.name, str(s.assumptions0))):
         if s.name == name:
             c = e.coeff(s, 1)
             return c, symbolic.simplify(e - c * s)
@@ -543,10 +547,12 @@ def offset_symbols(deps: List[Dependence], dims: List[str]) -> List[object]:
     syms = {}
     for dep in deps:
         for comp in (dep.du, dep.dv):
-            for s in symbolic.simplify(comp).free_symbols:
+            for s in sorted(symbolic.simplify(comp).free_symbols, key=lambda s: s.name):
                 if s.name not in dims and s.name not in nested_names:
                     syms[s.name] = s
-    return list(syms.values())
+    # sorted by name: the returned order reaches the ISL constraint text. ISL emptiness is order-independent
+    # today, so this is inert -- but it makes that provable rather than incidental.
+    return [syms[k] for k in sorted(syms)]
 
 
 @properties.make_properties
@@ -751,7 +757,10 @@ class WavefrontSkew(ppl.Pass):
         if not exprs:
             return
         parts = ' || '.join(f'(({symbolic.symstr(e)}) > 0)' for e in exprs)
-        tag = abs(hash(parts)) & 0xfffffff
+        # crc32, NOT hash(): ``hash()`` of a str is randomized per process by PYTHONHASHSEED, so the guard
+        # state and tasklet got a different label on every run of the SAME input -- different emitted C
+        # symbols and a different build hash. crc32 is a stable digest of the same text.
+        tag = zlib.crc32(parts.encode()) & 0xfffffff
         code = f'if ({parts}) {{ __builtin_trap(); }}'
         pre = outer.parent_graph.add_state_before(outer, label=f'_skew_guard_{tag:x}')
         guard = pre.add_tasklet(name=f'_skew_guard_{tag:x}', inputs={}, outputs={},
