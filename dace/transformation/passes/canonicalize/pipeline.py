@@ -87,6 +87,8 @@ from dace.transformation.passes.canonicalize.loop_to_einsum import LoopToEinsum
 from dace.transformation.passes.canonicalize.distribute_producer_consumer import DistributeProducerConsumerLoop
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import AssumeSymbolConstraints
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
+from dace.transformation.dataflow.trivial_map_elimination import TrivialMapElimination
+from dace.transformation.passes.empty_loop_elimination import EmptyLoopElimination
 
 from dace.transformation.interstate.loop_to_map import LoopToMap
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
@@ -129,7 +131,12 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     # * ``StateFusionExtended`` -- collapse adjacent states first.
     # * ``InlineMultistateSDFG`` + ``InlineSDFG`` -- flatten NestedSDFG
     #   nestings so all subsequent cleanup passes can see across the
-    #   boundary.
+    #   boundary. Both run in ONE fixpoint, not two sequential ones: in a
+    #   ``map { nsdfg { map { nsdfg { 2 states } } } }`` chain the inner
+    #   nesting is multistate, and flattening it exposes a fresh
+    #   single-state nesting that an already-converged ``InlineSDFG``
+    #   fixpoint would never revisit -- leaving the maps buried and
+    #   unfuseable.
     # * ``RemoveViews`` (PR #2335) -- folds View access nodes into the
     #   viewed array's address map: composing the view edge memlet's
     #   affine mapping into every downstream memlet (and Python
@@ -151,10 +158,52 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     #   form.
     # * ``EmptyStateElimination`` -- drop empty states left behind.
     return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
-            (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG()])),
-            (label, PatternMatchAndApplyRepeated([InlineSDFG()])), (label, RemoveViews()),
+            (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG(), InlineSDFG()])), (label, RemoveViews()),
             (label, CleanAccessNodeToScalarSliceToTaskletPattern()),
             (label, CleanTaskletToScalarSliceToAccessNodePattern()), (label, EmptyStateElimination())]
+
+
+def _coalesce() -> List[Tuple[str, ppl.Pass]]:
+    """Graph preparation for maximal map fusion, run after the first ``LoopToMap``.
+
+    Two maps fuse only if they share a state, so everything that keeps states
+    apart has to go first. The recipe removes each blocker in turn, cheapest
+    and most-enabling first, because every removal exposes work for the next:
+
+    1. ``CascadeInterstateEdgeAssignmentsUp`` -- an assignment-bearing
+       interstate edge blocks ``StateFusionExtended``. Sifting the assignments
+       towards the graph entry frees the edges between the compute states.
+       This must re-run *here*: the earlier invocations are all pre-parallelize,
+       and ``InlineMultistateSDFG`` lifts fresh assignments into the top-level
+       region every time it flattens a lowered map body.
+    2. ``EmptyStateElimination`` -- splices out the empty states left between
+       them, merging the assignments the cascade could not lift onto the bypass
+       edge (rather than letting a single assignment pin two maps apart).
+    3. ``TrivialMapElimination`` -- a single-iteration map is not a parallel
+       scope, only a wrapper; dropping it lifts its body to the top level where
+       it can fuse with its neighbours.
+    4. ``EmptyLoopElimination`` -- the loops those rewrites empty out.
+    5. ``MoveIfIntoMap`` -- a guard *outside* a map keeps it in its own
+       ``ConditionalBlock``, unreachable for fusion; pushing the guard in
+       co-locates the map with its siblings. (``ConditionFusion``, later, only
+       merges guards that are already adjacent -- it cannot push one inward.)
+    6. structural cleanup -- fuse the states the steps above just freed and
+       inline the nestings, so the maps genuinely share a state.
+    7. ``MapFusionVertical`` / ``MapFusionHorizontal`` -- the payoff.
+    8. ``MapCollapse`` -- fusion can leave a freshly-perfect nest; folding it
+       to one N-dimensional map is the canonical fully-parallel form.
+
+    :returns: ``(stage_label, pass)`` pairs for the phase, in order.
+    """
+    s: List[Tuple[str, ppl.Pass]] = [('coalesce', CascadeInterstateEdgeAssignmentsUp()),
+                                     ('coalesce', EmptyStateElimination()),
+                                     ('coalesce', PatternMatchAndApplyRepeated([TrivialMapElimination()])),
+                                     ('coalesce', EmptyLoopElimination()),
+                                     ('coalesce', PatternMatchAndApplyRepeated([MoveIfIntoMap()]))]
+    s += _structural_cleanup('coalesce')
+    s += [('coalesce', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+    s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
+    return s
 
 
 @properties.make_properties
@@ -817,6 +866,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
 
+    # coalesce: prepare the graph for maximal map fusion now that the DOALL
+    # loops have become maps -- see ``_coalesce`` for the per-step rationale.
+    s += _coalesce()
+
     # loop_fuse (post-parallelize recovery): every DOALL loop is now a Map, so the
     # remaining LoopRegions are exactly the sequential residue LoopToMap refused.
     # ``LoopFusion`` fuses consecutive same-range sequential siblings (locality; it
@@ -951,8 +1004,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # licm: hoist loop-invariant code (after LoopToMap, on maps).
     s += [('licm', LoopInvariantCodeMotion())]
 
-    # hoist_guards (terminal): hoist any still-invariant guard out past every
-    # enclosing loop (all-or-nothing upward, ``require_full_hoist=True``). Run
+    # hoist_guards (terminal): hoist any still-invariant guard outward. Run
     # AFTER fuse -- the dual ``MoveIfIntoLoop`` (prep stage) has already pushed
     # guards in to enable sibling fusion, so a terminal hoist of a guard that
     # is STILL invariant w.r.t. the whole remaining loop nest does not undo
@@ -960,7 +1012,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # 1``, cloudsc ``IWARMRAIN`` etc.) to the cheapest scope. MoveLoopInvariantIfUp's
     # dead-outside-branch match lifts past per-iteration iedge assignments
     # (``start = jb // 4``), which stay in the now-guarded loop body.
-    s += [('hoist_guards', MoveLoopInvariantIfUp(require_full_hoist=True))]
+    #
+    # Target-gated. On CPU a guard is hoisted as far as it will go: every level
+    # it clears removes a re-evaluation from an enclosing iteration, and a guard
+    # that stalls partway is still strictly cheaper than one left innermost. On
+    # GPU a partial hoist is not a win but a hazard -- a guard stalled between
+    # two levels of a map chain splits the nest at that level, so what would
+    # have been one kernel becomes a branch around several launches. There the
+    # hoist is all-or-nothing (``require_full_hoist``): take it only when the
+    # guard clears the complete chain and the whole nest stays one kernel.
+    s += [('hoist_guards', MoveLoopInvariantIfUp(require_full_hoist=(target == 'gpu')))]
 
     # By this point fully-parallel guarded nests are collapsed maps, so the
     # surviving invariant guard sits inside a map body (not a loop) where
