@@ -512,7 +512,8 @@ def test_b4_conservative_guards():
     assert pre not in sdfg.nodes(), "the empty, trivially-connected start state should be spliced out"
     assert sdfg.start_block is work, "start block must follow the spliced-out empty state"
 
-    # (b) Empty state reached by a conditional edge must survive.
+    # (b) A conditional IN-edge is spliced; the condition moves onto the
+    # bypass edge, so the guarded path is preserved.
     sdfg = _base_sdfg('b4b', n)
     sdfg.add_symbol('c', dace.int32)
     head = sdfg.add_state('head', is_start_block=True)
@@ -521,10 +522,16 @@ def test_b4_conservative_guards():
     sdfg.add_edge(head, empty, dace.InterstateEdge(condition='c > 0'))
     sdfg.add_edge(empty, work, dace.InterstateEdge())
     _add_double_tasklet(work, 'a', 'b', n)
-    assert EmptyStateElimination().apply_pass(sdfg, {}) is None, "spliced across a conditional edge"
-    assert empty in sdfg.nodes()
+    EmptyStateElimination().apply_pass(sdfg, {})
+    assert empty not in sdfg.nodes()
+    bypass = sdfg.edges_between(head, work)
+    assert len(bypass) == 1
+    assert not bypass[0].data.is_unconditional(), "the in-edge condition must survive the splice"
+    assert 'c' in bypass[0].data.condition.get_free_symbols()
 
-    # (c) Empty state whose out-edge carries an assignment must survive.
+    # (c) An assigning out-edge on an ENTRY state is not spliced: the empty
+    # ``head`` in front of it is removed first, leaving ``empty`` as the
+    # region's entry with no predecessor edge to carry ``k := 1`` onto.
     sdfg = _base_sdfg('b4c', n)
     sdfg.add_symbol('k', dace.int32)
     head = sdfg.add_state('head', is_start_block=True)
@@ -533,12 +540,27 @@ def test_b4_conservative_guards():
     sdfg.add_edge(head, empty, dace.InterstateEdge())
     sdfg.add_edge(empty, work, dace.InterstateEdge(assignments={'k': '1'}))
     _add_double_tasklet(work, 'a', 'b', n)
-    # The empty ``head`` start state has a trivial out-edge and is correctly
-    # spliced; the guarantee under test is that ``empty`` -- whose out-edge
-    # carries an assignment -- is NOT spliced (the assignment would be lost).
     EmptyStateElimination().apply_pass(sdfg, {})
-    assert empty in sdfg.nodes(), "must not splice across an assigning edge"
+    assert head not in sdfg.nodes()
+    assert empty in sdfg.nodes(), "no predecessor edge can carry the entry assignment"
     assert work in sdfg.nodes()
+
+    # (c') The out-edge assignment survives when a predecessor edge exists to
+    # carry it (the merge target), rather than being silently dropped.
+    sdfg = _base_sdfg('b4c2', n)
+    sdfg.add_symbol('k', dace.int32)
+    first = sdfg.add_state('first', is_start_block=True)
+    _add_double_tasklet(first, 'a', 'b', n)
+    empty = sdfg.add_state('empty')
+    work = sdfg.add_state('work')
+    sdfg.add_edge(first, empty, dace.InterstateEdge())
+    sdfg.add_edge(empty, work, dace.InterstateEdge(assignments={'k': '1'}))
+    _add_double_tasklet(work, 'b', 'a', n)
+    EmptyStateElimination().apply_pass(sdfg, {})
+    assert empty not in sdfg.nodes()
+    merged = sdfg.edges_between(first, work)
+    assert len(merged) == 1
+    assert merged[0].data.assignments == {'k': '1'}
 
 
 if __name__ == "__main__":

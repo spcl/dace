@@ -10,14 +10,17 @@ trivial loops -- pure churn that degrades to a sticky ``NestedSDFG``.
 ``StateFusionExtended`` does not remove these (it will not fuse a state into
 a ``LoopRegion`` successor).
 
-This is a conservative, canonicalization-only cleanup: it removes a state
-that holds no dataflow nodes when every incident interstate edge is
-unconditional and assignment-free (so splicing it out is exactly path-
-preserving). Anything else is left untouched.
+This is a canonicalization-only cleanup: it removes a state that holds no
+dataflow nodes and splices its predecessors onto its successor, merging the
+two edges' assignments onto the bypass edge. An empty state pinned only by an
+assignment keeps two states apart, which keeps their maps apart, which blocks
+fusion -- so merging rather than refusing is what makes this a fusion-prep
+pass. The merge is only performed when it is provably value-preserving (see
+``_merge_assignments``); anything else is left untouched.
 """
 from typing import Any, Dict, Optional, Set
 
-from dace import SDFG
+from dace import SDFG, symbolic
 from dace.sdfg.graph import Edge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState
@@ -25,16 +28,34 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation
 
 
-def _trivial_edge(e: Edge[InterstateEdge]) -> bool:
-    """Report whether an interstate edge is safe to splice across.
+def _merge_assignments(first: Dict[str, str], second: Dict[str, str]) -> Optional[Dict[str, str]]:
+    """Merge the assignments of two consecutive interstate edges onto one edge.
 
-    An edge is trivial iff it is unconditional and carries no assignments, so
-    bypassing it preserves both the execution path and the symbol state.
+    The assignments on a single interstate edge are **not ordered** -- they are
+    all evaluated against the symbol state on entry to the edge. Across the two
+    original edges they *are* ordered: ``second`` sees the values ``first``
+    wrote. So the merge is value-preserving exactly when no right-hand side in
+    ``second`` reads a symbol ``first`` assigns; otherwise that read would
+    silently change from the updated value to the stale one.
 
-    :param e: The interstate edge to inspect.
-    :returns: ``True`` if the edge is unconditional and assignment-free.
+    A left-hand-side collision needs no guard: ``second`` overwrites ``first``
+    both when run in sequence and in the merged dict, so the resulting value is
+    the same either way.
+
+    :param first: Assignments of the edge entering the empty state.
+    :param second: Assignments of the edge leaving it.
+    :returns: The merged assignment dict, or ``None`` if merging is unsound.
     """
-    return e.data.is_unconditional() and not e.data.assignments
+    if not second:
+        return dict(first)
+    written = set(first.keys())
+    if written:
+        for rhs in second.values():
+            if written & {str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols}:
+                return None
+    merged = dict(first)
+    merged.update(second)
+    return merged
 
 
 def _elide_one(region: ControlFlowRegion) -> bool:
@@ -48,15 +69,26 @@ def _elide_one(region: ControlFlowRegion) -> bool:
             continue
         in_e = list(region.in_edges(st))
         out_e = list(region.out_edges(st))
-        if any(not _trivial_edge(e) for e in in_e + out_e):
-            continue
         is_start = region.start_block is st
         # Single-successor splice: every predecessor jumps straight to the
         # (unique) successor; the empty state is bypassed.
         if len(out_e) == 1 and (in_e or is_start):
             succ = out_e[0].dst
-            for e in in_e:
-                region.add_edge(e.src, succ, e.data)
+            if succ is st:
+                continue
+            # The successor edge's condition would have to be distributed over
+            # every predecessor edge; only an unconditional one splices cleanly.
+            if not out_e[0].data.is_unconditional():
+                continue
+            # Nothing carries the successor edge's assignments when the empty
+            # state is the region's entry and has no predecessor.
+            if not in_e and out_e[0].data.assignments:
+                continue
+            merged = [_merge_assignments(e.data.assignments, out_e[0].data.assignments) for e in in_e]
+            if any(m is None for m in merged):
+                continue
+            for e, assignments in zip(in_e, merged):
+                region.add_edge(e.src, succ, InterstateEdge(condition=e.data.condition, assignments=assignments))
             for e in in_e + out_e:
                 region.remove_edge(e)
             region.remove_node(st)
@@ -64,7 +96,9 @@ def _elide_one(region: ControlFlowRegion) -> bool:
                 region.start_block = region.node_id(succ)
             return True
         # Empty sink with no successor: a dead tail; drop it and its in-edges.
-        if not out_e and in_e and not is_start:
+        # Its assignments are dropped with it, so they must not be observable
+        # -- in a nested region an exit-edge symbol can outlive the region.
+        if not out_e and in_e and not is_start and not any(e.data.assignments for e in in_e):
             for e in in_e:
                 region.remove_edge(e)
             region.remove_node(st)
