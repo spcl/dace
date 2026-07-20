@@ -18,11 +18,11 @@ import argparse
 import copy
 import csv
 import importlib
+import importlib.util
 import os
 import statistics
 import sys
 import time
-import traceback
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
@@ -31,28 +31,52 @@ from dace.codegen import codegen
 from dace.transformation.interstate import LoopUnroll
 
 REPO = Path(__file__).resolve().parents[2]
-CORPUS = REPO / 'tests' / 'corpus'
+
+#: Kernel corpora live in different places on different branches: tests/corpus/<name> on the
+#: extended branch, tests/<name> upstream. Search both so the same script works on either, and so a
+#: base/new pair across the two layouts still lines up (kernel keys use the file stem).
+CORPUS_ROOTS = [REPO / 'tests' / 'corpus', REPO / 'tests']
 
 
-def discover_programs(subdir: str) -> List[Tuple[str, dace.frontend.python.parser.DaceProgram]]:
-    """Every ``DaceProgram`` in ``tests/corpus/<subdir>``, as (kernel, program)."""
-    found = []
-    root = CORPUS / subdir
-    if not root.is_dir():
-        return found
-    sys.path.insert(0, str(CORPUS))
-    for path in sorted(root.rglob('*.py')):
-        if path.name.startswith('_') or 'generate_data' in path.name:
+def load_module(path: Path, corpus: Path):
+    """Import a corpus file by path. The upstream layout has no ``__init__.py``, so a dotted
+    module name only resolves on branches where the corpus dirs are packages."""
+    name = 'dacebench_' + '_'.join(path.relative_to(corpus).with_suffix('').parts)
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def discover_programs(subdir: str) -> List[Tuple[str, 'dace.frontend.python.parser.DaceProgram']]:
+    """Every ``DaceProgram`` under any corpus root's ``<subdir>``, as (kernel, program)."""
+    found: List[Tuple[str, object]] = []
+    seen: set = set()
+    for corpus in CORPUS_ROOTS:
+        root = corpus / subdir
+        if not root.is_dir():
             continue
-        module_name = '.'.join(path.relative_to(CORPUS).with_suffix('').parts)
-        try:
-            module = importlib.import_module(module_name)
-        except Exception:
-            continue
-        for attr in sorted(dir(module)):
-            obj = getattr(module, attr, None)
-            if isinstance(obj, dace.frontend.python.parser.DaceProgram):
-                found.append((f'{path.stem}:{attr}', obj))
+        if str(corpus) not in sys.path:
+            sys.path.insert(0, str(corpus))
+        for path in sorted(root.rglob('*.py')):
+            if path.name.startswith('_') or 'generate_data' in path.name:
+                continue
+            try:
+                module = load_module(path, corpus)
+            except Exception:
+                continue
+            if module is None:
+                continue
+            for attr in sorted(dir(module)):
+                obj = getattr(module, attr, None)
+                if isinstance(obj, dace.frontend.python.parser.DaceProgram):
+                    key = f'{path.stem}:{attr}'
+                    if key not in seen:
+                        seen.add(key)
+                        found.append((key, obj))
     return found
 
 
@@ -74,6 +98,9 @@ def bench_kernels(rows: List[dict], label: str, reps: int, limit: int = 0) -> No
     programs = discover_programs('npbench') + discover_programs('polybench')
     if limit:
         programs = programs[:limit]
+    if not programs:
+        raise SystemExit(f'[{label}] no kernels found under any of {[str(r) for r in CORPUS_ROOTS]} -- '
+                         f'refusing to write an empty CSV that would look like a clean run')
     print(f'[{label}] discovered {len(programs)} kernels', flush=True)
 
     for name, program in programs:
@@ -114,7 +141,10 @@ def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
     Each stage feeds the next, so they are timed on progressively transformed graphs rather than
     all on the pristine one -- that is the order a real compile runs them in.
     """
-    sys.path.insert(0, str(CORPUS))
+    for corpus in CORPUS_ROOTS:
+        if (corpus / 'cloudsc').is_dir():
+            sys.path.insert(0, str(corpus))
+            break
     try:
         from cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
         build = lambda: build_cloudsc_sdfg(simplify=False)
@@ -123,8 +153,12 @@ def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
             from cloudsc.cloudsc import cloudsc_py
             build = lambda: cloudsc_py.to_sdfg(simplify=False)
         except Exception:
-            print(f'[{label}] cloudsc unavailable, skipping', flush=True)
-            traceback.print_exc()
+            print(
+                f'[{label}] NOTE: cloudsc corpus not present on this checkout, so the three '
+                f'cloudsc stages are absent from this CSV. It exists only on branches carrying '
+                f'tests/corpus/cloudsc; a base/new pair where only one side has it will simply '
+                f'have no cloudsc rows in common.',
+                flush=True)
             return
 
     print(f'[{label}] building cloudsc SDFG...', flush=True)
