@@ -140,9 +140,16 @@ def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
     try:
         from cloudsc.generate_data_for_cloudsc import build_cloudsc_sdfg
         build = lambda: build_cloudsc_sdfg(simplify=False)
-    except Exception:
-        raise SystemExit(f'[{label}] tests/corpus/cloudsc is missing or unimportable -- check the '
-                         f'corpus out of a branch that has it, or pass --skip-cloudsc')
+    except Exception as ex:
+        # cloudsc imports dace.transformation.layout, which only exists on branches carrying that
+        # subsystem -- so it cannot be built against an upstream base ref no matter where the corpus
+        # comes from. Warn rather than abort: the kernel workloads above are still valid.
+        print(
+            f'[{label}] WARNING: cloudsc unavailable on this checkout ({type(ex).__name__}: {ex}). '
+            f'The three cloudsc stages are ABSENT from this CSV. For cloudsc numbers, both refs '
+            f'must carry dace.transformation.layout.',
+            flush=True)
+        return
 
     print(f'[{label}] building cloudsc SDFG...', flush=True)
     start = time.perf_counter()

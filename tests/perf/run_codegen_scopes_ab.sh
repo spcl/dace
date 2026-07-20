@@ -13,6 +13,10 @@
 #     that predates these files (e.g. origin/main) runnable at all.
 # Then runs the benchmark in each and writes markdown tables and a plot.
 #
+# cloudsc caveat: tests/corpus/cloudsc imports dace.transformation.layout, so it can only be built
+# on refs that carry that subsystem. Against an upstream base ref the run still produces the
+# npbench/polybench workloads and simply reports no cloudsc rows.
+#
 # Run it on an idle node: the numbers are medians of wall time and a busy box moves them by tens of
 # percent.
 set -euo pipefail
