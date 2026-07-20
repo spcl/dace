@@ -25,11 +25,19 @@ Legality (per array touched by both bodies, under the shared iterator):
     body2 overwrites earlier in the fused sweep.
   * output (write in both): illegal unless the two writes hit the same index.
 Symbolic / indirected / complex offsets are refused conservatively (v1).
+
+After a legal merge it also CONTRACTS intermediates: a transient the fused body produces and consumes at
+the same point ``tmp[i]`` (no cross-iteration history, no outside use) is shrunk to a reused ``[1]`` slot --
+the buffer-reclaim ``MapFusionVertical`` does for maps, decided here on the loop iteration. See
+``_contract_localized_intermediates``.
 """
 import copy
 from typing import Dict, List, Optional, Tuple
 
 from dace import SDFG
+from dace import data as dt
+from dace import subsets
+from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
@@ -90,6 +98,7 @@ class FuseLoops(transformation.MultiStateTransformation):
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         self._merge(sdfg, graph, self.first, self.second)
+        self._contract_localized_intermediates(sdfg, self.first)
 
     # ----- legality kernel (shared source of truth; the LoopFusion pass calls this transformation) -----
 
@@ -224,6 +233,119 @@ class FuseLoops(transformation.MultiStateTransformation):
         for e in out_edges:
             cfg.add_edge(first, e.dst, copy.deepcopy(e.data))
         set_nested_sdfg_parent_references(sdfg)
+
+    # ----- intermediate contraction (the buffer-shrink MapFusion does, for the loop path) -------------
+
+    def _contract_localized_intermediates(self, sdfg: SDFG, loop: LoopRegion) -> None:
+        """Shrink every transient the fused loop produces-and-consumes within a single iteration to a
+        per-iteration scalar -- the loop analogue of ``MapFusionVertical`` building a smaller intermediate.
+
+        Fusing ``body1;body2`` per iteration does not, by itself, reclaim the intermediate array between
+        them: ``tmp[i]`` written in body1 and read in body2 is still a full ``[N]`` buffer. But once both
+        bodies share the iteration, a transient touched ONLY at the SAME point ``tmp[i]`` -- no ``tmp[i-1]``
+        history, no use outside the loop -- lives entirely inside iteration ``i``, so a single reused
+        ``[1]`` slot preserves every value. This is exactly ``MapFusion``'s exclusive-intermediate case,
+        decided on the loop iteration instead of the map iteration; it is orthogonal to parallelism, so it
+        fires on the sequential recurrences ``LoopToMap`` left behind.
+
+        Conservative (v1): 1-D transient, all accesses a single identical point of the loop iterator, not
+        under a map scope, and touched nowhere outside the fused loop. Anything else is left untouched --
+        the fusion already happened; contraction is opportunistic cleanup that never changes a value.
+        """
+        body_states = _linear_blocks(loop) or [_single_compute_state(loop)]
+        body_states = [s for s in body_states if s is not None]
+        if not body_states:
+            return
+        body_set = set(body_states)
+        ivar = loop.loop_variable
+        for arr in list(sdfg.arrays.keys()):
+            desc = sdfg.arrays[arr]
+            # Only a genuine internal 1-D array is a contraction target: a Scalar is already minimal, a
+            # non-transient is a program in/out, a multi-dim carries per-map footprint (v1 skips it).
+            if not desc.transient or not isinstance(desc, dt.Array) or len(desc.shape) != 1:
+                continue
+            # Exclusive: any access outside the fused loop's body means the buffer outlives one iteration.
+            if any(
+                    isinstance(n, nodes.AccessNode) and n.data == arr for s in sdfg.all_states() if s not in body_set
+                    for n in s.nodes()):
+                continue
+            point = self._localized_point(arr, body_states, ivar)
+            if point is not None:
+                self._rewrite_array_to_scalar(sdfg, body_states, arr, desc)
+
+    @staticmethod
+    def _localized_point(arr: str, body_states: List[SDFGState], ivar: str) -> Optional[object]:
+        """Return the single point subset all accesses to ``arr`` share (referencing ``ivar``), or ``None``
+        if the accesses are not one identical iterator-indexed point -- an offset (``arr[i-1]``), a second
+        distinct index, an unresolved subset, an access under a map scope, or no iterator all disqualify."""
+        ref = None
+        saw_write = saw_read = False
+        for s in body_states:
+            for n in s.nodes():
+                if not isinstance(n, nodes.AccessNode) or n.data != arr:
+                    continue
+                if s.entry_node(n) is not None:  # under a map scope -> many cells per outer iter, not a point
+                    return None
+                for e in s.in_edges(n):
+                    sub = e.data.get_dst_subset(e, s) if e.data is not None else None
+                    ref = FuseLoops._unify_point(ref, sub, ivar)
+                    if ref is None:
+                        return None
+                    saw_write = True
+                for e in s.out_edges(n):
+                    sub = e.data.get_src_subset(e, s) if e.data is not None else None
+                    ref = FuseLoops._unify_point(ref, sub, ivar)
+                    if ref is None:
+                        return None
+                    saw_read = True
+        # A contractible intermediate is both produced and consumed inside the loop; write-only is dead
+        # (leave to ArrayElimination), read-only is a misclassified input.
+        if not (saw_write and saw_read) or ref is None:
+            return None
+        return ref
+
+    @staticmethod
+    def _unify_point(ref, sub, ivar: str):
+        """Fold one subset into the running ``ref``: it must be a point (start==end per dim), equal to
+        ``ref`` if one exists, and reference ``ivar``. Returns the point, or ``None`` on any mismatch."""
+        if sub is None:
+            return None
+        nd = list(sub.ndrange())
+        for lo, hi, _ in nd:
+            if not _symbolically_equal(lo, hi):  # not a single cell
+                return None
+        if not any(str(sym) == ivar for lo, _, _ in nd for sym in symbolic.pystr_to_symbolic(str(lo)).free_symbols):
+            return None
+        if ref is not None:
+            rnd = list(ref.ndrange())
+            if len(rnd) != len(nd) or not all(_symbolically_equal(a, b) for (a, _, _), (b, _, _) in zip(nd, rnd)):
+                return None
+        return sub
+
+    @staticmethod
+    def _rewrite_array_to_scalar(sdfg: SDFG, body_states: List[SDFGState], arr: str, desc: dt.Array) -> None:
+        """Replace every access to the localized 1-D ``arr`` with a fresh ``[1]`` transient indexed at
+        ``[0]``, then drop ``arr``. The ``[1]`` array (not a register scalar) persists across the two body
+        states within one iteration, which is where the write and the read live."""
+        local, _ = sdfg.add_array(arr + '_local', [1],
+                                  desc.dtype,
+                                  storage=desc.storage,
+                                  transient=True,
+                                  find_new_name=True)
+        zero = subsets.Range([(0, 0, 1)])
+        for s in body_states:
+            for n in s.nodes():
+                if not isinstance(n, nodes.AccessNode) or n.data != arr:
+                    continue
+                n.data = local
+                for e in s.all_edges(n):
+                    if e.data is not None and e.data.data == arr:
+                        e.data.data = local
+                        e.data.subset = copy.deepcopy(zero)
+        try:
+            sdfg.remove_data(arr, validate=False)
+        except ValueError:
+            pass  # still referenced by something outside our rewrite -> leave the dead array to simplify
 
 
 __all__ = ['FuseLoops']

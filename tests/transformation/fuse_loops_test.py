@@ -763,3 +763,309 @@ def test_fusion_across_an_invariant_scalar_overwritten_later_is_refused():
     before, after, applied, exact = run_fused(invariant_scalar_read_then_written, mk(names=("a", "d")), 48)
     assert exact
     assert applied == 0
+
+
+# =====================================================================================================
+# Intermediate contraction (buffer localization).
+#
+# Fusing two sequential loops that share an intermediate ``tmp`` is only half the win: the ``[N]`` buffer
+# between them is reclaimable once both bodies run in the same iteration. FuseLoops contracts a transient
+# the fused body writes-and-reads at the SAME point ``tmp[i]`` -- no cross-iteration history, no use
+# outside the loop -- down to a reused ``[1]`` slot (the loop analogue of MapFusionVertical's smaller
+# intermediate). It is orthogonal to parallelism, so it fires on the sequential recurrences LoopToMap left.
+#
+# Every case pins BOTH nets: value-preservation (`exact`, bit-for-bit vs the un-fused reference) and the
+# buffer measurement (`big_before`/`big_after` = transient arrays whose element count is not statically 1).
+# Contraction must NEVER change a value and must NEVER fire when a cross-iteration/offset/outside access
+# makes a single slot unsound -- those cases fuse (or refuse) but keep the full buffer.
+# =====================================================================================================
+
+
+def big_transients(sdfg):
+    """Names of transient ARRAY descriptors whose element count is not statically 1 -- i.e. the buffers a
+    localization would shrink. A contracted ``[1]`` slot has volume 1 and is excluded."""
+    out = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for name, desc in sd.arrays.items():
+            if desc.transient and isinstance(desc, dace.data.Array):
+                vol = 1
+                for s in desc.shape:
+                    vol *= s
+                if str(dace.symbolic.simplify(vol)) != "1":
+                    out.append(name)
+    return out
+
+
+def fuse_and_measure(prog, inputs, n, simplify=True):
+    """Like ``run_fused`` but also reports the big-transient set before/after fusion, so a test can assert
+    the intermediate buffer was (or was not) contracted. Returns (applied, exact, big_before, big_after)."""
+    ref = prog.to_sdfg(simplify=simplify)
+    ref.name = prog.name + "_ref"
+    rb = {k: v.copy() for k, v in inputs.items()}
+    ref(**rb, N=n)
+
+    sd = prog.to_sdfg(simplify=simplify)
+    big_before = big_transients(sd)
+    applied = sd.apply_transformations_repeated(FuseLoops) or 0
+    big_after = big_transients(sd)
+    sd.name = prog.name + "_fused"
+    fb = {k: v.copy() for k, v in inputs.items()}
+    sd(**fb, N=n)
+    exact = all(np.allclose(fb[k], rb[k], equal_nan=True) for k in inputs)
+    return applied, exact, big_before, big_after
+
+
+# --- contraction FIRES: transient written & read only at point i, both loops non-DOALL ---------------
+#
+# Neither loop is DOALL (each carries a recurrence on an OUTPUT array), so LoopToMap left them for
+# FuseLoops; ``tmp`` is a pure per-iteration value -> contractible to a scalar.
+
+
+@dace.program
+def localize_scalar_chain(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
+    tmp = np.empty_like(a)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]  # recurrence carrier -> loop1 not DOALL
+        tmp[i] = acc[i] + b[i]  # intermediate, point i
+    for i in range(1, N):
+        out[i] = out[i - 1] + tmp[i]  # recurrence carrier reading tmp[i] point -> loop2 not DOALL
+
+
+@dace.program
+def localize_mul_op(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
+    tmp = np.empty_like(a)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] * 0.5 + a[i]
+        tmp[i] = acc[i] * b[i]
+    for i in range(1, N):
+        out[i] = out[i - 1] - tmp[i]
+
+
+@dace.program
+def localize_min_op(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
+    tmp = np.empty_like(a)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]
+        tmp[i] = min(acc[i], b[i])
+    for i in range(1, N):
+        out[i] = max(out[i - 1], tmp[i])
+
+
+@dace.program
+def localize_shared_read(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
+    tmp = np.empty_like(a)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]
+        tmp[i] = acc[i] + b[i]
+    for i in range(1, N):
+        out[i] = out[i - 1] + tmp[i] + a[i]  # loop2 also reads the shared input a -- tmp still contracts
+
+
+@pytest.mark.parametrize("prog", [localize_scalar_chain, localize_mul_op, localize_min_op, localize_shared_read])
+def test_intermediate_is_localized_to_a_scalar(prog):
+    applied, exact, big_before, big_after = fuse_and_measure(prog, mk(names=("a", "b", "acc", "out")), 48)
+    assert applied >= 1
+    assert exact
+    assert "tmp" in "".join(big_before)  # the [N] intermediate existed before fusion
+    assert len(big_after) < len(big_before)  # ... and was contracted away
+    assert not any("tmp" in x for x in big_after)
+
+
+@pytest.mark.parametrize("n", [4, 16, 48, 64])
+def test_intermediate_localization_holds_across_sizes(n):
+    applied, exact, big_before, big_after = fuse_and_measure(localize_scalar_chain, mk(n=n, names=("a", "b", "acc",
+                                                                                                   "out")), n)
+    assert applied >= 1 and exact
+    assert len(big_after) < len(big_before)
+
+
+@dace.program
+def localize_two_intermediates(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
+    t1 = np.empty_like(a)
+    t2 = np.empty_like(a)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]
+        t1[i] = acc[i] + b[i]
+        t2[i] = acc[i] - b[i]
+    for i in range(1, N):
+        out[i] = out[i - 1] + t1[i] * t2[i]
+
+
+def test_two_point_intermediates_both_localized():
+    applied, exact, big_before, big_after = fuse_and_measure(localize_two_intermediates,
+                                                             mk(names=("a", "b", "acc", "out")), 48)
+    assert applied >= 1 and exact
+    assert len(big_before) >= 2  # t1, t2 both [N] before
+    assert big_after == []  # both contracted
+
+
+@dace.program
+def localize_long_chain(a: f64[N], p: f64[N], q: f64[N], out: f64[N]):
+    t1 = np.empty_like(a)
+    t2 = np.empty_like(a)
+    for i in range(1, N):
+        p[i] = p[i - 1] + a[i]
+        t1[i] = p[i] * 2.0
+    for i in range(1, N):
+        q[i] = q[i - 1] + t1[i]
+        t2[i] = q[i] - a[i]
+    for i in range(1, N):
+        out[i] = out[i - 1] + t2[i]
+
+
+def test_long_chain_localizes_every_intermediate():
+    # A 3-loop chain collapses one adjacency per merge: FuseLoops leaves the merged body as two states
+    # (StateFusion runs between passes, not inside the transformation), so the NEXT pair only matches once
+    # the body is re-fused to a single compute state. Interleave a simplify to model the canon pipeline and
+    # drive the chain fully closed -- then EVERY intermediate is localized.
+    n = 48
+    inputs = mk(names=("a", "p", "q", "out"))
+    ref = localize_long_chain.to_sdfg(simplify=True)
+    ref.name = "long_chain_ref"
+    rb = {k: v.copy() for k, v in inputs.items()}
+    ref(**rb, N=n)
+
+    sd = localize_long_chain.to_sdfg(simplify=True)
+    big_before = big_transients(sd)
+    applied = 0
+    while True:
+        got = sd.apply_transformations(FuseLoops)
+        if not got:
+            break
+        applied += got
+        sd.simplify()  # re-fuse the merged body's two states so the next adjacency can match
+    big_after = big_transients(sd)
+    sd.name = "long_chain_fused"
+    fb = {k: v.copy() for k, v in inputs.items()}
+    sd(**fb, N=n)
+
+    assert applied >= 2  # both adjacencies fuse once the body is re-collapsed between merges
+    assert all(np.allclose(fb[k], rb[k], equal_nan=True) for k in inputs)
+    assert big_after == []  # t1 and t2 both contracted to scalars
+
+
+# --- contraction REFUSED (unsound to use one slot) but fusion still happens, value preserved ----------
+
+
+@dace.program
+def intermediate_carries_history(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
+    tmp = np.zeros(N)  # zero-init: tmp[i-1] at i==1 reads a defined cell -> deterministic reference
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]
+        tmp[i] = tmp[i - 1] + acc[i]  # tmp reads its OWN previous cell -> cross-iteration, not one slot
+    for i in range(1, N):
+        out[i] = out[i - 1] + tmp[i]
+
+
+@dace.program
+def intermediate_read_behind_in_second(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
+    tmp = np.zeros(N)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]
+        tmp[i] = acc[i] + b[i]
+    for i in range(2, N):
+        out[i] = out[i - 1] + tmp[i - 1]  # reads the PREVIOUS tmp cell -> two live cells, no single slot
+
+
+@dace.program
+def intermediate_used_after_loop(a: f64[N], b: f64[N], acc: f64[N], out: f64[N], sink: f64[N]):
+    tmp = np.empty_like(a)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]
+        tmp[i] = acc[i] + b[i]
+    for i in range(1, N):
+        out[i] = out[i - 1] + tmp[i]
+    sink[0] = tmp[3]  # tmp is live AFTER the loop -> not exclusive -> must not be contracted
+
+
+@pytest.mark.parametrize("prog,names", [
+    (intermediate_carries_history, ("a", "b", "acc", "out")),
+    (intermediate_read_behind_in_second, ("a", "b", "acc", "out")),
+    (intermediate_used_after_loop, ("a", "b", "acc", "out", "sink")),
+])
+def test_unsafe_intermediate_is_not_contracted_but_value_preserved(prog, names):
+    applied, exact, big_before, big_after = fuse_and_measure(prog, mk(names=names), 48)
+    assert exact  # value is always preserved
+    assert big_before == big_after  # the buffer is NOT contracted (a single slot would be unsound)
+
+
+def test_two_d_intermediate_not_contracted_v1():
+    # a 2-D intermediate is written under a map scope (many cells per outer iteration) -- v1 refuses to
+    # contract it; fusion (and value) are unaffected.
+    @dace.program
+    def prog(a: f64[N, N], acc: f64[N, N], out: f64[N, N]):
+        tmp = np.empty_like(a)
+        for i in range(1, N):
+            for j in dace.map[0:N]:
+                acc[i, j] = acc[i - 1, j] + a[i, j]
+                tmp[i, j] = acc[i, j] * 2.0
+        for i in range(1, N):
+            for j in dace.map[0:N]:
+                out[i, j] = out[i - 1, j] + tmp[i, j]
+
+    applied, exact, big_before, big_after = fuse_and_measure(prog, mk2d(names=("a", "acc", "out")), 24)
+    assert exact
+    assert big_before == big_after  # 2-D intermediate left at full size in v1
+
+
+@dace.program
+def gather_indexed_intermediate(a: f64[N], idx: dace.int64[N], acc: f64[N], out: f64[N]):
+    tmp = np.empty_like(a)
+    for i in range(1, N):
+        acc[i] = acc[i - 1] + a[i]
+        tmp[i] = acc[idx[i]]  # written at point i but read via a gather -> not a pure point of i
+    for i in range(1, N):
+        out[i] = out[i - 1] + tmp[i]
+
+
+def test_gather_written_intermediate_value_preserved():
+    rng = np.random.default_rng(11)
+    inputs = {
+        "a": rng.random(48),
+        "idx": rng.integers(0, 48, size=48).astype(np.int64),
+        "acc": rng.random(48),
+        "out": rng.random(48),
+    }
+    applied, exact, big_before, big_after = fuse_and_measure(gather_indexed_intermediate, inputs, 48)
+    assert exact  # tmp WRITE is still point i, so tmp itself may localize; the value must be preserved
+
+
+# --- flow hazard THROUGH a produced intermediate --------------------------------------------------------
+#
+# A flow (RAW) hazard carried by a compiler temp: body1 PRODUCES tmp[i], body2 reads tmp[i+1] ahead of
+# that production. Because tmp is genuinely written in body1 (not a foldable constant), the read-ahead
+# dependence survives simplify and FuseLoops must refuse. (The anti/WAR-through-a-temp mirrors are covered
+# by the arg-array cases `read_behind_anti` / `read_ahead_anti_is_safe` above -- a read of a temp BEFORE it
+# is produced folds to its init, dissolving the very dependence under test, so those live on arg arrays.)
+
+
+@dace.program
+def intermediate_flow_read_ahead_blocks(a: f64[N], acc: f64[N], out: f64[N]):
+    tmp = np.zeros(N)  # produced cells overwrite the zero; the one unwritten tail cell stays a defined 0
+    for i in range(1, N - 1):
+        acc[i] = acc[i - 1] + a[i]
+        tmp[i] = acc[i]  # tmp[i] genuinely produced here (not a foldable constant)
+    for i in range(1, N - 1):
+        out[i] = out[i - 1] + tmp[i + 1]  # reads tmp AHEAD of its production -> fusion illegal
+
+
+def test_intermediate_flow_read_ahead_refuses_fusion():
+    applied, exact, big_before, big_after = fuse_and_measure(intermediate_flow_read_ahead_blocks,
+                                                             mk(names=("a", "acc", "out")), 48)
+    assert applied == 0  # a real read-ahead flow hazard through the temp -> refuse the fuse entirely
+    assert exact
+    assert big_before == big_after  # nothing fused -> nothing contracted
+
+
+def test_contraction_never_crashes_without_an_intermediate():
+    # a single loop, or a pair sharing no transient, must not trip the contraction pass.
+    @dace.program
+    def prog(a: f64[N], b: f64[N], c: f64[N]):
+        for i in range(1, N):
+            b[i] = b[i - 1] + a[i]
+        for i in range(1, N):
+            c[i] = c[i - 1] + b[i]  # b is a program ARG, not a transient -> never contracted
+
+    applied, exact, big_before, big_after = fuse_and_measure(prog, mk(names=("a", "b", "c")), 48)
+    assert applied == 1 and exact
+    assert big_before == big_after == []  # nothing transient to contract
