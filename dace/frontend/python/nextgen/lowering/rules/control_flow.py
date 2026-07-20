@@ -9,7 +9,7 @@ metadata), so memlet propagation and downstream analysis behave identically
 for frontend-produced and SDFG-derived schedule trees.
 """
 import ast
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -100,7 +100,7 @@ def lower_while(statement: ast.While, state: LoweringState) -> None:
 def lower_for(statement: ast.For, state: LoweringState) -> None:
     if cpa.is_range_iterator(statement.iter):
         _lower_loop_with_stability_check(statement, lambda s: _lower_range_loop(statement, s), state)
-    elif cpa.is_dace_map_iterator(statement.iter):
+    elif cpa.is_dace_map_iterator(statement.iter, state.context.globals):
         _lower_loop_with_stability_check(statement, lambda s: _lower_map_loop(statement, s), state)
     else:
         raise UnsupportedFeatureError(
@@ -171,8 +171,9 @@ def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:
 def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     targets = statement.target.elts if isinstance(statement.target, ast.Tuple) else [statement.target]
     params = [target.id for target in targets]
+    range_iterator, schedule = _extract_map_schedule(statement.iter, state)
     dynamic_inputs: List[tn.DynScopeCopyNode] = []
-    ranges = _parse_map_ranges(statement.iter, state, dynamic_inputs)
+    ranges = _parse_map_ranges(range_iterator, state, dynamic_inputs)
     if len(params) != len(ranges):
         raise UnsupportedFeatureError('Number of dace.map indices does not match number of ranges',
                                       state.context.filename,
@@ -188,9 +189,53 @@ def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     # places them right before the map.
     for dynamic_input in dynamic_inputs:
         state.emitter.emit(dynamic_input)
-    map_node = nodes.MapEntry(nodes.Map(f'map_{statement.lineno}', params, subsets.Range(ranges)))
+    map_ = nodes.Map(f'map_{statement.lineno}', params, subsets.Range(ranges))
+    if schedule is not None:
+        map_.schedule = schedule
+    map_node = nodes.MapEntry(map_)
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.lower_body(statement.body)
+
+
+def _extract_map_schedule(iterator: ast.expr,
+                          state: LoweringState) -> Tuple[ast.Subscript, Optional[dtypes.ScheduleType]]:
+    """
+    Split a ``dace.map`` for-iterator into its range subscript and an
+    optional schedule-type annotation: ``dace.map[...] @ ScheduleType`` is a
+    ``BinOp`` with ``ast.MatMult``, matching the classic frontend's
+    ``newast.py`` ``_parse_for_iterator`` convention. Iterators without the
+    ``@`` annotation are returned unchanged with schedule ``None``.
+    """
+    if not (isinstance(iterator, ast.BinOp) and isinstance(iterator.op, ast.MatMult)):
+        return iterator, None
+    schedule_name = astutils.rname(iterator.right)
+    schedule = _resolve_schedule_type(schedule_name, state.context.globals)
+    if schedule is None:
+        raise UnsupportedFeatureError(f'Could not resolve dace.map schedule type: {astutils.unparse(iterator.right)}',
+                                      state.context.filename,
+                                      iterator,
+                                      category='explicit-map')
+    return iterator.left, schedule
+
+
+def _resolve_schedule_type(schedule_name: str, global_vars: Dict[str, Any]) -> Optional[dtypes.ScheduleType]:
+    """
+    Resolve a dotted schedule-type name (``ScheduleType.GPU_Device`` or
+    ``<module-alias>.ScheduleType.GPU_Device``) against the program's global
+    namespace, mirroring ``newast.py``'s ``_parse_for_iterator`` schedule
+    handling.
+    """
+    if schedule_name.startswith('ScheduleType.'):
+        return getattr(dtypes.ScheduleType, schedule_name[len('ScheduleType.'):], None)
+    module_name, separator, member_path = schedule_name.partition('.')
+    module = global_vars.get(module_name)
+    if separator and dtypes.ismodule(module):
+        schedule = module
+        for part in member_path.split('.'):
+            schedule = getattr(schedule, part, None)
+    else:
+        schedule = global_vars.get(schedule_name)
+    return schedule if isinstance(schedule, dtypes.ScheduleType) else None
 
 
 def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState,
