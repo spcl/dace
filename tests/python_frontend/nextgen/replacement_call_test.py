@@ -97,6 +97,52 @@ def test_scalar_axis_keeps_wcr_mechanism():
     assert not _nodes_of_type(tree, tn.ReplacementCallNode)
 
 
+def test_concatenate_sequence_of_containers_structure():
+    """A static sequence whose elements are data containers (e.g. the
+    ``(A, B)`` in ``numpy.concatenate((A, B))``) passes through as a list of
+    container names, rather than being rejected as an un-representable
+    by-value argument."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 5], B: dace.float64[4, 5]):
+        return np.concatenate((A, B))
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].qualname == 'numpy.concatenate'
+    assert calls[0].arguments == [('A', 'B')]
+    assert calls[0].data_arguments == {'A', 'B'}
+
+
+def test_concatenate_sequence_of_containers_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5], B: dace.float64[4, 5]):
+        return np.concatenate((A, B))
+
+    tree = nextgen.parse_program(prog)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5)
+    B = np.random.rand(4, 5)
+    assert np.allclose(func(A=A, B=B), np.concatenate((A, B)))
+
+
+def test_hstack_list_of_containers_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 5], B: dace.float64[4, 5]):
+        return np.hstack([A, B])
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(4, 5)
+    B = np.random.rand(4, 5)
+    assert np.allclose(func(A=A, B=B), np.hstack([A, B]))
+
+
 def test_nonviable_replacement_falls_back():
     """numpy.reshape has both registrations but records view bindings, which
     deferred expansion cannot honor: the build-time viability trial rejects it
@@ -119,4 +165,7 @@ if __name__ == '__main__':
     test_mean_execution()
     test_transpose_execution()
     test_scalar_axis_keeps_wcr_mechanism()
+    test_concatenate_sequence_of_containers_structure()
+    test_concatenate_sequence_of_containers_execution()
+    test_hstack_list_of_containers_execution()
     test_nonviable_replacement_falls_back()

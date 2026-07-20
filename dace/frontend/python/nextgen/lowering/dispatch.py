@@ -798,10 +798,17 @@ def _replacement_arguments(call: ast.Call, state: LoweringState) -> Optional[Tup
         if value.kind in ('constant', 'symbolic'):
             return True, value.value
         if value.kind == 'static':
-            try:
-                elements = state.inference.sequence_constants(value.value)
-            except UnsupportedFeatureError:
-                return False, None
+            # A static sequence's elements may themselves be data containers
+            # (e.g. the ``(A, B)`` in ``numpy.concatenate((A, B))``): resolve
+            # each element the same way as a top-level argument, so a
+            # container name is recorded in ``data_arguments`` instead of
+            # being rejected outright.
+            elements = []
+            for element in value.value.elements:
+                ok, element_value = convert(element)
+                if not ok:
+                    return False, None
+                elements.append(element_value)
             return True, tuple(elements) if value.value.kind == 'tuple' else elements
         return False, None  # Data-valued compound expressions need a name
 
