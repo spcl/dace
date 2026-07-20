@@ -33,6 +33,11 @@ def uninlinable(x):
     return x * 3
 
 
+@dace_inhibitor
+def uninlinable_dict(d):
+    return d['a'] * 3
+
+
 def test_detected_callback_category():
     """A call preprocessing wrapped as a callback is intended interpreter work."""
 
@@ -63,6 +68,26 @@ def test_opaque_syntax_category():
     # The consumer of the opaque dict is a pyobject-propagation fallback,
     # batched into the same callback with its own prefix preserved.
     assert 'pyobject-propagation' in categories
+
+
+def test_dict_literal_call_argument_category():
+    """A dict literal passed as a call argument still requires the dict
+    itself to be built by the interpreter (``opaque-syntax``), but no longer
+    forces the *call* into the same catch-all: once the ANF pass can flatten
+    a ``Dict`` node (hoisting it to a temporary, like list/tuple literals),
+    the call resolves as an ordinary ``detected-callback`` site."""
+
+    @dace.program
+    def calls_with_dict(A: dace.float64[N]):
+        y: dace.float64 = uninlinable_dict({'a': A[0]})
+        A[0] = y
+
+    tree = nextgen.parse_program(calls_with_dict)
+    callbacks = _callbacks(tree)
+    assert len(callbacks) == 1
+    categories = _categories(callbacks[0])
+    assert 'detected-callback' in categories
+    assert 'opaque-syntax:Assign' in categories
 
 
 def test_raise_site_category_propagates(monkeypatch):
@@ -127,6 +152,7 @@ if __name__ == '__main__':
     import pytest
     test_detected_callback_category()
     test_opaque_syntax_category()
+    test_dict_literal_call_argument_category()
     test_raise_site_category_propagates(pytest.MonkeyPatch())
     test_uncategorized_default(pytest.MonkeyPatch())
     test_every_callback_reason_is_categorized()

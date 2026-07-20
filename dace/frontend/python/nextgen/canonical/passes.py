@@ -763,6 +763,14 @@ class ANFTransform(_BodyTransformer):
             # ('flat') and is hoisted to a named temporary elsewhere.
             expr.elts = [self._flatten(element, hoisted, level='atom') for element in expr.elts]
             return expr if level == 'flat' else self._hoist(expr, hoisted)
+        if isinstance(expr, ast.Dict):
+            # Dict literals: same shape as list/tuple literals above. A ``None``
+            # key marks a ``**expansion`` entry, which has no atom form.
+            if any(key is None for key in expr.keys):
+                raise _ShortCircuitHazard
+            expr.keys = [self._flatten(key, hoisted, level='atom') for key in expr.keys]
+            expr.values = [self._flatten(value, hoisted, level='atom') for value in expr.values]
+            return expr if level == 'flat' else self._hoist(expr, hoisted)
         if isinstance(expr, ast.Attribute) and not cpa.is_dataref(expr):
             # Nested structure-member chains (``outer.inner.leaf``) reduce to
             # single-level datarefs; chains not rooted at a Name stay atoms.
