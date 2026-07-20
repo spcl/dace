@@ -5,15 +5,18 @@ Python AST (CPA) subset defined in :mod:`~dace.frontend.python.nextgen.canonical
 
 Pass order matters and is fixed by :func:`default_passes`:
 
-1. :class:`DesugarStatements` — multi-target/chained assignments, ``AugAssign``,
+1. :class:`DetectAccumulations` — annotate self-referential writes (``b = b + x``,
+   ``b = x + b``) so conflict resolution has one marker to key off. Must
+   precede ANF, which hoists the self-reference out of reach.
+2. :class:`DesugarStatements` — multi-target/chained assignments, ``AugAssign``,
    ``AnnAssign``, loop ``else`` clauses, docstring removal.
-2. :class:`NormalizeLoops` — ``range`` calls to 3-argument form; complex
+3. :class:`NormalizeLoops` — ``range`` calls to 3-argument form; complex
    ``while`` tests to ``while True`` + conditional ``break`` (correct under
    ``break``/``continue`` because the test re-evaluates at the loop head).
-3. :class:`ANFTransform` — A-normal form: every compound subexpression is
+4. :class:`ANFTransform` — A-normal form: every compound subexpression is
    hoisted into a fresh single-assignment temporary, so all remaining
    expressions are at most depth-1 ("flat").
-4. :class:`MarkOpaque` — any statement still outside the CPA subset becomes an
+5. :class:`MarkOpaque` — any statement still outside the CPA subset becomes an
    explicit :class:`~dace.frontend.python.nextgen.canonical.cpa.OpaqueStmt`
    with precomputed input/output sets. This pass makes the stage total.
 """
@@ -501,6 +504,121 @@ class DesugarStatements(_BodyTransformer):
                         self._flag_breaks(child, flag, template)
 
 
+#: Binary operators whose operands may be swapped without changing the result
+#: of a *numeric* computation. IEEE 754 addition and multiplication commute
+#: exactly (they are only non-associative), so the swap is bit-exact for floats
+#: too — unlike re-associating a longer chain, which this pass refuses.
+#:
+#: ``+`` also concatenates Python sequences, where it does **not** commute. That
+#: is safe here only because this pass merely annotates: the swap is performed
+#: at lowering, and only for a target that resolves to a data container, which a
+#: compile-time list or string never does.
+_COMMUTATIVE_OPERATORS = (ast.Add, ast.Mult, ast.BitOr, ast.BitXor, ast.BitAnd)
+
+
+class DetectAccumulations(_BodyTransformer):
+    """
+    Recognize self-referential writes — reductions spelled without an augmented
+    operator — and annotate them, so the lowering stage has one marker to key
+    conflict resolution off instead of re-recognizing reduction idioms at every
+    write path.
+
+    Inside a map, ``b = b + x`` and ``b = x + b`` are the same accumulation as
+    ``b += x`` and need the same conflict resolution on their write. Without
+    this pass only the literal ``+=`` spelling gets one and every other spelling
+    lowers as a silent data race — the hole the classic frontend still has.
+
+    This must run **before** :class:`ANFTransform`, which hoists compound
+    operands into temporaries and can move the self-reference out of the
+    statement entirely; after ANF the signal is simply gone. It must equally run
+    before :class:`DesugarStatements`, whose ``AugAssign`` desugaring produces
+    exactly the shape this pass looks for and would otherwise be re-detected.
+
+    The pass **never rewrites**; it only attaches markers, so a statement that
+    does not race is bit-identical to what it would have been:
+
+    - ``augmented_op`` — the accumulating operator, matching the marker
+      :class:`DesugarStatements` attaches to a desugared ``AugAssign``.
+    - ``accumulator_side`` — ``'left'`` for ``b = b OP x`` (any operator) and
+      ``'right'`` for ``b = x OP b`` (commutative operators only, including the
+      chained ``b = x + y + b``, which parses as ``(x + y) + b`` so the grouping
+      of ``x + y`` survives the swap intact). Lowering reads the *other* operand
+      as the accumulated value.
+    - ``conflict_hazard`` — a self-referential write with no accumulation form
+      at all: ``b = b + x + y`` (would need inexact re-association), ``b = x - b``
+      (accumulator in a non-fold position of a non-commutative operator),
+      ``b = max(b, x)`` (a call, pending unified registry dispatch). These still
+      lower as races, but ``lowering/mechanisms/conflict.py`` reports them
+      instead of letting them pass silently.
+
+    Known blind spot: a conditional update (``if x > b: b = x``) is a race with
+    no self-reference in any single expression, so it is neither detected nor
+    reported here.
+    """
+    name = 'detect-accumulations'
+
+    def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
+        if isinstance(statement, CANONICAL_LEAVES):
+            return statement
+        if not isinstance(statement, ast.Assign) or len(statement.targets) != 1:
+            return self._recurse(statement)
+
+        value = statement.value
+        key = _reference_key(statement.targets[0])
+        if key is None:
+            return statement
+        # A plain self-copy (``b = b``) writes back what it read: no conflict.
+        if _reference_key(value) == key or not _reads_reference(value, key):
+            return statement
+
+        if isinstance(value, ast.BinOp):
+            if _reference_key(value.left) == key and not _reads_reference(value.right, key):
+                statement.augmented_op = value.op
+                statement.accumulator_side = 'left'
+                return statement
+            if (isinstance(value.op, _COMMUTATIVE_OPERATORS) and _reference_key(value.right) == key
+                    and not _reads_reference(value.left, key)):
+                statement.augmented_op = value.op
+                statement.accumulator_side = 'right'
+                return statement
+
+        statement.conflict_hazard = _hazard_reason(value, key)
+        return statement
+
+
+def _hazard_reason(value: ast.expr, key: str) -> str:
+    """A short description of why a self-referential write could not be reduced
+    to an accumulation, for the lowering-stage race report."""
+    if isinstance(value, ast.Call):
+        return 'a call combining the target with other values'
+    if isinstance(value, ast.BinOp):
+        if _reference_key(value.right) == key:
+            return 'the target is a right operand of a non-commutative operator'
+        return 'a chained update that would need re-association'
+    return 'a compound expression reading the target'
+
+
+def _reference_key(expression: ast.AST) -> Optional[str]:
+    """
+    A comparable identity for the storage an expression names, or None if it
+    names none. Load/store context is normalized away so that a store target
+    and a read of it compare equal; ``ast.dump`` already excludes source
+    locations.
+    """
+    if not isinstance(expression, (ast.Name, ast.Subscript, ast.Attribute)):
+        return None
+    clone = copy.deepcopy(expression)
+    for node in ast.walk(clone):
+        if hasattr(node, 'ctx'):
+            node.ctx = ast.Load()
+    return ast.dump(clone)
+
+
+def _reads_reference(expression: ast.AST, key: str) -> bool:
+    """Whether any subexpression reads the storage identified by ``key``."""
+    return any(_reference_key(node) == key for node in ast.walk(expression))
+
+
 class NormalizeLoops(_BodyTransformer):
     """
     Normalize loop headers:
@@ -802,6 +920,7 @@ def default_passes() -> List[_BodyTransformer]:
     """The default canonicalization pass order."""
     return [
         RecognizeExplicitDataflow(),
+        DetectAccumulations(),
         DesugarStatements(),
         NormalizeLoops(),
         ANFTransform(),
