@@ -24,7 +24,7 @@ import statistics
 import sys
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import dace
 from dace.codegen import codegen
@@ -73,16 +73,24 @@ def discover_programs(subdir: str) -> List[Tuple[str, 'dace.frontend.python.pars
     return found
 
 
-def timed(fn: Callable[[], None], reps: int) -> Optional[Dict[str, float]]:
-    """Median/min of ``reps`` timings, or None if the workload raised."""
+def timed(setup: Callable[[], Any], fn: Callable[[Any], None], reps: int) -> Optional[Dict[str, float]]:
+    """Median/min over ``reps`` runs of ``fn(setup())``, or None if it raised.
+
+    ``setup`` runs inside the loop but outside the timer, and its result is dropped before the next
+    iteration. Materializing every clone up front would hold ``reps`` copies of the graph alive at
+    once -- on a 5890-state SDFG that is gigabytes, and the allocator pressure alone would distort
+    what is being measured.
+    """
     samples = []
     for _ in range(reps):
+        subject = setup()
         start = time.perf_counter()
         try:
-            fn()
+            fn(subject)
         except Exception:
             return None
         samples.append(time.perf_counter() - start)
+        del subject
     return {'median_s': statistics.median(samples), 'min_s': min(samples), 'reps': len(samples)}
 
 
@@ -104,9 +112,7 @@ def bench_kernels(rows: List[dict], label: str, reps: int, limit: int = 0) -> No
             print(f'[{label}] SKIP build {name}', flush=True)
             continue
 
-        clones = [copy.deepcopy(pristine) for _ in range(reps)]
-        it = iter(clones)
-        opt = timed(lambda: next(it).simplify(validate=False), reps)
+        opt = timed(lambda: copy.deepcopy(pristine), lambda g: g.simplify(validate=False), reps)
         if opt:
             rows.append({'workload': 'opt', 'kernel': name, **opt})
 
@@ -118,9 +124,7 @@ def bench_kernels(rows: List[dict], label: str, reps: int, limit: int = 0) -> No
             continue
 
         # generate_code mutates (preprocess pads regions), so each rep needs its own copy
-        cg_clones = [copy.deepcopy(simplified) for _ in range(reps)]
-        cit = iter(cg_clones)
-        cg = timed(lambda: codegen.generate_code(next(cit)), reps)
+        cg = timed(lambda: copy.deepcopy(simplified), codegen.generate_code, reps)
         if cg:
             rows.append({'workload': 'codegen', 'kernel': name, **cg})
 
@@ -154,9 +158,26 @@ def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
             flush=True)
         return
 
-    print(f'[{label}] building cloudsc SDFG...', flush=True)
-    start = time.perf_counter()
-    pristine = build()
+    # The build is the INPUT, not what is measured, and it is identical for every ref -- so a
+    # shared cache lets the second arm skip a frontend parse that takes minutes on cloudsc.
+    cache = os.environ.get('DACE_BENCH_SDFG_CACHE')
+    pristine = None
+    if cache and os.path.exists(cache):
+        try:
+            start = time.perf_counter()
+            pristine = dace.SDFG.from_file(cache)
+            print(f'[{label}] loaded cloudsc SDFG from {cache} in {time.perf_counter() - start:.1f}s', flush=True)
+        except Exception as ex:
+            print(f'[{label}] cache at {cache} unusable ({type(ex).__name__}), rebuilding', flush=True)
+            pristine = None
+
+    if pristine is None:
+        print(f'[{label}] building cloudsc SDFG (several minutes -- frontend parse)...', flush=True)
+        start = time.perf_counter()
+        pristine = build()
+        if cache:
+            pristine.save(cache, compress=True)
+            print(f'[{label}] cached the built SDFG at {cache}', flush=True)
     print(
         f'[{label}] cloudsc built in {time.perf_counter() - start:.1f}s '
         f'({len(pristine.arrays)} arrays, {len(list(pristine.states()))} states)',
@@ -164,24 +185,20 @@ def bench_cloudsc(rows: List[dict], label: str, reps: int) -> None:
 
     stages = []
 
-    clones = [copy.deepcopy(pristine) for _ in range(reps)]
-    it = iter(clones)
-    stages.append(('cloudsc_simplify', timed(lambda: next(it).simplify(validate=False), reps)))
+    stages.append(('cloudsc_simplify', timed(lambda: copy.deepcopy(pristine), lambda g: g.simplify(validate=False),
+                                             reps)))
 
     simplified = copy.deepcopy(pristine)
     simplified.simplify(validate=False)
 
-    clones = [copy.deepcopy(simplified) for _ in range(reps)]
-    it = iter(clones)
-    stages.append(
-        ('cloudsc_unroll', timed(lambda: next(it).apply_transformations_repeated(LoopUnroll, validate=False), reps)))
+    stages.append(('cloudsc_unroll',
+                   timed(lambda: copy.deepcopy(simplified),
+                         lambda g: g.apply_transformations_repeated(LoopUnroll, validate=False), reps)))
 
     unrolled = copy.deepcopy(simplified)
     unrolled.apply_transformations_repeated(LoopUnroll, validate=False)
 
-    clones = [copy.deepcopy(unrolled) for _ in range(reps)]
-    it = iter(clones)
-    stages.append(('cloudsc_codegen_after_unroll', timed(lambda: codegen.generate_code(next(it)), reps)))
+    stages.append(('cloudsc_codegen_after_unroll', timed(lambda: copy.deepcopy(unrolled), codegen.generate_code, reps)))
 
     for workload, result in stages:
         if result:
