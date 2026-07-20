@@ -458,20 +458,13 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         in_edges = state.in_edges(self)
         if len(in_edges) != 2:
             raise ValueError("Expected exactly two inputs to batched matrix-matrix product")
-        for _, _, _, dst_conn, memlet in state.in_edges(self):
-            if dst_conn == '_a':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size0 = subset.size()
-            if dst_conn == '_b':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                size1 = subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from "
                              "batched matrix-matrix product")
-        out_memlet = out_edges[0].data
+        # Sizes come from the shared operand helper, which squeezes only rank-reducing indices.
+        a, b, c = _get_matmul_operands(self, state, sdfg)
+        size0, size1, size2 = a[4], b[4], c[4]
 
         # Both inputs must be at least 2D
         if len(size0) < 2:
@@ -494,9 +487,8 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
 
         # Output must have batch dimensions
-        if len(out_memlet.subset) < 3:
-            raise ValueError(
-                f"Batched matrix-matrix product output must be at least 3D, got {len(out_memlet.subset)} dimensions")
+        if len(size2) < 3:
+            raise ValueError(f"Batched matrix-matrix product output must be at least 3D, got {len(size2)} dimensions")
 
 
 # Numpy replacement
