@@ -1,35 +1,38 @@
 #!/bin/bash
-# Submit run_perf_ab.sh to SLURM on a normal node with a 2 hour limit.
+#SBATCH --job-name=dace-perf-ab
+#SBATCH --account=g34
+#SBATCH --partition=normal
+#SBATCH --nodes=1
+#SBATCH --exclusive
+#SBATCH --time=02:00:00
+#SBATCH --output=perf_ab/dace-perf-ab-%j.out
+#SBATCH --error=perf_ab/dace-perf-ab-%j.out
 #
-#   tests/perf/submit_perf_ab.sh [base-ref] [new-ref] [reps] [outdir] [corpus-ref] [harness-ref]
-#   tests/perf/submit_perf_ab.sh                      # all defaults
+# A/B the DaCe optimization + codegen analysis path, old vs new, on one exclusive node.
 #
-# Every argument is forwarded untouched to run_perf_ab.sh. Override the SLURM side with the
-# environment, e.g. PARTITION=debug TIME=00:30:00 tests/perf/submit_perf_ab.sh
+#   sbatch tests/perf/submit_perf_ab.sh [base-ref] [new-ref] [reps] [outdir] [corpus-ref] [harness-ref]
+#   sbatch tests/perf/submit_perf_ab.sh                          # all defaults
 #
-# --exclusive is not optional: these are wall-clock medians and a shared node moves them by tens of
-# percent, which is larger than the effect being measured.
+# Every argument is forwarded untouched to run_perf_ab.sh. Override the SLURM side with
+# --account/--time/... on the sbatch command line, which win over the #SBATCH lines above.
+#
+# Runs directly too (bash tests/perf/submit_perf_ab.sh ...): outside SLURM the #SBATCH lines are
+# inert comments, so it just executes the benchmark in the foreground.
 set -euo pipefail
 
 REPO=$(git rev-parse --show-toplevel)
-SCRIPT="$REPO/tests/perf/run_perf_ab.sh"
-OUTDIR=${4:-$PWD/perf_ab}
 
-PARTITION=${PARTITION:-normal}
-TIME=${TIME:-02:00:00}
-JOBNAME=${JOBNAME:-dace-perf-ab}
+# SBATCH --output writes to perf_ab/ relative to the submit directory, so it must exist
+# before the job is scheduled -- sbatch does not create it.
+mkdir -p perf_ab
 
-mkdir -p "$OUTDIR"
+# Toolchain: the cloudsc build and any C++ the corpus touches need a current compiler.
+# `spack` is a shell function; in a non-interactive sbatch shell it may not be defined yet, so
+# source the setup if `spack load` is not already available.
+if ! command -v spack >/dev/null 2>&1 && [ -n "${SPACK_ROOT:-}" ]; then
+    . "$SPACK_ROOT/share/spack/setup-env.sh"
+fi
+spack load llvm@22.1.5
+spack load gcc@16.1.0
 
-sbatch \
-    --job-name="$JOBNAME" \
-    --partition="$PARTITION" \
-    --nodes=1 \
-    --exclusive \
-    --time="$TIME" \
-    --output="$OUTDIR/%x-%j.out" \
-    --error="$OUTDIR/%x-%j.out" \
-    --wrap="$SCRIPT $*"
-
-echo "submitted; output goes to $OUTDIR/$JOBNAME-<jobid>.out"
-echo "watch with: tail -f $OUTDIR/$JOBNAME-*.out"
+exec "$REPO/tests/perf/run_perf_ab.sh" "$@"
