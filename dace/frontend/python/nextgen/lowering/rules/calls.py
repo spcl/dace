@@ -15,6 +15,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from dace import data, subsets
 from dace.memlet import Memlet
+from dace.utils import prod
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
@@ -89,7 +90,8 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     # nothing; any failure here falls back to the interpreter, preserving
     # totality. Failures during emission (step 4) are frontend bugs and raise.
     try:
-        callee_body, parameter_bindings, callee_globals, argument_labels = _prepare_callee(call, callee, state)
+        callee_body, parameter_bindings, callee_globals, argument_labels, pending_views = _prepare_callee(
+            call, callee, state)
     except Exception as reason:  # Unparseable callee, unsupported argument, ...
         fallback_to_callback(statement,
                              state,
@@ -115,6 +117,18 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
                              category='inline-fallback:early-return')
         return
 
+    # Inlining is now committed: materialize any argument reinterpretation
+    # views (see ``_reshape_view_descriptor``) before entering the callee
+    # scope, matching the classic frontend's NView placement immediately
+    # before the nested call.
+    for view_container, source_container, source_descriptor, view_descriptor in pending_views:
+        state.emitter.emit(
+            tn.ViewNode(target=view_container,
+                        source=source_container,
+                        memlet=Memlet(data=source_container, subset=subsets.Range.from_array(source_descriptor)),
+                        src_desc=source_descriptor,
+                        view_desc=view_descriptor))
+
     return_prefix = state.context.fresh_name(f'__{callee.name}_ret')
     scope = tn.FunctionCallScope(call=tn.FrontendFunctionCall(callee_name=callee.name, arguments=argument_labels),
                                  children=[])
@@ -126,8 +140,9 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     _bind_call_results(target, returned, statement, state)
 
 
-def _prepare_callee(call: ast.Call, callee: Any,
-                    state: LoweringState) -> Tuple[List[ast.stmt], Dict[str, str], Dict[str, Any], Dict[str, str]]:
+def _prepare_callee(
+    call: ast.Call, callee: Any, state: LoweringState
+) -> Tuple[List[ast.stmt], Dict[str, str], Dict[str, Any], Dict[str, str], List[Tuple[str, str, data.Data, data.Data]]]:
     """
     Map call arguments to callee parameters, then fetch (or produce) the
     callee's preprocessed and canonicalized parse through the per-program
@@ -136,14 +151,22 @@ def _prepare_callee(call: ast.Call, callee: Any,
 
     Data arguments bind parameters to the caller's repository containers (by
     reference); constant, symbolic, and compile-time-sequence arguments
-    specialize the callee through its globals.
+    specialize the callee through its globals. An argument whose descriptor
+    shape differs from the callee's own declared parameter annotation (but
+    matches in total element count and dtype) binds through a reinterpreting
+    view instead (see ``_reshape_view_descriptor``); its container is
+    registered but not yet emitted (see ``pending_views``) — emission is
+    deferred to the caller, which commits to inlining only after the
+    return-shape checks pass.
 
-    :return: A 4-tuple of (canonical callee body — a fresh deep copy, since
+    :return: A 5-tuple of (canonical callee body — a fresh deep copy, since
              lowering mutates it, parameter-to-container bindings, resolved
-             callee globals, argument label mapping).
+             callee globals, argument label mapping, and a list of pending
+             argument-reinterpretation views as (view container, source
+             container, source descriptor, view descriptor) tuples).
     """
-    argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, spec_key = _map_arguments(
-        call, callee, state)
+    (argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, spec_key,
+     pending_views) = _map_arguments(call, callee, state)
 
     # Cache key: callee identity (function AND bound object — two instances
     # share __call__ source but specialize separately through their attribute
@@ -181,7 +204,7 @@ def _prepare_callee(call: ast.Call, callee: Any,
     memo: Dict[int, Any] = {}
     _seed_embedded_objects(parse.canonical_body, memo)
     body = copy.deepcopy(parse.canonical_body, memo)
-    return body, parameter_bindings, parse.program_globals, argument_labels
+    return body, parameter_bindings, parse.program_globals, argument_labels, pending_views
 
 
 def _seed_embedded_objects(statements: List[ast.stmt], memo: Dict[int, Any]) -> None:
@@ -207,18 +230,73 @@ def _seed_embedded_objects(statements: List[ast.stmt], memo: Dict[int, Any]) -> 
                     _seed_embedded_objects([node.original], memo)
 
 
+def _declared_parameter_descriptor(callee: Any, parameter: str) -> Optional[data.Data]:
+    """
+    The callee's own explicit parameter-annotation descriptor, if any. Python
+    evaluates type annotations at function-definition time, so
+    ``a: dace.float64[4, 5, 10]`` resolves directly to an ``Array`` descriptor
+    on ``callee.signature`` — independent of whatever descriptor the call
+    site's argument happens to carry.
+    """
+    parameter_info = callee.signature.parameters.get(parameter)
+    if parameter_info is None:
+        return None
+    annotation = parameter_info.annotation
+    return annotation if isinstance(annotation, data.Data) else None
+
+
+def _reshape_view_descriptor(caller_descriptor: data.Data, declared: Optional[data.Data]) -> Optional[data.Data]:
+    """
+    A fresh view descriptor reinterpreting ``caller_descriptor`` with the
+    callee's own declared parameter shape, when it differs but preserves the
+    logical element count (the product of ``shape``, not ``total_size`` —
+    the latter is the allocated footprint including stride padding, which a
+    strided source view like a nested slice legitimately has larger than its
+    element count) and dtype.
+
+    Mirrors the classic frontend's ``NView`` (n-dimensional view) semantics
+    for a shape-mismatched nested-call connector — the classic frontend
+    builds a genuine nested SDFG, where a shape mismatch on the connector is
+    resolved by the SDFG-to-schedule-tree conversion; nextgen inlines calls
+    directly (sharing the repository, no nested SDFG), so the equivalent
+    reinterpretation is a plain view materialized at the call site.
+
+    :return: None when no reinterpretation is needed (shapes already match)
+             or possible (the mismatch is not proven size/dtype-compatible;
+             the caller then binds the parameter directly and any genuine
+             shape conflict surfaces as a feature gap inside the callee).
+    """
+    if (declared is None or not isinstance(declared, data.Array) or not isinstance(caller_descriptor, data.Array)
+            or tuple(caller_descriptor.shape) == tuple(declared.shape)):
+        return None
+    if caller_descriptor.dtype != declared.dtype:
+        return None
+    try:
+        if bool(prod(caller_descriptor.shape) != prod(declared.shape)):
+            return None
+    except Exception:
+        return None  # Symbolic sizes that cannot prove equality: no reinterpretation
+    return data.ArrayView(declared.dtype, list(declared.shape))
+
+
 def _map_arguments(
-        call: ast.Call, callee: Any, state: LoweringState
-) -> Tuple[Dict[str, data.Data], Dict[str, Any], Dict[str, str], Dict[str, str], set, Tuple]:
+    call: ast.Call, callee: Any, state: LoweringState
+) -> Tuple[Dict[str, data.Data], Dict[str, Any], Dict[str, str], Dict[str, str], set, Tuple, List[Tuple[
+        str, str, data.Data, data.Data]]]:
     """
     Map call arguments to callee parameters against the caller's context.
     Cheap and caller-state-dependent (runs on every call site, unlike the
     cached parse).
 
-    :return: A 6-tuple of (argument descriptors by parameter, callee globals
+    :return: A 7-tuple of (argument descriptors by parameter, callee globals
              with specialized values, parameter-to-container bindings,
-             argument label mapping, injected default-argument names, and the
-             hashable specialization key for the parse cache).
+             argument label mapping, injected default-argument names, the
+             hashable specialization key for the parse cache, and a list of
+             pending argument-reinterpretation views — see
+             ``_reshape_view_descriptor`` — as (view container, source
+             container, source descriptor, view descriptor) tuples; their
+             container is registered here but emission is deferred to the
+             caller, which commits to inlining only after later checks pass).
     """
     parameter_names = list(callee.argnames)
     if len(call.args) > len(parameter_names):
@@ -244,6 +322,7 @@ def _map_arguments(
     argtypes: Dict[str, data.Data] = {}
     parameter_bindings: Dict[str, str] = {}
     argument_labels: Dict[str, str] = {}
+    pending_views: List[Tuple[str, str, data.Data, data.Data]] = []
     specialization = []
     for parameter in parameter_names:
         if parameter not in provided:
@@ -272,7 +351,16 @@ def _map_arguments(
                                               argument,
                                               category='inline-fallback:arguments')
             container = state.context.container_of(argument.id, argument)
-            argtypes[parameter] = state.context.containers[container]  # By reference: shared repository
+            caller_descriptor = state.context.containers[container]  # By reference: shared repository
+            view_descriptor = _reshape_view_descriptor(caller_descriptor,
+                                                       _declared_parameter_descriptor(callee, parameter))
+            if view_descriptor is not None:
+                view_container = state.context.add_container(f'{container}_view', view_descriptor)
+                pending_views.append((view_container, container, caller_descriptor, view_descriptor))
+                container = view_container
+                argtypes[parameter] = view_descriptor
+            else:
+                argtypes[parameter] = caller_descriptor
             parameter_bindings[parameter] = container
             specialization.append((parameter, 'descriptor', repr(argtypes[parameter])))
         elif inferred.kind in ('constant', 'symbolic'):
@@ -287,7 +375,8 @@ def _map_arguments(
                                           state.context.filename,
                                           argument,
                                           category='inline-fallback:arguments')
-    return argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, tuple(specialization)
+    return (argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, tuple(specialization),
+            pending_views)
 
 
 def _parse_callee(callee: Any, argtypes: Dict[str, data.Data], callee_globals: Dict[str, Any],

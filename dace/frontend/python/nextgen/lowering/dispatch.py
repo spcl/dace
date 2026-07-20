@@ -38,7 +38,7 @@ cause. The taxonomy in use:
   ``explicit-map``, ``explicit-consume``, ``join-merge``, ``loop-stability``,
   ``type-inference``, ``undefined-name``, ``static-sequence``, ``ufunc``,
   ``array-creation``, ``reduction``, ``reference-set``, ``structure-member``,
-  ``assign-target`` — per-feature semantic gaps,
+  ``assign-target``, ``reshape`` — per-feature semantic gaps,
 - ``safety-net`` — an uncategorized error reaching the totality net in
   ``registry.lower_statement`` (highest bug suspicion),
 - ``uncategorized`` — a fallback site with no assigned category yet.
@@ -47,7 +47,8 @@ import ast
 import copy
 from typing import List, Optional, Tuple, Union
 
-from dace import dtypes
+from dace import data, dtypes
+from dace.memlet import Memlet
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
@@ -123,6 +124,8 @@ def lower_call(target: Optional[ast.expr], call: ast.Call, statement: ast.stmt, 
     if calls.is_sdfg_convertible(callee):
         calls.lower_nested_call(target, call, callee, statement, state)
         return
+    if target is not None and _lower_reshape_call(target, call, qualname, state):
+        return
     try:
         if _lower_registry_call(target, call, qualname, callee, statement, state):
             return
@@ -135,6 +138,118 @@ def lower_call(target: Optional[ast.expr], call: ast.Call, statement: ast.stmt, 
     else:
         message = f'no lowering for call "{qualname}"'
     fallback_to_callback(statement, state, message, category=category)
+
+
+def _lower_reshape_call(target: ast.expr, call: ast.Call, qualname: str, state: LoweringState) -> bool:
+    """
+    Lower ``<data>.reshape(<shape>)`` / ``numpy.reshape(<data>, <shape>)`` as
+    a view binding.
+
+    DaCe views carry a shape independent of their source subset, so a total
+    -size-preserving reshape reduces to reinterpreting the resolved source
+    access under a fresh, explicitly-shaped view container — the "frontend
+    view path" that view-producing registry replacements (like the classic
+    ``reshape`` replacement) explicitly defer to, since
+    :func:`_expansion_viable` rejects any replacement that records a view (a
+    view binding is frontend-visible state, not something a deferred
+    ``ReplacementCallNode`` can represent).
+
+    Returns False when the call is not a recognized/resolvable reshape form
+    (target not a name, base not a data access, shape not compile-time
+    integers, or element count mismatch); the caller then falls through to
+    the normal registry-call dispatch and, ultimately, a callback.
+    """
+    if not isinstance(target, ast.Name):
+        return False
+    base_expr, shape_args = _reshape_operands(call, qualname)
+    if base_expr is None:
+        return False
+    access = resolve_access(base_expr, state)
+    if access is None:
+        return False
+    shape = _reshape_shape(shape_args, access.subset, state)
+    if shape is None:
+        return False
+    view_descriptor = data.ArrayView(access.descriptor.dtype, shape)
+    view_name = state.context.add_container(target.id, view_descriptor)
+    state.context.bind(target.id, view_name)
+    state.emitter.emit(
+        tn.ViewNode(target=view_name,
+                    source=access.container,
+                    memlet=Memlet(data=access.container, subset=access.subset),
+                    src_desc=access.descriptor,
+                    view_desc=view_descriptor))
+    return True
+
+
+def _reshape_operands(call: ast.Call, qualname: str) -> Tuple[Optional[ast.expr], List[ast.expr]]:
+    """
+    The (base array expression, shape argument expressions) of a reshape call
+    form, or (None, []) if the call is not one of the recognized forms:
+    ``x.reshape(shape)``, ``x.reshape(d0, d1, ...)``, or
+    ``numpy.reshape(x, shape)``. The shape argument expressions are returned
+    as-is (not flattened) — ANF hoists a literal shape tuple to a name bound
+    to a static sequence, so :func:`_reshape_shape` resolves through
+    inference rather than requiring an inline ``ast.Tuple``/``ast.List``.
+    """
+    if isinstance(call.func, ast.Attribute) and call.func.attr == 'reshape' and not call.keywords:
+        return call.func.value, call.args
+    if qualname == 'numpy.reshape' and not call.keywords and call.args:
+        return call.args[0], call.args[1:]
+    return None, []
+
+
+def _reshape_shape(shape_args: List[ast.expr], source_subset, state: LoweringState) -> Optional[List]:
+    """
+    Resolve reshape target-shape arguments to concrete dimension sizes,
+    filling in at most one ``-1`` placeholder dimension from the source's
+    total element count (NumPy semantics). None when a dimension is not a
+    compile-time integer or the requested shape's element count does not
+    match the source's (the caller degrades to a callback).
+    """
+    dims: List[int] = []
+    if len(shape_args) == 1:
+        # A single shape argument: either a literal tuple/list (canonical
+        # 'static' per Inferred.infer) or an ANF-hoisted name bound to one
+        # (List/Tuple literals of atoms are canonical 'flat' static values —
+        # ANF hoists them out of operand positions like this call argument).
+        try:
+            inferred = state.inference.infer(shape_args[0])
+        except UnsupportedFeatureError:
+            inferred = None
+        if inferred is not None and inferred.kind == 'static':
+            try:
+                dims = [int(element) for element in state.inference.sequence_constants(inferred.value)]
+            except (UnsupportedFeatureError, TypeError, ValueError):
+                return None
+    if not dims:
+        for arg in shape_args:
+            value = state.inference.constant_int(arg)
+            if value is None:
+                return None
+            dims.append(value)
+    if not dims:
+        return None
+    total = source_subset.num_elements()
+    try:
+        known_product = 1
+        placeholder = None
+        for index, dim in enumerate(dims):
+            if dim == -1:
+                if placeholder is not None:
+                    return None
+                placeholder = index
+            else:
+                known_product *= dim
+        if placeholder is not None:
+            if known_product == 0 or bool(total % known_product != 0):
+                return None
+            dims[placeholder] = total // known_product
+        elif bool(known_product != total):
+            return None
+    except Exception:
+        return None
+    return dims
 
 
 def _call_gap_category(call: ast.Call, qualname: str, state: LoweringState) -> str:

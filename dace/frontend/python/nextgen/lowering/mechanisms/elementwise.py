@@ -42,6 +42,8 @@ def iteration_shape(target: DataAccess, operands: List[Tuple[str, DataAccess]], 
     target_shape = nondegenerate_shape(target.subset)
     operand_shape: Tuple = ()
     for _, access in operands:
+        if access.indirect:
+            continue  # Full-array pointer connectors do not participate in broadcasting
         operand_shape = broadcast_shapes(operand_shape, tuple(nondegenerate_shape(access.subset)))
     if len(operand_shape) > len(target_shape):
         raise UnsupportedFeatureError(
@@ -140,7 +142,7 @@ def emit_elementwise(target: DataAccess, expression: str, operands: List[Tuple[s
 
     in_memlets = {}
     for connector, access in operands:
-        if access.is_scalar_access:
+        if access.indirect or access.is_scalar_access:
             in_memlets[connector] = Memlet(data=access.container, subset=access.subset)
         else:
             in_memlets[connector] = Memlet(data=access.container, subset=indexed_subset(access, params, result_shape))

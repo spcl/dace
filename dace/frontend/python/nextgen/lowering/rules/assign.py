@@ -133,7 +133,13 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
     # (20,)); a fully integer-indexed access is a scalar element read and
     # lowers as a computation instead.
     if isinstance(value, ast.Subscript):
-        access = resolve_access(value, state)
+        try:
+            access = resolve_access(value, state)
+        except UnsupportedFeatureError:
+            # Not a directly resolvable access (e.g. an indirect index like
+            # ``x[A_col[j]]``): falls through to the computation path below,
+            # which lowers indirection through the elementwise mechanism.
+            access = None
         if access is not None and access.numpy_shape:
             _lower_view_binding(target, access, state)
             return
@@ -159,26 +165,87 @@ def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Infer
     """
     Lower an assignment to a whole structure member (``tracers.vapor = ...``).
 
-    Only :class:`~dace.data.Reference` members can be assigned as a whole —
-    the assignment re-points the member (a :class:`RefSetNode`), matching SDFG
-    reference semantics. Rebinding a non-reference member has no dataflow
-    equivalent (write into a subset instead), and attributes that are not
-    structure members are a feature gap; both degrade to the interpreter.
+    An EXISTING :class:`~dace.data.Reference` member can be assigned as a
+    whole — the assignment re-points the member (a :class:`RefSetNode`),
+    matching SDFG reference semantics. Rebinding an existing non-reference
+    member has no dataflow equivalent (write into a subset instead) and
+    degrades to the interpreter. A member that does not exist yet on a
+    :class:`~dace.data.PythonClass` base is created dynamically (mirroring
+    the classic frontend's ``_ensure_pythonclass_member``, see
+    :func:`_create_pythonclass_member`); attributes that are neither an
+    existing member nor a creatable one are a feature gap.
     """
     label = astutils.unparse(target)
     access = resolve_access(target, state)
-    if access is None:
+    if access is not None:
+        if not isinstance(access.descriptor, data.Reference):
+            raise UnsupportedFeatureError(
+                f'Cannot rebind non-reference structure member "{label}" (write into a subset instead)',
+                state.context.filename,
+                statement,
+                category='structure-member')
+        _lower_reference_set(label, (access.container, access.descriptor), value, inferred, statement, state)
+        return
+
+    created = _create_pythonclass_member(target, inferred, state)
+    if created is None:
         raise UnsupportedFeatureError(f'Assignment to unsupported attribute "{label}"',
                                       state.context.filename,
                                       statement,
                                       category='structure-member')
-    if not isinstance(access.descriptor, data.Reference):
-        raise UnsupportedFeatureError(
-            f'Cannot rebind non-reference structure member "{label}" (write into a subset instead)',
-            state.context.filename,
-            statement,
-            category='structure-member')
-    _lower_reference_set(label, (access.container, access.descriptor), value, inferred, statement, state)
+    path, member_descriptor = created
+    if isinstance(member_descriptor, data.Reference):
+        _lower_reference_set(label, (path, member_descriptor), value, inferred, statement, state)
+        return
+    dispatch.lower_computation(DataAccess(path, subsets.Range.from_array(member_descriptor), member_descriptor), value,
+                               statement, state)
+
+
+def _create_pythonclass_member(target: ast.Attribute, inferred: Inferred,
+                               state: LoweringState) -> Optional[Tuple[str, data.Data]]:
+    """
+    Dynamically create a new field on a :class:`~dace.data.PythonClass`
+    structure, mirroring the classic frontend's dynamic attribute creation
+    (``_ensure_pythonclass_member``): an array-valued assignment creates a
+    :class:`~dace.data.Reference` member (set via :class:`RefSetNode`, a
+    pointer copy on every subsequent assignment); any other value creates a
+    plain member of the value's own type (written by a normal
+    copy/computation). Members are non-transient (their storage belongs to
+    the enclosing object, not an SDFG-scoped temporary). Other structure
+    kinds (plain :class:`~dace.data.Structure`) have a fixed member set and
+    do not support this.
+
+    :return: The (dotted member path, registered descriptor) pair, or None if
+             the target's base is not a name bound to a ``PythonClass`` or the
+             value's descriptor cannot be determined.
+    """
+    if not isinstance(target.value, ast.Name):
+        return None
+    binding = state.context.resolve(target.value.id)
+    if binding is None or binding.kind != 'container':
+        return None
+    base_container = binding.container
+    base_descriptor = state.context.containers.get(base_container)
+    if not isinstance(base_descriptor, data.PythonClass):
+        return None
+    member = target.attr
+    if member in base_descriptor.members:
+        return None  # Already a member: the normal resolve_access path handles it
+
+    if inferred.is_data:
+        member_descriptor = (data.Reference.view(inferred.descriptor)
+                             if isinstance(inferred.descriptor, data.Array) else copy.deepcopy(inferred.descriptor))
+    else:
+        dtype = state.inference.dtype_of(inferred)
+        if dtype is None:
+            try:
+                dtype = dtypes.typeclass(type(inferred.value))
+            except (KeyError, TypeError):
+                return None
+        member_descriptor = data.Scalar(dtype)
+    member_descriptor.transient = False
+    base_descriptor.members[member] = member_descriptor
+    return structure_support.structure_member_path(base_container, member), member_descriptor
 
 
 def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: ast.Assign,

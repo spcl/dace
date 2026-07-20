@@ -38,7 +38,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import parse_memlet
 from dace.frontend.python.nextgen.canonical.cpa import ExplicitConsume, ExplicitTasklet
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
-from dace.frontend.python.nextgen.lowering.access import resolve_access
+from dace.frontend.python.nextgen.lowering.access import indirect_index_reads, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import _LocationShim
 
@@ -68,7 +68,7 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
         binop = _memlet_binop(body_statement)
         if binop is not None:
             if isinstance(binop.op, ast.LShift):  # local << A[...]
-                indirect = _indirect_index_reads(binop.right, state)
+                indirect = indirect_index_reads(binop.right, state)
                 if indirect:
                     _lower_indirect_memlet(binop.left, binop.right, indirect, in_memlets, out_memlets, prelude,
                                            epilogue, True, state, body_statement)
@@ -77,7 +77,7 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 in_memlets[connector] = _to_repository(memlet, state, body_statement)
             else:  # local >> A[...]
-                indirect = _indirect_index_reads(binop.right, state)
+                indirect = indirect_index_reads(binop.right, state)
                 if indirect:
                     _lower_indirect_memlet(binop.left, binop.right, indirect, in_memlets, out_memlets, prelude,
                                            epilogue, False, state, body_statement)
@@ -118,55 +118,6 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
     if statement.side_effects is not None:
         tasklet.side_effects = statement.side_effects
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
-
-
-def _indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> List[ast.expr]:
-    """
-    The outermost data-access subexpressions inside a memlet subscript's index
-    (e.g. the ``A_col[j]`` in ``x[A_col[j]]``), or an empty list when the
-    index is data-independent. Detection is AST-based and must run BEFORE the
-    shared memlet parser: the parser silently represents an inner data
-    subscript as an applied sympy function, so a parse would not fail — it
-    would produce a memlet whose subset references runtime data as if it were
-    symbolic.
-    """
-    if not isinstance(array_expression, ast.Subscript):
-        return []
-    reads: List[ast.expr] = []
-    seen: set = set()
-
-    class _Collector(ast.NodeVisitor):
-
-        def _try_collect(self, node: ast.expr) -> bool:
-            if not isinstance(getattr(node, 'ctx', ast.Load()), ast.Load):
-                return False
-            try:
-                access = resolve_access(node, state)
-            except UnsupportedFeatureError:
-                # Nested data-dependent index inside the index itself
-                # (x[idx[idx[j]]]): not supported, let the caller fall back.
-                raise
-            if access is None:
-                return False
-            key = astutils.unparse(node)
-            if key not in seen:
-                seen.add(key)
-                reads.append(node)
-            return True
-
-        def visit_Subscript(self, node: ast.Subscript) -> None:
-            if not self._try_collect(node):
-                self.generic_visit(node)
-
-        def visit_Attribute(self, node: ast.Attribute) -> None:
-            if not self._try_collect(node):
-                self.generic_visit(node)
-
-        def visit_Name(self, node: ast.Name) -> None:
-            self._try_collect(node)
-
-    _Collector().visit(array_expression.slice)
-    return reads
 
 
 def _lower_indirect_memlet(connector_expression: ast.expr, array_expression: ast.Subscript, reads: List[ast.expr],

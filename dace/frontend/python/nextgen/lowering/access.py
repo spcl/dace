@@ -8,7 +8,7 @@ import copy
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-from dace import data, subsets, symbolic
+from dace import data, dtypes, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
@@ -25,6 +25,11 @@ class DataAccess:
     #: False when integer-indexed (dropped). None when the index form could
     #: not be analyzed (fall back to squeezing all size-1 dimensions).
     kept_dims: Optional[List[bool]] = None
+    #: True when this access is a full-array pointer connector synthesized for
+    #: an indirect (data-dependent-index) read: its subset must not be
+    #: broadcast/indexed against an iteration space — the tasklet code indexes
+    #: it directly (e.g. ``__in0[__ind1]``).
+    indirect: bool = False
 
     @property
     def is_scalar_access(self) -> bool:
@@ -183,6 +188,55 @@ def _member_access(node: ast.Attribute, state: LoweringState) -> Optional[DataAc
     return DataAccess(path, subsets.Range.from_array(descriptor), descriptor)
 
 
+def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> List[ast.expr]:
+    """
+    The outermost data-access subexpressions inside a subscript's index (e.g.
+    the ``A_col[j]`` in ``x[A_col[j]]``), or an empty list when the index is
+    data-independent. Detection is AST-based and must run BEFORE
+    :func:`resolve_access`: the shared memlet parser silently represents an
+    inner data subscript it cannot evaluate as an applied sympy function, so a
+    parse would not fail — it would produce a subset that references runtime
+    data as if it were symbolic.
+
+    Used by both the explicit-tasklet memlet rule and the elementwise
+    computation mechanism to detect and lower genuine indirection
+    (``x[A_col[j]]``) as a full-array connector plus synthetic index
+    connectors, rather than falling back to the interpreter.
+    """
+    if not isinstance(array_expression, ast.Subscript):
+        return []
+    reads: List[ast.expr] = []
+    seen: set = set()
+
+    class _Collector(ast.NodeVisitor):
+
+        def _try_collect(self, node: ast.expr) -> bool:
+            if not isinstance(getattr(node, 'ctx', ast.Load()), ast.Load):
+                return False
+            access = resolve_access(node, state)  # UnsupportedFeatureError propagates (nested indirection)
+            if access is None:
+                return False
+            key = astutils.unparse(node)
+            if key not in seen:
+                seen.add(key)
+                reads.append(node)
+            return True
+
+        def visit_Subscript(self, node: ast.Subscript) -> None:
+            if not self._try_collect(node):
+                self.generic_visit(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> None:
+            if not self._try_collect(node):
+                self.generic_visit(node)
+
+        def visit_Name(self, node: ast.Name) -> None:
+            self._try_collect(node)
+
+    _Collector().visit(array_expression.slice)
+    return reads
+
+
 def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:
     """
     Return a copy of an expression with source-level names replaced by their
@@ -209,6 +263,13 @@ def substitute_data_operands(expr: ast.expr,
     Replace every data access in a canonical (flat) expression with a fresh
     tasklet connector name.
 
+    Indirect (data-dependent-index) reads such as ``x[A_col[j]]`` lower as a
+    full-array pointer connector plus synthetic index connectors, with the
+    element access moved into the rewritten code (``__in0[__in1]``) — the same
+    scheme as the explicit-tasklet memlet rule
+    (:mod:`~dace.frontend.python.nextgen.lowering.rules.dataflow_explicit`),
+    applied here to ordinary (non-tasklet-syntax) computations.
+
     :return: A 2-tuple of (rewritten expression source, list of
              (connector, access) pairs in order of first appearance).
     """
@@ -220,6 +281,10 @@ def substitute_data_operands(expr: ast.expr,
 
         def visit_Subscript(self, subscript_node: ast.Subscript) -> ast.AST:
             if isinstance(subscript_node.ctx, ast.Load):
+                if isinstance(subscript_node.value, (ast.Name, ast.Attribute)):
+                    reads = indirect_index_reads(subscript_node, state)
+                    if reads:
+                        return self._indirect_subscript(subscript_node)
                 access = resolve_access(subscript_node, state)
                 if access is not None:
                     return self._connector_for(subscript_node, access)
@@ -238,6 +303,30 @@ def substitute_data_operands(expr: ast.expr,
                 if access is not None:
                     return self._connector_for(name_node, access)
             return name_node
+
+        def _indirect_subscript(self, node: ast.Subscript) -> ast.AST:
+            base_access = resolve_access(node.value, state)
+            if base_access is None or isinstance(base_access.descriptor.dtype, dtypes.pyobject):
+                raise UnsupportedFeatureError(
+                    f'Indirect access references unknown or interpreter-only container '
+                    f'"{astutils.unparse(node.value)}"',
+                    state.context.filename,
+                    node,
+                    category='indirect-memlet')
+            base_key = astutils.unparse(node.value) + '\0indirect'
+            if base_key not in seen:
+                connector = f'{connector_prefix}{len(operands)}'
+                operands.append((connector,
+                                 DataAccess(base_access.container,
+                                            base_access.subset,
+                                            base_access.descriptor,
+                                            indirect=True)))
+                seen[base_key] = connector
+            connector = seen[base_key]
+            index_node = self.visit(copy.deepcopy(node.slice))
+            index_code = astutils.unparse(ast.fix_missing_locations(index_node))
+            replacement = ast.parse(f'{connector}[{index_code}]', mode='eval').body
+            return ast.copy_location(replacement, node)
 
         def _connector_for(self, original: ast.expr, access: DataAccess) -> ast.Name:
             key = astutils.unparse(original)
