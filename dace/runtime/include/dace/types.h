@@ -99,6 +99,7 @@ namespace dace
     typedef std::complex<double> complex128;
     struct half {
         // source: https://stackoverflow.com/a/26779139/15853075
+        half() = default;
         half(float f) {
             union { float fval; uint32_t x; } u;
             u.fval = f;
