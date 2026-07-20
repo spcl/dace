@@ -18,6 +18,7 @@ import argparse
 import copy
 import csv
 import importlib
+import importlib.util
 import os
 import statistics
 import sys
@@ -37,6 +38,19 @@ REPO = Path(__file__).resolve().parents[2]
 CORPUS_ROOTS = [REPO / 'tests' / 'corpus', REPO / 'tests']
 
 
+def load_module(path: Path, corpus: Path):
+    """Import a corpus file by path. The upstream layout has no ``__init__.py``, so a dotted
+    module name only resolves on branches where the corpus dirs are packages."""
+    name = 'dacebench_' + '_'.join(path.relative_to(corpus).with_suffix('').parts)
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
 def discover_programs(subdir: str) -> List[Tuple[str, 'dace.frontend.python.parser.DaceProgram']]:
     """Every ``DaceProgram`` under any corpus root's ``<subdir>``, as (kernel, program)."""
     found: List[Tuple[str, object]] = []
@@ -45,14 +59,16 @@ def discover_programs(subdir: str) -> List[Tuple[str, 'dace.frontend.python.pars
         root = corpus / subdir
         if not root.is_dir():
             continue
-        sys.path.insert(0, str(corpus))
+        if str(corpus) not in sys.path:
+            sys.path.insert(0, str(corpus))
         for path in sorted(root.rglob('*.py')):
             if path.name.startswith('_') or 'generate_data' in path.name:
                 continue
-            module_name = '.'.join(path.relative_to(corpus).with_suffix('').parts)
             try:
-                module = importlib.import_module(module_name)
+                module = load_module(path, corpus)
             except Exception:
+                continue
+            if module is None:
                 continue
             for attr in sorted(dir(module)):
                 obj = getattr(module, attr, None)
