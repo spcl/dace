@@ -62,8 +62,10 @@ checkout_path() {
 run_one() {
     local label=$1 ref=$2 wt="$OUTDIR/wt-$1"
 
+    # rm -rf leaves git's registration behind, so a rerun collides with the stale entry.
     rm -rf "$wt"
-    git -C "$REPO" worktree add -q --detach "$wt" "$ref"
+    git -C "$REPO" worktree prune
+    git -C "$REPO" worktree add -f -q --detach "$wt" "$ref"
 
     # git worktree does not populate submodules, and without these every C++ build fails.
     for sub in cub moodycamel; do
