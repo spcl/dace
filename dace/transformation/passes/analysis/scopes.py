@@ -193,6 +193,77 @@ class AllocationScopes(ppl.Pass):
         }
 
 
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class AccessInstances(ppl.Pass):
+    """
+    Where every data container is used, in block-topological order, plus each SDFG's shared
+    transients.
+
+    ``determine_allocation_lifetime`` takes the FIRST and LAST entry of the per-container list to
+    decide which state declares and which frees a transient, so the order here is load-bearing: it
+    must stay ``blockorder_topological_sort``. A container is "used" by an access node, by a code
+    node naming it as a free symbol without any memlet, or by a surrounding interstate edge -- the
+    last two are recorded with a synthetic AccessNode because the consumer only needs the state.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return bool(modified & (ppl.Modifies.Descriptors | ppl.Modifies.CFG | ppl.Modifies.AccessNodes
+                                | ppl.Modifies.Tasklets | ppl.Modifies.InterstateEdges))
+
+    def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[str, Dict]:
+        """
+        :return: ``access_instances``, ``code_instances`` and ``shared_transients``, keyed by CFG id.
+        """
+        from dace.sdfg.analysis import cfg as cfg_analysis
+
+        access_instances: Dict[int, Dict[str, List]] = {}
+        code_instances: Dict[int, Dict[str, List]] = {}
+        shared_transients: Dict[int, List[str]] = {}
+
+        for sdfg in top_sdfg.all_sdfgs_recursive():
+            shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
+            instances: Dict[str, List] = collections.defaultdict(list)
+            code_uses: Dict[str, List] = collections.defaultdict(list)
+            array_names = sdfg.arrays.keys()
+
+            for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
+                for node in state.data_nodes():
+                    if node.data not in array_names:
+                        continue
+                    instances[node.data].append((state, node))
+
+                # A code node may reference a container directly in its code (a free symbol with no
+                # connector/memlet/AccessNode); those states are uses too, otherwise the declaration
+                # can land in a scope that does not enclose the reading code.
+                for node in state.nodes():
+                    if not isinstance(node, nodes.CodeNode):
+                        continue
+                    for used in (node.free_symbols & array_names):
+                        instances[used].append((state, nodes.AccessNode(used)))
+                        code_uses[used].append((state, node))
+
+                edge_fsyms: Set[str] = set()
+                for e in state.parent_graph.all_edges(state):
+                    edge_fsyms |= e.data.free_symbols
+                for edge_array in edge_fsyms & array_names:
+                    instances[edge_array].append((state, nodes.AccessNode(edge_array)))
+
+            access_instances[sdfg.cfg_id] = instances
+            code_instances[sdfg.cfg_id] = code_uses
+
+        return {
+            'access_instances': access_instances,
+            'code_instances': code_instances,
+            'shared_transients': shared_transients,
+        }
+
+
 class CodegenAnalysisPipeline(ppl.Pipeline):
     """The read-only analyses code generation needs before it starts emitting.
 
@@ -205,4 +276,4 @@ class CodegenAnalysisPipeline(ppl.Pipeline):
     """
 
     def __init__(self):
-        super().__init__([StateReachability(), SymbolScopes(), AllocationScopes()])
+        super().__init__([StateReachability(), SymbolScopes(), AllocationScopes(), AccessInstances()])

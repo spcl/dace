@@ -20,7 +20,6 @@ from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
-from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
@@ -564,42 +563,18 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         :param top_sdfg: The top-level SDFG to determine for.
         """
-        # Gather shared transients, free symbols, and first/last appearance
-        shared_transients = {}
-        fsyms = {}
+        # Every read-only analysis codegen needs, resolved once through one pipeline.
         analysis_results = CodegenAnalysisPipeline().apply_pass(top_sdfg, {})
         reachability = analysis_results[StateReachability.__name__]
-        access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
-        for sdfg in top_sdfg.all_sdfgs_recursive():
-            shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
-            fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
-
-            #############################################
-            # Look for all states in which a scope-allocated array is used in
-            instances: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = collections.defaultdict(list)
-            array_names = sdfg.arrays.keys(
-            )  #set(k for k, v in sdfg.arrays.items() if v.lifetime == dtypes.AllocationLifetime.Scope)
-            # Iterate topologically to get state-order
-            for state in cfg_analysis.blockorder_topological_sort(sdfg, ignore_nonstate_blocks=True):
-                for node in state.data_nodes():
-                    if node.data not in array_names:
-                        continue
-                    instances[node.data].append((state, node))
-
-                # Look in the surrounding edges for usage
-                edge_fsyms: Set[str] = set()
-                for e in state.parent_graph.all_edges(state):
-                    edge_fsyms |= e.data.free_symbols
-                for edge_array in edge_fsyms & array_names:
-                    instances[edge_array].append((state, nodes.AccessNode(edge_array)))
-            #############################################
-
-            access_instances[sdfg.cfg_id] = instances
-
-        # Lookup tables for the per-descriptor decisions below, so each one is a dict hit rather
-        # than another walk of the whole SDFG. Pure analysis -- the decisions stay here.
         alloc_scopes = analysis_results['AllocationScopes']
         self.symbol_scopes = analysis_results['SymbolScopes']
+        instances = analysis_results['AccessInstances']
+        access_instances = instances['access_instances']
+        code_instances = instances['code_instances']
+        shared_transients = instances['shared_transients']
+
+        # Symbols-and-constants stays here: it is memoized on this code generator, not on the SDFG.
+        fsyms = {sdfg.cfg_id: self.symbols_and_constants(sdfg) for sdfg in top_sdfg.all_sdfgs_recursive()}
 
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
