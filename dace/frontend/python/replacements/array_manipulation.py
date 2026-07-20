@@ -171,10 +171,9 @@ def _transpose(pv: ProgramVisitor,
     outname, arr2 = sdfg.add_transient(outname, new_shape, restype, arr1.storage, find_new_name=True)
 
     if axes == (1, 0):  # 2D transposition
-        # The Transpose library node squeezes a unit axis to a vector and then rejects it as "not a
-        # matrix", so a ``(N, 1)`` / ``(1, N)`` array cannot use it. Fall back to a plain index-swap
-        # copy (``out[j, i] = in[i, j]``) whenever an extent is 1; it is general over 2D and
-        # stride-safe. Genuine matrices keep the optimized library node.
+        # The Transpose library node squeezes a unit axis and rejects it as "not a matrix", so an
+        # ``(N, 1)`` / ``(1, N)`` array copies with a swapped index instead; genuine matrices keep
+        # the library node.
         if 1 in arr1.shape:
             state.add_mapped_tasklet("transpose",
                                      map_ranges={

@@ -33,7 +33,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
 from dace.sdfg.replace import replace_datadesc_names
 from dace.sdfg.type_inference import infer_expr_type
 from dace.symbolic import pystr_to_symbolic, inequal_symbols
-from dace.utils import until
+from dace.utils import until, find_new_name
 
 import numpy
 import sympy
@@ -5377,48 +5377,39 @@ class ProgramVisitor(ExtNodeVisitor):
         """
         Reads a scalar into a symbol so its value can be used where only symbols are allowed.
 
-        A ``__sym_<scalar>`` symbol is assigned from the scalar on an interstate edge, capturing the
-        scalar's value at that point in the program. The scalar's data descriptor is deliberately
-        left in place: it may still be read or reassigned later, and the visitor's own bookkeeping
-        still refers to it by name.
+        The symbol is assigned from the scalar on an interstate edge; the scalar's descriptor is
+        left in place so it may still be read or reassigned afterwards.
 
         :param scalar: Name of the scalar data descriptor to read.
-        :param key: Cache key for the promotion, defaulting to the scalar name. Repeated promotions
-                    of the same expression reuse the symbol instead of minting a new one.
-        :param fresh: Mint a new symbol every call instead of reusing a cached one. A size scalar
-                      is materialized into a temporary that the frontend reuses across calls
-                      (``m = ...; np.empty(m); m = ...; np.empty(m)`` promotes one temporary at two
-                      values); reusing one symbol would give both arrays the last value written to
-                      it, so each shape must capture its own.
+        :param key: Cache key for the promotion; repeated promotions of the same expression reuse
+                    the symbol. Defaults to the scalar name.
+        :param fresh: Mint a new (suffixed) symbol every call instead of reusing a cached one, so
+                      two shapes sized from the same reassigned scalar keep their own values.
         :return: The symbol carrying the scalar's value.
         """
         key = key if key is not None else scalar
         desc = self.sdfg.arrays[scalar]
         sym = None if fresh else self.indirections.get(key)
         if sym is None:
+            base = f'__sym_{scalar}'
             if fresh:
-                # A fresh promotion always carries a suffix, so it can never land on the bare
-                # `__sym_<scalar>` a cached promotion of the same scalar reuses (an index access
-                # after the size is reassigned would otherwise re-bind the array's extent symbol).
-                # Check `arrays` too: a colliding data name would make `add_symbol` raise.
-                i = 0
-                name = f'__sym_{scalar}_{i}'
-                while name in self.sdfg.symbols or name in self.sdfg.arrays:
-                    i += 1
-                    name = f'__sym_{scalar}_{i}'
+                # Reserve ``base`` so a fresh promotion is always suffixed and never lands on the
+                # bare name a cached promotion reuses; else an index after the size is reassigned
+                # would re-bind the extent. The name is then free, so add_symbol cannot clash.
+                reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
+                name = self.sdfg.add_symbol(find_new_name(base, reserved), desc.dtype)
             else:
-                name = f'__sym_{scalar}'
+                name = base
+                try:
+                    self.sdfg.add_symbol(name, desc.dtype)
+                except FileExistsError:
+                    # A cached promotion may re-add an existing symbol; that is benign.
+                    pass
             sym = dace.symbol(name, dtype=desc.dtype)
             if not fresh:
                 self.indirections[key] = sym
-            try:
-                self.sdfg.add_symbol(name, desc.dtype)
-            except FileExistsError:
-                # A cached (non-fresh) promotion may re-add an existing symbol; that is benign.
-                pass
-            # A promoted size can end up in an array shape, and nested scopes resolve the free
-            # symbols of their scope arrays through `globals`, so the symbol has to be visible
-            # there as well as on the SDFG.
+            # Nested scopes resolve their scope arrays' free symbols through ``globals``, so the
+            # symbol must be visible there too, not only on the SDFG.
             self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
         edge = state.parent_graph.in_edges(state)[0]

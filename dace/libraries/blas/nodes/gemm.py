@@ -50,6 +50,7 @@ class ExpandGemmPure(ExpandTransformation):
         adata, bdata, cdata = _get_matmul_operands(node, parent_state, parent_sdfg)
         edge_a, outer_array_a, shape_a, strides_a = _matrix_operand(adata)
         edge_b, outer_array_b, shape_b, strides_b = _matrix_operand(bdata)
+        _, outer_array_c, _, strides_c = _matrix_operand(cdata)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -81,7 +82,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=_matrix_operand(cdata)[3], storage=cdata[1].storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=strides_c, storage=outer_array_c.storage)
 
         if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
@@ -466,8 +467,8 @@ class ExpandGemmPBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
-        # Read the same matrix view the dispatcher and validate agreed on; reading the raw subset
-        # would mis-size an operand (e.g. an (NQ, 1, NP) reshape) that validate has already accepted.
+        # Read the same matrix view validate accepted; the raw subset would mis-size an operand
+        # such as an (NQ, 1, NP) reshape.
         adata, bdata, _ = _get_matmul_operands(node, state, sdfg)
         _, adesc, ashape, _ = _matrix_operand(adata)
         _, bdesc, bshape, _ = _matrix_operand(bdata)

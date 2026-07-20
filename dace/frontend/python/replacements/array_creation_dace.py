@@ -22,35 +22,25 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
     """
     Rewrites a shape so that a size scalar used as an extent is read through a symbol.
 
-    An extent must be a symbol, but a size computed in the program (``nt = Nt + 1`` then
-    ``np.empty(nt)``) is a size-1 data descriptor. Each such name is read into a symbol on an
-    interstate edge and substituted into the shape, leaving the descriptor in place so the program
-    may keep reading the size afterwards.
+    An extent must be a symbol, but a size computed in the program (``nt = Nt + 1; np.empty(nt)``)
+    is a size-1 descriptor. Each such name is read into a fresh per-shape symbol and substituted
+    into the shape, leaving the descriptor in place. A symbol per shape keeps two arrays sized from
+    the same reassigned scalar from collapsing onto one value.
 
-    The size is captured into a symbol minted for this shape (``fresh``): the frontend reuses one
-    temporary for a size expression across calls, so ``m = ...; np.empty(m); m = ...; np.empty(m)``
-    would otherwise give both arrays whichever value was written to the shared symbol last. A
-    per-shape symbol records the value at the point each array is created.
-
-    :param pv: The program visitor, which owns symbol promotion and the state machine.
+    :param pv: The program visitor, owning symbol promotion and the state machine.
     :param sdfg: The SDFG being built.
     :param shape: The requested shape.
     :return: The shape with scalar extents replaced by symbols.
     """
     resolved = [symbolic.pystr_to_symbolic(e) if isinstance(e, str) else e for e in shape]
-    names = set()
-    for extent in resolved:
-        if not isinstance(extent, sympy.Basic):
-            continue
-        for sym in extent.free_symbols:
-            name = str(sym)
-            if name in sdfg.arrays and name not in sdfg.symbols and sdfg.arrays[name].total_size == 1:
-                names.add(name)
+    names = [
+        n for n in symbolic.symlist(resolved)
+        if n in sdfg.arrays and n not in sdfg.symbols and sdfg.arrays[n].total_size == 1
+    ]
     if not names:
         return shape
 
-    # One symbol per distinct name in this shape (np.empty((m, m)) shares it); sorted() keeps the
-    # promotion states deterministic when several size scalars appear.
+    # One symbol per distinct name; sorted() keeps the promotion states deterministic.
     replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}
     return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved]
 

@@ -1,15 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
-"""``SpecializeMatMul`` and ``Gemm`` have to read the same view of an operand.
+"""``SpecializeMatMul`` and ``Gemm`` must read the same view of an operand.
 
-The dispatcher matches on the squeezed operand sizes, so ``np.reshape(x, (NQ, 1, NP)) @ C4`` is
-routed to ``Gemm`` as an ``(NQ, NP) @ (NP, NP)`` product. ``Gemm.validate`` and the GEMM code
-generator used to re-read the raw subset instead, see rank 3, and reject the operand the dispatcher
-had just accepted -- "matrix-matrix product only supported on matrices". npbench's doitgen hits this
-at every size.
-
-Collapsing the unit dimension is exact rather than convenient: it is the row count of an
-``NQ``-long contiguous batch, so the product is genuinely one GEMM. Keeping it on ``Gemm`` also
-keeps ``alpha``, ``beta`` and a summation WCR, none of which ``BatchedMatMul`` honours.
+The dispatcher matches on squeezed sizes, so ``np.reshape(x, (NQ, 1, NP)) @ C4`` routes to ``Gemm``
+as ``(NQ, NP) @ (NP, NP)``. ``Gemm.validate`` and the GEMM codegen used to re-read the raw subset,
+see rank 3, and reject the operand -- "matrix-matrix product only supported on matrices". npbench's
+doitgen hits this. Collapsing the unit dim is exact (one GEMM), and keeping it on ``Gemm`` preserves
+``alpha``, ``beta`` and the WCR that ``BatchedMatMul`` drops.
 """
 import numpy as np
 import pytest
@@ -43,8 +39,7 @@ def reference(A, C4):
 
 
 def initialize(nr, nq, np_, seed=0):
-    # Random rather than polybench's ((i*j+k) % NP)/NP, which degenerates to all-zero when NP == 1
-    # and would make the numeric assertions vacuous for the all-unit-extent shape.
+    # Random, not polybench's ((i*j+k) % NP)/NP, which is all-zero at NP == 1 (a vacuous compare).
     rng = np.random.default_rng(seed)
     return rng.random((nr, nq, np_)), rng.random((np_, np_))
 
@@ -60,8 +55,7 @@ def specialize_matmuls(sdfg):
             node.expand(state)
 
 
-# NQ == 1 collapses a second dimension when squeezed, which is where a "pick whichever view looks
-# two-dimensional" heuristic breaks; both such shapes are covered.
+# NQ == 1 collapses a second dim when squeezed, where a "whichever view looks 2D" heuristic breaks.
 SIZES = [(3, 4, 5), (1, 1, 1), (8, 10, 12), (5, 1, 7)]
 
 

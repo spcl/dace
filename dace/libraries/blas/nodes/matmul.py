@@ -9,13 +9,12 @@ from math import prod
 
 def _matrix_subset_size(subset):
     """
-    Returns an operand's size in the matrix view ``SpecializeMatMul`` matched on.
+    Returns an operand's size in the matrix view ``SpecializeMatMul`` matched on: the raw size if
+    already 2D, otherwise the squeezed size.
 
-    The dispatcher selects GEMM when an operand's raw subset is 2D *or* when it is 2D once
-    squeezed, so validation, expansion and code generation all have to read that same view.
-    Reading only the raw subset rejects a ``(NQ, 1, NP)`` reshape; reading only the squeezed one
-    rejects a genuine unit extent such as an ``(N, 1)`` column, which squeezes to a vector.
-    Disagreeing with the dispatcher either way makes GEMM refuse the operand it was just handed.
+    The dispatcher selects GEMM when an operand is 2D raw *or* 2D once squeezed, so validation,
+    expansion and codegen must read that same view. Reading only the raw subset rejects a
+    ``(NQ, 1, NP)`` reshape; reading only the squeezed one rejects a genuine ``(N, 1)`` column.
 
     :param subset: The subset of the memlet accessing the operand.
     :return: The 2D size if either view supplies one, otherwise the squeezed size.
@@ -30,13 +29,11 @@ def _matrix_subset_size(subset):
 
 def _matrix_operand(operand):
     """
-    Returns a GEMM operand as ``(edge, descriptor, shape, strides)`` in its matrix view.
-
-    Applies the rule of :func:`_matrix_subset_size` to an operand whose two views have already
-    been computed, so that the strides are picked from the same view as the shape.
+    Returns a GEMM operand as ``(edge, descriptor, shape, strides)`` in its matrix view, applying
+    the rule of :func:`_matrix_subset_size` so shape and strides come from the same view.
 
     :param operand: One of the three tuples returned by :func:`_get_matmul_operands`.
-    :return: The edge, the outer descriptor, and the 2D shape and strides.
+    :return: The edge, outer descriptor, and 2D shape and strides.
     """
     edge, desc, size, strides, squeezed_size, squeezed_strides = operand
     if len(size) == 2:
