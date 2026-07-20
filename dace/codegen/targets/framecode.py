@@ -13,6 +13,8 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
+from dace.codegen.allocation_scopes import allocation_scopes
+from dace.codegen.symbol_scopes import SymbolScopes, symbol_scopes
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
 from dace.sdfg.type_inference import infer_expr_type
@@ -48,6 +50,9 @@ class DaCeCodeGenerator(object):
                                                  bool]]] = collections.defaultdict(list)
         self.where_allocated: Dict[Tuple[SDFG, str], SDFG] = {}
         self.fsyms: Dict[int, Set[str]] = {}
+        # Filled by determine_allocation_lifetime; targets read it through symbol_scopes.defined_at,
+        # which falls back to symbols_defined_at for anything built after the pass ran.
+        self.symbol_scopes: SymbolScopes = {}
         self._symbols_and_constants: Dict[int, Set[str]] = {}
         fsyms = self.free_symbols(sdfg)
         self.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
@@ -591,6 +596,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
             access_instances[sdfg.cfg_id] = instances
 
+        # Lookup tables for the per-descriptor decisions below, so each one is a dict hit rather
+        # than another walk of the whole SDFG. Pure analysis -- the decisions stay here.
+        alloc_scopes = allocation_scopes(top_sdfg, self.free_symbols)
+        self.symbol_scopes = symbol_scopes(top_sdfg)
+
         for sdfg, name, desc in top_sdfg.arrays_recursive(include_nested_data=True):
             if isinstance(desc, data.DistributedDescriptor):
                 self._dispatcher.defined_vars.add_global(f'__state->{name}', disp.DefinedType.Scalar,
@@ -674,14 +684,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
             elif top_lifetime == dtypes.AllocationLifetime.State:
                 # State memory is either allocated in the beginning of the
                 # containing state or the SDFG (if used in more than one state)
-                curstate: SDFGState = None
-                multistate = False
-                for state in sdfg.states():
-                    if any(n.data == name for n in state.data_nodes()):
-                        if curstate is not None:
-                            multistate = True
-                            break
-                        curstate = state
+                states_with_data = alloc_scopes.uses_data(sdfg.cfg_id, name)
+                curstate: SDFGState = states_with_data[0] if states_with_data else None
+                multistate = len(states_with_data) > 1
                 if multistate:
                     alloc_scope = sdfg
                 else:
@@ -696,18 +701,17 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 multistate = False
 
                 # Does the array appear in inter-state edges or loop / conditional block conditions etc.?
-                for isedge in sdfg.all_interstate_edges():
-                    if name in self.free_symbols(isedge.data):
-                        multistate = True
-                for cfg in sdfg.all_control_flow_regions():
-                    block_syms = cfg.used_symbols(all_symbols=True, with_contents=False)
-                    if name in block_syms:
-                        multistate = True
+                multistate = alloc_scopes.in_meta_code(sdfg.cfg_id, name)
 
+                # A state with no access node for `name` contributes nothing below, so skipping it
+                # avoids building its scope dict and walking its nodes.
+                relevant = alloc_scopes.uses_root_data(sdfg.cfg_id, name)
                 for state in sdfg.states():
                     if multistate:
                         break
-                    sdict = state.scope_dict()
+                    if state not in relevant:
+                        continue
+                    sdict = alloc_scopes.scope_dicts[state]
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
                             continue
