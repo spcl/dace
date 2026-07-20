@@ -80,8 +80,7 @@ def readonly3(A: dace.float64[N, N], O0: dace.float64[N, N], O1: dace.float64[N,
 
 
 @dace.program
-def rank3_read(A: dace.float64[N, N, N], X: dace.float64[N, N, N], C: dace.float64[N, N, N],
-               Y: dace.float64[N, N, N]):
+def rank3_read(A: dace.float64[N, N, N], X: dace.float64[N, N, N], C: dace.float64[N, N, N], Y: dace.float64[N, N, N]):
     """X is RELAID and then READ by the copy `Y[:] = X` -- the 'in' side of the retranspose bookkeeping."""
     for i, j, k in dace.map[0:N, 0:N, 0:N]:
         X[i, j, k] = A[i, j, k] * 2.0
@@ -349,7 +348,45 @@ if __name__ == "__main__":
     test_nested_sdfg_spanning_edge_refused()
     test_coverage_proof_admits_a_copy_writer_and_a_rowwise_writer()
     test_pure_output_copy_skips_the_uninitialized_entry_read()
+    test_conditional_write_does_not_prove_coverage()
+    test_whole_array_write_under_a_possibly_empty_map_does_not_prove_coverage()
     test_readonly_array_returns_to_identity_without_touching_the_caller_buffer()
     test_same_tag_different_ops_is_refused()
     test_rank3_relaid_copy_picks_the_right_permutation_direction()
     print("apply_assignment regression tests PASS")
+
+
+def dynamic_write_state() -> dace.SDFGState:
+    """``for i,j in map: if cond: X[i,j] = ...`` -- the write is CONDITIONAL, so it covers nothing."""
+    sdfg = dace.SDFG("dyn_write")
+    sdfg.add_array("X", [N, N], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    entry, exit_ = state.add_map("m", {"i": "0:N", "j": "0:N"})
+    tasklet = state.add_tasklet("maybe", {}, {"_out"}, "if i > j:\n    _out = 1.0")
+    write = state.add_access("X")
+    state.add_nedge(entry, tasklet, dace.Memlet())
+    memlet = dace.Memlet("X[i, j]")
+    memlet.dynamic = True
+    state.add_memlet_path(tasklet, exit_, write, src_conn="_out", memlet=memlet)
+    return state
+
+
+def test_conditional_write_does_not_prove_coverage():
+    """A dynamic (conditional) write memlet must never prove full coverage: skipping the entry
+    conversion on it leaves every unwritten element of the relaid clone uninitialized."""
+    assert writes_cover_array(dynamic_write_state(), "X") is False
+
+
+def test_whole_array_write_under_a_possibly_empty_map_does_not_prove_coverage():
+    """No dimension is bound to a map parameter, so the memlet alone claims the whole array --
+    which only holds if the map body runs. ``0:T`` may be empty."""
+    sdfg = dace.SDFG("maybe_empty")
+    T = dace.symbol("T")
+    sdfg.add_array("X", [N, N], dace.float64)
+    sdfg.add_array("acc", [1], dace.float64)
+    state = sdfg.add_state("s", is_start_block=True)
+    entry, exit_ = state.add_map("m", {"t": "0:T"})
+    tasklet = state.add_tasklet("fill", {}, {"_out"}, "_out = 1.0")
+    state.add_nedge(entry, tasklet, dace.Memlet())
+    state.add_memlet_path(tasklet, exit_, state.add_access("X"), src_conn="_out", memlet=dace.Memlet("X[0:N, 0:N]"))
+    assert writes_cover_array(state, "X") is False

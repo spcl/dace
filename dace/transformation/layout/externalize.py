@@ -46,6 +46,14 @@ def written_array_names(ext: SDFG):
     return written
 
 
+def constant_or_none(expr, symbols: Dict[str, int]) -> Optional[int]:
+    """``expr`` as an int, or None when ``symbols`` does not pin it down (e.g. a map parameter)."""
+    try:
+        return int(dace.symbolic.evaluate(expr, symbols))
+    except (TypeError, ValueError, KeyError):
+        return None
+
+
 def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
     """Smallest extent of any array an index array could subscript -- the tightest in-bounds cap for an
     integer fill; None when the nest has no such access.
@@ -60,11 +68,16 @@ def indexed_extent_bound(ext: SDFG, symbols: Dict[str, int]) -> Optional[int]:
     for state in ext.states():
         for edge in state.edges():
             name = edge.data.data
-            if name is None or name not in ext.arrays:
+            if name is None or name not in ext.arrays or ext.arrays[name].transient:
                 continue
-            shape = [int(dace.symbolic.evaluate(s, symbols)) for s in ext.arrays[name].shape]
-            whole = (isinstance(edge.src, nodes.MapEntry) and edge.data.subset is not None
-                     and int(dace.symbolic.evaluate(edge.data.subset.num_elements(), symbols)) == math.prod(shape))
+            shape = [constant_or_none(s, symbols) for s in ext.arrays[name].shape]
+            # An extent that `symbols` does not fix (a map parameter, in a triangular nest) leaves the cap
+            # unconstrained rather than failing -- the cap is advisory. A 1-element descriptor is a scalar
+            # operand, never an index target, and would otherwise clamp every integer fill to zero.
+            if None in shape or math.prod(shape) <= 1:
+                continue
+            elements = constant_or_none(edge.data.subset.num_elements(), symbols) if edge.data.subset else None
+            whole = isinstance(edge.src, nodes.MapEntry) and elements == math.prod(shape)
             if edge.data.dynamic or whole:
                 extents += shape
     return min(extents) if extents else None

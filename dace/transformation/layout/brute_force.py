@@ -173,16 +173,15 @@ def best(results: List[SweepResult], noise_floor: Optional[float] = None) -> Opt
     if noise_floor is None:
         from dace.transformation.layout.timing import SPREAD_CONTENDED_THRESHOLD
         noise_floor = SPREAD_CONTENDED_THRESHOLD
-    timed = [r for r in results if r.correct and r.time is not None]
-    if not timed:  # nothing measured: fall back to the earliest-enumerated correct candidate
-        return next((r for r in results if r.correct), None)
+    # A non-positive median means the timer resolved nothing for that candidate, so it ranks nowhere: it
+    # cannot be called fastest, and letting it set the window would drag every validly-timed candidate into
+    # the tie and hand the win to whichever was enumerated first.
+    timed = [r for r in results if r.correct and r.time is not None and r.time > 0.0]
+    if not timed:  # nothing resolved: fall back to the earliest-ENUMERATED correct candidate (`results` is
+        correct = [r for r in results if r.correct]  # sorted by time, so list order is not enumeration order)
+        return min(correct, key=lambda r: r.order) if correct else None
     fastest = min(r.time for r in timed)
-    if fastest <= 0.0:
-        # a non-positive median means the timer resolved nothing, and a RELATIVE window around it collapses
-        # to {0.0}; keep every timed candidate in the tie and let enumeration order decide
-        window = timed
-    else:
-        window = [r for r in timed if r.time <= fastest * (1.0 + noise_floor)]
+    window = [r for r in timed if r.time <= fastest * (1.0 + noise_floor)]
     return min(window, key=lambda r: r.order)
 
 

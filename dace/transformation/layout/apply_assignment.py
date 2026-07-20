@@ -104,8 +104,9 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
     param_ranges = dict(zip(exit_node.map.params, exit_node.map.range.ranges))
     for leaf in state.memlet_tree(edges_in[0]).leaves():
         memlet = leaf.data
-        if (memlet is None or memlet.wcr is not None or not isinstance(memlet.subset, dace.subsets.Range)
-                or len(memlet.subset.ranges) != len(desc.shape)):
+        # `dynamic` means the write is conditional, so it proves nothing about coverage
+        if (memlet is None or memlet.wcr is not None or memlet.dynamic
+                or not isinstance(memlet.subset, dace.subsets.Range) or len(memlet.subset.ranges) != len(desc.shape)):
             continue
         used = set()
         proven = True
@@ -125,6 +126,12 @@ def writes_cover_array(state: dace.SDFGState, array: str) -> bool:
                     or dace.symbolic.simplify(range_end - (desc.shape[d] - 1)) != 0):
                 proven = False
                 break
+        if proven and not used:
+            # No dimension is bound to a map parameter, so this one memlet claims the whole array --
+            # true only if the map body actually runs. An empty map writes nothing.
+            proven = all(
+                dace.symbolic.simplify(end - begin).is_nonnegative is True
+                for begin, end, _ in exit_node.map.range.ranges)
         if proven:
             return True
     return False

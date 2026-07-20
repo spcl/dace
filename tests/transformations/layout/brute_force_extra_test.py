@@ -106,11 +106,11 @@ def test_best_selects_first_correct_or_none():
     assert picked is not None and picked.name == "good" and picked.correct
 
 
-def test_best_keeps_the_whole_tie_when_the_fastest_time_is_not_positive():
-    """A RELATIVE tie window around a non-positive fastest time is degenerate: ``0.0 * (1 + floor)``
-    collapses it to exactly {0.0}, so a 1e-9 candidate could never win, and a negative fastest emptied
-    the window outright and crashed ``min`` on an empty sequence. A non-positive median means the timer
-    resolved nothing, so every timed candidate stays in the tie and enumeration order decides."""
+def test_best_ignores_candidates_whose_time_did_not_resolve():
+    """A non-positive median means the timer resolved nothing for that candidate, so it ranks nowhere.
+    A RELATIVE window around it is degenerate (``0.0 * (1 + floor)`` collapses to {0.0}) and a negative
+    fastest emptied the window outright, crashing ``min``. Dropping the unresolved entries also stops one
+    glitched candidate from dragging every validly-timed one into the tie."""
     zero_and_positive = [SweepResult("tiny", True, 1e-9, order=0), SweepResult("zero", True, 0.0, order=1)]
     assert best(zero_and_positive).name == "tiny"
 
@@ -119,6 +119,15 @@ def test_best_keeps_the_whole_tie_when_the_fastest_time_is_not_positive():
 
     negative = [SweepResult("first", True, 1e-9, order=0), SweepResult("glitch", True, -1e-6, order=1)]
     assert best(negative).name == "first"
+
+    # The review case: one unresolved candidate must not hand the win to the slowest measured one just
+    # because it was enumerated first.
+    glitch_first = [
+        SweepResult("slow", True, 2.0e-3, order=0),
+        SweepResult("fast", True, 0.5e-3, order=1),
+        SweepResult("unresolved", True, 0.0, order=2),
+    ]
+    assert best(glitch_first).name == "fast"
 
 
 def test_best_still_applies_the_relative_window_for_positive_times():
@@ -455,7 +464,7 @@ def test_shuffle_family_sweep_bit_exact():
 if __name__ == "__main__":
     test_time_cpu_invokes_fn_reps_plus_warmup()
     test_best_selects_first_correct_or_none()
-    test_best_keeps_the_whole_tie_when_the_fastest_time_is_not_positive()
+    test_best_ignores_candidates_whose_time_did_not_resolve()
     test_best_still_applies_the_relative_window_for_positive_times()
     test_sweep_ranks_fastest_correct_first()
     test_incorrect_and_build_failure_never_timed_never_best()
