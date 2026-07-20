@@ -234,9 +234,16 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                     dtype = nsdfg.symbols[s]
                 else:
                     dtype = sdfg.symbols[s]
-                name, _ = sdfg.add_scalar(f"__sym_out_{s}", dtype, transient=True, find_new_name=True)
+                # One name valid in BOTH SDFGs, so the NestedSDFG out-connector (added from write_set
+                # below) equals the inner data descriptor it maps to -- a NestedSDFG requires that. Two
+                # independent find_new_name=True calls resolve the suffix against each SDFG's OWN names, so
+                # they can diverge (outer picks ``__sym_out_x_0``, inner picks ``__sym_out_x``), desyncing
+                # the connector from its descriptor and producing an invalid nested SDFG that later passes
+                # (e.g. MapFission) crash on with a bare StopIteration.
+                oname = data.find_new_name(f"__sym_out_{s}", set(sdfg.arrays) | set(nsdfg.arrays))
+                name, _ = sdfg.add_scalar(oname, dtype, transient=True)
                 out_mapping[s] = name
-                nname, ndesc = nsdfg.add_scalar(f"__sym_out_{s}", dtype, find_new_name=True)
+                nname, ndesc = nsdfg.add_scalar(oname, dtype)
                 # Part (1)
                 tasklet = out_state.add_tasklet(f"set_{nname}", {}, {'__out'}, f'__out = {s}')
                 acc = out_state.add_access(nname)
