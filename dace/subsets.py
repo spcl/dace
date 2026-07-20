@@ -352,7 +352,12 @@ class Range(Subset):
         """
         if not self.index_dims[dim]:
             return False
-        rb, re, _ = self.ranges[dim]
+        rng = self.ranges[dim]
+        if not isinstance(rng, tuple):
+            # A degenerate dimension may hold the bare index expression instead of a triple
+            # (see ``add_indirection_subgraph``), which is degenerate by construction.
+            return True
+        rb, re, _ = rng
         return symbolic.equal_valued(0, re - rb)
 
     def rank_dims(self) -> List[int]:
@@ -821,14 +826,9 @@ class Range(Subset):
         return self.ranges.__getitem__(key)
 
     def __setitem__(self, key, value):
-        result = self.ranges.__setitem__(key, value)
-        # A replaced dimension is no longer the one that was parsed, so it is only still an index
-        # if the new range is degenerate.
-        for i in range(len(self.ranges)):
-            if self.index_dims[i]:
-                rb, re, _ = self.ranges[i]
-                self.index_dims[i] = bool(symbolic.equal_valued(0, re - rb))
-        return result
+        # A widened dimension stops being an index; `is_index_dim` cross-checks the range itself,
+        # so replacing an entry here needs no bookkeeping of its own.
+        return self.ranges.__setitem__(key, value)
 
     def __eq__(self, other):
         if not isinstance(other, Range):

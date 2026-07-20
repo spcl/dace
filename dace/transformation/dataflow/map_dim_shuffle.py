@@ -40,6 +40,5 @@ class MapDimShuffle(transformation.SingleStateTransformation):
         map_entry: nodes.MapEntry = self.map_entry
         new_map_order: list[int] = [map_entry.map.params.index(param) for param in self.parameters]
 
-        map_entry.range.ranges = [map_entry.range.ranges[new_pos] for new_pos in new_map_order]
-        map_entry.range.tile_sizes = [map_entry.range.tile_sizes[new_pos] for new_pos in new_map_order]
+        map_entry.range.reorder(new_map_order)
         map_entry.map.params = [map_entry.map.params[new_pos] for new_pos in new_map_order]

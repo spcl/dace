@@ -259,11 +259,13 @@ def pop_dims(subset, dims):
     else:
         ranges = copy.deepcopy(subset.ranges)
         tsizes = copy.deepcopy(subset.tile_sizes)
+        index_dims = list(subset.index_dims)
         for i in dims:
             r = ranges.pop(i)
             t = tsizes.pop(i)
+            index_dims.pop(i)
             popped.append((r, t))
-        new_subset = subsets.Range(ranges)
+        new_subset = subsets.Range(ranges, index_dims=index_dims)
         new_subset.tile_sizes = tsizes
         return new_subset, popped
 
@@ -273,10 +275,14 @@ def compose_and_push_back(first, second, dims=None, popped=None):
     if dims and popped and len(dims) == len(popped):
         ranges = subset.ranges
         tsizes = subset.tile_sizes
+        # The popped dimensions come back as slices, matching what `unsqueeze` inserts: their
+        # original flags were not carried along, and a slice preserves the rank.
+        index_dims = list(subset.index_dims)
         for d, (r, t) in zip(reversed(dims), reversed(popped)):
             ranges.insert(d, r)
             tsizes.insert(d, t)
-        subset = subsets.Range(ranges)
+            index_dims.insert(d, False)
+        subset = subsets.Range(ranges, index_dims=index_dims)
         subset.tile_sizes = tsizes
     return subset
 

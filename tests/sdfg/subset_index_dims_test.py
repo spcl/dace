@@ -162,6 +162,20 @@ def test_widening_a_dimension_clears_its_index_flag():
     assert other.rank() == 3
 
 
+def test_bare_index_expression_in_ranges():
+    """A degenerate dimension may hold the index expression itself instead of a triple.
+
+    ``add_indirection_subgraph`` substitutes into such a dimension and assigns the result back
+    directly, and ``dim_to_string`` has always rendered that form, so the rank query has to accept
+    it rather than unpack it blindly.
+    """
+    subset = subsets.Range.from_string('0:4, 0, 0:7')
+    subset[1] = dace.symbol('idx')
+    assert str(subset) == '0:4, idx, 0:7'
+    assert subset.is_index_dim(1)
+    assert subset.rank() == 2
+
+
 def test_rank_reducing_slice_still_lowers_correctly():
     """End-to-end guard: an integer index into a larger dimension still yields a 1D result."""
     R, C = (dace.symbol(s, dtype=dace.int64) for s in ('R', 'C'))
@@ -189,4 +203,5 @@ if __name__ == '__main__':
     test_flags_survive_structural_operations()
     test_derived_subsets_keep_their_flags()
     test_widening_a_dimension_clears_its_index_flag()
+    test_bare_index_expression_in_ranges()
     test_rank_reducing_slice_still_lowers_correctly()

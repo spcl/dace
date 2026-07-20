@@ -8,25 +8,8 @@ from dace.frontend.common import op_repository as oprepo
 import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas.blas_helpers import to_blastype, check_access, dtype_to_cudadatatype, to_cublas_computetype
-from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts)
-
-
-def _squeezed_size(memlet):
-    """
-    Returns the operand size as the matrix ``SpecializeMatMul`` saw when it chose GEMM.
-
-    The dispatcher matches on the squeezed operand sizes, so validation and code generation have to
-    read the same view. Reading the raw subset instead rejects an operand the dispatcher just
-    accepted, which is how a ``(NQ, 1, NP)`` reshape reaches GEMM and is then refused.
-
-    :param memlet: The memlet accessing the operand.
-    :return: The size of the memlet subset with its size-1 dimensions removed.
-    """
-    subset = dc(memlet.subset)
-    subset.squeeze()
-    return subset.size()
-
-
+from dace.libraries.blas.nodes.matmul import (_get_matmul_operands, _get_codegen_gemm_opts, _matrix_operand,
+                                              _matrix_subset_size)
 from .. import environments
 import numpy as np
 import warnings
@@ -64,8 +47,9 @@ class ExpandGemmPure(ExpandTransformation):
     def make_sdfg(node, parent_state, parent_sdfg):
         sdfg = dace.SDFG(node.label + "_sdfg")
 
-        ((edge_a, outer_array_a, _, _, shape_a, strides_a), (edge_b, outer_array_b, _, _, shape_b, strides_b),
-         cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
+        adata, bdata, cdata = _get_matmul_operands(node, parent_state, parent_sdfg)
+        edge_a, outer_array_a, shape_a, strides_a = _matrix_operand(adata)
+        edge_b, outer_array_b, shape_b, strides_b = _matrix_operand(bdata)
 
         dtype_a = outer_array_a.dtype.type
         dtype_b = outer_array_b.dtype.type
@@ -97,7 +81,7 @@ class ExpandGemmPure(ExpandTransformation):
 
         _, array_a = sdfg.add_array("_a", shape_a, dtype_a, strides=strides_a, storage=outer_array_a.storage)
         _, array_b = sdfg.add_array("_b", shape_b, dtype_b, strides=strides_b, storage=outer_array_b.storage)
-        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=cdata[-1], storage=cdata[1].storage)
+        _, array_c = sdfg.add_array("_c", shape_c, dtype_c, strides=_matrix_operand(cdata)[3], storage=cdata[1].storage)
 
         if equal_valued(1, node.alpha):
             mul_program = "__out = __a * __b"
@@ -569,11 +553,11 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
         size2 = None
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_a':
-                size0 = _squeezed_size(memlet)
+                size0 = _matrix_subset_size(memlet.subset)
             if dst_conn == '_b':
-                size1 = _squeezed_size(memlet)
+                size1 = _matrix_subset_size(memlet.subset)
             if dst_conn == '_c':
-                size2 = _squeezed_size(memlet)
+                size2 = _matrix_subset_size(memlet.subset)
 
         if self.transA:
             size0 = list(reversed(size0))
@@ -593,7 +577,7 @@ class Gemm(dace.sdfg.nodes.LibraryNode):
                           UserWarning)
         elif not res:
             raise ValueError("Inputs to matrix-matrix product must agree in the k-dimension")
-        size3 = _squeezed_size(out_memlet)
+        size3 = _matrix_subset_size(out_memlet.subset)
         if size2 is not None:
             res = [equal(s0, s1) for s0, s1 in zip(size2, size3)]
             fail = any([r is False for r in res])
