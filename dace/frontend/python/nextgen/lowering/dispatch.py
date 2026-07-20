@@ -91,6 +91,19 @@ def _replacement_registered(name: str) -> bool:
     return oprepo.Replacements.get_descriptor_inference(name) is not None
 
 
+def _method_registered(descriptor: data.Data, method_name: str) -> bool:
+    """
+    Whether a bound-method call is eligible for deferred replacement
+    expansion, mirroring :func:`_replacement_registered` for the ``_method_rep``
+    keyspace (:meth:`Replacements.get_method` /
+    :meth:`Replacements.get_method_descriptor_inference`).
+    """
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    if oprepo.Replacements.get_method(type(descriptor), method_name) is None:
+        return False
+    return oprepo.Replacements.get_method_descriptor_inference(type(descriptor), method_name) is not None
+
+
 def lower_computation(target: DataAccess,
                       value: ast.expr,
                       statement: ast.stmt,
@@ -465,18 +478,45 @@ def _match_reduction(call: ast.Call, qualname: str) -> Optional[Tuple[str, ast.e
     return ufunc_name, source_expr, axis_expr
 
 
+def _method_call_receiver(call: ast.Call, state: LoweringState) -> Optional[DataAccess]:
+    """
+    The bound receiver of a method-call form (``<base>.<method>(...)``), or
+    None when the call is not a method call on a whole registered container.
+
+    Restricted to ``Name`` and structure-member ``Attribute`` bases (both
+    resolve through :func:`resolve_access` to the FULL array, never a
+    subset) — a ``_method_rep`` replacement receives the whole container by
+    name (e.g. ``arr: str`` in ``_ndarray_copy``), so a ``Subscript`` base
+    like ``A[0].sum()`` cannot be passed as a receiver without silently
+    operating on all of ``A`` instead of the indexed element.
+    """
+    if not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, (ast.Name, ast.Attribute)):
+        return None
+    return resolve_access(call.func.value, state)
+
+
 def _lower_replacement_call(target: ast.expr, call: ast.Call, qualname: str, inferred, statement: ast.stmt,
                             state: LoweringState) -> bool:
     """
     Emit a deferred :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
-    for a vetted registry replacement. Returns False when the call is not
-    vetted or an argument cannot be resolved (the caller falls back).
+    for a vetted registry replacement (free function or bound method).
+    Returns False when the call is not vetted or an argument cannot be
+    resolved (the caller falls back).
     """
     name = qualname
+    receiver: Optional[str] = None
     if not _replacement_registered(name):
         name = getattr(call.func, 'qualname', None) or astutils.rname(call.func)
         if not _replacement_registered(name):
-            return False
+            name = None
+            # Not a registered free function: try the method family
+            # (``_method_rep``), e.g. ``A.copy()``/``A.fill(0)``.
+            receiver_access = _method_call_receiver(call, state)
+            if receiver_access is not None and _method_registered(receiver_access.descriptor, call.func.attr):
+                receiver = receiver_access.container
+                name = call.func.attr
+            if name is None:
+                return False
     if state.emitter.in_dataflow_scope:
         return False  # Expansion adds state machinery; no CFG inside dataflow scopes
 
@@ -484,7 +524,13 @@ def _lower_replacement_call(target: ast.expr, call: ast.Call, qualname: str, inf
     if converted is None:
         return False
     arguments, keywords, data_arguments = converted
-    if not _expansion_viable(name, arguments, keywords, data_arguments, state):
+    if receiver is not None:
+        # Mirror the classic frontend's convention (newast.py's Call
+        # visitor): the receiver is the replacement's first positional
+        # argument.
+        arguments = [receiver] + arguments
+        data_arguments = data_arguments | {receiver}
+    if not _expansion_viable(name, arguments, keywords, data_arguments, state, receiver=receiver):
         return False
     target_access = _call_target_access(target, inferred, statement, state)
     state.emitter.emit(
@@ -492,11 +538,17 @@ def _lower_replacement_call(target: ast.expr, call: ast.Call, qualname: str, inf
                                target=target_access.container,
                                arguments=arguments,
                                keyword_arguments=keywords,
-                               data_arguments=data_arguments))
+                               data_arguments=data_arguments,
+                               receiver=receiver))
     return True
 
 
-def _expansion_viable(name: str, arguments: List, keywords: dict, data_arguments: set, state: LoweringState) -> bool:
+def _expansion_viable(name: str,
+                      arguments: List,
+                      keywords: dict,
+                      data_arguments: set,
+                      state: LoweringState,
+                      receiver: Optional[str] = None) -> bool:
     """
     Trial-run a replacement on a scratch SDFG to decide, at tree-build time
     (where the graceful fallback is a callback), whether deferred expansion
@@ -509,7 +561,10 @@ def _expansion_viable(name: str, arguments: List, keywords: dict, data_arguments
     from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import ReplacementVisitorShim
     from dace.sdfg.sdfg import SDFG
 
-    function = oprepo.Replacements.get(name)
+    if receiver is not None:
+        function = oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
+    else:
+        function = oprepo.Replacements.get(name)
     scratch = SDFG('__replacement_viability')
     for data_name in data_arguments:
         descriptor = copy.deepcopy(state.context.containers[data_name])

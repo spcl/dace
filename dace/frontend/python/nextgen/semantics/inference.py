@@ -254,9 +254,13 @@ class InferenceService:
             base = self._bound_descriptor_of(node.func.value)
             if base is not None:
                 infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(base), node.func.attr)
-                if infer_fn is None:
-                    return None
-                return self._registry_inference(infer_fn, base, *args, **kwargs)
+                if infer_fn is not None:
+                    return self._registry_inference(infer_fn, base, *args, **kwargs)
+                # No method-family inference for this (type, method) pair:
+                # fall through to ufunc/free-function inference below rather
+                # than hard-aborting the whole call (the base being data
+                # doesn't rule out `node.func` resolving some other way, e.g.
+                # a qualified free function embedded via a constant callee).
 
         qualname, callee = self.resolve_callee(node.func)
 
@@ -348,11 +352,29 @@ class InferenceService:
         return None
 
     def _bound_descriptor_of(self, node: ast.expr) -> Optional[data.Data]:
-        """The container descriptor a canonical name expression is bound to, if any."""
+        """
+        The container descriptor a canonical expression is bound to, if any.
+
+        Beyond a bare ``Name`` (``a.sum()``), one more level is admitted --
+        an indexed or attribute expression that itself infers to a data
+        result, e.g. ``A[0].sum()`` or a structure member access -- so a
+        method call on such an expression is at least *typed* (whether it
+        can subsequently be *lowered* through the method-replacement family
+        is a separate, stricter question decided at dispatch time, which
+        only accepts a whole-container ``Name``/member receiver).
+        """
         if isinstance(node, ast.Name):
             binding = self.context.resolve(node.id)
             if binding is not None and binding.kind == 'container':
                 return self.context.containers[binding.container]
+            return None
+        if isinstance(node, (ast.Subscript, ast.Attribute)):
+            try:
+                inferred = self.infer(node)
+            except UnsupportedFeatureError:
+                return None
+            if inferred.is_data:
+                return inferred.descriptor
         return None
 
     def _registry_inference(self, infer_fn: Any, *args: Any, **kwargs: Any) -> Optional[Inferred]:

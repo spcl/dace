@@ -1070,9 +1070,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._dataflow_stack:
             raise NotImplementedError("Replacement calls inside dataflow scopes are not supported.")
 
-        function = oprepo.Replacements.get(node.qualname)
-        if function is None:
-            raise NotImplementedError(f"No replacement registered for '{node.qualname}'.")
+        if node.receiver is not None:
+            receiver_type = type(sdfg.arrays[node.receiver])
+            function = oprepo.Replacements.get_method(receiver_type, node.qualname)
+            if function is None:
+                raise NotImplementedError(
+                    f"No method replacement registered for '{node.qualname}' on '{receiver_type.__name__}'.")
+        else:
+            function = oprepo.Replacements.get(node.qualname)
+            if function is None:
+                raise NotImplementedError(f"No replacement registered for '{node.qualname}'.")
 
         shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
         result = function(shim, sdfg, self._current_state, *node.arguments, **node.keyword_arguments)
