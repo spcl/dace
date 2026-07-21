@@ -209,7 +209,9 @@ def get_program_interface(program_folder) -> str:
     marker = os.path.join(program_folder, 'INTERFACE')
     if os.path.isfile(marker):
         with open(marker, 'r') as f:
-            return f.read().strip()
+            interface = f.read().strip()
+            assert interface in ['nanobind', 'ctypes']
+            return interface
     return 'ctypes'
 
 
