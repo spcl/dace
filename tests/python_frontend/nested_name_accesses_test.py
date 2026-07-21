@@ -322,13 +322,6 @@ def test_issue_2100():
     sdfg.validate()
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="ProgramVisitor._add_access rebases the nested connector to the local "
-                   "symbol's range (descriptor N-1 long, body indexes [j-1]) but builds the memlet "
-                   "from the raw rng, so the callee indexes from an origin the caller never passed "
-                   "and every access shifts by the range start. The propagated range it needs is "
-                   "computed into `tmp_memlet` and discarded; using it verbatim is NOT the fix -- it "
-                   "regresses the nested-dependency case to a negative-start subset.")
 def test_nonzero_start_loop_in_map_keeps_its_origin():
     """A loop inside a ``dc.map`` whose range does not start at 0.
 
@@ -361,13 +354,6 @@ def test_nonzero_start_loop_in_map_keeps_its_origin():
     assert np.allclose(aa, expected)
 
 
-@pytest.mark.xfail(strict=True,
-                   reason="ProgramVisitor._add_access rebases the nested connector to the local "
-                   "symbol's range (descriptor N-1 long, body indexes [j-1]) but builds the memlet "
-                   "from the raw rng, so the callee indexes from an origin the caller never passed "
-                   "and every access shifts by the range start. The propagated range it needs is "
-                   "computed into `tmp_memlet` and discarded; using it verbatim is NOT the fix -- it "
-                   "regresses the nested-dependency case to a negative-start subset.")
 def test_nonzero_start_loop_in_map_with_carry():
     """The same shape carrying a loop-carried dependence (TSVC s1119), which is how this surfaced."""
     M = dc.symbol('M')
