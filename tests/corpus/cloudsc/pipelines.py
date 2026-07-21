@@ -14,7 +14,8 @@ so explicitly. Every earlier phase is unaffected and still numeric-checked.
 
 The recipe is grouped into PHASES (consecutive stages sharing a stage label -- so canon's
 ``loop_to_x`` Loop2X lifts and its ``parallelize`` Loop2Map each form one phase; the parallelize
-variant is classified into ``prep`` / ``loop_to_x`` / ``parallelize``). At each phase boundary
+variant is classified into ``prep`` / ``loop_to_x`` / ``parallelize``, then ``coalesce`` -- inline the
+nested SDFGs and fuse the maps they were walling off, see :func:`coalesce_stages`). At each phase boundary
 ``run_pipeline`` validates, runs ``numeric_check`` against the un-transformed reference, and saves a
 ``.sdfgz`` checkpoint. A checkpoint on disk therefore means "this phase passed"; a re-run loads the
 furthest good checkpoint and resumes past it (the multi-minute ``simplify`` / build is not repeated).
@@ -35,10 +36,14 @@ import dace
 from dace.codegen.codegen import generate_code
 from dace.config import set_temporary
 from dace.sdfg.utils import specialize_symbol
+from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
+from dace.transformation.passes.full_map_fusion import FullMapFusion
+from dace.transformation.passes.fusion_inline import FuseStates, InlineSDFGs
 from dace.transformation.passes.parallelization_prep import DEFAULT_UNROLL_LIMIT
 from dace.transformation.passes.parallelize import ParallelizePipeline
-from dace.transformation.passes.pattern_matching import PatternMatchAndApply
+from dace.transformation.passes.pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated
 
 Stage = Tuple[str, Callable[[dace.SDFG], None]]
 Phase = Tuple[str, List[Stage]]
@@ -101,10 +106,56 @@ def pretreat_stages() -> List[Stage]:
     return [('simplify', simplify), ('state_fusion_extended', state_fusion_extended)]
 
 
+#: Name of the coalescing phase, and the variants it is appended to. Both canon variants already
+#: coalesce inside their own recipe -- ``_build_stages`` runs ``canonicalize/pipeline.py::_coalesce``
+#: between ``post_l2m`` and ``loop_fuse`` (see the ``'coalesce'`` entry in :data:`_CANON_SUPER_PHASE`)
+#: -- so appending a second round there would re-scan the graph for nothing. ``parallelize`` stops
+#: dead at ``LoopToMap`` and is the one variant that never coalesces, so it is the one that gets this.
+COALESCE_PHASE: str = 'coalesce'
+COALESCE_VARIANTS: Tuple[str, ...] = ('parallelize', )
+
 #: Name of the opt-in GPU-offload phase, and the variants it may be appended to. ``canon_cpu`` is a CPU
 #: recipe, so ``offload=True`` leaves it alone rather than producing a GPU graph nobody asked for.
 OFFLOAD_PHASE: str = 'offload'
 OFFLOAD_VARIANTS: Tuple[str, ...] = ('parallelize', 'canon_gpu')
+
+
+def coalesce_stages() -> List[Stage]:
+    """Inline the nested SDFGs, then fuse the maps they were walling off.
+
+    ``LoopToMap`` leaves each lifted body in its own NestedSDFG, and map fusion cannot see across an
+    NSDFG boundary -- so straight out of the ``parallelize`` phase the element-wise maps that should be
+    one kernel are a chain of separate ones. The order is forced:
+
+    1. ``InlineSDFGs`` -- drop the NSDFG walls. Nothing downstream fires until this runs.
+    2. ``FuseStates`` -- two maps fuse only if they share a state; inlining a multi-state body leaves
+       the maps in adjacent states.
+    3. ``MapCollapse`` -- BEFORE fusing. A lifted 2-D nest arrives as ``map jk { map jl }``; folding it
+       to one 2-D map first means fusion pairs whole nests instead of merging an outer map with its
+       neighbour's inner one. Same reasoning as the canon recipe's collapse-then-fuse, and worth a
+       stage: without it the fixture in ``cloudsc_pipeline_coalesce_test.py`` ends at 4 maps, not 3.
+    4. ``FullMapFusion`` -- the payoff (vertical + horizontal + ``FindSingleUseData`` in one pass).
+       Wrapped in a ``Pipeline`` because it declares a ``FindSingleUseData`` dependency and raises if
+       applied with an empty results dict.
+    5. ``FuseStates`` again -- fusion and collapse free the state boundaries they had been pinning.
+       This is what makes the phase converge in ONE round: without it the graph is still shrinking
+       when the phase returns.
+
+    Every stage above is observed to fire on that fixture; nothing is here on speculation. A trailing
+    second ``MapCollapse`` (canon runs one, for nests that fusion leaves perfect) matched nothing and
+    is therefore not wired.
+
+    Value-preserving: no stage here reorders a reduction, so the phase is deliberately absent from
+    :data:`_REASSOC_PHASES` (it runs after ``parallelize``, whose relaxation is sticky anyway).
+    """
+    units = [
+        ('inline_nsdfgs', InlineSDFGs()),
+        ('fuse_states', FuseStates()),
+        ('collapse', PatternMatchAndApplyRepeated([MapCollapse()])),
+        ('fuse_maps', Pipeline([FullMapFusion()])),
+        ('fuse_states', FuseStates()),
+    ]
+    return [(label, lambda sdfg, u=unit: u.apply_pass(sdfg, {})) for label, unit in units]
 
 
 def load_offload_pass() -> Callable[[dace.SDFG], None]:
@@ -296,6 +347,9 @@ def variant_phases(variant: str,
     simplify/state-fusion) is ONE phase; then the variant's own coarse phases (parallelize:
     prep/loop_to_x/parallelize; canon: normalize/loop_to_x/parallelize/finalize).
 
+    :data:`COALESCE_PHASE` follows for the :data:`COALESCE_VARIANTS` -- after the map-producing phase,
+    since inlining and map fusion have nothing to chew on until the loops are maps.
+
     ``offload`` appends the terminal :data:`OFFLOAD_PHASE` for the :data:`OFFLOAD_VARIANTS`; every
     earlier phase is byte-identical to the ``offload=False`` plan. ``canon_cpu`` ignores it."""
     start: List[Stage] = specialize_stage(constants) + pretreat_stages()
@@ -308,6 +362,8 @@ def variant_phases(variant: str,
         phases += _canon_coarse_phases('gpu', assume_parallel_guards)
     else:
         raise ValueError(f'unknown variant {variant!r}; expected one of {VARIANTS}')
+    if variant in COALESCE_VARIANTS:
+        phases.append((COALESCE_PHASE, coalesce_stages()))
     if offload and variant in OFFLOAD_VARIANTS:
         phases.append((OFFLOAD_PHASE, offload_stage()))
     return phases
