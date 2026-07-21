@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
 import os
+import subprocess
+import sys
 
 import dace
 import numpy as np
