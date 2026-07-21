@@ -4,7 +4,7 @@
 from collections import deque, OrderedDict
 import itertools
 import uuid
-import networkx as nx
+from dace import graphlib
 from dace import graphlib
 from dace.dtypes import deduplicate
 import dace.serialize
@@ -646,7 +646,7 @@ class OrderedDiGraph(Graph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         were added. """
 
     def __init__(self):
-        self._nx = nx.DiGraph()
+        self._nx = graphlib.DiGraph()
         # {node: ({in edge: None}, {out edges: None})}
         self._nodes = OrderedDict()
         # {(src, dst): edge}
@@ -767,7 +767,7 @@ class OrderedMultiDiGraph(OrderedDiGraph[NodeT, EdgeT], Generic[NodeT, EdgeT]):
         they were added. """
 
     def __init__(self):
-        self._nx = nx.MultiDiGraph()
+        self._nx = graphlib.MultiDiGraph()
         # {node: ({in edge: edge}, {out edge: edge})}
         self._nodes = OrderedDict()
         # {edge: edge}
