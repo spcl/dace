@@ -4,17 +4,54 @@ Various analyses concerning LopoRegions, and utility functions to get informatio
 """
 
 from dataclasses import dataclass
-from typing import Dict, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple
 from dace.frontend.python import astutils
 
 import sympy
 
 from dace import symbolic
-from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
 
+if TYPE_CHECKING:
+    # Import-time only: ``dace.sdfg.state`` reaches back into this module (LoopRegion.new_symbols does
+    # the import inside the function body, "avoid cyclic import"), so importing the SDFG class here at
+    # module scope would close that cycle from the other side.
+    from dace.sdfg.sdfg import SDFG
 
-def counter_used_outside_loop(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
+
+def symbol_use_sites(sdfg: 'SDFG') -> Tuple[Dict[str, Set[int]], Set[str]]:
+    """One walk of ``sdfg`` indexing where each symbol is used: name -> ``id()`` of every block and
+    inter-state edge that references it, plus the set of names any data descriptor's shape or strides
+    mention (anywhere in the SDFG tree, since a nested descriptor is materialised just as eagerly).
+
+    Answering "is this symbol used outside that loop?" costs a full traversal, so a caller asking it per
+    loop pays it per loop. Build the index once and answer every loop from it.
+
+    Each block is enumerated individually, hence a REGION is asked only for the symbols it uses on
+    itself (``with_contents=False`` -- its condition / init / update); its contents arrive as their own
+    blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)`` returns
+    the empty set, which would silently hide every real use.
+    """
+    uses: Dict[str, Set[int]] = {}
+    for block in sdfg.all_control_flow_blocks():
+        with_contents = not isinstance(block, AbstractControlFlowRegion)
+        for name in block.used_symbols(all_symbols=True, with_contents=with_contents):
+            uses.setdefault(name, set()).add(id(block))
+    for edge in sdfg.all_interstate_edges():
+        for name in set(edge.data.free_symbols) | set(edge.data.assignments):
+            uses.setdefault(name, set()).add(id(edge))
+    descriptor_symbols: Set[str] = set()
+    for nested in sdfg.all_sdfgs_recursive():
+        for desc in nested.arrays.values():
+            descriptor_symbols.update(str(s) for s in desc.free_symbols)
+    return uses, descriptor_symbols
+
+
+def counter_used_outside_loop(name: str,
+                              loop: LoopRegion,
+                              sdfg: 'SDFG',
+                              use_sites: Optional[Dict[str, Set[int]]] = None,
+                              descriptor_symbols: Optional[Set[str]] = None) -> bool:
     """Whether ``name`` is read or written anywhere outside ``loop``.
 
     A LoopRegion counter is NOT scoped to its loop the way a map parameter is scoped to its map: DaCe
@@ -23,29 +60,17 @@ def counter_used_outside_loop(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
     this counter as loop-local?" -- scoping its declaration into the ``for``-init clause, dropping its
     value at a nesting boundary -- has to ask this, not assume it.
 
-    Every block of the SDFG is enumerated individually, hence a REGION is asked only for the symbols it
-    uses on itself (``with_contents=False`` -- its condition / init / update); its contents arrive as
-    their own blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)``
-    returns the empty set, which would silently hide every real use.
+    Pass ``use_sites`` / ``descriptor_symbols`` from :func:`symbol_use_sites` when asking about several
+    loops of the same SDFG; omitted, the index is built here for this one query.
     """
-    inside = {id(loop)} | {id(block) for block in loop.all_control_flow_blocks()}
-    for block in sdfg.all_control_flow_blocks():
-        if id(block) in inside:
-            continue
-        with_contents = not isinstance(block, AbstractControlFlowRegion)
-        if name in block.used_symbols(all_symbols=True, with_contents=with_contents):
-            return True
-    inside_edges = {id(edge) for edge in loop.all_interstate_edges()}
-    for edge in sdfg.all_interstate_edges():
-        if id(edge) in inside_edges:
-            continue
-        if name in edge.data.free_symbols or name in edge.data.assignments:
-            return True
-    # A descriptor whose shape/strides mention the counter is materialised outside the loop.
-    for desc in sdfg.arrays.values():
-        if name in {str(s) for s in desc.free_symbols}:
-            return True
-    return False
+    if use_sites is None or descriptor_symbols is None:
+        use_sites, descriptor_symbols = symbol_use_sites(sdfg)
+    if name in descriptor_symbols:
+        return True
+    inside = {id(loop)}
+    inside.update(id(block) for block in loop.all_control_flow_blocks())
+    inside.update(id(edge) for edge in loop.all_interstate_edges())
+    return any(site not in inside for site in use_sites.get(name, ()))
 
 
 def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:

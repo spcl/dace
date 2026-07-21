@@ -1087,6 +1087,50 @@ def test_map_over_carried_loop_terminates():
     assert sum(len(s.nodes()) for s in sdfg.all_states()) == sum(len(s.nodes()) for s in before.all_states())
 
 
+def test_symbol_use_index_agrees_with_the_per_loop_scan():
+    """``symbol_use_sites`` indexes the whole SDFG once so a caller asking about many loops does not
+    re-walk it per loop. The batched answer must equal the unbatched one for every counter."""
+    from dace.transformation.passes.analysis import loop_analysis
+    sdfg = map_over_carried_loop.to_sdfg(simplify=True)
+    use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)
+    checked = 0
+    for nested in sdfg.all_sdfgs_recursive():
+        inner_sites, inner_descs = loop_analysis.symbol_use_sites(nested)
+        for loop in [b for b in nested.all_control_flow_blocks() if isinstance(b, dace.sdfg.state.LoopRegion)]:
+            batched = loop_analysis.counter_used_outside_loop(loop.loop_variable,
+                                                              loop,
+                                                              nested,
+                                                              use_sites=inner_sites,
+                                                              descriptor_symbols=inner_descs)
+            assert batched == loop_analysis.counter_used_outside_loop(loop.loop_variable, loop, nested)
+            checked += 1
+    assert checked
+
+
+def test_counter_read_after_its_loop_is_not_internal():
+    """A counter observed after the loop must keep its declaration and its outbound propagation. The
+    predicate that decides this is the one codegen uses before scoping a counter into its for-init."""
+    from dace.transformation.passes.analysis import loop_analysis
+    sdfg = dace.SDFG('counter_escapes')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_symbol('k', dace.int64)
+    loop = dace.sdfg.state.LoopRegion('loop', 'k < 10', 'k', 'k = 0', 'k = k + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    loop.add_state('body', is_start_block=True)
+    after = sdfg.add_state('after')
+    sdfg.add_edge(loop, after, dace.InterstateEdge(assignments={'kk': 'k'}))  # reads k AFTER the loop
+
+    assert loop_analysis.counter_used_outside_loop('k', loop, sdfg)
+    # and with nothing reading it, the same counter is internal
+    sdfg2 = dace.SDFG('counter_local')
+    sdfg2.add_array('A', [1], dace.float64)
+    sdfg2.add_symbol('k', dace.int64)
+    loop2 = dace.sdfg.state.LoopRegion('loop', 'k < 10', 'k', 'k = 0', 'k = k + 1')
+    sdfg2.add_node(loop2, is_start_block=True)
+    loop2.add_state('body', is_start_block=True)
+    assert not loop_analysis.counter_used_outside_loop('k', loop2, sdfg2)
+
+
 def test_nested_loop_iterator_is_not_mapped_at_the_parent():
     """``nest_sdfg_control_flow`` wraps a LoopRegion into a nested SDFG. The loop iterator is scoped to
     that region, so it must appear in neither the new node's symbol mapping nor the enclosing SDFG's
@@ -1141,4 +1185,6 @@ if __name__ == '__main__':
     test_conditional_component_fission_three()
     test_conditional_component_fission_single_is_noop()
     test_map_over_carried_loop_terminates()
+    test_symbol_use_index_agrees_with_the_per_loop_scan()
+    test_counter_read_after_its_loop_is_not_internal()
     test_nested_loop_iterator_is_not_mapped_at_the_parent()

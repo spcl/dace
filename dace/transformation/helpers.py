@@ -149,21 +149,25 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         # A counter is internal iff its init binds it outright (``i = 0``, not ``i = i + 1``) AND nothing
         # outside the loop observes it. Declaration in ``sdfg.symbols`` answers neither question: DaCe
         # declares every counter there, and this function deletes the declaration again.
-        loop_symbol_types: Dict[str, dtypes.typeclass] = {}
-        internal_loop_variables: Set[str] = set()
-        for b in all_blocks:
-            if isinstance(b, LoopRegion) and b.loop_variable:
-                defined_symbols.add(b.loop_variable)
-                loop_symbol_types.update(b.new_symbols(sdfg.symbols))  # authoritative type
-                try:
-                    init = loop_analysis.get_init_assignment(b)
-                    binds_outright = not b.init_statement or b.loop_variable not in \
-                        symbolic.free_symbols_and_functions(init)
-                except (AttributeError, TypeError):
-                    binds_outright = False  # unparseable init: assume it reads an incoming value
-                if binds_outright and not loop_analysis.counter_used_outside_loop(b.loop_variable, b, sdfg):
-                    internal_loop_variables.add(b.loop_variable)
-                    strictly_defined_symbols.add(b.loop_variable)
+        loop_regions: List[LoopRegion] = [b for b in all_blocks if isinstance(b, LoopRegion) and b.loop_variable]
+        use_sites, descriptor_symbols = loop_analysis.symbol_use_sites(sdfg)  # indexed once for all loops
+        internal_counters: Set[str] = set()
+        external_counters: Set[str] = set()
+        for b in loop_regions:
+            defined_symbols.add(b.loop_variable)
+            # ``get_init_assignment`` returns None -- it does not raise -- when the init assigns the
+            # counter ambiguously or not at all. That is not "binds outright": the value comes in from
+            # outside, so the counter must keep both its declaration and its outbound propagation.
+            init = loop_analysis.get_init_assignment(b) if b.init_statement else None
+            binds_outright = not b.init_statement or (init is not None and b.loop_variable
+                                                      not in symbolic.free_symbols_and_functions(init))
+            internal = binds_outright and not loop_analysis.counter_used_outside_loop(
+                b.loop_variable, b, sdfg, use_sites=use_sites, descriptor_symbols=descriptor_symbols)
+            (internal_counters if internal else external_counters).add(b.loop_variable)
+        # Classification is per REGION but every consumer below is keyed by NAME, so a name several
+        # regions share is internal only when every one of them binds it internally.
+        internal_counters -= external_counters
+        strictly_defined_symbols.update(internal_counters)
 
         return_state = new_state = graph.add_state('nested_sdfg_parent')
 
@@ -234,26 +238,39 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         # Export a counter only if something outside the loop observes it. Exporting unconditionally
         # costs a ``symbolic_output`` state, and that state is a second component -- which defeated
         # MapFission's single-component termination guard and let it renest forever (TSVC s1119).
-        for b in all_blocks:
-            if isinstance(b, LoopRegion) and b.loop_variable and b.init_statement:
-                if b.loop_variable in internal_loop_variables:
+        for b in loop_regions:
+            if b.init_statement:
+                if b.loop_variable in internal_counters:
                     ndefined_symbols.discard(b.loop_variable)
                 else:
                     ndefined_symbols.add(b.loop_variable)
         if ndefined_symbols:
+            # Type every exported symbol BEFORE adding any state: an untypeable one has to raise out of a
+            # function that has not touched the graph yet, or the caller is left holding a half-built
+            # nested SDFG it cannot roll back. A counter's own loop is the authority on its type, since
+            # the declaration may sit in an SDFG this subgraph does not contain (TSVC s114 raised a bare
+            # ``KeyError: '_loop_it_0'`` here) -- consulted only for the counters actually exported,
+            # because ``new_symbols`` re-infers three expressions and copies every array dtype.
+            counter_regions = {b.loop_variable: b for b in loop_regions}
+            symbol_dtypes: Dict[str, dtypes.typeclass] = {}
+            for s in ndefined_symbols:
+                if s in nsdfg.symbols:
+                    symbol_dtypes[s] = nsdfg.symbols[s]
+                elif s in sdfg.symbols:
+                    symbol_dtypes[s] = sdfg.symbols[s]
+                else:
+                    region = counter_regions.get(s)
+                    inferred = region.new_symbols(sdfg.symbols) if region is not None else {}
+                    if s not in inferred:
+                        raise KeyError(f"symbol {s} is assigned inside the nested subgraph but declared "
+                                       f"nowhere it can be typed from (neither SDFG's symbols, nor a loop "
+                                       f"iterator); cannot build its symbol-scalar-symbol output")
+                    symbol_dtypes[s] = inferred[s]
+
             out_state = nsdfg.add_state('symbolic_output')
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
             for s in ndefined_symbols:
-                if s in nsdfg.symbols:
-                    dtype = nsdfg.symbols[s]
-                elif s in sdfg.symbols:
-                    dtype = sdfg.symbols[s]
-                elif s in loop_symbol_types:
-                    dtype = loop_symbol_types[s]
-                else:
-                    raise KeyError(f"symbol {s!r} is assigned inside the nested subgraph but declared "
-                                   f"nowhere it can be typed from (neither SDFG's symbols, nor a loop "
-                                   f"iterator); cannot build its symbol-scalar-symbol output")
+                dtype = symbol_dtypes[s]
                 # One name valid in BOTH SDFGs, so the NestedSDFG out-connector (added from write_set
                 # below) equals the inner data descriptor it maps to -- a NestedSDFG requires that. Two
                 # independent find_new_name=True calls resolve the suffix against each SDFG's OWN names, so

@@ -259,15 +259,31 @@ class MapFission(transformation.SingleStateTransformation):
                             if e.dst.data in not_subgraph:
                                 return False
 
-        # With one component there is nothing to split, so apply can only push the map INTO the nested
-        # SDFG. Progress while the body is real dataflow, but a body that is itself a lone nested SDFG
-        # yields the same pattern one level deeper and matches again (TSVC s1119: ~490 levels).
-        if expr_index == 1:
-            flat = [component for components in total_components for component in components]
-            if not flat or (len(flat) == 1 and all(isinstance(n, nodes.NestedSDFG) for n in flat[0])):
-                return False
+        if expr_index == 1 and not self.fission_makes_progress(total_components):
+            return False
 
         return True
+
+    @staticmethod
+    def fission_makes_progress(total_components) -> bool:
+        """Whether fissioning a nested SDFG would yield anything other than its input.
+
+        Fission replicates the map around each component. Two shapes produce no change, and both then
+        re-match on the result, so ``apply_transformations_repeated`` never reaches a fixpoint:
+
+        * NO component -- there is nothing to replicate the map around.
+        * exactly ONE component which is itself a nested SDFG. That is what
+          ``nest_sdfg_control_flow`` makes of a control-flow region, so apply rebuilds the same
+          map-around-nested-SDFG one nesting level deeper (TSVC s1119 renested ~490 times before
+          hitting the recursion limit).
+
+        One component of real dataflow is NOT this case: apply pushes the map inside, which is progress
+        and does not re-match.
+        """
+        flat = [component for components in total_components for component in components]
+        if not flat:
+            return False
+        return not (len(flat) == 1 and all(isinstance(n, nodes.NestedSDFG) for n in flat[0]))
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
         map_entry = self.map_entry
