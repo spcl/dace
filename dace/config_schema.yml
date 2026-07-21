@@ -149,6 +149,26 @@ required:
                 description: >
                     Number of spaces used when indenting generated code.
 
+            precompiled_header:
+                type: bool
+                default: true
+                title: Precompile the DaCe runtime header
+                description: >
+                    Precompile ``<dace/dace.h>`` once per compiler and flag set into a shared cache
+                    and force-include it into generated host sources. Purely an optimization: a
+                    header that does not match how a translation unit is compiled is ignored by the
+                    compiler, which then produces the same object as before.
+
+            configure_cache:
+                type: bool
+                default: true
+                title: Reuse CMake configure results across builds
+                description: >
+                    Seed each new build folder with the compiler detection and ``find_package``
+                    results of an earlier build configured the same way, instead of rediscovering
+                    them for every SDFG. Purely an optimization: without a cached entry, or with a
+                    stale one, CMake simply does the full configure again.
+
             build_type:
                 type: str
                 default: RelWithDebInfo
