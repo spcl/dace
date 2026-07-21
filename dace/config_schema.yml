@@ -900,6 +900,13 @@ required:
                                     a promise to the backend whose value is not fixed -- it can unlock
                                     constant folding and hoisting, or merely bloat the initializer.
 
+                                    The ``const T x = expr;`` binding follows the same emission-time rule
+                                    as ``scalar_init_style = fused`` below: a binding folded into a tasklet
+                                    that turns out to need its own ``{ ... }`` block would be scoped to that
+                                    block and invisible to later readers, so a candidate whose writing
+                                    tasklet is braced falls back to a plain ``T x;`` line immediately ahead
+                                    of that tasklet, with the write kept inside.
+
                             explicit_copy:
                                 type: str
                                 default: 'on'
