@@ -10,7 +10,42 @@ from dace.frontend.python import astutils
 import sympy
 
 from dace import symbolic
-from dace.sdfg.state import LoopRegion
+from dace.sdfg.sdfg import SDFG
+from dace.sdfg.state import AbstractControlFlowRegion, LoopRegion
+
+
+def counter_used_outside_loop(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
+    """Whether ``name`` is read or written anywhere outside ``loop``.
+
+    A LoopRegion counter is NOT scoped to its loop the way a map parameter is scoped to its map: DaCe
+    leaks its final value to subsequent blocks, and the default ``eager`` declaration placement hoists
+    its ``int64_t i;`` to the top of the generated function. So any question of the form "may I treat
+    this counter as loop-local?" -- scoping its declaration into the ``for``-init clause, dropping its
+    value at a nesting boundary -- has to ask this, not assume it.
+
+    Every block of the SDFG is enumerated individually, hence a REGION is asked only for the symbols it
+    uses on itself (``with_contents=False`` -- its condition / init / update); its contents arrive as
+    their own blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)``
+    returns the empty set, which would silently hide every real use.
+    """
+    inside = {id(loop)} | {id(block) for block in loop.all_control_flow_blocks()}
+    for block in sdfg.all_control_flow_blocks():
+        if id(block) in inside:
+            continue
+        with_contents = not isinstance(block, AbstractControlFlowRegion)
+        if name in block.used_symbols(all_symbols=True, with_contents=with_contents):
+            return True
+    inside_edges = {id(edge) for edge in loop.all_interstate_edges()}
+    for edge in sdfg.all_interstate_edges():
+        if id(edge) in inside_edges:
+            continue
+        if name in edge.data.free_symbols or name in edge.data.assignments:
+            return True
+    # A descriptor whose shape/strides mention the counter is materialised outside the loop.
+    for desc in sdfg.arrays.values():
+        if name in {str(s) for s in desc.free_symbols}:
+            return True
+    return False
 
 
 def get_loop_end(loop: LoopRegion) -> Optional[symbolic.SymbolicType]:

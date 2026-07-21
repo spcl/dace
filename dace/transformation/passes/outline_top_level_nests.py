@@ -34,9 +34,11 @@ def loop_defined_symbols(loop: LoopRegion) -> Set[str]:
     """Symbols DEFINED inside a loop region: each loop variable (the region and any nested
     ``LoopRegion``) plus every inter-state-edge assignment target.
 
-    ``nest_sdfg_subgraph`` emits a symbolic output for each such symbol and looks its dtype up in the
-    nested-or-parent ``sdfg.symbols``; a loop index DaCe never registered as a symbol would raise a
-    ``KeyError`` there, so the caller pre-declares these on the parent first.
+    ``nest_sdfg_subgraph`` emits a symbolic output for each such symbol that something outside the loop
+    observes, and types an inter-state assignment target from the nested-or-parent ``sdfg.symbols``; a
+    target DaCe never registered would raise there, so the caller pre-declares these on the parent
+    first. (Loop counters type themselves via ``LoopRegion.new_symbols`` and need no pre-declaration,
+    but they are cheap to include and a counter left declared is removed again by the outliner.)
     """
     syms: Set[str] = set()
     for block in [loop, *loop.all_control_flow_blocks()]:
@@ -117,13 +119,11 @@ class OutlineTopLevelNests(ppl.Pass):
             }
             inner_state = helpers.nest_sdfg_subgraph(sdfg, SubgraphView(sdfg, [loop]))
             nsdfg = next(n for n in inner_state.nodes() if isinstance(n, nodes.NestedSDFG))
-            # A loop variable that the nest re-initialises internally needs no INBOUND value. The
-            # outliner maps it (``sym: sym``) anyway -- because we pre-declared it on the parent to
-            # type the outliner's symbolic outputs, it is no longer classified strictly-internal
-            # (helpers.nest_sdfg_subgraph keys that on ``not in sdfg.symbols``), so it survives in the
-            # node's symbol_mapping and would leak as a REQUIRED free-symbol argument of the root SDFG.
-            # Drop those inbound mappings; the outbound ``sym = __sym_out_sym`` assignment the outliner
-            # also emits still propagates the final value out.
+            # A loop variable the nest re-initialises internally needs no INBOUND value. A counter that
+            # nothing outside the loop observes is already classified strictly-internal by
+            # nest_sdfg_subgraph and never mapped; one that IS observed outside stays mapped, and only
+            # its outbound ``sym = __sym_out_sym`` assignment carries the value. Drop the inbound
+            # mapping in that case too, or it leaks as a REQUIRED free-symbol argument of the root SDFG.
             for var in loop_vars:
                 nsdfg.symbol_mapping.pop(var, None)
             self._mark(nsdfg, self._unique_label(sdfg, count))

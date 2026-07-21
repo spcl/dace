@@ -146,16 +146,24 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 except AttributeError:
                     # `symbolic.pystr_to_symbolic` may return bool, which doesn't have attribute `args`
                     pass
+        # A counter is internal iff its init binds it outright (``i = 0``, not ``i = i + 1``) AND nothing
+        # outside the loop observes it. Declaration in ``sdfg.symbols`` answers neither question: DaCe
+        # declares every counter there, and this function deletes the declaration again.
+        loop_symbol_types: Dict[str, dtypes.typeclass] = {}
+        internal_loop_variables: Set[str] = set()
         for b in all_blocks:
             if isinstance(b, LoopRegion) and b.loop_variable:
                 defined_symbols.add(b.loop_variable)
-                if b.loop_variable not in sdfg.symbols:
-                    if b.init_statement:
-                        init_assignment = loop_analysis.get_init_assignment(b)
-                        if b.loop_variable not in {str(s) for s in symbolic.pystr_to_symbolic(init_assignment).args}:
-                            strictly_defined_symbols.add(b.loop_variable)
-                    else:
-                        strictly_defined_symbols.add(b.loop_variable)
+                loop_symbol_types.update(b.new_symbols(sdfg.symbols))  # authoritative type
+                try:
+                    init = loop_analysis.get_init_assignment(b)
+                    binds_outright = not b.init_statement or b.loop_variable not in \
+                        symbolic.free_symbols_and_functions(init)
+                except (AttributeError, TypeError):
+                    binds_outright = False  # unparseable init: assume it reads an incoming value
+                if binds_outright and not loop_analysis.counter_used_outside_loop(b.loop_variable, b, sdfg):
+                    internal_loop_variables.add(b.loop_variable)
+                    strictly_defined_symbols.add(b.loop_variable)
 
         return_state = new_state = graph.add_state('nested_sdfg_parent')
 
@@ -223,17 +231,29 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
         out_state = None
         for e in nsdfg.all_interstate_edges():
             ndefined_symbols.update(set(e.data.assignments.keys()))
+        # Export a counter only if something outside the loop observes it. Exporting unconditionally
+        # costs a ``symbolic_output`` state, and that state is a second component -- which defeated
+        # MapFission's single-component termination guard and let it renest forever (TSVC s1119).
         for b in all_blocks:
-            if isinstance(b, LoopRegion) and b.loop_variable is not None and b.loop_variable != '' and b.init_statement:
-                ndefined_symbols.add(b.loop_variable)
+            if isinstance(b, LoopRegion) and b.loop_variable and b.init_statement:
+                if b.loop_variable in internal_loop_variables:
+                    ndefined_symbols.discard(b.loop_variable)
+                else:
+                    ndefined_symbols.add(b.loop_variable)
         if ndefined_symbols:
             out_state = nsdfg.add_state('symbolic_output')
             nsdfg.add_edge(sink_node, out_state, InterstateEdge())
             for s in ndefined_symbols:
                 if s in nsdfg.symbols:
                     dtype = nsdfg.symbols[s]
-                else:
+                elif s in sdfg.symbols:
                     dtype = sdfg.symbols[s]
+                elif s in loop_symbol_types:
+                    dtype = loop_symbol_types[s]
+                else:
+                    raise KeyError(f"symbol {s!r} is assigned inside the nested subgraph but declared "
+                                   f"nowhere it can be typed from (neither SDFG's symbols, nor a loop "
+                                   f"iterator); cannot build its symbol-scalar-symbol output")
                 # One name valid in BOTH SDFGs, so the NestedSDFG out-connector (added from write_set
                 # below) equals the inner data descriptor it maps to -- a NestedSDFG requires that. Two
                 # independent find_new_name=True calls resolve the suffix against each SDFG's OWN names, so
@@ -250,9 +270,11 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
                 write_set.add(name)
 
-        # Add NestedSDFG node
-        fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
-        fsymbols.update(defined_symbols)
+        # Add NestedSDFG node. It must be GIVEN what it reads from OUTSIDE, and ``nsdfg.free_symbols``
+        # draws exactly that line: a region-bound iterator is not free in the SDFG holding the region,
+        # an ``i = i + 1`` still is. Mapping a self-bound symbol makes it free at the PARENT boundary,
+        # where nothing defines it -- invalid, and MapFission re-creates it on every reapplication.
+        fsymbols = (sdfg.symbols.keys() - defined_symbols) | nsdfg.free_symbols
         fsymbols = fsymbols - strictly_defined_symbols
         mapping = {s: s for s in fsymbols}
         cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)

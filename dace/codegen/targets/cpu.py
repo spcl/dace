@@ -24,6 +24,7 @@ from dace.sdfg import (ScopeSubgraphView, SDFG, scope_contains_scope, is_array_s
                        dynamic_map_inputs)
 from dace.sdfg.scope import is_devicelevel_gpu, is_in_scope
 from dace.sdfg.validation import validate_memlet_data
+from dace.transformation.passes.analysis.loop_analysis import counter_used_outside_loop
 from typing import TYPE_CHECKING, Dict, Optional, Set, Tuple, Union
 
 import re
@@ -86,37 +87,6 @@ def counter_init_assigns_only(loop: LoopRegion) -> bool:
     stmt = code[0]
     return (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 and isinstance(stmt.targets[0], ast.Name)
             and stmt.targets[0].id == loop.loop_variable)
-
-
-def counter_used_outside_loop(name: str, loop: LoopRegion, sdfg: SDFG) -> bool:
-    """Whether ``name`` is read or written anywhere outside ``loop``. Declaring the counter in the
-    loop's own ``for``-init clause scopes it to the loop, so its value stops being observable after the
-    loop closes -- exactly what a use outside would need. DaCe permits such a use (a LoopRegion leaks
-    its counter's final value to subsequent blocks), so this must be checked, not assumed.
-
-    Every block of the SDFG is enumerated individually, hence a REGION is asked only for the symbols it
-    uses on itself (``with_contents=False`` -- its condition / init / update); its contents arrive as
-    their own blocks. A state must be asked WITH contents: ``SDFGState.used_symbols(with_contents=False)``
-    returns the empty set, which would silently hide every real use.
-    """
-    inside = {id(loop)} | {id(block) for block in loop.all_control_flow_blocks()}
-    for block in sdfg.all_control_flow_blocks():
-        if id(block) in inside:
-            continue
-        with_contents = not isinstance(block, AbstractControlFlowRegion)
-        if name in block.used_symbols(all_symbols=True, with_contents=with_contents):
-            return True
-    inside_edges = {id(edge) for edge in loop.all_interstate_edges()}
-    for edge in sdfg.all_interstate_edges():
-        if id(edge) in inside_edges:
-            continue
-        if name in edge.data.free_symbols or name in edge.data.assignments:
-            return True
-    # A descriptor whose shape/strides mention the counter is materialised outside the loop.
-    for desc in sdfg.arrays.values():
-        if name in {str(s) for s in desc.free_symbols}:
-            return True
-    return False
 
 
 def loop_local_counter_ctype(name: str, dtype: dtypes.typeclass, sdfg: SDFG) -> Optional[str]:

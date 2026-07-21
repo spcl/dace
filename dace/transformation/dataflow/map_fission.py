@@ -259,6 +259,14 @@ class MapFission(transformation.SingleStateTransformation):
                             if e.dst.data in not_subgraph:
                                 return False
 
+        # With one component there is nothing to split, so apply can only push the map INTO the nested
+        # SDFG. Progress while the body is real dataflow, but a body that is itself a lone nested SDFG
+        # yields the same pattern one level deeper and matches again (TSVC s1119: ~490 levels).
+        if expr_index == 1:
+            flat = [component for components in total_components for component in components]
+            if not flat or (len(flat) == 1 and all(isinstance(n, nodes.NestedSDFG) for n in flat[0])):
+                return False
+
         return True
 
     def apply(self, graph: sd.SDFGState, sdfg: sd.SDFG):
