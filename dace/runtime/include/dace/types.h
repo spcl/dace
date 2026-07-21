@@ -333,7 +333,14 @@ typedef half float16;
 // -inf), so a thread whose chunk is empty contributes nothing. ``omp_out`` is
 // combined with ``+=`` / ``*=`` (defined above) and min/max through the
 // implicit float comparison.
+//
+// ``-`` is declared because ExpandReduceOpenMP emits ``reduction(-: ...)`` for
+// a Sub node and OpenMP accepts it for the primitive float types. Its combiner
+// is ``+=``, not ``-=``: the clause negates within each private copy, and the
+// copies are then summed -- which is what OpenMP defines the ``-`` reduction to
+// mean, and what GCC does for ``float``.
 #pragma omp declare reduction(+ : dace::half : omp_out += omp_in) initializer(omp_priv = dace::half(0.0f))
+#pragma omp declare reduction(- : dace::half : omp_out += omp_in) initializer(omp_priv = dace::half(0.0f))
 #pragma omp declare reduction(* : dace::half : omp_out *= omp_in) initializer(omp_priv = dace::half(1.0f))
 #pragma omp declare reduction(min : dace::half : omp_out = (float)omp_in < (float)omp_out ? omp_in : omp_out) \
     initializer(omp_priv = dace::half(__builtin_huge_valf()))

@@ -326,6 +326,24 @@ static void test_openmp_reductions() {
   }
   CHECK_BITS(out[0], raw(float16((float)exact)));
 
+  // --- subtraction: OpenMP's `-` reduction, which negates within each private
+  // copy and then SUMS them. Must agree exactly with the same clause on float. ---
+  for (int i = 0; i < N; ++i) in[i] = float16(1.0f);
+  static float fin[2048];
+  for (int i = 0; i < N; ++i) fin[i] = 1.0f;
+  out[0] = float16(0.0f);
+#pragma omp parallel for reduction(- : out[0])
+  for (int _i0 = 0; _i0 < N; ++_i0) {
+    out[0] -= in[_i0 * 1];
+  }
+  float fout = 0.0f;
+#pragma omp parallel for reduction(- : fout)
+  for (int _i0 = 0; _i0 < N; ++_i0) {
+    fout -= fin[_i0];
+  }
+  CHECK((float)out[0] == fout);
+  CHECK_BITS(out[0], raw(float16(-(float)N)));
+
   // --- product: powers of two, exact and in range ---
   for (int i = 0; i < N; ++i) in[i] = float16((i % 2) ? 2.0f : 0.5f);
   out[0] = float16(1.0f);
