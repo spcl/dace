@@ -43,6 +43,33 @@ def use_aligned_operator_new() -> bool:
         return False
 
 
+def aligned_new_placement() -> str:
+    """The placement argument that goes between ``new`` and the element type, or an empty string
+    when aligned ``operator new`` is unavailable. Single source of the emitted spelling, so the
+    allocation sites here and the tests asserting on generated code cannot drift apart."""
+    return '(std::align_val_t(64)) ' if use_aligned_operator_new() else ''
+
+
+def trivially_destructible_assert(ctype: str, newline: bool = True) -> str:
+    """Guard emitted alongside an aligned array deallocation, empty when that form is not used.
+    ``::operator delete[]`` skips destructors, which is valid only for trivially destructible
+    element types (all DaCe types today); the static_assert turns a future violation into a
+    compile error rather than undefined behavior."""
+    if not use_aligned_operator_new():
+        return ''
+    return (f'static_assert(std::is_trivially_destructible<{ctype}>::value, '
+            f'"aligned heap deallocation skips destructors");{chr(10) if newline else " "}')
+
+
+def array_delete_expression(name: str) -> str:
+    """The array-deallocation statement paired with ``aligned_new_placement()``'s allocation.
+    Memory from the aligned ``operator new[]`` must be released by the aligned
+    ``operator delete[]``, so the two spellings are chosen together, here."""
+    if use_aligned_operator_new():
+        return f'::operator delete[]({name}, std::align_val_t(64));'
+    return f'delete[] {name};'
+
+
 @registry.autoregister_params(name='cpu')
 class CPUCodeGen(TargetCodeGenerator):
     """ SDFG CPU code generator. """
@@ -506,7 +533,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
             if not declared:
                 declaration_stream.write(f'{nodedesc.dtype.ctype} *{name};\n', cfg, state_id, node)
-            aligned = '(std::align_val_t(64)) ' if use_aligned_operator_new() else ''
+            aligned = aligned_new_placement()
             allocation_stream.write(
                 "%s = new %s%s[%s];\n" % (alloc_name, aligned, nodedesc.dtype.ctype, cpp.sym2cpp(arrsize)), cfg,
                 state_id, node)
@@ -557,11 +584,10 @@ class CPUCodeGen(TargetCodeGenerator):
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {aligned}{ctype}[{arrsize}];""".format(
-                    aligned='(std::align_val_t(64)) ' if use_aligned_operator_new() else '',
-                    ctype=nodedesc.dtype.ctype,
-                    name=alloc_name,
-                    arrsize=cpp.sym2cpp(arrsize)),
+                    {name} = new {aligned}{ctype}[{arrsize}];""".format(aligned=aligned_new_placement(),
+                                                                        ctype=nodedesc.dtype.ctype,
+                                                                        name=alloc_name,
+                                                                        arrsize=cpp.sym2cpp(arrsize)),
                 cfg,
                 state_id,
                 node,
@@ -605,25 +631,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 # Aligned operator new[] must be released by the aligned operator delete[]. The direct
                 # call skips destructors (valid only for trivially destructible element types, i.e. all
                 # DaCe types); the static_assert turns a future violation into a compile error, not UB.
-                if use_aligned_operator_new():
-                    callsite_stream.write(
-                        f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                        f"\"aligned heap deallocation skips destructors\");\n"
-                        f"::operator delete[]({alloc_name}, std::align_val_t(64));\n", cfg, state_id, node)
-                else:
-                    callsite_stream.write(f"delete[] {alloc_name};\n", cfg, state_id, node)
+                callsite_stream.write(
+                    f"{trivially_destructible_assert(nodedesc.dtype.ctype)}"
+                    f"{array_delete_expression(alloc_name)}\n", cfg, state_id, node)
             else:
                 callsite_stream.write(f"delete {alloc_name};\n", cfg, state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
                 # Aligned pairing + trivial-destructibility guard as above.
-                if use_aligned_operator_new():
-                    delete_stmt = (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
-                                   f"\"aligned heap deallocation skips destructors\"); "
-                                   f"::operator delete[]({alloc_name}, std::align_val_t(64));")
-                else:
-                    delete_stmt = f"delete[] {alloc_name};"
+                delete_stmt = (f"{trivially_destructible_assert(nodedesc.dtype.ctype, newline=False)}"
+                               f"{array_delete_expression(alloc_name)}")
             else:
                 delete_stmt = f"delete {alloc_name};"
             callsite_stream.write(

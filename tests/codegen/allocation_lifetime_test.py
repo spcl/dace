@@ -4,6 +4,7 @@ import pytest
 
 import dace
 from dace.codegen.targets import framecode
+from dace.codegen.targets.cpu import aligned_new_placement
 from dace.sdfg import infer_types
 import numpy as np
 
@@ -505,7 +506,7 @@ def test_branched_allocation(mode):
     # Make sure array is allocated once or twice, depending on the test
     code = sdfg.generate_code()[0].clean_code
     num_allocs = 2 if mode == 'multivalue' else 1
-    assert code.count('new float') == num_allocs
+    assert code.count(f'new {aligned_new_placement()}float') == num_allocs
     assert code.count('delete[]') == num_allocs
 
     sdfg.compile()
@@ -534,7 +535,7 @@ def test_scope_multisize():
 
     # Make sure array is allocated twice
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('new double') == 2
+    assert code.count(f'new {aligned_new_placement()}double') == 2
     assert code.count('delete[]') == 2
 
     sdfg()
@@ -580,7 +581,7 @@ def test_multisize():
 
     # Make sure array is allocated once
     code = sdfg.generate_code()[0].clean_code
-    assert code.count('new double') == 1
+    assert code.count(f'new {aligned_new_placement()}double') == 1
     assert code.count('delete[]') == 1
 
     res1 = sdfg(cond=np.uint64(0))

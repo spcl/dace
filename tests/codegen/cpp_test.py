@@ -7,6 +7,7 @@ import warnings
 from dace import SDFG, Memlet, dtypes
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
+from dace.codegen.targets.cpu import aligned_new_placement, array_delete_expression
 from dace.subsets import Range
 
 
@@ -167,8 +168,8 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
 
         # In code, assert that we allocate _and_ deallocate on the heap
         code = program_objects[0].clean_code
-        assert code.find("A = new double") > 0, "A is allocated on the heap."
-        assert code.find("delete[] A") > 0, "A is deallocated from the heap."
+        assert code.find(f"A = new {aligned_new_placement()}double") > 0, "A is allocated on the heap."
+        assert code.find(array_delete_expression("A")) > 0, "A is deallocated from the heap."
 
 
 if __name__ == '__main__':
