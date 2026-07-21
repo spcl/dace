@@ -11,6 +11,7 @@ import networkx as nx
 
 from dace import dtypes, subsets, symbolic
 from dace.dtypes import DebugInfo
+from dace.sdfg.graph import NodeNotFoundError
 
 if TYPE_CHECKING:
     import dace
@@ -990,14 +991,44 @@ class InvalidSDFGError(Exception):
 
         return f'File "{lineinfo.filename}"'
 
+    def resolve_block(self):
+        """The control-flow block ``state_id`` refers to, or ``None`` when the id does not resolve.
+
+        ``state_id`` indexes the block's PARENT control flow region, which is the SDFG itself only
+        for top-level blocks -- a nested state's id therefore need not index anything in
+        ``self.sdfg`` at all. Formatting must never raise on that: an exception whose ``__str__``
+        throws prints as ``<exception str() failed>`` and hides the very problem it reports.
+        """
+        if self.state_id is None:
+            return None
+        try:
+            return self.sdfg.node(self.state_id)
+        except (NodeNotFoundError, IndexError, KeyError, TypeError):
+            return None
+
+    def resolve_state(self):
+        """Like :meth:`resolve_block`, but for errors that can only refer to an ``SDFGState``. A
+        block that is not one is proof the id did not belong to ``self.sdfg`` -- report it as
+        unresolved rather than naming an unrelated region."""
+        from dace.sdfg.state import SDFGState
+        block = self.resolve_block()
+        return block if isinstance(block, SDFGState) else None
+
+    def unresolved(self, kind: str, element_id) -> str:
+        """Placeholder text for an element whose id no longer resolves against the graph."""
+        return f'<unresolved {kind} id {element_id}>'
+
+    def state_label(self, state) -> str:
+        return state.label if state is not None else self.unresolved('state', self.state_id)
+
     def to_json(self):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id)
 
     def __str__(self):
         if self.state_id is not None:
-            state = self.sdfg.node(self.state_id)
+            state = self.resolve_block()
             locinfo = self._getlineinfo(state)
-            suffix = f' (at state {state.label})'
+            suffix = f' (at state {self.state_label(state)})'
         else:
             suffix = ''
             if self.sdfg.number_of_nodes() >= 1:
@@ -1026,15 +1057,28 @@ class InvalidSDFGInterstateEdgeError(InvalidSDFGError):
     def to_json(self):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, isedge_id=self.edge_id)
 
+    def resolve_edge(self):
+        """The inter-state edge ``edge_id`` refers to, or ``None``. Same caveat as
+        :meth:`InvalidSDFGError.resolve_block`: the id indexes the containing control flow region."""
+        if self.edge_id is None:
+            return None
+        edges = self.sdfg.edges()
+        if not 0 <= self.edge_id < len(edges):
+            return None
+        return edges[self.edge_id]
+
     def __str__(self):
-        if self.edge_id is not None:
-            e = self.sdfg.edges()[self.edge_id]
+        e = self.resolve_edge()
+        if e is not None:
             edgestr = ' (at edge %s -> %s)' % (
                 str(e.src),
                 str(e.dst),
             )
             locinfo_src = self._getlineinfo(e.src)
             locinfo_dst = self._getlineinfo(e.dst)
+        elif self.edge_id is not None:
+            edgestr = f' (at edge {self.unresolved("interstate edge", self.edge_id)})'
+            locinfo_src = locinfo_dst = ''
         else:
             edgestr = ''
             locinfo_src = locinfo_dst = ''
@@ -1072,18 +1116,29 @@ class InvalidSDFGNodeError(InvalidSDFGError):
     def to_json(self):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, node_id=self.node_id)
 
-    def __str__(self):
-        state = self.sdfg.node(self.state_id)
-        locinfo = ''
+    def resolve_node(self, state):
+        """The node ``node_id`` refers to inside ``state``, or ``None`` when it does not resolve --
+        the node may have been removed from the graph since the error rose."""
+        if state is None or self.node_id is None:
+            return None
+        nodes = state.nodes()
+        if not 0 <= self.node_id < len(nodes):
+            return None
+        return nodes[self.node_id]
 
-        if self.node_id is not None:
-            from dace.sdfg.nodes import Node
-            node: Node = state.node(self.node_id)
-            nodestr = f', node {node}'
-            locinfo = self._getlineinfo(node)
-        else:
+    def __str__(self):
+        state = self.resolve_state()
+        node = self.resolve_node(state)
+
+        if self.node_id is None:
             nodestr = ''
             locinfo = self._getlineinfo(state)
+        elif node is None:
+            nodestr = f', node {self.unresolved("node", self.node_id)}'
+            locinfo = self._getlineinfo(state)
+        else:
+            nodestr = f', node {node}'
+            locinfo = self._getlineinfo(node)
 
         if locinfo:
             locinfo = '\nOriginating from source code at ' + locinfo
@@ -1091,7 +1146,7 @@ class InvalidSDFGNodeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {state.label}{nodestr}){locinfo}'
+        return f'{self.message} (at state {self.state_label(state)}{nodestr}){locinfo}'
 
 
 class NodeNotExpandedError(InvalidSDFGNodeError):
@@ -1117,11 +1172,27 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
     def to_json(self):
         return dict(message=self.message, cfg_id=self.sdfg.cfg_id, state_id=self.state_id, edge_id=self.edge_id)
 
-    def __str__(self):
-        state = self.sdfg.node(self.state_id)
+    def resolve_edge(self, state):
+        """The dataflow edge ``edge_id`` refers to inside ``state``, or ``None`` when it does not
+        resolve -- the edge may have been removed from the graph since the error rose."""
+        if state is None or self.edge_id is None:
+            return None
+        edges = state.edges()
+        if not 0 <= self.edge_id < len(edges):
+            return None
+        return edges[self.edge_id]
 
-        if self.edge_id is not None:
-            e = state.edges()[self.edge_id]
+    def __str__(self):
+        state = self.resolve_state()
+        e = self.resolve_edge(state)
+
+        if self.edge_id is None:
+            edgestr = ''
+            locinfo = self._getlineinfo(state)
+        elif e is None:
+            edgestr = f', edge {self.unresolved("edge", self.edge_id)}'
+            locinfo = self._getlineinfo(state)
+        else:
             edgestr = ", edge %s (%s:%s -> %s:%s)" % (
                 str(e.data),
                 str(e.src),
@@ -1130,9 +1201,6 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
                 e.dst_conn,
             )
             locinfo = self._getlineinfo(e.data)
-        else:
-            edgestr = ''
-            locinfo = self._getlineinfo(state)
 
         if locinfo:
             locinfo = '\nOriginating from source code at ' + locinfo
@@ -1140,7 +1208,7 @@ class InvalidSDFGEdgeError(InvalidSDFGError):
         if self.path:
             locinfo += f'\nInvalid SDFG saved for inspection in {os.path.abspath(self.path)}'
 
-        return f'{self.message} (at state {state.label}{edgestr}){locinfo}'
+        return f'{self.message} (at state {self.state_label(state)}{edgestr}){locinfo}'
 
 
 def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
