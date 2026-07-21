@@ -23,7 +23,7 @@ from dace.config import Config
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
-from dace.codegen import compiled_sdfg as csd
+from dace.codegen import ctypes_compiled_sdfg as csd
 from dace.codegen import nanobind_bindings
 from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 from dace.codegen.target import make_absolute

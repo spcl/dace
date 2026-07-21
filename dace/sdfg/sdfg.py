@@ -2519,7 +2519,7 @@ class SDFG(ControlFlowRegion):
         Returns `False` if the file does not exist.
         """
         # Avoid import loops
-        from dace.codegen import compiled_sdfg as cs, compiler
+        from dace.codegen import ctypes_compiled_sdfg as cs, compiler
 
         # On the nanobind path, "loaded" means the module name is taken in
         # sys.modules: extension modules cannot be unloaded or re-imported, so
