@@ -1433,7 +1433,7 @@ class CPUCodeGen(TargetCodeGenerator):
                             state_id,
                             [src_node, dst_node],
                         )
-                    elif hasattr(src_nodedesc, "src"):  # ArrayStreamView
+                    elif hasattr(src_nodedesc, "src"):  # Array-stream view, ``src`` set by is_array_stream_view
                         stream.write(
                             "{s}.push({arr});".format(s=self.ptr(dst_node.data, dst_nodedesc, sdfg),
                                                       arr=self.ptr(src_nodedesc.src, sdfg.arrays[src_nodedesc.src],

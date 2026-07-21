@@ -135,25 +135,6 @@ def validate_control_flow_region(sdfg: 'SDFG',
                     f'variables {also_assigned}, which are also modified in the same '
                     'edge.', sdfg, eid)
 
-        # A LoopRegion's iterator is mutated by the LoopRegion itself
-        # (init_expr / update_expr); writing to it from an arbitrary
-        # interstate edge inside the body would race with the loop
-        # machinery and break the SSA invariant the SSA pass relies on.
-        # Reject any assignment whose LHS is the enclosing LoopRegion's
-        # loop variable.  Use the generic ``InvalidSDFGError`` rather
-        # than ``InvalidSDFGInterstateEdgeError`` so the message renders
-        # cleanly -- the latter looks the edge up via
-        # ``sdfg.edges()[edge_id]`` which can't find region-internal
-        # edges.
-        if isinstance(region, LoopRegion) and region.loop_variable:
-            if region.loop_variable in edge.data.assignments:
-                raise InvalidSDFGError(
-                    f'Loop iterator "{region.loop_variable}" must not appear on '
-                    f'the LHS of an interstate-edge assignment inside its own '
-                    f'LoopRegion "{region.label}".  The LoopRegion already '
-                    'owns the iterator update via init_expr / update_expr; '
-                    'mutating it elsewhere races with that machinery.', sdfg, None)
-
         # Add edge symbols into defined symbols
         symbols.update(issyms)
 
@@ -230,7 +211,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
     # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
 
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
@@ -444,12 +425,10 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
 
-    # Obtain whether we are already in an accelerator context ('context' is a dict, so not hasattr)
+    # Obtain whether we are already in an accelerator context. ``is_in_scope`` ignores the state
+    # when the node is None, so the value validate_sdfg threaded down is the same one.
     if 'in_gpu' not in context:
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
-
-    # Hoisted out of the per-edge loop: the config cannot change mid-validation
-    validate_undefs = Config.get_bool('experimental', 'validate_undefs')
 
     # Reference check
     if id(state) in references:
@@ -857,7 +836,7 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                         raise InvalidSDFGEdgeError("Memlet other_subset out-of-bounds", sdfg, state_id, eid)
 
             # Test subset and other_subset for undefined symbols
-            if validate_undefs:
+            if Config.get_bool('experimental', 'validate_undefs'):
                 # TODO: Traverse by scopes and accumulate data
                 defined_symbols = state.symbols_defined_at(e.dst)
                 undefs = (e.data.subset.free_symbols - set(defined_symbols.keys()))
@@ -894,14 +873,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                          for oe in state.out_edges(dst_node)}):
                         pass
                 else:
-                    if isinstance(dst_node, nd.Tasklet) and len(dst_node.in_connectors) == 0 and len(
-                            dst_node.out_connectors) == 0:
-                        # Tasklets with no input or output connector -> sync tasklet -> OK
-                        pass
-                    else:
-                        raise InvalidSDFGEdgeError(
-                            f"Memlet creates an invalid path (sink node {dst_node}"
-                            " should be a data node)", sdfg, state_id, eid)
+                    raise InvalidSDFGEdgeError(
+                        f"Memlet creates an invalid path (sink node {dst_node}"
+                        " should be a data node)", sdfg, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
@@ -917,25 +891,21 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     eid,
                 )
 
-        # Verify that source and destination subsets contain the same number of
-        # elements. The check only applies when BOTH endpoints are ``AccessNode``s
-        # backed by arrays (so ``.data`` and ``.veclen`` are meaningful); if either
-        # side is a ``Stream`` access node the volumes legitimately differ.
-        if (not e.data.allow_oob and e.data.other_subset is not None and isinstance(src_node, nd.AccessNode)
-                and isinstance(dst_node, nd.AccessNode) and not isinstance(sdfg.arrays[src_node.data], dt.Stream)
-                and not isinstance(sdfg.arrays[dst_node.data], dt.Stream)):
+        # Verify that source and destination subsets contain the same
+        # number of elements
+        if not e.data.allow_oob and e.data.other_subset is not None and not (
+            (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
+            (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
             src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):
                 error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
                 # NOTE: Make an exception for Views and reference sets
                 from dace.sdfg import utils
-                if (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.View)
-                        and utils.get_view_edge(state, src_node) is e):
+                if (isinstance(sdfg.arrays[src_node.data], dt.View) and utils.get_view_edge(state, src_node) is e):
                     warnings.warn(error.message)
                     continue
-                if (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.View)
-                        and utils.get_view_edge(state, dst_node) is e):
+                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and utils.get_view_edge(state, dst_node) is e):
                     warnings.warn(error.message)
                     continue
                 if e.dst_conn == 'set':
@@ -970,14 +940,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     if same_or_unreachable_nodes and no_wcr:
                         subsets_intersect = subsets.intersects(writes[i]['subset'], writes[j]['subset'])
                         if subsets_intersect:
-                            warnings.warn(
-                                f'Memlet range overlap while writing to "{node_label}" in state "{state.label}"')
+                            warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
             # Check read-write data races.
             for write in writes:
                 for read in reads:
                     if (not nx.has_path(state.nx, read['node'], write['node'])
                             and subsets.intersects(write['subset'], read['subset'])):
-                        warnings.warn(f'Memlet range overlap while writing to "{node_label}" in state "{state.label}"')
+                        warnings.warn(f'Memlet range overlap while writing to "{node}" in state "{state.label}"')
 
     ########################################
 

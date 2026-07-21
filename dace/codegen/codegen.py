@@ -128,13 +128,15 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
                         frame.targets.add(tgt)
 
         # Instrumentation-related query
-        if hasattr(node, 'symbol_instrument'):
+        if isinstance(node, SDFGState):
             disp.instrumentation[node.symbol_instrument] = provider_mapping[node.symbol_instrument]
-        if hasattr(node, 'instrument'):
+        # MapEntry and ConsumeEntry forward ``instrument`` to their Map/Consume object
+        if isinstance(node, (SDFGState, dace.nodes.AccessNode, dace.nodes.Tasklet, dace.nodes.NestedSDFG,
+                             dace.nodes.MapEntry, dace.nodes.ConsumeEntry)):
             disp.instrumentation[node.instrument] = provider_mapping[node.instrument]
-        elif hasattr(node, 'consume'):
+        elif isinstance(node, dace.nodes.ConsumeExit):
             disp.instrumentation[node.consume.instrument] = provider_mapping[node.consume.instrument]
-        elif hasattr(node, 'map'):
+        elif isinstance(node, dace.nodes.MapExit):
             disp.instrumentation[node.map.instrument] = provider_mapping[node.map.instrument]
 
     if sdfg.instrument != dtypes.InstrumentationType.No_Instrumentation:

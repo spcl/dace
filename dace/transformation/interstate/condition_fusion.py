@@ -1,67 +1,11 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
 import copy
-import sympy
-from dace import sdfg as sd, properties, symbolic
+from dace import sdfg as sd, properties
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, ConditionalBlock
 from dace.transformation import transformation as xf
-
-
-def _flatten_and(expr: sympy.Basic) -> list:
-    """Collect all conjuncts of a (possibly nested) conjunction, flattened.
-
-    Accepts dace's own ``AND`` operator as well as ``sympy.And``.
-
-    :param expr: A symbolic expression, conjunction or otherwise.
-    :returns: The flattened conjuncts (the expression itself if not a conjunction).
-    """
-    func = getattr(expr, 'func', None)
-    if isinstance(expr, sympy.And) or getattr(func, '__name__', '') == 'AND':
-        res = []
-        for arg in expr.args:
-            res.extend(_flatten_and(arg))
-        return res
-    return [expr]
-
-
-def _simplify_conjunction(cond_str: str) -> str:
-    """Minimal equivalent of a conjunction condition string.
-
-    The branch-combination cartesian product builds ``(c1) and (c2)``
-    chains. Returns ``'False'`` when the conjunction is a contradiction (an
-    atom and its negation are both present -- an unsatisfiable cross-term),
-    the de-duplicated form when a conjunct repeats (identical fused guards
-    yield ``(c) and (c)``), or the original string when nothing simplifies.
-
-    :param cond_str: The branch condition as a Python expression string.
-    :returns: The simplified condition string (or ``'False'``).
-    """
-    try:
-        expr = symbolic.pystr_to_symbolic(cond_str)
-    except Exception:
-        return cond_str
-    conjuncts = _flatten_and(expr)
-    if len(conjuncts) <= 1:
-        return cond_str
-    for i, ci in enumerate(conjuncts):
-        neg = sympy.Not(ci)
-        if any(j != i and neg == cj for j, cj in enumerate(conjuncts)):
-            return 'False'
-    uniq = []
-    for c in conjuncts:
-        if not any(c == u for u in uniq):
-            uniq.append(c)
-    if len(uniq) == len(conjuncts):
-        return cond_str
-    # Reconstruct via ``symstr`` rather than ``str``: a subscripted guard read
-    # (``g[i]``) prints under sympy ``str`` as the internal ``Subscript(g, i)``
-    # function form, which the codegen cannot compile. ``symstr`` with the
-    # accessed container names renders it back to ``g[i]``. ``symstr`` already
-    # parenthesizes each non-atomic conjunct.
-    arrnames = frozenset().union(*(symbolic.arrays(u) for u in uniq))
-    return ' and '.join(symbolic.symstr(u, arrnames) for u in uniq)
 
 
 @properties.make_properties
@@ -117,7 +61,7 @@ class ConditionFusion(xf.MultiStateTransformation):
                 return False
 
             parent_cfg = self.cblck1.parent_graph
-            if not hasattr(parent_cfg, "parent_graph"):
+            if parent_cfg is None:
                 return False
             parent_cfg = parent_cfg.parent_graph
             if not isinstance(parent_cfg, ConditionalBlock):
@@ -228,19 +172,6 @@ class ConditionFusion(xf.MultiStateTransformation):
             outer_cfg.add_edge(cblck1, e.dst, copy.deepcopy(e.data))
         outer_cfg.remove_node(cblck2)
 
-        # Simplify the fused branch conditions: drop a branch whose
-        # condition is an unsatisfiable cartesian cross-term, and collapse a
-        # redundant ``(c) and (c)`` from identical fused guards to the
-        # minimal predicate. Keeps at least one branch.
-        for cnd, cfg in list(cblck1.branches):
-            if cnd is None or len(cblck1.branches) <= 1:
-                continue
-            simplified = _simplify_conjunction(cnd.as_string)
-            if simplified == 'False':
-                cblck1.remove_branch(cfg)
-            elif simplified != cnd.as_string:
-                cnd.as_string = simplified
-
         # If a branch is empty (single empty state), remove branch (implicit else)
         implicit_else = False
         for _, cfg in cblck1.branches:
@@ -260,17 +191,8 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents. ``set_nested_sdfg_parent_references`` walks every
-        # NestedSDFG and sets ``node.sdfg.parent_sdfg`` on the *inner* SDFGs;
-        # the follow-up loop repairs ``.sdfg`` on the OUTER container blocks
-        # (``SDFGState`` / ``ControlFlowRegion`` / ``ConditionalBlock``) whose
-        # ``.sdfg`` attribute names the containing SDFG. The
-        # ``ControlFlowBlock`` isinstance check replaces the previous
-        # ``hasattr(node, "sdfg")`` -- ``hasattr`` also matched ``NestedSDFG``
-        # nodes, whose ``.sdfg`` is the *inner* SDFG (an
-        # ``SDFGReferenceProperty`` with a setter), so the assignment
-        # overwrote the inner-SDFG slot with the outer container and produced
-        # a graph cycle that infinite-recurses ``all_nodes_recursive``.
+        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
+        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):
@@ -284,7 +206,7 @@ class ConditionFusion(xf.MultiStateTransformation):
         assert len(nbranch.successors(cblck1)) == 0
 
         # Check if cblck1 is nested in another conditional block
-        assert hasattr(nbranch, "parent_graph")
+        assert nbranch is not None
         assert isinstance(nbranch.parent_graph, ConditionalBlock)
         cblckp = nbranch.parent_graph
 
@@ -356,11 +278,8 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents. The ``ControlFlowBlock`` isinstance check (not
-        # ``hasattr(node, "sdfg")``) is required so ``NestedSDFG`` nodes --
-        # whose ``.sdfg`` is the *inner* SDFG -- are skipped. Writing the
-        # outer SDFG into a NestedSDFG's inner-SDFG slot creates a graph
-        # cycle that infinite-recurses ``all_nodes_recursive``.
+        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
+        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
             if isinstance(node, ControlFlowBlock):

@@ -6,6 +6,7 @@ API for SDFG analysis and manipulation Passes, as well as Pipelines that contain
 from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
+import inspect
 from enum import Flag, auto
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
@@ -69,6 +70,9 @@ class Pass:
     """
 
     CATEGORY: str = 'Helper'
+
+    #: Set to True by the ``dace.transformation.explicit_cf_compatible`` decorator
+    __explicit_cf_compatible__: bool = False
 
     def depends_on(self) -> List[Union[Type['Pass'], 'Pass']]:
         """
@@ -144,7 +148,7 @@ class Pass:
 
         # Ignore abstract classes.
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+        result = set(sc for sc in result if not inspect.isabstract(sc))
 
         return result
 

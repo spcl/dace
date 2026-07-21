@@ -343,7 +343,7 @@ def negate_expr(node):
     from dace.properties import CodeBlock  # Avoid import loop
     if isinstance(node, CodeBlock):
         node = node.code
-    if hasattr(node, "__len__"):
+    if isinstance(node, (list, tuple)):
         if len(node) > 1:
             raise ValueError("negate_expr only expects "
                              "single expressions, got: {}".format(node))
@@ -379,7 +379,7 @@ def and_expr(node_a, node_b):
         node_a = node_a.code
         node_b = node_b.code
 
-    if hasattr(node_a, "__len__"):
+    if isinstance(node_a, (list, tuple)):
         if len(node_a) > 1:
             raise ValueError("and_expr only expects single expressions, got: {}".format(node_a))
         if len(node_b) > 1:
