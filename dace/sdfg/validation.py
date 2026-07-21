@@ -425,7 +425,8 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
 
-    # Obtain whether we are already in an accelerator context ('context' is a dict, so not hasattr)
+    # Obtain whether we are already in an accelerator context. ``is_in_scope`` ignores the state
+    # when the node is None, so the value validate_sdfg threaded down is the same one.
     if 'in_gpu' not in context:
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
 
