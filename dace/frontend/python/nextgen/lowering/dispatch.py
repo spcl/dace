@@ -297,11 +297,17 @@ def _reshape_operands(call: ast.Call, qualname: str) -> Tuple[Optional[ast.expr]
     as-is (not flattened) — ANF hoists a literal shape tuple to a name bound
     to a static sequence, so :func:`_reshape_shape` resolves through
     inference rather than requiring an inline ``ast.Tuple``/``ast.List``.
+
+    The ``numpy.reshape`` form is checked first: its ``call.func`` is also an
+    ``ast.Attribute`` ending in ``.reshape`` (``Attribute(value=Name('numpy'),
+    attr='reshape')``), so checking the method form first would misparse it as
+    ``<numpy module>.reshape(A, s)`` — the module as the base array and
+    ``(A, s)`` as the shape arguments.
     """
-    if isinstance(call.func, ast.Attribute) and call.func.attr == 'reshape' and not call.keywords:
-        return call.func.value, call.args
     if qualname == 'numpy.reshape' and not call.keywords and call.args:
         return call.args[0], call.args[1:]
+    if isinstance(call.func, ast.Attribute) and call.func.attr == 'reshape' and not call.keywords:
+        return call.func.value, call.args
     return None, []
 
 

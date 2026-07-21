@@ -249,18 +249,51 @@ def test_hstack_list_of_containers_execution():
 
 
 def test_nonviable_replacement_falls_back():
-    """numpy.reshape has both registrations but records view bindings, which
-    deferred expansion cannot honor: the build-time viability trial rejects it
-    and the call stays a callback (never an expansion-time crash)."""
+    """A well-formed, statically-resolvable ``numpy.reshape`` now takes the
+    dedicated frontend view path (:func:`dispatch._lower_reshape_call`)
+    rather than deferred replacement expansion — see
+    ``test_reshape_view_execution`` below. An element-count mismatch isn't a
+    view the dedicated path can construct, so it falls through to the
+    general registry-call path: ``numpy.reshape`` has both registrations
+    there too, but the replacement records a view binding, which deferred
+    expansion cannot honor. The build-time viability trial rejects it and
+    the call stays a callback (never an expansion-time crash)."""
 
     @dace.program
     def prog(A: dace.float64[6]):
-        b = np.reshape(A, (2, 3))
+        b = np.reshape(A, (2, 4))  # 8 != 6: not a valid reshape
         return b + 1.0
 
     tree = nextgen.parse_program(prog)
     assert not _nodes_of_type(tree, tn.ReplacementCallNode)
     assert _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_reshape_view_execution():
+    """Both ``A.reshape(shape)`` and ``numpy.reshape(A, shape)`` resolve
+    through the dedicated frontend view path (no callback, no
+    ReplacementCallNode) and produce identical, correct results."""
+
+    @dace.program
+    def prog_method(A: dace.float64[6]):
+        b = A.reshape((2, 3))
+        return b + 1.0
+
+    @dace.program
+    def prog_function(A: dace.float64[6]):
+        b = np.reshape(A, (2, 3))
+        return b + 1.0
+
+    A = np.random.rand(6)
+    expected = np.reshape(A, (2, 3)) + 1.0
+
+    for prog in (prog_method, prog_function):
+        tree = nextgen.parse_program(prog)
+        assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+        assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+        assert _nodes_of_type(tree, tn.ViewNode)
+        func = tree.as_sdfg().compile()
+        assert np.allclose(func(A=A), expected)
 
 
 if __name__ == '__main__':
@@ -280,3 +313,4 @@ if __name__ == '__main__':
     test_concatenate_sequence_of_containers_execution()
     test_hstack_list_of_containers_execution()
     test_nonviable_replacement_falls_back()
+    test_reshape_view_execution()
