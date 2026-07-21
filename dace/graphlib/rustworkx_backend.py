@@ -109,7 +109,10 @@ class NodeView:
     def __call__(self, data=False):
         if not data:
             return self._list()
-        return [(n, self._handle._rx.get_node_data(self._handle._index.index_of(n))) for n in self._list()]
+        # bulk-fetch all payloads once (handle.node_payloads_by_index) instead of a per-node
+        # get_node_data round-trip; idx_to_obj order is exactly _list's node order.
+        payloads = self._handle.node_payloads_by_index()
+        return [(node, payloads[idx]) for idx, node in self._handle._index.idx_to_obj.items()]
 
     def __iter__(self):
         return iter(self._list())
@@ -152,10 +155,12 @@ class EdgeView:
         return result
 
     def __call__(self, data=False):
-        pairs = self._list()
         if not data:
-            return pairs
-        return [(u, v, self._handle.get_edge_payload(u, v)) for u, v in pairs]
+            return self._list()
+        # read each edge's payload inline from the same out_edges pass (handle.edges_with_payload)
+        # rather than a per-edge get_edge_payload round-trip -- also keeps each parallel multigraph
+        # edge's own payload, which get_edge_payload/get_edge_data collapse to a single one.
+        return list(self._handle.edges_with_payload())
 
     def __iter__(self):
         return iter(self._list())
@@ -256,6 +261,27 @@ class RustworkxGraphHandle:
     def get_edge_payload(self, u, v):
         return self._rx.get_edge_data(self._index.index_of(u), self._index.index_of(v))
 
+    # -- bulk accessors: one native rustworkx call for the whole node/edge set, so rebuild/dump
+    # loops don't pay a per-element index_of + get_node_data / get_edge_payload round-trip into rust
+    # (the antipattern that made __deepcopy__ slower than plain networkx). Shared by __deepcopy__,
+    # reverse, to_networkx and the data=True views below.
+
+    def node_payloads_by_index(self):
+        """{index: payload} for every node, from one bulk rx.node_indices()/rx.nodes() pair (same
+        order). Zip against idx_to_obj (node objects, in insertion order) to recover (node, payload)
+        -- the index keys are NOT ascending after remove/re-add, hence a map rather than a bare zip."""
+        return dict(zip(self._rx.node_indices(), self._rx.nodes()))
+
+    def edges_with_payload(self):
+        """(u, v, payload) for every edge, in real networkx .edges() order (grouped by source node
+        in insertion order, then that node's own edge-insertion order -- see EdgeView._list for why
+        the order is load-bearing). The payload comes straight from rx.out_edges, which already
+        carries it, so there's no second get_edge_payload round-trip per edge -- and each PARALLEL
+        multigraph edge keeps its own payload (get_edge_data returns just one of them for all)."""
+        for u_idx, u in self._index.idx_to_obj.items():
+            for _, v_idx, payload in reversed(list(self._rx.out_edges(u_idx))):
+                yield u, self._index.node_at(v_idx), payload
+
     @property
     def nodes(self):
         return NodeView(self)
@@ -297,10 +323,11 @@ class RustworkxGraphHandle:
         if not copy:
             raise NotImplementedError('RustworkxGraphHandle.reverse(copy=False) is not supported')
         result = RustworkxGraphHandle(multigraph=self.multigraph)
-        for node in self.nodes():
-            result.add_node(node, **self._rx.get_node_data(self._index.index_of(node)))
-        for u, v in self.edges():
-            result.add_edge(v, u, **self.get_edge_payload(u, v))
+        payloads = self.node_payloads_by_index()
+        for idx, node in self._index.idx_to_obj.items():
+            result.add_node(node, **payloads[idx])
+        for u, v, payload in self.edges_with_payload():
+            result.add_edge(v, u, **payload)
         return result
 
     def number_of_nodes(self):
@@ -332,23 +359,18 @@ class RustworkxGraphHandle:
 
     def __deepcopy__(self, memo):
         result = RustworkxGraphHandle(multigraph=self.multigraph)
-        # One bulk pull of every node payload (rx.nodes()) keyed by index (rx.node_indices(), same
-        # order), instead of the old per-node index_of + get_node_data round-trip into rust. Walk
-        # idx_to_obj in its own insertion order so the copy's node order stays faithful (see
-        # NodeView._list); index keys are NOT ascending after remove/re-add, hence the idx->payload
-        # map rather than a bare zip. copy.deepcopy(..., memo) is still called on every node and
-        # payload (the unavoidable, load-bearing part -- shared memo keeps cross-references identical).
-        idx_to_payload = dict(zip(self._rx.node_indices(), self._rx.nodes()))
+        # Bulk-fetch node payloads and read edge payloads inline (see node_payloads_by_index /
+        # edges_with_payload) instead of the old per-node index_of + get_node_data and per-edge
+        # get_edge_payload round-trips into rust. Walk idx_to_obj in insertion order so the copy's
+        # node/edge order stays faithful (see NodeView._list / EdgeView._list). copy.deepcopy(...,
+        # memo) is still called on every node and payload -- the unavoidable, load-bearing part: the
+        # shared memo keeps cross-references (a node shared by two edges, or by some outer structure
+        # deepcopied in the same sweep, e.g. SDFG.__deepcopy__) resolved to the identical copy.
+        payloads = self.node_payloads_by_index()
         for idx, node in self._index.idx_to_obj.items():
-            result.add_node(copy.deepcopy(node, memo), **copy.deepcopy(idx_to_payload[idx], memo))
-        # rx.out_edges already carries each edge's payload as its third tuple element, so read it
-        # inline instead of a second get_edge_payload round-trip per edge -- and, unlike
-        # get_edge_data, this keeps each PARALLEL edge's own payload in a multigraph. Same per-source
-        # reversed order as EdgeView._list (load-bearing: recovers networkx insertion order).
-        for u_idx, u in self._index.idx_to_obj.items():
-            for _, v_idx, payload in reversed(list(self._rx.out_edges(u_idx))):
-                v = self._index.node_at(v_idx)
-                result.add_edge(copy.deepcopy(u, memo), copy.deepcopy(v, memo), **copy.deepcopy(payload, memo))
+            result.add_node(copy.deepcopy(node, memo), **copy.deepcopy(payloads[idx], memo))
+        for u, v, payload in self.edges_with_payload():
+            result.add_edge(copy.deepcopy(u, memo), copy.deepcopy(v, memo), **copy.deepcopy(payload, memo))
         return result
 
 
@@ -405,10 +427,11 @@ def to_networkx(G):
     """
     import networkx
     result = networkx.MultiDiGraph() if G.multigraph else networkx.DiGraph()
-    for node in G.nodes():
-        result.add_node(node, **G._rx.get_node_data(G._index.index_of(node)))
-    for u, v in G.edges():
-        result.add_edge(u, v, **G.get_edge_payload(u, v))
+    payloads = G.node_payloads_by_index()
+    for idx, node in G._index.idx_to_obj.items():
+        result.add_node(node, **payloads[idx])
+    for u, v, payload in G.edges_with_payload():
+        result.add_edge(u, v, **payload)
     return result
 
 

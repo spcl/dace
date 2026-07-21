@@ -106,8 +106,9 @@ def get_node_attributes(G, name, default=None):
     graph or a RustworkxGraphHandle by using each one's own node-payload access."""
     if isinstance(G, rustworkx_backend.RustworkxGraphHandle):
         result = {}
-        for node in G.nodes():
-            attrs = G._rx.get_node_data(G._index.index_of(node))
+        payloads = G.node_payloads_by_index()  # one bulk fetch, not a per-node get_node_data round-trip
+        for idx, node in G._index.idx_to_obj.items():
+            attrs = payloads[idx]
             if name in attrs:
                 result[node] = attrs[name]
         return result

@@ -468,6 +468,23 @@ def test_multidigraph_parallel_edges(backend):
         assert gl.has_path(G, 'a', 'b')
 
 
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_multidigraph_edges_data_keeps_each_parallel_edge_payload(backend):
+    """ edges(data=True) on a multigraph must return EACH parallel edge's own payload (matching real
+        networkx.MultiDiGraph), not one payload collapsed across all parallels -- reading it inline
+        from out_edges instead of a per-edge get_edge_data lookup is what keeps them distinct. """
+    with gl.set_default_backend(backend):
+        G = gl.MultiDiGraph()
+        G.add_edge('a', 'b', label='first')
+        G.add_edge('a', 'b', label='second')
+        G.add_edge('a', 'c', label='third')
+
+        labels = [d['label'] for _, _, d in G.edges(data=True)]
+        assert sorted(labels) == ['first', 'second', 'third']
+        ab_labels = sorted(d['label'] for u, v, d in G.edges(data=True) if (u, v) == ('a', 'b'))
+        assert ab_labels == ['first', 'second']
+
+
 def _build_ordering_graph():
     G = gl.DiGraph()
     for n in ['n0', 'n1', 'n2', 'n3', 'n4', 'n5']:
