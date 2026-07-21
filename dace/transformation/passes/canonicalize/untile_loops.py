@@ -75,6 +75,7 @@ import sympy
 
 import dace
 from dace import SDFG, properties, symbolic
+from dace.sdfg import nodes
 from dace.sdfg.graph import NodeNotFoundError
 from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
@@ -84,6 +85,17 @@ from dace.transformation.passes.canonicalize.tracked_assumptions import record_a
 
 #: Prefix for the synthesised unit-stride iterator that replaces the (i, ii) pair.
 _UNTILE_PREFIX = '_untile_k_'
+
+
+def count_applied(result) -> int:
+    """Number of transformations a ``PatternMatchAndApplyRepeated`` run applied.
+
+    It returns ``{transformation name: [applied, ...]}``, or ``None`` when it matched nothing.
+    Callers need the count to report their own modification honestly.
+    """
+    if not result:
+        return 0
+    return sum(len(applied) for applied in result.values())
 
 
 def _next_id(sdfg: SDFG) -> int:
@@ -480,7 +492,7 @@ class UntileLoops(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def _maps_to_loops(self, sdfg: SDFG) -> None:
+    def _maps_to_loops(self, sdfg: SDFG) -> int:
         """Pre-round-trip step: lower every Map to a LoopRegion.
 
         Sequence:
@@ -504,29 +516,30 @@ class UntileLoops(ppl.Pass):
         from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
         from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
-        PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+        applied = count_applied(PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {}))
+        applied += count_applied(PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {}))
         # Sweep up any NSDFG wrappers that survived MapToForLoop's
         # inline_after step because they were Map-scoped at the time.
         # After all Maps are lifted they are no longer scoped, so a
         # fixpoint sweep flattens them.
         for _ in range(16):
-            before = sum(1 for n, _ in sdfg.all_nodes_recursive()
-                         if hasattr(n, "sdfg") and hasattr(n, "symbol_mapping"))
-            PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
-            PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {})
-            after = sum(1 for n, _ in sdfg.all_nodes_recursive() if hasattr(n, "sdfg") and hasattr(n, "symbol_mapping"))
+            before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
+            applied += count_applied(PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {}))
+            applied += count_applied(PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {}))
+            after = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
             if after >= before:
                 break
+        return applied
 
-    def _loops_back_to_maps(self, sdfg: SDFG) -> None:
+    def _loops_back_to_maps(self, sdfg: SDFG) -> int:
         """Post-round-trip step: re-lift every parallelizable LoopRegion
         to a Map and re-fuse adjacent uni-dim Maps."""
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(sdfg, {})
-        PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {})
+        applied = count_applied(PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(sdfg, {}))
+        applied += count_applied(PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {}))
+        return applied
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """Run the per-loop rewrite as a fixpoint over the SDFG.
@@ -539,8 +552,12 @@ class UntileLoops(ppl.Pass):
         progressively. Iteration cap = 1 + (loop count); once an
         iteration rewrites nothing we stop.
         """
+        # The round trip rewrites the graph even when no tile pair is found, so its edits have to
+        # be reported too -- returning None after lowering and re-lifting every map would tell the
+        # caller nothing changed and let it reuse stale analyses.
+        roundtrip = 0
         if self.map_roundtrip:
-            self._maps_to_loops(sdfg)
+            roundtrip += self._maps_to_loops(sdfg)
 
         total = 0
         # Safety cap: at most one rewrite per LoopRegion in the SDFG.
@@ -559,13 +576,17 @@ class UntileLoops(ppl.Pass):
             total += rewritten_this_pass
 
         if self.map_roundtrip:
-            self._loops_back_to_maps(sdfg)
+            roundtrip += self._loops_back_to_maps(sdfg)
         if total:
             # Propagate once, at the end of the pass -- the in-place iterator
             # rewrites above intentionally do not self-propagate per rewrite.
             from dace.sdfg.propagation import propagate_memlets_sdfg
             propagate_memlets_sdfg(sdfg)
-        return total or None
+        # ``total`` counts untiled loops; the round trip's edits do not add to that number, but
+        # they still mean "modified", hence 0 rather than None.
+        if total:
+            return total
+        return 0 if roundtrip else None
 
     def _try_untile(self, outer: LoopRegion, sdfg: SDFG) -> bool:
         # The outer must be ``for i in range(0, N, K)`` with a positive tile

@@ -18,7 +18,7 @@ from dace.transformation.passes.canonicalize.tracked_assumptions import record_a
 from dace.transformation.passes.canonicalize.untile_loops import (_audit_combined_access, _diff_is_zero,
                                                                   _intermediate_chain_clean, _iter_candidate_inners,
                                                                   _match_inner_case, _next_id, _tile_size,
-                                                                  _UNTILE_PREFIX)
+                                                                  _UNTILE_PREFIX, count_applied)
 
 
 @properties.make_properties
@@ -46,36 +46,39 @@ class UntileLoopsAndBlocks(ppl.Pass):
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
         return False
 
-    def _maps_to_loops(self, sdfg: SDFG) -> None:
+    def _maps_to_loops(self, sdfg: SDFG) -> int:
         """Mirrors UntileLoops._maps_to_loops."""
         from dace.transformation.dataflow.map_expansion import MapExpansion
         from dace.transformation.dataflow.map_for_loop import MapToForLoop
         from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
         from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {})
-        PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {})
+        applied = count_applied(PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {}))
+        applied += count_applied(PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {}))
         for _ in range(16):
-            before = sum(1 for n, _ in sdfg.all_nodes_recursive()
-                         if isinstance(n, dace.nodes.NestedSDFG))
-            PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {})
-            PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {})
+            before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
+            applied += count_applied(PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {}))
+            applied += count_applied(PatternMatchAndApplyRepeated([InlineMultistateSDFG()]).apply_pass(sdfg, {}))
             after = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
             if after >= before:
                 break
+        return applied
 
-    def _loops_back_to_maps(self, sdfg: SDFG) -> None:
+    def _loops_back_to_maps(self, sdfg: SDFG) -> int:
         """Mirrors UntileLoops._loops_back_to_maps."""
         from dace.transformation.dataflow.map_collapse import MapCollapse
         from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(sdfg, {})
-        PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {})
+        applied = count_applied(PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(sdfg, {}))
+        applied += count_applied(PatternMatchAndApplyRepeated([MapCollapse()]).apply_pass(sdfg, {}))
+        return applied
 
     def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
         """Fixpoint over the SDFG; each iteration collapses one tile pair (mirrors UntileLoops.apply_pass)."""
+        # The round trip rewrites the graph even with no tile pair found; report those edits too.
+        roundtrip = 0
         if self.map_roundtrip:
-            self._maps_to_loops(sdfg)
+            roundtrip += self._maps_to_loops(sdfg)
 
         total = 0
         max_iters = 1 + sum(1 for sd in sdfg.all_sdfgs_recursive()
@@ -93,11 +96,13 @@ class UntileLoopsAndBlocks(ppl.Pass):
             total += rewritten_this_pass
 
         if self.map_roundtrip:
-            self._loops_back_to_maps(sdfg)
+            roundtrip += self._loops_back_to_maps(sdfg)
         if total:
             from dace.sdfg.propagation import propagate_memlets_sdfg
             propagate_memlets_sdfg(sdfg)
-        return total or None
+        if total:
+            return total
+        return 0 if roundtrip else None
 
     # Blocked-access recognition (new part).
     def _free_syms(self, comp):
@@ -116,8 +121,7 @@ class UntileLoopsAndBlocks(ppl.Pass):
         return _diff_is_zero(lo, hi) and _diff_is_zero(stp, 1) and _diff_is_zero(lo, target)
 
     def _match_block_memlet(self, sdfg: SDFG, arr_name: str, ranges, outer_var: str, inner_var: str,
-                            K_expr: symbolic.SymbolicType,
-                            K_const: int) -> Optional[Tuple[List[bool], List[int]]]:
+                            K_expr: symbolic.SymbolicType, K_const: int) -> Optional[Tuple[List[bool], List[int]]]:
         """Returns (masks, factors) for UnblockDimensions if ranges is the case-A blocked access, else None."""
         if arr_name not in sdfg.arrays:
             return None
@@ -144,9 +148,8 @@ class UntileLoopsAndBlocks(ppl.Pass):
         factors = [1] * (rank - 2) + [K_const]
         return (masks, factors)
 
-    def _audit_case(self, inner: LoopRegion, outer_var: str, inner_var: str, case: str,
-                    K_expr: symbolic.SymbolicType, K_const: Optional[int],
-                    sdfg: SDFG) -> Optional[Dict[str, Tuple[List[bool], List[int]]]]:
+    def _audit_case(self, inner: LoopRegion, outer_var: str, inner_var: str, case: str, K_expr: symbolic.SymbolicType,
+                    K_const: Optional[int], sdfg: SDFG) -> Optional[Dict[str, Tuple[List[bool], List[int]]]]:
         """Blocked-aware body audit; returns None to refuse, else {array: (masks, factors)} to unblock before untile."""
         if case == 'B':
             return {} if _audit_combined_access(inner, outer_var, inner_var, case) else None
