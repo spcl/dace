@@ -721,13 +721,37 @@ class RustworkxBackend:
         # -- translated here so `except nx.NetworkXUnfeasible:` call sites (e.g. dace/library.py's
         # dependency-graph sort) work identically either backend, including when the cycle is
         # only discovered partway through consuming the generator.
-        import rustworkx
         G = _coerce(G)
-        try:
-            for i in rustworkx.topological_sort(G._rx):
-                yield G._index.node_at(i)
-        except rustworkx.DAGHasCycle as e:
-            raise NetworkXUnfeasible(str(e)) from e
+        # Deliberately Kahn-by-generation in Python rather than rustworkx.topological_sort: a DAG
+        # has many valid topological orders, and rustworkx picks a different one than networkx
+        # (155/500 random DAGs differ). That is not merely cosmetic -- state_fusion.py and
+        # sdfg_nesting.py select a node with `next(n for n in order if ...)`, so a different order
+        # picks a different node and builds a structurally different SDFG. Reproducing networkx's
+        # own algorithm (topological_generations: repeatedly emit the current zero-in-degree
+        # frontier, in discovery order) makes both backends agree exactly. rustworkx's
+        # topological_generations is NOT enough -- it orders within a generation by node index
+        # rather than discovery order. Both are O(V+E); this one just runs in Python.
+        in_degree = {}
+        frontier = []
+        for node in G.nodes():
+            degree = G.in_degree(node)
+            if degree:
+                in_degree[node] = degree
+            else:
+                frontier.append(node)
+        emitted = 0
+        while frontier:
+            generation, frontier = frontier, []
+            for node in generation:
+                emitted += 1
+                yield node
+                for child in G.successors(node):
+                    in_degree[child] -= 1
+                    if not in_degree[child]:
+                        del in_degree[child]
+                        frontier.append(child)
+        if emitted != G.number_of_nodes():
+            raise NetworkXUnfeasible('Graph contains a cycle or graph changed during iteration')
 
     def simple_cycles(self, G):
         # lazy generator, matching real networkx.simple_cycles.

@@ -601,3 +601,36 @@ def test_node_accessors_raise_networkx_error_for_missing_node(backend):
         for accessor in ('successors', 'predecessors', 'neighbors'):
             with pytest.raises(gl.NetworkXError):
                 list(getattr(G, accessor)('missing'))
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_topological_sort_order_matches_real_networkx(backend):
+    """ A DAG has many valid topological orders, and rustworkx's own topological_sort picks a
+        different one than networkx (155/500 random DAGs differed). That is not cosmetic:
+        state_fusion.py and sdfg_nesting.py pick a node out of the order with
+        `next(n for n in order if ...)`, so a different order selects a different node and
+        yields a structurally different SDFG. Assert the exact sequence, not just validity --
+        a validity-only check (every edge u->v has index(u) < index(v)) passes under both and
+        is exactly what let this through before. """
+    import random
+
+    random.seed(11)
+    for _ in range(25):
+        size = random.randint(2, 12)
+        order = list(range(size))
+        random.shuffle(order)
+        edges = [(order[i], order[j]) for i in range(size) for j in range(i + 1, size) if random.random() < 0.3]
+        random.shuffle(edges)
+
+        def build():
+            G = gl.DiGraph()
+            for node in order:
+                G.add_node(node)
+            for u, v in edges:
+                G.add_edge(u, v)
+            return G
+
+        with gl.set_default_backend('networkx'):
+            expected = list(gl.topological_sort(build()))
+        with gl.set_default_backend(backend):
+            assert list(gl.topological_sort(build())) == expected
