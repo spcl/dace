@@ -18,32 +18,30 @@ import numpy as np
 from dace import symbolic
 
 
-def promote_size_scalars_in_shape(sdfg: SDFG, shape: Shape) -> None:
-    """Promote a size expression that was materialized as a size-1 descriptor and then used as an array
-    SHAPE (``np.empty(Nt + 1)`` -> the scalar ``Nt_plus_1`` reused symbolically) into an SDFG symbol.
-    Otherwise ``add_datadesc`` tries to ``add_symbol`` the like-named descriptor and raises. Scoped to
-    the shape's own symbols so a plain scalar argument (never used as a shape) is left untouched."""
-    names = set()
-    for extent in shape:
-        if isinstance(extent, Integral):
-            continue
-        expr = symbolic.pystr_to_symbolic(extent) if isinstance(extent, str) else extent
-        if isinstance(expr, sympy.Basic):
-            names |= {str(s) for s in expr.free_symbols}
-    targets = {n for n in names if n in sdfg.arrays and n not in sdfg.symbols and sdfg.arrays[n].total_size == 1}
-    if not targets:
-        return
-    from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion, find_promotable_scalars
-    promotable = find_promotable_scalars(sdfg, transients_only=False)
-    not_promotable = targets - promotable
-    if not_promotable:
-        raise DaceSyntaxError(
-            None, None, f'Cannot use {sorted(not_promotable)} as an array shape: the like-named size '
-            f'descriptor is not promotable to a symbol.')
-    promo = ScalarToSymbolPromotion()
-    promo.transients_only = False
-    promo.ignore = promotable - targets  # promote ONLY the size scalars used in this shape
-    promo.apply_pass(sdfg, {})
+def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) -> Shape:
+    """
+    Rewrites a shape so that a size scalar used as an extent is read through a symbol.
+
+    A size computed in the program (``nt = Nt + 1; np.empty(nt)``) is a size-1 descriptor, but an
+    extent must be a symbol. One fresh symbol per shape keeps two arrays sized from the same
+    reassigned scalar from collapsing onto one value.
+
+    :param pv: The program visitor.
+    :param sdfg: The SDFG being built.
+    :param shape: The requested shape.
+    :return: The shape with scalar extents replaced by symbols.
+    """
+    resolved = [symbolic.pystr_to_symbolic(e) if isinstance(e, str) else e for e in shape]
+    names = [
+        n for n in symbolic.symlist(resolved)
+        if n in sdfg.arrays and n not in sdfg.symbols and sdfg.arrays[n].total_size == 1
+    ]
+    if not names:
+        return shape
+
+    # One symbol per distinct name; sorted() keeps the promotion states deterministic.
+    replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}
+    return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved]
 
 
 @oprepo.replaces('dace.define_local')
@@ -63,7 +61,7 @@ def _define_local_ex(pv: ProgramVisitor,
         if not isinstance(strides, (list, tuple)):
             strides = [strides]
         strides = [int(s) if isinstance(s, Integral) else s for s in strides]
-    promote_size_scalars_in_shape(sdfg, shape)
+    shape = promote_size_scalars_in_shape(pv, sdfg, shape)
     name = pv.get_target_name()
     name, _ = sdfg.add_transient(name,
                                  shape,
