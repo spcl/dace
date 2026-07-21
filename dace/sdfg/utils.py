@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
+import ast
 import collections
 import copy
 import warnings
@@ -8,6 +9,7 @@ import networkx as nx
 import time
 
 import dace.sdfg.nodes
+from dace.frontend.python import astutils
 from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
@@ -2636,16 +2638,17 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             if isinstance(e.dst, nd.Tasklet):
                 in_tasklet_name = e.dst_conn
                 if e.dst.code.language == dace.dtypes.Language.Python:
-                    import sympy
-                    lhs, rhs = e.dst.code.as_string.split("=")
-                    lhs = lhs.strip()
-                    rhs = rhs.strip()
-                    subs_rhs = str(sympy.pycode(dace.symbolic.SymExpr(rhs).subs({in_tasklet_name: scalar_val}))).strip()
-                    new_code = CodeBlock(code=f"{lhs} = {subs_rhs}", language=dace.dtypes.Language.Python)
-                    e.dst.code = new_code
+                    # Substitute directly on the tasklet AST. A sympy round-trip
+                    # (``pystr_to_symbolic`` -> ``subs`` -> ``pycode``) is lossy here: it prints
+                    # floats at 15 significant digits, so a float64 no longer round-trips
+                    # bit-exactly, and it folds integer quotients into ``Rational`` literals such
+                    # as ``(1 / 3)``, which the C++ backend then emits as integer division.
+                    replacer = astutils.ASTFindReplace({in_tasklet_name: str(scalar_val)})
+                    body = CodeBlock(e.dst.code.as_string, dace.dtypes.Language.Python).code
+                    new_body = [ast.fix_missing_locations(replacer.visit(stmt)) for stmt in body]
+                    e.dst.code = CodeBlock(code=new_body, language=dace.dtypes.Language.Python)
                 else:
-
-                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, scalar_val),
+                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, str(scalar_val)),
                                          language=e.dst.code.language)
                     e.dst.code = new_code
                 state.remove_edge(e)
