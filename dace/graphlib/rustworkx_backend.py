@@ -20,6 +20,9 @@ directed s-t max-flow/min-cut (handled in dace.graphlib.algorithms.flow.edmondsk
 reuses this same helper).
 """
 import copy
+import functools
+
+import networkx
 
 from networkx.exception import NetworkXError, NetworkXNoCycle, NetworkXNoPath, NetworkXUnfeasible, NodeNotFound
 
@@ -581,6 +584,36 @@ class RustworkxDiGraphMatcher:
             yield {self._G1._index.node_at(a): self._G2._index.node_at(b) for a, b in mapping.items()}
 
 
+def run_natively_on_networkx(networkx_func):
+    """For an algorithm whose own cost is O(V+E), reuse a real networkx graph as-is instead of
+    converting it to a temporary rustworkx one.
+
+    _coerce is itself O(V+E), but in Python-level FFI calls, whereas networkx's own traversals are
+    tuned and usually early-exit. Measured on a chain graph, the CONVERSION ALONE costs 4.7x
+    (V=3000) to 8.1x (V=200) what networkx's whole has_path call costs -- so for a linear
+    algorithm, coercing can never pay off, no matter how fast the Rust side is. Only super-linear
+    algorithms can amortize a conversion (all_simple_paths and simple_cycles are exponential, VF2
+    isomorphism likewise), and those keep coercing.
+
+    This only affects graphs that ARE already real networkx -- i.e. reached through an SDFG or
+    state's .nx/._nx, whose storage is real networkx unconditionally by design. A graph built
+    natively through graphlib.DiGraph() is a RustworkxGraphHandle and still runs fully in Rust,
+    with no conversion anywhere; that is where the backend's speedup actually comes from.
+    """
+
+    def decorator(method):
+
+        @functools.wraps(method)
+        def wrapper(self, G, *args, **kwargs):
+            if isinstance(G, networkx.Graph):
+                return networkx_func(G, *args, **kwargs)
+            return method(self, G, *args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 class RustworkxBackend:
     name = 'rustworkx'
 
@@ -590,6 +623,7 @@ class RustworkxBackend:
     def new_multidigraph(self):
         return RustworkxGraphHandle(multigraph=True)
 
+    @run_natively_on_networkx(networkx.has_path)
     def has_path(self, G, source, target):
         import rustworkx
         G = _coerce(G)
@@ -604,6 +638,7 @@ class RustworkxBackend:
             return True
         return rustworkx.has_path(G._rx, source_idx, target_idx)
 
+    @run_natively_on_networkx(networkx.immediate_dominators)
     def immediate_dominators(self, G, start):
         import rustworkx
         G = _coerce(G)
@@ -611,6 +646,7 @@ class RustworkxBackend:
         idom = rustworkx.immediate_dominators(G._rx, start_idx)
         return {G._index.node_at(k): G._index.node_at(v) for k, v in idom.items()}
 
+    @run_natively_on_networkx(networkx.weakly_connected_components)
     def weakly_connected_components(self, G):
         # lazy generator, matching real networkx.weakly_connected_components (each component is
         # still an eager set, same as real networkx -- only the outer sequence is lazy).
@@ -619,6 +655,7 @@ class RustworkxBackend:
         for comp in rustworkx.weakly_connected_components(G._rx):
             yield {G._index.node_at(i) for i in comp}
 
+    @run_natively_on_networkx(networkx.topological_sort)
     def topological_sort(self, G):
         # lazy generator, matching real networkx.topological_sort. rustworkx raises its own
         # rustworkx.DAGHasCycle on a cyclic graph where real networkx raises NetworkXUnfeasible
@@ -640,6 +677,7 @@ class RustworkxBackend:
         for cycle in rustworkx.simple_cycles(G._rx):
             yield [G._index.node_at(i) for i in cycle]
 
+    @run_natively_on_networkx(networkx.find_cycle)
     def find_cycle(self, G, source=None):
         # networkx's `source` accepts a single node OR a list of nodes (tried in turn until a
         # cycle is found); rustworkx's digraph_find_cycle only accepts a single index, so a
@@ -663,12 +701,14 @@ class RustworkxBackend:
                 return [(G._index.node_at(u), G._index.node_at(v)) for u, v in edges]
         raise NetworkXNoCycle('No cycle found.')
 
+    @run_natively_on_networkx(networkx.descendants)
     def descendants(self, G, source):
         import rustworkx
         G = _coerce(G)
         source_idx = _index_of(G, source, NetworkXError, f'The node {source} is not in the digraph.')
         return {G._index.node_at(i) for i in rustworkx.descendants(G._rx, source_idx)}
 
+    @run_natively_on_networkx(networkx.ancestors)
     def ancestors(self, G, source):
         import rustworkx
         G = _coerce(G)
@@ -715,6 +755,7 @@ class RustworkxBackend:
         import networkx
         return networkx.transitive_closure_dag(G)
 
+    @run_natively_on_networkx(networkx.dfs_edges)
     def dfs_edges(self, G, source=None):
         # lazy generator, matching real networkx.dfs_edges.
         import rustworkx
@@ -726,6 +767,7 @@ class RustworkxBackend:
         for u, v in rustworkx.digraph_dfs_edges(G._rx, src_idx):
             yield (G._index.node_at(u), G._index.node_at(v))
 
+    @run_natively_on_networkx(networkx.shortest_path_length)
     def shortest_path_length(self, G, source, target):
         import rustworkx
         G = _coerce(G)
