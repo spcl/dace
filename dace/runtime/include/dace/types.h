@@ -164,20 +164,44 @@ static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } 
 //   ARM32:   only with the FP16 conversion extension (__ARM_FP16_FORMAT_IEEE
 //            plus VFPv4+ / __ARM_FEATURE_FP16_SCALAR_ARITHMETIC).
 //
-// ``__FLT16_MAX__`` is the portable "``_Float16`` is usable here" probe that
-// both GCC and Clang define. ``__ARM_FP16_FORMAT_IEEE`` is the ACLE macro
-// saying ``__fp16`` is IEEE binary16 rather than the Arm "alternative" format,
-// which has no infinities and so is NOT bit-compatible with our emulation.
+// Two hazards that normally make ``_Float16`` risky do NOT apply here, because
+// it is confined to these two functions and never appears in a type, a struct
+// member or a function signature:
+//
+//  * Excess precision. GCC and Clang both evaluate ``_Float16`` *arithmetic* in
+//    float and only round at explicit casts and assignments unless you pass
+//    -fexcess-precision=16 / -ffloat16-excess-precision=none, so ``a*b+c`` in
+//    _Float16 rounds once, not three times. We never do arithmetic in the type
+//    -- each function is a single explicit conversion -- so the rounding is
+//    unambiguous and no extra build flag is needed.
+//  * ABI. ``_Float16`` is passed in an SSE/FP register, is classified as an HFA
+//    inside aggregates on AArch64, and mangles as ``DF16_``. ``dace::half``
+//    remains ``struct half { uint16_t h; }``, so calling convention, aggregate
+//    classification and C++ mangling of every generated symbol are untouched.
+//
+// Gating macros. NOT ``__FLT16_MAX__``: GCC defines the ``__FLT16_*`` macros
+// even on targets where ``_Float16`` is storage-only and every use is a hard
+// error (verified: ``g++ -m32 -mno-sse2`` defines 16 of them), which is why GCC
+// 14's release notes tell you to test ``__SSE2__`` instead. x86 ``_Float16``
+// arrived in GCC 12 and Clang 15, hence the version guards.
+// ``__ARM_FP16_FORMAT_IEEE`` is the ACLE macro saying binary16 rather than the
+// Arm "alternative" format, which has no infinities and would not be
+// bit-compatible with the emulation; AArch64 only ever uses the IEEE format.
+// AArch64 needs no arithmetic-feature check: FCVT between half and single is
+// base ARMv8-A, so the conversion is one instruction even without FEAT_FP16
+// (which is OPTIONAL from ARMv8.2 and is not mandatory in any ARMv8/v9 level --
+// ``__ARM_FEATURE_FP16_SCALAR_ARITHMETIC`` is the only sound way to detect it,
+// and it would only matter if we did arithmetic in the type, which we do not).
+// 32-bit ARM deliberately stays on the emulation: it is untested here.
 #if !defined(DACE_HALF_NO_NATIVE)
-#if (defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)) && \
-    defined(__FLT16_MAX__) && (defined(__F16C__) || defined(__AVX512FP16__))
+#if (defined(__x86_64__) || defined(__i386__)) && defined(__SSE2__) &&           \
+    (defined(__F16C__) || defined(__AVX512FP16__)) &&                           \
+    ((defined(__clang__) && __clang_major__ >= 15) ||                           \
+     (!defined(__clang__) && defined(__GNUC__) && __GNUC__ >= 12))
 #define DACE_HALF_NATIVE_T _Float16
-#elif defined(__aarch64__) && defined(__FLT16_MAX__) && defined(__ARM_FP16_FORMAT_IEEE)
+#elif defined(__aarch64__) && defined(__ARM_FP16_FORMAT_IEEE) &&                 \
+    (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 7))
 #define DACE_HALF_NATIVE_T _Float16
-#elif defined(__aarch64__) && defined(__ARM_FP16_FORMAT_IEEE)
-#define DACE_HALF_NATIVE_T __fp16
-#elif defined(__arm__) && defined(__ARM_FP16_FORMAT_IEEE) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
-#define DACE_HALF_NATIVE_T __fp16
 #endif
 #endif
 
