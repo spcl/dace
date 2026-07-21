@@ -227,9 +227,11 @@ def test_float16_openmp_reduction_logical(kind, wcr, identity, reference):
     for values in (np.ones(size, dtype=np.float16), np.zeros(size, dtype=np.float16),
                    np.concatenate([np.ones(size - 1, dtype=np.float16),
                                    np.zeros(1, dtype=np.float16)]),
-                   np.concatenate([np.zeros(7, dtype=np.float16),
-                                   np.full(1, 5.0, dtype=np.float16),
-                                   np.zeros(size - 8, dtype=np.float16)])):
+                   np.concatenate([
+                       np.zeros(7, dtype=np.float16),
+                       np.full(1, 5.0, dtype=np.float16),
+                       np.zeros(size - 8, dtype=np.float16)
+                   ])):
         sdfg = openmp_reduce_sdfg(f'logical_{kind}', wcr, identity, size)
         out = np.zeros(1, dtype=np.float16)
         sdfg.compile()(A=values.copy(), s=out)
