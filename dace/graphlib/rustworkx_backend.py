@@ -429,10 +429,8 @@ class RustworkxGraphHandle:
             raise NotImplementedError('RustworkxGraphHandle.reverse(copy=False) is not supported')
         result = RustworkxGraphHandle(multigraph=self.multigraph)
         payloads = self.node_payloads_by_index()
-        for idx, node in self._index.idx_to_obj.items():
-            result.add_node(node, **payloads[idx])
-        for u, v, payload in self.edges_with_payload():
-            result.add_edge(v, u, **payload)
+        result.build_bulk(((node, payloads[idx]) for idx, node in self._index.idx_to_obj.items()),
+                          ((v, u, payload) for u, v, payload in self.edges_with_payload()))
         return result
 
     def number_of_nodes(self):
@@ -472,11 +470,26 @@ class RustworkxGraphHandle:
         # shared memo keeps cross-references (a node shared by two edges, or by some outer structure
         # deepcopied in the same sweep, e.g. SDFG.__deepcopy__) resolved to the identical copy.
         payloads = self.node_payloads_by_index()
-        for idx, node in self._index.idx_to_obj.items():
-            result.add_node(copy.deepcopy(node, memo), **copy.deepcopy(payloads[idx], memo))
-        for u, v, payload in self.edges_with_payload():
-            result.add_edge(copy.deepcopy(u, memo), copy.deepcopy(v, memo), **copy.deepcopy(payload, memo))
+        result.build_bulk(((copy.deepcopy(node, memo), copy.deepcopy(payloads[idx], memo))
+                           for idx, node in self._index.idx_to_obj.items()),
+                          ((copy.deepcopy(u, memo), copy.deepcopy(v, memo), copy.deepcopy(payload, memo))
+                           for u, v, payload in self.edges_with_payload()))
         return result
+
+    def build_bulk(self, nodes_with_payload, edges_with_payload):
+        """Fill an EMPTY handle in two rustworkx calls instead of V+E.
+
+        add_node/add_edge each cross into Rust per element; add_nodes_from/add_edges_from take the
+        whole batch at once (and return indices in argument order, so NodeIndexMap stays faithful
+        to insertion order -- the property NodeView._list depends on). Only valid on an empty
+        handle with no duplicate nodes, which is exactly what every conversion path here has.
+        """
+        nodes_with_payload = list(nodes_with_payload)
+        indices = self._rx.add_nodes_from([payload for _, payload in nodes_with_payload])
+        for (node, _), index in zip(nodes_with_payload, indices):
+            self._index.add(node, index)
+        self._rx.add_edges_from([(self._index.index_of(u), self._index.index_of(v), payload)
+                                 for u, v, payload in edges_with_payload])
 
 
 def _index_of(G, node, exc_type, message):
@@ -517,14 +530,10 @@ def _coerce(G):
     handle = RustworkxGraphHandle(multigraph=G.is_multigraph())
     # Attributes go in by dict update, not **kwargs: networkx allows any hashable attribute key
     # (G.nodes[n][7] = ...), and **attr would die with "keywords must be strings".
-    for node, attr in G.nodes(data=True):
-        handle.add_node(node)
-        if attr:
-            handle._rx.get_node_data(handle._index.index_of(node)).update(attr)
-    for u, v, attr in G.edges(data=True):
-        handle.add_edge(u, v)
-        if attr:
-            handle.get_edge_payload(u, v).update(attr)
+    # dict(attr) not **attr: networkx permits any hashable attribute key (G.nodes[n][7] = ...),
+    # which **kwargs would reject with "keywords must be strings".
+    handle.build_bulk(((node, dict(attr)) for node, attr in G.nodes(data=True)),
+                      ((u, v, dict(attr)) for u, v, attr in G.edges(data=True)))
     return handle
 
 
@@ -553,10 +562,8 @@ def _transitive_closure_via_networkx(G, dag_only):
     result = RustworkxGraphHandle(multigraph=G.multigraph)
     # networkx.transitive_closure starts from G.copy(), so it keeps node and edge attributes --
     # rebuilding with bare add_node/add_edge would silently drop every one of them.
-    for node, attr in closure.nodes(data=True):
-        result.add_node(node, **attr)
-    for u, v, attr in closure.edges(data=True):
-        result.add_edge(u, v, **attr)
+    result.build_bulk(((node, dict(attr)) for node, attr in closure.nodes(data=True)),
+                      ((u, v, dict(attr)) for u, v, attr in closure.edges(data=True)))
     return result
 
 

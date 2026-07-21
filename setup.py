@@ -91,10 +91,11 @@ setup(
         ],
         'docs': ['jinja2<3.2.0', 'sphinx-autodoc-typehints', 'sphinx-rtd-theme>=0.5.1'],
         'linting': ['pre-commit==4.1.0', 'yapf==0.43.0'],
-        # >=0.16.0: earlier releases have no rustworkx.immediate_dominators, which the backend
-        # calls on the propagate_states hot path -- with 0.15.1 every @dace.program dies with
-        # AttributeError. Unpinned above that; newer is faster, so prefer the latest.
-        'fastgraph': ['rustworkx >= 0.16.0'],
+        # 0.18.0 is the current release and what the backend is written against: it needs
+        # immediate_dominators (absent before 0.16.0, so 0.15.1 makes every @dace.program die)
+        # and the bulk add_nodes_from/add_edges_from constructors the conversion paths use to
+        # avoid per-element FFI. Newer is faster; there is no reason to run an older one.
+        'fastgraph': ['rustworkx >= 0.18.0'],
     },
     entry_points={
         'console_scripts': [
