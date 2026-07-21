@@ -161,7 +161,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         end = loop_analysis.get_loop_end(self.loop)
         stride = loop_analysis.get_loop_stride(self.loop)
 
-        last_iteration = start + (end - start) // stride * stride
+        last_iteration = start + symbolic.int_floor(end - start, stride) * stride
         itervar = self.loop.loop_variable
 
         # Rewrite each occurence of the loop variable in the loop body
