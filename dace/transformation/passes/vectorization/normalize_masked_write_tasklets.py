@@ -102,6 +102,13 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
 
         tasklet.code = CodeBlock(f"{out_conn} = {CONDITIONAL_WRITE_FUNC}({cond_src}, {value_src})",
                                  language=dace.dtypes.Language.Python)
+        # ``IT`` lowers to ``if (cond) { out = value; }``, so the connector is NOT assigned on the
+        # false path. That is only correct if the write itself is skipped there -- i.e. the output
+        # memlet is DYNAMIC. On a static memlet DaCe stores the connector unconditionally after the
+        # tasklet, which would write whatever uninitialised value it happened to hold instead of
+        # leaving the destination alone (TSVC s277's guarded ``a[i] += c[i]*d[i]``). Dropping the
+        # else read and marking the write dynamic are two halves of one rewrite.
+        write.dynamic = True
         # Drop the WHOLE read path, not just the tasklet's edge: the read enters through the
         # enclosing map's ``IN_``/``OUT_`` connector pair, and removing only the inner edge would
         # strand them (a dangling out-connector the validator rejects). It also drops the tasklet's

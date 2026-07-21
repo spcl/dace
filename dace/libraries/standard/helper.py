@@ -1,16 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions."""
+"""
+Shared helpers for CopyLibraryNode and MemsetLibraryNode expansions.
+"""
 from typing import Callable, List, Tuple
 
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
 
-# Both legacy and experimental codegens consume this exact name for stream wiring.
+# Both the legacy and experimental codegens consume this exact name for stream wiring.
 CURRENT_STREAM_NAME = "__dace_current_stream"
 
-# Register is intentionally in neither set: resolves by scope (GPU register in a device
-# scope, host stack slot otherwise).
+# Register is intentionally in neither set: it resolves by scope (GPU register
+# in a device scope, host stack slot otherwise).
 GPU_RESIDENT_STORAGES = frozenset({
     dtypes.StorageType.GPU_Global,
     dtypes.StorageType.GPU_Shared,
@@ -41,8 +43,10 @@ def host_accessible_info_storage(storage: dtypes.StorageType) -> dtypes.StorageT
 def collapse_shape_and_strides(
         subset: dace.subsets.Range,
         strides: List[dace.symbolic.SymExpr]) -> Tuple[List[dace.symbolic.SymExpr], List[dace.symbolic.SymExpr]]:
-    """Drop length-1 dimensions from a (subset, strides) pair. Surviving strides are scaled by
-    the subset step (``stride * s``) to describe the access as a view into the parent array.
+    """Drop length-1 dimensions from a (subset, strides) pair.
+
+    Surviving strides are scaled by the subset step (``stride * s``) to describe the access as a
+    view into the parent array.
 
     :param subset: The access range, one ``(begin, end, step)`` per dimension.
     :param strides: The parent array strides, aligned with ``subset``.

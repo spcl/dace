@@ -74,9 +74,12 @@ class ReinferConnectorTypes(ppl.Pass):
 
     def modifies(self) -> ppl.Modifies:
         # ``Modifies`` has no ``Connectors`` flag; connectors live on the code nodes that carry
-        # them. ``Descriptors`` is kept as a conservative over-declaration (the pass only reads
-        # them, but over-declaring costs re-runs, never correctness).
-        return ppl.Modifies.Tasklets | ppl.Modifies.NestedSDFGs | ppl.Modifies.Descriptors
+        # them. ``infer_connector_types`` retypes ANY dataflow node's connectors -- map entries
+        # and exits included -- so this must be ``Nodes``, not just tasklets and nested SDFGs;
+        # under-declaring would stop a downstream ``should_reapply(Modifies.Scopes)`` from firing.
+        # ``Descriptors`` is kept as a conservative over-declaration (the pass only reads them,
+        # but over-declaring costs re-runs, never correctness).
+        return ppl.Modifies.Nodes | ppl.Modifies.Descriptors
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
@@ -112,5 +115,12 @@ class ReinferConnectorTypes(ppl.Pass):
             infer_types.infer_connector_types(nsdfg)
         after = self._connector_types(sdfg)
 
-        changed = sum(1 for key, ctype in after.items() if before.get(key) != ctype)
+        # Diff over the union of keys with a sentinel: a plain ``before.get(key)`` default of
+        # ``None`` would compare a typeclass against ``None``, and ``typeclass.__ne__(None)``
+        # returns False -- so an ADDED connector would be silently counted as unchanged. Iterating
+        # ``after`` alone would likewise miss a REMOVED one.
+        missing = object()
+        changed = sum(1 for key in before.keys() | after.keys()
+                      if before.get(key, missing) is not after.get(key, missing)
+                      and before.get(key, missing) != after.get(key, missing))
         return changed or None

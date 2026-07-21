@@ -19,7 +19,8 @@ from dace.sdfg.construction_utils import (
 )
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation import pass_pipeline as ppl
-from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import condition_guards_iteration_symbol
+from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
+    arm_accesses_are_in_range_unguarded, condition_guards_iteration_symbol)
 from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 
 
@@ -399,7 +400,7 @@ class BranchNormalization(ppl.Pass):
         # fabricate the out-of-range read (lane ``i = N-1`` reading ``a[N]``). Masking, not
         # if-conversion, is the correct lowering, so leave the block for the masking path -- the
         # same refusal SameWriteSetIfElseToITECFG applies before us (shared detector).
-        if condition_guards_iteration_symbol(cb):
+        if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
             return False
         # Arm may be a linear chain: empty entry states + one substantive compute
         # state. Wholesale lift keeps structure, gates only escaping writes via ITE
@@ -593,7 +594,7 @@ class BranchNormalization(ppl.Pass):
         # Refuse to even split an index-guarded ``if/else`` (see _normalize_single_arm): the
         # negated-else halves this produces would be flattened just the same, fabricating the
         # out-of-range read. Leave it whole for the masking path.
-        if condition_guards_iteration_symbol(cb):
+        if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
             return False
         if len(body0.nodes()) != 1 or len(body1.nodes()) != 1:
             return False

@@ -342,6 +342,24 @@ class SplitTasklets(ppl.Pass):
 
     tmp_access_identifier = "_split_"
 
+    def next_split_index(self, sdfg: SDFG) -> int:
+        """First split-scalar index not already used anywhere in ``sdfg``.
+
+        Split scalars are named ``<ssa_var>_split_<index>``, which is a pure function of the
+        per-tasklet index. Restarting the index at 0 on every run therefore re-issues the
+        previous run's names for entirely unrelated intermediates -- two independent SSA
+        values aliasing one register scalar. The pipeline does run the pass twice (canonicalize
+        splits, then the vectorizer splits again), so the index continues past what is there.
+        """
+        pattern = re.compile(re.escape(self.tmp_access_identifier) + r"(\d+)$")
+        highest = -1
+        for nested in sdfg.all_sdfgs_recursive():
+            for name in nested.arrays:
+                match = pattern.search(name)
+                if match is not None:
+                    highest = max(highest, int(match.group(1)))
+        return highest + 1
+
     def token_split_variable_names(self, string_to_check: str) -> Set[str]:
         """
         Split a code string into identifier tokens, dropping whitespace and brackets.
@@ -697,7 +715,7 @@ class SplitTasklets(ppl.Pass):
                   or ``None`` if nothing was declared and no tasklet was split.
         """
         added_symbols = self._add_missing_symbols(sdfg)
-        split_access_counter = 0
+        split_access_counter = self.next_split_index(sdfg)
 
         symbol_lifted_data = self._symbol_lifted_data(sdfg)
 
@@ -927,11 +945,10 @@ class SplitTasklets(ppl.Pass):
                                     storage=dace.dtypes.StorageType.Register,
                                     transient=True,
                                 )
-                            # Independently of whether the descriptor already existed: a
-                            # second run of this pass over the same SDFG (canonicalize
-                            # splits, then the vectorizer splits again) finds the scalar
-                            # present but has no access node for it in THIS invocation.
-                            if array_name not in added_accesses:
+                                # Descriptor and access node are created together, so a new
+                                # descriptor means no access node exists yet. ``next_split_index``
+                                # keeps the name clear of earlier runs; without it this fires.
+                                assert array_name not in added_accesses
                                 added_accesses[array_name] = state.add_access(array_name)
                             state.add_edge(
                                 added_accesses[array_name], None, t, in_conn,
@@ -964,7 +981,7 @@ class SplitTasklets(ppl.Pass):
                             storage=dace.dtypes.StorageType.Register,
                             transient=True,
                         )
-                    if array_name not in added_accesses:
+                        assert array_name not in added_accesses
                         added_accesses[array_name] = state.add_access(array_name)
                     state.add_edge(
                         t, out_conn, added_accesses[array_name], None,

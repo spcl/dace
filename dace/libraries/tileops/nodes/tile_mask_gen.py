@@ -38,6 +38,12 @@ class ExpandTileMaskGenPure(ExpandTransformation):
         global_ubs = list(node.global_ubs)
         off = tile_offset(widths)
         terms = [f"((({iv}) + __l{k}) < ({ub}))" for k, (iv, ub) in enumerate(zip(iter_vars, global_ubs))]
+        # A branch guard the if-conversion paths could not lower rides along as one more
+        # conjunct, so the guarded region runs under the mask: inactive lanes neither store
+        # (masked TileStore) nor dereference their source (masked TileLoad guards the read),
+        # which is what makes a range-protecting guard safe to evaluate unconditionally.
+        if node.guard_predicate:
+            terms.append(f"({node.guard_predicate})")
         cond = " && ".join(terms) if terms else "true"
         body = f"_o[{off}] = {cond};"
         code = nested_loops(widths, body)
@@ -116,12 +122,22 @@ class TileMaskGen(nodes.LibraryNode):
         default=[],
         desc="Per-dim exclusive upper-bound expressions; symbols resolved in the surrounding scope.",
     )
+    guard_predicate = properties.Property(
+        dtype=str,
+        allow_none=True,
+        default=None,
+        desc="Extra per-lane predicate AND-ed into the mask, as a C++ expression over the lane "
+        "placeholders ``__l0..__l{K-1}`` and surrounding-scope symbols (e.g. "
+        "``((i) + __l0) < (mid)``). Carries a branch guard the if-conversion paths could not "
+        "lower, so the guarded region executes under the mask instead of as control flow.",
+    )
 
     def __init__(self,
                  name: str,
                  widths: Tuple[int, ...],
                  iter_vars: Tuple[str, ...],
                  global_ubs: Tuple[str, ...],
+                 guard_predicate: Optional[str] = None,
                  location: Optional[str] = None):
         """Construct a ``TileMaskGen`` node.
 
@@ -129,6 +145,7 @@ class TileMaskGen(nodes.LibraryNode):
         :param widths: Per-dim mask widths, innermost-last.
         :param iter_vars: Per-dim outer iter-var name.
         :param global_ubs: Per-dim exclusive upper-bound expressions.
+        :param guard_predicate: Optional branch guard AND-ed into the mask.
         :param location: Optional DaCe node location override.
         :raises ValueError: On length mismatch or invalid K.
         """
@@ -141,6 +158,14 @@ class TileMaskGen(nodes.LibraryNode):
         self.widths = list(widths)
         self.iter_vars = list(iter_vars)
         self.global_ubs = list(global_ubs)
+        self.guard_predicate = guard_predicate
+        if guard_predicate:
+            # The ISA backends build the mask from the bounds alone (see
+            # ``_isa_codegen.make_mask_tasklet``), so they would silently DROP the guard and run
+            # every lane -- the exact miscompile the guard exists to prevent. Pin the pure
+            # expansion, which is the only one that emits the extra conjunct. A mask is generated
+            # once per tile, not per element, so the cost of staying scalar here is negligible.
+            self.implementation = "pure"
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
         """Confirm ``_o`` is connected and its descriptor satisfies the design
