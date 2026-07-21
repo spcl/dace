@@ -7,9 +7,17 @@ Kept out of the SDFG-shape symbols (``klev``/``klon``): those bound the kernel's
 outer loops, and specializing them would make ``LoopUnroll`` fully unroll 32-iteration
 loops nested inside other 32-iteration loops -- an intractable amount of generated code
 for a benchmark. ``nclv``/``ncldq*`` (the cloud-species count/indices, 5-wide) and
-``kidia``/``kfdia`` (the horizontal tile bounds, exercised via ``specialize_scalar``
-specifically since that is the function this benchmark is meant to cover) are small and
-representative without exploding compile time.
+``kidia``/``kfdia`` (the horizontal tile bounds) are small and representative without
+exploding compile time.
+
+Both groups go through ``specialize_scalar``, not ``SDFG.specialize`` -- the latter only
+calls ``add_constant`` on the top-level SDFG (no recursion into nested SDFGs, no
+symbol_mapping cleanup), so a pure symbol like ``nclv`` that reaches a nested SDFG only
+through its ``symbol_mapping`` (never as Scalar/array data) is left as an unresolved free
+symbol there while the outer scope no longer supplies it. ``specialize_scalar`` recurses
+into nested SDFGs and now also handles symbol_mapping directly (see
+``dace/sdfg/utils.py``'s ``_specialize_scalar_impl``), which ``SPECIALIZED_SYMBOLS`` here
+needs even though none of them are ever Scalar data descriptors.
 """
 import time
 from typing import Dict, Tuple, Union
@@ -20,9 +28,9 @@ from dace.transformation.interstate import LoopUnroll
 
 from tests.corpus.cloudsc.generate_data_for_cloudsc import CLOUDSC_SYMBOLS
 
-#: Shape/index symbols baked in via SDFG.specialize (compile-time constants).
+#: Shape/index symbols (never Scalar data, reach nested SDFGs only via symbol_mapping).
 SPECIALIZED_SYMBOLS = ('nclv', 'ncldql', 'ncldqi', 'ncldqr', 'ncldqs', 'ncldqv')
-#: Scalar arguments baked in via specialize_scalar (the function this benchmark covers).
+#: Horizontal tile bounds (genuine Scalar arguments, flow in via data memlets too).
 SPECIALIZED_SCALARS = ('kidia', 'kfdia')
 
 
@@ -51,7 +59,8 @@ def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
     """
     with dace.config.set_temporary('graph', 'backend', value=backend):
         t0 = time.perf_counter()
-        sdfg.specialize({name: CLOUDSC_SYMBOLS[name] for name in SPECIALIZED_SYMBOLS})
+        for name in SPECIALIZED_SYMBOLS:
+            specialize_scalar(sdfg, name, CLOUDSC_SYMBOLS[name])
         for name in SPECIALIZED_SCALARS:
             specialize_scalar(sdfg, name, CLOUDSC_SYMBOLS[name])
         applied = sdfg.apply_transformations_repeated(LoopUnroll)

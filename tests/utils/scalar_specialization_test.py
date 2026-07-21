@@ -1,6 +1,7 @@
 import dace
 import copy
 import numpy as np
+from dace.sdfg.state import LoopRegion
 from dace.sdfg.utils import specialize_scalar
 
 Y = dace.symbolic.symbol("Y")
@@ -72,6 +73,89 @@ def test_python_tasklet_with_cast_falls_back_to_token_replace():
     assert out[0] == 6
 
 
+def test_symbol_only_nested_propagation():
+    """N reaches the nested SDFG purely through symbol_mapping (key='N', value='N', a plain
+    passthrough) -- never as a Scalar/array data connection. This is the CloudSC ``nclv``
+    case: a plain dace.symbol used as an array-shape/loop bound never satisfies the
+    data-memlet-gated recursion (in_data_mapping), so without handling symbol_mapping
+    directly, the nested SDFG kept N as an unresolved free symbol while the outer scope no
+    longer passed it in -- specialize_scalar used to only remove root-level Scalar data, it
+    did not clean up symbol_mapping for a pure symbol at all.
+    """
+    sdfg = dace.SDFG('symbol_only_specialize')
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_array('A', [1], dace.int32)
+
+    nested_sdfg = dace.SDFG('inner')
+    nested_sdfg.add_symbol('N', dace.int32)
+    nested_sdfg.add_symbol('i', dace.int32)
+    nested_sdfg.add_array('A', [1], dace.int32)
+    loop = LoopRegion('loop', condition_expr='i < N', loop_var='i', initialize_expr='i = 0',
+                      update_expr='i = i + 1')
+    nested_sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    tasklet = body.add_tasklet('write', {}, {'out'}, 'out = i')
+    inner_out = body.add_write('A')
+    body.add_edge(tasklet, 'out', inner_out, None, dace.Memlet('A[0]'))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nested_sdfg, set(), {'A'}, symbol_mapping={'N': 'N'})
+    outer_out = state.add_write('A')
+    state.add_edge(nsdfg_node, 'A', outer_out, None, dace.memlet.Memlet.from_array('A', sdfg.arrays['A']))
+    sdfg.validate()
+
+    specialize_scalar(sdfg, 'N', 5)
+    sdfg.validate()
+
+    assert 'N' not in nsdfg_node.symbol_mapping
+    assert 'N' not in nested_sdfg.symbols
+    assert 'N' not in {str(s) for s in nested_sdfg.free_symbols}
+
+    A = np.zeros(1, dtype=np.int32)
+    sdfg(A=A, N=5)
+    assert A[0] == 4  # loop runs i=0..4 (i<5), last write is i=4
+
+
+def test_symbol_in_nested_mapping_value_only_substitutes_expression():
+    """scalar_name can appear on the VALUE side of some OTHER inner symbol's symbol_mapping
+    entry (e.g. {'M': 'N + 1'}) without the nested SDFG ever having a free symbol literally
+    named scalar_name. Only the bound expression should be substituted -- the mapping entry
+    for the other inner symbol (M) must remain (it still needs a binding, just a constant
+    one), and nothing should be removed from or recursed into the nested SDFG.
+    """
+    sdfg = dace.SDFG('value_side_specialize')
+    sdfg.add_symbol('N', dace.int32)
+    sdfg.add_array('A', [5], dace.float64)
+
+    nested_sdfg = dace.SDFG('inner')
+    nested_sdfg.add_symbol('M', dace.int32)
+    nested_sdfg.add_array('A', [5], dace.float64)
+    nstate = nested_sdfg.add_state()
+    tasklet = nstate.add_tasklet('write', {}, {'out'}, 'out = M')
+    inner_out = nstate.add_write('A')
+    nstate.add_edge(tasklet, 'out', inner_out, None, dace.Memlet('A[0]'))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nested_sdfg, set(), {'A'}, symbol_mapping={'M': 'N + 1'})
+    outer_out = state.add_write('A')
+    state.add_edge(nsdfg_node, 'A', outer_out, None, dace.memlet.Memlet.from_array('A', sdfg.arrays['A']))
+    sdfg.validate()
+
+    specialize_scalar(sdfg, 'N', 4)
+    sdfg.validate()
+
+    # Real sympy substitution (unlike the tasklet-code token-replace fallback), so the
+    # expression is folded to a plain constant, not left as an unevaluated '4 + 1'.
+    assert nsdfg_node.symbol_mapping['M'] == 5
+    assert 'M' in nested_sdfg.symbols
+
+    A = np.zeros(5)
+    sdfg(A=A, N=4)
+    assert A[0] == 5
+
+
 if __name__ == "__main__":
     test_nested_sdfg()
     test_python_tasklet_with_cast_falls_back_to_token_replace()
+    test_symbol_only_nested_propagation()
+    test_symbol_in_nested_mapping_value_only_substitutes_expression()

@@ -2692,8 +2692,32 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         in_data_mapping = {ie.data.data: ie.dst_conn for ie in in_edges if ie.data.data is not None}
         out_data_mapping = {oe.data.data: oe.src_conn for oe in out_edges if oe.data.data is not None}
         assert scalar_name not in out_data_mapping
-        if scalar_name in in_data_mapping:
-            _specialize_scalar_impl(root, nsdfg_node.sdfg, in_data_mapping[scalar_name], scalar_val)
+
+        # scalar_name can also reach a nested SDFG purely through symbol_mapping, with no data
+        # connection at all (the common case for a plain dace.symbol used e.g. as an array shape
+        # bound, rather than an actual Scalar container). symbol_mapping maps the nested SDFG's
+        # OWN symbol name (key) to an expression evaluated in this, outer, scope (value) --
+        # scalar_name can appear on either side:
+        # - As a KEY: the nested SDFG has its own free symbol by that name and needs the same
+        #   treatment as the data-connected case -- recurse to specialize it inside (the
+        #   parent_nsdfg_node cleanup below removes the now-stale mapping entry once inside).
+        # - As a VALUE inside some OTHER inner symbol's bound expression (e.g.
+        #   {'inner_bound': 'nclv + 1'}): only that expression needs substituting -- the inner
+        #   symbol still needs *a* binding, just a now-constant one instead of one that
+        #   mentions scalar_name. No recursion: the nested SDFG never sees scalar_name itself,
+        #   only whatever value its own symbol (inner_bound) ends up bound to.
+        if scalar_name in in_data_mapping or scalar_name in nsdfg_node.symbol_mapping:
+            inner_name = in_data_mapping.get(scalar_name, scalar_name)
+            _specialize_scalar_impl(root, nsdfg_node.sdfg, inner_name, scalar_val)
+        # A symbol_mapping value is always a plain symbolic expression (never full code with
+        # e.g. casts, unlike tasklet code), so a real sympy substitution -- which also folds
+        # 'N + 1' to '5' instead of leaving it as an unevaluated token-replaced string -- is
+        # safe here without the tasklet-code path's try/except fallback.
+        for inner_name, outer_expr in nsdfg_node.symbol_mapping.items():
+            if inner_name == scalar_name:
+                continue
+            nsdfg_node.symbol_mapping[inner_name] = dace.symbolic.pystr_to_symbolic(str(outer_expr)).subs(
+                {scalar_name: scalar_val})
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
