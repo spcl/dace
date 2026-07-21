@@ -760,7 +760,7 @@ required:
 
                             ssa_loop_scalars:
                                 type: str
-                                default: 'off'
+                                default: 'on'
                                 title: Single-assignment versioning of reassigned scope scalars
                                 description: >
                                     Applies to: experimental_readable ONLY (this runs an SDFG rewrite
@@ -769,7 +769,7 @@ required:
 
                                     Whether a transient scalar that is REASSIGNED several times in a scope
                                     / loop nest is versioned into single-assignment names before codegen:
-                                    ``off`` (the default) leaves it as one mutable variable; ``on`` runs
+                                    ``off`` leaves it as one mutable variable; ``on`` (the default) runs
                                     the existing :class:`~dace.transformation.passes.scalar_fission.
                                     PrivatizeScalars` (``ScalarFission``) pass so each dominating write
                                     becomes its own container (``nx``, ``nx_0``, ``nx_1`` ...), each
