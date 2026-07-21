@@ -156,8 +156,8 @@ class NanobindCompiledSDFG:
         if self._simple_call and not hooks_active:
             if self.do_not_execute is False:
                 self._handle(*args, **kwargs)
-            if self._has_gpu_code and self._gpu_error_check:
-                self._check_gpu_error()
+                if self._has_gpu_code and self._gpu_error_check:
+                    self._check_gpu_error()
             return None
 
         # Handle positional arguments and move them into `kwargs`.
