@@ -33,6 +33,7 @@ import time
 from typing import Dict, List
 
 import dace
+from dace import graphlib
 from dace.codegen.codegen import generate_code
 
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
@@ -89,7 +90,7 @@ def run_one_repetition(reference: dace.SDFG, backend: str, tmp_dir: str, rep: in
 
     times: Dict[str, float] = run_pipeline(sdfg, backend)
 
-    with dace.config.set_temporary('graph', 'backend', value=backend):
+    with graphlib.set_default_backend(backend):
         t0 = time.perf_counter()
         generate_code(sdfg)
         times['codegen'] = time.perf_counter() - t0

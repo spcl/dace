@@ -109,8 +109,12 @@ def get_node_attributes(G, name, default=None):
         payloads = G.node_payloads_by_index()  # one bulk fetch, not a per-node get_node_data round-trip
         for idx, node in G._index.idx_to_obj.items():
             attrs = payloads[idx]
+            # networkx omits nodes lacking the attribute only when no default is given; with a
+            # default every node appears, carrying that default.
             if name in attrs:
                 result[node] = attrs[name]
+            elif default is not None:
+                result[node] = default
         return result
     import networkx
     return networkx.get_node_attributes(G, name, default)
@@ -140,15 +144,20 @@ def set_default_backend(name: str):
     envvar = 'DACE_graph_backend'
     had_envvar = envvar in os.environ
     old_envvar = os.environ.get(envvar)
-    os.environ[envvar] = name
-    try:
-        with dace.config.set_temporary('graph', 'backend', value=name):
+    # set_temporary MUST snapshot the old value before the env var is set: it restores what
+    # Config.get returned on entry, and Config.get is env-var-first, so setting the env var
+    # first makes it snapshot the NEW value and "restore" that on exit -- leaking the
+    # temporary backend into the process permanently and contaminating every later test in
+    # the same worker.
+    with dace.config.set_temporary('graph', 'backend', value=name):
+        os.environ[envvar] = name
+        try:
             yield
-    finally:
-        if had_envvar:
-            os.environ[envvar] = old_envvar
-        else:
-            del os.environ[envvar]
+        finally:
+            if had_envvar:
+                os.environ[envvar] = old_envvar
+            else:
+                del os.environ[envvar]
 
 
 def get_backend_name() -> str:

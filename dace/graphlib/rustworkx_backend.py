@@ -43,6 +43,22 @@ class NodeIndexMap:
         self.id_to_idx = {}
         self.idx_to_obj = {}
 
+    # id_to_idx holds the ORIGINAL process's id() values, which mean nothing after unpickling --
+    # every unhashable node would then miss its entry (has_node False, remove_node KeyError).
+    # Drop it on the way out and rebuild from idx_to_obj, which pickles faithfully.
+    def __getstate__(self):
+        return {'obj_to_idx': self.obj_to_idx, 'idx_to_obj': self.idx_to_obj}
+
+    def __setstate__(self, state):
+        self.obj_to_idx = state['obj_to_idx']
+        self.idx_to_obj = state['idx_to_obj']
+        self.id_to_idx = {}
+        for index, node in self.idx_to_obj.items():
+            try:
+                hash(node)
+            except TypeError:
+                self.id_to_idx[id(node)] = index
+
     def add(self, node, index):
         try:
             self.obj_to_idx[node] = index
@@ -87,6 +103,14 @@ class AdjacencyView:
 
     def __contains__(self, v):
         return self._handle.has_edge(self._u, v)
+
+    # networkx's adjacency view iterates its neighbours (`for v in G[u]`); without this Python
+    # falls back to the integer-index protocol and __getitem__(0) raises a confusing KeyError.
+    def __iter__(self):
+        return self._handle.successors(self._u)
+
+    def keys(self):
+        return list(self._handle.successors(self._u))
 
 
 class NodeView:
@@ -192,7 +216,10 @@ class RustworkxGraphHandle:
 
     def add_node(self, node_for_adding, **attr):
         if node_for_adding in self._index:
-            self._rx.get_node_data(self._index.index_of(node_for_adding)).update(attr)
+            # add_edge calls this twice with no attrs for every edge; skipping the no-op
+            # get_node_data round-trip drops 2 FFI calls per edge on every construction path.
+            if attr:
+                self._rx.get_node_data(self._index.index_of(node_for_adding)).update(attr)
             return
         idx = self._rx.add_node(dict(attr))
         self._index.add(node_for_adding, idx)
@@ -201,14 +228,28 @@ class RustworkxGraphHandle:
         self.add_node(u_of_edge)
         self.add_node(v_of_edge)
         ui, vi = self._index.index_of(u_of_edge), self._index.index_of(v_of_edge)
+        # Re-adding an existing edge MERGES attributes in networkx (add_edge(a,b,w=1) then
+        # add_edge(a,b,z=2) leaves {'w':1,'z':2}); rustworkx's add_edge would replace the
+        # payload outright and silently drop 'w'. Multigraphs are exempt -- there a repeat
+        # add_edge is a genuinely new parallel edge, not an update of the existing one.
+        if not self.multigraph and self._rx.has_edge(ui, vi):
+            self._rx.get_edge_data(ui, vi).update(attr)
+            return None
         return self._rx.add_edge(ui, vi, dict(attr))
 
     def remove_node(self, node):
-        self._rx.remove_node(self._index.index_of(node))
+        self._rx.remove_node(self.node_index_or_raise(node))
         self._index.remove(node)
 
     def remove_edge(self, u, v):
-        self._rx.remove_edge(self._index.index_of(u), self._index.index_of(v))
+        import rustworkx
+        ui, vi = self.node_index_or_raise(u), self.node_index_or_raise(v)
+        try:
+            self._rx.remove_edge(ui, vi)
+        except rustworkx.NoEdgeBetweenNodes:
+            # NoEdgeBetweenNodes is not a NetworkXError subclass, so `except NetworkXError:`
+            # handlers would miss it entirely.
+            raise NetworkXError(f'The edge {u}-{v} is not in the graph.')
 
     def add_nodes_from(self, nodes_for_adding, **attr):
         # matches networkx.DiGraph.add_nodes_from: items may be a plain node or a (node, attr
@@ -261,6 +302,19 @@ class RustworkxGraphHandle:
     def get_edge_payload(self, u, v):
         return self._rx.get_edge_data(self._index.index_of(u), self._index.index_of(v))
 
+    # Small pieces of the networkx graph API that callers reach for on any graph-like object;
+    # without them an otherwise-valid call site dies with AttributeError only under this backend.
+    def is_multigraph(self):
+        return self.multigraph
+
+    def is_directed(self):
+        return True
+
+    def get_edge_data(self, u, v, default=None):
+        if not self.has_edge(u, v):
+            return default
+        return self.get_edge_payload(u, v)
+
     # -- bulk accessors: one native rustworkx call for the whole node/edge set, so rebuild/dump
     # loops don't pay a per-element index_of + get_node_data / get_edge_payload round-trip into rust
     # (the antipattern that made __deepcopy__ slower than plain networkx). Shared by __deepcopy__,
@@ -296,25 +350,73 @@ class RustworkxGraphHandle:
     # for the full explanation and the real bug this fixes).
 
     def in_edges(self, node):
+        # networkx returns an empty view for a node that isn't there rather than raising.
+        if node not in self._index:
+            return []
         idx = self._index.index_of(node)
         return [(self._index.node_at(u), self._index.node_at(v)) for u, v, _ in reversed(list(self._rx.in_edges(idx)))]
 
     def out_edges(self, node):
+        if node not in self._index:
+            return []
         idx = self._index.index_of(node)
         return [(self._index.node_at(u), self._index.node_at(v)) for u, v, _ in reversed(list(self._rx.out_edges(idx)))]
 
+    def node_index_or_raise(self, node):
+        """index_of() raises a bare KeyError for an unknown node, but networkx raises
+        NetworkXError here -- and real call sites catch that specific type (e.g.
+        dace/transformation/dataflow/redundant_array.py's `except NetworkXError:` around
+        successors()), so a KeyError sails straight past the handler."""
+        if node not in self._index:
+            raise NetworkXError(f'The node {node} is not in the digraph.')
+        return self._index.index_of(node)
+
+    def unique_neighbors(self, indices):
+        """rustworkx returns one entry per EDGE, so a multigraph yields the same neighbour once
+        per parallel edge; networkx yields each neighbour once. Leaving the duplicates in is not
+        merely cosmetic -- transformation/helpers.py's simplify_state and transient_reuse.py both
+        run `for p in predecessors: for c in successors: add_edge(p, c)`, which squares the
+        duplicate count every round and blows up exponentially (a real state measured 131072
+        edges and 20s under rustworkx vs 1 edge and 0.7ms under networkx).
+
+        dict.fromkeys keeps first-seen order, so the reversed()-recovered insertion order that
+        EdgeView._list documents is preserved. Falls back to id() for unhashable nodes, the same
+        way NodeIndexMap does.
+        """
+        nodes = [self._index.node_at(i) for i in reversed(list(indices))]
+        try:
+            return list(dict.fromkeys(nodes))
+        except TypeError:
+            seen, unique = set(), []
+            for n in nodes:
+                if id(n) not in seen:
+                    seen.add(id(n))
+                    unique.append(n)
+            return unique
+
     def successors(self, node):
-        idx = self._index.index_of(node)
-        return (self._index.node_at(i) for i in reversed(list(self._rx.successor_indices(idx))))
+        # Materialized, not a generator: node_at() resolved lazily would alias a recycled index
+        # if the graph is mutated mid-iteration, silently yielding a node that was never a
+        # neighbour (networkx raises RuntimeError there instead).
+        return iter(self.unique_neighbors(self._rx.successor_indices(self.node_index_or_raise(node))))
+
+    # networkx.DiGraph.neighbors is successors (out-neighbors); dace/autodiff/analysis.py calls
+    # it on a transitive_closure() result, which is a handle under this backend.
+    def neighbors(self, node):
+        return self.successors(node)
 
     def predecessors(self, node):
-        idx = self._index.index_of(node)
-        return (self._index.node_at(i) for i in reversed(list(self._rx.predecessor_indices(idx))))
+        return iter(self.unique_neighbors(self._rx.predecessor_indices(self.node_index_or_raise(node))))
 
     def in_degree(self, node):
+        # networkx returns an (empty) degree view rather than raising for an absent node.
+        if node not in self._index:
+            return 0
         return self._rx.in_degree(self._index.index_of(node))
 
     def out_degree(self, node):
+        if node not in self._index:
+            return 0
         return self._rx.out_degree(self._index.index_of(node))
 
     def reverse(self, copy=True):
@@ -410,10 +512,16 @@ def _coerce(G):
     if isinstance(G, RustworkxGraphHandle):
         return G
     handle = RustworkxGraphHandle(multigraph=G.is_multigraph())
+    # Attributes go in by dict update, not **kwargs: networkx allows any hashable attribute key
+    # (G.nodes[n][7] = ...), and **attr would die with "keywords must be strings".
     for node, attr in G.nodes(data=True):
-        handle.add_node(node, **attr)
+        handle.add_node(node)
+        if attr:
+            handle._rx.get_node_data(handle._index.index_of(node)).update(attr)
     for u, v, attr in G.edges(data=True):
-        handle.add_edge(u, v, **attr)
+        handle.add_edge(u, v)
+        if attr:
+            handle.get_edge_payload(u, v).update(attr)
     return handle
 
 
@@ -440,10 +548,12 @@ def _transitive_closure_via_networkx(G, dag_only):
     nxg = to_networkx(G)
     closure = networkx.transitive_closure_dag(nxg) if dag_only else networkx.transitive_closure(nxg)
     result = RustworkxGraphHandle(multigraph=G.multigraph)
-    for node in closure.nodes():
-        result.add_node(node)
-    for u, v in closure.edges():
-        result.add_edge(u, v)
+    # networkx.transitive_closure starts from G.copy(), so it keeps node and edge attributes --
+    # rebuilding with bare add_node/add_edge would silently drop every one of them.
+    for node, attr in closure.nodes(data=True):
+        result.add_node(node, **attr)
+    for u, v, attr in closure.edges(data=True):
+        result.add_edge(u, v, **attr)
     return result
 
 
@@ -566,14 +676,25 @@ class RustworkxBackend:
         return {G._index.node_at(i) for i in rustworkx.ancestors(G._rx, source_idx)}
 
     def all_simple_paths(self, G, source, target):
-        # lazy generator, matching real networkx.all_simple_paths -- including its asymmetry: a
-        # missing SOURCE raises NodeNotFound, but a missing TARGET just yields no paths.
+        # lazy generator, matching real networkx.all_simple_paths. networkx only tolerates a
+        # missing target when it is iterable (it does `set(target)`, so a container of targets);
+        # for a plain non-iterable node -- which every DaCe IR node is -- it raises NodeNotFound
+        # just like a missing source.
         import rustworkx
         G = _coerce(G)
         source_idx = _index_of(G, source, NodeNotFound, f'source node {source} not in graph')
         if target not in G._index:
+            try:
+                iter(target)
+            except TypeError:
+                raise NodeNotFound(f'target node {target} not in graph')
             return
         target_idx = G._index.index_of(target)
+        # networkx counts the trivial length-0 path, so source == target yields exactly [[source]]
+        # (same convention as has_path); rustworkx's own call would return nothing.
+        if source_idx == target_idx:
+            yield [source]
+            return
         paths = rustworkx.digraph_all_simple_paths(G._rx, source_idx, target_idx)
         for path in paths:
             yield [G._index.node_at(i) for i in path]

@@ -554,3 +554,50 @@ def test_edge_order_survives_remove_and_readd(backend):
         G.remove_edge('a', 'y')
         G.add_edge('a', 'y')
         assert list(G.out_edges('a')) == expected
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_add_edge_merges_attributes_like_real_networkx(backend):
+    """ networkx's add_edge on an existing (u, v) MERGES into the existing attribute dict;
+        rustworkx's own add_edge replaces the payload, which silently dropped the earlier
+        keys. dace/transformation/passes/pattern_matching.py and cutout.py both build up
+        edge attributes incrementally, so a dropped key is a silent wrong-result. """
+    with gl.set_default_backend(backend):
+        G = gl.DiGraph()
+        G.add_edge('a', 'b', w=1)
+        G.add_edge('a', 'b', z=2)
+        assert dict(G['a']['b']) == {'w': 1, 'z': 2}
+        assert G.number_of_edges() == 1
+
+        # A repeated add_edge on a MULTIgraph is a genuinely new parallel edge, not an update.
+        M = gl.MultiDiGraph()
+        M.add_edge('a', 'b', w=1)
+        M.add_edge('a', 'b', z=2)
+        assert M.number_of_edges() == 2
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_neighbors_matches_successors_on_derived_graph(backend):
+    """ dace/autodiff/analysis.py calls .neighbors() on a transitive_closure() result, which
+        under this backend is a handle rather than a real networkx graph -- the method has to
+        exist there too. networkx.DiGraph.neighbors is out-neighbors, i.e. successors. """
+    with gl.set_default_backend(backend):
+        G = gl.DiGraph()
+        G.add_edge('a', 'b')
+        G.add_edge('b', 'c')
+        closure = gl.transitive_closure(G)
+        assert sorted(closure.neighbors('a')) == ['b', 'c']
+        assert sorted(closure.neighbors('a')) == sorted(closure.successors('a'))
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_node_accessors_raise_networkx_error_for_missing_node(backend):
+    """ Real call sites catch the specific type -- dace/transformation/dataflow/
+        redundant_array.py guards successors() with `except NetworkXError:`. A bare KeyError
+        (what the index map raises) sails straight past that handler. """
+    with gl.set_default_backend(backend):
+        G = gl.DiGraph()
+        G.add_node('a')
+        for accessor in ('successors', 'predecessors', 'neighbors'):
+            with pytest.raises(gl.NetworkXError):
+                list(getattr(G, accessor)('missing'))

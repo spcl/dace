@@ -23,6 +23,7 @@ import time
 from typing import Dict, Tuple, Union
 
 import dace
+from dace import graphlib
 from dace.sdfg.utils import specialize_scalar
 from dace.transformation.interstate import LoopUnroll
 
@@ -41,7 +42,7 @@ def run_simplify(sdfg: dace.SDFG, backend: str) -> float:
     :param backend: ``'networkx'`` or ``'rustworkx'``.
     :returns: Elapsed seconds.
     """
-    with dace.config.set_temporary('graph', 'backend', value=backend):
+    with graphlib.set_default_backend(backend):
         t0 = time.perf_counter()
         sdfg.simplify()
         t1 = time.perf_counter()
@@ -57,7 +58,7 @@ def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
     :param backend: ``'networkx'`` or ``'rustworkx'``.
     :returns: ``(elapsed_seconds, loop_unroll_applications)``.
     """
-    with dace.config.set_temporary('graph', 'backend', value=backend):
+    with graphlib.set_default_backend(backend):
         t0 = time.perf_counter()
         for name in SPECIALIZED_SYMBOLS:
             specialize_scalar(sdfg, name, CLOUDSC_SYMBOLS[name])
