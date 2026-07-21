@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
+import builtins
 import ctypes
 import json
 import inspect
@@ -337,6 +338,20 @@ _BYTES = {
     ml_dtypes.float8_e5m2: 1,
 }
 
+#: Width of Python's scalar types, per ``compiler.default_data_types``.
+_DEFAULT_DATA_TYPES = {
+    'python': {
+        int: numpy.int64,
+        float: numpy.float64,
+        complex: numpy.complex128
+    },
+    'c': {
+        int: numpy.int32,
+        float: numpy.float32,
+        complex: numpy.complex64
+    },
+}
+
 
 class typeclass(object):
     """ An extension of types that enables their use in DaCe.
@@ -358,30 +373,15 @@ class typeclass(object):
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
 
-        config_data_types = Config.get('compiler', 'default_data_types')
-
-        if wrapped_type is int:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.int64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.int32
-            else:
+        # Only Python's scalar types consult the configuration; every other type paid the lookup.
+        if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
+            config_data_types = Config.get('compiler', 'default_data_types')
+            widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
+            if widths is None:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is float:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.float64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.float32
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is complex:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.complex128
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.complex64
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is bool:
+            wrapped_type = widths[wrapped_type]
+        elif wrapped_type is builtins.bool:
+            # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
