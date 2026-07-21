@@ -39,7 +39,10 @@ def use_aligned_operator_new() -> bool:
     """
     try:
         return int(Config.get('compiler', 'cpp_standard')) >= 17
-    except ValueError:
+    except (TypeError, ValueError):
+        # A .dace.conf with an empty or non-numeric cpp_standard yields None or a bare string;
+        # int() raises TypeError for the former, which is not a ValueError, so codegen used to
+        # die on an opaque traceback instead of falling back to the unannotated allocation.
         return False
 
 
