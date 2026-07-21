@@ -89,8 +89,8 @@ def test_float16_cpu_random_roundtrip_matches_numpy():
     np.testing.assert_array_equal(out, expected)
 
 
-def openmp_reduce_sdfg(name, wcr, identity, size):
-    """A float16 Reduce node pinned to the OpenMP expansion.
+def openmp_reduce_sdfg(name, wcr, identity, size, dtype=dace.float16):
+    """A Reduce node pinned to the OpenMP expansion, float16 unless told otherwise.
 
     Lowers to exactly the pattern this exercises::
 
@@ -102,8 +102,8 @@ def openmp_reduce_sdfg(name, wcr, identity, size):
     ``operator<op>=`` and a ``#pragma omp declare reduction`` to be accepted at all.
     """
     sdfg = dace.SDFG(name)
-    sdfg.add_array('A', [size], dace.float16)
-    sdfg.add_array('s', [1], dace.float16)
+    sdfg.add_array('A', [size], dtype)
+    sdfg.add_array('s', [1], dtype)
     state = sdfg.add_state()
     red = Reduce('reduce', wcr, None, identity=identity)
     red.implementation = 'OpenMP'
@@ -180,6 +180,89 @@ def test_float16_openmp_reduction_minmax(kind, wcr, identity, reference):
     values = (rng.standard_normal(size) * 100.0).astype(np.float16)
     sdfg = openmp_reduce_sdfg(f'half_omp_{kind}', wcr, identity, size)
     assert run_reduction(sdfg, values) == reference(values)
+
+
+@pytest.mark.parametrize('dtype, npdtype', [(dace.float16, np.float16), (dace.float32, np.float32)])
+def test_openmp_reduction_div_matches_sequential(dtype, npdtype):
+    """Div lowers to a product reduction over the divisors, then one divide.
+
+    ``reduction(/: x)`` does not exist -- ``/`` is not an OpenMP reduction identifier
+    and the clause is rejected for every dtype, ``float`` included. Division is not
+    associative, but ``a / b / c / d == a / (b * c * d)``, so the divisors reduce with
+    ``*`` and the output is divided once.
+
+    Inputs are powers of two: the product (2^4) and the quotient (1024 / 16) are both
+    exactly representable in binary16, so the result is exact and independent of how
+    the runtime chunks the loop, and is compared against a sequential reference rather
+    than a tolerance. Run for float32 as well, since the old lowering was broken for
+    every dtype and not just fp16.
+    """
+    size = 2048
+    values = np.ones(size, dtype=npdtype)
+    values[[3, 9, 77, 900]] = npdtype(2.0)
+    identity = npdtype(1024.0)
+
+    sdfg = openmp_reduce_sdfg(f'div_{np.dtype(npdtype).name}', 'lambda a, b: a / b', identity, size, dtype=dtype)
+    out = np.zeros(1, dtype=npdtype)
+    sdfg.compile()(A=values.copy(), s=out)
+
+    reference = np.float64(identity)
+    for v in values:
+        reference = reference / np.float64(v)
+    assert reference == 64.0  # 1024 / 2^4, exact
+    assert out[0] == npdtype(reference)
+
+
+@pytest.mark.parametrize('kind, wcr, identity, reference',
+                         [('and', 'lambda a, b: a and b', np.float16(1), np.logical_and.reduce),
+                          ('or', 'lambda a, b: a or b', np.float16(0), np.logical_or.reduce)])
+def test_float16_openmp_reduction_logical(kind, wcr, identity, reference):
+    """&& and || reduce on truthiness and normalize to exactly 1.0 / 0.0.
+
+    Exact by nature -- the result is only ever 0.0 or 1.0, both exactly representable
+    -- so no tolerance is involved. Includes a truthy non-1.0 value (5.0) to pin that
+    it normalizes rather than propagating, which is what ``float`` does.
+    """
+    size = 2048
+    for values in (np.ones(size, dtype=np.float16), np.zeros(size, dtype=np.float16),
+                   np.concatenate([np.ones(size - 1, dtype=np.float16),
+                                   np.zeros(1, dtype=np.float16)]),
+                   np.concatenate([np.zeros(7, dtype=np.float16),
+                                   np.full(1, 5.0, dtype=np.float16),
+                                   np.zeros(size - 8, dtype=np.float16)])):
+        sdfg = openmp_reduce_sdfg(f'logical_{kind}', wcr, identity, size)
+        out = np.zeros(1, dtype=np.float16)
+        sdfg.compile()(A=values.copy(), s=out)
+        expected = np.float16(1.0) if reference(values.astype(bool)) else np.float16(0.0)
+        assert out[0] == expected, f'{kind} over {values[:10]}...: got {out[0]}, want {expected}'
+
+
+@pytest.mark.parametrize('wcr', ['lambda a, b: a & b', 'lambda a, b: a | b', 'lambda a, b: a ^ b'])
+@pytest.mark.parametrize('dtype', [dace.float16, dace.float32, dace.float64])
+def test_openmp_bitwise_reduction_on_float_is_refused(wcr, dtype):
+    """A bitwise reduction over a floating-point dtype must be refused, clearly.
+
+    C++ has no ``&`` / ``|`` / ``^`` on a floating-point operand and OpenMP has no
+    reduction identifier for one either, so this combination can never be lowered. It
+    used to reach the C++ compiler and fail there with "user defined reduction not
+    found for '*(float (*)[1])_out'", which says nothing about the real cause.
+    """
+    size = 256
+    sdfg = openmp_reduce_sdfg('bitwise', wcr, 1, size, dtype=dtype)
+    with pytest.raises(ValueError, match='not defined for non-integral data type'):
+        sdfg.compile()
+
+
+def test_openmp_bitwise_reduction_on_integers_still_works():
+    """The refusal must not catch the case bitwise reductions are actually for."""
+    size = 2048
+    rng = np.random.default_rng(3)
+    values = rng.integers(0, 2**31 - 1, size=size).astype(np.int32)
+
+    sdfg = openmp_reduce_sdfg('bitwise_int', 'lambda a, b: a & b', -1, size, dtype=dace.int32)
+    out = np.zeros(1, dtype=np.int32)
+    sdfg.compile()(A=values.copy(), s=out)
+    assert out[0] == np.bitwise_and.reduce(values)
 
 
 #: Runs one float16 OpenMP sum in a fresh interpreter. ``OMP_NUM_THREADS`` is only

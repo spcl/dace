@@ -336,9 +336,20 @@ typedef half float16;
 //
 // ``-`` is declared because ExpandReduceOpenMP emits ``reduction(-: ...)`` for
 // a Sub node and OpenMP accepts it for the primitive float types. Its combiner
-// is ``+=``, not ``-=``: the clause negates within each private copy, and the
-// copies are then summed -- which is what OpenMP defines the ``-`` reduction to
-// mean, and what GCC does for ``float``.
+// is ``+=``, NOT ``-=`` -- do not "fix" this. The clause negates within each
+// private copy and the copies are then summed, which is what OpenMP defines the
+// ``-`` reduction to mean and what GCC does for ``float``: the answer is
+// ``initial - sum(x)``, and a ``-=`` combiner would flip the sign of every
+// thread's contribution but the first.
+//
+// The set is exactly the one OpenMP accepts for ``float`` -- no more, no less.
+// ``&``, ``|`` and ``^`` are deliberately absent: OpenMP rejects them for the
+// primitive floating-point types too ("user defined reduction not found for
+// 'float'"), and C++ has no bitwise operator on a floating-point operand.
+// Declaring them for ``half`` would make float16 accept a program that fails to
+// compile for float32, and would silently give it bit-pattern semantics that no
+// other float type has. ExpandReduceOpenMP refuses those combinations up front
+// instead.
 #pragma omp declare reduction(+ : dace::half : omp_out += omp_in) initializer(omp_priv = dace::half(0.0f))
 #pragma omp declare reduction(- : dace::half : omp_out += omp_in) initializer(omp_priv = dace::half(0.0f))
 #pragma omp declare reduction(* : dace::half : omp_out *= omp_in) initializer(omp_priv = dace::half(1.0f))
@@ -346,6 +357,15 @@ typedef half float16;
     initializer(omp_priv = dace::half(__builtin_huge_valf()))
 #pragma omp declare reduction(max : dace::half : omp_out = (float)omp_in > (float)omp_out ? omp_in : omp_out) \
     initializer(omp_priv = dace::half(-__builtin_huge_valf()))
+// Logical reductions operate on truthiness and normalize the result to exactly
+// 1.0 or 0.0, because ``a && b`` yields ``bool`` and the assignment converts it
+// back -- the same normalization ``float`` gets, where a truthy 5.0f also
+// reduces to 1.0f. Identities are the neutral truth values: true for &&,
+// false for ||.
+#pragma omp declare reduction(&& : dace::half : omp_out = dace::half((float)((float)omp_out && (float)omp_in))) \
+    initializer(omp_priv = dace::half(1.0f))
+#pragma omp declare reduction(|| : dace::half : omp_out = dace::half((float)((float)omp_out || (float)omp_in))) \
+    initializer(omp_priv = dace::half(0.0f))
 #endif
 #endif
 

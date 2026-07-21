@@ -375,8 +375,83 @@ static void test_openmp_reductions() {
   }
   CHECK_BITS(out[0], raw(float16(wantmax)));
 
+  // --- logical && / || : truthiness, normalized to exactly 1.0 / 0.0.
+  // Asserted against the identical clause on `float`, which is the definition of
+  // "parity" here -- including that a truthy 5.0 reduces to 1.0, not to 5.0. ---
+  {
+    static float lfin[2048];
+    for (int i = 0; i < N; ++i) {
+      in[i] = float16(1.0f);
+      lfin[i] = 1.0f;
+    }
+    // all true
+    out[0] = float16(123.0f);  // non-identity start must still be folded in
+    float fl = 123.0f;
+#pragma omp parallel for reduction(&& : out[0])
+    for (int _i0 = 0; _i0 < N; ++_i0) out[0] = out[0] && in[_i0];
+#pragma omp parallel for reduction(&& : fl)
+    for (int _i0 = 0; _i0 < N; ++_i0) fl = fl && lfin[_i0];
+    CHECK((float)out[0] == fl);
+    CHECK_BITS(out[0], raw(float16(1.0f)));
+
+    // one false element anywhere must win
+    in[N / 2] = float16(0.0f);
+    lfin[N / 2] = 0.0f;
+    out[0] = float16(123.0f);
+    fl = 123.0f;
+#pragma omp parallel for reduction(&& : out[0])
+    for (int _i0 = 0; _i0 < N; ++_i0) out[0] = out[0] && in[_i0];
+#pragma omp parallel for reduction(&& : fl)
+    for (int _i0 = 0; _i0 < N; ++_i0) fl = fl && lfin[_i0];
+    CHECK((float)out[0] == fl);
+    CHECK_BITS(out[0], raw(float16(0.0f)));
+
+    // all false
+    for (int i = 0; i < N; ++i) {
+      in[i] = float16(0.0f);
+      lfin[i] = 0.0f;
+    }
+    out[0] = float16(0.0f);
+    fl = 0.0f;
+#pragma omp parallel for reduction(|| : out[0])
+    for (int _i0 = 0; _i0 < N; ++_i0) out[0] = out[0] || in[_i0];
+#pragma omp parallel for reduction(|| : fl)
+    for (int _i0 = 0; _i0 < N; ++_i0) fl = fl || lfin[_i0];
+    CHECK((float)out[0] == fl);
+    CHECK_BITS(out[0], raw(float16(0.0f)));
+
+    // a single truthy 5.0 must normalize to 1.0, exactly as float does
+    in[7] = float16(5.0f);
+    lfin[7] = 5.0f;
+    out[0] = float16(0.0f);
+    fl = 0.0f;
+#pragma omp parallel for reduction(|| : out[0])
+    for (int _i0 = 0; _i0 < N; ++_i0) out[0] = out[0] || in[_i0];
+#pragma omp parallel for reduction(|| : fl)
+    for (int _i0 = 0; _i0 < N; ++_i0) fl = fl || lfin[_i0];
+    CHECK((float)out[0] == fl);
+    CHECK_BITS(out[0], raw(float16(1.0f)));
+  }
+
+  // --- Div is lowered by ExpandReduceOpenMP as a `*` reduction over the divisors
+  // followed by one divide, because `/` is not an OpenMP reduction identifier.
+  // Powers of two keep the product and the quotient exact and order-independent. ---
+  for (int i = 0; i < N; ++i) in[i] = float16(1.0f);
+  in[3] = in[9] = in[77] = in[900] = float16(2.0f);
+  {
+    float16 acc = float16(1.0f);
+#pragma omp parallel for reduction(* : acc)
+    for (int _i0 = 0; _i0 < N; ++_i0) {
+      acc *= in[_i0 * 1];
+    }
+    out[0] = float16(1024.0f);
+    out[0] = out[0] / acc;
+    CHECK_BITS(out[0], raw(float16(64.0f)));  // 1024 / 2^4
+  }
+
   // --- the private copies really are identity-initialized: reducing into a
   // non-zero starting value must ADD to it, not clobber it ---
+  for (int i = 0; i < N; ++i) in[i] = float16(1.0f);
   for (int i = 0; i < N; ++i) in[i] = float16(1.0f);
   out[0] = float16(7.0f);
 #pragma omp parallel for reduction(+ : out[0])
