@@ -61,11 +61,38 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
                     continue
                 if tasklet.code.language != dace.dtypes.Language.Python:
                     continue
-                if self._normalize(tasklet):
-                    count += 1
-                elif self._demote_self_blend(state, tasklet):
+                if self._normalize(tasklet) or self._demote_self_blend(state, tasklet):
+                    self._mark_conditional_writes_dynamic(state, tasklet)
                     count += 1
         return count or None
+
+    def _mark_conditional_writes_dynamic(self, state: SDFGState, tasklet: nd.Tasklet) -> None:
+        """Mark every out-edge whose connector is written through ``IT`` as a DYNAMIC memlet.
+
+        ``IT(cond, value)`` lowers to ``if (cond) { out = value; }``, so the connector is not
+        assigned on the false path. That is only sound if the WRITE is skipped there too, which in
+        DaCe means a dynamic memlet: a static one stores the connector unconditionally after the
+        tasklet, so the false path would write whatever uninitialised value it happened to hold
+        instead of leaving the destination alone (TSVC s277's guarded ``a[i] += c[i]*d[i]``).
+
+        Enforced here, once, for EVERY producer of the ``IT`` form rather than at each rewrite
+        site. :meth:`_normalize` happens to inherit a dynamic memlet from the frontend (it lowers
+        an already-conditional ``A[mask] = value``), but :meth:`_demote_self_blend` turns an
+        UNCONDITIONAL blend into a conditional write and must convert the memlet with it. Making
+        the invariant explicit keeps the next producer from having to rediscover it.
+
+        :param state: The state holding ``tasklet``.
+        :param tasklet: A tasklet whose body was just rewritten to the ``IT`` form.
+        """
+        guarded = {
+            node.targets[0].id
+            for node in ast.walk(ast.parse(tasklet.code.as_string)) if isinstance(node, ast.Assign)
+            and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name) and node.value.func.id == CONDITIONAL_WRITE_FUNC
+        }
+        for edge in state.out_edges(tasklet):
+            if edge.src_conn in guarded and edge.data is not None:
+                edge.data.dynamic = True
 
     def _demote_self_blend(self, state: SDFGState, tasklet: nd.Tasklet) -> bool:
         """Rewrite a SELF-BLEND ``out = ITE(cond, value, out)`` into the masked write
@@ -102,13 +129,6 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
 
         tasklet.code = CodeBlock(f"{out_conn} = {CONDITIONAL_WRITE_FUNC}({cond_src}, {value_src})",
                                  language=dace.dtypes.Language.Python)
-        # ``IT`` lowers to ``if (cond) { out = value; }``, so the connector is NOT assigned on the
-        # false path. That is only correct if the write itself is skipped there -- i.e. the output
-        # memlet is DYNAMIC. On a static memlet DaCe stores the connector unconditionally after the
-        # tasklet, which would write whatever uninitialised value it happened to hold instead of
-        # leaving the destination alone (TSVC s277's guarded ``a[i] += c[i]*d[i]``). Dropping the
-        # else read and marking the write dynamic are two halves of one rewrite.
-        write.dynamic = True
         # Drop the WHOLE read path, not just the tasklet's edge: the read enters through the
         # enclosing map's ``IN_``/``OUT_`` connector pair, and removing only the inner edge would
         # strand them (a dangling out-connector the validator rejects). It also drops the tasklet's
