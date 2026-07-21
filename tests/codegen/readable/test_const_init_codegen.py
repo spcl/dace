@@ -6,6 +6,8 @@ as a ``const``/``constexpr`` initializer and that NO redundant runtime
 initialization (``memset`` / ``new`` / ``= {0}`` allocation) is emitted for it,
 and that results stay bit-exact vs legacy.
 """
+import re
+
 import numpy as np
 import dace
 from dace.config import Config
@@ -182,9 +184,100 @@ def test_scalar_constant_subscript_lowered_to_bare_name():
     assert '= C;' in code, 'read did not lower to the bare name'
 
 
+def const_chain_sdfg(name, n=4, m=3):
+    """A partial-sum chain of write-once scalars, one link of which keeps a connector.
+
+    ``res[j] = ((((0 + X[0, j]) + X[1, j]) + ...))``, each partial sum its own scope-local scalar, as a
+    reduction split into per-element tasklets produces. The seed ``p0`` is a compile-time constant, so
+    ``MarkConstInit`` promotes it to an SDFG constant -- and a read of an SDFG constant is exactly what
+    ``InlineTaskletConnectors`` refuses to inline, so the tasklet consuming it keeps its ``a`` connector
+    and is emitted in its own ``{ }`` block while the rest of the chain is brace-free.
+
+    ``p0`` is declared LAST on purpose: ``MarkConstInit`` classifies descriptors in declaration order,
+    so this is the order in which ``p1`` is classified (and its writer predicted brace-free) BEFORE
+    ``p0`` becomes the constant that keeps that writer's connector alive.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('X', [n, m], dace.float64)
+    sdfg.add_array('res', [m], dace.float64)
+    for i in list(range(1, n)) + [0]:
+        sdfg.add_scalar('p%d' % i,
+                        dace.float64,
+                        transient=True,
+                        storage=dace.StorageType.Register,
+                        lifetime=dace.AllocationLifetime.Scope)
+    st = sdfg.add_state('main')
+    me, mx = st.add_map('outer', dict(j='0:%d' % m))
+    rx = st.add_read('X')
+    partials = {i: st.add_access('p%d' % i) for i in range(n)}
+    seed = st.add_tasklet('seed', {}, {'o'}, 'o = 0.0')
+    st.add_edge(me, None, seed, None, dace.Memlet())
+    st.add_edge(seed, 'o', partials[0], None, dace.Memlet('p0[0]'))
+    for i in range(n):
+        t = st.add_tasklet('acc%d' % i, {'a', 'x'}, {'o'}, 'o = a + x')
+        st.add_edge(partials[i], None, t, 'a', dace.Memlet('p%d[0]' % i))
+        st.add_memlet_path(rx, me, t, dst_conn='x', memlet=dace.Memlet('X[%d, j]' % i))
+        if i + 1 < n:
+            st.add_edge(t, 'o', partials[i + 1], None, dace.Memlet('p%d[0]' % (i + 1)))
+        else:
+            mx.add_in_connector('IN_res')
+            mx.add_out_connector('OUT_res')
+            st.add_edge(t, 'o', mx, 'IN_res', dace.Memlet('res[j]'))
+            st.add_edge(mx, 'OUT_res', st.add_write('res'), None, dace.Memlet('res[0:%d]' % m))
+    sdfg.validate()
+    return sdfg
+
+
+def scope_end_line(lines, decl_line):
+    """Index of the line that closes the C++ block ``lines[decl_line]`` was declared in."""
+    depth = 0
+    for index in range(decl_line + 1, len(lines)):
+        depth += lines[index].count('{') - lines[index].count('}')
+        if depth < 0:
+            return index
+    return len(lines)
+
+
+def assert_declared_in_readers_scope(code, names):
+    """Assert each of ``names`` is still in scope at its last use (the block it was declared in has
+    not closed yet). Catches a binding emitted inside a tasklet's own ``{ }`` block while its readers
+    sit in the enclosing one -- code that references an out-of-scope name."""
+    lines = code.splitlines()
+    for name in names:
+        decl = re.compile(r'^\s*(const\s+)?double\s+%s\s*(=|;)' % name)
+        use = re.compile(r'\b%s\b' % name)
+        decl_lines = [i for i, l in enumerate(lines) if decl.match(l)]
+        assert len(decl_lines) == 1, f'{name}: expected exactly one declaration, got {decl_lines}'
+        end = scope_end_line(lines, decl_lines[0])
+        uses = [i for i, l in enumerate(lines) if i != decl_lines[0] and use.search(l)]
+        assert uses, f'{name}: no use found -- the chain was folded away, test is vacuous'
+        assert max(uses) < end, (f'{name} is declared at line {decl_lines[0] + 1} in a block that closes '
+                                 f'at line {end + 1}, but is used at line {max(uses) + 1}:\n' +
+                                 '\n'.join(lines[decl_lines[0]:max(uses) + 1]))
+
+
+def test_const_binding_stays_in_scope_of_its_readers():
+    """A write-once scalar whose producing tasklet needs its own ``{ }`` block must NOT get its
+    ``const T x = expr;`` binding folded into that block -- the readers live in the enclosing scope.
+    Before the fix this emitted C++ that does not compile ("'p1' was not declared in this scope")."""
+    sdfg, code = _gen(const_chain_sdfg, 'experimental_readable', 'const_chain_exp')
+    assert '{  // acc0' in code, 'the connector-keeping link no longer needs its own block; test is vacuous'
+    assert_declared_in_readers_scope(code, ['p1', 'p2', 'p3'])
+
+    # Same numbers as legacy (this also proves the emitted C++ compiles).
+    X = np.arange(12.0).reshape(4, 3).copy()
+    res_exp, res_legacy = np.zeros(3), np.zeros(3)
+    sdfg.compile()(X=X.copy(), res=res_exp)
+    Config.set('compiler', 'cpu', 'implementation', value='legacy')
+    const_chain_sdfg('const_chain_leg').compile()(X=X.copy(), res=res_legacy)
+    Config.set('compiler', 'cpu', 'implementation', value='experimental_readable')
+    assert np.array_equal(res_exp, res_legacy) and np.array_equal(res_exp, X.sum(axis=0))
+
+
 if __name__ == '__main__':
     test_scalar_constexpr_no_memset()
     test_array_constexpr_full_no_memset()
     test_array_constexpr_partial_zerofill()
     test_scalar_constant_subscript_lowered_to_bare_name()
+    test_const_binding_stays_in_scope_of_its_readers()
     print('ok')

@@ -154,6 +154,11 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # (see late_declarable_scalar / emit_pending_late_decls). ptrname -> declaration info. Empty in
         # the default ``eager`` mode, so the emit hook is a no-op and the output stays byte-identical.
         self._late_pending: Dict[str, dict] = {}
+        # const_init: the `const T x = expr;` binding a write-once transient gets in place of its
+        # skipped declaration. Registered while the writing tasklet's body is lowered and consumed by
+        # emit_tasklet_body_block, which is the first point that knows whether that tasklet is emitted
+        # brace-free (fuse the binding) or in its own `{ }` block (declare ahead of the block instead).
+        self.const_pending: List[dict] = []
 
     # -- map scope ------------------------------------------------------------
 
@@ -925,6 +930,20 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             return None
         return neighbor_tasklets, node.setzero
 
+    def register_const_binding(self, decl: str, plain: str, fused: str) -> None:
+        """Register the ``const T x = expr;`` binding of a write-once transient whose declaration
+        ``allocate_array`` skipped. ``plain`` is the bare write emitted into the tasklet body, ``fused``
+        the same write carrying the binding, ``decl`` the standalone declaration.
+
+        The binding is only in scope for later readers if it is emitted at the ENCLOSING scope, which
+        holds exactly when the writing tasklet is emitted brace-free -- and, as for the mutable
+        ``scalar_init_style = fused`` counterpart, that is decided at emission (``has_locals`` counts
+        the tasklet postamble, generated after the body is lowered). So the choice is deferred to
+        ``emit_tasklet_body_block``: fuse when the tasklet collapses onto one line, otherwise emit
+        ``decl`` ahead of the block and let the body keep the plain write.
+        """
+        self.const_pending.append({'decl': decl, 'plain': plain, 'fused': fused})
+
     def fuse_pending_decl(self, tasklet, line: str) -> str:
         """Fold a pending declaration into ``line``, the brace-free single statement of ``tasklet``,
         turning ``x = expr;`` into ``T x = expr;`` -- the declaration IS the first write. Returns the
@@ -933,7 +952,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
         The write must be spelled by this line: the scalar is deferred on the strength of its DATAFLOW
         (see ``late_declarable_scalar``), but only the emitted text proves the statement really is
-        ``x = ...`` and not, say, a read of ``x`` feeding another store."""
+        ``x = ...`` and not, say, a read of ``x`` feeding another store.
+
+        A ``const_init`` binding (``register_const_binding``) is folded on the same terms, matched
+        against the exact plain write its lowering emitted."""
+        for info in self.const_pending:
+            if line != info['plain']:
+                continue
+            self.const_pending.remove(info)
+            return info['fused']
         for ptrname, info in list(self._late_pending.items()):
             if not info['fusable'] or id(tasklet) not in info['writers']:
                 continue
@@ -945,8 +972,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
 
     def emit_pending_late_decls(self, cfg, state_id, tasklet, callsite_stream) -> None:
         """Emit the deferred ``T x;`` declaration of every scalar this ``tasklet`` is the first to use,
-        immediately before the tasklet body. A no-op (and byte-identical) unless a declaration was
-        deferred (``decl_placement = late`` / ``scalar_init_style = fused``) and is still pending."""
+        immediately before the tasklet body, plus the declaration of any ``const_init`` binding this
+        tasklet could not fuse. A no-op (and byte-identical) unless a declaration was deferred
+        (``decl_placement = late`` / ``scalar_init_style = fused``) or a binding went unfused."""
+        # A const binding still pending here belongs to a tasklet that did NOT collapse onto one line:
+        # fusing it would scope the value to that tasklet's `{ }` block, out of reach of its readers.
+        # Declare it (mutable, since the value is assigned in the block) at the enclosing scope instead.
+        for info in self.const_pending:
+            callsite_stream.write(info['decl'], cfg, state_id, tasklet)
+        self.const_pending.clear()
         if not self._late_pending:
             return
         for ptrname, info in list(self._late_pending.items()):
@@ -1129,12 +1163,15 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             return self.generic_visit(node)
         rhs = cppunparse.cppunparse(value, expr_semicolon=False)
         desc = self.sdfg.arrays[target]
+        plain = '%s = %s;' % (lhs, rhs)
         if self.codegen._is_const_scalar(desc):
-            # Single-write scope-local scalar: fuse the (skipped) declaration and the
-            # write into one `const T x = expr;` binding. Safe because this write is a
-            # connector-free single assignment -> emitted brace-free at the enclosing
-            # scope, and MarkConstInit proved it is the only write and precedes reads.
-            newnode = ast.Name(id='const %s %s = %s;' % (desc.dtype.ctype, lhs, rhs))
+            # Single-write scope-local scalar: the mutable `T x;` declaration was skipped in
+            # allocate_array, so this write carries it -- as a fused `const T x = expr;` binding when
+            # the tasklet is emitted brace-free, else as a plain `T x;` line ahead of its block.
+            # Which one is only known once the body is lowered, so register both and emit the plain
+            # write; register_const_binding's consumer picks (see emit_tasklet_body_block).
+            ctype = desc.dtype.ctype
+            self.codegen.register_const_binding('%s %s;' % (ctype, lhs), plain, 'const %s %s = %s;' % (ctype, lhs, rhs))
         elif self.codegen._is_const_len1_array(desc):
             # Single-write single-element stack array -> `const T x[1] = {(T)(expr)};`; reads keep their
             # `x[x_idx(0)]` form (== x[0]). The explicit `(T)` cast matches legacy's implicit narrowing on
@@ -1142,10 +1179,9 @@ class ReadableKeywordRemover(cpp.DaCeKeywordRemover):
             # it the braced list-initializer would raise -Wnarrowing where legacy is silent.
             name = self.codegen.ptr(target, desc, self.sdfg)
             ctype = desc.dtype.ctype
-            newnode = ast.Name(id='const %s %s[1] = {(%s)(%s)};' % (ctype, name, ctype, rhs))
-        else:
-            newnode = ast.Name(id='%s = %s;' % (lhs, rhs))
-        return self._replace_assignment(newnode, node)
+            self.codegen.register_const_binding('%s %s[1];' % (ctype, name), plain,
+                                                'const %s %s[1] = {(%s)(%s)};' % (ctype, name, ctype, rhs))
+        return self._replace_assignment(ast.Name(id=plain), node)
 
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         target = rname(node)
