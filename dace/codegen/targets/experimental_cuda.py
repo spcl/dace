@@ -1041,9 +1041,12 @@ class KernelSpec:
         # The kernel wrapper function runs on the host; its signature receives __state,
         # every kernel argument, and exactly one gpuStream_t handle.
         gpustream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
+        # Resolve the descriptor from the memlet, not from ``e.src``: when the kernel map sits
+        # inside a host-scheduled map the stream edge is routed through the enclosing MapEntry,
+        # so ``e.src`` is that MapEntry rather than the gpu_streams AccessNode.
         gpustream_input = [
             e for e in dace.sdfg.dynamic_map_inputs(kernel_parent_state, kernel_map_entry)
-            if e.src.desc(sdfg).dtype == dtypes.gpuStream_t
+            if e.data.data is not None and sdfg.arrays[e.data.data].dtype == dtypes.gpuStream_t
         ]
         if len(gpustream_input) > 1:
             raise ValueError(
