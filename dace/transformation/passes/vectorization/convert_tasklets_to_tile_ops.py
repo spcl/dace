@@ -1901,10 +1901,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                     is_widenable = False
         if not is_widenable:
             return False
-        new_desc = _dd.Array(dtype=desc.dtype,
-                             shape=widths,
-                             transient=True,
-                             storage=getattr(desc, "storage", dace.dtypes.StorageType.Register))
+        new_desc = _dd.Array(dtype=desc.dtype, shape=widths, transient=True, storage=desc.storage)
         sdfg.arrays[out_edge.dst.data] = new_desc
         target_subset = ", ".join(f"0:{w}" for w in widths)
         target_range = _subsets.Range.from_string(target_subset)

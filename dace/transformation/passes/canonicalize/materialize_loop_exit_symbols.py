@@ -48,7 +48,11 @@ from typing import Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import SDFG, properties, symbolic
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
+
+#: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
+#: these as ``Constant`` rather than ``Name``, so this is a belt-and-braces allowance.
+LITERAL_NAMES = frozenset({'True', 'False', 'None'})
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -117,8 +121,9 @@ def _expr_is_loop_invariant(expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore:
             if n.id == loop.loop_variable:
                 return False
             if not _is_loop_invariant_symbol(n.id, loop, sdfg, sdfg_free_symbols):
-                # Allow numeric literal names like ``True`` / ``False`` to pass.
-                if not hasattr(__import__('builtins'), n.id):
+                # Only literal names pass. Probing ``builtins`` instead would admit ``open``,
+                # ``sum``, ``id``, ... as loop-invariant operands.
+                if n.id not in LITERAL_NAMES:
                     return False
     return True
 
@@ -355,8 +360,8 @@ class MaterializeLoopExitSymbols(ppl.Pass):
         edges that stay within ``blocks``) references ``sym_name`` in its data
         flow / assignments / conditions."""
         for block in blocks:
-            for s in (block.all_states() if hasattr(block, 'all_states') else [block]):
-                if not hasattr(s, 'used_symbols'):
+            for s in (block.all_states() if isinstance(block, ControlFlowRegion) else [block]):
+                if not isinstance(s, SDFGState):
                     continue
                 if sym_name in s.used_symbols(all_symbols=True):
                     return True

@@ -50,7 +50,7 @@ def _is_negative(value) -> bool:
         s = symbolic.simplify(value)
     except Exception:
         return False
-    return getattr(s, 'is_number', False) and getattr(s, 'is_negative', False)
+    return s.is_number and s.is_negative
 
 
 def _next_id(sdfg: SDFG) -> int:

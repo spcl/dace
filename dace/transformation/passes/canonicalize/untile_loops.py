@@ -207,7 +207,7 @@ def _is_constant_positive_int(expr) -> Optional[int]:
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if not getattr(s, 'is_number', False) or not getattr(s, 'is_Integer', False):
+    if not s.is_number or not s.is_Integer:
         return None
     v = int(s)
     return v if v > 0 else None
@@ -218,7 +218,7 @@ def _is_zero(expr) -> bool:
         s = symbolic.simplify(expr)
     except Exception:
         return False
-    return getattr(s, 'is_number', False) and s == 0
+    return s.is_number and s == 0
 
 
 def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
@@ -248,8 +248,8 @@ def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if getattr(s, 'is_number', False):
-        if not getattr(s, 'is_Integer', False):
+    if s.is_number:
+        if not s.is_Integer:
             return None
         v = int(s)
         if v <= 1:
@@ -351,7 +351,7 @@ def _diff_is_zero(a, b) -> bool:
         diff = symbolic.simplify(a - b)
     except Exception:
         return False
-    if hasattr(diff, "is_number") and diff.is_number:
+    if diff.is_number:
         try:
             return int(diff) == 0
         except (TypeError, ValueError):

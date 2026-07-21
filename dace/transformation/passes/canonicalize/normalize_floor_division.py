@@ -71,11 +71,14 @@ def normalize_descriptor(desc: dt.Data) -> int:
         desc.shape = reshaped
         count += 1
     if isinstance(desc, dt.Array):
-        for values, assign in ((desc.strides, "strides"), (desc.offset, "offset")):
-            rewritten = [normalize(v) for v in values]
-            if rewritten != list(values):
-                setattr(desc, assign, rewritten)
-                count += 1
+        rewritten_strides = [normalize(v) for v in desc.strides]
+        if rewritten_strides != list(desc.strides):
+            desc.strides = rewritten_strides
+            count += 1
+        rewritten_offset = [normalize(v) for v in desc.offset]
+        if rewritten_offset != list(desc.offset):
+            desc.offset = rewritten_offset
+            count += 1
         rewritten_total = normalize(desc.total_size)
         if rewritten_total != desc.total_size:
             desc.total_size = rewritten_total

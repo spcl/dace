@@ -294,7 +294,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         """Recursively check whether any nested block contains a BreakBlock."""
         if isinstance(block, BreakBlock):
             return True
-        if not hasattr(block, 'nodes'):
+        if not isinstance(block, (ControlFlowRegion, SDFGState)):
             return False
         for n in block.nodes():
             if self._contains_break(n):

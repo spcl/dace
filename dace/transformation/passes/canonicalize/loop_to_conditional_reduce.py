@@ -240,7 +240,7 @@ class LoopToConditionalReduce(ppl.Pass):
         # And no non-transient writes other than the accumulator.
         for n in sink_ans:
             desc = sdfg.arrays.get(n.data)
-            if desc is not None and not getattr(desc, 'transient', False) and n.data != acc_name:
+            if desc is not None and not desc.transient and n.data != acc_name:
                 return None
 
         # Walk back from the sink to find the update tasklet.
@@ -316,7 +316,7 @@ class LoopToConditionalReduce(ppl.Pass):
     # ------------------------- match helpers -------------------------
 
     def _branch_has_content(self, branch) -> bool:
-        if not hasattr(branch, 'nodes'):
+        if not isinstance(branch, ControlFlowRegion):
             return False
         for n in branch.nodes():
             if isinstance(n, SDFGState) and len(n.nodes()) > 0:

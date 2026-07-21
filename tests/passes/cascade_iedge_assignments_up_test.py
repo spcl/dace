@@ -66,7 +66,7 @@ def _assignments_inside_loops(sdfg: dace.SDFG) -> List[Tuple[str, str, str]]:
             if isinstance(g, LoopRegion):
                 in_loop = True
                 break
-            g = getattr(g, 'parent_graph', None)
+            g = g.parent_graph
         if not in_loop:
             continue
         for e in cfg.edges():

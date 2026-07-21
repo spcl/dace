@@ -136,10 +136,8 @@ def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
     :param source: A standalone (throwaway) SDFG whose contents ``target`` adopts.
     """
     from dace.transformation.passes.fusion_inline import FixNestedSDFGReferences
-    for key, value in list(source.__dict__.items()):
-        if key in ('_parent', '_parent_sdfg', '_parent_nsdfg_node', '_cfg_list', 'guid'):
-            continue
-        setattr(target, key, value)
+    preserved = ('_parent', '_parent_sdfg', '_parent_nsdfg_node', '_cfg_list', 'guid')
+    target.__dict__.update({k: v for k, v in source.__dict__.items() if k not in preserved})
     target._parent = None
     target._parent_sdfg = None
     target._parent_nsdfg_node = None

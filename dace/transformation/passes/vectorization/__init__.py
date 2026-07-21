@@ -20,7 +20,11 @@ def __getattr__(name):
     """Lazily resolve the pipeline entry points (breaks the interstate import cycle)."""
     if name in _PIPELINE_EXPORTS:
         from dace.transformation.passes.vectorization import vectorize_multi_dim
-        return getattr(vectorize_multi_dim, name)
+        if name == "VectorizeMultiDim":
+            return vectorize_multi_dim.VectorizeMultiDim
+        if name == "VectorizeCPUMultiDim":
+            return vectorize_multi_dim.VectorizeCPUMultiDim
+        return vectorize_multi_dim.VectorizeGPUMultiDim
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 

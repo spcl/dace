@@ -650,7 +650,7 @@ class ArgMaxLift(ppl.Pass):
         ``:= gather_sym``), ``x := outer_var`` and ``y := inner_var`` via iedges,
         with empty states and no other writes. Returns ``(x_name, y_name)`` or
         ``None``."""
-        if not hasattr(true_branch, 'edges'):
+        if not isinstance(true_branch, ControlFlowRegion):
             return None
         carrier_seen = False
         x_idx = y_idx = None
@@ -780,7 +780,7 @@ class ArgMaxLift(ppl.Pass):
         sdfg.reset_cfg_list()
 
     def _branch_has_content(self, branch) -> bool:
-        if not hasattr(branch, 'nodes'):
+        if not isinstance(branch, ControlFlowRegion):
             return False
         for n in branch.nodes():
             if isinstance(n, SDFGState) and len(n.nodes()) > 0:
@@ -991,7 +991,7 @@ class ArgMaxLift(ppl.Pass):
         return None, None
 
     def _extract_singleton_state(self, branch) -> Optional[SDFGState]:
-        if not hasattr(branch, 'nodes'):
+        if not isinstance(branch, ControlFlowRegion):
             return None
         content_states = [n for n in branch.nodes() if isinstance(n, SDFGState) and len(n.nodes()) > 0]
         if len(content_states) != 1:
@@ -1119,7 +1119,7 @@ class ArgMaxLift(ppl.Pass):
             is the index-carrier symbol name when an ``idx := loop_var`` write is
             present, else ``None``.
         """
-        if not hasattr(true_branch, 'edges'):
+        if not isinstance(true_branch, ControlFlowRegion):
             return False, None
         carrier_write_seen = False
         idx_carrier = None

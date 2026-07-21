@@ -47,13 +47,13 @@ def _is_assign_tasklet(t) -> bool:
     """True iff ``t`` is a tasklet with a single in / out connector and a body
     of the form ``<out_conn> = <in_conn>`` (no arithmetic, no calls).
     """
-    if not hasattr(t, "code") or not hasattr(t, "in_connectors") or not hasattr(t, "out_connectors"):
+    if not isinstance(t, dace.nodes.Tasklet):
         return False
     if len(t.in_connectors) != 1 or len(t.out_connectors) != 1:
         return False
     in_conn = next(iter(t.in_connectors))
     out_conn = next(iter(t.out_connectors))
-    body = (t.code.as_string if hasattr(t.code, "as_string") else str(t.code)).strip().rstrip(";")
+    body = t.code.as_string.strip().rstrip(";")
     return body == f"{out_conn} = {in_conn}"
 
 

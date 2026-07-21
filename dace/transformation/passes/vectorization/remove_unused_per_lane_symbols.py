@@ -36,9 +36,12 @@ That's a separate follow-up slice; this pass is only the structural sweep.
 """
 from typing import Any, Dict, Optional, Set
 
+import sympy
+
 from dace import properties, symbolic
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import NestedSDFG, Tasklet
+from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
@@ -52,7 +55,7 @@ def _symbols_in_code_block(code_block) -> Set[str]:
     """
     if code_block is None:
         return set()
-    src = code_block.as_string if hasattr(code_block, "as_string") else str(code_block)
+    src = code_block.as_string if isinstance(code_block, CodeBlock) else str(code_block)
     return symbolic.symbols_in_code(src)
 
 
@@ -83,7 +86,7 @@ def _collect_referenced_symbols(sdfg: SDFG) -> Set[str]:
                 referenced.update(_symbols_in_code_block(node.code))
             elif isinstance(node, NestedSDFG):
                 for value in node.symbol_mapping.values():
-                    if hasattr(value, "free_symbols"):
+                    if isinstance(value, sympy.Basic):
                         referenced.update(str(s) for s in value.free_symbols)
                     else:
                         referenced.update(symbolic.symbols_in_code(str(value)))

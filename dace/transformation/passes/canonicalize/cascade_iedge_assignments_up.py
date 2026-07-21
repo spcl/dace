@@ -118,11 +118,11 @@ def _meets_binding_rule(dest: ControlFlowRegion, cfg: ControlFlowRegion, sdfg: S
     ``LoopRegion`` and no ``LoopRegion`` strictly contains ``dest``."""
     if isinstance(dest, LoopRegion):
         return False
-    p = getattr(dest, 'parent_graph', None)
+    p = dest.parent_graph
     while p is not None and p is not sdfg:
         if isinstance(p, LoopRegion):
             return False
-        p = getattr(p, 'parent_graph', None)
+        p = p.parent_graph
     return True
 
 
@@ -132,7 +132,7 @@ def _on_conditional_branch(cfg: ControlFlowRegion, dest: ControlFlowRegion, sdfg
     unconditionally executed under ``dest`` (L5)."""
     g = cfg
     while g is not None and g is not dest:
-        p = getattr(g, 'parent_graph', None)
+        p = g.parent_graph
         if isinstance(p, ConditionalBlock):
             return True
         g = p
@@ -311,7 +311,7 @@ def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: 
     dest: ControlFlowRegion = edge_region
     walker: ControlFlowRegion = edge_region
     while True:
-        parent = getattr(walker, 'parent_graph', None)
+        parent = walker.parent_graph
         if parent is None:
             break
         if not isinstance(parent, ControlFlowRegion):
@@ -373,8 +373,8 @@ def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegio
 def _direct_child(dest: ControlFlowRegion, edge_region: ControlFlowRegion) -> ControlFlowRegion:
     """Walk up from ``edge_region`` to find the immediate child of ``dest``."""
     g = edge_region
-    while getattr(g, 'parent_graph', None) is not dest:
-        g = getattr(g, 'parent_graph', None)
+    while g.parent_graph is not dest:
+        g = g.parent_graph
         if g is None:
             raise RuntimeError('dest is not an ancestor of edge_region')
     return g
