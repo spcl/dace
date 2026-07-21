@@ -332,12 +332,23 @@ class RustworkxGraphHandle:
 
     def __deepcopy__(self, memo):
         result = RustworkxGraphHandle(multigraph=self.multigraph)
-        for node in self.nodes():
-            attr = self._rx.get_node_data(self._index.index_of(node))
-            result.add_node(copy.deepcopy(node, memo), **copy.deepcopy(attr, memo))
-        for u, v in self.edges():
-            payload = self.get_edge_payload(u, v)
-            result.add_edge(copy.deepcopy(u, memo), copy.deepcopy(v, memo), **copy.deepcopy(payload, memo))
+        # One bulk pull of every node payload (rx.nodes()) keyed by index (rx.node_indices(), same
+        # order), instead of the old per-node index_of + get_node_data round-trip into rust. Walk
+        # idx_to_obj in its own insertion order so the copy's node order stays faithful (see
+        # NodeView._list); index keys are NOT ascending after remove/re-add, hence the idx->payload
+        # map rather than a bare zip. copy.deepcopy(..., memo) is still called on every node and
+        # payload (the unavoidable, load-bearing part -- shared memo keeps cross-references identical).
+        idx_to_payload = dict(zip(self._rx.node_indices(), self._rx.nodes()))
+        for idx, node in self._index.idx_to_obj.items():
+            result.add_node(copy.deepcopy(node, memo), **copy.deepcopy(idx_to_payload[idx], memo))
+        # rx.out_edges already carries each edge's payload as its third tuple element, so read it
+        # inline instead of a second get_edge_payload round-trip per edge -- and, unlike
+        # get_edge_data, this keeps each PARALLEL edge's own payload in a multigraph. Same per-source
+        # reversed order as EdgeView._list (load-bearing: recovers networkx insertion order).
+        for u_idx, u in self._index.idx_to_obj.items():
+            for _, v_idx, payload in reversed(list(self._rx.out_edges(u_idx))):
+                v = self._index.node_at(v_idx)
+                result.add_edge(copy.deepcopy(u, memo), copy.deepcopy(v, memo), **copy.deepcopy(payload, memo))
         return result
 
 
