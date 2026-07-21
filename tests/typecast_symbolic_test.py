@@ -11,7 +11,6 @@ reasoning, and print to the matching ``dace::<type>(x)`` C++ cast
 sympy printer and cppunparse to identical code.
 """
 import pytest
-import sympy
 
 import dace
 from dace.symbolic import pystr_to_symbolic
