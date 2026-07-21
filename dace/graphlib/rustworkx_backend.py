@@ -749,7 +749,11 @@ class RustworkxBackend:
             for node in generation:
                 emitted += 1
                 yield node
-                for child in G.successors(node):
+                # One decrement per EDGE, not per neighbour: in_degree counts edges, and
+                # successors() deduplicates parallel edges on a multigraph, so decrementing per
+                # neighbour leaves a parallel-edge target permanently above zero and the whole
+                # graph looks cyclic.
+                for _, child in G.out_edges(node):
                     in_degree[child] -= 1
                     if not in_degree[child]:
                         del in_degree[child]

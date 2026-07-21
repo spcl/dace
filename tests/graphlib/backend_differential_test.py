@@ -634,3 +634,17 @@ def test_topological_sort_order_matches_real_networkx(backend):
             expected = list(gl.topological_sort(build()))
         with gl.set_default_backend(backend):
             assert list(gl.topological_sort(build())) == expected
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_topological_sort_handles_multigraph_parallel_edges(backend):
+    """ in_degree counts EDGES while successors() deduplicates parallel edges, so a Kahn
+        implementation that decrements once per neighbour never brings a parallel-edge target
+        to zero and reports the whole graph as cyclic. This failed 27 tests across
+        work_depth, operational_intensity, schedule_inference and cutout. """
+    with gl.set_default_backend(backend):
+        G = gl.MultiDiGraph()
+        G.add_edge('a', 'b')
+        G.add_edge('a', 'b')
+        G.add_edge('b', 'c')
+        assert list(gl.topological_sort(G)) == ['a', 'b', 'c']
