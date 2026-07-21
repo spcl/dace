@@ -1,8 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-3 ``TRMM`` library node — ``B := alpha * op(A) * B`` (or right-side) with triangular ``A``.
-
-Uses separate ``_Bin`` and ``_Bout`` connectors (see :class:`Trsm`).
-"""
 import copy
 
 import dace.library
@@ -87,11 +83,12 @@ class ExpandTrmmCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Trmm(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?TRMM``: triangular matrix-matrix multiply."""
 
+    # Global properties
     implementations = {"OpenBLAS": ExpandTrmmOpenBLAS, "MKL": ExpandTrmmMKL, "cuBLAS": ExpandTrmmCuBLAS}
     default_implementation = None
 
+    # Object fields
     side = dace.properties.Property(dtype=bool,
                                     default=False,
                                     desc="False: B := alpha op(A) B; True: B := alpha B op(A)")
@@ -105,7 +102,9 @@ class Trmm(dace.sdfg.nodes.LibraryNode):
         self.side, self.uplo, self.transA, self.unit_diag, self.alpha = side, uplo, transA, unit_diag, alpha
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_Bin, ldb_in), ldb_out, m, n)``."""
+        """
+        :return: A five-tuple ((A, lda), (Bin, ldb_in), ldb_out, m, n).
+        """
         desc_A = desc_B = lda = ldb_in = ldb_out = m = n = None
         for e in state.in_edges(self):
             sq = copy.deepcopy(e.data.subset)
@@ -126,6 +125,7 @@ class Trmm(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_B, ldb_in), ldb_out, m, n
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.trmm')
 @oprepo.replaces('dace.libraries.blas.Trmm')
 def trmm_libnode(pv: 'ProgramVisitor',
@@ -139,13 +139,15 @@ def trmm_libnode(pv: 'ProgramVisitor',
                  transA=False,
                  unit_diag=False,
                  alpha=1):
-    """Build a :class:`Trmm` node. ``result`` defaults to ``B``."""
     result = result if result is not None else B
     A_in, B_in = state.add_read(A), state.add_read(B)
     B_out = state.add_write(result)
+
     libnode = Trmm('trmm', side=side, uplo=uplo, transA=transA, unit_diag=unit_diag, alpha=alpha)
     state.add_node(libnode)
+
     state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
     state.add_edge(B_in, None, libnode, '_Bin', mm.Memlet(B))
     state.add_edge(libnode, '_Bout', B_out, None, mm.Memlet(result))
+
     return []

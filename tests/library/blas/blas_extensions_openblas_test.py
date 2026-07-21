@@ -10,8 +10,7 @@ import pytest
 
 import dace
 from dace.memlet import Memlet
-from dace.libraries.blas.nodes import (Axpy, Scal, Nrm2, Asum, Iamax, Copy, Swap, Trsv, Trmv, Symv, Trsm, Trmm, Symm,
-                                       Syrk, Ger)
+from dace.libraries.blas.nodes import (Axpy, Scal, Copy, Swap, Trsv, Trmv, Symv, Trsm, Trmm, Symm, Syrk, Ger)
 
 _RTOL = 1e-14
 _ATOL = 1e-14
@@ -62,51 +61,6 @@ def test_scal_openblas():
     res = np.zeros(n)
     _run(sdfg, x=x, res=res)
     np.testing.assert_allclose(res, expected, rtol=_RTOL, atol=_ATOL)
-
-
-def _build_reduction_sdfg(node_cls, n, *, x_dtype=dace.float64, out_dtype=None):
-    out_dtype = out_dtype or x_dtype
-    sdfg = dace.SDFG(f'{node_cls.__name__.lower()}_obs')
-    sdfg.add_array('x', [n], x_dtype)
-    sdfg.add_array('out', [1], out_dtype)
-    s = sdfg.add_state()
-    node = node_cls(node_cls.__name__.lower(), n=n)
-    node.implementation = _IMPL
-    s.add_node(node)
-    s.add_memlet_path(s.add_read('x'), node, dst_conn='_x', memlet=Memlet(f'x[0:{n}]'))
-    s.add_memlet_path(node, s.add_write('out'), src_conn='_result', memlet=Memlet('out[0]'))
-    return sdfg
-
-
-@pytest.mark.mkl
-def test_nrm2_openblas():
-    n = 16
-    x = np.random.default_rng(2).standard_normal(n)
-    sdfg = _build_reduction_sdfg(Nrm2, n)
-    out = np.zeros(1)
-    _run(sdfg, x=x, out=out)
-    np.testing.assert_allclose(out[0], np.linalg.norm(x), rtol=_RTOL, atol=_ATOL)
-
-
-@pytest.mark.mkl
-def test_asum_openblas():
-    n = 16
-    x = np.random.default_rng(3).standard_normal(n)
-    sdfg = _build_reduction_sdfg(Asum, n)
-    out = np.zeros(1)
-    _run(sdfg, x=x, out=out)
-    np.testing.assert_allclose(out[0], np.sum(np.abs(x)), rtol=_RTOL, atol=_ATOL)
-
-
-@pytest.mark.mkl
-def test_iamax_openblas():
-    n = 24
-    x = np.random.default_rng(4).standard_normal(n)
-    x[11] = 42.0
-    sdfg = _build_reduction_sdfg(Iamax, n, out_dtype=dace.int32)
-    out = np.zeros(1, dtype=np.int32)
-    _run(sdfg, x=x, out=out)
-    assert int(out[0]) == 11
 
 
 @pytest.mark.mkl
@@ -358,9 +312,9 @@ def test_ger_openblas():
 
 
 if __name__ == '__main__':
-    for fn in (test_axpy_openblas, test_scal_openblas, test_nrm2_openblas, test_asum_openblas, test_iamax_openblas,
-               test_copy_openblas, test_swap_openblas, test_trsv_openblas, test_trmv_openblas, test_symv_openblas,
-               test_trsm_openblas, test_trmm_openblas, test_symm_openblas, test_syrk_openblas, test_ger_openblas):
+    for fn in (test_axpy_openblas, test_scal_openblas, test_copy_openblas, test_swap_openblas, test_trsv_openblas,
+               test_trmv_openblas, test_symv_openblas, test_trsm_openblas, test_trmm_openblas, test_symm_openblas,
+               test_syrk_openblas, test_ger_openblas):
         fn()
         print(f'  {fn.__name__}: PASS')
     print('All BLAS extension OpenBLAS lowering tests pass.')

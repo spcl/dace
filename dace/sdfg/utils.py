@@ -3,6 +3,7 @@
 
 import collections
 import copy
+import traceback
 import warnings
 import networkx as nx
 import time
@@ -1698,8 +1699,7 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
         try:
             func = sdfg.compile(validate=validate)
             folder = sdfg.build_folder
-        except BaseException as exc:  # noqa: BLE001 -- re-raised on every rank
-            import traceback
+        except BaseException as exc:  # re-raised on every rank below
             error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
 
     # Broadcast the build folder (or rank 0's compile error).  Sending both in

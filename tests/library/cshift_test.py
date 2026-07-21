@@ -17,15 +17,9 @@ from dace.libraries.standard.nodes import CShift
 
 
 def _build(in_shape, dtype, *, dim=1, shift=None):
-    """Wire a CShift lib node into a fresh SDFG with full-array memlets.
-
-    :param in_shape: source array shape (also the output shape).
-    :param dtype: element type.
-    :param dim: Fortran 1-based rotation axis.
-    :param shift: ``None`` means the runtime symbol ``__shift``; an
-        integer or symbolic expression pins the value at construct time.
-    :returns: the constructed (unexpanded) SDFG.
-    """
+    """Wire a CShift lib node into a fresh (unexpanded) SDFG with full-array memlets, ``in_shape``
+    on both sides. ``shift=None`` means the runtime symbol ``__shift``; an integer or symbolic
+    expression pins the value at construct time."""
     label = f"cshift_dim{dim}_{'_'.join(map(str, in_shape))}"
     sdfg = dace.SDFG(label)
     sdfg.add_array("v", list(in_shape), dtype)

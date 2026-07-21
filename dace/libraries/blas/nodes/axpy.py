@@ -22,12 +22,6 @@ class ExpandAxpyVectorized(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state: SDFGState, parent_sdfg, schedule=dace.ScheduleType.Default):
-        """
-        :param node: Node to expand.
-        :param parent_state: State that the node is in.
-        :param parent_sdfg: SDFG that the node is in.
-        :param schedule: The schedule to set on maps in the expansion.
-        """
         node.validate(parent_sdfg, parent_state)
 
         x_outer = parent_sdfg.arrays[next(parent_state.in_edges_by_connector(node, "_x")).data.data]
@@ -101,13 +95,6 @@ def _axpy_strides(node, parent_sdfg, parent_state):
 
 @dace.library.expansion
 class ExpandAxpyOpenBLAS(ExpandTransformation):
-    """``cblas_?axpy(N, alpha, X, incX, Y, incY)`` -- writes the result back into ``_res``.
-
-    Because cBLAS ``?axpy`` updates ``Y`` in-place but the DaCe node has a
-    separate ``_res`` output, the expansion emits a ``cblas_?copy`` from
-    ``_y`` into ``_res`` first, then calls ``?axpy`` with ``_res`` in the
-    ``Y`` position. This preserves the node's three-buffer convention.
-    """
 
     environments = [environments.openblas.OpenBLAS]
 
@@ -125,6 +112,7 @@ class ExpandAxpyOpenBLAS(ExpandTransformation):
         prefix = func.lower()
         n = node.n
         a = node.a
+        # cBLAS axpy updates Y in place; copy _y into _res first, then call.
         if dtype in (dace.complex64, dace.complex128):
             code = f"""
             {dtype.ctype} __alpha = {dtype.ctype}({a});
@@ -155,7 +143,6 @@ class ExpandAxpyMKL(ExpandTransformation):
 
 @dace.library.expansion
 class ExpandAxpyCuBLAS(ExpandTransformation):
-    """cuBLAS ``cublas?axpy(handle, n, &alpha, X, incX, Y, incY)`` with a prior ``copy`` into ``_res``."""
 
     environments = [environments.cublas.cuBLAS]
 
@@ -172,6 +159,7 @@ class ExpandAxpyCuBLAS(ExpandTransformation):
         sx, sy = _axpy_strides(node, parent_sdfg, parent_state)
         n, a = node.n, node.a
         code = environments.cublas.cuBLAS.handle_setup_code(node)
+        # cuBLAS axpy updates Y in place; copy _y into _res first, then call.
         code += f"""
         {dtype.ctype} __alpha = {dtype.ctype}({a});
         cublas{func}copy(__dace_cublas_handle, {n}, _y, {sy}, _res, {sy});
@@ -188,7 +176,7 @@ class ExpandAxpyCuBLAS(ExpandTransformation):
 class Axpy(dace.sdfg.nodes.LibraryNode):
     """
     Implements the BLAS AXPY operation, which computes a*x + y, where the
-    vectors x and y are of size n. Expects input connectrs "_x" and "_y", and
+    vectors x and y are of size n. Expects input connectors "_x" and "_y", and
     output connector "_res".
     """
 
@@ -209,14 +197,6 @@ class Axpy(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, *args, inputs={"_x", "_y"}, outputs={"_res"}, **kwargs)
         self.a = a or dace.symbolic.symbol("a")
         self.n = n or dace.symbolic.symbol("n")
-
-    def compare(self, other):
-
-        if (self.veclen == other.veclen and self.implementation == other.implementation):
-
-            return True
-        else:
-            return False
 
     def validate(self, sdfg, state):
 

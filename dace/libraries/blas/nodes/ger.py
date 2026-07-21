@@ -99,7 +99,6 @@ def _ger_strides(node, parent_state, parent_sdfg):
 
 @library.expansion
 class ExpandGerOpenBLAS(ExpandTransformation):
-    """``cblas_?ger(layout, m, n, alpha, X, incX, Y, incY, A, lda)`` after copying ``_A`` into ``_res``."""
 
     environments = [environments.openblas.OpenBLAS]
 
@@ -119,7 +118,7 @@ class ExpandGerOpenBLAS(ExpandTransformation):
         alpha = node.alpha
         # cBLAS ger updates A in place; copy _A into _res first, then call.
         if dtype in (dace.complex64, dace.complex128):
-            cfunc = prefix + 'gerc' if dtype == dace.complex128 else prefix + 'gerc'
+            cfunc = prefix + 'gerc'
         else:
             cfunc = prefix + 'ger'
         code = f"""
@@ -152,7 +151,6 @@ class ExpandGerMKL(ExpandTransformation):
 
 @library.expansion
 class ExpandGerCuBLAS(ExpandTransformation):
-    """cuBLAS ``cublas?ger(handle, m, n, &alpha, x, incx, y, incy, A, lda)``; works on the in-place ``_res`` after copy."""
 
     environments = [environments.cublas.cuBLAS]
 
@@ -171,6 +169,7 @@ class ExpandGerCuBLAS(ExpandTransformation):
         alpha = node.alpha
         cfunc = func + 'ger' if dtype not in (dace.complex64, dace.complex128) else func + 'gerc'
         code = environments.cublas.cuBLAS.handle_setup_code(node)
+        # cuBLAS ger updates A in place; copy _A into _res first, then call.
         code += f"""
         {dtype.ctype} __alpha = {dtype.ctype}({alpha});
         cudaMemcpyAsync(_res, _A, sizeof({dtype.ctype}) * ({m}) * ({lda}),

@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests for ``dace.sdfg.construction_utils.get_parent_map_and_loop_scopes``.
+Tests for ``dace.transformation.helpers.get_parent_map_and_loop_scopes``.
 
 Uses the DaCe Python frontend (``@dace.program``, ``dace.map``, ``range``)
 to build a realistic HPC-style SDFG that mixes maps, loops, nested SDFGs,

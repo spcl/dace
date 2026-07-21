@@ -30,21 +30,8 @@ def expanded_input_connectors(node: nodes.Node, state: Any) -> Dict[str, Any]:
 
 
 def resolve_comm(node: nodes.Node, state: Any) -> str:
-    """Resolve the MPI communicator an MPI library node should use from its
-    optional communicator-carrying input connectors.  The connector NAME is the
-    semantic discriminator:
-
-      * ``_comm`` -- a raw ``opaque(MPI_Comm)`` value (e.g. produced by a
-        ``Comm_f2c`` node from a Fortran integer handle); used DIRECTLY, no
-        cartesian topology.
-      * ``_grid`` -- a process grid (``ProcessGrid`` / ``FortranProcessGrid``)
-        whose cartesian sub-communicator is used.
-
-    ``_comm`` takes priority when both are present.  Falls back to
-    ``MPI_COMM_WORLD`` when neither is connected.  The returned string is the
-    connector name (or ``"MPI_COMM_WORLD"``); the C tasklet emits it verbatim
-    into the ``MPI_*`` call and DaCe codegen substitutes the connector's value.
-    """
+    """Communicator token for an MPI node: a wired ``_comm`` connector, else a
+    wired ``_grid`` connector, else ``MPI_COMM_WORLD``."""
     if input_descriptor_name(node, state, '_comm'):
         return "_comm"
     if input_descriptor_name(node, state, '_grid'):

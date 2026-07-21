@@ -1,11 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""LAPACK ``POTRS`` library node — solve ``A X = B`` using the Cholesky factor from POTRF.
-
-Uses separate ``_bin`` and ``_bout`` connectors so DaCe codegen doesn't
-generate two declarations for the same name. The expansion stages a
-copy of ``_bin`` into ``_bout`` then calls LAPACKE in place on
-``_bout``.
-"""
 import copy
 
 import dace.library
@@ -83,15 +76,12 @@ class ExpandPotrsCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Potrs(dace.sdfg.nodes.LibraryNode):
-    """LAPACK ``?POTRS``: solve ``A X = B`` given the Cholesky factor.
 
-    Inputs: ``_a`` (the factor), ``_bin`` (RHS).
-    Outputs: ``_bout`` (solution X), ``_res`` (LAPACK info).
-    """
-
+    # Global properties
     implementations = {"OpenBLAS": ExpandPotrsOpenBLAS, "MKL": ExpandPotrsMKL, "cuSolverDn": ExpandPotrsCuSolverDn}
     default_implementation = None
 
+    # Object fields
     lower = dace.properties.Property(dtype=bool, default=True, desc="True if the factor in _a is lower triangular")
 
     def __init__(self, name, lower=True, **kwargs):
@@ -99,7 +89,9 @@ class Potrs(dace.sdfg.nodes.LibraryNode):
         self.lower = lower
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda, n), (desc_B, ldb_in, ldb_out, nrhs))``."""
+        """
+        :return: A two-tuple ((A, lda, n), (Bin, ldb_in, ldb_out, nrhs)).
+        """
         desc_A = desc_B = lda = ldb_in = ldb_out = None
         n_A = nrhs = None
         for e in state.in_edges(self):

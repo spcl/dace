@@ -6,7 +6,6 @@ from .code import CodeLibraryNode
 from .copy_node import CopyLibraryNode
 from .count_node import CountLibraryNode
 from .cshift import CShift
-from .eoshift import EOShift
 from .norm2 import Norm2
 from .memset_node import MemsetLibraryNode
 from .merge_node import MergeLibraryNode

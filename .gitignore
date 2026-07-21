@@ -215,3 +215,6 @@ _all_tests/
 
 # Local secrets / tokens
 .mtoken
+
+# Local Claude Code settings
+.claude/

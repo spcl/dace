@@ -214,13 +214,14 @@ class UniqueLoopIterators(ppl.Pass):
         own.add(loop)
         return readers.issubset(own)
 
-    def _apply_recursive(self, sdfg: dace.SDFG, block_reach: dict, blocks_reading: dict) -> None:
+    def _apply_recursive(self, sdfg: dace.SDFG, block_reach: dict, blocks_reading: dict) -> int:
         # Names DaCe knows are arrays -- ``symstr`` uses this set to
         # render array subscripts as ``arr[idx]`` (Python syntax for
         # interstate-edge assignments) rather than ``arr(idx)`` (sympy
         # default function-call form, which C++ codegen later rejects
         # since ``arr`` is a pointer, not callable).
         array_names = frozenset(sdfg.arrays.keys())
+        count = 0
         for cfg in sdfg.all_control_flow_regions():
             if not isinstance(cfg, LoopRegion):
                 continue
@@ -244,11 +245,14 @@ class UniqueLoopIterators(ppl.Pass):
                             assignments={old_name: f"({post_value_str})"})
 
             UniqueLoopIterators._loop_var_counter += 1
+            count += 1
 
         for state in sdfg.all_states():
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG):
-                    self._apply_recursive(node.sdfg, block_reach, blocks_reading)
+                    count += self._apply_recursive(node.sdfg, block_reach, blocks_reading)
+
+        return count
 
     def apply_pass(self, sdfg: dace.SDFG, _) -> Optional[int]:
         # The post-value assignment must only be emitted for a loop
@@ -271,4 +275,5 @@ class UniqueLoopIterators(ppl.Pass):
             if loop_vars:
                 block_reach = ControlFlowBlockReachability().apply_pass(sdfg, {})
                 blocks_reading = self._collect_symbol_readers(sdfg, loop_vars)
-        self._apply_recursive(sdfg, block_reach, blocks_reading)
+        count = self._apply_recursive(sdfg, block_reach, blocks_reading)
+        return count if count > 0 else None

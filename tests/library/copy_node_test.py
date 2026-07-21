@@ -12,18 +12,9 @@ import numpy as np
 
 @dataclass
 class _ArraySpec:
-    """Per-side array spec for :func:`_make_copy_sdfg`.
-
-    :param shape: array shape.
-    :param storage: storage type.
-    :param strides: explicit strides; ``None`` keeps DaCe's packed-C default.
-    :param total_size: explicit buffer total size; only consulted when ``strides`` is set
-        (defaults to ``prod(shape)``).
-    :param transient: transient-array flag.
-    :param subset: memlet subset string; defaults to the full per-dim range.
-    :param name: SDFG-visible array name; defaults to ``src`` / ``dst`` from position.
-    :param dtype: element type; ``None`` defers to the helper's ``dtype`` argument.
-    """
+    """Per-side array spec for :func:`_make_copy_sdfg`. ``strides``/``total_size`` default to
+    DaCe's packed-C layout; ``subset`` defaults to the full per-dim range; ``name`` defaults to
+    ``src``/``dst`` from position; ``dtype`` defers to the helper's ``dtype`` argument."""
     shape: Sequence[int]
     storage: dace.dtypes.StorageType
     strides: Optional[Sequence[int]] = None
@@ -41,16 +32,8 @@ def _make_copy_sdfg(src: _ArraySpec,
                     name: str = "copy_sdfg",
                     libnode_name: str = "cp",
                     dtype: dace.dtypes.typeclass = dace.float64) -> Tuple[dace.SDFG, CopyLibraryNode]:
-    """One-state SDFG copying ``src`` -> ``dst`` via a single ``CopyLibraryNode``.
-
-    :param src: source-side array spec.
-    :param dst: destination-side array spec.
-    :param implementation: pinned ``CopyLibraryNode.implementation`` (``None`` keeps ``'Auto'``).
-    :param name: SDFG name.
-    :param libnode_name: libnode label.
-    :param dtype: fallback dtype when a spec leaves ``dtype=None``.
-    :returns: ``(sdfg, libnode)``.
-    """
+    """One-state SDFG copying ``src`` -> ``dst`` via a single ``CopyLibraryNode`` -> ``(sdfg,
+    libnode)``. ``implementation=None`` keeps ``'Auto'``."""
     sdfg, src_name, dst_name, src_acc, dst_acc, src_subset, dst_subset = _make_copy_skeleton(src, dst, name, dtype)
     libnode = CopyLibraryNode(name=libnode_name)
     if implementation is not None:
@@ -1500,12 +1483,9 @@ def test_copy_single_element_d2h():
 
 
 def _legacy_fails(sdfg_leg: dace.SDFG, expected: np.ndarray, run) -> bool:
-    """``True`` if compiling/running the legacy SDFG raises OR produces output diverging from ``expected``.
-
-    :param sdfg_leg: SDFG with libnodes already replaced by direct edges.
-    :param expected: NumPy ground truth.
-    :param run: a callable ``run(exe) -> np.ndarray`` that runs the compiled SDFG and returns the dst array.
-    """
+    """``True`` if compiling/running the legacy (direct-edge) SDFG raises OR produces output
+    diverging from ``expected``. ``run(exe) -> np.ndarray`` runs the compiled SDFG and returns the
+    dst array."""
     try:
         exe = sdfg_leg.compile()
         return not np.array_equal(run(exe), expected)

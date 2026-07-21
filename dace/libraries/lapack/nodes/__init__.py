@@ -4,7 +4,6 @@ from .getri import Getri
 from .getrs import Getrs
 from .potrf import Potrf
 
-# LAPACK additions.
 from .potrs import Potrs
 from .geqrf import Geqrf
 from .orgqr import Orgqr

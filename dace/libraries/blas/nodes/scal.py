@@ -1,12 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-1 ``SCAL`` library node — ``x := a * x`` (in-place vector scale).
-
-Mirrors the structure of :mod:`dace.libraries.blas.nodes.dot`: a pure
-mapped-tasklet expansion, plus cBLAS-backed OpenBLAS / MKL expansions
-and a cuBLAS expansion. The ``_x`` connector is both input and output
-(in-place), matching the cBLAS / cuBLAS in-place signature.
-"""
-import copy
 import warnings
 
 import dace.library
@@ -21,12 +13,8 @@ from dace.frontend.common import op_repository as oprepo
 
 @dace.library.expansion
 class ExpandScalPure(ExpandTransformation):
-    """Backend-agnostic expansion: a single mapped tasklet writes ``a*x_i`` into ``_res[i]``.
-
-    Modeled with separate ``_x`` input and ``_res`` output buffers (mirroring
-    :class:`Axpy`) so the codegen doesn't generate two declarations for the
-    same connector when the node is in-place. The caller can pass the same
-    array for ``_x`` and ``_res`` to achieve true in-place scaling.
+    """
+    Naive backend-agnostic expansion of SCAL.
     """
 
     environments = []
@@ -73,9 +61,7 @@ class ExpandScalOpenBLAS(ExpandTransformation):
         n = n or node.n or sz
         a = node.a
 
-        # cBLAS scal updates in place; we first ``cblas_?copy`` ``_x`` into
-        # ``_res`` and then call ``cblas_?scal`` on ``_res`` to honour the
-        # node's two-buffer convention.
+        # cBLAS scal updates in place; copy _x into _res first, then call.
         if dtype in (dace.complex64, dace.complex128):
             code = f"""
             {dtype.ctype} __alpha = {dtype.ctype}({a});
@@ -142,12 +128,8 @@ class ExpandScalCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Scal(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?SCAL``: in-place vector scale ``x := a * x``.
 
-    The connector ``_x`` is both input and output. ``a`` is a scalar
-    Python / numpy / sympy value passed as a node property.
-    """
-
+    # Global properties
     implementations = {
         "pure": ExpandScalPure,
         "OpenBLAS": ExpandScalOpenBLAS,
@@ -156,6 +138,7 @@ class Scal(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
+    # Object fields
     a = dace.properties.SymbolicProperty(allow_none=False, default=dace.symbolic.symbol("a"))
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
@@ -165,44 +148,24 @@ class Scal(dace.sdfg.nodes.LibraryNode):
         self.n = n
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_x, stride_x), (desc_res, stride_res), n)``."""
-        in_edges = state.in_edges(self)
-        out_edges = state.out_edges(self)
-        if len(in_edges) != 1 or len(out_edges) != 1:
-            raise ValueError("SCAL expects one input and one output")
-
-        in_memlet, out_memlet = in_edges[0].data, out_edges[0].data
-        desc_x = sdfg.arrays[in_memlet.data]
-        desc_res = sdfg.arrays[out_memlet.data]
-
-        sq_in = copy.deepcopy(in_memlet.subset)
-        sq_out = copy.deepcopy(out_memlet.subset)
-        dims_in = sq_in.squeeze()
-        dims_out = sq_out.squeeze()
-        if len(sq_in.size()) != 1 or len(sq_out.size()) != 1:
-            raise ValueError("SCAL only supported on 1-D arrays")
-        if sq_in.num_elements() != sq_out.num_elements():
-            raise ValueError("SCAL: input and output must be the same length")
-        stride_x = desc_x.strides[dims_in[0]]
-        stride_res = desc_res.strides[dims_out[0]]
-        return (desc_x, stride_x), (desc_res, stride_res), sq_in.num_elements()
+        """
+        :return: A three-tuple ((x, stride_x), (res, stride_res), n).
+        """
+        return blas_helpers.validate_level1_vector_to_vector(self, sdfg, state, "SCAL")
 
 
 # Numpy replacement
 @oprepo.replaces('dace.libraries.blas.scal')
 @oprepo.replaces('dace.libraries.blas.Scal')
 def scal_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, a, x, result=None):
-    """Build a :class:`Scal` library node and wire it into ``state``.
-
-    :param a: Scalar multiplier.
-    :param x: Name of the input array.
-    :param result: Name of the output array. Defaults to ``x`` (in-place).
-    """
     result = result if result is not None else x
     x_in = state.add_read(x)
     res_out = state.add_write(result)
+
     libnode = Scal('scal', a=a, n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
+
     state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
     state.add_edge(libnode, '_res', res_out, None, mm.Memlet(result))
+
     return []

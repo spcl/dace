@@ -1,8 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-3 ``SYRK`` library node — ``C := alpha A op(A^T) + beta C`` (symmetric rank-k update).
-
-Uses separate ``_Cin`` and ``_Cout`` connectors (see :class:`Trsm`).
-"""
 import copy
 
 import dace.library
@@ -79,11 +75,12 @@ class ExpandSyrkCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Syrk(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?SYRK``: symmetric rank-k update."""
 
+    # Global properties
     implementations = {"OpenBLAS": ExpandSyrkOpenBLAS, "MKL": ExpandSyrkMKL, "cuBLAS": ExpandSyrkCuBLAS}
     default_implementation = None
 
+    # Object fields
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True if upper triangle of C is written")
     transA = dace.properties.Property(dtype=bool, default=False, desc="False: C += alpha A A^T; True: C += alpha A^T A")
     alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
@@ -94,7 +91,9 @@ class Syrk(dace.sdfg.nodes.LibraryNode):
         self.uplo, self.transA, self.alpha, self.beta = uplo, transA, alpha, beta
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_C, ldc_in), ldc_out, n, k)``."""
+        """
+        :return: A five-tuple ((A, lda), (C, ldc_in), ldc_out, n, k).
+        """
         desc_A = desc_C = lda = ldc_in = ldc_out = None
         n = k = None
         for e in state.in_edges(self):
@@ -120,6 +119,7 @@ class Syrk(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_C, ldc_in), ldc_out, n, k
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.syrk')
 @oprepo.replaces('dace.libraries.blas.Syrk')
 def syrk_libnode(pv: 'ProgramVisitor',
@@ -132,13 +132,15 @@ def syrk_libnode(pv: 'ProgramVisitor',
                  transA=False,
                  alpha=1,
                  beta=0):
-    """Build a :class:`Syrk` node. ``result`` defaults to ``C`` for in-place semantics."""
     result = result if result is not None else C
     A_in, C_in = state.add_read(A), state.add_read(C)
     C_out = state.add_write(result)
+
     libnode = Syrk('syrk', uplo=uplo, transA=transA, alpha=alpha, beta=beta)
     state.add_node(libnode)
+
     state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
     state.add_edge(C_in, None, libnode, '_Cin', mm.Memlet(C))
     state.add_edge(libnode, '_Cout', C_out, None, mm.Memlet(result))
+
     return []

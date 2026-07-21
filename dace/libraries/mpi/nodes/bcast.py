@@ -45,8 +45,7 @@ class ExpandBcastMPI(ExpandTransformation):
         init = ""
         comm = resolve_comm(node, parent_state)
         if comm == "MPI_COMM_WORLD" and node.fcomm:
-            # Legacy Fortran-comm-handle node property (superseded by a ``_comm``
-            # connector fed from a ``Comm_f2c`` node, but kept for direct callers).
+            # fcomm is the legacy per-node handle, superseded by a _comm connector.
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
 

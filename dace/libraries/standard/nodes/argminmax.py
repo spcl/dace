@@ -49,11 +49,8 @@ from dace.transformation.transformation import ExpandTransformation
 
 
 def _flat_size(shape) -> int:
-    """Return the product of the static-int extents in ``shape``.
-
-    :raises ValueError: if any extent isn't a literal int (the flat-decode
-        path needs a static total size).
-    """
+    """Product of the static-int extents in ``shape``. Raises if any extent isn't a literal int
+    (the flat-decode path needs a static total size)."""
     total = 1
     for s in shape:
         total *= int(s)
@@ -80,7 +77,9 @@ def _flat_index_expr(rank: int, shape) -> str:
 
 
 def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
-    """Shared pure expansion for :class:`ArgMin` / :class:`ArgMax`.
+    """Shared pure expansion for :class:`ArgMin` / :class:`ArgMax` (``func`` picks the comparison
+    direction). Raises ``NotImplementedError`` when a ``_mask`` connector is wired (not yet
+    implemented).
 
     Multi-state pipeline (see module docstring); every WCR is a pure
     ``min`` / ``max`` over a scalar.  Tasklet bodies are
@@ -88,14 +87,6 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     = ``__out = __in``, idx reduce = ``__out = flat if (__in == bv) else sentinel``,
     extract = one ``__o<d> = (__flat // stride) % extent + offset``
     per dim.
-
-    :param node: ``ArgMin`` or ``ArgMax`` instance being expanded.
-    :param parent_state: enclosing state.
-    :param parent_sdfg: enclosing SDFG.
-    :param func: ``"min"`` or ``"max"`` selecting the comparison direction.
-    :returns: a self-contained nested SDFG implementing the scan.
-    :raises NotImplementedError: when a ``_mask`` connector is wired
-        (mask handling is not yet implemented).
     """
     desc_x, desc_idx, mask_desc, dim_zero = node.validate(parent_sdfg, parent_state)
     if mask_desc is not None:
@@ -135,7 +126,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
 
     one_offset = 1 if node.one_based else 0
 
-    # ---- state 1: init __best_val to identity ----
+    # state 1: init __best_val to identity.
     init_val = sdfg.add_state(node.label + "_init_val")
     if flat:
         init_val.add_mapped_tasklet(
@@ -158,7 +149,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
             external_edges=True,
         )
 
-    # ---- state 2: reduce __best_val ----
+    # state 2: reduce __best_val.
     reduce_val = sdfg.add_state_after(init_val, node.label + "_reduce_val")
     map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
     x_subs = ", ".join([f"__i{d}" for d in range(rank)])
@@ -172,7 +163,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
         external_edges=True,
     )
 
-    # ---- state 3: init __best_idx to sentinel ----
+    # state 3: init __best_idx to sentinel.
     init_idx = sdfg.add_state_after(reduce_val, node.label + "_init_idx")
     if flat:
         init_idx.add_mapped_tasklet(
@@ -195,7 +186,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
             external_edges=True,
         )
 
-    # ---- state 4: reduce __best_idx (filtered min/max over flat indices) ----
+    # state 4: reduce __best_idx (filtered min/max over flat indices).
     reduce_idx = sdfg.add_state_after(init_idx, node.label + "_reduce_idx")
     if flat:
         flat_idx = _flat_index_expr(rank, shape)
@@ -217,7 +208,7 @@ def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
         external_edges=True,
     )
 
-    # ---- state 5: extract / decode ----
+    # state 5: extract / decode.
     extract = sdfg.add_state_after(reduce_idx, node.label + "_extract")
     if flat:
         # Decode flat -> per-dim subscripts.  One tasklet per dim,
@@ -272,12 +263,9 @@ class ExpandArgMaxPure(ExpandTransformation):
 
 
 def _validate_argminmax(node, sdfg, state):
-    """Shared validation for ``ArgMin`` / ``ArgMax``.
-
-    :returns: ``(desc_x, desc_idx, mask_desc_or_None, dim_zero_or_None)``.
-    :raises ValueError: if the connector wiring or shapes don't match the
-        configured ``dim`` reduction axis.
-    """
+    """Shared validation for ``ArgMin`` / ``ArgMax`` -> ``(desc_x, desc_idx, mask_desc_or_None,
+    dim_zero_or_None)``. Raises if the connector wiring or shapes don't match the configured
+    ``dim`` reduction axis."""
     in_x = None
     in_mask = None
     for e in state.in_edges(node):

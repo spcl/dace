@@ -88,11 +88,8 @@ class Broadcast(dace.sdfg.nodes.LibraryNode):
         self.dim = dim
 
     def validate(self, sdfg, state):
-        """:returns: ``(desc_src, desc_dst, dim_zero)``.
-
-        :raises ValueError: if the destination's rank isn't ``rank(src)+1``
-            or ``dim`` is out of range.
-        """
+        """-> ``(desc_src, desc_dst, dim_zero)``. Raises if the destination's rank isn't
+        ``rank(src)+1`` or ``dim`` is out of range."""
         in_edges = state.in_edges(self)
         out_edges = state.out_edges(self)
         if len(in_edges) != 1 or in_edges[0].dst_conn != "_src":

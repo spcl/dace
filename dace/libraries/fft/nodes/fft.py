@@ -6,6 +6,7 @@ Implements Forward and Inverse Fast Fourier Transform (FFT) library nodes
 from dace import data, dtypes, SDFG, SDFGState, symbolic, library, nodes, properties
 from dace import transformation as xf
 from dace.libraries.fft import environments as env
+from dace.libraries.blas import environments as blas_environments
 
 
 # Define the library nodes
@@ -68,8 +69,8 @@ class DFTExpansion(xf.ExpandTransformation):
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
-        if len(indesc.shape) > 1 or getattr(node, 'axis', None) is not None:
-            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=False, axis=getattr(node, 'axis', None))
+        if len(indesc.shape) > 1 or node.axis is not None:
+            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=False, axis=node.axis)
 
         return dft.dft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
@@ -84,8 +85,8 @@ class IDFTExpansion(xf.ExpandTransformation):
         input, output = _get_input_and_output(parent_state, node)
         indesc = parent_sdfg.arrays[input]
         outdesc = parent_sdfg.arrays[output]
-        if len(indesc.shape) > 1 or getattr(node, 'axis', None) is not None:
-            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=True, axis=getattr(node, 'axis', None))
+        if len(indesc.shape) > 1 or node.axis is not None:
+            return dft.dft_nd_sdfg(indesc, outdesc, factor=node.factor, inverse=True, axis=node.axis)
 
         return dft.idft_explicit.to_sdfg(indesc, outdesc, N=indesc.shape[0], factor=node.factor)
 
@@ -107,7 +108,7 @@ class cuFFTFFTExpansion(xf.ExpandTransformation):
         outdesc = parent_sdfg.arrays[output]
         if str(node.factor) != '1':
             raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, False, getattr(node, 'axis', None))
+        return _generate_cufft_code(indesc, outdesc, parent_sdfg, False, node.axis)
 
 
 @library.register_expansion(IFFT, 'cuFFT')
@@ -122,7 +123,7 @@ class cuFFTIFFTExpansion(xf.ExpandTransformation):
         outdesc = parent_sdfg.arrays[output]
         if str(node.factor) != '1':
             raise NotImplementedError('Multiplicative post-FFT factors are not yet implemented')
-        return _generate_cufft_code(indesc, outdesc, parent_sdfg, True, getattr(node, 'axis', None))
+        return _generate_cufft_code(indesc, outdesc, parent_sdfg, True, node.axis)
 
 
 def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_inverse: bool, axis=None):
@@ -365,16 +366,10 @@ def _generate_fftw3_code(indesc: data.Data, outdesc: data.Data, is_inverse: bool
 
 @library.register_expansion(FFT, 'MKL')
 class MKLFFTExpansion(xf.ExpandTransformation):
-    """MKL backend: routes through MKL's FFTW3 compatibility layer.
+    """MKL backend: routes through MKL's FFTW3-compatible ABI, so the emitted
+    code is identical to :class:`FFTW3FFTExpansion`."""
 
-    MKL exposes the FFTW3 C ABI when ``libmkl_*`` is linked instead of
-    ``libfftw3``, so the emitted code is identical to :class:`FFTW3FFTExpansion`.
-    Selecting this implementation simply pulls in the MKL environment / link
-    flags from :mod:`dace.libraries.blas.environments.intel_mkl`.
-    """
-
-    from dace.libraries.blas import environments as _blas_envs
-    environments = [_blas_envs.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(*args, **kwargs):
@@ -385,8 +380,7 @@ class MKLFFTExpansion(xf.ExpandTransformation):
 class MKLIFFTExpansion(xf.ExpandTransformation):
     """MKL backend for :class:`IFFT` (routes through FFTW3-compat ABI)."""
 
-    from dace.libraries.blas import environments as _blas_envs
-    environments = [_blas_envs.intel_mkl.IntelMKL]
+    environments = [blas_environments.intel_mkl.IntelMKL]
 
     @staticmethod
     def expansion(*args, **kwargs):

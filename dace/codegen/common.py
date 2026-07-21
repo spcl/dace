@@ -100,7 +100,7 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     return strio.getvalue().strip()
 
 
-@lru_cache(typed=True)
+@lru_cache()
 def get_gpu_backend() -> str:
     """
     Returns the currently-selected GPU backend. If automatic,
@@ -147,7 +147,7 @@ def get_gpu_backend() -> str:
                        'to either "cuda" or "hip".')
 
 
-@lru_cache(typed=True)
+@lru_cache()
 def get_gpu_runtime() -> gpu_runtime.GPURuntime:
     """
     Returns the GPU runtime library (CUDA / HIP) if exists. The result is cached for performance.

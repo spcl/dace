@@ -1,14 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Variable-count gather to a single root as an explicit dataflow node
-(``MPI_Gatherv``).
-
-Like :class:`~dace.libraries.mpi.nodes.gather.Gather` but each rank may
-contribute a different number of elements: the root supplies per-rank
-``_recvcounts`` and ``_displs`` (both ``int32`` arrays, indexed by rank -- the MPI
-C ABI mandates plain ``int``).  Datatypes are inferred per buffer and the
-communicator is resolved from an optional ``_comm`` / ``_grid`` input connector,
-else the default world.
-"""
 from dace import data, dtypes, library
 from dace.libraries.mpi import utils
 from dace.sdfg import nodes
@@ -71,10 +61,9 @@ class Gatherv(MPINode):
 
     def validate(self, sdfg, state):
         """
-        :return: a five-tuple ((inbuffer, in_count_str), outbuffer, recvcounts,
-                 displs, root) of the data descriptors in the parent SDFG.
+        :return: A five-tuple ((inbuffer, in_count_str), outbuffer, recvcounts, displs, root)
+                 of the data descriptors in the parent SDFG.
         """
-
         inbuffer, outbuffer, recvcounts, displs, root = None, None, None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":

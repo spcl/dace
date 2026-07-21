@@ -14,15 +14,8 @@ def _make_memset_sdfg(implementation: Optional[str],
                       subset: str,
                       gpu: bool = True,
                       name: str = "memset_sdfg") -> dace.SDFG:
-    """Build an SDFG that memsets a sub-region of a single array.
-
-    :param implementation: ``MemsetLibraryNode.implementation`` (``None`` keeps ``'Auto'``).
-    :param shape: array shape (sequence of dim extents).
-    :param subset: memlet subset string for the memset's output edge.
-    :param gpu: True for ``GPU_Global`` storage, False for ``CPU_Heap``.
-    :param name: SDFG name.
-    :returns: the constructed SDFG.
-    """
+    """Build an SDFG that memsets a sub-region (``subset``) of a single array. ``implementation``
+    ``None`` keeps ``'Auto'``; ``gpu`` picks ``GPU_Global`` vs ``CPU_Heap`` storage."""
     sdfg = dace.SDFG(name)
     arr_name = "gpuB" if gpu else "B"
     storage = dace.dtypes.StorageType.GPU_Global if gpu else dace.dtypes.StorageType.CPU_Heap

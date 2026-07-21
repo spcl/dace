@@ -193,7 +193,7 @@ SCOPEDEFAULT_STORAGE = {
     ScheduleType.GPU_ThreadBlock: StorageType.Register,
     ScheduleType.GPU_ThreadBlock_Dynamic: StorageType.Register,
     ScheduleType.SVE_Map: StorageType.CPU_Heap,
-    ScheduleType.Snitch: StorageType.Snitch_TCDM,
+    ScheduleType.Snitch: StorageType.Snitch_TCDM
 }
 
 # Maps from ScheduleType to default ScheduleType for sub-scopes
@@ -210,7 +210,7 @@ SCOPEDEFAULT_SCHEDULE = {
     ScheduleType.GPU_ThreadBlock_Dynamic: ScheduleType.Sequential,
     ScheduleType.SVE_Map: ScheduleType.Sequential,
     ScheduleType.Snitch: ScheduleType.Snitch,
-    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore,
+    ScheduleType.Snitch_Multicore: ScheduleType.Snitch_Multicore
 }
 
 # Maps from StorageType to a preferred ScheduleType for helping determine schedules.

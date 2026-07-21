@@ -2118,17 +2118,14 @@ def get_parent_map_and_loop_scopes(root_sdfg: SDFG, node: Union[nodes.MapEntry, 
                                                                 nodes.Tasklet, ConditionalBlock, nodes.LibraryNode],
                                    parent_state: Union[SDFGState, None]) -> List[Union[nodes.MapEntry, LoopRegion]]:
     """
-    Collect all parent map entries and loop regions enclosing ``node``,
-    traversing upward through scope dicts, control-flow regions, and
-    nested-SDFG boundaries until the root SDFG is reached.
+    Collect all parent map entries and loop regions enclosing ``node``, traversing upward
+    through scope dicts, control-flow regions, and nested-SDFG boundaries until the root
+    SDFG is reached.
 
-    :param root_sdfg: The top-level SDFG.  Retained for call-site
-        stability; the nested-SDFG walk uses ``SDFG.parent`` directly
-        and no longer needs a recursive search from the root.
-    :param node: The starting node (MapEntry, Tasklet, LibraryNode) or a
-        ControlFlowRegion / ConditionalBlock.
-    :param parent_state: The SDFGState containing ``node``, or ``None``
-        if ``node`` is a ControlFlowRegion.
+    :param node: The starting node (MapEntry, Tasklet, LibraryNode) or a ControlFlowRegion
+        / ConditionalBlock.
+    :param parent_state: The SDFGState containing ``node``, or ``None`` if ``node`` is a
+        ControlFlowRegion.
     :returns: Parent scopes (MapEntry or LoopRegion), innermost first.
     """
     scope_dict = parent_state.scope_dict() if parent_state is not None else None

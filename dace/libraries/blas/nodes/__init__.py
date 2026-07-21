@@ -9,20 +9,14 @@ from .batched_matmul import BatchedMatMul
 from .axpy import Axpy
 from .einsum import Einsum
 
-# BLAS Level-1 additions.
 from .scal import Scal
-from .nrm2 import Nrm2
-from .asum import Asum
-from .iamax import Iamax
 from .copy import Copy
 from .swap import Swap
 
-# BLAS Level-2 additions.
 from .trsv import Trsv
 from .trmv import Trmv
 from .symv import Symv
 
-# BLAS Level-3 additions.
 from .trsm import Trsm
 from .trmm import Trmm
 from .symm import Symm

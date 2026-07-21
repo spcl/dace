@@ -1,8 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-3 ``SYMM`` library node — ``C := alpha A B + beta C`` (or right-side) with symmetric ``A``.
-
-Uses separate ``_Cin`` and ``_Cout`` connectors (see :class:`Trsm`).
-"""
 import copy
 
 import dace.library
@@ -79,11 +75,12 @@ class ExpandSymmCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Symm(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?SYMM``: symmetric matrix-matrix multiply."""
 
+    # Global properties
     implementations = {"OpenBLAS": ExpandSymmOpenBLAS, "MKL": ExpandSymmMKL, "cuBLAS": ExpandSymmCuBLAS}
     default_implementation = None
 
+    # Object fields
     side = dace.properties.Property(dtype=bool,
                                     default=False,
                                     desc="False: C = alpha A B + beta C; True: C = alpha B A + beta C")
@@ -96,7 +93,9 @@ class Symm(dace.sdfg.nodes.LibraryNode):
         self.side, self.uplo, self.alpha, self.beta = side, uplo, alpha, beta
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_B, ldb), (desc_C, ldc_in), ldc_out, m, n)``."""
+        """
+        :return: A six-tuple ((A, lda), (B, ldb), (C, ldc_in), ldc_out, m, n).
+        """
         descs, strides = {}, {}
         m = n = ldc_out = None
         for e in state.in_edges(self):
@@ -118,6 +117,7 @@ class Symm(dace.sdfg.nodes.LibraryNode):
                 m, n)
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.symm')
 @oprepo.replaces('dace.libraries.blas.Symm')
 def symm_libnode(pv: 'ProgramVisitor',
@@ -131,14 +131,16 @@ def symm_libnode(pv: 'ProgramVisitor',
                  uplo=False,
                  alpha=1,
                  beta=0):
-    """Build a :class:`Symm` node. ``result`` defaults to ``C`` for in-place semantics."""
     result = result if result is not None else C
     A_in, B_in, C_in = (state.add_read(name) for name in (A, B, C))
     C_out = state.add_write(result)
+
     libnode = Symm('symm', side=side, uplo=uplo, alpha=alpha, beta=beta)
     state.add_node(libnode)
+
     state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
     state.add_edge(B_in, None, libnode, '_B', mm.Memlet(B))
     state.add_edge(C_in, None, libnode, '_Cin', mm.Memlet(C))
     state.add_edge(libnode, '_Cout', C_out, None, mm.Memlet(result))
+
     return []

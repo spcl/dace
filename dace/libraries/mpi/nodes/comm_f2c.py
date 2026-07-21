@@ -1,20 +1,4 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
-"""Create an ``MPI_Comm`` inside an SDFG from a Fortran integer communicator
-handle, as an explicit dataflow node.
-
-A Fortran kernel hands MPI calls an ``INTEGER`` communicator (the ``MPI_Fint``
-handle from ``MPI_Comm_c2f`` / the Fortran ``comm`` argument).  This node converts
-it to a C ``MPI_Comm`` with ``MPI_Comm_f2c`` and produces it on a ``_comm``
-output -- an ``opaque(MPI_Comm)`` value that flows through the graph to the
-``_comm`` input connector of ``Isend`` / ``Irecv`` / ``Barrier`` / the
-collectives (see :func:`dace.libraries.mpi.nodes.node.resolve_comm`).
-
-This is the dataflow-native alternative to the legacy per-node ``fcomm``
-property: the communicator becomes a first-class value (created here, consumed
-via ``_comm``), so multiple distinct communicators are naturally supported and
-the host can pass / receive one across the SDFG boundary as an
-``opaque(MPI_Comm)`` argument.
-"""
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -45,8 +29,8 @@ class ExpandCommF2cMPI(ExpandTransformation):
 
 @dace.library.node
 class CommF2c(MPINode):
-    """Convert a Fortran integer communicator handle (``_fcomm``) to an
-    ``MPI_Comm`` (``_comm``, ``opaque(MPI_Comm)``) via ``MPI_Comm_f2c``."""
+    """``MPI_Comm_f2c``: convert a Fortran integer communicator handle
+    (``_fcomm``) to an ``MPI_Comm`` (``_comm``)."""
 
     # Global properties
     implementations = {

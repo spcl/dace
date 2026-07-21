@@ -22,29 +22,27 @@ import tempfile
 import traceback
 from pathlib import Path
 
-_REPO = Path(__file__).resolve().parents[1]
-_HLFIR_DIR = _REPO / "dace" / "frontend" / "hlfir"
-_FIXTURES = _REPO / "tests" / "hlfir"
-# The editable dace install on this machine points at a different checkout;
-# force the d2 copy ahead of it so ``import dace`` resolves to our tree.
-sys.path.insert(0, str(_REPO))
-sys.path.insert(0, str(_HLFIR_DIR))
-sys.path.insert(0, str(_HLFIR_DIR / "build"))
+REPO = Path(__file__).resolve().parents[1]
+HLFIR_DIR = REPO / "dace" / "frontend" / "hlfir"
+FIXTURES = REPO / "tests" / "hlfir"
+# Put this checkout ahead of any other dace install on sys.path.
+sys.path.insert(0, str(REPO))
+sys.path.insert(0, str(HLFIR_DIR))
+sys.path.insert(0, str(HLFIR_DIR / "build"))
 
 from hlfir_to_sdfg import SDFGBuilder, DEFAULT_PIPELINE  # noqa: E402
 
 # Per-fixture pipeline overrides.  Most HLFIR tests use the minimal
 # ``hlfir-propagate-shapes`` pipeline; only a handful want the full chain.
-_MINIMAL = "hlfir-propagate-shapes"
-_FIXTURE_PIPELINES: dict[str, str] = {
+MINIMAL = "hlfir-propagate-shapes"
+FIXTURE_PIPELINES: dict[str, str] = {
     # DO WHILE / EXIT needs cf→scf lifting before scf.while is visible.
     "do_loop_exit.f90": DEFAULT_PIPELINE,
 }
 
 # Fixtures that are not full-SDFG-buildable today — their real tests
-# exercise IR or classifier state, not a constructed SDFG.  Skip with
-# an explanatory status line instead of raising.
-_SKIP_FIXTURES: dict[str, str] = {
+# exercise IR or classifier state, not a constructed SDFG.
+SKIP_FIXTURES: dict[str, str] = {
     "complex_struct.f90": "struct flattening produces dotted array names "
     "that NestedDict rejects in SDFG.add_array",
     "velocity_struct.f90": "flatten_structs_test only inspects IR text, "
@@ -54,14 +52,14 @@ _SKIP_FIXTURES: dict[str, str] = {
 }
 
 
-def _subroutine_name(src: str) -> str:
+def subroutine_name(src: str) -> str:
     m = re.search(r"^\s*subroutine\s+(\w+)", src, re.M | re.I)
     if not m:
         raise RuntimeError("no `subroutine` found")
     return m.group(1)
 
 
-def _flang() -> str:
+def flang() -> str:
     for name in ("flang-new-21", "flang-new-20"):
         p = shutil.which(name)
         if p:
@@ -69,25 +67,24 @@ def _flang() -> str:
     raise RuntimeError("flang-new not on PATH")
 
 
-def _compile_hlfir(src_path: Path, work: Path) -> Path:
+def compile_hlfir(src_path: Path, work: Path) -> Path:
     hlfir = work / (src_path.stem + ".hlfir")
-    subprocess.check_call([_flang(), "-fc1", "-emit-hlfir", str(src_path), "-o", str(hlfir)])
+    subprocess.check_call([flang(), "-fc1", "-emit-hlfir", str(src_path), "-o", str(hlfir)])
     return hlfir
 
 
 def dump_one(src_path: Path, out_dir: Path) -> tuple[str, str]:
     """Returns ``("ok" | "skip" | "fail", message)``."""
-    if src_path.name in _SKIP_FIXTURES:
-        return ("skip", _SKIP_FIXTURES[src_path.name])
+    if src_path.name in SKIP_FIXTURES:
+        return ("skip", SKIP_FIXTURES[src_path.name])
     source = src_path.read_text()
-    name = _subroutine_name(source)
-    pipeline = _FIXTURE_PIPELINES.get(src_path.name, _MINIMAL)
+    name = subroutine_name(source)
+    pipeline = FIXTURE_PIPELINES.get(src_path.name, MINIMAL)
     with tempfile.TemporaryDirectory(prefix="hlfir_dump_") as td:
         work = Path(td)
-        # copy the .f90 in so flang sees it under a clean path
         staged = work / src_path.name
         staged.write_text(source)
-        hlfir = _compile_hlfir(staged, work)
+        hlfir = compile_hlfir(staged, work)
         builder = SDFGBuilder(str(hlfir), pipeline=pipeline)
         sdfg = builder.build()
         out_path = out_dir / f"{src_path.stem}.sdfg"
@@ -99,9 +96,9 @@ def main(argv: list[str]) -> int:
     out_dir = Path(argv[1]) if len(argv) > 1 else Path("/tmp/hlfir_sdfgs")
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    fixtures = sorted(_FIXTURES.glob("*.f90"))
+    fixtures = sorted(FIXTURES.glob("*.f90"))
     if not fixtures:
-        print(f"No fixtures found under {_FIXTURES}", file=sys.stderr)
+        print(f"No fixtures found under {FIXTURES}", file=sys.stderr)
         return 1
 
     print(f"dumping {len(fixtures)} SDFGs -> {out_dir}")

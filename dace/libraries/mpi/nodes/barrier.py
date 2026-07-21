@@ -15,15 +15,10 @@ class ExpandBarrierMPI(ExpandTransformation):
 
     @staticmethod
     def expansion(node, parent_state, parent_sdfg, **kwargs):
-        # Communicator resolution mirrors the data collectives (Bcast/Scatter):
-        # a wired ``_grid`` cartesian sub-comm, else a Fortran handle converted
-        # with ``MPI_Comm_f2c``, else the default world.
         init = ""
         comm = resolve_comm(node, parent_state)
         if comm == "MPI_COMM_WORLD" and node.fcomm:
-            # Legacy Fortran-comm-handle node property (superseded by a ``_comm``
-            # connector fed from a ``Comm_f2c`` node, but kept for direct callers
-            # that set ``fcomm`` instead of wiring a connector).
+            # fcomm is the legacy per-node handle, superseded by a _comm connector.
             init = f"MPI_Comm __comm = MPI_Comm_f2c({node.fcomm});"
             comm = "__comm"
         code = f"""
@@ -39,11 +34,7 @@ class ExpandBarrierMPI(ExpandTransformation):
 
 @dace.library.node
 class Barrier(MPINode):
-    """A collective ``MPI_Barrier`` -- pure synchronisation, no data buffers.
-
-    Carries side effects (so it is never pruned despite having no dataflow) and
-    resolves its communicator from an optional ``_grid`` connector, a Fortran
-    ``fcomm`` handle, or the default world."""
+    """Collective ``MPI_Barrier``."""
 
     implementations = {
         "MPI": ExpandBarrierMPI,

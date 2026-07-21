@@ -1,24 +1,18 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Passes that move data between length-1 ``Array`` and ``Scalar`` form.
 
-``ConvertLengthOneArraysToScalars`` rewrites every length-1 ``Array``
-(shape ``(1,)``) to a true ``Scalar`` and drops the now-redundant
-``[0]`` accessors from interstate-edge assignments, conditional-block
-guards, loop-region conditions and memlet subsets.
-``ConvertScalarsToLengthOneArrays`` is the inverse (``Scalar`` ->
-length-1 ``Array``).
-
-The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as
-a post-generation cleanup: ``Scalar`` data on the SDFG signature binds
-to a plain Python ``int`` / ``float`` whereas a length-1 ``Array``
-needs a 1-element numpy buffer, so this moves bridge outputs/locals
-from the latter to the former wherever it is safe.
+The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a
+post-generation cleanup: ``Scalar`` data on the SDFG signature binds to a
+plain Python ``int`` / ``float`` whereas a length-1 ``Array`` needs a
+1-element numpy buffer.
 """
 from typing import Optional, Set
 
 import dace
 from dace import Memlet, properties
 from dace.properties import CodeBlock
+from dace.sdfg import nodes as nd
+from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 
@@ -65,8 +59,6 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         return False
 
     def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
-        from dace.sdfg import nodes as _nd
-        from dace.sdfg import utils as _sdutil
         scalarized: Set[str] = set()
         # A length-1 Array that BACKS a View (some View's viewed edge points
         # at it) must not be scalarized either: a View needs an Array source
@@ -76,12 +68,12 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         view_sources: Set[str] = set()
         for state in sdfg.states():
             for node in state.nodes():
-                if isinstance(node, _nd.AccessNode) and isinstance(sdfg.arrays.get(node.data), dace.data.View):
-                    ve = _sdutil.get_view_edge(state, node)
+                if isinstance(node, nd.AccessNode) and isinstance(sdfg.arrays.get(node.data), dace.data.View):
+                    ve = sdutil.get_view_edge(state, node)
                     if ve is None:
                         continue
                     other = ve.src if ve.dst is node else ve.dst
-                    if isinstance(other, _nd.AccessNode):
+                    if isinstance(other, nd.AccessNode):
                         view_sources.add(other.data)
         for arr_name, arr in [(k, v) for k, v in sdfg.arrays.items()]:
             if isinstance(arr.dtype, dace.dtypes.opaque):

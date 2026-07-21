@@ -16,9 +16,9 @@ because this branch doesn't change it; run those with their own
 
 By default each pytest subprocess is parallelised with pytest-xdist
 (``-n 4``).  Override with ``--workers N`` — ``--workers 1`` forces a
-serial run.  The HLFIR group is forced serial regardless because
-many HLFIR tests reuse the SDFG name ``main`` and would race on the
-shared ``.dacecache/main/build`` directory under xdist.
+serial run.  Many HLFIR tests reuse the SDFG name ``main``;
+``tests/hlfir/conftest.py`` avoids the resulting xdist cache-dir race
+by giving each worker its own ``.dacecache_gw<N>`` directory.
 
 Usage:
     python tests/run_relevant_tests.py                       # default 4 workers
@@ -35,9 +35,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[1]
 
-# Each entry: (label, [paths/args]).  Cache-dir races between parallel
-# workers are handled by ``tests/hlfir/conftest.py``, which gives each
-# pytest-xdist worker its own ``.dacecache_gw<N>`` directory.
+# Each entry: (label, [paths/args]).
 GROUPS: list[tuple[str, list[str]]] = [
     ("hlfir.frontend", ["tests/hlfir/"]),
     ("library.standard", ["tests/library/count_node_test.py", "tests/library/merge_node_test.py"]),
@@ -105,7 +103,6 @@ def main(argv: list[str]) -> int:
         for k in totals:
             totals[k] += counts[k]
 
-    # Pretty-print a single summary table.
     width = max(len(r[0]) for r in rows) + 2
     print("\n" + "=" * 78)
     print("Summary (per group):")

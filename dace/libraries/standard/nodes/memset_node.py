@@ -15,12 +15,8 @@ from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_ST
 
 def _make_memset_skeleton(node: "MemsetLibraryNode",
                           parent_state: dace.SDFGState) -> Tuple[dace.SDFG, dace.SDFGState, str, dace.data.Data, List]:
-    """Build the shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion.
-
-    :param node: The memset library node being expanded.
-    :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
-    :returns: ``(sdfg, state, out_name, out, map_lengths)``.
-    """
+    """Build the shared SDFG skeleton for the mapped (``ExpandPure``) memset expansion ->
+    ``(sdfg, state, out_name, out, map_lengths)``."""
     out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     out_shape_collapsed, out_strides_collapsed = collapse_shape_and_strides(out_subset, out.strides)
 
@@ -37,15 +33,9 @@ def _make_memset_skeleton(node: "MemsetLibraryNode",
 
 
 def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState, *, cuda: bool) -> nodes.Tasklet:
-    """Build a direct memset tasklet (``cudaMemsetAsync`` if ``cuda`` else ``memset``).
-
-    :param node: The memset library node being expanded.
-    :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
-    :param cuda: Emit ``cudaMemsetAsync`` (else ``memset``).
-    :returns: The memset tasklet.
-    :raises ValueError: if the output subset is non-contiguous (single-call memset
-        would zero outside the subset); use the ``pure`` expansion instead.
-    """
+    """Build a direct memset tasklet (``cudaMemsetAsync`` if ``cuda`` else ``memset``). Raises if
+    the output subset is non-contiguous (single-call memset would zero outside the subset); use
+    the ``pure`` expansion instead."""
     out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
     if not out_subset.is_contiguous_subset(out):
         raise ValueError(
@@ -67,16 +57,13 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
 
 
 def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState) -> str:
-    """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
+    """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to ``'pure'``, ``'CUDA'``, or
+    ``'CPU'``.
 
     ``'pure'``: device scope (no ``cudaMemsetAsync`` from a kernel), non-contiguous subsets, or a
     statically-large contiguous CPU zero (element map parallelizes across OpenMP at top level).
     ``'CUDA'``: host-issued GPU-destination contiguous memset. Else ``'CPU'`` (single
     ``std::memset``), including small/symbolic-size contiguous CPU zero.
-
-    :param node: The memset library node being expanded.
-    :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
-    :returns: One of ``'pure'``, ``'CUDA'``, or ``'CPU'``.
     """
     _out_name, out, out_subset = node.validate(parent_state.sdfg, parent_state)
 
@@ -210,14 +197,9 @@ class MemsetLibraryNode(nodes.LibraryNode):
         super().__init__(name, *args, outputs={MemsetLibraryNode.OUTPUT_CONNECTOR_NAME}, **kwargs)
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> Tuple[str, dace.data.Data, dace.subsets.Range]:
-        """Validate wiring and resolve the output edge.
-
-        :param sdfg: The SDFG owning the data descriptors.
-        :param state: The state containing this node.
-        :returns: ``(out_name, out, out_subset)``.
-        :raises ValueError: If the node lacks exactly one output edge, or has a non-empty
-            non-reserved input connector wired.
-        """
+        """Validate wiring and resolve the output edge -> ``(out_name, out, out_subset)``. Raises
+        if the node lacks exactly one output edge, or has a non-empty non-reserved input
+        connector wired."""
         data_oes = [oe for oe in state.out_edges(self) if oe.src_conn == MemsetLibraryNode.OUTPUT_CONNECTOR_NAME]
         if len(data_oes) != 1:
             raise ValueError(f"{type(self).__name__} expects exactly one "

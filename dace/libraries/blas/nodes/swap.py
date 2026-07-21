@@ -1,11 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-1 ``SWAP`` library node — ``x, y := y, x`` (element-wise swap).
-
-Modeled with separate ``_xin`` / ``_yin`` inputs and ``_xout`` / ``_yout``
-outputs (no inout connectors) so DaCe codegen produces one declaration
-per name. The expansion stages an initial cBLAS / cuBLAS ``copy`` into
-the output buffers then performs the actual ``swap`` on those.
-"""
 import copy
 import warnings
 
@@ -21,7 +14,9 @@ from dace.frontend.common import op_repository as oprepo
 
 @dace.library.expansion
 class ExpandSwapPure(ExpandTransformation):
-    """``_xout, _yout := _yin, _xin`` via a mapped tasklet (no library calls)."""
+    """
+    Naive backend-agnostic expansion of SWAP.
+    """
 
     environments = []
 
@@ -110,13 +105,8 @@ class ExpandSwapCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Swap(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?SWAP``: ``_xout, _yout := _yin, _xin``.
 
-    Inputs ``_xin``, ``_yin``; outputs ``_xout``, ``_yout``. Callers
-    requesting true in-place semantics should pass the same array name
-    for the input and output of each vector.
-    """
-
+    # Global properties
     implementations = {
         "pure": ExpandSwapPure,
         "OpenBLAS": ExpandSwapOpenBLAS,
@@ -125,6 +115,7 @@ class Swap(dace.sdfg.nodes.LibraryNode):
     }
     default_implementation = None
 
+    # Object fields
     n = dace.properties.SymbolicProperty(allow_none=True, default=None)
 
     def __init__(self, name, n=None, **kwargs):
@@ -132,7 +123,9 @@ class Swap(dace.sdfg.nodes.LibraryNode):
         self.n = n
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_x, sxi), (desc_y, syi), sxo, syo, n)``."""
+        """
+        :return: A five-tuple ((x, sxi), (y, syi), sxo, syo, n).
+        """
         descs, strides_in = {}, {}
         n = sxo = syo = None
         for e in state.in_edges(self):
@@ -156,22 +149,21 @@ class Swap(dace.sdfg.nodes.LibraryNode):
         return (descs["_xin"], strides_in["_xin"]), (descs["_yin"], strides_in["_yin"]), sxo, syo, n
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.swap')
 @oprepo.replaces('dace.libraries.blas.Swap')
 def swap_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, x, y, x_result=None, y_result=None):
-    """Build a :class:`Swap` node.
-
-    :param x_result: Output array for the swapped x; defaults to ``x`` (true in-place swap).
-    :param y_result: Output array for the swapped y; defaults to ``y``.
-    """
     x_result = x_result if x_result is not None else x
     y_result = y_result if y_result is not None else y
     x_in, y_in = state.add_read(x), state.add_read(y)
     x_out, y_out = state.add_write(x_result), state.add_write(y_result)
+
     libnode = Swap('swap', n=sdfg.arrays[x].shape[0])
     state.add_node(libnode)
+
     state.add_edge(x_in, None, libnode, '_xin', mm.Memlet(x))
     state.add_edge(y_in, None, libnode, '_yin', mm.Memlet(y))
     state.add_edge(libnode, '_xout', x_out, None, mm.Memlet(x_result))
     state.add_edge(libnode, '_yout', y_out, None, mm.Memlet(y_result))
+
     return []

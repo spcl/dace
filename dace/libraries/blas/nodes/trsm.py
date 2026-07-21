@@ -1,10 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-3 ``TRSM`` library node — ``op(A) X = alpha B`` (or right-side) with triangular ``A``.
-
-Uses separate ``_Bin`` and ``_Bout`` connectors to avoid the inout-codegen
-double-declaration. The expansion stages a cBLAS / cuBLAS rank-major copy
-of ``_Bin`` into ``_Bout``, then calls the in-place TRSM on ``_Bout``.
-"""
 import copy
 
 import dace.library
@@ -29,14 +23,6 @@ def _cublas_flags(node):
             'CUBLAS_DIAG_UNIT' if node.unit_diag else 'CUBLAS_DIAG_NON_UNIT')
 
 
-def _copy_loop(prefix, ld_in, ld_out, m, n):
-    """Per-row cBLAS copy from ``_Bin`` to ``_Bout`` (works for col-major leading dim)."""
-    return f"""
-        for (int __i = 0; __i < ({m}); ++__i)
-          cblas_{prefix}copy({n}, _Bin + __i, {ld_in}, _Bout + __i, {ld_out});
-        """
-
-
 @dace.library.expansion
 class ExpandTrsmOpenBLAS(ExpandTransformation):
 
@@ -50,7 +36,6 @@ class ExpandTrsmOpenBLAS(ExpandTransformation):
         prefix = func.lower()
         side, uplo, trans, diag = _cblas_flags(node)
         a = node.alpha
-        # Simple full-array memcpy (works for contiguous case).
         code = f"""
         std::memcpy(_Bout, _Bin, sizeof({dt.ctype}) * ({m}) * ({ldb_in}));
         cblas_{prefix}trsm(CblasRowMajor, {side}, {uplo}, {trans}, {diag}, {m}, {n}, ({dt.ctype})({a}), _A, {lda}, _Bout, {ldb_out});
@@ -100,11 +85,12 @@ class ExpandTrsmCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Trsm(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?TRSM``: triangular solve with multiple RHS, ``op(A) Xout = alpha _Bin``."""
 
+    # Global properties
     implementations = {"OpenBLAS": ExpandTrsmOpenBLAS, "MKL": ExpandTrsmMKL, "cuBLAS": ExpandTrsmCuBLAS}
     default_implementation = None
 
+    # Object fields
     side = dace.properties.Property(dtype=bool, default=False, desc="False: solve op(A)X=B; True: X op(A)=B")
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True for upper triangular A")
     transA = dace.properties.Property(dtype=bool, default=False, desc="True to use A^T")
@@ -116,7 +102,9 @@ class Trsm(dace.sdfg.nodes.LibraryNode):
         self.side, self.uplo, self.transA, self.unit_diag, self.alpha = side, uplo, transA, unit_diag, alpha
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_Bin, ldb_in), ldb_out, m, n)``."""
+        """
+        :return: A five-tuple ((A, lda), (Bin, ldb_in), ldb_out, m, n).
+        """
         desc_A = desc_B = lda = ldb_in = ldb_out = m = n = None
         for e in state.in_edges(self):
             sq = copy.deepcopy(e.data.subset)
@@ -137,6 +125,7 @@ class Trsm(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_B, ldb_in), ldb_out, m, n
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.trsm')
 @oprepo.replaces('dace.libraries.blas.Trsm')
 def trsm_libnode(pv: 'ProgramVisitor',
@@ -150,13 +139,15 @@ def trsm_libnode(pv: 'ProgramVisitor',
                  transA=False,
                  unit_diag=False,
                  alpha=1):
-    """Build a :class:`Trsm` node. ``result`` defaults to ``B`` for in-place semantics."""
     result = result if result is not None else B
     A_in, B_in = state.add_read(A), state.add_read(B)
     B_out = state.add_write(result)
+
     libnode = Trsm('trsm', side=side, uplo=uplo, transA=transA, unit_diag=unit_diag, alpha=alpha)
     state.add_node(libnode)
+
     state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
     state.add_edge(B_in, None, libnode, '_Bin', mm.Memlet(B))
     state.add_edge(libnode, '_Bout', B_out, None, mm.Memlet(result))
+
     return []

@@ -1,12 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-2 ``TRSV`` library node — triangular solve ``op(A) x = b``.
-
-Modeled with separate ``_xin`` (RHS) and ``_xout`` (solution) connectors
-following the :class:`Potrf` pattern so DaCe codegen doesn't generate
-two declarations for the same name. The OpenBLAS / cuBLAS expansions
-first copy ``_xin`` into ``_xout``, then call the in-place cBLAS /
-cuBLAS triangular solve on ``_xout``.
-"""
 import copy
 
 import dace.library
@@ -88,15 +80,12 @@ class ExpandTrsvCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Trsv(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?TRSV``: solve ``op(A) x = b`` where ``A`` is triangular.
 
-    Inputs: ``_A`` (triangular matrix), ``_xin`` (right-hand-side).
-    Outputs: ``_xout`` (solution).
-    """
-
+    # Global properties
     implementations = {"OpenBLAS": ExpandTrsvOpenBLAS, "MKL": ExpandTrsvMKL, "cuBLAS": ExpandTrsvCuBLAS}
     default_implementation = None
 
+    # Object fields
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True for upper triangular A")
     transA = dace.properties.Property(dtype=bool, default=False, desc="True to solve op(A)=A^T")
     unit_diag = dace.properties.Property(dtype=bool, default=False, desc="True if A has implicit unit diagonal")
@@ -106,7 +95,9 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
         self.uplo, self.transA, self.unit_diag = uplo, transA, unit_diag
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_x, sx_in), sx_out, n)``."""
+        """
+        :return: A four-tuple ((A, lda), (xin, sx_in), sx_out, n).
+        """
         desc_A = desc_x = lda = sx_in = sx_out = n = None
         for e in state.in_edges(self):
             sq = copy.deepcopy(e.data.subset)
@@ -127,6 +118,7 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_x, sx_in), sx_out, n
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.trsv')
 @oprepo.replaces('dace.libraries.blas.Trsv')
 def trsv_libnode(pv: 'ProgramVisitor',
@@ -138,13 +130,15 @@ def trsv_libnode(pv: 'ProgramVisitor',
                  uplo=False,
                  transA=False,
                  unit_diag=False):
-    """Build a :class:`Trsv` node. ``result`` defaults to ``x`` for in-place semantics."""
     result = result if result is not None else x
     A_in, x_in = state.add_read(A), state.add_read(x)
     x_out = state.add_write(result)
+
     libnode = Trsv('trsv', uplo=uplo, transA=transA, unit_diag=unit_diag)
     state.add_node(libnode)
+
     state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
     state.add_edge(x_in, None, libnode, '_xin', mm.Memlet(x))
     state.add_edge(libnode, '_xout', x_out, None, mm.Memlet(result))
+
     return []

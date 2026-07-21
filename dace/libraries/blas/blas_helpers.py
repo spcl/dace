@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 import numpy as np
 from dace import dtypes, data
 from typing import Any, Dict, Tuple
@@ -215,38 +216,29 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
             raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")
 
 
-def validate_level1_vector_to_scalar(node, sdfg, state, op_name: str):
-    """Shared validation for BLAS Level-1 nodes whose shape is
-    ``vector -> scalar`` (``ASUM``, ``NRM2``, ``IAMAX``, ``DOT``, ...).
+def validate_level1_vector_to_vector(node, sdfg, state, op_name: str):
+    """ Shared validation for BLAS Level-1 nodes shaped vector -> vector (COPY, SCAL, ...).
 
-    Every such node takes one rank-1 input and writes a single-element
-    output; the only thing that differs across the operations is the
-    error-message name and the post-validation work the caller does
-    with the descriptor / stride / length.  Returns the same canonical
-    tuple every per-op ``validate`` was constructing by hand.
-
-    :param node: the library node being validated.
-    :param sdfg: parent SDFG.
-    :param state: parent state.
-    :param op_name: short operation name used in error messages
-        (``"ASUM"``, ``"NRM2"``, ...).
-    :returns: ``((desc_x, stride_x), desc_res, n)``.
-    :raises ValueError: arity / rank / output-size mismatches.
+        :param op_name: operation name used in error messages.
+        :return: ``((desc_x, stride_x), (desc_y, stride_y), n)``.
     """
-    import copy as _copy
     in_edges = state.in_edges(node)
     out_edges = state.out_edges(node)
     if len(in_edges) != 1 or len(out_edges) != 1:
         raise ValueError(f"{op_name} expects one input and one output")
-    in_memlet = in_edges[0].data
+    in_memlet, out_memlet = in_edges[0].data, out_edges[0].data
     desc_x = sdfg.arrays[in_memlet.data]
-    desc_res = sdfg.arrays[out_edges[0].data.data]
-    squeezed = _copy.deepcopy(in_memlet.subset)
-    sqdims = squeezed.squeeze()
-    if len(squeezed.size()) != 1:
+    desc_y = sdfg.arrays[out_memlet.data]
+
+    sq_in = copy.deepcopy(in_memlet.subset)
+    sq_out = copy.deepcopy(out_memlet.subset)
+    dims_in = sq_in.squeeze()
+    dims_out = sq_out.squeeze()
+    if len(sq_in.size()) != 1 or len(sq_out.size()) != 1:
         raise ValueError(f"{op_name} only supported on 1-D arrays")
-    stride_x = desc_x.strides[sqdims[0]]
-    n = squeezed.num_elements()
-    if out_edges[0].data.subset.num_elements() != 1:
-        raise ValueError(f"Output of {op_name} must be a single element")
-    return (desc_x, stride_x), desc_res, n
+    if sq_in.num_elements() != sq_out.num_elements():
+        raise ValueError(f"{op_name}: input and output must be the same length")
+
+    stride_x = desc_x.strides[dims_in[0]]
+    stride_y = desc_y.strides[dims_out[0]]
+    return (desc_x, stride_x), (desc_y, stride_y), sq_in.num_elements()

@@ -1,39 +1,17 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """MatMul ``transA`` / ``transB`` correctness tests.
 
-The ``MatMul`` library node is a meta-node that ``SpecializeMatMul``
-expands to a backend op (``Gemm`` for 2-D inputs, ``BatchedMatMul`` for
-3+ D, ``Gemv`` for matrix-vector, ``Dot`` for vector-vector).
-
-These tests pin the contract:
-
-  * ``transA=True`` -> the node computes ``A^T @ B`` directly without
-    materialising a transposed copy of ``A``.
-  * ``transB=True`` -> ``A @ B^T``.
-  * Both flags simultaneously -> ``A^T @ B^T``.
-  * Both ``False`` (default) -> the existing ``A @ B`` behaviour stays
-    unchanged.
-
-The numerical reference is numpy's ``@`` on the matching transposed
-operands.  Tolerances are tight (``rtol=1e-12``) because GEMM does the
-same dot-products as numpy on the same floats; any drift would be a
-real bug.
+``transA``/``transB=True`` must compute ``A^T @ B`` / ``A @ B^T`` without
+materialising a transposed copy of the operand.
 """
 import dace
 import numpy as np
 import pytest
 from dace.libraries.blas import MatMul
 
-# ----------------------------------------------------------------
-# Helpers
-# ----------------------------------------------------------------
-
 
 def _build_matmul_sdfg(m, k, n, dtype, transA, transB):
-    """Hand-build an SDFG containing one MatMul node with the given
-    flags.  Returns the compiled program callable.  Hand-building
-    (rather than ``@dace.program``) is needed because the frontend
-    has no syntax for ``transA``/``transB`` flags -- those live on
-    the library node only."""
+    """Hand-build an SDFG with one MatMul node; the frontend has no syntax for transA/transB."""
     sdfg = dace.SDFG(f"mm_trans_{transA}_{transB}_{dace.dtypes.typeclass(dtype).ctype}")
 
     a_shape = (k, m) if transA else (m, k)
@@ -73,9 +51,6 @@ def _reference(a, b, transA, transB):
 ])
 @pytest.mark.parametrize("dtype", [np.float32, np.float64])
 def test_matmul_trans_flags(transA, transB, dtype):
-    """Every combination of ``transA`` / ``transB`` on 2-D operands.
-    Verifies the output matches ``numpy``'s ``@`` on the matching
-    transposed inputs, element-wise."""
     rng = np.random.default_rng(seed=0)
     m, k, n = 5, 7, 11
 
@@ -95,19 +70,13 @@ def test_matmul_trans_flags(transA, transB, dtype):
 
 
 def test_matmul_default_flags_are_false():
-    """Constructing ``MatMul`` without flags must leave ``transA`` /
-    ``transB`` at ``False`` -- regression guard against the property
-    defaults flipping silently."""
     n = MatMul("default_test")
     assert n.transA is False, f"transA default should be False, got {n.transA!r}"
     assert n.transB is False, f"transB default should be False, got {n.transB!r}"
 
 
 def test_matmul_trans_no_transient_in_sdfg():
-    """``transA=True`` must NOT introduce an extra transient for the
-    transposed ``A`` -- the whole point of the flag is to fuse the
-    transpose into the GEMM call.  Checks the expanded SDFG carries
-    only the user arrays + the GEMM library node's internals."""
+    """transA=True must fuse the transpose into GEMM, not materialise a transposed copy of A."""
     rng = np.random.default_rng(seed=0)
     m, k, n = 4, 6, 8
     a = rng.standard_normal((k, m)).astype(np.float64)
@@ -129,18 +98,10 @@ def test_matmul_trans_no_transient_in_sdfg():
     state.add_edge(b_in, None, node, "_b", dace.Memlet(f"B[0:{k}, 0:{n}]"))
     state.add_edge(node, "_c", c_out, None, dace.Memlet(f"C[0:{m}, 0:{n}]"))
 
-    pre_transient_count = sum(1 for d in sdfg.arrays.values() if d.transient)
     sdfg.expand_library_nodes()
-    # After Specialize -> Gemm, the only transients should be those Gemm
-    # introduces for its own internals (none for the pure expansion at
-    # 2-D matrix shape).  The point: no user-data-shaped transient gets
-    # added to hold ``A^T``.
-    post_transient_count = sum(1 for d in sdfg.arrays.values() if d.transient)
     extra_kn_transient = any(d.transient and tuple(int(s) for s in d.shape) == (m, k) for d in sdfg.arrays.values())
-    assert not extra_kn_transient, (f"transA=True minted an unexpected (m,k) "
-                                    f"transient -- transpose should fuse into GEMM, not materialise a copy")
+    assert not extra_kn_transient, "transA=True minted an unexpected (m,k) transient"
 
-    # Sanity: the program still computes the right answer.
     prog = sdfg.compile()
     prog(A=a, B=b, C=c)
     np.testing.assert_allclose(c, a.T @ b, rtol=1e-12, atol=1e-12)

@@ -1,13 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""LAPACK ``GEQRF`` library node — QR factorization of a general matrix.
-
-Produces ``A := QR`` with ``Q`` stored implicitly as Householder
-reflectors in the lower triangle of ``A`` plus a ``tau`` vector of
-length ``min(m, n)``. Use :class:`Orgqr` to materialise ``Q``.
-
-Uses ``_ain`` / ``_aout`` for the matrix to keep input and output
-connectors distinct in the codegen.
-"""
 import copy
 
 import dace.library
@@ -89,12 +80,8 @@ class ExpandGeqrfCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Geqrf(dace.sdfg.nodes.LibraryNode):
-    """LAPACK ``?GEQRF``: QR factorization, ``A := QR``.
 
-    Inputs: ``_ain``. Outputs: ``_aout`` (R + Householder reflectors),
-    ``_tau`` (scalar vector of length ``min(m, n)``), ``_res`` (info).
-    """
-
+    # Global properties
     implementations = {"OpenBLAS": ExpandGeqrfOpenBLAS, "MKL": ExpandGeqrfMKL, "cuSolverDn": ExpandGeqrfCuSolverDn}
     default_implementation = None
 
@@ -102,7 +89,9 @@ class Geqrf(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, inputs={"_ain"}, outputs={"_aout", "_tau", "_res"}, **kwargs)
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda_in, lda_out, m, n), desc_tau)``."""
+        """
+        :return: A two-tuple ((A, lda_in, lda_out, m, n), tau).
+        """
         desc_A = lda_in = lda_out = m = n = desc_tau = None
         for e in state.in_edges(self):
             if e.dst_conn != "_ain":

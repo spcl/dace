@@ -1,17 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Every MPI library node must resolve its communicator through the shared
-``resolve_comm`` helper: it reads an optional ``_comm`` (raw ``opaque(MPI_Comm)``)
-input connector first, else an optional ``_grid`` process-grid connector, else
-falls back to ``MPI_COMM_WORLD``.  Neither connector is declared in the node's
-fixed ``inputs`` -- the caller wires them dynamically (``add_in_connector`` +
-edge) and the expansion picks them up via ``expanded_input_connectors``.
-
-These tests assert at the code-generation level (no MPI runtime needed): they
-expand each node's tasklet and check the emitted C uses the resolved connector
-token, NOT a hardcoded ``MPI_COMM_WORLD``.  They cover the nodes that previously
-hardcoded the world communicator (allgather / scatter / redistribute) plus the
-uniformity fix on barrier, and confirm backward compatibility (no connector ->
-``MPI_COMM_WORLD``).
+"""Every MPI library node resolves its communicator via ``resolve_comm``: an
+optional ``_comm`` connector, else an optional ``_grid`` connector, else
+``MPI_COMM_WORLD``.  These tests expand each node's tasklet and check the
+emitted C uses the resolved connector, not a hardcoded ``MPI_COMM_WORLD``
+(code-generation level, no MPI runtime needed).
 """
 from unittest import mock
 

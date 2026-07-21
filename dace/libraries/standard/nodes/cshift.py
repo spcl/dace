@@ -136,10 +136,8 @@ class CShift(dace.sdfg.nodes.LibraryNode):
         self.shift = shift
 
     def validate(self, sdfg, state):
-        """:returns: ``(desc_x, desc_out, dim_zero)``.
-
-        :raises ValueError: if shapes don't match or dim is out of range.
-        """
+        """-> ``(desc_x, desc_out, dim_zero)``. Raises if shapes don't match or dim is out of
+        range."""
         in_edges = state.in_edges(self)
         out_edges = state.out_edges(self)
         if len(in_edges) != 1 or in_edges[0].dst_conn != "_x":

@@ -1,11 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Abort MPI execution as an explicit dataflow node (``MPI_Abort``).
-
-Terminates the processes in the resolved communicator with the ``_errorcode``
-integer-scalar input.  Carries side effects (so it is never pruned despite having
-no data outputs) and resolves its communicator from an optional ``_comm`` or
-``_grid`` input connector, else the default world.
-"""
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -37,8 +30,7 @@ class ExpandAbortMPI(ExpandTransformation):
 
 @dace.library.node
 class Abort(MPINode):
-    """Collective ``MPI_Abort(comm, errorcode)`` -- terminate the communicator
-    with the ``_errorcode`` integer-scalar input.  No data outputs."""
+    """Collective ``MPI_Abort(comm, errorcode)``."""
 
     # Global properties
     implementations = {
@@ -50,9 +42,6 @@ class Abort(MPINode):
         super().__init__(name, *args, inputs={"_errorcode"}, outputs=set(), **kwargs)
 
     def validate(self, sdfg, state):
-        """
-        :return: the ``_errorcode`` input data descriptor in the parent SDFG.
-        """
         errorcode = None
         for e in state.in_edges(self):
             if e.dst_conn == "_errorcode":

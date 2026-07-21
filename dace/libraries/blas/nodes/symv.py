@@ -1,11 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-2 ``SYMV`` library node — ``y := alpha A x + beta y`` with symmetric ``A``.
-
-Modeled with separate ``_yin`` and ``_yout`` connectors so DaCe codegen
-doesn't generate two declarations for the same name. The expansion
-copies ``_yin`` into ``_yout`` first then calls the in-place cBLAS / cuBLAS
-SYMV on ``_yout``.
-"""
 import copy
 
 import dace.library
@@ -79,11 +72,12 @@ class ExpandSymvCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Symv(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?SYMV``: symmetric matrix-vector multiply, ``_yout := alpha A _x + beta _yin``."""
 
+    # Global properties
     implementations = {"OpenBLAS": ExpandSymvOpenBLAS, "MKL": ExpandSymvMKL, "cuBLAS": ExpandSymvCuBLAS}
     default_implementation = None
 
+    # Object fields
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True if upper triangle of A is referenced")
     alpha = dace.properties.SymbolicProperty(allow_none=False, default=1)
     beta = dace.properties.SymbolicProperty(allow_none=False, default=0)
@@ -93,7 +87,9 @@ class Symv(dace.sdfg.nodes.LibraryNode):
         self.uplo, self.alpha, self.beta = uplo, alpha, beta
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_x, sx), (desc_y, syi), syo, n)``."""
+        """
+        :return: A five-tuple ((A, lda), (x, sx), (y, syi), syo, n).
+        """
         descs, strides = {}, {}
         n = syo = None
         for e in state.in_edges(self):
@@ -115,17 +111,20 @@ class Symv(dace.sdfg.nodes.LibraryNode):
         return ((descs["_A"], strides["_A"]), (descs["_x"], strides["_x"]), (descs["_yin"], strides["_yin"]), syo, n)
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.symv')
 @oprepo.replaces('dace.libraries.blas.Symv')
 def symv_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, A, x, y, result=None, alpha=1, beta=0, uplo=False):
-    """Build a :class:`Symv` node. ``result`` defaults to ``y`` for in-place semantics."""
     result = result if result is not None else y
     A_in, x_in, y_in = (state.add_read(name) for name in (A, x, y))
     y_out = state.add_write(result)
+
     libnode = Symv('symv', uplo=uplo, alpha=alpha, beta=beta)
     state.add_node(libnode)
+
     state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
     state.add_edge(x_in, None, libnode, '_x', mm.Memlet(x))
     state.add_edge(y_in, None, libnode, '_yin', mm.Memlet(y))
     state.add_edge(libnode, '_yout', y_out, None, mm.Memlet(result))
+
     return []

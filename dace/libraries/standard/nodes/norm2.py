@@ -136,11 +136,8 @@ class Norm2(dace.sdfg.nodes.LibraryNode):
         self.dim = dim
 
     def validate(self, sdfg, state):
-        """:returns: ``(desc_x, desc_out, dim_zero_or_None)``.
-
-        :raises ValueError: if connector wiring is wrong or ``dim`` is
-            out of range for the input rank.
-        """
+        """-> ``(desc_x, desc_out, dim_zero_or_None)``. Raises if connector wiring is wrong or
+        ``dim`` is out of range for the input rank."""
         in_edges = state.in_edges(self)
         out_edges = state.out_edges(self)
         if len(in_edges) != 1 or in_edges[0].dst_conn != "_x":

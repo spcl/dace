@@ -1,9 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""LAPACK ``ORGQR`` library node — materialise explicit ``Q`` from the compact GEQRF output.
-
-Uses ``_ain`` / ``_aout`` for the matrix so input and output connectors
-stay distinct in codegen.
-"""
 import copy
 
 import dace.library
@@ -85,8 +80,8 @@ class ExpandOrgqrCuSolverDn(ExpandTransformation):
 
 @dace.library.node
 class Orgqr(dace.sdfg.nodes.LibraryNode):
-    """LAPACK ``?ORGQR``: materialise explicit ``Q`` matrix from GEQRF output."""
 
+    # Global properties
     implementations = {"OpenBLAS": ExpandOrgqrOpenBLAS, "MKL": ExpandOrgqrMKL, "cuSolverDn": ExpandOrgqrCuSolverDn}
     default_implementation = None
 
@@ -94,7 +89,9 @@ class Orgqr(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, inputs={"_ain", "_tau"}, outputs={"_aout", "_res"}, **kwargs)
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda_in, lda_out, m, n), (desc_tau, k))``."""
+        """
+        :return: A two-tuple ((A, lda_in, lda_out, m, n), (tau, k)).
+        """
         desc_A = lda_in = lda_out = m = n = desc_tau = k = None
         for e in state.in_edges(self):
             sq = copy.deepcopy(e.data.subset)

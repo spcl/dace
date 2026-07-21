@@ -1,12 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Query the calling process's rank within a communicator as an explicit
-dataflow node (``MPI_Comm_rank``).
-
-The communicator is resolved (see
-:func:`dace.libraries.mpi.nodes.node.resolve_comm`) from an optional ``_comm``
-(raw ``opaque(MPI_Comm)``) or ``_grid`` (process grid) input connector, else the
-default world.  The rank is produced on the ``_rank`` integer-scalar output.
-"""
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -25,8 +17,6 @@ class ExpandCommRankMPI(ExpandTransformation):
     def expansion(node, parent_state, parent_sdfg, n=None, **kwargs):
         node.validate(parent_sdfg, parent_state)
         comm = resolve_comm(node, parent_state)
-        # A local ``int`` receives the rank so the ``_rank`` output can be any
-        # integer width (MPI_Comm_rank writes a C ``int``).
         code = f"""
             int __rank;
             MPI_Comm_rank({comm}, &__rank);
@@ -42,8 +32,7 @@ class ExpandCommRankMPI(ExpandTransformation):
 
 @dace.library.node
 class CommRank(MPINode):
-    """Return the calling process's rank in the resolved communicator on the
-    ``_rank`` integer-scalar output via ``MPI_Comm_rank``."""
+    """``MPI_Comm_rank``: the calling process's rank, on the ``_rank`` output."""
 
     # Global properties
     implementations = {
@@ -55,9 +44,6 @@ class CommRank(MPINode):
         super().__init__(name, *args, inputs=set(), outputs={"_rank"}, **kwargs)
 
     def validate(self, sdfg, state):
-        """
-        :return: the ``_rank`` output data descriptor in the parent SDFG.
-        """
         rank = None
         for e in state.out_edges(self):
             if e.src_conn == "_rank":

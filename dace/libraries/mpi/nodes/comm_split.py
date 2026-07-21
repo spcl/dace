@@ -1,15 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Split a communicator into disjoint sub-communicators as an explicit dataflow
-node (``MPI_Comm_split``).
-
-Mirrors :class:`~dace.libraries.mpi.nodes.comm_f2c.CommF2c`: the produced
-communicator is a first-class ``opaque(MPI_Comm)`` value on the ``_newcomm``
-output that flows into the ``_comm`` input of downstream MPI nodes (see
-:func:`dace.libraries.mpi.nodes.node.resolve_comm`).  Every process in the parent
-communicator with the same ``_color`` lands in the same new communicator, ordered
-by ``_key``.  The communicator being split is resolved from an optional ``_comm``
-or ``_grid`` input connector, else the default world.
-"""
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -44,9 +33,7 @@ class ExpandCommSplitMPI(ExpandTransformation):
 
 @dace.library.node
 class CommSplit(MPINode):
-    """Collective ``MPI_Comm_split(comm, color, key)`` producing a new
-    ``opaque(MPI_Comm)`` communicator on ``_newcomm`` from ``_color`` / ``_key``
-    integer-scalar inputs."""
+    """``MPI_Comm_split(comm, color, key)``, producing ``_newcomm``."""
 
     # Global properties
     implementations = {
@@ -59,8 +46,7 @@ class CommSplit(MPINode):
 
     def validate(self, sdfg, state):
         """
-        :return: a two-tuple (color, key) of the input data descriptors in the
-                 parent SDFG.
+        :return: A two-tuple (color, key) of the data descriptors in the parent SDFG.
         """
         color, key = None, None
         for e in state.in_edges(self):

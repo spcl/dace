@@ -33,13 +33,9 @@ _OUTPUT_CONNECTOR_NAME = "_cnt_out"
 
 
 def _validate_count_edges(node, sdfg, state):
-    """Validate the COUNT node's edges and return
-    ``(mask_name, mask_desc, mask_subset, out_name, out_desc, out_subset)``.
-
-    Mirrors the ``_validate_*_edges`` pattern from ``copy_node`` /
-    ``memset_node`` -- one edge per connector, no surprises, dtype
-    checked at the boundary.
-    """
+    """Validate the COUNT node's edges -> ``(mask_name, mask_desc, mask_subset, out_name,
+    out_desc, out_subset)``. Mirrors the ``_validate_*_edges`` pattern from ``copy_node`` /
+    ``memset_node`` -- one edge per connector, dtype checked at the boundary."""
     in_edges = [ie for ie in state.in_edges(node) if ie.dst_conn == _INPUT_CONNECTOR_NAME]
     if len(in_edges) != 1:
         raise ValueError(f"{type(node).__name__} expects exactly one "

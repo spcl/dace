@@ -1,10 +1,4 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""BLAS Level-2 ``TRMV`` library node — ``y := op(A) * x`` with triangular ``A``.
-
-Modeled with ``_xin`` input and ``_xout`` output following the :class:`Trsv` pattern.
-The expansion copies ``_xin`` into ``_xout`` then calls cBLAS / cuBLAS triangular MV
-in place on ``_xout``.
-"""
 import copy
 
 import dace.library
@@ -86,11 +80,12 @@ class ExpandTrmvCuBLAS(ExpandTransformation):
 
 @dace.library.node
 class Trmv(dace.sdfg.nodes.LibraryNode):
-    """BLAS ``?TRMV``: triangular matrix-vector multiply, ``_xout := op(A) * _xin``."""
 
+    # Global properties
     implementations = {"OpenBLAS": ExpandTrmvOpenBLAS, "MKL": ExpandTrmvMKL, "cuBLAS": ExpandTrmvCuBLAS}
     default_implementation = None
 
+    # Object fields
     uplo = dace.properties.Property(dtype=bool, default=False, desc="True for upper triangular A")
     transA = dace.properties.Property(dtype=bool, default=False, desc="True to use A^T")
     unit_diag = dace.properties.Property(dtype=bool, default=False, desc="True if implicit unit diagonal")
@@ -100,7 +95,9 @@ class Trmv(dace.sdfg.nodes.LibraryNode):
         self.uplo, self.transA, self.unit_diag = uplo, transA, unit_diag
 
     def validate(self, sdfg, state):
-        """:return: ``((desc_A, lda), (desc_x, sx_in), sx_out, n)``."""
+        """
+        :return: A four-tuple ((A, lda), (xin, sx_in), sx_out, n).
+        """
         desc_A = desc_x = lda = sx_in = sx_out = n = None
         for e in state.in_edges(self):
             sq = copy.deepcopy(e.data.subset)
@@ -121,6 +118,7 @@ class Trmv(dace.sdfg.nodes.LibraryNode):
         return (desc_A, lda), (desc_x, sx_in), sx_out, n
 
 
+# Numpy replacement
 @oprepo.replaces('dace.libraries.blas.trmv')
 @oprepo.replaces('dace.libraries.blas.Trmv')
 def trmv_libnode(pv: 'ProgramVisitor',
@@ -132,13 +130,15 @@ def trmv_libnode(pv: 'ProgramVisitor',
                  uplo=False,
                  transA=False,
                  unit_diag=False):
-    """Build a :class:`Trmv` node. ``result`` defaults to ``x`` for in-place semantics."""
     result = result if result is not None else x
     A_in, x_in = state.add_read(A), state.add_read(x)
     x_out = state.add_write(result)
+
     libnode = Trmv('trmv', uplo=uplo, transA=transA, unit_diag=unit_diag)
     state.add_node(libnode)
+
     state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
     state.add_edge(x_in, None, libnode, '_xin', mm.Memlet(x))
     state.add_edge(libnode, '_xout', x_out, None, mm.Memlet(result))
+
     return []
