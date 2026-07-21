@@ -366,9 +366,17 @@ def nest_state_subgraph(sdfg: SDFG,
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
     data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
-    # Find other occurrences in SDFG
+    # Find other occurrences in SDFG. A transient is named by an access node OR, when it is only
+    # a scalar bridging two code nodes, by nothing but the memlet on the edge between them.
+    # Counting access nodes alone would call such a transient subgraph-local and delete it out
+    # from under its other user -- e.g. the body copy ``SplitMapForTileRemainder`` leaves in a
+    # remainder tail, whose own nesting then fails with a ``KeyError`` on the missing descriptor.
+    subgraph_edge_ids = {id(e) for e in subgraph.edges()}
     other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
                       if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes())
+    other_nodes |= set(e.data.data for s in sdfg.states() for e in s.edges()
+                       if id(e) not in subgraph_edge_ids and e.data.data is not None
+                       and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode))
     subgraph_transients = set()
     for data in data_in_subgraph:
         datadesc = sdfg.arrays[data]
@@ -378,7 +386,8 @@ def nest_state_subgraph(sdfg: SDFG,
     # All transients of edges between code nodes are also added to nested graph
     for edge in subgraph.edges():
         if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
-            subgraph_transients.add(edge.data.data)
+            if edge.data.data is not None:
+                subgraph_transients.add(edge.data.data)
 
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
@@ -394,9 +403,11 @@ def nest_state_subgraph(sdfg: SDFG,
     # Create the nested SDFG
     nsdfg = SDFG(name or 'nested_' + state.label)
 
-    # Transients are added to the nested graph as-is
+    # Transients are added to the nested graph as-is. Copied, not shared: the parent keeps its own
+    # descriptor whenever the transient has another user (below), and one descriptor object living
+    # in two SDFGs is what validation rejects as a duplicate reference.
     for name in subgraph_transients:
-        nsdfg.add_datadesc(name, sdfg.arrays[name])
+        nsdfg.add_datadesc(name, copy.deepcopy(sdfg.arrays[name]))
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
@@ -574,8 +585,10 @@ def nest_state_subgraph(sdfg: SDFG,
     # Remove subgraph nodes from graph
     state.remove_nodes_from(subgraph.nodes())
 
-    # Remove subgraph transients from top-level graph
-    for transient in subgraph_transients:
+    # Remove subgraph transients from top-level graph -- only the ones that really were
+    # subgraph-local. A code-node bridge transient some other part of the SDFG still names stays
+    # put; the nested SDFG was given its own copy of the descriptor above.
+    for transient in subgraph_transients - other_nodes:
         del sdfg.arrays[transient]
 
     # Remove newly isolated nodes due to memlet consolidation

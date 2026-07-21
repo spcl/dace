@@ -427,11 +427,19 @@ class CPPUnparser:
     def _conditional_write_parts(self, t):
         """Match a lone ``<target> = IT(<cond>, <value>)`` assignment.
 
-        The target must already be declared -- ``IT`` only ever writes a tasklet OUT connector,
-        which the tasklet preamble declares (as ``_o[0]`` for a pointer connector) -- because a
-        guarded declaration (``if (c) { auto x = v; }``) would scope the variable to the branch
-        and leave the false path referring to nothing. A subscript / attribute target is a store
-        into something already declared, so it needs no such check.
+        The target is never declared here, only assigned: ``IT`` writes a destination that already
+        exists -- a tasklet OUT connector declared by the tasklet preamble, or, once the write is a
+        dynamic memlet, the destination the connector was substituted with (a scalar the codegen
+        allocated at function scope). Declaring it under the guard (``if (c) { auto x = v; }``)
+        would scope it to the branch and leave the false path referring to nothing.
+
+        This deliberately does not verify that the target is declared. ``self.locals`` only tracks
+        declarations this unparser emitted, so it cannot see the function-scope allocation behind a
+        substituted connector -- and treating "unknown" as "do not lower" is not a safe fallback:
+        ``IT`` is not a C++ function, so anything that reaches the ordinary assignment path fails to
+        compile regardless. Lowering unconditionally turns a would-be ``'IT' was not declared``
+        error into correct code where the destination exists, and into a plain undeclared-identifier
+        error on the destination itself where it does not.
 
         :param t: The ``ast.Assign`` node being unparsed.
         :returns: ``(target, cond, value)`` AST nodes, or ``None`` if this is an ordinary assign.
@@ -443,13 +451,7 @@ class CPPUnparser:
         if len(t.targets) != 1:
             return None
         target = t.targets[0]
-        if isinstance(target, (ast.Subscript, ast.Attribute)):
-            return target, value.args[0], value.args[1]
-        if not isinstance(target, ast.Name):
-            return None
-        declared = self.locals.is_defined(target.id, self._indent) or (self.defined_symbols is not None
-                                                                       and target.id in self.defined_symbols)
-        if not declared:
+        if not isinstance(target, (ast.Subscript, ast.Attribute, ast.Name)):
             return None
         return target, value.args[0], value.args[1]
 
@@ -1300,6 +1302,29 @@ def cppunparse(node, expr_semicolon=True, locals=None, defined_symbols=None):
     strio = StringIO()
     CPPUnparser(node, 0, locals or CPPLocals(), strio, expr_semicolon=expr_semicolon, defined_symbols=defined_symbols)
     return strio.getvalue().strip()
+
+
+def cpp_assignment(target: str, value, defined_symbols=None) -> str:
+    """A C++ statement assigning ``value`` to the already-rendered ``target`` expression.
+
+    For callers that cannot go through :meth:`CPPUnparser._Assign` because the assignment target is
+    a C++ expression they built themselves (a pointer name, an array-interface subscript) rather
+    than a Python AST node -- codegen's dynamic-memlet writes, chiefly. Unparsing only the value
+    and gluing ``"%s = %s;"`` around it would lose every rewrite the assignment unparser performs,
+    of which the conditional write is one: ``IT(cond, v)`` is not a C++ function and must become a
+    guarded statement, so it has to be handled where the target is known.
+
+    :param target: The assignment destination, already rendered as C++.
+    :param value: The right-hand side, as a Python AST node.
+    :param defined_symbols: Symbols with known types, forwarded to the unparser.
+    :returns: The C++ statement, terminated with a semicolon.
+    """
+    if (isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == CONDITIONAL_WRITE_FUNC
+            and len(value.args) == 2):
+        cond, written = value.args
+        return (f"if ({cppunparse(cond, expr_semicolon=False, defined_symbols=defined_symbols)}) "
+                f"{{ {target} = {cppunparse(written, expr_semicolon=False, defined_symbols=defined_symbols)}; }}")
+    return f"{target} = {cppunparse(value, expr_semicolon=False, defined_symbols=defined_symbols)};"
 
 
 # Code can either be a string or a function

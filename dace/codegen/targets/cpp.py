@@ -1249,22 +1249,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     else:
                         var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
-                            newnode = ast.Name(id="%s = %s;" % (
-                                ptrname,
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            ))
+                            newnode = ast.Name(id=cppunparse.cpp_assignment(ptrname, value))
                         elif isinstance(desc, data.View):
-                            newnode = ast.Name(id="%s = %s;" % (
-                                cpp_array_expr(self.sdfg, memlet, codegen=self.codegen),
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            ))
+                            newnode = ast.Name(id=cppunparse.cpp_assignment(
+                                cpp_array_expr(self.sdfg, memlet, codegen=self.codegen), value))
                         else:
                             array_interface_name = self.codegen.ptr(ptrname, desc, self.sdfg, memlet.dst_subset, True,
                                                                     None, None, True)
-                            newnode = ast.Name(
-                                id=f"{array_interface_name}"
-                                f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
-                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
+                            index = cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)
+                            newnode = ast.Name(id=cppunparse.cpp_assignment(f"{array_interface_name}[{index}]", value))
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
                 pass
@@ -1283,8 +1276,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                        indices=sym2cpp(subscript),
                                                        dtype=dtype) + ';')
         else:
-            newnode = ast.Name(id="%s[%s] = %s;" %
-                               (target, sym2cpp(subscript), cppunparse.cppunparse(value, expr_semicolon=False)))
+            newnode = ast.Name(id=cppunparse.cpp_assignment(f"{target}[{sym2cpp(subscript)}]", value))
 
         return self._replace_assignment(newnode, node)
 
