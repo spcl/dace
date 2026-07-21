@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.interstate.loop_peeling import LoopPeeling
 
@@ -245,3 +246,52 @@ if __name__ == '__main__':
     test_peeling_end_no_loop_symbol_leak()
     test_peeling_single_state_body_emits_flat_states()
     test_peeling_multi_state_body_emits_cfr_with_deepcopied_edges()
+
+
+@pytest.mark.parametrize('start, condition, step, expected', [
+    (0, 'i < 10', 'i + 1', list(range(0, 10, 1))),
+    (0, 'i < 10', 'i + 3', list(range(0, 10, 3))),
+    (9, 'i > -1', 'i - 1', list(range(9, -1, -1))),
+    (9, 'i > -1', 'i - 3', list(range(9, -1, -3))),
+    (9, 'i >= 0', 'i - 1', list(range(9, -1, -1))),
+    (5, 'i <= 5', 'i + 1', [5]),
+])
+def test_unroll_covers_every_iteration(start, condition, step, expected):
+    """ get_loop_end reports the last value the iterate actually takes, so the past-the-end bound
+        is one step FURTHER along the direction of travel: +1 counting up, -1 counting down. A
+        hardcoded +1 made every decrementing loop stop short -- `i = 9; i > -1; i -= 1` unrolled 8
+        of its 10 iterations, dropping the last two silently, with a valid SDFG to show for it. """
+    sdfg = dace.SDFG(f'unroll_{start}_{step.replace(" ", "").replace("-", "m").replace("+", "p")}')
+    sdfg.add_array('A', [10], dace.float64)
+    loop = dace.sdfg.state.LoopRegion('l', condition, 'i', f'i = {start}', f'i = {step}')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    tasklet = body.add_tasklet('write', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    assert sdfg.apply_transformations_repeated([LoopUnroll]) == 1
+
+    A = np.zeros([10])
+    sdfg(A=A)
+    written = sorted(int(i) for i, v in enumerate(A) if v != 0)
+    assert written == sorted(expected)
+
+
+def test_unroll_negative_iterate_produces_valid_labels():
+    """ Iteration regions are named after the iterate value, and a negative int renders a bare '-',
+        which is not a legal identifier -- a descending loop that crosses zero produced state names
+        like 'l_i-1_body' and failed validation outright. """
+    sdfg = dace.SDFG('negiter')
+    sdfg.add_array('A', [9], dace.float64)
+    loop = dace.sdfg.state.LoopRegion('l', 'i > -5', 'i', 'i = 4', 'i = i - 1')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    tasklet = body.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('A'), None, dace.Memlet('A[i + 4]'))
+
+    assert sdfg.apply_transformations_repeated([LoopUnroll]) == 1
+    assert all(dace.dtypes.validate_name(n.label) for n in sdfg.nodes())
+
+    A = np.zeros([9])
+    sdfg(A=A)
+    assert np.all(A == 1.0)

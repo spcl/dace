@@ -5,7 +5,7 @@ import ast
 import copy
 from typing import List, Optional, Union
 
-from dace import sdfg as sd, symbolic
+from dace import dtypes, sdfg as sd, symbolic
 from dace.properties import Property, make_properties
 from dace.sdfg import InterstateEdge, utils as sdutil
 from dace.sdfg.nodes import NestedSDFG
@@ -69,7 +69,6 @@ class LoopUnroll(xf.MultiStateTransformation):
         try:
             stride = symbolic.evaluate(stride, sdfg.constants)
             loop_diff = int(symbolic.evaluate(end - start, sdfg.constants))
-            is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
 
@@ -96,14 +95,15 @@ class LoopUnroll(xf.MultiStateTransformation):
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
         unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
-        for i in offsets:
+        for position, i in enumerate(offsets):
             # Instantiate loop contents as a new control flow region with iterate value.
+            # `position` (0, 1, 2, ...) is instantiate_loop_iteration's label-safety fallback,
+            # NOT `i` itself: for a decrementing loop (negative stride) `i` walks 0, -1, -2, ...
+            # and is just as unsafe to embed in a name as a symbolic iterate value would be.
             current_index = start + i
-            is_symbolic |= symbolic.issymbolic(current_index)
-            iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index,
-                                                               str(i) if is_symbolic else None)
+            iteration_region = self.instantiate_loop_iteration(graph, self.loop, current_index, position)
             iteration_region.replace_dict({self.loop.loop_variable: current_index}, replace_keys=True)
-            iteration_region.replace_meta_accesses({self.loop.loop_variable: str(current_index)})
+            iteration_region.replace_meta_accesses({self.loop.loop_variable: symbolic.symstr(current_index)})
 
             # Connect iterations with unconditional edges
             if len(unrolled_iterations) > 0:
@@ -141,8 +141,19 @@ class LoopUnroll(xf.MultiStateTransformation):
                                    graph: ControlFlowRegion,
                                    loop: LoopRegion,
                                    value: symbolic.SymbolicType,
+                                   index: int,
                                    label_suffix: Optional[str] = None) -> ControlFlowRegion:
-        it_label = loop.label + '_' + loop.loop_variable + (label_suffix if label_suffix is not None else str(value))
+        it_label = loop.label + '_' + loop.loop_variable + (label_suffix
+                                                            if label_suffix is not None else symbolic.symstr(value))
+        if not dtypes.validate_name(it_label):
+            # A concrete (non-symbolic) iterate value can still render into an invalid
+            # identifier -- e.g. a negative int's ``str()`` contains a bare ``-``
+            # (confirmed on a real CloudSC loop counting down: label
+            # ``for_1260_jn-1`` rejected by validate_name). The enumeration index is
+            # always a small non-negative int, always identifier-safe; fall back to it
+            # rather than trying to enumerate every character ``str(value)`` could ever
+            # produce.
+            it_label = loop.label + '_' + loop.loop_variable + str(index)
         iteration_region = ControlFlowRegion(it_label, graph.sdfg, graph)
 
         # ``ensure_unique_name``: the label is derived from the loop label + iterate value, which is
@@ -190,6 +201,11 @@ class LoopUnroll(xf.MultiStateTransformation):
             data = copy.deepcopy(edge.data)
             iteration_region.add_edge(src, dst, data)
 
+        # A raw str() on a symbolic expression can misrender it (e.g. an operator-function like
+        # ``__right_shift`` prints as its sympy class name, not the operator) -- symstr renders
+        # the DaCe-printable form, so the substituted code stays parseable either way.
+        value_str = symbolic.symstr(value)
+
         # Replace occurences of the loop variables on all interstate edges
         for edge, parent_graph in iteration_region.all_edges_recursive():  # Recursion needed for nested SDFGs
             if isinstance(edge.data, InterstateEdge):
@@ -198,14 +214,14 @@ class LoopUnroll(xf.MultiStateTransformation):
                 assert src in parent_graph.nodes()
                 assert dst in parent_graph.nodes()
                 if not edge.data.is_unconditional():
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(edge.data.condition)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(edge.data.condition)
 
                 new_assignments = dict()
                 for k, v in edge.data.assignments.items():
                     k_ast = ast.parse(k)
                     v_ast = ast.parse(v)
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(k_ast)
-                    ASTFindReplace({loop.loop_variable: str(value)}).visit(v_ast)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(k_ast)
+                    ASTFindReplace({loop.loop_variable: value_str}).visit(v_ast)
                     new_assignments[ast.unparse(k_ast)] = ast.unparse(v_ast)
                 edge.data.assignments = new_assignments
 
@@ -213,7 +229,7 @@ class LoopUnroll(xf.MultiStateTransformation):
             if isinstance(node, NestedSDFG):
                 if loop.loop_variable in node.symbol_mapping:
                     node.symbol_mapping[loop.loop_variable] = ASTFindReplace({
-                        loop.loop_variable: str(value)
+                        loop.loop_variable: value_str
                     }).visit(node.symbol_mapping[loop.loop_variable])
                 if loop.loop_variable in node.symbol_mapping:
                     del node.symbol_mapping[loop.loop_variable]
