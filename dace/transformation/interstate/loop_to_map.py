@@ -148,13 +148,26 @@ def _sanitize_by_index(indices: Set[int], subset: subsets.Subset) -> subsets.Ran
 def _affine_coeffs(expr, itersym):
     """ Return ``(a, b)`` with ``expr == a*itersym + b``, or ``None`` if
         ``expr`` is not affine in ``itersym``.
+
+        Derived, not searched for. ``expand`` + ``coeff`` + ``simplify`` is the obvious spelling
+        but it is superlinear in the size of the index expression: on a deeply tiled nest (the
+        two-level tiled Jacobi stencil, whose indices carry every enclosing tile origin) the
+        expansion blows up and ``coeff``'s ``as_independent`` walk over the resulting sum does not
+        come back -- ``LoopToMap.can_be_applied`` never returned, so the pipeline hung.
+
+        For an expression polynomial in ``itersym`` the coefficients are exact by construction:
+        the derivative IS ``a`` when the degree is at most one (and still mentions ``itersym``
+        when it is higher, which is the degree test), and evaluating at zero IS ``b``. Both are
+        structural, and neither expands the expression. Non-polynomial in ``itersym`` (an
+        ``int_floor`` of it, say) is not affine and is refused, as before.
     """
-    e = sp.expand(symbolic.pystr_to_symbolic(expr))
-    a = e.coeff(itersym, 1)
-    b = e.coeff(itersym, 0)
-    if sp.simplify(e - (a * itersym + b)) != 0:
+    e = symbolic.pystr_to_symbolic(expr)
+    if not e.is_polynomial(itersym):
         return None
-    return a, b
+    a = sp.diff(e, itersym)
+    if itersym in a.free_symbols:  # degree >= 2 -> not affine
+        return None
+    return a, e.subs(itersym, 0)
 
 
 def _same_injective_index(idx1, idx2, itersym) -> bool:
