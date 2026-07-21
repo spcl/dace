@@ -217,6 +217,39 @@ required:
                     Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
                     anything it cannot resolve without cmake.
 
+            precompiled_header:
+                type: bool
+                default: true
+                title: Precompile the DaCe runtime header
+                description: >
+                    Precompile ``<dace/dace.h>`` once per (compiler, flags) into a
+                    machine-global cache and force-include it into generated host
+                    sources. The runtime umbrella header is most of the compile time
+                    of a small kernel, so this roughly halves it -- but only because
+                    the result is cached across SDFGs: building the header costs more
+                    than it saves for a single translation unit.
+
+                    Purely an optimization. If the cached header does not match the
+                    flags a translation unit is compiled with, the compiler ignores it
+                    and compiles normally, producing the same object.
+
+                    The cache lives in ``/dev/shm`` (falling back to the user cache
+                    directory); override the root with ``DACE_BUILD_CACHE_DIR``.
+
+            configure_cache:
+                type: bool
+                default: true
+                title: Reuse CMake configure results across builds
+                description: >
+                    Seed each fresh build folder with the CMake compiler/ABI detection
+                    and ``find_package`` results of an earlier build configured the
+                    same way, instead of rediscovering them for every SDFG. Turns a
+                    full configure into a reconfigure.
+
+                    Purely an optimization: with no cached entry, or a stale one, CMake
+                    simply does the full job again. Shares ``DACE_BUILD_CACHE_DIR``
+                    with ``precompiled_header``. Applies to ``build_mode: cmake``.
+
             static_archive:
                 type: bool
                 default: false

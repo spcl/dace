@@ -28,6 +28,7 @@ from typing import Dict, List, Optional
 
 from dace.config import Config
 from dace.dtypes import deduplicate
+from dace.codegen import build_cache
 from dace.codegen import common
 from dace.codegen import exceptions as cgx
 from dace.codegen.compiler import _get_or_eval
@@ -368,17 +369,6 @@ def _cuda_arch_flags(supported: Optional[set], allow_native: bool = True) -> Lis
     return flags
 
 
-def _newest_mtime(directory: str) -> float:
-    newest = 0.0
-    for root, _, filenames in os.walk(directory):
-        for f in filenames:
-            try:
-                newest = max(newest, os.path.getmtime(os.path.join(root, f)))
-            except OSError:
-                pass
-    return newest
-
-
 def _depfile_headers(depfile: str) -> List[str]:
     """The sources and headers a ``-MMD -MF`` compile recorded for one object; empty if unreadable.
 
@@ -403,54 +393,6 @@ def _depfile_headers(depfile: str) -> List[str]:
     # that never exist on disk -- which would silently rebuild everything on every build.
     text = parts[1].replace('\\\n', ' ').replace('\\ ', '\0')
     return [entry.replace('\0', ' ') for entry in text.split()]
-
-
-def _ensure_dace_pch(cxx: str, pch_flags: List[str], runtime_inc: str, runtime_mtime: float,
-                     run) -> Optional[List[str]]:
-    """Precompile ``<dace/dace.h>`` once per (compiler, flags) and cache it in the user cache dir.
-
-    The DaCe runtime umbrella header dominates the compile time of a small kernel (~1s of parsing +
-    template instantiation); precompiling it cuts a host translation unit by ~3x. Returns the extra
-    ``-I``/``-include`` flags that make g++/clang++ use the cached PCH, or ``None`` when a PCH could
-    not be produced (the caller then compiles normally -- correctness is unaffected, only speed).
-
-    An invalid or flag-mismatched PCH is silently ignored by the compiler, so this can never change
-    the produced object; the only failure mode is the one-off PCH build itself, which is swallowed.
-    """
-    try:
-        import getpass
-        import hashlib
-        key = hashlib.md5(('\0'.join([cxx, runtime_inc] + pch_flags)).encode()).hexdigest()[:16]
-        # PCH root: keep the ~120 MB .gch in RAM (/dev/shm) when available -- on HPC login/compute
-        # nodes the default user cache dir is NFS-backed $HOME, and re-reading the PCH over NFS on
-        # every translation unit costs more than the PCH saves, silently eroding the native
-        # backend's compile-time advantage. Override with DACE_NATIVE_PCH_DIR; fall back to the
-        # user cache dir where /dev/shm is absent (macOS, containers without shm).
-        pch_root = os.environ.get('DACE_NATIVE_PCH_DIR')
-        if not pch_root:
-            if os.path.isdir('/dev/shm') and os.access('/dev/shm', os.W_OK):
-                pch_root = os.path.join('/dev/shm', f'dace_native_pch_{getpass.getuser()}')
-            else:
-                pch_root = os.path.expanduser('~/.cache/dace/native_pch')
-        pch_dir = os.path.join(pch_root, key)
-        header = os.path.join(pch_dir, 'dace_prewarm.h')
-        gch = header + '.gch'
-        # Strictly newer, matching the coarse-mtime convention used for objects/libraries below: a
-        # .gch sharing the newest runtime header's mtime counts as stale, since g++ would otherwise
-        # keep silently using a PCH built from the pre-edit headers.
-        if not (os.path.isfile(gch) and os.path.getmtime(gch) > runtime_mtime):
-            os.makedirs(pch_dir, exist_ok=True)
-            if not os.path.isfile(header):
-                with open(header, 'w') as f:
-                    f.write('#include <dace/dace.h>\n')
-            # Compile to a per-process temp then atomically rename into place, so a concurrent build
-            # (pytest -n4 shares this global cache) can never observe a half-written .gch.
-            tmp_gch = f'{gch}.tmp.{os.getpid()}'
-            run([cxx] + pch_flags + ['-I', runtime_inc, '-x', 'c++-header', header, '-o', tmp_gch])
-            os.replace(tmp_gch, gch)
-        return ['-I', pch_dir, '-include', 'dace_prewarm.h']
-    except Exception:
-        return None  # any trouble -> compile without the PCH
 
 
 # ---------------------------------------------------------------------------
@@ -492,7 +434,7 @@ def build_native(program_folder: str,
     # Walked once per build (not cached across builds): the runtime headers are stable within a build,
     # but a developer editing them between builds in one long-lived process must still invalidate
     # objects/PCH -- a process-lifetime cache here would wrongly reuse stale objects.
-    runtime_mtime = _newest_mtime(runtime_inc)
+    runtime_mtime = build_cache.newest_mtime(runtime_inc)
 
     def run(cmd: List[str], stream=output_stream) -> None:
         line = ' '.join(shlex.quote(c) for c in cmd)
@@ -600,7 +542,7 @@ def build_native(program_folder: str,
         pch_flags = list(host_base_flags)
         if has_gpu:
             pch_flags += ['-DWITH_CUDA']
-        host_pch = _ensure_dace_pch(_cxx(), pch_flags, runtime_inc, runtime_mtime, run) or []
+        host_pch = build_cache.ensure_dace_pch(_cxx(), pch_flags, runtime_inc, runtime_mtime, run) or []
 
     def obj_current(obj: str, cmd: List[str]) -> bool:
         """An object is current if every file it was built from is older than it and the command that

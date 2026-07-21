@@ -9,6 +9,7 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
+set(DACE_PCH_DIR "" CACHE STRING "Directory holding a precompiled <dace/dace.h> to force-include")
 
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
@@ -50,7 +51,21 @@ foreach(DACE_FILE ${DACE_FILES})
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
+  # Remember the generated HOST sources separately: they are the only ones a precompiled
+  # <dace/dace.h> may be forced into (see below).
+  if(NOT DACE_FILE_EXT STREQUAL ".cu")
+    set(DACE_GENERATED_HOST_FILES ${DACE_GENERATED_HOST_FILES} ${DACE_FILE})
+  endif()
 endforeach()
+
+# Reuse the precompiled DaCe runtime header built by dace/codegen/build_cache.py. Scoped to the
+# generated host sources on purpose: forcing <dace/dace.h> into an environment's auxiliary
+# translation unit, or into a .cu that nvcc compiles, can break a file that never asked for it.
+# If the flags it was built with do not match, the compiler just ignores it and compiles normally.
+if(DACE_PCH_DIR AND DACE_GENERATED_HOST_FILES)
+  set_source_files_properties(${DACE_GENERATED_HOST_FILES} PROPERTIES
+                              COMPILE_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")
+endif()
 
 # Internal dependencies
 set(DACE_RUNTIME_DIR ${CMAKE_SOURCE_DIR}/../runtime)

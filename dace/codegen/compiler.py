@@ -21,6 +21,8 @@ from dace.config import Config
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
+from dace.codegen import build_cache
+from dace.codegen import common
 from dace.codegen import compiled_sdfg as csd
 from dace.codegen.target import make_absolute
 
@@ -493,6 +495,53 @@ def configure_and_compile(
     return lib_path
 
 
+#: CMake's own ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults for GNU-like compilers. The PCH is only used if
+#: it was built with the same flags as the translation unit, so these must track what CMake appends
+#: for the configured build type -- note ``Debug`` is plain ``-g``, not ``-O0 -g``.
+CMAKE_BUILD_TYPE_FLAGS = {
+    'Debug': ['-g'],
+    'Release': ['-O3', '-DNDEBUG'],
+    'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
+    'MinSizeRel': ['-Os', '-DNDEBUG'],
+}
+
+
+def shared_pch_dir(targets) -> Optional[str]:
+    """Directory holding a precompiled ``<dace/dace.h>`` matching how CMake compiles generated code.
+
+    Returns ``None`` when precompiled headers are disabled or one could not be built. The flags below
+    mirror the compile line CMake produces for the generated sources (see ``compile_commands.json``):
+    the configured standard as ``gnu++``, ``compiler.cpu.args``, the build-type flags, ``-fPIC``
+    because the artifact is a shared library, and ``-fopenmp``. Per-program ``-D``/``-I`` are left
+    out -- the compiler accepts those as extras on the compile line.
+
+    Should these ever drift apart, the compiler silently declines to use the PCH: the object it
+    produces is unchanged, only the compile is slower. ``pch_is_used_test`` guards against that.
+    """
+    if not Config.get_bool('compiler', 'precompiled_header'):
+        return None
+    dace_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    runtime_inc = os.path.join(dace_root, 'runtime', 'include')
+
+    executable = Config.get('compiler', 'cpu', 'executable')
+    cxx = make_absolute(executable) if executable else 'c++'
+    flags = [f'-std=gnu++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp']
+    flags += shlex.split(Config.get('compiler', 'cpu', 'args') or '')
+    flags += CMAKE_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), [])
+    if any(t in ('cuda', 'experimental_cuda') for t in targets):
+        flags.append('-DWITH_CUDA')
+        if common.get_gpu_backend() == 'hip':
+            flags.append('-DWITH_HIP')
+
+    def run(cmd: List[str]) -> None:
+        subprocess.run(cmd, check=True, capture_output=True)
+
+    pch_flags = build_cache.ensure_dace_pch(cxx, flags, runtime_inc, build_cache.newest_mtime(runtime_inc), run)
+    # ensure_dace_pch hands back the flags that USE the PCH; CMake only needs the directory, since
+    # the CMakeLists spells out the -I/-include pair itself.
+    return pch_flags[1] if pch_flags else None
+
+
 def _cmake_configure_and_build(program_folder,
                                program_name,
                                src_folder,
@@ -556,6 +605,10 @@ def _cmake_configure_and_build(program_folder,
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
     cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
+    # Emit compile_commands.json next to the build. Free (the generator already knows the commands),
+    # makes clangd/tooling work on generated code, and is what tells us the exact flags a translation
+    # unit is compiled with -- which is how the precompiled header below is kept in sync.
+    cmake_command.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
     # Additive static archive next to the .so (opt-in; matches native build mode).
     cmake_command.append(
         "-DDACE_STATIC_ARCHIVE={}".format("ON" if Config.get_bool('compiler', 'static_archive') else "OFF"))
@@ -570,6 +623,23 @@ def _cmake_configure_and_build(program_folder,
                         (Config.get('compiler', 'linker', 'args') or '')).strip()
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
+
+    # Precompile <dace/dace.h> once per (compiler, flags) into a machine-global cache and let every
+    # generated translation unit include it. The umbrella header is most of a small kernel's compile
+    # time, and the cache is what makes it pay off: building the PCH costs more than it saves for a
+    # single translation unit, but it is then reused by every later SDFG.
+    pch_dir = shared_pch_dir(targets)
+    if pch_dir:
+        cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
+
+    # Everything that determines what CONFIGURE discovers, i.e. the whole command minus the flags
+    # that only name this particular program. ``DACE_FILES`` is reduced to the set of target
+    # subdirectories it mentions, because that -- not the file names -- is what decides which
+    # languages and packages the CMakeLists enables.
+    per_program = ('-DDACE_SRC_DIR=', '-DDACE_FILES=', '-DDACE_PROGRAM_NAME=')
+    configure_key = build_cache.signature(*[c for c in cmake_command if not c.startswith(per_program)],
+                                          *sorted({os.path.dirname(f)
+                                                   for f in files}))
     cmake_command = ' '.join(cmake_command)
 
     if Config.get('debugprint') == 'verbose':
@@ -579,13 +649,27 @@ def _cmake_configure_and_build(program_folder,
 
     ##############################################
     # Configure
+    # A fresh build folder otherwise repeats the compiler/ABI detection and every find_package for
+    # every single SDFG, none of which can differ between two programs configured the same way.
+    # Seeding those results in turns the configure into a reconfigure; publishing afterwards is what
+    # makes the *next* SDFG cheap. Purely an optimization: with no entry, or a stale one, CMake just
+    # does the full job again.
+    seeded = False
+    if Config.get_bool('compiler', 'configure_cache'):
+        seeded = build_cache.seed_configure_cache(build_folder, configure_key)
     try:
         if not identical_file_exists(cmake_filename, cmake_command):
             _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream, env=build_env)
+            if Config.get_bool('compiler', 'configure_cache') and not seeded:
+                build_cache.publish_configure_cache(build_folder, configure_key)
     except subprocess.CalledProcessError as ex:
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
             print('Cleaning CMake build folder and retrying...')
+        # The retry starts from an empty folder, so a seed cannot be what fails it twice -- but drop
+        # the entry regardless, or a bad one would go on poisoning every later build of this shape.
+        if seeded:
+            build_cache.drop_configure_cache(configure_key)
         shutil.rmtree(build_folder, ignore_errors=True)
         os.makedirs(build_folder)
         try:
