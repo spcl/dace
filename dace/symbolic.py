@@ -1137,6 +1137,10 @@ class int_floor(sympy.Function):
             return x // y
         if y.is_Number and y == 1:
             return x
+        # Exact division is not a rounding operation at all -- return the quotient itself, so the
+        # expression stays comparable and simplifiable instead of hiding behind an int_floor node.
+        if y.is_Number and sympy.Mod(x, y).is_zero:
+            return x / y
 
     def _eval_is_integer(self):
         return True
@@ -1166,9 +1170,9 @@ class int_ceil(sympy.Function):
         # descriptor keeps an int_ceil(N, 1) that never folds back to N.
         if y.is_Number and y == 1:
             return x
-        # Exact division has nothing to round up, so it is plain floor division.
+        # Exact division has nothing to round up, so it is just the quotient.
         if y.is_Number and sympy.Mod(x, y).is_zero:
-            return int_floor(x, y)
+            return x / y
 
     def _eval_is_integer(self):
         return True
