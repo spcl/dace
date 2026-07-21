@@ -668,6 +668,28 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                                         access_cache, sdfg)
                 continue
             memlet_data = connector.removeprefix(PREFIX_PASSTHROUGH_IN)
+            if memlet_data not in sdfg.arrays:
+                # This map scope's OWN sdfg parameter may itself be a nested
+                # SDFG (e.g. a dynamic-range inner map nested inside a static
+                # outer one, via _insert_nestedSDFG_in_MapScope): a connector
+                # can reference a container that exists only in an ENCLOSING
+                # sdfg and was never cloned in here, because nothing has read
+                # or written it directly at this level yet -- only referenced
+                # it as a pass-through connector. Same "clone the descriptor
+                # from the nearest parent that has it, and register it as a
+                # nested-SDFG connector" idiom _connect_map_input's own
+                # ``isinstance(outer_map_entry, SDFG)`` branch already applies
+                # -- duplicated (not deferred to that call) because
+                # ``Memlet.from_array`` below needs the descriptor to exist
+                # BEFORE _connect_map_input ever runs, so its normal
+                # "not yet present" gate never fires for this case.
+                parent_sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
+                if not self._apply_nview_array_override(memlet_data, sdfg):
+                    sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
+                    if parent_sdfg.arrays[memlet_data].transient:
+                        sdfg.arrays[memlet_data].transient = False
+                    if isinstance(outer_map_entry, SDFG):
+                        outer_to_connect["inputs"].add(memlet_data)
             self._connect_map_input(map_entry, connector, memlet_data,
                                     Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]), outer_map_entry,
                                     outer_to_connect, access_cache, sdfg)

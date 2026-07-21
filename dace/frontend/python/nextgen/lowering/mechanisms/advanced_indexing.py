@@ -121,7 +121,7 @@ def output_shape(expr: MemletExpr, context, inference, node: ast.expr) -> List[A
     Kept separate from :func:`analyze` because inference needs the shape to
     allocate the result container before any node is emitted.
     """
-    shape = _basic_shape_marks(expr)
+    shape = _basic_shape_marks(expr, node)
     shape, position = _place_advanced_chunk(shape, expr.new_axes)
     broadcast = _broadcast_index_shape(expr, context, inference, node)
     return shape[:position] + list(broadcast) + shape[position + 1:]
@@ -156,7 +156,7 @@ def analyze(node: ast.Subscript, expr: MemletExpr, container: str, descriptor: d
         for i, (size, (start, end, _)) in enumerate(zip(expr.subset.size(), ndrange)) if start != end
     }
 
-    shape_marks = _basic_shape_marks(expr)
+    shape_marks = _basic_shape_marks(expr, node)
     output_ndrange: List[Optional[Tuple[Any, Any, Any]]] = [
         None if shape_marks[i] is None else rng for i, rng in enumerate(iteration)
     ]
@@ -593,19 +593,39 @@ def _target_subset(target: DataAccess, access: AdvancedIndex) -> subsets.Range:
     return subsets.Range(ranges)
 
 
-def _basic_shape_marks(expr: MemletExpr) -> List[Optional[Any]]:
+def _basic_shape_marks(expr: MemletExpr, node: ast.expr) -> List[Optional[Any]]:
     """
     The result shape with every advanced-indexed dimension marked ``None``.
 
     Once any advanced index is present, a *scalar*-indexed dimension is marked
     too: NumPy drops it from the result, which is why ``A[ind, 4]`` has one
     fewer dimension than ``A[ind, 4:5]``.
+
+    Which non-advanced dimensions count as "scalar-indexed" is decided from
+    the ORIGINAL subscript's AST (:func:`~...access.kept_dimensions`, shared
+    with basic indexing's own view-binding shape computation) rather than
+    from whether the resolved subset happens to have a size-1 extent: a
+    dimension that is naturally size 1 (e.g. left over from an earlier
+    slice on the base array) but was never explicitly given an integer
+    index in THIS subscript must stay kept, and a plain ``start == end``
+    check on the resolved range cannot tell the two apart. Verified wrong
+    the range-based way: ``A[:, 1:2][indarr]`` silently dropped the size-1
+    slice dimension instead of keeping it.
     """
+    from dace.frontend.python.nextgen.lowering.access import kept_dimensions
+
     marks: List[Optional[Any]] = [
         size if dimension not in index_arrays(expr) else None for dimension, size in enumerate(expr.subset.size())
     ]
     if index_arrays(expr):
-        marks = [None if start == end else size for size, (start, end, _) in zip(marks, expr.subset.ndrange())]
+        kept = kept_dimensions(node.slice, len(marks))
+        if kept is not None:
+            marks = [mark if kept[dimension] else None for dimension, mark in enumerate(marks)]
+        else:
+            # Not AST-modelable (should not normally be reachable here):
+            # fall back to the previous, imprecise range-based heuristic
+            # rather than raising, matching this function's total contract.
+            marks = [None if start == end else size for size, (start, end, _) in zip(marks, expr.subset.ndrange())]
     return marks
 
 
