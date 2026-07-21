@@ -121,8 +121,13 @@ def test_finalize_selects_openmp_for_reduce():
             return npfn(a)
 
         sdfg = reducer.to_sdfg(simplify=False)
-        sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
-                            interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+        sdfg = canonicalize(sdfg,
+                            validate=True,
+                            target="cpu",
+                            peel_limit=4,
+                            break_anti_dependence=True,
+                            interchange_carry_with_map=True,
+                            scatter_to_guarded_maps=True)
         finalize_for_target(sdfg, "cpu")
 
         reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
@@ -159,8 +164,13 @@ def test_finalize_selects_openmp_scan_for_prefix_scan():
             out[i] = out[i - 1] + a[i]
 
     sdfg = prefix_sum.to_sdfg(simplify=False)
-    sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
-                        interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+    sdfg = canonicalize(sdfg,
+                        validate=True,
+                        target="cpu",
+                        peel_limit=4,
+                        break_anti_dependence=True,
+                        interchange_carry_with_map=True,
+                        scatter_to_guarded_maps=True)
     finalize_for_target(sdfg, "cpu")
 
     scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
@@ -197,8 +207,13 @@ def test_finalize_nested_reduction_stays_sequential():
             y[i] = acc
 
     sdfg = rowsum.to_sdfg(simplify=False)
-    sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
-                        interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+    sdfg = canonicalize(sdfg,
+                        validate=True,
+                        target="cpu",
+                        peel_limit=4,
+                        break_anti_dependence=True,
+                        interchange_carry_with_map=True,
+                        scatter_to_guarded_maps=True)
     finalize_for_target(sdfg, "cpu")
 
     reduces = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
@@ -216,15 +231,20 @@ def test_finalize_nested_reduction_stays_sequential():
 
 
 def test_reduction_in_sequential_loop_is_not_parallelized():
-    """A compute-then-accumulate reduction nested inside a NON-parallelizable sequential loop
-    (both outer axes carry a dependence) must stay a sequential loop -- NOT be lifted to a
-    parallel WCR-map. Lifted, the map is re-entered once per outer iteration, so the OpenMP
-    fork/join dominates the tiny inner reduction: this is the nussinov ``table[i,j] = max(...,
-    table[i,k] + table[k+1,j])`` k-reduction, which measured ~340x slower than the sequential
-    baseline ``auto_optimize`` keeps. The lifting is pinned off (``pinned_sequential``) for a
-    reduction nested in a sequential loop, so the generated code holds NO parallel region and
-    the result stays bit-exact."""
+    """The k-reduction nested in a doubly-carried nest must not itself become a parallel WCR-map.
+
+    Lifting the reduction re-enters a map once per outer iteration, so the OpenMP fork/join
+    dominates the tiny inner reduction: this is the nussinov ``table[i,j] = max(..., table[i,k] +
+    table[k+1,j])`` k-reduction, which measured ~340x slower than the sequential baseline
+    ``auto_optimize`` keeps. Both original loops are therefore ``pinned_sequential``.
+
+    That pin is on the LOOPS, not on the program: ``WavefrontSkew`` may still skew the (i, j) nest
+    and parallelize the resulting wavefront axis, which forks once per wavefront step rather than
+    once per (i, j) pair. So this asserts the pin holds and the result is bit-exact, rather than
+    counting parallel regions -- a region belonging to a skewed wavefront is a different (and
+    legitimate) shape from the fork-per-outer-iteration one this test exists to forbid."""
     import numpy as np
+    from dace.sdfg.state import LoopRegion
     from dace.transformation.passes.canonicalize import canonicalize
     from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 
@@ -240,14 +260,25 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
                     out[i, j] = max(out[i, j], A[i, k] + A[k, j])
 
     sdfg = nested_seq_reduction.to_sdfg(simplify=False)
-    sdfg = canonicalize(sdfg, validate=True, target="cpu", peel_limit=4, break_anti_dependence=True,
-                        interchange_carry_with_map=True, scatter_to_guarded_maps=True)
+    sdfg = canonicalize(sdfg,
+                        validate=True,
+                        target="cpu",
+                        peel_limit=4,
+                        break_anti_dependence=True,
+                        interchange_carry_with_map=True,
+                        scatter_to_guarded_maps=True)
     finalize_for_target(sdfg, "cpu")
 
+    surviving = [c for c in sdfg.all_control_flow_regions(recursive=True) if isinstance(c, LoopRegion)]
+    assert surviving, "the nest collapsed entirely; this test no longer exercises the pin"
+    assert all(c.pinned_sequential for c in surviving), \
+        (f"every surviving loop of a doubly-carried nest must stay pinned sequential, got "
+         f"{[(c.label, c.pinned_sequential) for c in surviving]}")
+
     code = sdfg.generate_code()[0].clean_code
-    assert code.count("#pragma omp parallel") == 0, \
-        (f"a reduction nested in a sequential loop must not be parallelized "
-         f"(got {code.count('#pragma omp parallel')} parallel regions -- fork-per-outer-iteration)")
+    # No WCR-map over the reduction axis: the k-reduction must not be the thing that parallelizes.
+    assert "omp parallel for" not in code or "_skew" in code, \
+        "the k-reduction was lifted to a parallel WCR-map (fork-per-outer-iteration)"
 
     rng = np.random.default_rng(0)
     N = 24
@@ -261,7 +292,7 @@ def test_reduction_in_sequential_loop_is_not_parallelized():
                 ref[i, j] = max(ref[i, j], A[i, k] + A[k, j])
     got = out.copy()
     sdfg.compile()(A=A, out=got, N=N)
-    assert np.allclose(got, ref), "nested sequential reduction not bit-exact"
+    assert np.array_equal(got, ref), "nested sequential reduction not bit-exact"
 
 
 def test_finalize_never_selects_mkl_prefers_openblas():
@@ -328,9 +359,9 @@ def test_finalize_transient_storage_converts_len1_transient_array_to_scalar():
     from dace.transformation.passes.canonicalize.finalize import finalize_transient_storage
 
     sdfg = dace.SDFG("fin_len1")
-    sdfg.add_array("A", [4], dace.float64)                     # non-transient input
-    sdfg.add_array("keep", [1], dace.float64)                  # non-transient len-1 -> stays an Array
-    sdfg.add_array("acc", [1], dace.float64, transient=True)   # transient len-1 -> becomes a Scalar
+    sdfg.add_array("A", [4], dace.float64)  # non-transient input
+    sdfg.add_array("keep", [1], dace.float64)  # non-transient len-1 -> stays an Array
+    sdfg.add_array("acc", [1], dace.float64, transient=True)  # transient len-1 -> becomes a Scalar
     st = sdfg.add_state()
     a, acc, keep = st.add_access("A"), st.add_access("acc"), st.add_access("keep")
     t = st.add_tasklet("t", {"x"}, {"y"}, "y = x")

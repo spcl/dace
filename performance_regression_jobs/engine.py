@@ -41,7 +41,7 @@ _COMPILE_CSV = 'compile.csv'
 # of that file raise `_csv.Error: field larger than field limit`, taking down table writing
 # for the whole corpus. Errors are truncated on write (see write_status), but the cap has to
 # be lifted too so the oversized files already on disk stay readable.
-csv.field_size_limit(min(2 ** 31 - 1, sys.maxsize))
+csv.field_size_limit(min(2**31 - 1, sys.maxsize))
 
 # The job's FULL cpu mask, captured at engine import -- i.e. before any DaCe-compiled
 # kernel .so is loaded. With OMP_PROC_BIND set (the job scripts export close/cores),
@@ -68,6 +68,7 @@ def restore_cpu_affinity():
             os.sched_setaffinity(0, _INITIAL_CPU_AFFINITY)
         except OSError:
             pass
+
 
 _MAX_STATUS_ERROR_CHARS = 8192
 
@@ -151,7 +152,7 @@ def configure_dace_process():
       share a build tree -- otherwise CMake's FindMPI probe can deadlock on
       the shared dir (the daint cmake hang).
     - compiler.cpu.args is guaranteed to contain native_harness.OPT_FLAGS
-      (-O3 -march=native -ffast-math) -- see that constant's docstring for
+      (-O3 -march=native + the fp guarantee flags) -- see that constant's docstring for
       why a DaCe lane and a native lane must be compiled at the same
       optimization level.
     - compiler.cpu.executable comes from DACE_PERF_CXX (exported by the
@@ -351,8 +352,7 @@ def to_device_args(sdfg, call_kwargs, device):
         desc = sdfg.arrays.get(name)
         return desc is not None and 'GPU' in str(getattr(desc, 'storage', ''))
 
-    return {k: (cp.asarray(v) if (isinstance(v, np.ndarray) and on_device(k)) else v)
-            for k, v in call_kwargs.items()}
+    return {k: (cp.asarray(v) if (isinstance(v, np.ndarray) and on_device(k)) else v) for k, v in call_kwargs.items()}
 
 
 def args_to_host(call_kwargs, ret, device):
@@ -391,7 +391,6 @@ def time_sdfg(sdfg, call_kwargs, reps, warmup=1, time_budget_s=None):
     one rep is always measured; None means run all `reps` (the historical behavior)."""
     import time
     import dace
-    import numpy as np
     # A previously loaded kernel .so has already libgomp-bound this master thread to
     # one core (OMP_PROC_BIND); restore the full mask so affinity-derived thread
     # detection (pthreads BLAS, numpy's bundled BLAS) inside the timed calls is not
@@ -552,8 +551,10 @@ def _direct_compile_cmd(sdfg, folder):
     # rpath the OpenMP runtime dir so the built .so loads via ctypes (spack load doesn't put
     # libomp/libgomp on LD_LIBRARY_PATH; see native_harness.openmp_rpath_flags).
     import native_harness as nh
-    return [cxx, *args, f'-std={std}', '-fPIC', '-shared', '-fopenmp', *nh.openmp_rpath_flags(cxx),
-            *inc, *srcs, *env_link, '-o', so], srcs
+    return [
+        cxx, *args, f'-std={std}', '-fPIC', '-shared', '-fopenmp', *nh.openmp_rpath_flags(cxx), *inc, *srcs, *env_link,
+        '-o', so
+    ], srcs
 
 
 def compile_sdfg_timed(sdfg):
@@ -708,7 +709,9 @@ def pipeline_auto_opt(sdfg, device='cpu'):
     # program stays device-resident like pipeline_parallel/canon_gpu. auto_optimize defaults
     # use_gpu_storage=False, which leaves interface arrays on host -- a mixed-storage interface the
     # harness would then have to marshal per-arg. All-arrays-on-device is the GPU-path invariant.
-    return auto_optimize(sdfg, _device_type(device), use_gpu_storage=(device == 'gpu'),
+    return auto_optimize(sdfg,
+                         _device_type(device),
+                         use_gpu_storage=(device == 'gpu'),
                          find_fast_library_fn=perf_library_prio)
 
 
@@ -812,7 +815,6 @@ GPU_ONLY_PIPELINES = {
 
 #: Every dispatchable pipeline (standard + gpu-only), keyed by lane name.
 ALL_PIPELINES = {**PIPELINES, **GPU_ONLY_PIPELINES}
-
 
 # --------------------------------------------------------------------------
 # GPU availability probe: run once per process (cached). A machine with no CUDA
@@ -1205,8 +1207,10 @@ def write_summary_csv(results_root, corpus, baseline_label=None):
     names; `speedup_vs_baseline` is filled when baseline_label is given and both
     it and the row's pipeline are correct with a median in the same tag."""
     corpus_dir = os.path.join(results_root, corpus)
-    fields = ['corpus', 'kernel', 'tag', 'device', 'preset', 'pipeline', 'correct', 'min_ms', 'median_ms',
-              'speedup_vs_baseline']
+    fields = [
+        'corpus', 'kernel', 'tag', 'device', 'preset', 'pipeline', 'correct', 'min_ms', 'median_ms',
+        'speedup_vs_baseline'
+    ]
     rows = []
     if os.path.isdir(corpus_dir):
         for kernel in sorted(os.listdir(corpus_dir)):
@@ -1222,8 +1226,13 @@ def write_summary_csv(results_root, corpus, baseline_label=None):
                     if base_ms and e.get('correct') and e.get('min_ms'):
                         speedup = f"{base_ms / e['min_ms']:.4f}"
                     rows.append(
-                        dict(corpus=corpus, kernel=kernel, tag=tag, device=device_of_tag(tag),
-                             preset=tag.rsplit('_', 1)[-1], pipeline=pipeline, correct=e.get('correct'),
+                        dict(corpus=corpus,
+                             kernel=kernel,
+                             tag=tag,
+                             device=device_of_tag(tag),
+                             preset=tag.rsplit('_', 1)[-1],
+                             pipeline=pipeline,
+                             correct=e.get('correct'),
                              min_ms='' if e.get('min_ms') is None else f"{e['min_ms']:.6f}",
                              median_ms='' if e.get('median_ms') is None else f"{e['median_ms']:.6f}",
                              speedup_vs_baseline=speedup))

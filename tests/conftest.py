@@ -40,6 +40,18 @@ os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 
 import pytest
 
+#: Seed applied before every test, so a numerical comparison that only fails on some inputs fails
+#: on every run instead of intermittently. Tests that want their own draw still call
+#: ``np.random.seed`` / ``default_rng(seed)`` themselves; this only fixes the starting state.
+GLOBAL_RANDOM_SEED = 0
+
+
+@pytest.fixture(autouse=True)
+def seeded_global_rng():
+    """Reseed NumPy's legacy global RNG before each test."""
+    import numpy as np
+    np.random.seed(GLOBAL_RANDOM_SEED)
+
 
 @pytest.hookimpl()
 def pytest_terminal_summary(terminalreporter, exitstatus, config):

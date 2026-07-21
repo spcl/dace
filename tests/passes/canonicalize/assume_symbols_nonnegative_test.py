@@ -21,14 +21,15 @@ import sys
 import textwrap
 
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (
-    AssumeSymbolConstraints, AssumeSymbolsNonnegative, insert_assumption_guards, insert_symbol_nonnegative_guard,
-    _GUARD_STATE_LABEL)
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (AssumeSymbolConstraints,
+                                                                                AssumeSymbolsNonnegative,
+                                                                                insert_assumption_guards,
+                                                                                insert_symbol_nonnegative_guard,
+                                                                                _GUARD_STATE_LABEL)
 from dace.transformation.passes.canonicalize.tracked_assumptions import record_assumption, tracked_assumptions
 
 N = dace.symbol('N', dtype=dace.int64)
@@ -85,8 +86,11 @@ def test_noop_without_signed_int_symbols():
 
 
 def test_pass_wrapper_matches_helper():
+    """The wrapper reports BOTH halves of the contract it applies: the symbols it re-declared
+    nonnegative plus the guard state it emitted. ``axpy`` has one signed-integer free symbol
+    (``N``), so a first application counts 1 + 1; a second changes nothing."""
     sdfg = _axpy_sdfg()
-    assert AssumeSymbolsNonnegative().apply_pass(sdfg, {}) == 1
+    assert AssumeSymbolsNonnegative().apply_pass(sdfg, {}) == 2
     assert AssumeSymbolsNonnegative().apply_pass(sdfg, {}) is None
 
 
@@ -133,7 +137,9 @@ def test_guard_aborts_on_negative_symbol():
         print("NO_TRAP")
     """)
     proc = subprocess.run([sys.executable, '-c', script],
-                          env={**os.environ, 'PYTHONPATH': os.path.dirname(dace.__path__[0])},
+                          env={
+                              **os.environ, 'PYTHONPATH': os.path.dirname(dace.__path__[0])
+                          },
                           capture_output=True,
                           text=True)
     # __builtin_trap terminates via a signal -> negative returncode, and "NO_TRAP"
@@ -175,8 +181,8 @@ def test_tracked_assumption_emitted_as_own_tasklet():
 def test_tracked_assumption_deduped_and_true_dropped():
     sdfg = _kn_sdfg()
     record_assumption(sdfg, K < N)
-    record_assumption(sdfg, K < N)          # duplicate -> single entry
-    record_assumption(sdfg, N < N + 1)      # simplifies to True -> dropped
+    record_assumption(sdfg, K < N)  # duplicate -> single entry
+    record_assumption(sdfg, N < N + 1)  # simplifies to True -> dropped
     assert [str(r) for r in tracked_assumptions(sdfg)] == ['K < N']
 
 

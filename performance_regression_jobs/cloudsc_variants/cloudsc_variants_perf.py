@@ -133,20 +133,20 @@ def build_cache(cache_path):
     os.makedirs(os.path.dirname(cache_path), exist_ok=True)
     sdfg.save(cache_path, compress=True)
     size_mb = os.path.getsize(cache_path) / 1e6
-    print(f'phase A: cached {cache_path} ({size_mb:.1f} MB) in {time.perf_counter() - t_total:.1f}s total',
-          flush=True)
+    print(f'phase A: cached {cache_path} ({size_mb:.1f} MB) in {time.perf_counter() - t_total:.1f}s total', flush=True)
 
 
 # --------------------------------------------------------------------------
 # Phase B helpers. All of these run inside the isolated measurement subprocess.
 # --------------------------------------------------------------------------
 def _ieee_o3_flags():
-    """Replace configure_dace_process's -ffast-math with -fno-fast-math -ffp-contract=off,
-    keeping -O3/-march=native/-fopenmp and the OpenMP rpath / gcc-install-dir flags it set.
-    This is the chain test's validated ``o3`` regime -- fast-math reassociates cloudsc's
-    flux prefix sums and rewrites transcendentals, so no tolerance can bound it."""
+    """Drop the value-changing fp flags and pin contraction off, keeping -O3/-march=native/
+    -fopenmp and the OpenMP rpath / gcc-install-dir flags configure_dace_process set. This is the
+    chain test's validated ``o3`` regime -- reciprocal rewriting and FMA contraction both perturb
+    cloudsc's flux prefix sums, so no tolerance can bound them."""
     import dace
-    toks = [t for t in dace.Config.get('compiler', 'cpu', 'args').split() if t != '-ffast-math']
+    dropped = ('-ffast-math', '-freciprocal-math')
+    toks = [t for t in dace.Config.get('compiler', 'cpu', 'args').split() if t not in dropped]
     for flag in ('-fno-fast-math', '-ffp-contract=off'):
         if flag not in toks:
             toks.append(flag)
@@ -235,8 +235,10 @@ def bench_variant(cache_path, ref_npz, mode, impl, compile_reps, run_reps, timeo
             report = compare_outputs(reference, call_kwargs, rtol=TOL, atol=TOL)
             correct = all(ok for _, _, ok in report.values())
             worst = max(((ma, mr) for ma, mr, _ in report.values()), default=(0.0, 0.0))
-            print(f'[{mode}/{impl}] reps={len(run_samples)} worst |abs|={worst[0]:.3e} '
-                  f'|rel|={worst[1]:.3e} (tol={TOL:.0e}) {"ok" if correct else "FAIL"}', flush=True)
+            print(
+                f'[{mode}/{impl}] reps={len(run_samples)} worst |abs|={worst[0]:.3e} '
+                f'|rel|={worst[1]:.3e} (tol={TOL:.0e}) {"ok" if correct else "FAIL"}',
+                flush=True)
 
     codegen_ms = min(codegen_samples)
     compile_ms = min(compile_samples)
@@ -319,8 +321,10 @@ def write_tables(results_dir):
         both_ok = leg['correct'] == '1' and exp['correct'] == '1'
         rl, re_ = num(leg, 'run_ms'), num(exp, 'run_ms')
         if rl and re_ and both_ok:
-            lines += ['', f'**runtime experimental vs legacy ({mode})**: {rl / re_:.3f}x '
-                      f'(>1 = the readable generator produced faster code).']
+            lines += [
+                '', f'**runtime experimental vs legacy ({mode})**: {rl / re_:.3f}x '
+                f'(>1 = the readable generator produced faster code).'
+            ]
         elif not both_ok:
             lines += ['', f'**runtime experimental vs legacy ({mode})**: n/a (a variant failed correctness).']
 
@@ -365,15 +369,20 @@ def parse_variants(spec):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--results-dir', default='results', help='results root (default: results)')
-    ap.add_argument('--cache-dir', default=DEFAULT_CACHE_DIR,
+    ap.add_argument('--cache-dir',
+                    default=DEFAULT_CACHE_DIR,
                     help=f'directory for the Phase-A .sdfgz cache (default: {DEFAULT_CACHE_DIR})')
     ap.add_argument('--rebuild-cache', action='store_true', help='force Phase A even if the cache exists')
-    ap.add_argument('--build-cache-only', action='store_true',
+    ap.add_argument('--build-cache-only',
+                    action='store_true',
                     help='run Phase A (if needed) and exit -- for pre-building on the login node')
-    ap.add_argument('--compile-reps', type=int, default=1,
+    ap.add_argument('--compile-reps',
+                    type=int,
+                    default=1,
                     help='cold-compile samples per cell (default: 1 -- a cloudsc compile is minutes)')
     ap.add_argument('--run-reps', type=int, default=25, help='runtime samples per cell (default: 25)')
-    ap.add_argument('--variants', default=None,
+    ap.add_argument('--variants',
+                    default=None,
                     help='comma-separated subset, e.g. cmake_legacy,native_experimental_readable (default: all 4)')
     ap.add_argument('--tables-only', action='store_true', help='skip measurement, just rebuild the markdown tables')
     ap.add_argument('--timeout', type=float, default=900.0, help='per-cell subprocess timeout, seconds')

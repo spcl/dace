@@ -83,7 +83,7 @@ export CUDAHOSTCXX="$GPU_HOST_CXX"
 export DACE_compiler_cuda_max_concurrent_streams=0
 # GPU default flags: always -O3 (device via -Xptxas, host via -Xcompiler) and fast-math (plus
 # -march=native for the host glue). No bare -O3 -- nvcc only takes device/host opt via -Xptxas/-Xcompiler.
-export DACE_compiler_cuda_args="-Xptxas -O3 -Xcompiler -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter"
+export DACE_compiler_cuda_args="-Xptxas -O3 -Xcompiler -O3 -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter"
 
 echo "[gpu] CUDA_HOME=$CUDA_HOME"
 echo -n "[gpu] nvcc: "; command -v nvcc && nvcc --version 2>/dev/null | tail -1
