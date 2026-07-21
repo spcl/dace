@@ -2556,21 +2556,42 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # -> then create a [tasklet] that uses the scalar_val as a constant value inside
     import re
 
+    import numpy
+
     def _token_replace(code: str, src: str, dst: str) -> str:
-        # Split while keeping delimiters
-        tokens = re.split(r'(\s+|[()\[\]])', code)
+        # Replace whole identifiers only. Splitting on whitespace and brackets alone missed every
+        # unspaced operator -- `o = _in*3` kept the token '_in*3', so the connector was dropped
+        # while the code still referenced it -- so match on identifier boundaries instead. The
+        # lookbehind also excludes '.', which keeps an attribute like `x._in` from being rewritten.
+        return re.sub(r'(?<![A-Za-z0-9_.])' + re.escape(src) + r'(?![A-Za-z0-9_])', dst, code).strip()
 
-        # Replace tokens that exactly match src
-        tokens = [dst if token.strip() == src else token for token in tokens]
+    def _scalar_literal(value: Union[float, int, str], dtype) -> str:
+        """Source-level literal for ``value``, substituted verbatim into tasklet code.
 
-        # Recombine everything
-        return ''.join(tokens).strip()
+        Two things it has to get right. Floats print via repr, which round-trips a float64
+        exactly; sympy's pycode prints 15 significant digits, so 1/3 came back as a DIFFERENT
+        double. And an integer value replacing a read of a floating-point scalar is written as a
+        float literal: the surrounding code was compiled with float semantics, and turning
+        ``_in / 2`` into ``5 / 2`` silently switches it to integer division in the generated C++.
+        """
+        if isinstance(value, str):
+            return value
+        if isinstance(value, float):
+            return repr(value)
+        if dtype is not None and numpy.issubdtype(dtype.as_numpy_dtype(), numpy.floating):
+            return repr(float(value))
+        return str(value)
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
             return CodeBlock(_token_replace(input.as_string, src, dst))
         else:
             return input.replace(src, dst)
+
+    # Captured before the descriptor is removed below: substituting an integer into code that read
+    # a floating-point scalar has to keep floating-point semantics (see _scalar_literal).
+    scalar_desc = sdfg.arrays.get(scalar_name)
+    scalar_dtype = scalar_desc.dtype if scalar_desc is not None else None
 
     nsdfgs = []
     # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
@@ -2606,31 +2627,19 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
 
             if isinstance(e.dst, nd.Tasklet):
                 in_tasklet_name = e.dst_conn
-                if e.dst.code.language == dace.dtypes.Language.Python:
-                    import sympy
-                    try:
-                        lhs, rhs = e.dst.code.as_string.split("=")
-                        lhs = lhs.strip()
-                        rhs = rhs.strip()
-                        subs_rhs = str(sympy.pycode(dace.symbolic.SymExpr(rhs).subs({in_tasklet_name:
-                                                                                     scalar_val}))).strip()
-                        new_code = CodeBlock(code=f"{lhs} = {subs_rhs}", language=dace.dtypes.Language.Python)
-                    except Exception:
-                        # Real tasklet code can contain constructs sympy's expression parser does
-                        # not round-trip -- e.g. a Python cast like ``dace.int32(x)`` is misparsed
-                        # as an attribute-access node and then called, raising "'Attr' object is
-                        # not callable" (confirmed on CloudSC's kidia/kfdia-consuming tasklets).
-                        # Fall back to the same plain token substitution the non-Python branch below
-                        # already relies on: exact-token matching, no parsing, always applicable.
-                        new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name,
-                                                                 str(scalar_val)),
-                                             language=dace.dtypes.Language.Python)
-                    e.dst.code = new_code
-                else:
-
-                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, str(scalar_val)),
-                                         language=e.dst.code.language)
-                    e.dst.code = new_code
+                # Substitute the literal; do NOT re-derive the expression symbolically. Parsing the
+                # right-hand side into sympy and printing it back rewrote the arithmetic itself:
+                # it folded across floating-point operations (`_in + 0.1 + b` with _in=0.2 became
+                # `b + 0.3`, where IEEE gives 0.30000000000000004), reassociated sums so
+                # cancellation happened in a different order, and printed floats to 15 significant
+                # digits, which does not round-trip a float64. It also could not parse ordinary
+                # tasklet code such as a `dace.int32(x)` cast, so most CloudSC tasklets took the
+                # fallback path anyway. Constant folding that IS safe -- integer symbol bounds,
+                # where 'N + 1' should collapse to '5' -- happens on symbol_mapping further down.
+                new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name,
+                                                         _scalar_literal(scalar_val, scalar_dtype)),
+                                     language=e.dst.code.language)
+                e.dst.code = new_code
                 state.remove_edge(e)
                 if e.src_conn is not None:
                     src.remove_out_connector(e.src_conn)

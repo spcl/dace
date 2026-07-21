@@ -158,3 +158,53 @@ if __name__ == "__main__":
     test_python_tasklet_with_cast_falls_back_to_token_replace()
     test_symbol_only_nested_propagation()
     test_symbol_in_nested_mapping_value_only_substitutes_expression()
+
+
+def _scalar_into_tasklet(code: str, dtype, value):
+    """One float64 output driven by a single tasklet reading scalar 's', specialized to `value`."""
+    sdfg = dace.SDFG('spec_' + str(abs(hash(code)))[:8])
+    sdfg.add_scalar('s', dtype)
+    sdfg.add_array('out', [1], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('compute', {'_in'}, {'o'}, code)
+    state.add_edge(state.add_read('s'), None, tasklet, '_in', dace.Memlet('s[0]'))
+    state.add_edge(tasklet, 'o', state.add_write('out'), None, dace.Memlet('out[0]'))
+    specialize_scalar(sdfg, 's', value)
+    result = np.zeros([1])
+    sdfg(out=result, s=np.float64(value))
+    return result[0], tasklet.code.as_string
+
+
+def test_specialization_preserves_floating_point_semantics():
+    """ The substituted value used to be parsed into sympy and printed back, which rewrote the
+        arithmetic rather than just filling in a number: it folded across floating-point
+        operations, reassociated sums, and printed only 15 significant digits. Each case below
+        returned a different double than the unspecialized program did. """
+    # folding across a float add: sympy produced 'b + 0.3', but 0.2 + 0.1 is 0.30000000000000004
+    value, _ = _scalar_into_tasklet('o = _in + 0.1 + 1.0', dace.float64, 0.2)
+    assert value == 0.2 + 0.1 + 1.0
+
+    # 15-significant-digit printing does not round-trip a float64
+    value, _ = _scalar_into_tasklet('o = _in', dace.float64, 1 / 3)
+    assert value == 1 / 3
+
+    value, _ = _scalar_into_tasklet('o = _in*3.0', dace.float64, 1 / 3)
+    assert value == (1 / 3) * 3.0
+
+
+def test_integer_value_keeps_floating_point_division():
+    """ An int substituted into code that read a floating-point scalar must be written as a float
+        literal. `_in / 2` compiled as float division before specialization; emitting a bare `5`
+        turns it into integer division in the generated C++, i.e. 2 instead of 2.5. """
+    value, code = _scalar_into_tasklet('o = _in / 2', dace.float64, 5)
+    assert '5.0' in code
+    assert value == 2.5
+
+
+def test_substitution_matches_unspaced_operators():
+    """ Token matching split only on whitespace and brackets, so `_in/2` stayed one token and was
+        never replaced -- leaving the tasklet referencing a connector that specialization had just
+        removed. """
+    value, code = _scalar_into_tasklet('o = _in/2', dace.float64, 5.0)
+    assert '_in' not in code
+    assert value == 2.5
