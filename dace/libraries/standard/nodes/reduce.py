@@ -326,6 +326,16 @@ class ExpandReduceAuto(pm.ExpandTransformation):
         return ExpandReduceOpenMP.expansion(node, state, sdfg)
 
 
+#: Connector names for the OpenMP reduce tasklet.  Deliberately NOT the ``_in`` / ``_out`` that the
+#: other expansions use: those return a nested SDFG or a library node, both of which validation
+#: exempts from the connector-vs-array-name check, whereas this expansion drops a bare Tasklet into
+#: the parent state.  A tasklet connector that collides with an array in the same SDFG is rejected --
+#: and ``AllNode`` / ``AnyNode`` declare exactly such an ``_out`` array, since that is their own
+#: output connector name.
+_IN = '_reduce_in'
+_OUT = '_reduce_out'
+
+
 @dace.library.expansion
 class ExpandReduceOpenMP(pm.ExpandTransformation):
     """
@@ -334,8 +344,12 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
     environments = []
 
     _REDUCTION_TYPE_TO_OPENMP = {
-        dtypes.ReductionType.Max: ('max', '{o} = max({o}, {i});'),
-        dtypes.ReductionType.Min: ('min', '{o} = min({o}, {i});'),
+        # The clause identifier stays lower-case (``reduction(min: ...)`` is the OpenMP spelling);
+        # the BODY calls the runtime's variadic ``Min`` / ``Max`` from ``pyinterop.h``, which is what
+        # codegen emits for min/max elsewhere.  Bare ``min`` / ``max`` do not resolve to a function
+        # in the generated scope, so this only compiled while OpenMP was not the default expansion.
+        dtypes.ReductionType.Max: ('max', '{o} = Max({o}, {i});'),
+        dtypes.ReductionType.Min: ('min', '{o} = Min({o}, {i});'),
         dtypes.ReductionType.Sum: ('+', '{o} += {i};'),
         dtypes.ReductionType.Product: ('*', '{o} *= {i};'),
         dtypes.ReductionType.Bitwise_And: ('&', '{o} &= {i};'),
@@ -397,7 +411,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         else:
             out_offset.append('0')
 
-        outexpr = '_out[%s]' % ' + '.join(out_offset)
+        outexpr = '%s[%s]' % (_OUT, ' + '.join(out_offset))
 
         # Write identity value first
         if node.identity is not None:
@@ -427,7 +441,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         in_offset = ' + '.join(in_offset)
 
         # Reduction expression
-        code += expr.format(i='_in[%s]' % in_offset, o=outexpr)
+        code += expr.format(i='%s[%s]' % (_IN, in_offset), o=outexpr)
         code += '\n'
 
         # Closing braces
@@ -436,16 +450,16 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
             code += '}\n' * output_dims
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in': dace.pointer(input_data.dtype)},
-                                   {'_out': dace.pointer(output_data.dtype)},
+        tnode = dace.nodes.Tasklet('reduce', {_IN: dace.pointer(input_data.dtype)},
+                                   {_OUT: dace.pointer(output_data.dtype)},
                                    code,
                                    language=dace.Language.CPP)
 
         # Rename outer connectors and add to node
-        inedge._dst_conn = '_in'
-        outedge._src_conn = '_out'
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
+        inedge._dst_conn = _IN
+        outedge._src_conn = _OUT
+        node.add_in_connector(_IN)
+        node.add_out_connector(_OUT)
 
         return tnode
 
