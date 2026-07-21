@@ -50,27 +50,40 @@ def _nloops(sdfg):
 
 
 def _run_full(prog, **kw):
-    """Canonicalize fully WITH the distribution injected before loop_to_x, run,
-    return the outputs. Used for the bit-exact value checks."""
+    """Canonicalize fully, run, return the SDFG. Used for the bit-exact value checks.
+
+    The recipe carries its own ``distribute`` stage, so this just runs it. Applying the pass a
+    second time before ``loop_to_x`` (as this helper used to) re-splits an already-distributed
+    body into a shape the einsum lift then mis-classifies.
+    """
     sdfg = prog.to_sdfg(simplify=True)
-    for label, unit in _build_stages():
-        if label == 'loop_to_x':
-            DistributeProducerConsumerLoop().apply_pass(sdfg, {})
+    for _label, unit in _build_stages():
         unit.apply_pass(sdfg, {})
     sdfg(**kw)
     return sdfg
 
 
+@dace.program
+def atax_loops(A: dace.float64[M, N], x: dace.float64[N], y: dace.float64[N]):
+    """atax in its loop form: ``tmp = A @ x`` then ``y = tmp @ A``, sharing one for-i loop."""
+    tmp = np.zeros([M], dtype=np.float64)
+    for i in range(M):
+        for j in range(N):
+            tmp[i] += A[i, j] * x[j]
+        for j in range(N):
+            y[j] += A[i, j] * tmp[i]
+
+
 def test_atax_matvecs_distribute_and_lift():
     """atax's two matvecs share a for-i loop coupled through tmp[i]; the
     distribution splits them, after which the pipeline lifts a matvec to an
-    Einsum. Value must stay bit-exact."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("atax", "tests/corpus/polybench/linear_algebra/kernels/atax.py")
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
+    Einsum. Value must stay bit-exact.
 
-    sdfg = _to_loops(m.atax)
+    The kernel is written out here rather than imported from the polybench corpus: that copy is now
+    ``y[:] = (A @ x) @ A``, which the frontend lowers straight to two Gemv library nodes, so it
+    contains no loop for this pass to distribute.
+    """
+    sdfg = _to_loops(atax_loops)
     before = _nloops(sdfg)
     assert DistributeProducerConsumerLoop().apply_pass(sdfg, {}) == 1
     assert _nloops(sdfg) == before + 1, 'the coupled for-i loop must split into two'
@@ -80,11 +93,10 @@ def test_atax_matvecs_distribute_and_lift():
     rng = np.random.default_rng(0)
     A = rng.standard_normal((mm, nn))
     x = rng.standard_normal((nn, ))
-    yref = np.zeros(nn)
-    m.atax.to_sdfg(simplify=True)(A=A.copy(), x=x.copy(), y=yref, M=mm, N=nn)
+    yref = (A @ x) @ A
 
     y = np.zeros(nn)
-    lifted = _run_full(m.atax, A=A.copy(), x=x.copy(), y=y, M=mm, N=nn)
+    lifted = _run_full(atax_loops, A=A.copy(), x=x.copy(), y=y, M=mm, N=nn)
     assert np.allclose(y, yref), 'distribution + lift must be value-preserving'
     libs = {type(n).__name__ for n, _ in lifted.all_nodes_recursive() if isinstance(n, nodes.LibraryNode)}
     assert 'Einsum' in libs, 'a split matvec should lift to an Einsum node'

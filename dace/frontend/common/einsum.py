@@ -89,6 +89,14 @@ class EinsumParser(object):
     def is_bmm(self):
         if len(self.inputs) != 2:
             return False
+        # An index private to one operand must survive into the output. ``sum_vars`` only collects
+        # indices shared by BOTH inputs, so a private index missing from the output -- ``j`` in
+        # ``ij,i->i`` (``y[i] += A[i,j] * x[i]``) -- is a contraction no GEMM/GEMV form expresses:
+        # that is a broadcast multiply followed by a reduction. Its operand ranks match ``ij,j->i``,
+        # so without this the level-2 path below builds a GEMV whose ``_x`` length is the output
+        # extent, which Gemv.validate rejects.
+        if len(self.a_only) != len(self.c_a_only) or len(self.b_only) != len(self.c_b_only):
+            return False
         for key, val in self.fields().items():
             if not _is_sequential(val):
                 return False
@@ -391,8 +399,10 @@ def _create_einsum_internal(sdfg: SDFG,
             beta_nz = not symbolic.equal_valued(0, beta)
             gemv_dst, gemv_desc = (c, sdfg.arrays[output])
             if beta_nz:
-                buf_name, buf_desc = sdfg.add_transient('%s_gemv' % output, output_shape,
-                                                        sdfg.arrays[output].dtype, find_new_name=True)
+                buf_name, buf_desc = sdfg.add_transient('%s_gemv' % output,
+                                                        output_shape,
+                                                        sdfg.arrays[output].dtype,
+                                                        find_new_name=True)
                 state.remove_node(c)  # output is produced by the fold map below, not GEMV
                 gemv_dst, gemv_desc = (state.add_access(buf_name), buf_desc)
             gemv = Gemv('einsum_gemv', transA=trans_a, alpha=alpha, beta=0)
