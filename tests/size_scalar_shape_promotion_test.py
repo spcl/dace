@@ -136,6 +136,21 @@ def test_shape_stays_correct_through_simplify():
         assert np.allclose(out, a * 2.0), f'wrong result with simplify={simplify}'
 
 
+def test_size_symbol_is_assigned_before_the_allocation():
+    """simplify() moves the promotion onto an edge out of the allocation's dominator.
+
+    The allocation then read the symbol undefined and sized the array at 0, corrupting the heap on the first write.
+    """
+    sdfg = size_from_empty.to_sdfg(simplify=True)
+    sym = str(next(iter(sdfg.arrays['b'].free_symbols)))
+    lines = sdfg.generate_code()[0].clean_code.splitlines()
+
+    alloc = next(i for i, line in enumerate(lines) if 'new double' in line and sym in line)
+    assign = next(i for i, line in enumerate(lines) if line.strip().startswith(f'{sym} = '))
+    assert assign < alloc
+    assert any('delete[] b' in line for line in lines), 'the array is never freed'
+
+
 if __name__ == '__main__':
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
@@ -144,3 +159,4 @@ if __name__ == '__main__':
     test_a_size_reused_as_an_index_does_not_rebind_the_extent()
     test_promotion_leaves_the_descriptor_in_place()
     test_shape_stays_correct_through_simplify()
+    test_size_symbol_is_assigned_before_the_allocation()
