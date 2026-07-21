@@ -13,6 +13,7 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
+from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
@@ -1183,6 +1184,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # The external free-symbol set is unchanged by canonicalization (only loop
     # iterators are renamed, and those are bound).
     s += [('end', AssumeSymbolConstraints())]
+
+    # Last: any pass above may have built an index with python's `//` on a sympy expression,
+    # which is sympy floor() -- distributed by sympy and then printed WITHOUT the floor, so the
+    # index truncates term by term. Normalizing here means nothing reaches codegen holding one.
+    s += [('end', NormalizeFloorDivision())]
     return s
 
 
