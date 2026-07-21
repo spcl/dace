@@ -301,15 +301,14 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             f'which is required for memory allocation', sdfg, None)
 
                 # Check strides if array
-                if hasattr(desc, 'strides'):
-                    for i, stride in enumerate(desc.strides):
-                        if symbolic.is_undefined(stride):
-                            raise InvalidSDFGError(
-                                f'Transient data container "{name}" contains undefined symbol in stride {i}, '
-                                f'which is required for memory allocation', sdfg, None)
+                for i, stride in enumerate(desc.strides):
+                    if symbolic.is_undefined(stride):
+                        raise InvalidSDFGError(
+                            f'Transient data container "{name}" contains undefined symbol in stride {i}, '
+                            f'which is required for memory allocation', sdfg, None)
 
                 # Check total size
-                if hasattr(desc, 'total_size') and symbolic.is_undefined(desc.total_size):
+                if symbolic.is_undefined(desc.total_size):
                     raise InvalidSDFGError(
                         f'Transient data container "{name}" has undefined total size, '
                         f'which is required for memory allocation', sdfg, None)
@@ -423,8 +422,9 @@ def validate_state(state: 'dace.sdfg.SDFGState',
     initialized_transients = (initialized_transients if initialized_transients is not None else {'__pystate'})
     references = references or set()
 
-    # Obtain whether we are already in an accelerator context
-    if not hasattr(context, 'in_gpu'):
+    # Obtain whether we are already in an accelerator context. ``is_in_scope`` ignores the state
+    # when the node is None, so the value validate_sdfg threaded down is the same one.
+    if 'in_gpu' not in context:
         context['in_gpu'] = is_devicelevel_gpu(sdfg, state, None)
 
     # Reference check

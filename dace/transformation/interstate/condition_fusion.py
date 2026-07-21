@@ -4,7 +4,8 @@ import copy
 from dace import sdfg as sd, properties
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
+from dace.sdfg import nodes
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, ConditionalBlock
 from dace.transformation import transformation as xf
 
 
@@ -61,7 +62,7 @@ class ConditionFusion(xf.MultiStateTransformation):
                 return False
 
             parent_cfg = self.cblck1.parent_graph
-            if not hasattr(parent_cfg, "parent_graph"):
+            if parent_cfg is None:
                 return False
             parent_cfg = parent_cfg.parent_graph
             if not isinstance(parent_cfg, ConditionalBlock):
@@ -191,10 +192,11 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents
+        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
+        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
-            if hasattr(node, "sdfg"):
+            if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg
 
     def fuse_nested_conditions(self, sdfg: sd.SDFG, cblck1: ConditionalBlock):
@@ -205,7 +207,7 @@ class ConditionFusion(xf.MultiStateTransformation):
         assert len(nbranch.successors(cblck1)) == 0
 
         # Check if cblck1 is nested in another conditional block
-        assert hasattr(nbranch, "parent_graph")
+        assert nbranch is not None
         assert isinstance(nbranch.parent_graph, ConditionalBlock)
         cblckp = nbranch.parent_graph
 
@@ -277,8 +279,9 @@ class ConditionFusion(xf.MultiStateTransformation):
             for j, node in enumerate(cfg.nodes()):
                 node.label = f"{node.label}_{j}"
 
-        # Fix SDFG parents
+        # Fix SDFG parents. NestedSDFG nodes are excluded: their ``sdfg`` is the nested graph
+        # itself, not a back-reference, and set_nested_sdfg_parent_references already fixed them.
         sdutil.set_nested_sdfg_parent_references(sdfg)
         for node, parent in sdfg.all_nodes_recursive():
-            if hasattr(node, "sdfg"):
+            if isinstance(node, ControlFlowBlock):
                 node.sdfg = parent.sdfg

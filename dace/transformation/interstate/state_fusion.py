@@ -312,10 +312,10 @@ class StateFusion(transformation.MultiStateTransformation):
             if len(resulting_ccs) > 1:
                 # Side-effect tasklets cannot be fused if could lead to data races
                 for node in first_state.nodes():
-                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                    if isinstance(node, nodes.Tasklet) and node.side_effects:
                         return False
                 for node in second_state.nodes():
-                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
+                    if isinstance(node, nodes.Tasklet) and node.side_effects:
                         return False
 
             # Check for data races

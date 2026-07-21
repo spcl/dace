@@ -34,8 +34,7 @@ class DistributedDescriptor(Data):
 
     @property
     def offset(self):
-        shp = getattr(self, 'shape', [])
-        return [0] * len(shp)
+        return [0] * len(self.shape)
 
 
 def _symbols_from_shape(shape) -> Set[symbolic.SymbolicType]:

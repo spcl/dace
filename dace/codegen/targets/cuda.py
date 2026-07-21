@@ -265,7 +265,7 @@ class CUDACodeGen(TargetCodeGenerator):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             # Skip SDFGs without memory pool hints
             pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if getattr(arr, 'pool', False) is True and arr.transient)
+                         if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
             if not pooled:
                 continue
             self.has_pool = True
@@ -493,7 +493,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         return [self._codeobject]
 
     def node_dispatch_predicate(self, sdfg, state, node):
-        if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
+        # NOTE: Works on nodes and scopes
+        if isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)):
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
         if self._in_device_code:
