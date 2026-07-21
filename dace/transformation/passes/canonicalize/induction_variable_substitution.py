@@ -334,7 +334,7 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG,
         return None
 
     # Trip count = (end - start) // stride + 1 (loop_analysis.get_loop_end is inclusive).
-    trip_count = symbolic.simplify((end - start) // stride + 1)
+    trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
 
     return final_accum, str(final_subset), type(rhs.op), const_val, trip_count
 
@@ -888,7 +888,7 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     #      next-block-after-loop inside the parent, ensuring the IV update
     #      runs once per containing-loop iteration before the body restarts.
     import dace
-    trip_count = symbolic.simplify((end - start) // stride + 1)
+    trip_count = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
     post_loop_value = symbolic.symstr(symbolic.simplify(sym_sym + trip_count * step))
 
     iv_post = parent.add_state(loop.label + '_iv_post')

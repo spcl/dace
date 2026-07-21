@@ -110,7 +110,7 @@ class NormalizeNegativeStride(ppl.Pass):
         if start is None or end is None:
             return False
         try:
-            trip = symbolic.simplify((start - end) // (-stride) + 1)
+            trip = symbolic.simplify(symbolic.int_floor(start - end, -stride) + 1)
         except Exception:
             return False
 

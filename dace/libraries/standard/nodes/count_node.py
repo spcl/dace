@@ -97,8 +97,9 @@ class ExpandPure(ExpandTransformation):
     def expansion(node, parent_state: dace.SDFGState, parent_sdfg: dace.SDFG):
         mask_name, mask, mask_subset, out_name, out, out_subset = node.validate(parent_sdfg, parent_state)
 
-        mask_shape = [(e + 1 - b) // s for (b, e, s) in mask_subset]
-        out_shape = [(e + 1 - b) // s for (b, e, s) in out_subset] if out_subset.dims() else []
+        # int_floor, never `//`: `(e + 1 - b) // s` over a symbolic subset is a sum numerator.
+        mask_shape = [dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in mask_subset]
+        out_shape = ([dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in out_subset] if out_subset.dims() else [])
         axes = _fortran_dim_to_axes(node.dim, len(mask_shape))
 
         # Inner SDFG: cast → reduce.  Cast turns a non-integer mask

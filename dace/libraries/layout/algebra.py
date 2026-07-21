@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Tuple
 
 import sympy
 
+from dace import symbolic
+
 
 def _sym(x):
     """Coerce an int / str / sympy value into a sympy expression (for structural equality)."""
@@ -17,8 +19,8 @@ def _ceil_div(e, b):
     """Ceiling division ``ceil(e / b)`` for int or symbolic ``e`` and integer ``b``."""
     e = _sym(e)
     if e.is_Integer:
-        return sympy.Integer(-(-int(e) // int(b)))
-    return sympy.ceiling(e / b)
+        return sympy.Integer(-(-int(e) // int(b)))  # plain ints here: ordinary integer ceil
+    return symbolic.int_ceil(e, b)
 
 
 @dataclass(frozen=True)
@@ -267,7 +269,7 @@ def physical_index_exprs(m: LayoutMap) -> List:
     exprs = []
     for dg in m.digits:
         idx = sympy.Symbol(f"__i{dg.dim}", nonnegative=True, integer=True)
-        exprs.append((idx // dg.stride) % dg.extent)
+        exprs.append(symbolic.int_floor(idx, dg.stride) % dg.extent)
     return exprs
 
 

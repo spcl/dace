@@ -82,8 +82,9 @@ def _descriptors(node, parent_sdfg, parent_state):
     casts the accumulator to bool (``!= 0``).  The caller (bridge /
     test) must therefore wire ``_out`` to a ``bool`` array."""
     mask, mask_subset, out, out_subset = _validate_edges(node, parent_sdfg, parent_state)
-    mask_shape = [(e + 1 - b) // s for (b, e, s) in mask_subset]
-    out_shape = [(e + 1 - b) // s for (b, e, s) in out_subset] if out_subset.dims() else [1]
+    # int_floor, never `//`: `(e + 1 - b) // s` over a symbolic subset is a sum numerator.
+    mask_shape = [dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in mask_subset]
+    out_shape = ([dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in out_subset] if out_subset.dims() else [1])
     axis = _fortran_dim_to_axis(node.dim, len(mask_shape))
     mask_desc = dace.data.Array(mask.dtype, mask_shape, storage=mask.storage)
     out_desc = dace.data.Array(dace.bool_, out_shape, storage=out.storage)

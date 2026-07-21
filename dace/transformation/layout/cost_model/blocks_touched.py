@@ -97,7 +97,7 @@ def replayed_blocks_touched(indices, block_elems: int):
                          "TRAVERSAL order first -- the streaming bound depends on it")
     if idx.size == 0:
         return 0.0, 0.0
-    blocks = idx // block_elems
+    blocks = dace.symbolic.int_floor(idx, block_elems)
     streaming = (1 + int(numpy.count_nonzero(blocks[1:] != blocks[:-1]))) / idx.size
     distinct = int(numpy.unique(blocks).size) / idx.size
     return streaming, distinct

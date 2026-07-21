@@ -60,8 +60,10 @@ def _low_high_per_axis(indesc, outdesc):
     cuts = []
     for nin_d, nout_d in zip(indesc.shape, outdesc.shape):
         smaller = nin_d if nin_d <= nout_d else nout_d
-        low_d = (smaller + 1) // 2
-        high_d = smaller // 2
+        # int_floor, never `//` on a symbolic size: sympy floor() gets distributed and sym2cpp
+        # then drops it, truncating each term of the sum on its own.
+        low_d = dace.symbolic.int_floor(smaller + 1, 2)
+        high_d = dace.symbolic.int_floor(smaller, 2)
         cuts.append((low_d, high_d, nin_d, nout_d))
     return cuts
 

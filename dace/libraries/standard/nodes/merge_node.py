@@ -44,7 +44,7 @@ def _subset_volume(subset):
     vol = 1
     for (b, e, s) in subset:
         try:
-            vol *= int((e + 1 - b) // s)
+            vol *= int(dace.symbolic.int_floor(e + 1 - b, s))
         except (TypeError, ValueError):
             return None  # symbolic — assume non-scalar
     return vol
@@ -70,7 +70,7 @@ class ExpandPure(ExpandTransformation):
         # Iteration shape = the output's subset (the result shape).
         out_subset = out_oe.data.subset
         out_arr = parent_sdfg.arrays[out_oe.data.data]
-        iter_shape = [(e + 1 - b) // s for (b, e, s) in out_subset]
+        iter_shape = [dace.symbolic.int_floor(e + 1 - b, s) for (b, e, s) in out_subset]
         params = [f"__i{i}" for i in range(len(iter_shape))]
         rng = {p: f"0:{s}" for p, s in zip(params, iter_shape)}
         full_idx = ", ".join(params)

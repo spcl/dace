@@ -133,7 +133,7 @@ class SplitArray(ppl.Pass):
                 if isinstance(n, dace.nodes.MapEntry):
                     has_split_dim = False
                     for _, r in zip(n.map.params, n.map.range):
-                        extent = ((r[1] + 1) - r[0]) // r[2]
+                        extent = dace.symbolic.int_floor((r[1] + 1) - r[0], r[2])
                         if extent.free_symbols:
                             continue
                         try:
@@ -282,7 +282,7 @@ class SplitArray(ppl.Pass):
             b, e, s = access_expr
             if splitd is not None:
                 # Split dimensions must be single-element accesses
-                assert ((e + 1) - b) // s == 1
+                assert dace.symbolic.int_floor((e + 1) - b, s) == 1
                 try:
                     access_offset = int(b)
                     new_name_expr.append(self._name_map[splitd][access_offset])
@@ -316,7 +316,7 @@ class SplitArray(ppl.Pass):
         for i, (splitd, access_expr) in enumerate(zip(dim_filter, edge.data.subset)):
             b, e, s = access_expr
             if splitd is not None:
-                assert ((e + 1) - b) // s == 1
+                assert dace.symbolic.int_floor((e + 1) - b, s) == 1
                 try:
                     int(b)  # compile-time resolvable, not data-dependent
                 except Exception:
@@ -374,7 +374,7 @@ class SplitArray(ppl.Pass):
             for i, (splitd, access_expr) in enumerate(zip(dim_filter, edge.data.subset)):
                 b, e, s = access_expr
                 if splitd is not None:
-                    assert ((e + 1) - b) // s == 1
+                    assert dace.symbolic.int_floor((e + 1) - b, s) == 1
                     try:
                         int(b)
                     except Exception:

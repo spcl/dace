@@ -9,7 +9,7 @@ import os
 import sympy as sp
 import dace.dtypes as dtypes
 from copy import deepcopy
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.dtypes import StorageType
 import re
 from collections import deque
@@ -172,7 +172,7 @@ def scope_volume(state: SDFGState,
                 for sym in access_node_write_volume.free_symbols:
                     write_symbol_map[sym.name] = sym
 
-                shifted_hi = (hi - lo) // step
+                shifted_hi = int_floor(hi - lo, step)
                 shifted_lo = sp.sympify(0)
                 sp_var = sp.Symbol(var)
 
