@@ -7,10 +7,11 @@ knob but does not offload; the cutoff is structural (``offload_to_gpu`` absent f
 so the graph stays CPU-runnable and the numeric check compiles it for the host.
 
 GPU offload is a separate OPT-IN phase (``offload=True``), appended after the variant's own phases for
-``parallelize`` and ``canon_gpu`` only (see :data:`OFFLOAD_VARIANTS`). It is off by default precisely
-because it ends CPU-runnability: the offloaded graph cannot be run on a host box, so that one phase is
-checked by ``validate()`` + CUDA code generation instead of ``numeric_check``, and the run output says
-so explicitly. Every earlier phase is unaffected and still numeric-checked.
+``parallelize`` and ``canon_gpu`` only (see :data:`OFFLOAD_VARIANTS`). Its check depends on the host:
+where a GPU is actually usable (:func:`gpu_is_runnable`) the offloaded graph is RUN ON THE DEVICE and
+``numeric_check`` compares it to the same reference as every other phase; where there is no GPU it
+falls back to ``validate()`` + CUDA code generation. The printed line names which of the two happened,
+so a structural-only run can never be read as a numeric one. Every earlier phase is unaffected.
 
 The recipe is grouped into PHASES (consecutive stages sharing a stage label -- so canon's
 ``loop_to_x`` Loop2X lifts and its ``parallelize`` Loop2Map each form one phase; the parallelize
@@ -25,6 +26,7 @@ no dace-fortran); ``None`` = structural-only (fast, no per-phase compile+run).
 """
 import contextlib
 import copy
+import functools
 import hashlib
 import importlib.util
 import os
@@ -32,9 +34,13 @@ import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
+import numpy
+
 import dace
+from dace import dtypes
 from dace.codegen.codegen import generate_code
 from dace.config import set_temporary
+from dace.sdfg import nodes
 from dace.sdfg.utils import specialize_symbol
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.pass_pipeline import Pipeline
@@ -119,6 +125,16 @@ COALESCE_VARIANTS: Tuple[str, ...] = ('parallelize', )
 OFFLOAD_PHASE: str = 'offload'
 OFFLOAD_VARIANTS: Tuple[str, ...] = ('parallelize', 'canon_gpu')
 
+#: Device-side FP flags for the offload phase's numeric run, prepended to the configured CUDA args.
+#: The host reference legs already build strict (``IEEE_CPU_ARGS`` / the dace-fortran
+#: ``_strict_fp_cpu_args`` fixture: ``-O0 -fno-fast-math -ffp-contract=off``); nvcc contracts to FMA and
+#: approximates division/sqrt by DEFAULT, so without these the device leg is compiled under looser FP
+#: rules than the reference it is compared against. Measured on the gpu_scc CLOUDSC graph: leaving
+#: nvcc's defaults on costs ~2.5e-12 worst relative error and 19 non-bit-exact output arrays, turning
+#: them off gives ~2.5e-13 over 11 arrays with 8 more coming out bit-exact. This matches the two legs'
+#: build regimes; it does NOT relax anybody's tolerance -- the caller's ``numeric_check`` still decides.
+STRICT_FP_CUDA_ARGS: str = '-fmad=false --prec-div=true --prec-sqrt=true'
+
 
 def coalesce_stages() -> List[Stage]:
     """Inline the nested SDFGs, then fuse the maps they were walling off.
@@ -188,10 +204,11 @@ def offload_stage() -> List[Stage]:
 def generate_cuda_code(sdfg: dace.SDFG) -> int:
     """Code-generate ``sdfg`` for CUDA; return the number of ``__global__`` kernels emitted.
 
-    The correctness check for an offloaded graph on a CPU-only box: no GPU is needed to code-generate,
-    and a graph that is not actually device-scheduled emits no ``.cu`` object at all, so the assert
-    below is not vacuous. Runs on a deepcopy -- ``generate_code`` raises control flow and infers
-    types/storage in place.
+    The FALLBACK check for an offloaded graph, used where :func:`gpu_is_runnable` says no: no GPU is
+    needed to code-generate, and a graph that is not actually device-scheduled emits no ``.cu`` object
+    at all, so the assert below is not vacuous. Structural only -- it says the graph compiles for a
+    device, never that it computes the right thing there. Runs on a deepcopy -- ``generate_code``
+    raises control flow and infers types/storage in place.
 
     Uses the ``experimental`` backend: it used to crash on this "kernel nested inside a host map"
     shape, which is exactly what CLOUDSC produces (the nblocks map stays on the host), because
@@ -207,6 +224,78 @@ def generate_cuda_code(sdfg: dace.SDFG) -> int:
     kernels = sum(obj.clean_code.count('__global__') for obj in cuda)
     assert kernels > 0, 'CUDA codegen emitted a .cu object with no __global__ kernel'
     return kernels
+
+
+@functools.lru_cache(maxsize=None, typed=True)
+def gpu_is_runnable() -> bool:
+    """True iff this host can build AND run a device-scheduled SDFG, decided by doing exactly that.
+
+    Deliberately end-to-end rather than a capability sniff. ``nvidia-smi`` exiting 0, a CUDA_HOME in
+    the environment or an ``nvcc`` on PATH each answer a different, weaker question than the one the
+    offload phase needs -- a driver with no device, a toolkit that cannot link, a device the process
+    has no permission to open all pass those and still fail at the phase. Building the smallest
+    possible GPU program and checking its output answers the real question once, and the
+    ``lru_cache`` keeps it to one compile per process.
+
+    Any failure is a no -- a host without a GPU raises from nvcc, a compiler configuration error, or a
+    runtime error at launch, and all of them mean the same thing here: fall back to the structural
+    check.
+    """
+
+    @dace.program
+    def gpu_probe(inp: dace.float64[32], out: dace.float64[32]):
+        for i in dace.map[0:32]:
+            out[i] = inp[i] * 2.0
+
+    try:
+        probe = gpu_probe.to_sdfg()
+        probe.apply_gpu_transformations()
+        inp = numpy.arange(32, dtype=numpy.float64)
+        out = numpy.zeros(32, dtype=numpy.float64)
+        with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+            probe(inp=inp, out=out)
+        return bool(numpy.array_equal(out, inp * 2.0))
+    except Exception as exc:
+        print(f'gpu_is_runnable: no usable GPU ({type(exc).__name__}: {exc})')
+        return False
+
+
+def check_offload_phase(sdfg: dace.SDFG, numeric_check: Optional[Callable[[dace.SDFG, str], None]]) -> bool:
+    """Check the offloaded graph as strongly as this host allows; return whether that was a NUMERIC
+    check. Prints one line saying which of the two ran, so a structural pass never reads as a device
+    pass.
+
+    With a usable GPU (:func:`gpu_is_runnable`) and a ``numeric_check`` wired, the offloaded graph is
+    RUN ON THE DEVICE and compared against the same reference every earlier phase used. That works
+    because the offload mirrors each host array to a ``gpu_<name>`` sibling with copy-in/copy-out
+    states -- the graph does its own transfers, so it is called with ordinary host numpy arrays and the
+    caller's check needs no GPU-specific spelling. Without one of those two, it falls back to
+    :func:`generate_cuda_code`.
+
+    The device leg builds with :data:`STRICT_FP_CUDA_ARGS` so its FP rules match the strict-FP host
+    reference. Residual host/device differences (device libm is not host libm) are left for
+    ``numeric_check`` to judge at the caller's own tolerance -- nothing here loosens it.
+    """
+    kernels = generate_cuda_code(sdfg)
+    if numeric_check is None or not gpu_is_runnable():
+        reason = 'no numeric_check wired' if numeric_check is None else 'no usable GPU on this host'
+        print(f'    numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE ({reason}) -- STRUCTURAL ONLY: '
+              f'validate() + CUDA codegen, {kernels} __global__ kernel(s), experimental backend.')
+        return False
+    cuda_args = f'{STRICT_FP_CUDA_ARGS} {dace.Config.get("compiler", "cuda", "args")}'
+    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
+        with set_temporary('compiler', 'cuda', 'args', value=cuda_args):
+            numeric_check(sdfg, OFFLOAD_PHASE)
+    print(f'    numeric[{OFFLOAD_PHASE}]: VERIFIED ON DEVICE -- the offloaded graph ran on the GPU and '
+          f'matched the reference ({kernels} __global__ kernel(s), experimental backend, strict-FP).')
+    return True
+
+
+def is_device_scheduled(sdfg: dace.SDFG) -> bool:
+    """True iff any map in ``sdfg``, at any nesting depth, is scheduled onto the GPU."""
+    return any(
+        isinstance(node, nodes.MapEntry) and node.map.schedule in dtypes.GPU_SCHEDULES
+        for node, _ in sdfg.all_nodes_recursive())
 
 
 def _stage_pass_names(unit) -> set:
@@ -386,10 +475,13 @@ def run_candidate(sdfg: dace.SDFG, inputs: Dict, cpu_args: str, sequential: bool
     buffers. Renamed to a fresh build dir for the run then restored, so the pipeline SDFG keeps its
     identity. Specialization erases the species symbols, so args the SDFG no longer takes are dropped.
     Under ``sequential`` the maps are forced sequential first -- pass a throwaway copy there so the
-    live candidate's schedules are not mutated."""
+    live candidate's schedules are not mutated. A DEVICE-scheduled graph is exempt: ``sequential``
+    exists to strip OpenMP reduction nondeterminism from a host run, and applying it to an offloaded
+    graph would quietly demote every kernel back to the host -- the run would then pass while proving
+    nothing about the GPU."""
     saved_name = sdfg.name
     sdfg.name = f'cloudsc_e2e_{tag}'
-    if sequential:
+    if sequential and not is_device_scheduled(sdfg):
         from tests.corpus.cloudsc.generate_data_for_cloudsc import make_sequential
         make_sequential(sdfg)
     needed = set(sdfg.arglist().keys()) | {str(s) for s in sdfg.free_symbols}
@@ -513,10 +605,10 @@ def run_pipeline(sdfg: dace.SDFG,
     graph the run continues from is one that read back intact AND still computes the right thing. A
     checkpoint failing any of those is skipped and an earlier one is tried.
 
-    ``offload`` appends the terminal GPU-offload phase (:data:`OFFLOAD_VARIANTS` only). That phase is
-    NOT numeric-checked -- the graph is device-scheduled and will not run on a host box -- it is
-    checked by ``validate()`` + CUDA code generation, and the printed line says so. The plan signature
-    covers it, so offload checkpoints never collide with the non-offload ones.
+    ``offload`` appends the terminal GPU-offload phase (:data:`OFFLOAD_VARIANTS` only), checked by
+    :func:`check_offload_phase`: run on the device and numeric-checked where there is a usable GPU,
+    ``validate()`` + CUDA codegen where there is not, with the printed line naming which. The plan
+    signature covers the phase, so offload checkpoints never collide with the non-offload ones.
     """
     tag = tag or f'{variant}_{sdfg.name}'
     dump_dir.mkdir(parents=True, exist_ok=True)
@@ -557,9 +649,7 @@ def run_pipeline(sdfg: dace.SDFG,
         # numeric BEFORE save: a checkpoint on disk then means "this phase passed", so resume can
         # skip it without re-checking.
         if phase_name == OFFLOAD_PHASE:
-            kernels = generate_cuda_code(sdfg)
-            print(f'    numeric[{phase_name}]: SKIPPED -- device-scheduled graph, not host-runnable. '
-                  f'Checked by validate() + CUDA codegen: {kernels} __global__ kernel(s), legacy backend.')
+            check_offload_phase(sdfg, numeric_check)
         elif numeric_check is not None:
             numeric_check(sdfg, phase_name)
         ckpt = _checkpoint_path(dump_dir, tag, sig, idx + 1, phase_name)
@@ -601,8 +691,8 @@ def _main() -> int:
     ap.add_argument('--assume-parallel-guards', action='store_true', help='drop runtime guards (unsound, max maps)')
     ap.add_argument('--offload',
                     action='store_true',
-                    help=f'append the GPU-offload phase ({", ".join(OFFLOAD_VARIANTS)} only); that phase is '
-                    'validate+CUDA-codegen checked, never numeric-checked')
+                    help=f'append the GPU-offload phase ({", ".join(OFFLOAD_VARIANTS)} only); numeric-checked '
+                    'on the device where a GPU is usable, validate+CUDA-codegen checked where it is not')
     args = ap.parse_args()
 
     constants = {k: CLOUDSC_SYMBOLS[k] for k in ('nclv', ) if k in CLOUDSC_SYMBOLS}
