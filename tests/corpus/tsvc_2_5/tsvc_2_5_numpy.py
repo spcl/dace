@@ -173,8 +173,8 @@ def _jacobi2d_tiled(b: np.ndarray, a: np.ndarray, t: int) -> None:
 
 
 def ref_jacobi2d_tiled_const(b: np.ndarray, a: np.ndarray) -> None:
-    """2D Jacobi 5-point stencil pre-tiled with constant tile size 64."""
-    _jacobi2d_tiled(b, a, 64)
+    """2D Jacobi 5-point stencil pre-tiled with constant tile size 8 (sized to fit ``LEN_2D``)."""
+    _jacobi2d_tiled(b, a, 8)
 
 
 def ref_jacobi2d_tiled_sym(b: np.ndarray, a: np.ndarray, t: int) -> None:
@@ -194,8 +194,8 @@ def _jacobi2d_double_tiled(b: np.ndarray, a: np.ndarray, t1: int, t2: int) -> No
 
 
 def ref_jacobi2d_double_tiled_const(b: np.ndarray, a: np.ndarray) -> None:
-    """2D Jacobi 5-point stencil pre-tiled with constant outer (64) and inner (8) tiles."""
-    _jacobi2d_double_tiled(b, a, 64, 8)
+    """2D Jacobi 5-point stencil pre-tiled with constant outer (16) and inner (8) tiles."""
+    _jacobi2d_double_tiled(b, a, 16, 8)
 
 
 def ref_jacobi2d_double_tiled_sym(b: np.ndarray, a: np.ndarray, t1: int, t2: int) -> None:
@@ -249,11 +249,11 @@ def ref_masked_store_const(a: np.ndarray, b: np.ndarray, mask: np.ndarray) -> No
             a[i] = b[i]
 
 
-def ref_masked_store_sym(a: np.ndarray, b: np.ndarray, threshold_data: np.ndarray, k: float) -> None:
-    """Predicated store: ``if threshold_data[i] > k: a[i] = b[i]``."""
+def ref_masked_store_sym(a: np.ndarray, b: np.ndarray, threshold_data: np.ndarray, kmask: float) -> None:
+    """Predicated store: ``if threshold_data[i] > kmask: a[i] = b[i]``."""
     n = a.shape[0]
     for i in range(n):
-        if threshold_data[i] > k:
+        if threshold_data[i] > kmask:
             a[i] = b[i]
 
 
@@ -335,15 +335,15 @@ def ref_break_post_body(a: np.ndarray, b: np.ndarray, c: np.ndarray) -> None:
             break
 
 
-def ref_break_capture(a: np.ndarray, out_index: np.ndarray, out_value: np.ndarray, k: float) -> None:
-    """TSVC ``s332``: first ``i`` with ``a[i] > k`` -> capture index +
+def ref_break_capture(a: np.ndarray, out_index: np.ndarray, out_value: np.ndarray, kfind: float) -> None:
+    """TSVC ``s332``: first ``i`` with ``a[i] > kfind`` -> capture index +
     value, break. ``out_index``/``out_value`` stay at ``-1`` if no
-    element exceeds ``k``."""
+    element exceeds ``kfind``."""
     n = a.shape[0]
     out_index[0] = -1
     out_value[0] = -1.0
     for i in range(n):
-        if a[i] > k:
+        if a[i] > kfind:
             out_index[0] = i
             out_value[0] = a[i]
             break

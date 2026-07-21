@@ -25,6 +25,12 @@ ITERATIONS = dace.symbol("ITERATIONS")
 S = dace.symbol("S")  # symbolic stride (TSVC-2 carries one too; we reuse the name)
 SSYM = dace.symbol("SSYM")  # symbolic stride for the strided gather/scatter family
 K = dace.symbol("K")  # symbolic offset
+# Thresholds compared against DATA, kept apart from the index offset ``K``: one symbol cannot be
+# both, and sharing it made the kernels below vacuous. ``K`` must be >= 2 to be a useful offset
+# (``i % K``), but the arrays are ``standard_normal``, so at 3 no element ever cleared the bar --
+# the predicated store stored nothing and the search never found anything.
+KMASK = dace.symbol("KMASK")  # predicated-store threshold: bound so ~half the lanes are active
+KFIND = dace.symbol("KFIND")  # early-exit search threshold: bound so a hit exists, past index 0
 M = dace.symbol("M")  # quasi-affine `N // M` denominator
 T = dace.symbol("T")  # symbolic tile size (single-level tiling)
 T1 = dace.symbol("T1")  # symbolic outer tile size (two-level tiling)
@@ -291,12 +297,16 @@ def fission_dep_sym_offset(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], x: 
 
 @dace.program
 def jacobi2d_tiled_const(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D]):
-    """2D Jacobi 5-point stencil pre-tiled, constant tile size 64. Outer
-    ``ii``/``jj`` walk tile origins, inner ``i``/``j`` the in-tile coords."""
-    for ii in range(1, LEN_2D - 1 - 64, 64):
-        for jj in range(1, LEN_2D - 1 - 64, 64):
-            for i in range(ii, ii + 64):
-                for j in range(jj, jj + 64):
+    """2D Jacobi 5-point stencil pre-tiled, constant tile size 8. Outer
+    ``ii``/``jj`` walk tile origins, inner ``i``/``j`` the in-tile coords.
+
+    The tile constant has to FIT ``LEN_2D``: at 64 against ``LEN_2D = 32`` the outer range is
+    ``range(1, -33, 64)``, i.e. empty, and the kernel ran zero iterations -- a gate entry any
+    miscompilation passes. At 8 it walks a 3x3 grid of tiles."""
+    for ii in range(1, LEN_2D - 1 - 8, 8):
+        for jj in range(1, LEN_2D - 1 - 8, 8):
+            for i in range(ii, ii + 8):
+                for j in range(jj, jj + 8):
                     b[i, j] = 0.2 * (a[i, j] + a[i - 1, j] + a[i + 1, j] + a[i, j - 1] + a[i, j + 1])
 
 
@@ -314,11 +324,14 @@ def jacobi2d_tiled_sym(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, 
 @dace.program
 def jacobi2d_double_tiled_const(a: dace.float64[LEN_2D, LEN_2D], b: dace.float64[LEN_2D, LEN_2D]):
     """2D Jacobi 5-point stencil with two levels of constant tiling
-    (outer tile 64, inner tile 8). Anchors the two-level untile pass."""
-    for ii in range(1, LEN_2D - 1 - 64, 64):
-        for jj in range(1, LEN_2D - 1 - 64, 64):
-            for iii in range(ii, ii + 64, 8):
-                for jjj in range(jj, jj + 64, 8):
+    (outer tile 16, inner tile 8). Anchors the two-level untile pass.
+
+    Outer tile sized to fit ``LEN_2D`` for the same reason as
+    :func:`jacobi2d_tiled_const`: at 64 the outer range was empty."""
+    for ii in range(1, LEN_2D - 1 - 16, 16):
+        for jj in range(1, LEN_2D - 1 - 16, 16):
+            for iii in range(ii, ii + 16, 8):
+                for jjj in range(jj, jj + 16, 8):
                     for i in range(iii, iii + 8):
                         for j in range(jjj, jjj + 8):
                             b[i, j] = 0.2 * (a[i, j] + a[i - 1, j] + a[i + 1, j] + a[i, j - 1] + a[i, j + 1])
@@ -402,10 +415,10 @@ def masked_store_const(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], mask: d
 
 @dace.program
 def masked_store_sym(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], threshold_data: dace.float64[LEN_1D]):
-    """Predicated store keyed on symbolic threshold ``K`` (double scalar):
-    ``if threshold_data[i] > K: a[i] = b[i]``."""
+    """Predicated store keyed on symbolic threshold ``KMASK`` (double scalar):
+    ``if threshold_data[i] > KMASK: a[i] = b[i]``."""
     for i in dace.map[0:LEN_1D]:
-        if threshold_data[i] > K:
+        if threshold_data[i] > KMASK:
             a[i] = b[i]
 
 
@@ -535,13 +548,13 @@ def ext_break_post_body(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dac
 
 @dace.program
 def ext_break_capture(a: dace.float64[LEN_1D], out_index: dace.int64[1], out_value: dace.float64[1]):
-    """TSVC ``s332`` with symbolic threshold ``K`` (double): find first ``i``
-    with ``a[i] > K``, capture index + value, break. The exit-edge scalar rebind
+    """TSVC ``s332`` with symbolic threshold ``KFIND`` (double): find first ``i``
+    with ``a[i] > KFIND``, capture index + value, break. The exit-edge scalar rebind
     is what ``EarlyExitToFindIndex`` reconstructs as an argmin-of-index."""
     out_index[0] = -1
     out_value[0] = -1.0
     for i in range(LEN_1D):
-        if a[i] > K:
+        if a[i] > KFIND:
             out_index[0] = i
             out_value[0] = a[i]
             break
@@ -1182,6 +1195,11 @@ SIZES = {
     "S": 4,
     "SSYM": 3,
     "K": 3,
+    # Data thresholds over ``standard_normal`` arrays: 0 leaves ~half the lanes active (both mask
+    # polarities, crossing tile boundaries), 2 puts the first search hit at index 5 of 128 -- past
+    # the start, so a search that always answers 0 is caught.
+    "KMASK": 0,
+    "KFIND": 2,
     "M": 4,
     "T": 4,
     "T1": 8,

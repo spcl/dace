@@ -1921,7 +1921,12 @@ def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> 
             arrays[name] = np.array((np.arange(int(np.prod(shape))) % max(shape)).astype(np_dtype).reshape(shape),
                                     copy=True)
         else:
-            arrays[name] = np.array(rng.random(shape).astype(np_dtype), copy=True)
+            # Uniform on [-1, 1), NOT [0, 1): TSVC is full of ``if (a[i] < 0.)`` guards, and
+            # non-negative inputs take only the false side of every one of them. For s1279 and
+            # s277 that side is the whole body, so the kernel became a no-op and the gate compared
+            # inputs against inputs -- green for any miscompilation. Straddling zero also exercises
+            # both polarities of every mask the vectorizer generates.
+            arrays[name] = np.array((rng.random(shape) * 2.0 - 1.0).astype(np_dtype), copy=True)
     return arrays
 
 
