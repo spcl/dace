@@ -580,6 +580,11 @@ class TransformationHistProperty(Property):
             return data
         if not isinstance(data, list):
             raise TypeError('TransformationHistProperty expects a list input, got %s' % data)
+        # A history entry names its transformation class, and both the serializer registry and
+        # subclass discovery only know classes whose module was imported. Local import because
+        # dace.transformation imports this module.
+        from dace.transformation.transformation import load_builtin_transformations
+        load_builtin_transformations()
         return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 

@@ -20,6 +20,7 @@ All transformations extend the ``TransformationBase`` class. There are three bui
 
 import abc
 import copy
+import importlib
 from dace import serialize
 from dace.dtypes import ScheduleType
 from dace.sdfg import SDFG, SDFGState
@@ -38,6 +39,41 @@ PassT = TypeVar('PassT', bound=ppl.Pass)
 def explicit_cf_compatible(cls: PassT) -> PassT:
     cls.__explicit_cf_compatible__ = True
     return cls
+
+
+#: Packages holding the built-in transformations. Subclass discovery only sees classes whose defining
+#: module was imported, so name-based deserialization has to load these first.
+BUILTIN_TRANSFORMATION_PACKAGES = ('dace.transformation.dataflow', 'dace.transformation.interstate',
+                                   'dace.transformation.subgraph')
+
+
+def load_builtin_transformations() -> None:
+    """Import the packages holding the built-in transformations.
+
+    Both the ``dace.serialize`` type registry and ``PatternTransformation`` subclass discovery are
+    import-driven, so reading a saved transformation history needs these loaded -- after a bare
+    ``import dace`` they are not, and the names in the history resolve to nothing. Imported here
+    rather than at module level: every one of those packages imports this module.
+    """
+    for package in BUILTIN_TRANSFORMATION_PACKAGES:
+        importlib.import_module(package)
+
+
+def transformation_by_name(name: str, root: Type['TransformationBase']) -> Type['TransformationBase']:
+    """Resolve the transformation class called ``name`` below ``root``, for JSON deserialization.
+
+    An unresolved name used to surface as a bare ``StopIteration``, which the JSON reader swallowed
+    into a silently dropped element; it now raises.
+    """
+    load_builtin_transformations()
+    if root is PatternTransformation:
+        candidates = root.subclasses_recursive(all_subclasses=True)
+    else:
+        candidates = root.subclasses_recursive()
+    for cls in candidates:
+        if cls.__name__ == name:
+            return cls
+    raise TypeError(f'Unknown {root.__name__} {name!r}: no such class in any imported module')
 
 
 class TransformationBase(ppl.Pass):
@@ -488,8 +524,7 @@ class PatternTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'PatternTransformation':
-        xform = next(ext for ext in PatternTransformation.subclasses_recursive(all_subclasses=True)
-                     if ext.__name__ == json_obj['transformation'])
+        xform = transformation_by_name(json_obj['transformation'], PatternTransformation)
 
         # Recreate subgraph
         expr = xform.expressions()[json_obj.get('expr_index', 0)]
@@ -1052,8 +1087,7 @@ class SubgraphTransformation(TransformationBase):
 
     @staticmethod
     def from_json(json_obj: Dict[str, Any], context: Dict[str, Any] = None) -> 'SubgraphTransformation':
-        xform = next(ext for ext in SubgraphTransformation.subclasses_recursive()
-                     if ext.__name__ == json_obj['transformation'])
+        xform = transformation_by_name(json_obj['transformation'], SubgraphTransformation)
 
         # Reconstruct transformation
         ret = xform()

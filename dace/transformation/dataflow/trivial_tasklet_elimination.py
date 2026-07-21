@@ -95,9 +95,11 @@ class TrivialTaskletElimination(transformation.SingleStateTransformation):
             return False
         if isinstance(write_desc, data.Stream):
             return False
-        # Keep copy-tasklet connected to map node if source and destination nodes
-        # have different data type (implicit type cast)
-        if expr_index != 0 and read_desc.dtype != write_desc.dtype:
+        # Keep the copy tasklet when the endpoints differ in dtype: the tasklet performs an
+        # implicit cast that a plain memlet copy does not, so eliminating it silently drops the
+        # conversion. This holds for the direct AccessNode -> tasklet -> AccessNode form
+        # (expr_index 0) too, which is why the check is not gated on expr_index.
+        if read_desc.dtype != write_desc.dtype:
             return False
 
         # expr_index == 2 (AccessNode -> tasklet -> MapExit): removing the tasklet splices
