@@ -504,7 +504,15 @@ class ONNXModel:
         sdfg_utils.fuse_states(self.sdfg)
 
         if self.cuda:
-            self.sdfg.apply_gpu_transformations()
+            # GPU-transform, then simplify -- but SKIP the array-elimination / reference-to-view
+            # passes. Those inline a reshape's copy (``expanded[:] = np.reshape(data)``) into a view;
+            # the single-state autodiff engine (``make_backward_function``) can only build a correct
+            # backward for a reshape *copy* -- a view has no gradient-accumulation buffer, so the
+            # reshaped tensor's gradient silently comes out zero (e.g. ``test_reshape_on_memlet_path``,
+            # HF decoders). ``FuseStates`` still runs, so the graph stays the single state the backward
+            # generator expects.
+            self.sdfg.apply_gpu_transformations(simplify=False)
+            self.sdfg.simplify(skip={'ArrayElimination', 'ReferenceToView'})
 
     def _add_constant_tensor(self, tensor: Union[onnx.TensorProto, Tuple[str, np.ndarray]],
                              storage: dtypes.StorageType):
