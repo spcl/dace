@@ -18,6 +18,7 @@ from pathlib import Path
 
 import pytest
 
+from tests.corpus.cloudsc import pipelines
 from tests.corpus.cloudsc.cloudsc_offload_to_gpu_test import blocked_sdfg
 from tests.corpus.cloudsc.pipelines import (OFFLOAD_PHASE, OFFLOAD_VARIANTS, VARIANTS, generate_cuda_code,
                                             load_offload_pass, run_pipeline, variant_phases)
@@ -66,10 +67,12 @@ def test_offload_stage_offloads_and_generates_cuda(variant):
     assert generate_cuda_code(sdfg) == 1
 
 
-def test_run_pipeline_skips_the_numeric_check_loudly():
+def test_run_pipeline_reports_how_the_offload_phase_was_checked():
     """The full ``run_pipeline`` wiring, on a tiny blocked SDFG (sub-second -- not CloudSC): the
-    offload phase runs last, a wired ``numeric_check`` is called for every earlier phase but never for
-    it, and the skip is announced together with the codegen result."""
+    offload phase runs last, a wired ``numeric_check`` is called for every earlier phase, and the
+    offload line says outright whether the graph was RUN on the device or only code-generated. Both
+    outcomes are legal -- which one happens is a property of the host, not of the pipeline -- but they
+    must never be confusable, and a device run must have called ``numeric_check`` for the phase."""
     checked = []
     sdfg = blocked_sdfg()
     sdfg.name = 'pipeline_offload_probe'
@@ -85,9 +88,38 @@ def test_run_pipeline_skips_the_numeric_check_loudly():
                          offload=True)
     printed = buffer.getvalue()
     assert checked, 'phases before offload must still be numeric-checked'
-    assert OFFLOAD_PHASE not in checked, checked
-    assert f'numeric[{OFFLOAD_PHASE}]: SKIPPED' in printed, printed
     assert '__global__ kernel(s)' in printed, printed
+    on_device = f'numeric[{OFFLOAD_PHASE}]: VERIFIED ON DEVICE' in printed
+    structural = f'numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE' in printed
+    assert on_device != structural, f'the offload line must claim exactly one of the two:\n{printed}'
+    assert on_device == (OFFLOAD_PHASE in checked), (f'claimed device run={on_device} but numeric_check '
+                                                     f'called for the phase={OFFLOAD_PHASE in checked}')
+
+
+def test_structural_fallback_is_what_a_gpu_less_host_gets(monkeypatch):
+    """With no usable GPU the phase must still be checked, structurally, and say so -- CloudSC CPU
+    runs cannot be made to depend on CUDA. Forced rather than assumed, so this pins the fallback on a
+    GPU box too."""
+    monkeypatch.setattr(pipelines, 'gpu_is_runnable', lambda: False)
+    sdfg = blocked_sdfg()
+    load_offload_pass()(sdfg)
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        numeric = pipelines.check_offload_phase(sdfg, lambda _sdfg, _phase: None)
+    assert numeric is False
+    assert f'numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE (no usable GPU on this host)' in buffer.getvalue()
+
+
+def test_structural_fallback_when_no_numeric_check_is_wired():
+    """``numeric_check=None`` is structural-only everywhere else in the pipeline; the offload phase
+    must not silently invent a check it was not given."""
+    sdfg = blocked_sdfg()
+    load_offload_pass()(sdfg)
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        numeric = pipelines.check_offload_phase(sdfg, None)
+    assert numeric is False
+    assert f'numeric[{OFFLOAD_PHASE}]: NOT RUN ON DEVICE (no numeric_check wired)' in buffer.getvalue()
 
 
 def test_cuda_codegen_check_rejects_a_host_graph():
