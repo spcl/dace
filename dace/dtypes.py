@@ -1,5 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
+import builtins
 import ctypes
 import json
 import inspect
@@ -325,7 +326,8 @@ class typeclass(object):
             if widths is None:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
             wrapped_type = widths[wrapped_type]
-        elif wrapped_type is bool:
+        elif wrapped_type is builtins.bool:
+            # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
