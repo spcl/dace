@@ -1,0 +1,45 @@
+name: Graph Backend (rustworkx)
+
+on:
+  push:
+    branches: [ main, ci-fix, graphlib-backend ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10','3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+        pip install flake8 pytest-xdist coverage
+        pip install -e ".[testing,fastgraph]"
+
+    - name: Test with pytest (rustworkx backend)
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        export DACE_graph_backend=rustworkx
+        pytest -n auto --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"

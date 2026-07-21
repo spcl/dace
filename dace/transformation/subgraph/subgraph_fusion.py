@@ -1,7 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ This module contains classes that implement subgraph fusion.    """
 import dace
-import networkx as nx
+from dace import graphlib as nx
 
 from dace import dtypes, symbolic, subsets, data
 from dace.sdfg import nodes, SDFG

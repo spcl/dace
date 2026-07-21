@@ -2,7 +2,7 @@
 """ Loop detection transformation """
 
 import sympy as sp
-import networkx as nx
+from dace import graphlib as nx
 from typing import AnyStr, Iterable, Optional, Tuple, List, Set
 
 from dace import sdfg as sd, symbolic
@@ -191,7 +191,7 @@ class DetectLoop(transformation.PatternTransformation):
             return None
 
         # All nodes inside loop must be dominated by loop guard
-        dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
+        dominators = nx.immediate_dominators(graph.nx, graph.start_block)
         postdominators = sdutil.postdominators(graph, True)
         loop_nodes = self.loop_body()
         # If the exit state is in the loop nodes, this is not a valid loop
@@ -287,7 +287,7 @@ class DetectLoop(transformation.PatternTransformation):
             return None
 
         # All nodes inside loop must be dominated by loop start
-        dominators = nx.dominance.immediate_dominators(graph.nx, graph.start_block)
+        dominators = nx.immediate_dominators(graph.nx, graph.start_block)
         if begin is ltest:
             loop_nodes = [begin]
         else:

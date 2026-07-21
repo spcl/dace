@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 from typing import Optional, Set
 
-import networkx as nx
+from dace import graphlib as nx
 
 from dace import SDFG, properties
 from dace.sdfg import nodes
@@ -71,7 +71,9 @@ class TransientReuse(ppl.Pass):
             # Remove all nodes that are not AccessNodes or have incoming wcr edges
             # and connect their predecessors and successors
             for n in state.nodes():
-                if n in G.nodes():
+                # `n in G`, not `n in G.nodes()`: the latter materializes the whole node list per
+                # probe, making this loop quadratic in the size of the state.
+                if n in G:
                     if not isinstance(n, nodes.AccessNode):
                         for p in G.predecessors(n):
                             for c in G.successors(n):
