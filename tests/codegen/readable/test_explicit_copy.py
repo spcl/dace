@@ -64,6 +64,53 @@ def test_both_settings_compile_and_run(explicit_copy):
         assert numpy.array_equal(sc_out, sc_in)
 
 
+def self_copy_sdfg(name: str) -> dace.SDFG:
+    """``p[:, 3] = p[:, 4]`` as ONE AccessNode -> AccessNode edge on the SAME array -- the shape
+    CloudSC's level-shift flux copies have (``pfsqlf[jk] = pfsqlf[jk-1]``).
+
+    The memlet is src-relative: ``subset`` is the read column, ``other_subset`` the written one. A
+    self-copy is the case where the endpoint names cannot disambiguate the two, so lifting it to a
+    ``CopyLibraryNode`` by reading the pair positionally silently reverses the copy.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('p', [4, 5], dace.float64)
+    state = sdfg.add_state('s')
+    state.add_edge(state.add_access('p'), None, state.add_access('p'), None,
+                   dace.Memlet(data='p', subset='0:4, 4', other_subset='0:4, 3'))
+    return sdfg
+
+
+def run_self_copy(implementation: str) -> numpy.ndarray:
+    """Run :func:`self_copy_sdfg` under ``implementation`` on a seeded buffer; return the buffer."""
+    p = numpy.arange(20, dtype=numpy.float64).reshape(4, 5).copy()
+    with set_temporary('compiler', 'cpu', 'implementation', value=implementation):
+        self_copy_sdfg(f'self_copy_{implementation}')(p=p)
+    return p
+
+
+def test_self_copy_direction_matches_legacy():
+    """A same-array copy must move data the same way under both generators.
+
+    Regression: ``InsertExplicitCopies`` (which only the readable leg runs) used to treat a self-copy's
+    ``subset`` as the DESTINATION, so the lifted ``CopyLibraryNode`` read and wrote the wrong columns
+    and the readable leg computed ``p[:, 4] = p[:, 3]`` -- the copy backwards. On CloudSC that turned
+    the flux level-shift ``pfsqlf[jk] = pfsqlf[jk-1]`` into ``pfsqlf[jk-1] = pfsqlf[jk]``, propagating
+    uninitialised data down the column instead of the accumulated flux.
+    """
+    expected = numpy.arange(20, dtype=numpy.float64).reshape(4, 5).copy()
+    expected[:, 3] = expected[:, 4]
+
+    legacy = run_self_copy('legacy')
+    readable = run_self_copy('experimental_readable')
+
+    numpy.testing.assert_array_equal(legacy,
+                                     expected,
+                                     err_msg='legacy must copy column 4 (subset) onto column 3 (other_subset)')
+    numpy.testing.assert_array_equal(readable,
+                                     legacy,
+                                     err_msg='readable codegen diverges from legacy on a same-array copy')
+
+
 if __name__ == '__main__':
     test_on_replaces_copynd_in_readable()
     test_off_keeps_copynd_in_readable()
@@ -71,3 +118,4 @@ if __name__ == '__main__':
     test_legacy_ignores_the_flag()
     test_both_settings_compile_and_run('on')
     test_both_settings_compile_and_run('off')
+    test_self_copy_direction_matches_legacy()
