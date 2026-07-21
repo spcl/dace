@@ -7,6 +7,7 @@ bounds, so heap arrays are allocated with C++17 aligned ``operator new`` (when
 ``compiler.cpp_standard`` >= 17) or with no annotation at all (below 17).
 """
 import numpy as np
+import re
 
 import dace
 from dace.config import set_temporary
@@ -23,6 +24,30 @@ def _heap_transient_sdfg(name: str) -> dace.SDFG:
     state.add_edge(state.add_read('A'), None, tmp, None, dace.Memlet('A[0:2]'))
     state.add_edge(tmp, None, state.add_write('B'), None, dace.Memlet('tmp[0:2]'))
     return sdfg
+
+
+def test_aligned_allocation_property():
+    """Checks if the `.alignment` property is honored."""
+    new_code = r'new\s*\(std::align_val_t\({alignment}\)\)\s*double\s*\[2\]\s*;'
+    del_code = r'::operator\s+delete\[\]\(tmp,\s*std::align_val_t\({alignment}\)\)\s*;'
+    for alignment in [-1, 0, 64, 128]:
+        name_suffix = str(alignment) if alignment >= 0 else f"m{str(abs(alignment))}"
+        sdfg = _heap_transient_sdfg(f"sdfg_allocation_{name_suffix}")
+        array_desc = sdfg.arrays["tmp"]
+        array_desc.alignment = alignment
+        code = sdfg.generate_code()[0].clean_code
+
+        if alignment < 0:
+            assert re.search(r'tmp\s+=\s*new\s+double\s*\[2\]\s*;', code)
+            assert re.search(r'delete\[\]\s+tmp\s*;', code)
+
+        elif alignment == 0:
+            assert re.search(new_code.format(alignment=64), code)
+            assert re.search(del_code.format(alignment=64), code)
+
+        else:
+            assert re.search(new_code.format(alignment=alignment), code)
+            assert re.search(del_code.format(alignment=alignment), code)
 
 
 def test_heap_allocation_aligned_new_cpp17():
