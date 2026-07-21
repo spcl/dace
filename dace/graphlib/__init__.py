@@ -22,6 +22,7 @@ do; the two rustworkx has no implementation of at all (transitive closure, max-f
 always run on real networkx regardless of backend, since there's nothing to lower to.
 """
 import contextlib
+import os
 
 import dace.config
 import dace.graphlib.resolve as resolve
@@ -126,11 +127,27 @@ def minimum_cut(G, s, t, capacity='capacity', flow_func=None, **kwargs):
 
 @contextlib.contextmanager
 def set_default_backend(name: str):
-    """Built directly on the existing dace.config.set_temporary primitive -- no new override
-    mechanism needed. Affects graphs constructed for the duration of the context, not graphs
-    that already exist (see resolve.py: backend is bound at construction time)."""
-    with dace.config.set_temporary('graph', 'backend', value=name):
-        yield
+    """Built on dace.config.set_temporary, plus a matching os.environ override. Config.get()
+    checks DACE_graph_backend before its in-memory value (dace/config.py's documented,
+    intentional env-var-first precedence), so set_temporary alone is silently a no-op whenever
+    that env var is already set in the process -- e.g. CI jobs that export
+    DACE_graph_backend=rustworkx for the whole pytest run, which would otherwise defeat every
+    test that tries to select a backend explicitly (see tests/graphlib/backend_differential_test.py
+    and tests/perf/graph_backend_cloudsc_test.py, both hit this). Affects graphs constructed for
+    the duration of the context, not graphs that already exist (see resolve.py: backend is
+    bound at construction time)."""
+    envvar = 'DACE_graph_backend'
+    had_envvar = envvar in os.environ
+    old_envvar = os.environ.get(envvar)
+    os.environ[envvar] = name
+    try:
+        with dace.config.set_temporary('graph', 'backend', value=name):
+            yield
+    finally:
+        if had_envvar:
+            os.environ[envvar] = old_envvar
+        else:
+            del os.environ[envvar]
 
 
 def get_backend_name() -> str:
