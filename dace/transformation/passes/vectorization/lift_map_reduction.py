@@ -57,6 +57,62 @@ _WCR_LAMBDA = {
 }
 
 
+def _free_syms(expr) -> set:
+    """The free-symbol NAMES of ``expr``, or an empty set if it does not parse."""
+    try:
+        return {str(s) for s in symbolic.pystr_to_symbolic(str(expr)).free_symbols}
+    except Exception:  # noqa: BLE001 -- an unparseable bound is not a symbol dependence we model
+        return set()
+
+
+def _trip_depends_on_enclosing_map(state, map_entry, trip) -> bool:
+    """True if the reduction map's trip count is sized by a param of a map ENCLOSING it --
+    following the scope tree out through nested-SDFG boundaries.
+
+    The lift stages per-iteration products in a transient sized ``(trip,)``, added to the state's
+    SDFG. A descriptor may only be sized by symbols in scope where it LIVES, and a map param is
+    not: it is bound per iteration, inside the map. So a triangular inner reduction -- polybench
+    trmm's ``for k in range(i + 1, M)`` under a ``for i`` map -- would allocate
+    ``_red_buf[M - i - 1]``, and once the owning nested SDFG is inlined the map param ``i`` becomes
+    a free symbol of the whole program: it lands in the compiled signature and the call fails with
+    ``Missing program argument "i"``. (Even passed, one buffer cannot serve the outer map's
+    per-``i`` differing trip counts.)
+
+    Checking the in-state scope alone is not enough. The reduction map is typically top-level
+    within its own body nested SDFG, and the enclosing map lives one boundary OUT, feeding its
+    param in under a different name via ``symbol_mapping`` (trmm: the nest's ``i`` bound to the
+    outer ``computecol`` map's ``i``). So the walk ascends through ``parent_nsdfg_node``,
+    translating the symbol set outward at each boundary, until it reaches the root SDFG.
+
+    Sizing the buffer correctly needs it allocated per outer iteration, inside the enclosing scope,
+    which this lift does not do. So refuse: the reduction stays a plain WCR map, which is correct.
+
+    :param state: The state holding ``map_entry``.
+    :param map_entry: The reduction map being lifted.
+    :param trip: The reduction map's trip count expression.
+    :returns: ``True`` if the lift must be refused.
+    """
+    syms = _free_syms(trip)
+    cur_state, node = state, map_entry
+    while syms and cur_state is not None:
+        scope = cur_state.scope_dict()
+        parent = scope.get(node)
+        while parent is not None:
+            if isinstance(parent, nodes.MapEntry) and syms & {str(p) for p in parent.map.params}:
+                return True
+            parent = scope.get(parent)
+        # Top scope of this state -> ascend into the enclosing NestedSDFG node, re-expressing the
+        # symbols in the OUTER SDFG's names. A symbol absent from the mapping is already an outer
+        # name (a global like ``M``) and carries through unchanged.
+        nsdfg_node = cur_state.sdfg.parent_nsdfg_node
+        if nsdfg_node is None:
+            return False
+        syms = set().union(*(_free_syms(nsdfg_node.symbol_mapping[s]) if s in nsdfg_node.symbol_mapping else {s}
+                             for s in syms))
+        node, cur_state = nsdfg_node, cur_state.sdfg.parent
+    return False
+
+
 def _const_assign_value(code: str) -> Optional[float]:
     """Numeric value of a ``_out = <number>`` tasklet, or ``None``.
 
@@ -125,8 +181,7 @@ def _pure_wcr_map_ok(state: "dace.SDFGState", map_entry: "dace.nodes.MapEntry"):
     return map_exit, inner, map_entry.map.params[0]
 
 
-def _validate_pure_wcr_write(state, map_entry, map_exit, inner, param,
-                             write_edge) -> Optional[PureWCRReductionInfo]:
+def _validate_pure_wcr_write(state, map_entry, map_exit, inner, param, write_edge) -> Optional[PureWCRReductionInfo]:
     """Per-write guards: one scalar ``body -> map_exit`` WCR edge writing a FIXED
     (param-independent) scalar accumulator not read at map entry / aliased in scope.
 
@@ -335,6 +390,8 @@ class LiftMapReductionToReduce(ppl.Pass):
         param = me.map.params[0]
         lb, ub, _ = me.map.range[-1]
         trip = symbolic.simplify(ub - lb + 1)
+        if _trip_depends_on_enclosing_map(state, me, trip):
+            return False
         dtype = sdfg.arrays[acc].dtype
         wcr = _WCR_LAMBDA.get(op)
         if wcr is None:
@@ -452,6 +509,8 @@ class LiftMapReductionToReduce(ppl.Pass):
         param = me.map.params[0]
         lb, ub, _ = me.map.range[-1]
         trip = symbolic.simplify(ub - lb + 1)
+        if _trip_depends_on_enclosing_map(state, me, trip):
+            return False
         dtype = sdfg.arrays[acc].dtype
 
         wcr = _WCR_LAMBDA.get(info.op)

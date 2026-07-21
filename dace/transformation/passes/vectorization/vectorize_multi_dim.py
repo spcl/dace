@@ -19,7 +19,7 @@ Every other combo → ``NotImplementedError``.
 """
 import copy
 import warnings
-from typing import Literal, Optional, Tuple
+from typing import Optional, Tuple
 
 import sympy
 
@@ -38,8 +38,7 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.utils.pass_invariants import (no_wcr_in_map_body,
-                                                                            no_wcr_inside_nested_sdfgs,
-                                                                            no_multi_array_carried_sweep_in_map)
+                                                                            no_wcr_inside_nested_sdfgs)
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
@@ -64,12 +63,10 @@ from dace.transformation.passes.vectorization.insert_tile_load_store import Inse
 # per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
-    PowerOperatorExpansion,
     RemoveMathCall,
     RewriteModuloToPyMod,
     StripPowerExponentCast,
 )
-from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
@@ -147,9 +144,18 @@ def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
     target._parent_sdfg = None
     target._parent_nsdfg_node = None
     target._cfg_list = []
-    for block in target.nodes():
-        block._sdfg = target
-        block._parent_graph = target
+    # Re-point EVERY block, at every control-flow nesting level (loop / conditional bodies included),
+    # at ``target``. Fixing only the top-level nodes leaves blocks inside a LoopRegion pointing at the
+    # throwaway ``source``: the SDFG still behaves correctly (``source`` is an equivalent graph), but a
+    # later ``deepcopy`` cannot resolve those stale owners -- ``ControlFlowBlock.__deepcopy__`` keeps
+    # ``_sdfg`` only when the owner is already in the copy's ``memo``, and sets it to ``None`` otherwise.
+    # The result is a state whose ``sdfg`` is ``None``, which crashes type inference on the *copy*
+    # (polybench lu / gramschmidt, whose WCR bodies take this refusal path). ``all_control_flow_regions``
+    # stops at nested-SDFG boundaries, so inner SDFGs keep their own (correct) owners.
+    for region in target.all_control_flow_regions():
+        for block in region.nodes():
+            block._sdfg = target
+            block._parent_graph = region
     target.reset_cfg_list()
     FixNestedSDFGReferences().apply_pass(target, {})
 
@@ -940,17 +946,6 @@ class VectorizeMultiDim(ppl.Pipeline):
         # correct input and leave it un-tiled -- a clean refusal instead of a crash or a
         # half-transformed SDFG. Cheap relative to the compile that follows; taken once per call.
         snapshot = copy.deepcopy(sdfg)
-        # Refuse the multi-array carried-sweep shape (ADI's simultaneous p/q/v tridiagonal
-        # recurrences) on the PRISTINE input, before the prep passes inline the body loops and
-        # the shape is no longer recognisable. The tile widener cannot lane-privatise several
-        # aliasing array sweeps at once and mis-lowers them into a silent race, so leave the
-        # kernel un-tiled (correct) rather than emit a racing one. Restore + return like any
-        # other ``VectorizeUnsupported`` refusal.
-        multi_sweep = no_multi_array_carried_sweep_in_map(sdfg)
-        if multi_sweep is not None:
-            warnings.warn(f"VectorizeMultiDim: refusing to vectorize {sdfg.name!r}; leaving it "
-                          f"un-tiled (correct, un-optimized): {multi_sweep}")
-            return None
         # Always simplify first (user direction): callers may hand us an un-simplified SDFG
         # (``to_sdfg(simplify=False)``) with FunctionCallRegions / redundant states / un-inlined
         # wrappers. Up-front simplify gives every downstream pass a canonical flat-state body;
