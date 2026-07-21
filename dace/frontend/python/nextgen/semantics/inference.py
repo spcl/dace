@@ -21,7 +21,7 @@ import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
-from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError
+from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
 from dace.frontend.python.nextgen.semantics import values
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
@@ -205,7 +205,19 @@ class InferenceService:
 
         The qualified name is normalized to ``module.__name__``-based form
         (e.g. ``numpy.zeros`` even for ``np.zeros``), matching the keys of the
-        replacement registry.
+        replacement registry. It is then passed through
+        :func:`~dace.frontend.python.nextgen.common.normalize_qualname`, since
+        ``module.__name__`` reports a callee's REAL defining module -- e.g.
+        ``dace.ndarray`` is really ``dace.frontend.python.wrappers.ndarray``,
+        re-exported at the top-level ``dace`` package -- which needs
+        collapsing to the registry's shorter key whenever a callee is reached
+        other than through a literal, unaliased ``dace.<name>`` attribute
+        chain (an aliased module import, a name bound to the function object,
+        the fully-qualified path written out directly, ...). This is the
+        SINGLE normalization point: every qualname this method returns,
+        regardless of which branch produced it, is already registry-facing --
+        callers (:meth:`infer_call`, ``lowering.dispatch``) must not re-derive
+        or re-normalize it themselves.
 
         :return: A 2-tuple of (qualified name, resolved object or None).
         """
@@ -213,7 +225,7 @@ class InferenceService:
         # constants) directly into the AST as constant nodes with a qualname.
         if isinstance(func, ast.Constant) and not is_literal_constant(func.value):
             resolved = func.value
-            return _qualified_object_name(resolved, getattr(func, 'qualname', None)), resolved
+            return normalize_qualname(_qualified_object_name(resolved, getattr(func, 'qualname', None))), resolved
 
         parts: List[str] = []
         node = func
@@ -221,7 +233,7 @@ class InferenceService:
             parts.append(node.attr)
             node = node.value
         if not isinstance(node, ast.Name):
-            return astutils.rname(func), None
+            return normalize_qualname(astutils.rname(func)), None
         parts.append(node.id)
         parts.reverse()
 
@@ -235,10 +247,10 @@ class InferenceService:
         if resolved is not None:
             qualified = _qualified_object_name(resolved, None)
             if qualified is not None:
-                return qualified, resolved
+                return normalize_qualname(qualified), resolved
         if len(parts) > 1 and isinstance(root, types.ModuleType):
-            return f'{root.__name__}.{".".join(parts[1:])}', resolved
-        return '.'.join(parts), resolved
+            return normalize_qualname(f'{root.__name__}.{".".join(parts[1:])}'), resolved
+        return normalize_qualname('.'.join(parts)), resolved
 
     #: Ufunc methods with dedicated registry entries (``get_ufunc(method)``).
     _UFUNC_METHODS = ('reduce', 'accumulate', 'outer')

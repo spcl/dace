@@ -52,7 +52,7 @@ from dace.memlet import Memlet
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
-from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError
+from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values
@@ -615,13 +615,11 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
             return True
         return _lower_ufunc_replacement_call(target, call, ufunc.__name__, ufunc_method, inferred, statement, state)
 
-    # Array/stream creation. Resolution may yield the callee's real module
-    # path (dace.define_stream lives in dace.frontend.python.wrappers), so
-    # fall back to the source-level name: the qualname preprocessing attaches
-    # to embedded callee constants, or the textual call name.
+    # Array/stream creation. ``qualname`` is already registry-normalized by
+    # ``resolve_callee`` (e.g. ``dace.define_stream``, whose real module is
+    # ``dace.frontend.python.wrappers``, normalizes back to the ``dace.``
+    # form CREATION_CALLS is keyed on).
     creation_name = qualname
-    if creation_name not in creation.CREATION_CALLS:
-        creation_name = getattr(call.func, 'qualname', None) or astutils.rname(call.func)
     if creation_name in creation.CREATION_CALLS:
         if any(keyword.arg not in ('dtype', 'fill_value', 'shape', 'storage', 'lifetime', 'buffer_size')
                for keyword in call.keywords):
@@ -719,7 +717,7 @@ def _lower_replacement_call(target: Optional[ast.expr], call: ast.Call, qualname
     name = qualname
     receiver: Optional[str] = None
     if not _replacement_registered(name):
-        name = getattr(call.func, 'qualname', None) or astutils.rname(call.func)
+        name = normalize_qualname(getattr(call.func, 'qualname', None) or astutils.rname(call.func))
         if not _replacement_registered(name):
             name = None
             # Not a registered free function: try the method family
