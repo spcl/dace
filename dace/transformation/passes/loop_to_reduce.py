@@ -1229,6 +1229,17 @@ def _extract_multi_state_chain(loop: LoopRegion, sdfg: SDFG):
             if value_in_edge is None:
                 continue
 
+            # The chain must carry the tasklet's RESULT into the accumulator. Walking back from the
+            # sink can arrive at the tasklet over an EMPTY memlet -- a sequencing edge that carries
+            # no data -- in which case the value stored is whatever the intermediate node already
+            # held, and the tasklet only happens to be ordered before it. TSVC s255's rotation
+            # ``y = x`` reaches ``_Add_`` exactly that way (``_Add_ -[]-> x -[x[0] -> y[0]]-> y``):
+            # it looks like ``y = y + <sum>``, but ``y`` is OVERWRITTEN with ``x``. Folding that
+            # into a WCR turns a copy into an accumulation and drops ``y`` from the sum, silently
+            # computing ``(b[i] + b[i-1]) * 0.333``.
+            if first_write_edge is not data_out[0]:
+                continue
+
             return (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an,
                     sink_an, wcr, data_name, copy.deepcopy(carry_subset))
     return None
