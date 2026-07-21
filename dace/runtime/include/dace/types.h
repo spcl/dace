@@ -139,64 +139,183 @@ static constexpr float _dace_half_u2f(uint32_t u) { return std::bit_cast<float>(
 static inline uint32_t _dace_half_f2u(float f) { union { float f; uint32_t u; } c; c.f = f; return c.u; }
 static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } c; c.u = u; return c.f; }
 #endif
+
+// ---------------------------------------------------------------------------
+// Native binary16 backing type for the float <-> half CONVERSIONS.
+//
+// ``dace::half`` stays a class whose arithmetic is evaluated in ``float`` (see
+// the operator section below): that is what the emulation has always done, so
+// results are unchanged. The only thing the native type replaces is the two
+// conversion routines, turning ~15 integer ALU ops into a single hardware
+// instruction. Verified bit-identical to the emulation for every one of the
+// 2^32 float bit patterns and all 2^16 half bit patterns, NaN payloads excepted
+// (the hardware quiets NaNs per IEEE-754; the emulation did not) --
+// see tests/cpp/half_ops_test.cpp.
+//
+// We only switch where the conversion is a real instruction. ``_Float16`` is
+// *available* far more widely than it is *fast*: on a plain x86-64 target
+// without F16C, GCC/Clang lower every conversion to a libgcc/compiler-rt call
+// (``__extendhfsf2`` / ``__truncsfhf2``), which is slower than the inline
+// emulation. So gate on the ISA feature macro, never on mere type availability.
+//
+//   x86:     __F16C__ (VCVTPH2PS/VCVTPS2PH, Ivy Bridge+) or __AVX512FP16__.
+//   AArch64: FCVT between half and single is base ARMv8-A, so IEEE-format
+//            __fp16/_Float16 conversions are always single instructions.
+//   ARM32:   only with the FP16 conversion extension (__ARM_FP16_FORMAT_IEEE
+//            plus VFPv4+ / __ARM_FEATURE_FP16_SCALAR_ARITHMETIC).
+//
+// ``__FLT16_MAX__`` is the portable "``_Float16`` is usable here" probe that
+// both GCC and Clang define. ``__ARM_FP16_FORMAT_IEEE`` is the ACLE macro
+// saying ``__fp16`` is IEEE binary16 rather than the Arm "alternative" format,
+// which has no infinities and so is NOT bit-compatible with our emulation.
+#if !defined(DACE_HALF_NO_NATIVE)
+#if (defined(__x86_64__) || defined(__i386__) || defined(_M_X64) || defined(_M_IX86)) && \
+    defined(__FLT16_MAX__) && (defined(__F16C__) || defined(__AVX512FP16__))
+#define DACE_HALF_NATIVE_T _Float16
+#elif defined(__aarch64__) && defined(__FLT16_MAX__) && defined(__ARM_FP16_FORMAT_IEEE)
+#define DACE_HALF_NATIVE_T _Float16
+#elif defined(__aarch64__) && defined(__ARM_FP16_FORMAT_IEEE)
+#define DACE_HALF_NATIVE_T __fp16
+#elif defined(__arm__) && defined(__ARM_FP16_FORMAT_IEEE) && defined(__ARM_FEATURE_FP16_SCALAR_ARITHMETIC)
+#define DACE_HALF_NATIVE_T __fp16
+#endif
+#endif
+
+#if defined(DACE_HALF_NATIVE_T)
+// A 2-byte native type bit-cast to/from uint16_t: no reinterpretation of the
+// value, so the stored representation is the same IEEE binary16 either way.
+DACE_HALF_CE uint16_t dace_half_from_float(float f) {
+#if defined(__cpp_lib_bit_cast)
+  return std::bit_cast<uint16_t>((DACE_HALF_NATIVE_T)f);
+#else
+  union { DACE_HALF_NATIVE_T n; uint16_t u; } c;
+  c.n = (DACE_HALF_NATIVE_T)f;
+  return c.u;
+#endif
+}
+DACE_HALF_CE float dace_half_to_float(uint16_t h) {
+#if defined(__cpp_lib_bit_cast)
+  return (float)std::bit_cast<DACE_HALF_NATIVE_T>(h);
+#else
+  union { uint16_t u; DACE_HALF_NATIVE_T n; } c;
+  c.u = h;
+  return (float)c.n;
+#endif
+}
+#else
+// IEEE-754 binary32 -> binary16, round-to-nearest-even.
+// Based on (https://gist.github.com/rygorous/2156668)
+DACE_HALF_CE uint16_t dace_half_from_float(float f) {
+  uint32_t u = _dace_half_f2u(f);
+  uint32_t sign = u & 0x80000000u;
+  u ^= sign;  // work on the magnitude
+  uint16_t h;
+
+  if (u >= 0x47800000u) {
+    // Inf or NaN (exponent overflows half range): NaN -> qNaN, else Inf.
+    h = (u > 0x7f800000u) ? 0x7e00 : 0x7c00;
+  } else if (u < 0x38800000u) {
+    // Subnormal half or zero. Adding this magic constant and relying on
+    // round-to-nearest-even FP addition aligns the mantissa correctly.
+    float mf = _dace_half_u2f(u) + _dace_half_u2f(0x3f000000u);  // 126 << 23
+    h = (uint16_t)(_dace_half_f2u(mf) - 0x3f000000u);
+  } else {
+    // Normal half: rebias exponent (127 -> 15) and round mantissa to even.
+    uint32_t mant_odd = (u >> 13) & 1;
+    u += 0xc8000000u + 0xfffu;  // ((15 - 127) << 23) + rounding bias
+    u += mant_odd;
+    h = (uint16_t)(u >> 13);
+  }
+  return (uint16_t)(h | (uint16_t)(sign >> 16));
+}
+
+// IEEE-754 binary16 -> binary32 (exact; every binary16 fits in binary32).
+DACE_HALF_CE float dace_half_to_float(uint16_t h) {
+  uint32_t sign = (uint32_t)(h & 0x8000) << 16;
+  uint32_t exp = (h >> 10) & 0x1f;
+  uint32_t mant = h & 0x3ff;
+  uint32_t out;
+  if (exp == 0) {
+    if (mant == 0) {
+      out = sign;  // signed zero
+    } else {
+      // Subnormal half: normalize into a float normal.
+      exp = 1;
+      do {
+        exp--;
+        mant <<= 1;
+      } while ((mant & 0x400) == 0);
+      mant &= 0x3ff;
+      out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
+    }
+  } else if (exp == 0x1f) {
+    out = sign | 0x7f800000u | (mant << 13);  // Inf or NaN
+  } else {
+    out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);  // normal
+  }
+  return _dace_half_u2f(out);
+}
+#endif
+
 struct half {
   constexpr half() : h(0) {}
+  DACE_HALF_CE half(float f) : h(dace_half_from_float(f)) {}
+  DACE_HALF_CE operator float() const { return dace_half_to_float(h); }
 
-  // IEEE-754 binary32 -> binary16, round-to-nearest-even.
-  // Based on (https://gist.github.com/rygorous/2156668)
-  DACE_HALF_CE half(float f) : h(0) {
-    uint32_t u = _dace_half_f2u(f);
-    uint32_t sign = u & 0x80000000u;
-    u ^= sign;  // work on the magnitude
-
-    if (u >= 0x47800000u) {
-      // Inf or NaN (exponent overflows half range): NaN -> qNaN, else Inf.
-      h = (u > 0x7f800000u) ? 0x7e00 : 0x7c00;
-    } else if (u < 0x38800000u) {
-      // Subnormal half or zero. Adding this magic constant and relying on
-      // round-to-nearest-even FP addition aligns the mantissa correctly.
-      float mf = _dace_half_u2f(u) + _dace_half_u2f(0x3f000000u);  // 126 << 23
-      h = (uint16_t)(_dace_half_f2u(mf) - 0x3f000000u);
-    } else {
-      // Normal half: rebias exponent (127 -> 15) and round mantissa to even.
-      uint32_t mant_odd = (u >> 13) & 1;
-      u += 0xc8000000u + 0xfffu;  // ((15 - 127) << 23) + rounding bias
-      u += mant_odd;
-      h = (uint16_t)(u >> 13);
-    }
-    h |= (uint16_t)(sign >> 16);
+  // Compound assignment. Binary arithmetic, comparisons and unary minus already
+  // work through the implicit ``operator float()`` and are deliberately NOT
+  // overloaded here: an ``operator+(half, half)`` would tie with the built-in
+  // ``operator+(float, float)`` for a mixed expression such as ``h + 1.0f``
+  // (one user-defined conversion either way) and make it ambiguous. Compound
+  // assignment is the one part of the surface that conversion cannot supply,
+  // because the built-in ``operator+=`` needs an lvalue of arithmetic type and
+  // ``operator float()`` yields a prvalue.
+  //
+  // A single ``float`` parameter covers half/float/double/integer right-hand
+  // sides via one implicit conversion each, so there is exactly one candidate
+  // and no ambiguity. The value semantics are ``h = half(float(h) OP x)`` --
+  // the same convert-out / compute-in-float / round-back the emulation has
+  // always given for ``h = h OP x``.
+#define DACE_HALF_COMPOUND(OP)                                     \
+  DACE_HALF_CE half &operator OP##=(float f) {                     \
+    *this = half((float)*this OP f);                               \
+    return *this;                                                  \
   }
+  DACE_HALF_COMPOUND(+)
+  DACE_HALF_COMPOUND(-)
+  DACE_HALF_COMPOUND(*)
+  DACE_HALF_COMPOUND(/)
+#undef DACE_HALF_COMPOUND
 
-  // IEEE-754 binary16 -> binary32 (exact; every binary16 fits in binary32).
-  DACE_HALF_CE operator float() const {
-    uint32_t sign = (uint32_t)(h & 0x8000) << 16;
-    uint32_t exp = (h >> 10) & 0x1f;
-    uint32_t mant = h & 0x3ff;
-    uint32_t out;
-    if (exp == 0) {
-      if (mant == 0) {
-        out = sign;  // signed zero
-      } else {
-        // Subnormal half: normalize into a float normal.
-        exp = 1;
-        do {
-          exp--;
-          mant <<= 1;
-        } while ((mant & 0x400) == 0);
-        mant &= 0x3ff;
-        out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);
-      }
-    } else if (exp == 0x1f) {
-      out = sign | 0x7f800000u | (mant << 13);  // Inf or NaN
-    } else {
-      out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);  // normal
-    }
-    return _dace_half_u2f(out);
-  }
+  DACE_HALF_CE half &operator++() { return *this += 1.0f; }
+  DACE_HALF_CE half &operator--() { return *this -= 1.0f; }
+  DACE_HALF_CE half operator++(int) { half t = *this; *this += 1.0f; return t; }
+  DACE_HALF_CE half operator--(int) { half t = *this; *this -= 1.0f; return t; }
 
   uint16_t h;
 };
 typedef half float16;
+
+#ifdef _OPENMP
+// OpenMP has no built-in reduction over a class type: ``reduction(+: x)`` on a
+// ``dace::half`` accumulator is rejected with "user defined reduction not
+// found" even once ``operator+=`` exists, because the clause needs an identity
+// and a combiner it cannot synthesize for a non-arithmetic type. Declaring them
+// here -- rather than in the CPU codegen -- means the declaration follows
+// whichever of the two ``half`` implementations above is in effect, and every
+// generated translation unit that includes <dace/types.h> gets it.
+//
+// The identities mirror OpenMP's built-in floating-point ones (0, 1, +inf,
+// -inf), so a thread whose chunk is empty contributes nothing. ``omp_out`` is
+// combined with ``+=`` / ``*=`` (defined above) and min/max through the
+// implicit float comparison.
+#pragma omp declare reduction(+ : dace::half : omp_out += omp_in) initializer(omp_priv = dace::half(0.0f))
+#pragma omp declare reduction(* : dace::half : omp_out *= omp_in) initializer(omp_priv = dace::half(1.0f))
+#pragma omp declare reduction(min : dace::half : omp_out = (float)omp_in < (float)omp_out ? omp_in : omp_out) \
+    initializer(omp_priv = dace::half(__builtin_huge_valf()))
+#pragma omp declare reduction(max : dace::half : omp_out = (float)omp_in > (float)omp_out ? omp_in : omp_out) \
+    initializer(omp_priv = dace::half(-__builtin_huge_valf()))
+#endif
 #endif
 
 enum NumAccesses {
