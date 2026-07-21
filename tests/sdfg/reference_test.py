@@ -11,7 +11,7 @@ from dace.transformation.passes.analysis import ControlFlowBlockReachability, Fi
 from dace.transformation.passes.reference_reduction import ReferenceToView
 import numpy as np
 import pytest
-import networkx as nx
+from dace import graphlib as nx
 
 
 def _assert_roundtrip_json_stable(sdfg):
