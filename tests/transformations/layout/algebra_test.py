@@ -2,8 +2,9 @@
 """Unit tests for the layout algebra (dace.libraries.layout.algebra)."""
 import sympy
 
-from dace.libraries.layout.algebra import (Digit, LayoutMap, Permute, Block, Unblock, Pad, Shuffle, Zip, Unzip,
-                                           identity_map, compose_ops, simplify_ops, is_identity)
+from dace.symbolic import int_ceil
+from dace.libraries.layout.algebra import (Digit, Permute, Block, Unblock, Pad, Shuffle, Zip, Unzip, identity_map,
+                                           compose_ops, simplify_ops, is_identity)
 
 N = sympy.Symbol('N', nonnegative=True, integer=True)
 M = sympy.Symbol('M', nonnegative=True, integer=True)
@@ -25,7 +26,7 @@ def test_permute_apply():
 def test_block_apply():
     # [N] blocked by 16 -> outer (0,16,ceil(N/16)) in place, inner (0,1,16) appended.
     m = compose_ops([Block(0, 16)], shape=[N])
-    assert m.digits == (Digit(0, 16, sympy.ceiling(N / 16)), Digit(0, 1, 16))
+    assert m.digits == (Digit(0, 16, int_ceil(N, 16)), Digit(0, 1, 16))
 
 
 def test_block_then_unblock_map_roundtrip_divisible():

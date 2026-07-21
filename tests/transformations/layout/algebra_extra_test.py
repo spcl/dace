@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 import sympy
 
+from dace.symbolic import int_ceil
 from dace.libraries.layout.algebra import (Digit, LayoutMap, Permute, Block, Unblock, Pad, Shuffle, Zip, Unzip,
                                            identity_map, compose_ops, simplify_ops, is_identity, physical_index_exprs,
                                            op_to_dict, op_from_dict, ops_to_list, ops_from_list)
@@ -80,13 +81,13 @@ def test_permute_inverse_roundtrips_layout():
 def test_block_splits_finest_digit_of_dim():
     # After Block(0,16) the finest digit is (0,1,16); Block(0,4) must split THAT one.
     m = compose_ops([Block(0, 16), Block(0, 4)], shape=[N])
-    assert m.digits == (Digit(0, 16, sympy.ceiling(N / 16)), Digit(0, 4, 4), Digit(0, 1, 4))
+    assert m.digits == (Digit(0, 16, int_ceil(N, 16)), Digit(0, 4, 4), Digit(0, 1, 4))
 
 
 def test_unblock_merges_finest_inner_first():
     # Block twice then Unblock(0,4): merges the (0,1,4) inner with its (0,4,4) partner.
     m = compose_ops([Block(0, 16), Block(0, 4), Unblock(0, 4)], shape=[N])
-    assert m.digits == (Digit(0, 16, sympy.ceiling(N / 16)), Digit(0, 1, 16))
+    assert m.digits == (Digit(0, 16, int_ceil(N, 16)), Digit(0, 1, 16))
 
 
 def test_pad_grows_coarsest_digit_and_dim_size():
