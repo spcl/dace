@@ -69,7 +69,7 @@ class NanobindCompiledSDFG:
     :note: This class will not unload the module.
     """
 
-    def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: List[str]):
+    def __init__(self, sdfg: "dace.SDFG", module: ModuleType, arg_names: List[str], gpu_error_check: bool = True):
         self._sdfg: "dace.SDFG" = sdfg
         self._module: ModuleType = module
         self._arg_names: List[str] = list(arg_names or [])
@@ -97,6 +97,8 @@ class NanobindCompiledSDFG:
 
         # Static per module; cached for the per-call GPU error check.
         self._has_gpu_code: bool = bool(self._handle.has_gpu_code)
+        # See the ``gpu_error_check`` property. Read directly on the (GPU-only) call path.
+        self._gpu_error_check: bool = bool(gpu_error_check)
 
     @property
     def sdfg(self) -> "dace.SDFG":
@@ -116,6 +118,20 @@ class NanobindCompiledSDFG:
     @property
     def has_gpu_code(self) -> bool:
         return self._handle.has_gpu_code
+
+    @property
+    def gpu_error_check(self) -> bool:
+        """Whether each call on a GPU SDFG checks the GPU runtime's last error afterwards.
+
+        Parity with the ctypes ``fast_call`` ``do_gpu_check``. Defaults to the
+        constructor argument (``True``); set to ``False`` to skip the check (a
+        small speedup). Has no effect on a CPU-only SDFG.
+        """
+        return self._gpu_error_check
+
+    @gpu_error_check.setter
+    def gpu_error_check(self, value: bool) -> None:
+        self._gpu_error_check = bool(value)
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the compiled SDFG.
@@ -140,7 +156,7 @@ class NanobindCompiledSDFG:
         if self._simple_call and not hooks_active:
             if self.do_not_execute is False:
                 self._handle(*args, **kwargs)
-            if self._has_gpu_code:
+            if self._has_gpu_code and self._gpu_error_check:
                 self._check_gpu_error()
             return None
 
@@ -164,7 +180,7 @@ class NanobindCompiledSDFG:
                 self._call_handle_with_hooks(kwargs)
             elif self.do_not_execute is False:
                 self._handle(**kwargs)
-            if self._has_gpu_code:
+            if self._has_gpu_code and self._gpu_error_check:
                 self._check_gpu_error()
             return None
 
@@ -181,7 +197,7 @@ class NanobindCompiledSDFG:
             self._call_handle_with_hooks(kwargs)
         elif self.do_not_execute is False:
             self._handle(**kwargs)
-        if self._has_gpu_code:
+        if self._has_gpu_code and self._gpu_error_check:
             self._check_gpu_error()
 
         # Process the return value.
@@ -372,23 +388,22 @@ class NanobindCompiledSDFG:
         """
         return list(self._handle.state_fields())
 
-    def get_state_struct(self) -> int:
-        """Returns the *raw pointer* to the state struct as an integer.
+    def get_state_struct(self) -> ctypes.Structure:
+        """Returns a live, mutable ``ctypes.Structure`` view of the state struct.
 
-        The state must be initialized; querying it beforehand raises. Combine
-        it with :meth:`state_fields` if you need to interpret the memory.
-        Callers must know exactly what they are doing - and whatever they are
-        doing with this pointer is most likely wrong.
+        Parity with ``CompiledSDFG.get_state_struct``: the structure overlays the
+        live state memory and exposes the leading pointer fields (as
+        ``c_void_p``) by name, so callers can ``getattr``/``setattr`` them. The
+        state must be initialized; querying it beforehand raises.
 
-        :note: The return value differs from the ctypes
-               ``CompiledSDFG.get_state_struct()``, which returns a
-               ``ctypes.Structure`` dynamically assembled from the parsed source
-               (its ``_try_parse_state_struct()``); here only the integer
-               pointer value is returned.
-        :todo: Align this function with the `ctypes` version.
+        :note: The structure aliases state memory owned by the handle; it must
+               not be used after :meth:`finalize`.
         """
         # ``state_pointer`` raises if the state is uninitialized or finalized.
-        return self._handle.state_pointer
+        ptr = self._handle.state_pointer
+        fields = [(name, ctypes.c_void_p) for name in self._handle.state_fields()]
+        state_struct_t = type('State', (ctypes.Structure, ), {'_fields_': fields})
+        return state_struct_t.from_address(ptr)
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable]:
         """Returns an arbitrary exported symbol as a callable, or None if absent.

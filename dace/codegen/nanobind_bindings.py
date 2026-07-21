@@ -417,15 +417,22 @@ def _structure_forward_decls(arglist):
 
 
 def _pointer_field_names(statestruct):
-    """Names of the pointer fields in the state-struct declarations (codegen source of truth)."""
+    """Leading consecutive pointer-field names of the state struct (codegen source of truth).
+
+    Mirrors the ctypes ``_try_parse_state_struct``: only the leading run of
+    pointer fields is returned, stopping at the first non-pointer or unparseable
+    declaration. This lets the names back a consecutively-laid-out
+    ``ctypes.Structure`` overlay (get_state_struct) with correct field offsets.
+    """
     names = []
     for decl in statestruct or []:
         decl = decl.strip().rstrip(';').strip()
         if '*' not in decl:
-            continue
+            break
         token = decl.split()[-1].lstrip('*')
-        if token.isidentifier():
-            names.append(token)
+        if not token.isidentifier():
+            break
+        names.append(token)
     return names
 
 

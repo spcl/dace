@@ -215,6 +215,35 @@ def test_nanobind_interface_state_pointer():
             handle.state_pointer  # finalized
 
 
+def test_nanobind_interface_get_state_struct_parity():
+    """get_state_struct exposes the same leading state-struct pointer fields as
+    the ctypes interface, as a live ctypes.Structure overlay of state memory."""
+    import ctypes
+
+    def build_and_fields(interface):
+        with set_temporary('compiler', 'interface', value=interface):
+            N = dace.symbol('N')
+            sdfg = dace.SDFG(f'ststruct_parity_{interface}')
+            sdfg.add_array('A', [N], dace.float64)
+            # A persistent transient becomes a named pointer field in the state struct.
+            sdfg.add_transient('buf', [N], dace.float64, lifetime=dace.AllocationLifetime.Persistent)
+            st = sdfg.add_state()
+            st.add_nedge(st.add_read('A'), st.add_write('buf'), dace.Memlet('A[0:N]'))
+            st.add_nedge(st.add_read('buf'), st.add_write('A'), dace.Memlet('buf[0:N]'))
+            csdfg = sdfg.compile()
+            csdfg(A=np.ones(8), N=np.int32(8))  # initialize the state
+            struct = csdfg.get_state_struct()
+            assert isinstance(struct, ctypes.Structure)
+            names = [name for name, _ in struct._fields_]
+            csdfg.finalize()
+            return names
+
+    nb_fields = build_and_fields('nanobind')
+    ct_fields = build_and_fields('ctypes')
+    assert nb_fields == ct_fields
+    assert any('buf' in f for f in nb_fields)  # the persistent transient's pointer field
+
+
 def test_nanobind_interface_rename_own_build_folder():
     """A collision-renamed program is compiled into its own build folder, not in-place."""
     import os
@@ -302,9 +331,17 @@ def test_nanobind_interface_workspace():
         assert isinstance(fields, list) and len(fields) > 0
         assert any('workspace' in f for f in fields)
 
-        # get_state_struct returns the raw state pointer on this interface,
-        # unlike the ctypes path which returns a ctypes.Structure view.
-        assert csdfg.get_state_struct() == csdfg._handle.state_pointer
+        # get_state_struct returns a live, mutable ctypes.Structure overlay of
+        # the state memory - parity with the ctypes interface.
+        import ctypes
+        struct = csdfg.get_state_struct()
+        assert isinstance(struct, ctypes.Structure)
+        assert [name for name, _ in struct._fields_] == fields
+        # The structure aliases the actual state memory at state_pointer.
+        assert ctypes.addressof(struct) == csdfg._handle.state_pointer
+        # The workspace pointer set via set_workspace is readable through it.
+        wsp_field = next(f for f in fields if 'workspace' in f)
+        assert getattr(struct, wsp_field) is not None
 
 
 def test_nanobind_interface_get_exported_function():
@@ -1493,6 +1530,52 @@ def test_nanobind_interface_gpu_error_check(monkeypatch):
         warnings_mod.simplefilter('always')
         csdfg(A=object())
     assert any('Could not get last error' in str(w.message) for w in caught)
+
+
+def test_nanobind_interface_gpu_error_check_disabled(monkeypatch):
+    """gpu_error_check disables the post-call GPU error check (replacing ctypes'
+    fast_call(do_gpu_check=False)): it defaults to the constructor argument and
+    is settable through the property."""
+    import types
+    from dace.codegen import common
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+
+    sdfg = dace.SDFG('gpu_error_disable_probe')
+    sdfg.add_array('A', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+
+    class FakeHandle:
+        has_gpu_code = True
+        return_names = ()
+        is_single_value_ret = False
+        callback_names = ()
+
+        def __call__(self, *args, **kwargs):
+            pass
+
+    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: FakeHandle(), __file__='<stub>')
+
+    class FakeRuntime:
+
+        def get_last_error_string(self):
+            return 'illegal memory access'
+
+    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime())
+
+    # Default (constructor arg True): a pending error raises.
+    csdfg = NanobindCompiledSDFG(sdfg, stub_module, ['A'])
+    assert csdfg.gpu_error_check is True
+    with pytest.raises(RuntimeError, match='illegal memory access'):
+        csdfg(A=object())
+
+    # Disabled through the property: the same pending error is ignored.
+    csdfg.gpu_error_check = False
+    assert csdfg.gpu_error_check is False
+    csdfg(A=object())  # does not raise
+
+    # Disabled through the constructor argument.
+    csdfg2 = NanobindCompiledSDFG(sdfg, stub_module, ['A'], gpu_error_check=False)
+    assert csdfg2.gpu_error_check is False
+    csdfg2(A=object())  # does not raise
 
 
 def test_nanobind_interface_finalize_exit_code_binding():
