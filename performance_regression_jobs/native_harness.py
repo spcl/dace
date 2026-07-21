@@ -23,7 +23,7 @@ import subprocess
 
 #: Serial (single-core) and two multi-core auto-parallelizing forms, plus the
 #: two experiment-facing lanes the unified run_perf.py sweeps:
-#:   compiler-seq      single-core -O3 -march=native -ffast-math (autovectorized,
+#:   compiler-seq      single-core -O3 -march=native + the fp guarantee flags (autovectorized,
 #:                     single thread) -- the sequential C++ baseline
 #:   compiler-autopar  multi-core auto-parallel (gcc -ftree-parallelize-loops=N
 #:                     -floop-parallelize-all -fopenmp); at -O3 this also autovecs
@@ -44,6 +44,7 @@ def _autopar_threads():
     except ValueError:
         return 4
 
+
 #: Optimization flags shared with DaCe's own compiler.cpu.args (see
 #: engine.configure_dace_process, which ensures these are present there too)
 #: so a native lane and a DaCe lane are compiled at the same optimization
@@ -54,7 +55,8 @@ def _autopar_threads():
 #: the runtime there and stays single-threaded) and links against the same
 #: OpenMP runtime across lanes -- see openmp_rpath_flags for making that runtime
 #: loadable at ctypes time.
-OPT_FLAGS = ('-O3', '-march=native', '-ffast-math', '-fopenmp')
+OPT_FLAGS = ('-O3', '-march=native', '-fno-math-errno', '-fno-trapping-math', '-fno-signed-zeros', '-freciprocal-math',
+             '-fopenmp')
 
 
 def openmp_rpath_flags(cc):
@@ -252,8 +254,7 @@ def _autopar_flags(cc):
 #: '-O3 ... -shared -fPIC <src> -o <so>').
 _LANE_SPEC = {
     'native-clang': (lambda: find_compiler('clang++'), lambda cc: _gcc_install_dir_flag(cc)),
-    'native-clang-polly-autopar':
-    (lambda: find_compiler('clang++'), lambda cc: _gcc_install_dir_flag(cc) + [
+    'native-clang-polly-autopar': (lambda: find_compiler('clang++'), lambda cc: _gcc_install_dir_flag(cc) + [
         '-mllvm', '-polly', '-mllvm', '-polly-parallel', '-mllvm', '-polly-parallel-force', '-mllvm',
         '-polly-process-unprofitable', '-lgomp'
     ]),
@@ -262,18 +263,15 @@ _LANE_SPEC = {
     # newer system g++-14/13/12 has it. Picking the newest g++ makes this lane a real Graphite
     # auto-parallelizer instead of silently failing to compile.
     'native-gcc-autopar':
-    (newest_gxx, lambda cc: [
-        f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp'
-    ]),
+    (newest_gxx, lambda cc: [f'-ftree-parallelize-loops={_autopar_threads()}', '-floop-parallelize-all', '-fopenmp']),
     # -- experiment-facing lanes (run_perf.py). Both follow the PHASE compiler
     #    (_perf_phase_cxx == DACE_PERF_CXX == run_perf --cxx) so a phase is fully
     #    LLVM or fully GCC, never mixed: 'seq' is a single-core autovectorized build
-    #    (OPT_FLAGS: -O3 -march=native -ffast-math) and 'autopar' adds the matching
+    #    (OPT_FLAGS: -O3 -march=native + the fp guarantee flags) and 'autopar' adds the matching
     #    auto-parallelizer (clang -> Polly, gcc -> Graphite; see _autopar_flags).
     'compiler-seq': (_perf_phase_cxx, _gcc_install_dir_flag),
     'compiler-autopar': (_perf_phase_cxx, _autopar_flags),
 }
-
 
 #: A compiler that doesn't recognize a flag often warns and exits 0 rather
 #: than erroring -- e.g. a newer icpx silently dropping '-parallel' would

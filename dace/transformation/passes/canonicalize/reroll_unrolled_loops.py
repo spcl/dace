@@ -411,6 +411,12 @@ class RerollUnrolledLoops(ppl.Pass):
             lane_nodes[st] = per_lane_unique
             merge_nodes[st] = merges
             for d in distinct:
+                # Which arrays a lane reads, not just what its tasklets say. Boundary AccessNodes are
+                # excluded from a lane component by construction, so on code alone two lanes reading
+                # DIFFERENT arrays look identical and the re-roll drops a real access. ``_lane_sig``
+                # below folds in the read names for the same reason.
+                codes[d].extend(sorted(e.src.data for e in per_lane_edges[d] if isinstance(e.src, nodes.AccessNode)))
+                codes[d].extend(sorted(e.dst.data for e in per_lane_edges[d] if isinstance(e.dst, nodes.AccessNode)))
                 codes[d].extend(n.code.as_string for n in per_lane_unique[d] if isinstance(n, nodes.Tasklet))
         codes = {d: sorted(c) for d, c in codes.items()}
         if not codes[0] or any(codes[d] != codes[0] for d in distinct[1:]):

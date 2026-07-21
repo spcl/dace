@@ -522,12 +522,18 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         rewritten = 0
         for cfg in g.all_control_flow_regions(recursive=True):
             if isinstance(cfg, LoopRegion):
-                for attr in ("loop_condition", "init_statement", "update_statement"):
-                    cb = getattr(cfg, attr, None)
-                    new = self._rewritten_codeblock(cb)
-                    if new is not cb:
-                        setattr(cfg, attr, new)
-                        rewritten += 1
+                new = self._rewritten_codeblock(cfg.loop_condition)
+                if new is not cfg.loop_condition:
+                    cfg.loop_condition = new
+                    rewritten += 1
+                new = self._rewritten_codeblock(cfg.init_statement)
+                if new is not cfg.init_statement:
+                    cfg.init_statement = new
+                    rewritten += 1
+                new = self._rewritten_codeblock(cfg.update_statement)
+                if new is not cfg.update_statement:
+                    cfg.update_statement = new
+                    rewritten += 1
             elif isinstance(cfg, ConditionalBlock):
                 for branch in cfg.branches:  # each branch is a ``[condition, body]`` pair
                     new = self._rewritten_codeblock(branch[0])

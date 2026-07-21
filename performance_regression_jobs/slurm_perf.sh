@@ -137,7 +137,7 @@ SRUN_GPU=""
 if [ "$DEVICE" = "gpu" ]; then
     export DACE_compiler_cuda_cuda_arch=90
     export DACE_compiler_cuda_max_concurrent_streams=0
-    export DACE_compiler_cuda_args="-Xptxas -O3 -Xcompiler -O3 -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter"
+    export DACE_compiler_cuda_args="-Xptxas -O3 -Xcompiler -O3 -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter"
     export CUDAHOSTCXX=/usr/bin/g++-14
     CXX=/usr/bin/g++-14
     SRUN_GPU="--gpus-per-task=1"

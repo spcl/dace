@@ -62,6 +62,7 @@ import sympy
 from dace import symbolic
 from dace.sdfg import SDFG, nodes
 from dace.subsets import Range
+from dace.transformation.passes.vectorization.utils.symbolic_polymorphism import free_symbol_names
 
 
 class PerDimKind(enum.Enum):
@@ -179,7 +180,7 @@ def _direct_symbols(expr: sympy.Expr) -> Set[str]:
     # Subscript = gather stop boundary: inner symbols are gather-index inputs, not address arithmetic
     if isinstance(expr, symbolic.Subscript):
         return set()
-    args = getattr(expr, 'args', None)
+    args = expr.args if isinstance(expr, sympy.Basic) else ()
     if not args:
         return set()
     result: Set[str] = set()
@@ -243,7 +244,7 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
     :param inner_sdfg: Unused (kept for call-site symmetry / future use).
     :returns: RHS expression string, or ``None`` when no assignment reaches.
     """
-    region = getattr(state, "parent_graph", None)
+    region = state.parent_graph
     if region is None:
         return None
     visited = set()
@@ -511,7 +512,7 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
     :param state: Access state for reaching-def disambiguation.
     :returns: A new :class:`~dace.subsets.Range` if anything changed, else ``None``.
     """
-    if inner_sdfg is None or subset is None or not hasattr(subset, "ranges"):
+    if inner_sdfg is None or not isinstance(subset, Range):
         return None
     defs = build_symbol_definition_map(inner_sdfg, state)
     if not defs:
@@ -537,8 +538,7 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
         changed = changed or c1 or c2
     if not changed:
         return None
-    from dace.subsets import Range as _Range
-    return _Range(new_ranges)
+    return Range(new_ranges)
 
 
 def _is_tile_dependent(symbol: str,
@@ -644,7 +644,7 @@ def _gather_subscripts(expr: sympy.Expr) -> List[symbolic.Subscript]:
     result: List[symbolic.Subscript] = []
     if isinstance(expr, symbolic.Subscript):
         result.append(expr)
-    args = getattr(expr, 'args', None)
+    args = expr.args if isinstance(expr, sympy.Basic) else ()
     if args:
         for arg in args:
             result.extend(_gather_subscripts(arg))
@@ -945,7 +945,7 @@ def classify_tile_access(subset: Range,
                 # symbolic coefficients whose tile-independence we can't prove.
                 tile_dep_coeff = False
                 if inner_sdfg is not None:
-                    coeff_syms = {str(s) for s in coeff.free_symbols} if hasattr(coeff, "free_symbols") else set()
+                    coeff_syms = free_symbol_names(coeff)
                     if any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in coeff_syms):
                         tile_dep_coeff = True
                 if tile_dep_coeff:
@@ -1000,7 +1000,7 @@ def classify_tile_access(subset: Range,
             if c is None:  # non-affine in tv (e.g. i**2)
                 multi_var_gather = True
                 break
-            c_syms = {str(s) for s in c.free_symbols} if hasattr(c, "free_symbols") else set()
+            c_syms = free_symbol_names(c)
             if (c_syms & iter_var_set) or (inner_sdfg is not None
                                            and any(_is_tile_dependent(s, iter_var_set, inner_sdfg) for s in c_syms)):
                 multi_var_gather = True

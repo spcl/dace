@@ -199,12 +199,16 @@ def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, comp
 
 def id_for(n) -> Tuple:
     """A stable "structural id" for a node, so we can match deepcopy-pair nodes
-    by their visible shape (label/data + type) without relying on Python ``id``."""
+    by their visible shape (label/data + type) without relying on Python ``id``.
+
+    ``label`` is missing only on ``Node``, ``EntryNode`` and ``ExitNode``, which are abstract
+    bases; every node that can sit in a state resolves it.
+    """
     if isinstance(n, nodes.AccessNode):
         return ('access', n.data)
     if isinstance(n, nodes.Tasklet):
         return ('tasklet', n.label, n.code.as_string)
-    return (type(n).__name__, getattr(n, 'label', None))
+    return (type(n).__name__, n.label)
 
 
 @properties.make_properties

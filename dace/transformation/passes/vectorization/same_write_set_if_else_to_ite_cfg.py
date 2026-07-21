@@ -795,9 +795,9 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         src = edge.src
         sdfg = state.sdfg
         if not isinstance(src, dace.nodes.AccessNode) or sdfg.arrays[src.data].total_size != 1:
-            raise NotImplementedError(
-                "SameWriteSetIfElseToITECFG: predicated WCR write must come from a "
-                f"single-element access node (got {type(src).__name__} {getattr(src, 'data', '')!r})")
+            detail = src.data if isinstance(src, dace.nodes.AccessNode) else type(src).__name__
+            raise NotImplementedError("SameWriteSetIfElseToITECFG: predicated WCR write must come from a "
+                                      f"single-element access node (got {detail!r})")
         op_code = _wcr_apply_code(edge.data.wcr, "_base", "_acc")
         then_name = write_node.data
         src_name = src.data

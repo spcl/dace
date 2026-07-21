@@ -29,7 +29,7 @@ variable -- so it fires only on the re-rolled tile/remainder shape and its kin,
 never on unrelated adjacent loops.
 """
 import re
-from typing import List, Optional, Tuple
+from typing import Optional, Tuple
 
 import sympy
 
@@ -62,7 +62,7 @@ def _int_floor_to_sympy(expr):
     which is exactly what an adjacency check between a tile bound and a
     remainder start needs.
     """
-    return expr.replace(lambda x: hasattr(x, 'func') and x.func.__name__ == 'int_floor' and len(x.args) == 2,
+    return expr.replace(lambda x: x.func.__name__ == 'int_floor' and len(x.args) == 2,
                         lambda x: sympy.floor(x.args[0] / x.args[1]))
 
 

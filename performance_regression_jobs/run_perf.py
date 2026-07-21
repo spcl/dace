@@ -10,13 +10,13 @@ vectorizer, native lanes are compiled fast-math either way):
   canon_vs   dace-autoopt      engine.pipeline_auto_opt
              dace-canon        engine.pipeline_canon
              dace-parallel     engine.pipeline_parallel
-             compiler-seq      native single-core -O3 -march=native -ffast-math
+             compiler-seq      native single-core -O3 -march=native + fp guarantee flags
              compiler-autopar  native gcc auto-parallelized C
              numpy             timed numpy oracle -- npbench/polybench ONLY
 
   vector_vs  dace-canon-vec    engine.pipeline_canon_vectorize
              dace-parallel-vec engine.pipeline_parallel_vectorize
-             compiler-seq      native single-core -O3 -march=native -ffast-math
+             compiler-seq      native single-core -O3 -march=native + fp guarantee flags
              compiler-autopar  native gcc auto-parallelized C
              numpy             timed numpy oracle -- npbench/polybench ONLY
 
@@ -57,10 +57,12 @@ EXPERIMENTS = {
     # Graphite (gcc) -- rather than the single cxx-following 'compiler-autopar', so one job reports
     # both regardless of --cxx (matches the tsvc corpora, which already run both). 'compiler-seq'
     # stays the single-core, cxx-following reference.
-    'canon_vs': dict(dace=['dace-autoopt', 'dace-canon', 'dace-parallel'],
-                     native=['compiler-seq', 'native-clang-polly-autopar', 'native-gcc-autopar']),
-    'vector_vs': dict(dace=['dace-canon-vec', 'dace-parallel-vec'],
-                      native=['compiler-seq', 'native-clang-polly-autopar', 'native-gcc-autopar']),
+    'canon_vs':
+    dict(dace=['dace-autoopt', 'dace-canon', 'dace-parallel'],
+         native=['compiler-seq', 'native-clang-polly-autopar', 'native-gcc-autopar']),
+    'vector_vs':
+    dict(dace=['dace-canon-vec', 'dace-parallel-vec'],
+         native=['compiler-seq', 'native-clang-polly-autopar', 'native-gcc-autopar']),
 }
 
 #: base result-folder preset token. On GPU the '-gpu' suffix is what
@@ -169,8 +171,7 @@ def process_kernel(corpus, kernel_name, recipe, lanes, args, rank, native_libs, 
         if remaining <= 0:
             continue
         print(f'[{kernel_name}] {lane}: measuring {remaining} more rep(s)')
-        ok, payload = _time_lane(corpus, kernel_name, recipe, lane, remaining, native_libs, args.timeout,
-                                 args.device)
+        ok, payload = _time_lane(corpus, kernel_name, recipe, lane, remaining, native_libs, args.timeout, args.device)
         if ok:
             engine.append_results(ldir, lane, payload, have)
         else:
@@ -204,9 +205,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('--experiment', required=True, choices=sorted(EXPERIMENTS), help='which experiment to run')
     ap.add_argument('--corpus', required=True, choices=sorted(adapters.ADAPTERS), help='which corpus to sweep')
-    ap.add_argument('--device', choices=('cpu', 'gpu'), default='cpu',
+    ap.add_argument('--device',
+                    choices=('cpu', 'gpu'),
+                    default='cpu',
                     help="run the dace lanes on cpu or gpu (native/numpy lanes are always cpu). GPU results "
-                         "land in a '-gpu' preset folder so they sit beside the cpu ones in the same tree.")
+                    "land in a '-gpu' preset folder so they sit beside the cpu ones in the same tree.")
     engine.add_common_args(ap)
     args = ap.parse_args()
 

@@ -48,8 +48,6 @@ fed the moved blocks is re-emitted inside the guarded region so nothing is silen
 import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import sympy
-
 from dace import SDFG, properties, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
@@ -121,7 +119,11 @@ def _last_reached_iterate(loop: LoopRegion):
     stride_s = symbolic.pystr_to_symbolic(stride)
     if stride_s == 1:
         return end_s
-    return symbolic.simplify(init_s + sympy.floor((end_s - init_s) / stride_s) * stride_s)
+    # ``int_floor``, never ``sympy.floor`` over a division: ``simplify`` distributes the floor into
+    # a rational and ``sym2cpp`` prints it without the floor, so the guard below compares against a
+    # truncated value and the post-body fires mid-loop. Same hazard documented in
+    # ``materialize_loop_exit_symbols``.
+    return symbolic.simplify(init_s + symbolic.int_floor(end_s - init_s, stride_s) * stride_s)
 
 
 def _has_outer_carry(subset, iv: str) -> bool:

@@ -385,8 +385,8 @@ required:
                         type: str
                         title: Arguments
                         description: Compiler argument flags
-                        default: '-fPIC -Wall -Wextra -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
-                        default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
+                        default: '-fPIC -Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default_Windows: '/O2 /fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
                         type: str
@@ -1027,14 +1027,14 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: Compiler argument flags for CUDA
-                        default: '-lineinfo -Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-O3 --use_fast_math'
+                        default: '-lineinfo -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter'
+                        default_Windows: '-O3'
 
                     hip_args:
                         type: str
                         title: hipcc Arguments
                         description: Compiler argument flags for HIP
-                        default: '-fPIC -O3 -ffast-math -Wno-unused-parameter'
+                        default: '-fPIC -O3 -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str

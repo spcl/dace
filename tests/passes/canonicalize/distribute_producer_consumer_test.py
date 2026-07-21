@@ -30,18 +30,23 @@ N = dace.symbol('N')
 
 
 def _to_loops(prog):
-    """Run the canonicalize recipe up to (not including) the loop_to_x stage,
-    where the body is loops-only -- the window this pass runs in."""
+    """Run the canonicalize recipe up to (not including) the ``distribute`` stage.
+
+    Stopping at ``distribute`` -- not at the later ``loop_to_x`` -- is what leaves this pass
+    something to do: the ``distribute`` stage IS this pass, so running through it hands the tests
+    an already-distributed SDFG on which a second application correctly reports ``None``.
+    """
     sdfg = prog.to_sdfg(simplify=True)
     for label, unit in _build_stages():
-        if label == 'loop_to_x':
+        if label == 'distribute':
             break
         unit.apply_pass(sdfg, {})
     return sdfg
 
 
 def _nloops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
+               if isinstance(r, LoopRegion) and r.loop_variable)
 
 
 def _run_full(prog, **kw):
@@ -158,9 +163,9 @@ def test_backward_dependence_refuses():
     def war(a: dace.float64[M], b: dace.float64[M]):
         for i in range(M):
             for j in range(1):
-                b[i] += a[i]          # reads a[i]
+                b[i] += a[i]  # reads a[i]
             for j in range(1):
-                a[i] = b[i] * 0.5     # later block WRITES a that the earlier read
+                a[i] = b[i] * 0.5  # later block WRITES a that the earlier read
 
     sdfg = _to_loops(war)
     groups_split = DistributeProducerConsumerLoop().apply_pass(sdfg, {})

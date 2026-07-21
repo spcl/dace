@@ -207,7 +207,7 @@ def _is_constant_positive_int(expr) -> Optional[int]:
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if not getattr(s, 'is_number', False) or not getattr(s, 'is_Integer', False):
+    if not s.is_number or not s.is_Integer:
         return None
     v = int(s)
     return v if v > 0 else None
@@ -218,7 +218,7 @@ def _is_zero(expr) -> bool:
         s = symbolic.simplify(expr)
     except Exception:
         return False
-    return getattr(s, 'is_number', False) and s == 0
+    return s.is_number and s == 0
 
 
 def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
@@ -248,8 +248,8 @@ def _tile_size(expr) -> Optional[Tuple[symbolic.SymbolicType, Optional[int]]]:
         s = symbolic.simplify(expr)
     except Exception:
         return None
-    if getattr(s, 'is_number', False):
-        if not getattr(s, 'is_Integer', False):
+    if s.is_number:
+        if not s.is_Integer:
             return None
         v = int(s)
         if v <= 1:
@@ -351,7 +351,7 @@ def _diff_is_zero(a, b) -> bool:
         diff = symbolic.simplify(a - b)
     except Exception:
         return False
-    if hasattr(diff, "is_number") and diff.is_number:
+    if diff.is_number:
         try:
             return int(diff) == 0
         except (TypeError, ValueError):
@@ -403,13 +403,25 @@ def _all_memlet_uses_only(inner: LoopRegion, allowed_atoms: Set[str], forbidden_
     return True
 
 
+def depends_only_on_sum(ex: sympy.Basic, i_sym: sympy.Symbol, ii_sym: sympy.Symbol) -> bool:
+    """``True`` iff ``ex`` reads ``i`` and ``ii`` only through the sum ``i + ii``.
+
+    The case-A rewrite substitutes ``ii -> k - i`` and then ``i -> 0``, which preserves a
+    subexpression's value exactly when that subexpression is a function of ``i + ii``: any such
+    function has equal partials in both. Co-occurrence is NOT sufficient -- ``2*i + ii`` and
+    ``i**2 + ii**2`` both mention the two together yet collapse to ``k`` and ``k**2``. Anything
+    sympy cannot differentiate (``int_floor`` and friends) refuses, so the audit fails closed.
+    """
+    try:
+        return symbolic.simplify(sympy.diff(ex, i_sym) - sympy.diff(ex, ii_sym)) == 0
+    except (TypeError, ValueError, AttributeError, NotImplementedError):
+        return False
+
+
 def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, case: str) -> bool:
     """The structural safety check the docstring describes.
 
-    Case A (``ii in range(0, K)``): the combined expression ``i + ii`` must be
-    the *only* way ``i`` and ``ii`` enter any memlet. Conservative test: every
-    memlet-subset expression that mentions ``i`` must also mention ``ii``, and
-    vice-versa.
+    Case A (``ii in range(0, K)``): ``i`` and ``ii`` must enter every memlet only as ``i + ii``.
 
     Case B (``ii in range(i, i + K)``): ``i`` must NEVER appear in a memlet
     (only ``ii``). The new iterator ``k`` becomes ``ii`` directly.
@@ -421,13 +433,7 @@ def _audit_combined_access(inner: LoopRegion, outer_var: str, inner_var: str, ca
             if i_sym in ex.free_symbols:
                 return False
         return True
-    # Case A: ``i`` and ``ii`` must always appear together.
-    for ex in _collect_body_subset_exprs(inner):
-        has_i = i_sym in ex.free_symbols
-        has_ii = ii_sym in ex.free_symbols
-        if has_i != has_ii:
-            return False
-    return True
+    return all(depends_only_on_sum(ex, i_sym, ii_sym) for ex in _collect_body_subset_exprs(inner))
 
 
 @properties.make_properties

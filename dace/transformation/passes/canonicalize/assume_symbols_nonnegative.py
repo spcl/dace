@@ -48,6 +48,26 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 
 
+def _names_already_nonnegative(sdfg: SDFG) -> set:
+    """Names whose symbol instances inside ``sdfg`` already carry ``nonnegative=True``.
+
+    ``symbolic.symbol(name, dtype=dtype)`` builds a FRESH symbol and does not recall assumptions
+    set earlier, so asking it whether a name is nonnegative always answers ``None``. The assumption
+    lives on the symbol objects ``replace_dict`` threaded into the descriptors, which is where this
+    reads it -- otherwise the pass re-marks every symbol on every run and never reports ``None``,
+    so a fixed-point pipeline containing it cannot converge.
+
+    :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
+    :returns: The set of symbol names already assumed nonnegative.
+    """
+    assumed = set()
+    for desc in sdfg.arrays.values():
+        for expr in (*desc.shape, *desc.strides, desc.total_size):
+            if isinstance(expr, sympy.Basic):
+                assumed |= {str(s) for s in expr.free_symbols if s.is_nonnegative}
+    return assumed
+
+
 def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
     """Set the SymPy ``nonnegative=True`` assumption on every signed-integer free symbol of
     ``sdfg`` (and its nested SDFGs), in place.
@@ -71,11 +91,12 @@ def set_symbol_nonnegative_assumptions(sdfg: SDFG) -> Optional[int]:
         # sorted: ``free_symbols`` is a set of STRINGS (per-process randomized hashing). The substitutions
         # happen to commute here, but the replacement dict's order is otherwise arbitrary -- sorting is free
         # and matches _signed_integer_free_symbols below.
+        assumed = _names_already_nonnegative(g)
         for name in sorted(g.free_symbols):
             dtype = g.symbols.get(name)
             if dtype not in _SIGNED_INTEGER_DTYPES:
                 continue
-            if symbolic.symbol(name, dtype=dtype).is_nonnegative:  # already nonnegative
+            if name in assumed:
                 continue
             repl[name] = symbolic.symbol(name, dtype=dtype, nonnegative=True)
         if repl:
