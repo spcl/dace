@@ -1598,6 +1598,7 @@ def test_nanobind_interface_float16_scalar_still_rejected():
         generate_bindings_code(sdfg)
 
 
+@pytest.mark.skipif(sys.platform == 'win32', reason='half compile probe uses g++')
 def test_nanobind_interface_float16_end_to_end():
     """E2E: a float16[N] in / float16[N] out program round-trips through the
     real compiled nanobind module, and a passed float16 array is by-reference."""
