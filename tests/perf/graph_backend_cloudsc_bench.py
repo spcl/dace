@@ -38,14 +38,19 @@ from dace.codegen.codegen import generate_code
 
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
                                                             generate_cloudsc_inputs, make_sequential)
-from tests.perf.cloudsc_backend_pipeline import filtered_inputs, run_pipeline
+from tests.perf.cloudsc_backend_pipeline import (filtered_inputs, run_pipeline, run_simplify, specialize_and_unroll)
 
 BACKENDS = ['networkx', 'rustworkx']
-PHASES = ['simplify', 'config_prop_loopunroll', 'codegen', 'compile', 'serialize', 'deserialize']
+PHASES = [
+    'frontend', 'simplify', 'codegen_simplified', 'config_prop_loopunroll', 'codegen', 'compile', 'serialize',
+    'deserialize'
+]
 PHASE_LABELS = {
-    'simplify': 'simplify',
+    'frontend': 'python->sdfg',
+    'simplify': 'sdfg->simplified',
+    'codegen_simplified': 'simplified->codegen',
     'config_prop_loopunroll': 'config-prop+loopunroll',
-    'codegen': 'codegen',
+    'codegen': 'codegen(unrolled)',
     'compile': 'compile',
     'serialize': 'serialize',
     'deserialize': 'deserialize',
@@ -85,10 +90,31 @@ def check_correctness(reference: dace.SDFG, backend: str) -> None:
 def run_one_repetition(reference: dace.SDFG, backend: str, tmp_dir: str, rep: int) -> Dict[str, float]:
     """Run the full timed pipeline once under ``backend``, starting from a fresh
     private copy of ``reference``. Returns ``{phase: seconds}``."""
-    sdfg = copy.deepcopy(reference)
+    times: Dict[str, float] = {}
+
+    # python -> SDFG, measured per repetition rather than reusing the module-level reference:
+    # the frontend parse is the phase being timed here, so it has to actually run. simplify=False
+    # keeps it a pure parse, with simplification measured as its own phase below.
+    with graphlib.set_default_backend(backend):
+        t0 = time.perf_counter()
+        sdfg = build_cloudsc_sdfg(simplify=False)
+        times['frontend'] = time.perf_counter() - t0
     make_sequential(sdfg)
 
-    times: Dict[str, float] = run_pipeline(sdfg, backend)
+    # SDFG -> simplified, then codegen straight off the SIMPLIFIED graph (before config-prop and
+    # unrolling) so that cost is attributable on its own -- 'codegen' further down is the
+    # post-unroll one, a much bigger graph, and the two are not comparable.
+    times['simplify'] = run_simplify(sdfg, backend)
+    with graphlib.set_default_backend(backend):
+        simplified = copy.deepcopy(sdfg)
+        t0 = time.perf_counter()
+        generate_code(simplified)
+        times['codegen_simplified'] = time.perf_counter() - t0
+
+    pass_time, applied = specialize_and_unroll(sdfg, backend)
+    if applied == 0:
+        raise RuntimeError(f'backend={backend!r}: LoopUnroll found nothing to unroll after simplify')
+    times['config_prop_loopunroll'] = pass_time
 
     with graphlib.set_default_backend(backend):
         t0 = time.perf_counter()
