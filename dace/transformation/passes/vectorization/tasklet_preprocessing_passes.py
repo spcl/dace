@@ -3,7 +3,7 @@
 power expansion, type-cast removal, math-prefix stripping, and STD-to-DaCe
 math replacement."""
 import dace
-from typing import Any, Callable, Dict, Optional, Set
+from typing import Any, Callable, Dict, Optional
 import ast
 import math
 import re
@@ -17,7 +17,7 @@ from dace.transformation.helpers import CodeBlock
 def _rewrite_python_tasklet_bodies(
         sdfg: SDFG,
         rewrite: Callable[[str], str],
-        filter_node: Optional[Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool]] = None) -> None:
+        filter_node: Optional[Callable[[Any, "dace.SDFGState", "dace.sdfg.nodes.Tasklet"], bool]] = None) -> int:
     """Apply ``rewrite`` to every Python tasklet body in ``sdfg`` recursively.
 
     :param sdfg: the SDFG whose Python tasklets are rewritten in place.
@@ -25,7 +25,9 @@ def _rewrite_python_tasklet_bodies(
         code is updated only if the result differs.
     :param filter_node: optional per-tasklet predicate; if it returns False
         the rewrite is skipped for that tasklet.
+    :returns: how many tasklet bodies actually changed.
     """
+    rewritten = 0
     for node, graph in sdfg.all_nodes_recursive():
         if not isinstance(node, dace.sdfg.nodes.Tasklet):
             continue
@@ -37,6 +39,13 @@ def _rewrite_python_tasklet_bodies(
         new_ast_str = rewrite(ast_str)
         if new_ast_str != ast_str:
             node.code = CodeBlock(new_ast_str, language=dace.Language.Python)
+            # Re-read through CodeBlock before counting: it round-trips the source through the AST
+            # unparser, so a rewrite that only changes spelling lands back on the original string.
+            # Counting the intent rather than the result would report a modification on every
+            # re-run and stop a fixpoint pipeline from ever converging.
+            if node.code.as_string != ast_str:
+                rewritten += 1
+    return rewritten
 
 
 class PowerOperatorExpander(ast.NodeTransformer):
@@ -431,15 +440,15 @@ class _BodyRewritePass(ppl.Pass):
     def _rewrite(self, src: str) -> str:
         raise NotImplementedError
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        """Apply the subclass rewrite to all Python tasklet bodies, then validate.
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Apply the subclass rewrite to all Python tasklet bodies.
 
         :param sdfg: the SDFG rewritten in place.
         :param pipeline_results: unused pipeline results.
-        :returns: None.
+        :returns: how many tasklet bodies changed, or None if none did.
         """
-        _rewrite_python_tasklet_bodies(sdfg, self._rewrite)
-        return None
+        rewritten = _rewrite_python_tasklet_bodies(sdfg, self._rewrite)
+        return rewritten or None
 
 
 @properties.make_properties
@@ -508,8 +517,9 @@ class RewriteModuloToPyMod(_BodyRewritePass):
         new = _rewrite_modulo(src)
         return CodeBlock(new, language=dace.Language.Python) if new != src else cb
 
-    def _rewrite_control_flow(self, g: SDFG) -> None:
+    def _rewrite_control_flow(self, g: SDFG) -> int:
         """Rewrite ``%`` in loop-bound codeblocks and branch conditions of ``g``."""
+        rewritten = 0
         for cfg in g.all_control_flow_regions(recursive=True):
             if isinstance(cfg, LoopRegion):
                 for attr in ("loop_condition", "init_statement", "update_statement"):
@@ -517,27 +527,35 @@ class RewriteModuloToPyMod(_BodyRewritePass):
                     new = self._rewritten_codeblock(cb)
                     if new is not cb:
                         setattr(cfg, attr, new)
+                        rewritten += 1
             elif isinstance(cfg, ConditionalBlock):
                 for branch in cfg.branches:  # each branch is a ``[condition, body]`` pair
                     new = self._rewritten_codeblock(branch[0])
                     if new is not branch[0]:
                         branch[0] = new
+                        rewritten += 1
+        return rewritten
 
-    def _rewrite_interstate_edges(self, g: SDFG) -> None:
+    def _rewrite_interstate_edges(self, g: SDFG) -> int:
         """Rewrite ``%`` in interstate-edge conditions and assignment RHS of ``g``."""
+        rewritten = 0
         for e in g.all_interstate_edges(recursive=True):
             ise = e.data
             new_cond = self._rewritten_codeblock(ise.condition)
             if new_cond is not ise.condition:
                 ise.condition = new_cond
+                rewritten += 1
             for var, rhs in list(ise.assignments.items()):
                 if "%" in rhs:
                     new_rhs = _rewrite_modulo(rhs)
                     if new_rhs != rhs:
                         ise.assignments[var] = new_rhs
+                        rewritten += 1
+        return rewritten
 
-    def _rewrite_memlets_and_ranges(self, g: SDFG) -> None:
+    def _rewrite_memlets_and_ranges(self, g: SDFG) -> int:
         """Rewrite symbolic ``Mod`` in memlet subsets and map ranges of ``g``."""
+        rewritten = 0
         for state in g.all_states():
             for e in state.edges():
                 m = e.data
@@ -545,28 +563,32 @@ class RewriteModuloToPyMod(_BodyRewritePass):
                     continue
                 if m.subset is not None and _subset_has_mod(m.subset):
                     m.subset = _rewrite_subset_modulo(m.subset)
+                    rewritten += 1
                 if m.other_subset is not None and _subset_has_mod(m.other_subset):
                     m.other_subset = _rewrite_subset_modulo(m.other_subset)
+                    rewritten += 1
             for node in state.nodes():
                 if isinstance(node, dace.nodes.MapEntry) and _subset_has_mod(node.map.range):
                     node.map.range = _rewrite_subset_modulo(node.map.range)
+                    rewritten += 1
+        return rewritten
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        """Rewrite ``%`` -> ``py_mod`` across every location of ``sdfg``, then validate.
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Rewrite ``%`` -> ``py_mod`` across every location of ``sdfg``.
 
         :param sdfg: the SDFG rewritten in place.
         :param pipeline_results: unused pipeline results.
-        :returns: None.
+        :returns: how many sites were rewritten, or None if none were.
         """
         # Tasklet bodies (recurses through nested SDFGs on its own).
-        _rewrite_python_tasklet_bodies(sdfg, _rewrite_modulo)
+        rewritten = _rewrite_python_tasklet_bodies(sdfg, _rewrite_modulo)
         # The remaining sites are per-SDFG (``all_states`` / ``all_control_flow_regions``
         # / ``all_interstate_edges`` do NOT descend into nested SDFGs), so walk each.
         for g in sdfg.all_sdfgs_recursive():
-            self._rewrite_control_flow(g)
-            self._rewrite_interstate_edges(g)
-            self._rewrite_memlets_and_ranges(g)
-        return None
+            rewritten += self._rewrite_control_flow(g)
+            rewritten += self._rewrite_interstate_edges(g)
+            rewritten += self._rewrite_memlets_and_ranges(g)
+        return rewritten or None
 
 
 @properties.make_properties
@@ -585,16 +607,17 @@ class RemoveMathCall(ppl.Pass):
     def depends_on(self):
         return {}
 
-    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
-        """Strip ``math.`` from the RHS of every Python assignment tasklet, then validate.
+    def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Strip ``math.`` from the RHS of every Python assignment tasklet.
 
         :param sdfg: the SDFG rewritten in place.
         :param pipeline_results: unused pipeline results.
-        :returns: None.
+        :returns: how many tasklet bodies changed, or None if none did.
         """
         # RemoveMathCall is shaped differently: it splits the tasklet body on " = ", rewrites
         # only the RHS, and asserts the prefix is gone afterwards. The body-rewrite helper does
         # not match this shape, so the loop is open-coded here.
+        rewritten = 0
         for node, _ in sdfg.all_nodes_recursive():
             if not isinstance(node, dace.sdfg.nodes.Tasklet):
                 continue
@@ -609,6 +632,11 @@ class RemoveMathCall(ppl.Pass):
             new_ast_right = _remove_math_prefix_from_source(ast_right)
             if new_ast_right != ast_right:
                 node.code = CodeBlock(ast_left + " = " + new_ast_right, language=dace.Language.Python)
+                # Count what CodeBlock actually kept, not what was intended -- see
+                # _rewrite_python_tasklet_bodies: the unparser round trip can undo a spelling-only
+                # change, and over-reporting stops a fixpoint pipeline converging.
+                if node.code.as_string != ast_str:
+                    rewritten += 1
             assert "math." not in new_ast_right
             assert "math." not in node.code.as_string
-        return None
+        return rewritten or None
