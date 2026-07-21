@@ -616,6 +616,7 @@ def auto_optimize(sdfg: SDFG,
         if use_gpu_storage:
             apply_gpu_storage(sdfg)
         sdfg.apply_gpu_transformations()
+        #sdfg.view()
         sdfg.simplify()
 
     # fuse subgraphs greedily
@@ -649,7 +650,7 @@ def auto_optimize(sdfg: SDFG,
     # NOTE: We need to `infer_types` in case a LibraryNode expands to other LibraryNodes (e.g., np.linalg.solve)
     infer_types.infer_connector_types(sdfg)
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
-    sdfg.expand_library_nodes()
+    #sdfg.expand_library_nodes()
 
     # TODO(later): Safe vectorization
 

@@ -9,7 +9,8 @@ from dace.transformation.transformation import explicit_cf_compatible
 from warnings import warn
 from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 
-VERBOSE = False
+VERBOSE = True
+PRINT_NAMES = 500
 
 class OffloadingIRNode:
     # INVARIANT: IR-trees are always DAGs
@@ -45,8 +46,8 @@ class OffloadingIRNode:
         return self.__repr__()
     def _get_str(self, visited_set, len_before):
         s = f"{self.debug_name}:"
-        spaces = 50 - (len_before + len(s))
-        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set if len(name) <= 500])}, gpu = {sorted([name for name in self.gpu_set if len(name) <= 5])}\n"
+        spaces = 40 - (len_before + len(s))
+        s += spaces * " " + f"cpu = {sorted([name for name in self.cpu_set if len(name) <= PRINT_NAMES])}, gpu = {sorted([name for name in self.gpu_set if len(name) <= PRINT_NAMES])}\n"
 
         if self in visited_set:
             return s
@@ -181,7 +182,6 @@ class OffloadToAccelerator(ppl.Pass):
         # step 2 & 3: copy analysis & create IR to store analysis results
         if VERBOSE: print("--- Analysis---")
         sdfgIR = self.sdfg_to_IR(sdfg)
-        if VERBOSE: print(f"--- full IR ---\n{sdfgIR}\n\n")
 
         # step 4: insert copies based on IR
         if VERBOSE: print("--- Copies ---")
@@ -610,7 +610,7 @@ class OffloadToAccelerator(ppl.Pass):
         non_transients = {name for name in sdfg.arrays if not sdfg.arrays[name].transient}
         initially_on_gpu = set()
         initially_on_cpu = set()
-        
+
         for array_name in non_transients:
             if self.is_array_stored_on_GPU(sdfg, array_name):
                 initially_on_gpu.add(array_name)
@@ -619,23 +619,24 @@ class OffloadToAccelerator(ppl.Pass):
 
         # create inital node (open node)
         IR = OffloadingIRNode.new_open_node(sdfg)
-        IR.gpu_set = initially_on_gpu
-        IR.cpu_set = initially_on_cpu
+        IR.gpu_set = initially_on_gpu.copy()
+        IR.cpu_set = initially_on_cpu.copy() # no copy -> may cause sideeffects
        
         # parse entire graph
         end = self._parse_to_IR(sdfg, sdfg, IR)
 
+        if VERBOSE: print(f"--- early IR ---\n{IR}\n")
+
+        
+
         # finish graph: tie the final node together with the inital close node
         end.append_node(IR.close)
         IR.close.gpu_set = initially_on_gpu
-        IR.close.cpu_set = initially_on_cpu # arrays end up where they started
-
-        if VERBOSE: print(f"--- early IR ---\n{IR}\n")
+        IR.close.cpu_set = initially_on_cpu # arrays end up where they started      
 
         self._propagate_arrays(IR)
-        
-        # create & rename all GPU arrays
-        #self._create_gpu_arrays_from(sdfg, IR)
+
+        if VERBOSE: print(f"--- full IR ---\n{IR}\n\n")
 
         return IR
 
@@ -853,6 +854,8 @@ class OffloadToAccelerator(ppl.Pass):
         def propagate(node):        
             for next in node.next:
                 next_arrays = next.cpu_set | next.gpu_set
+                print(f"1 propagating from \n{node.debug_name}: gpu = {node.gpu_set}, cpu = {node.cpu_set} to \n{next.debug_name}: gpu = {next.gpu_set}, cpu = {next.cpu_set}")
+                
                 
                 for array in node.cpu_set:
                     if not array in next_arrays:
@@ -861,74 +864,40 @@ class OffloadToAccelerator(ppl.Pass):
                     if not array in next_arrays:
                         next.gpu_set.add(array)
 
-        self.__traverse_IR(IR, propagate)
+                print(f"2 propagating from \n{node.debug_name}: gpu = {node.gpu_set}, cpu = {node.cpu_set} to \n{next.debug_name}: gpu = {next.gpu_set}, cpu = {next.cpu_set}")
+                print(f"1st node: gpu = {IR.gpu_set}, cpu = {IR.cpu_set}")
+                print()
 
-    def _fill_in_successor_copies(self, IR):
+        
+        print(f"1st node {IR.debug_name}: gpu = {IR.gpu_set}, cpu = {IR.cpu_set}")
+        self.__traverse_IR(IR, propagate)
+        print(f"1st node {IR.debug_name}: gpu = {IR.gpu_set}, cpu = {IR.cpu_set}")
+                
+
+
+    """def _fill_in_successor_copies(self, IR):
         def fill_in_successor_copies(node):
             if node.copy_successor and node.next:
                 node.cpu_set = node.next[0].cpu_set
                 node.gpu_set = node.next[0].gpu_set
         self.__traverse_IR(IR, fill_in_successor_copies)
-
-
-    def _create_gpu_arrays_from(self, sdfg, IR:OffloadingIRNode):
-        def gpu_arrays(node:OffloadingIRNode):
-            if node.block:
-
-                """
-                for array on gpu: # since it needs to be copied
-                    make the gpu name
-                    register it as a transient or a view
-                """
-
-                """
-                A -> B
-
-                for every array that needs to be copied: # make ad hoc?
-                    find out where array was initially:
-                        on cpu:
-                            this is a gpu copy:
-                                name = "{array}_gpu"
-                            this is a cpu copy:
-                                name = "{array}"
-
-                        on gpu:
-                            this is a gpu copy:
-                                name = "{array}"
-                            this is a cpu copy:
-                                name = "{array}_host"
-                """
-
-
-
-                rename_dict = {array : self.get_gpu_name(array) for array in node.gpu_set}
-                self._rename_arrays_in_block(node.block, rename_dict)
-
-                for cpu_name, gpu_name in rename_dict.items():
-                    #assert cpu_name in sdfg.arrays, cpu_name
-                    if not cpu_name in sdfg.arrays: # there is an internal nested sdfg -> do not rename
-                        continue
-                    if not gpu_name in sdfg.arrays: # create gpu-euivalents as transient on-GPU arrays
-                        cpu_array = sdfg.arrays[cpu_name]
-                        if isinstance(cpu_array, data.View):
-                            sdfg.add_view(gpu_name, cpu_array.shape, cpu_array.dtype, storage = dtypes.StorageType.GPU_Global)
-                        else:
-                            sdfg.add_array(gpu_name, cpu_array.shape, cpu_array.dtype, storage = dtypes.StorageType.GPU_Global, transient=True)
-                    
-        self.__traverse_IR(IR, gpu_arrays)
+    """
     
-    def _rename_arrays_in_block(self, block:ControlFlowBlock, rename_dict:dict):
+    def _correct_names_in_block(self, block:ControlFlowBlock, rename_dict:dict):
+        if block is None:
+            return
+        
         if isinstance(block, SDFGState):
-            self._rename_arrays_in_state(block, rename_dict)
+            self._correct_names_in_state(block, rename_dict)
         
         elif isinstance(block, ControlFlowBlock):
             # rename meta accesses (control-flow metadata like loop bounds or conditions)
             block.replace_meta_accesses(rename_dict)
-            # NOTE: internal states / blocks have their own IRNode and don't need to be handled recursively here
+            # NOTE: states / blocks within the current block all have their own IRNodes and don't need to be handled recursively here
         else:
-            raise NotImplementedError(f"in _rename_all_gpu_arrays: IR.block unhandled type: {IR.block} is {IR.block.__class__.__name__}")
+            raise NotImplementedError(f"in _correct_names_in_block: IR.block unhandled type: {block} is {block.__class__.__name__}")
 
-    def _rename_arrays_in_state(self, state : SDFGState, rename_dict:dict):
+    def _correct_names_in_state(self, state:SDFGState, rename_dict:dict):
         # rename access nodes
         for access in state.data_nodes():
             if access.data in rename_dict:
@@ -941,6 +910,48 @@ class OffloadToAccelerator(ppl.Pass):
                 if memlet is not None and not memlet.is_empty() and memlet.data in rename_dict:
                     memlet.data = rename_dict[memlet.data]
         
+
+    def _insert_copy_names(self, sdfg:SDFG, IR:OffloadingIRNode):
+        # make a rename dict for each IR node, then rename all such arrays in the IR.block
+        def _correct_names_in_node(node:OffloadingIRNode):
+            rename_dict = {}
+            for name in node.gpu_set:
+                assert name in sdfg.arrays
+                if sdfg.arrays[name].storage == dtypes.StorageType.Default: # starts on CPU, but this access is on GPU
+                    rename_dict[name] = self._get_gpu_name(name)
+
+            for name in node.cpu_set:
+                assert name in sdfg.arrays
+                if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global: # starts on GPU, but this access is on CPU
+                    rename_dict[name] = self._get_host_name(name)
+
+            self._correct_names_in_block(node.block, rename_dict)
+
+        self.__traverse_IR(IR, _correct_names_in_node)
+
+
+    def _correct_transient_storage_locations(self, sdfg:SDFG, IR:OffloadingIRNode):
+        seen_transients = set()
+
+        def _correct_transients(node:OffloadingIRNode):
+            for name in node.gpu_set:
+                assert name in sdfg.arrays
+                desc = sdfg.arrays[name]
+                if desc.transient and not name in seen_transients:
+                    desc.storage = dtypes.StorageType.GPU_Global
+                    seen_transients.add(name)
+
+            for name in node.cpu_set:
+                assert name in sdfg.arrays
+                desc = sdfg.arrays[name]
+                if desc.transient and not name in seen_transients:
+                    desc.storage = dtypes.StorageType.Default
+                    seen_transients.add(name)
+
+        self.__traverse_IR(IR, _correct_transients)
+
+
+
 
     def eval_IR(self, sdfg, IR:OffloadingIRNode):
         # modifies SDFG in place & inserts all necessary copies
@@ -998,6 +1009,8 @@ class OffloadToAccelerator(ppl.Pass):
                             self.create_interstate_copy(sdfg, tail.block, None, cpu_copies, to_gpu=False)
 
 
+        self._correct_transient_storage_locations(sdfg, IR)
+        self._insert_copy_names(sdfg, IR)
         self.__traverse_IR(IR, eval)
 
 
@@ -1031,34 +1044,34 @@ class OffloadToAccelerator(ppl.Pass):
             
         # 2) create the copy map with correct names
         copy_map = {}
+        name : str
         for name in array_names:
             assert name in sdfg.arrays
-            
+
             if self.is_array_stored_on_GPU(sdfg, name): # original array is on GPU
                 if not to_gpu: # copy goes to CPU: A -> A_host
-                    copy_map[name] = f"{name}_host"
+                    copy_map[name] = self._get_host_name(name)
                     
                 else: # copy goes to GPU: A_host -> A
-                    copy_map[f"{name}_host"] = name
+                    copy_map[self._get_host_name(name)] = name
 
             else: # original array is on CPU
                 if to_gpu: # copy goes to GPU: A -> A_gpu
-                    copy_map[name] = f"{name}_gpu"
+                    copy_map[name] = self._get_gpu_name(name)
                     
                 else: # copy goes to CPU: A_gpu -> A
-                    copy_map[f"{name}_gpu"] = name
-
-        
+                    copy_map[self._get_gpu_name(name)] = name
+                    
         # 3) build all the copies inside the new state
         for old_name, new_name in copy_map.items():
+            if VERBOSE: print("copying", old_name, "->", new_name)
+
             # a) if first copy of this array: register new copy array with sdfg
             if not new_name in sdfg.arrays: 
-                desc = sdfg.arrays[old_name]
-                if isinstance(desc, data.View):
-                    sdfg.add_view(new_name, desc.shape, desc.dtype, storage = dtypes.StorageType.GPU_Global)
-                else:
-                    sdfg.add_array(new_name, desc.shape, desc.dtype, storage = dtypes.StorageType.GPU_Global, transient=True)
-            
+                self._register_new_copy_transient(sdfg, new_name, old_name)
+            elif not old_name in sdfg.arrays: 
+                self._register_new_copy_transient(sdfg, old_name, new_name) # in some cases, e.g. loops, a copy-from can be registered before its copy-to, leading to an unknown "old_name" 
+
             # b) add (Access Node -> Access Node) to state
             copy_in = copy_state.add_access(old_name)
             copy_out = copy_state.add_access(new_name)
@@ -1076,9 +1089,25 @@ class OffloadToAccelerator(ppl.Pass):
 
             copy_state.add_edge(copy_in, None, copy_out, None, copy_memlet)
                 
-        
-    def get_gpu_name(self, cpu_name):
-        if cpu_name.startswith("__return"):
-            return "return" + cpu_name[8:] + "_gpu"
-        return cpu_name + "_gpu"
-    # TODO: A -> A_gpu, A -> A_host
+  
+    def _register_new_copy_transient(self, sdfg:SDFG, unknown_name:str, known_name:str):
+        assert known_name in sdfg.arrays
+        desc = sdfg.arrays[known_name]
+        if VERBOSE: print("new name detected:", unknown_name)
+
+        new_storage = dtypes.StorageType.Default if self.is_array_stored_on_GPU(sdfg, known_name) else dtypes.StorageType.GPU_Global
+        if isinstance(desc, data.View):
+            sdfg.add_view(unknown_name, desc.shape, desc.dtype, storage = new_storage)
+        else:
+            sdfg.add_array(unknown_name, desc.shape, desc.dtype, storage = new_storage, transient=True)
+            
+
+    def _get_host_name(self, name:str) -> str:
+        if name.startswith("__return"):
+            return f"_return{name[8:]}_host"
+        return f"{name}_host"
+    
+    def _get_gpu_name(self, name:str) -> str:
+        if name == "__return":
+            return f"_return{name[8:]}_gpu"
+        return f"{name}_gpu"
