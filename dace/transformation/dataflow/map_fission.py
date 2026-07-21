@@ -10,7 +10,7 @@ from dace.sdfg import nodes, graph as gr
 from dace.sdfg import utils as sdutil
 from dace.sdfg.propagation import propagate_memlets_state, propagate_subset
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.symbolic import pystr_to_symbolic
+from dace.symbolic import int_floor, pystr_to_symbolic
 from dace.transformation import transformation, helpers
 from typing import List, Optional, Tuple
 
@@ -283,11 +283,17 @@ class MapFission(transformation.SingleStateTransformation):
         outer_map: nodes.Map = map_entry.map
         # Border-transient extent equals the iteration count per dimension.
         # Memlets that index border transients are normalized to
-        # `(p - iMin) / step` so the squeezed array remains in-bounds for
-        # strided maps. Symbolic steps are assumed non-negative.
+        # `int_floor(p - iMin, step)` so the squeezed array remains in-bounds
+        # for strided maps. Symbolic steps are assumed non-negative.
+        # `/` would be RATIONAL division: sympy distributes `(p - 1)/2` into
+        # `p/2 - 1/2`, and the surviving `1/2` both makes the index non-integer
+        # (C: "array subscript is not an integer") and shifts it by half an
+        # element. int_floor stays integral and agrees on every iterated value.
         mapsize = outer_map.range.size()
-        squeezed_idx = [(pystr_to_symbolic(p) - iMin) / step
-                        for p, (iMin, _iMax, step) in zip(outer_map.params, outer_map.range.ranges)]
+        squeezed_idx = [
+            int_floor(pystr_to_symbolic(p) - iMin, step)
+            for p, (iMin, _iMax, step) in zip(outer_map.params, outer_map.range.ranges)
+        ]
 
         # Add new symbols from outer map to nested SDFG
         # Add new symbols also from the adjacent edge subsets and the data descriptors they carry.
