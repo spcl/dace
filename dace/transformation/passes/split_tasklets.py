@@ -157,10 +157,20 @@ def to_ssa(code: str) -> List[str]:
     """
     Convert a single Python assignment (or expression) into single-operation SSA lines.
 
+    Only a ONE-statement body is lowered. A multi-statement body returns ``[]``, meaning "declined":
+    the splitter reads a single statement, so lowering only the first would drop the rest of the
+    tasklet on the floor. A frontend tasklet whose body is a type annotation followed by the
+    assignment (``_out: dace.float64`` / ``_out = a * b * c``) is exactly that shape, and the
+    caller must leave such a tasklet intact rather than replace it with a partial rewrite.
+
     :param code: The tasklet source, e.g. ``out = a * b + c``.
-    :returns: A list of SSA statements, each performing at most one primitive operation.
+    :returns: A list of SSA statements, each performing at most one primitive operation, or ``[]``
+              when the body is not a single lowerable statement.
     """
-    tree = ast.parse(code).body[0]
+    body = ast.parse(code).body
+    if len(body) != 1:
+        return []
+    tree = body[0]
     ssa = ASTSplitter()
     # Start the temp counter past any ``__t<N>`` already present in the input
     # so a re-split (or an input that happens to use these names) does not
@@ -812,7 +822,12 @@ class SplitTasklets(ppl.Pass):
 
                 if c.language == dace.dtypes.Language.Python:
                     ssa_statements = to_ssa(c.as_string)
-                    if len(ssa_statements) != 1:
+                    # Strictly MORE than one statement: the rewrite below removes the tasklet first
+                    # and rebuilds it from ``ssa_statements``, so an empty list -- ``to_ssa``
+                    # declining a body it will not lower -- would delete the tasklet and every one
+                    # of its edges and put nothing back, orphaning its source access nodes
+                    # ("Isolated node"). A single statement is already split.
+                    if len(ssa_statements) > 1:
                         # Rigorously infer EACH split intermediate's type from its
                         # operands (DaCe promotion: same-kind widening, fp32->fp64,
                         # int32->int64, complex64->complex128, ...) instead of stamping

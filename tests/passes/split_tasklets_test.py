@@ -1068,7 +1068,6 @@ def test_split_function_call_intermediate_uses_operand_type():
         f"function-call intermediate not typed from its float32 operand: {split_dtypes}"
 
 
-
 def test_second_run_does_not_reuse_first_runs_split_scalars():
     """A later run must not re-issue the earlier run's split-scalar names.
 
@@ -1118,7 +1117,60 @@ def test_second_run_does_not_reuse_first_runs_split_scalars():
     assert numpy.allclose(c, a * 2.0 + 3.0)
     assert numpy.array_equal(ci, ai * 2 + 3)
 
+
+#: Tasklet bodies the splitter must DECLINE: more than one statement, so lowering only the first
+#: would drop the rest. The annotated form is what the Fortran frontend emits for a typed local.
+declined_bodies = [
+    "_out: dace.float64\n_out = ((_in_a * _in_b) * _in_c)",
+    "_tmp = (_in_a * _in_b)\n_out = (_tmp * _in_c)",
+]
+
+
+@pytest.mark.parametrize("body", declined_bodies)
+def test_to_ssa_declines_multi_statement_body(body: str):
+    """``to_ssa`` reads a single statement, so a multi-statement body must return ``[]`` ("declined")
+    rather than the SSA of its first statement only -- which the caller would then substitute for the
+    WHOLE tasklet, silently dropping the remaining statements."""
+    from dace.transformation.passes.split_tasklets import to_ssa
+
+    assert to_ssa(body) == [], f"{body!r} must be declined, got {to_ssa(body)}"
+
+
+@pytest.mark.parametrize("body", declined_bodies)
+def test_split_keeps_tasklet_the_splitter_declines(body: str):
+    """A tasklet whose body ``to_ssa`` declines must be left INTACT.
+
+    Regression: ``apply_pass`` gated on ``len(ssa_statements) != 1``, which an empty list also
+    satisfies. The tasklet was removed (with all of its edges) and the rebuild loop then iterated
+    over nothing, so the tasklet vanished and every access node that fed only it was orphaned --
+    ``InvalidSDFGNodeError: Isolated node``. Seen on CloudSC (gpu_scc / multistep, canon_cpu and
+    canon_gpu) on a frontend tasklet whose body is a type annotation plus the assignment.
+    """
+    sdfg = dace.SDFG(f"declined_{abs(hash(body))}")
+    state = sdfg.add_state("main", is_start_block=True)
+    for name in ("_in_a", "_in_b", "_in_c", "_out"):
+        sdfg.add_array(f"{name}_ARR", shape=(1, ), dtype=dace.float64)
+    t = state.add_tasklet(name="declined", inputs={"_in_a", "_in_b", "_in_c"}, outputs={"_out"}, code=body)
+    for conn in ("_in_a", "_in_b", "_in_c"):
+        state.add_edge(state.add_access(f"{conn}_ARR"), None, t, conn, dace.Memlet(f"{conn}_ARR[0]"))
+    state.add_edge(t, "_out", state.add_access("_out_ARR"), None, dace.Memlet("_out_ARR[0]"))
+    sdfg.validate()
+
+    SplitTasklets().apply_pass(sdfg, {})
+
+    tasklets = [n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet)]
+    assert len(tasklets) == 1, f"declined tasklet was rewritten into {[t.label for t in tasklets]}"
+    assert tasklets[0].code.as_string == body
+    # No source access node was orphaned.
+    for node in state.nodes():
+        assert state.in_degree(node) + state.out_degree(node) > 0, f"{node} was left isolated"
+    sdfg.validate()
+
+
 if __name__ == "__main__":
+    for _body in declined_bodies:
+        test_to_ssa_declines_multi_statement_body(_body)
+        test_split_keeps_tasklet_the_splitter_declines(_body)
     test_split_infers_complex_intermediate_with_int_symbol()
     test_split_function_call_intermediate_uses_operand_type()
     for _dt in [dace.float16, dace.int8, dace.uint8, dace.int16, dace.complex64]:
