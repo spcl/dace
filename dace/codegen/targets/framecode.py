@@ -13,7 +13,8 @@ from dace.cli import progress
 from dace.codegen import control_flow as cflow
 from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
-from dace.transformation.passes.analysis.scopes import CodegenAnalysisPipeline
+from dace.transformation.passes.analysis.scopes import (AccessInstances, AllocationScopes, CodegenAnalysisPipeline,
+                                                        SymbolScopes)
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
 from dace.sdfg.type_inference import infer_expr_type
@@ -565,9 +566,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Every read-only analysis codegen needs, resolved once through one pipeline.
         analysis_results = CodegenAnalysisPipeline().apply_pass(top_sdfg, {})
         reachability = analysis_results[StateReachability.__name__]
-        alloc_scopes = analysis_results['AllocationScopes']
-        self.symbol_scopes = analysis_results['SymbolScopes']
-        instances = analysis_results['AccessInstances']
+        alloc_scopes = analysis_results[AllocationScopes.__name__]
+        self.symbol_scopes = analysis_results[SymbolScopes.__name__]
+        instances = analysis_results[AccessInstances.__name__]
         access_instances = instances['access_instances']
         code_instances = instances['code_instances']
         shared_transients = instances['shared_transients']
