@@ -55,8 +55,13 @@ def _unique_block_label(sdfg: SDFG, base: str) -> str:
 
 
 def _constant_trip_count(loop: LoopRegion, sdfg: SDFG) -> Optional[int]:
-    """The exact iteration count of ``loop`` if it is constant, else ``None``
-    (matches ``len(range(0, end - start + 1, stride))``, i.e. LoopUnroll's count)."""
+    """The exact iteration count of ``loop`` if it is constant, else ``None``.
+
+    Ascending strides only: the ``stride_val <= 0`` bail deliberately declines DESCENDING loops, which
+    this pass therefore never unrolls (they fall through to LoopToMap). ``LoopUnroll`` itself does
+    handle a negative stride; widening this gate to match is a behaviour change for the pipelines that
+    embed the pass, not part of that fix. With the bail in place the ``+ 1`` below is only ever reached
+    for a positive stride, where it is the correct inclusive-end adjustment."""
     from dace.transformation.passes.analysis import loop_analysis
     start = loop_analysis.get_init_assignment(loop)
     end = loop_analysis.get_loop_end(loop)
@@ -1034,7 +1039,6 @@ class BestEffortLoopPeeling(ppl.Pass):
         returned liberally -- :meth:`_best_modulo_split_for` probes each on an
         isolated copy and keeps only one whose fold actually removes the wrap, so a
         non-splitting candidate is harmless."""
-        import sympy
         ranges = self._loop_own_ranges(loop)
         if not ranges:
             return []
