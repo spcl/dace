@@ -84,7 +84,10 @@ echo "Job: ${SLURM_JOB_ID:-local}  Node: $(hostname)  Reps: ${REPS}"
 echo "Python: ${PYTHON_BIN} ($(${PYTHON_BIN} -c 'import sys; print(sys.version.split()[0])'))"
 echo "Output dir: ${OUTDIR}"
 
-"${PYTHON_BIN}" tests/perf/graph_backend_cloudsc_bench.py \
+# -u: stdout is a PIPE here (the tee above), so Python block-buffers it and a multi-hour run
+# shows nothing until it exits -- the warnings still appear because stderr is unbuffered,
+# which makes it look hung rather than merely quiet.
+"${PYTHON_BIN}" -u tests/perf/graph_backend_cloudsc_bench.py \
     --reps "${REPS}" \
     --output "${OUTDIR}/results.json" \
     --table-output "${OUTDIR}/results_table.md" \
