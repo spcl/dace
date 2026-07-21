@@ -48,6 +48,9 @@ class LoopUnroll(xf.MultiStateTransformation):
         # If loop stride is not specialized or constant-sized, fail
         if symbolic.issymbolic(step, sdfg.constants):
             return False
+        # A zero stride never advances the iterate, so there is no finite unrolling to emit.
+        if symbolic.evaluate(step, sdfg.constants) == 0:
+            return False
         # If loop range diff is not constant-sized, fail
         if symbolic.issymbolic(end - start, sdfg.constants):
             return False
@@ -65,22 +68,35 @@ class LoopUnroll(xf.MultiStateTransformation):
 
         try:
             stride = symbolic.evaluate(stride, sdfg.constants)
-            loop_diff = int(symbolic.evaluate(end - start + 1, sdfg.constants))
+            loop_diff = int(symbolic.evaluate(end - start, sdfg.constants))
             is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
         except TypeError:
             raise TypeError('Loop difference and strides cannot be symbolic.')
 
+        # ``get_loop_end`` reports the INCLUSIVE last value of the iterate, so the iterate offsets are
+        # ``0, stride, 2*stride, ...`` up to and including ``loop_diff``. A Python ``range`` takes an
+        # EXCLUSIVE bound, which therefore has to sit one unit PAST ``loop_diff`` in the direction of
+        # travel: above it while ascending, but BELOW it while descending. Hardcoding ``+1`` here left a
+        # descending loop's bound two units short of where it belongs and silently truncated the last
+        # ``ceil(2 / |stride|)`` iterations (2 of them at stride -1, 1 at stride -2). A loop that runs
+        # zero times still yields an empty range under either sign: the bound then lies on the wrong
+        # side of the start for the given stride.
+        offsets = range(0, loop_diff + (1 if stride > 0 else -1), stride)
+
         # A start-block loop has no in-edges, so the unrolled chain would inherit none and leave the
         # parent with an ambiguous start. Prepend an empty ``pre -> loop`` start state so the loop is a
         # normal interior block; ``pre`` stays the single start and is absorbed by the following fusion.
-        if loop_diff > 0 and graph.start_block is self.loop:
+        # Guard on the ITERATION COUNT, not on the sign of ``loop_diff``, which is negative for every
+        # descending loop that does have iterations; a zero-trip loop instead gets its own start state
+        # below.
+        if len(offsets) > 0 and graph.start_block is self.loop:
             pre_state = graph.add_state(self.loop.label + '_unroll_pre', is_start_block=True)
             graph.add_edge(pre_state, self.loop, sd.InterstateEdge())
 
         # Create states for loop subgraph
         # A state is returned as a replacement when the loop body is empty
         unrolled_iterations: List[Union[ControlFlowRegion, SDFGState]] = []
-        for i in range(0, loop_diff, stride):
+        for i in offsets:
             # Instantiate loop contents as a new control flow region with iterate value.
             current_index = start + i
             is_symbolic |= symbolic.issymbolic(current_index)
