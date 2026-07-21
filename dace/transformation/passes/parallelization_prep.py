@@ -21,6 +21,8 @@ imports pull in).
 import copy
 from typing import Any, Dict, Optional
 
+import sympy
+
 from dace import properties, symbolic
 from dace.config import Config
 from dace.sdfg import SDFG
@@ -42,6 +44,30 @@ _MODULO_FUNC_NAMES = frozenset({'Mod', 'py_mod', 'Modulo', 'mod', 'floor_mod'})
 
 def _loops(sdfg: SDFG):
     return [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+
+
+def _as_symbolic(expr):
+    """``expr`` as a sympy expression, skipping the print-and-reparse round trip when it already is
+    one. Subset bounds are stored symbolic, so ``pystr_to_symbolic(str(bound))`` returns the very
+    same expression after printing it -- and sympy's printer is not cheap (30% of this pass's time
+    on CloudSC). A ``SymExpr`` is NOT a ``sympy.Basic`` and still goes through the round trip, which
+    is what picks its main expression out."""
+    if isinstance(expr, sympy.Basic):
+        return expr
+    return symbolic.pystr_to_symbolic(str(expr))
+
+
+def _is_zero(expr) -> bool:
+    """Whether ``expr`` is identically zero -- the zero test the index-solving below needs.
+
+    ``sympy.expand`` is the cheap sufficient normalizer for the affine index differences tested
+    here; ``sympy.simplify`` decides the same cases but runs its full cancel/factor/powsimp
+    pipeline, costing ~13ms per distinct expression even for something as small as ``i - j``. That
+    was 8.5s of the 21s this pass spent on CloudSC, and expand agreed with simplify on every one of
+    the 53504 zero tests measured there."""
+    if not isinstance(expr, sympy.Basic):
+        return expr == 0
+    return expr == 0 or sympy.expand(expr) == 0
 
 
 def _unique_block_label(sdfg: SDFG, base: str) -> str:
@@ -412,8 +438,12 @@ class BestEffortLoopPeeling(ppl.Pass):
         is harmless.
         """
         ivar = symbolic.pystr_to_symbolic(loop.loop_variable)
-        reads: Dict[Any, list] = {}  # array -> loop-invariant single-point read subsets
-        writes: Dict[Any, list] = {}  # array -> loop-var-dependent single-point write subsets
+        # Keyed by the subset's own ranges, so the same access repeated across the body (and across
+        # the states an ENCLOSING loop re-scans) is solved once instead of once per occurrence --
+        # a dropped duplicate can only re-derive a split point already in ``values``. Insertion
+        # order is kept, so the candidate order the caller tie-breaks on is unchanged.
+        reads: Dict[Any, dict] = {}  # array -> loop-invariant single-point read subsets
+        writes: Dict[Any, dict] = {}  # array -> loop-var-dependent single-point write subsets
         for state in loop.all_states():
             if not isinstance(state, SDFGState):
                 continue
@@ -421,24 +451,35 @@ class BestEffortLoopPeeling(ppl.Pass):
                 for e in state.in_edges(node):
                     m = e.data
                     if m is not None and m.data is not None and m.subset is not None:
-                        writes.setdefault(m.data, []).append(m.subset)
+                        writes.setdefault(m.data, {}).setdefault(tuple(m.subset.ndrange()), m.subset)
                 for e in state.out_edges(node):
                     m = e.data
                     if m is not None and m.data is not None and m.subset is not None:
-                        reads.setdefault(m.data, []).append(m.subset)
+                        reads.setdefault(m.data, {}).setdefault(tuple(m.subset.ndrange()), m.subset)
         values = []
         for data in set(reads) & set(writes):
-            for rsub in reads[data]:
+            # Only a write whose index VARIES with the loop variable can collide: the solve below
+            # never assigns a solution off a loop-invariant write dimension, so such a write can
+            # only return ``None`` -- filter it out here instead of paying a solve per read.
+            wsubs = [w for w in writes[data].values() if self._varies_with(w, ivar)]
+            if not wsubs:
+                continue
+            for rsub in reads[data].values():
                 # A broadcast read touches no dimension that varies with the loop var.
-                if any(ivar in symbolic.pystr_to_symbolic(str(b)).free_symbols for (b, _e, _s) in rsub.ndrange()):
+                if self._varies_with(rsub, ivar):
                     continue
-                for wsub in writes[data]:
+                for wsub in wsubs:
                     if len(wsub) != len(rsub):
                         continue
                     x = self._solve_write_eq_read(wsub, rsub, ivar)
                     if x is not None and ivar not in x.free_symbols and x not in values:
                         values.append(x)
         return values
+
+    @staticmethod
+    def _varies_with(sub, ivar) -> bool:
+        """Whether any dimension of ``sub`` STARTS at an index depending on ``ivar``."""
+        return any(ivar in _as_symbolic(b).free_symbols for (b, _e, _s) in sub.ndrange())
 
     def _solve_write_eq_read(self, wsub, rsub, ivar):
         """Solve ``write_index(i) == read_const`` for the single ``i`` at which the
@@ -449,24 +490,24 @@ class BestEffortLoopPeeling(ppl.Pass):
         integer). Single-point accesses only."""
         sol = None
         for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
-            w = symbolic.pystr_to_symbolic(str(wb))
-            r = symbolic.pystr_to_symbolic(str(rb))
-            if symbolic.simplify(symbolic.pystr_to_symbolic(str(we)) - w) != 0:
+            w = _as_symbolic(wb)
+            r = _as_symbolic(rb)
+            if not _is_zero(_as_symbolic(we) - w):
                 return None  # multi-element write range in this dim -> not a clean point
-            if symbolic.simplify(symbolic.pystr_to_symbolic(str(re_)) - r) != 0:
+            if not _is_zero(_as_symbolic(re_) - r):
                 return None  # multi-element read range in this dim
             if ivar in w.free_symbols:
                 a = w.coeff(ivar, 1)
                 b = symbolic.simplify(w - a * ivar)
                 if ivar in a.free_symbols or ivar in b.free_symbols:
                     return None  # non-affine in the loop variable
-                if not (a.is_number and symbolic.simplify(a * a - 1) == 0):
+                if not (a.is_number and _is_zero(a * a - 1)):
                     return None  # |a| != 1 -> solution may be non-integer
                 xi = symbolic.simplify((r - b) / a)
-                if sol is not None and symbolic.simplify(xi - sol) != 0:
+                if sol is not None and not _is_zero(xi - sol):
                     return None  # inconsistent solution across dimensions
                 sol = xi
-            elif symbolic.simplify(w - r) != 0:
+            elif not _is_zero(w - r):
                 return None  # non-loop-var dimension does not match -> no collision
         return sol
 
@@ -905,11 +946,18 @@ class BestEffortLoopPeeling(ppl.Pass):
         """Every modulo subexpression of ``expr``: both the ``%`` operator
         (``sympy.Mod``) and the floor-mod helper-function spellings (see
         :data:`_MODULO_FUNC_NAMES`), so a wrap-around index is found regardless of
-        which representation introduced it."""
-        import sympy
-        mods = set(expr.atoms(sympy.Mod))
-        mods |= {f for f in expr.atoms(sympy.Function) if getattr(f.func, '__name__', None) in _MODULO_FUNC_NAMES}
-        return mods
+        which representation introduced it.
+
+        Both spellings are collected in ONE traversal: this runs over every subset expression of
+        every loop body, and a bare index expression (the overwhelming majority) holds no modulo at
+        all, so the walk itself is the cost."""
+        if not expr.args:
+            return set()  # a bare symbol / number has no subexpression to search
+        return {
+            n
+            for n in expr.atoms(sympy.Mod, sympy.Function)
+            if isinstance(n, sympy.Mod) or n.func.__name__ in _MODULO_FUNC_NAMES
+        }
 
     def _modulo_to_affine(self, mod, ranges: Dict[Any, Any]):
         """If ``mod`` is a modulo ``arg % m`` (operator or helper function) with
@@ -976,15 +1024,18 @@ class BestEffortLoopPeeling(ppl.Pass):
             return {}
         return {symbolic.pystr_to_symbolic(loop.loop_variable): (start, end)}
 
-    def _affine_body_modulos(self, loop: LoopRegion):
+    def _affine_body_modulos(self, loop: LoopRegion, ranges: Optional[Dict[Any, Any]] = None):
         """Yield ``(mod, arg, m, a, b)`` for every memlet-subset modulo ``Mod(arg,
         m)`` in ``loop``'s body whose argument ``arg = a*ivar + b`` is affine in the
         loop variable -- the only modulos a bounded peel or a band split can fold.
         Data-dependent / non-affine arguments are skipped: no bounded rewrite folds
-        them. ``a`` and ``b`` may be symbolic (e.g. a symbolic stride or offset)."""
-        import sympy
+        them. ``a`` and ``b`` may be symbolic (e.g. a symbolic stride or offset).
+
+        ``ranges`` is ``loop``'s own range box (:meth:`_loop_own_ranges`); callers that already
+        hold it pass it in, since recovering it re-reads and re-parses the loop bounds."""
         from dace import subsets
-        ranges = self._loop_own_ranges(loop)
+        if ranges is None:
+            ranges = self._loop_own_ranges(loop)
         if not ranges:
             return
         (ivar, _), = ranges.items()
@@ -1020,7 +1071,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         at the boundary iteration; peeling or splitting that boundary lets the band
         fold make each segment affine and floor-correct."""
         ranges = self._loop_own_ranges(loop)
-        for mod, _arg, _m, _a, _b in self._affine_body_modulos(loop):
+        for mod, _arg, _m, _a, _b in self._affine_body_modulos(loop, ranges):
             if self._modulo_to_affine(mod, ranges) is None:
                 return True  # affine but genuinely wrapping
         return False
@@ -1044,8 +1095,8 @@ class BestEffortLoopPeeling(ppl.Pass):
             return []
         (ivar, (start, end)), = ranges.items()
         points = []
-        for _mod, _arg, m, a, b in self._affine_body_modulos(loop):
-            if not (a.is_number and symbolic.simplify(a * a - 1) == 0):
+        for _mod, _arg, m, a, b in self._affine_body_modulos(loop, ranges):
+            if not (a.is_number and _is_zero(a * a - 1)):
                 continue  # |a| != 1: the crossing is not an exact integer in general
             for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
                 x = symbolic.simplify((t * m - b) / a)
