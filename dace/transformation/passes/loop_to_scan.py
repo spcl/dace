@@ -607,6 +607,15 @@ def _descend_to_content_state_candidates(loop: LoopRegion):
         # the rewrite step also mutates any sibling branch's writes (see
         # ``_mutate_sibling_branches_to_zero_delta`` -- emitted post-match).
         for cb in cond_blocks:
+            # Only a TOTAL conditional. A ``Scan`` writes every element of the carrier, so it can
+            # stand in for a conditional only when some branch runs on every path. With no ``else``
+            # the false path leaves the element untouched, and the nearest a scan can express is a
+            # zero delta -- which still writes ``out[j] = out[j-1]`` and so flattens the untouched
+            # elements to the seed instead of preserving them. TSVC s275
+            # (``if aa[0,i] > 0: for j: aa[j,i] = aa[j-1,i] + bb[j,i]*cc[j,i]``) is that shape: its
+            # unguarded columns came out constant down the column.
+            if not any(cond is None for cond, _ in cb.branches):
+                continue
             for cond, branch in cb.branches:
                 branch_state, deeper = _descend_to_content_state(branch)
                 if branch_state is None or deeper is not None:

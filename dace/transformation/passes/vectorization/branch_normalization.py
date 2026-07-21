@@ -417,8 +417,16 @@ class BranchNormalization(ppl.Pass):
             # Each assigned symbol must be arm-local (all reads inside body);
             # else the lift breaks downstream consumers.
             non_local = []
-            for sym in e.data.assignments.keys():
-                if not self._symbol_is_arm_local(local_sdfg_for_arm, body, sym):
+            for sym, rhs in e.data.assignments.items():
+                # AGENT FIX: a SELF-REFERENTIAL binding (``k = k + 1``) is a recurrence
+                # across arm EXECUTIONS. Every read may sit textually inside the arm
+                # (TSVC s343's compaction counter reads ``k`` only in ``k + 1`` and
+                # ``flat_2d_array[k]``, both in-arm) yet the value still crosses the
+                # enclosing loop's back edge, so an unconditional lift turns the
+                # compaction counter into a dense iteration counter.
+                if sym in symbolic.symbols_in_code(str(rhs)):
+                    non_local.append(sym)
+                elif not self._symbol_is_arm_local(local_sdfg_for_arm, body, sym):
                     non_local.append(sym)
             if non_local:
                 # Arm conditionally binds a symbol read OUTSIDE it (loop-carried

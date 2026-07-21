@@ -122,10 +122,18 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
         self._repl_tasklets_on_node_list(state, list(scope.nodes()), repldict)
         for n in scope.nodes():
             if isinstance(n, nodes.NestedSDFG):
-                n.symbol_mapping = {
-                    k: dace.symbolic.pystr_to_symbolic(str(v)).subs(subsdict)
-                    for k, v in n.symbol_mapping.items()
-                }
+                new_mapping = {}
+                for k, v in n.symbol_mapping.items():
+                    vsym = dace.symbolic.pystr_to_symbolic(str(v))
+                    # AGENT EXPERIMENT B: identity binding of a rewritten param -> push the
+                    # ``b + s*p`` substitution INTO the nested SDFG so the strided index stays
+                    # VISIBLE in its memlets, instead of hiding it in ``symbol_mapping``.
+                    if vsym in subsdict and str(k) == str(vsym):
+                        n.sdfg.replace_dict({str(k): repldict[str(vsym)]})
+                        new_mapping[k] = vsym
+                        continue
+                    new_mapping[k] = vsym.subs(subsdict)
+                n.symbol_mapping = new_mapping
         return True
 
     def _normalize_loop(self, loop: LoopRegion) -> bool:
