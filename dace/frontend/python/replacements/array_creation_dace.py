@@ -22,12 +22,11 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
     """
     Rewrites a shape so that a size scalar used as an extent is read through a symbol.
 
-    An extent must be a symbol, but a size computed in the program (``nt = Nt + 1; np.empty(nt)``)
-    is a size-1 descriptor. Each such name is read into a fresh per-shape symbol and substituted
-    into the shape, leaving the descriptor in place. A symbol per shape keeps two arrays sized from
-    the same reassigned scalar from collapsing onto one value.
+    A size computed in the program (``nt = Nt + 1; np.empty(nt)``) is a size-1 descriptor, but an
+    extent must be a symbol. One fresh symbol per shape keeps two arrays sized from the same
+    reassigned scalar from collapsing onto one value.
 
-    :param pv: The program visitor, owning symbol promotion and the state machine.
+    :param pv: The program visitor.
     :param sdfg: The SDFG being built.
     :param shape: The requested shape.
     :return: The shape with scalar extents replaced by symbols.

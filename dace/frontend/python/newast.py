@@ -5375,16 +5375,12 @@ class ProgramVisitor(ExtNodeVisitor):
 
     def promote_scalar_to_symbol(self, scalar: str, key: Optional[str] = None, fresh: bool = False) -> symbolic.symbol:
         """
-        Reads a scalar into a symbol so its value can be used where only symbols are allowed.
-
-        The symbol is assigned from the scalar on an interstate edge; the scalar's descriptor is
-        left in place so it may still be read or reassigned afterwards.
+        Reads a scalar into a symbol on an interstate edge, leaving its descriptor in place.
 
         :param scalar: Name of the scalar data descriptor to read.
-        :param key: Cache key for the promotion; repeated promotions of the same expression reuse
-                    the symbol. Defaults to the scalar name.
-        :param fresh: Mint a new (suffixed) symbol every call instead of reusing a cached one, so
-                      two shapes sized from the same reassigned scalar keep their own values.
+        :param key: Cache key; repeated promotions of the same expression reuse the symbol.
+        :param fresh: Mint a new suffixed symbol instead of reusing a cached one, so two shapes
+                      sized from the same reassigned scalar keep their own values.
         :return: The symbol carrying the scalar's value.
         """
         key = key if key is not None else scalar
@@ -5393,9 +5389,8 @@ class ProgramVisitor(ExtNodeVisitor):
         if sym is None:
             base = f'__sym_{scalar}'
             if fresh:
-                # Reserve ``base`` so a fresh promotion is always suffixed and never lands on the
-                # bare name a cached promotion reuses; else an index after the size is reassigned
-                # would re-bind the extent. The name is then free, so add_symbol cannot clash.
+                # Reserve ``base`` so a fresh promotion never lands on the bare name a cached one
+                # reuses; a later index on the same scalar would otherwise re-bind the extent.
                 reserved = self.sdfg.symbols.keys() | self.sdfg.arrays.keys() | {base}
                 name = self.sdfg.add_symbol(find_new_name(base, reserved), desc.dtype)
             else:
@@ -5403,14 +5398,14 @@ class ProgramVisitor(ExtNodeVisitor):
                 try:
                     self.sdfg.add_symbol(name, desc.dtype)
                 except FileExistsError:
-                    # A cached promotion may re-add an existing symbol; that is benign.
-                    pass
+                    pass  # A cached promotion may re-add an existing symbol.
             sym = dace.symbol(name, dtype=desc.dtype)
             if not fresh:
                 self.indirections[key] = sym
-            # Nested scopes resolve their scope arrays' free symbols through ``globals``, so the
-            # symbol must be visible there too, not only on the SDFG.
-            self.globals[str(sym)] = sym
+            else:
+                # Shape symbols must resolve inside nested scopes, which look up free symbols in
+                # ``globals``. Subscript promotions must stay out: they shadow names there.
+                self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
         edge = state.parent_graph.in_edges(state)[0]
         edge.data.assignments = {str(sym): scalar}
