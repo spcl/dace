@@ -759,7 +759,7 @@ def test_view_edge_from_map_entry():
     # The consumer must still hang off the MapEntry, not off the outer AccessNode.
     assert state.scope_dict()[t] is entry
 
-    a_arr = np.arange(12, dtype=np.float64).reshape(4, 3)
+    a_arr = np.arange(12, dtype=np.float64).reshape(4, 3).copy()
     b_arr = np.zeros(4, dtype=np.float64)
     sdfg(A=a_arr, B=b_arr)
     np.testing.assert_allclose(b_arr, a_arr[:, 1])

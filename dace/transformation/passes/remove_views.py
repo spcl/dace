@@ -666,7 +666,7 @@ class RemoveViews(ppl.Pass):
                 else:
                     self._rewrite_memlets(state, vnode, viewed_node, view_edge, viewed_subset, mapping, is_viewed_src)
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1)
-                    self._reconnect_edges(state, vnode, viewed_node, view_edge, is_viewed_src)
+                    self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
                     state.remove_node(vnode)
                     self._cleanup_isolated_viewed_node(state, viewed_node)
                     removed.add(vnode.data)
@@ -704,7 +704,7 @@ class RemoveViews(ppl.Pass):
                     self._rewrite_memlets(state, vnode, viewed_node, view_edge, viewed_subset, mapping_1b,
                                           is_viewed_src)
                     self._rewrite_interstate_edges(sdfg, vnode.data, _rw_1b)
-                    self._reconnect_edges(state, vnode, viewed_node, view_edge, is_viewed_src)
+                    self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
                     state.remove_node(vnode)
                     self._cleanup_isolated_viewed_node(state, viewed_node)
                     removed.add(vnode.data)
@@ -777,7 +777,18 @@ class RemoveViews(ppl.Pass):
                               f' {old_other}'
                               f' -> other_subset={m.other_subset}')
 
-    def _reconnect_edges(self, state, view_node, viewed_node, view_edge, is_viewed_src):
+    def _reconnect_edges(self, state, view_node, view_edge, is_viewed_src):
+        """Splice ``view_node`` out of its own edges, then drop the defining edge.
+
+        The replacement endpoint is the view edge's IMMEDIATE neighbour, never the viewed
+        AccessNode ``_classify_view`` resolved: when the view is staged through a Map
+        (``A -> MapEntry -> V``, ``V -> MapExit -> A``) the memlet path's far end is the outer
+        AccessNode while the connector on ``view_edge`` belongs to the scope node. Attaching that
+        connector to the outer node bypasses the scope, mints a bogus ``IN_``/``OUT_`` connector on
+        an AccessNode, and leaves the scope node's own connector pair with no edge -- the
+        "Dangling in-connector" validation failure. For a view edge that really does start (or end)
+        at the viewed AccessNode the neighbour IS that node, so the direct case is unchanged.
+        """
         if is_viewed_src:
             for e in list(state.out_edges(view_node)):
                 if e is view_edge:
@@ -786,10 +797,10 @@ class RemoveViews(ppl.Pass):
                     print(f'[{_PASS}]       reconnect:'
                           f' {view_node.data}:{e.src_conn}'
                           f' -> {e.dst}:{e.dst_conn}'
-                          f'  =>  {viewed_node.data}:{view_edge.src_conn}'
+                          f'  =>  {view_edge.src}:{view_edge.src_conn}'
                           f' -> {e.dst}:{e.dst_conn}')
                 state.remove_edge(e)
-                state.add_edge(viewed_node, view_edge.src_conn, e.dst, e.dst_conn, e.data)
+                state.add_edge(view_edge.src, view_edge.src_conn, e.dst, e.dst_conn, e.data)
         else:
             for e in list(state.in_edges(view_node)):
                 if e is view_edge:
@@ -799,9 +810,9 @@ class RemoveViews(ppl.Pass):
                           f' {e.src}:{e.src_conn}'
                           f' -> {view_node.data}:{e.dst_conn}'
                           f'  =>  {e.src}:{e.src_conn}'
-                          f' -> {viewed_node.data}:{view_edge.dst_conn}')
+                          f' -> {view_edge.dst}:{view_edge.dst_conn}')
                 state.remove_edge(e)
-                state.add_edge(e.src, e.src_conn, viewed_node, view_edge.dst_conn, e.data)
+                state.add_edge(e.src, e.src_conn, view_edge.dst, view_edge.dst_conn, e.data)
         if view_edge in state.edges():
             state.remove_edge(view_edge)
 
@@ -1020,7 +1031,7 @@ class RemoveViews(ppl.Pass):
         self._rewrite_interstate_edges(sdfg, vnode.data, _rw_lin)
 
         # -- reconnect and remove -------------------------------------------
-        self._reconnect_edges(state, vnode, viewed_node, view_edge, is_viewed_src)
+        self._reconnect_edges(state, vnode, view_edge, is_viewed_src)
         state.remove_node(vnode)
         self._cleanup_isolated_viewed_node(state, viewed_node)
         if _DEBUGPRINT:
