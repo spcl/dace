@@ -948,7 +948,7 @@ required:
 
                             ssa_loop_scalars:
                                 type: str
-                                default: 'off'
+                                default: 'on'
                                 title: Single-assignment versioning of reassigned scope scalars
                                 description: >
                                     Applies to: experimental_readable ONLY (this runs an SDFG rewrite
@@ -957,7 +957,7 @@ required:
 
                                     Whether a transient scalar that is REASSIGNED several times in a scope
                                     / loop nest is versioned into single-assignment names before codegen:
-                                    ``off`` (the default) leaves it as one mutable variable; ``on`` runs
+                                    ``off`` leaves it as one mutable variable; ``on`` (the default) runs
                                     the existing :class:`~dace.transformation.passes.scalar_fission.
                                     PrivatizeScalars` (``ScalarFission``) pass so each dominating write
                                     becomes its own container (``nx``, ``nx_0``, ``nx_1`` ...), each
@@ -970,7 +970,7 @@ required:
 
                             scalar_emission_type:
                                 type: str
-                                default: keep
+                                default: scalar
                                 title: Normalize single-value transients to Scalar or length-1 Array
                                 description: >
                                     Applies to: experimental_readable ONLY (this runs an SDFG rewrite
@@ -981,8 +981,11 @@ required:
                                     ``Scalar`` (``T x;``) or a length-1 ``Array`` (``T x[1];``, indexed
                                     ``x[0]``). A frontend leaves a mix of both; this normalizes it.
 
-                                    ``keep`` (the default) runs neither conversion, so the descriptors and
-                                    the emitted code are byte-identical to today. ``scalar`` runs
+                                    ``scalar`` (the default) is the readable form: a single value reads as
+                                    ``x``, not ``x[0]``. ``keep`` runs neither conversion, so the
+                                    descriptors and the emitted code are byte-identical to the legacy
+                                    generator's -- use it to bisect a suspected scalarization
+                                    regression. ``scalar`` runs
                                     :class:`~dace.transformation.passes.length_one_array_scalar_conversion.
                                     ConvertLengthOneArraysToScalars` to turn every length-1 array into a
                                     Scalar; ``len1_array`` runs the inverse
