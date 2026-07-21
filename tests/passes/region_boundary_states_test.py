@@ -18,8 +18,13 @@ def loop_and_branch(a: dace.float64[N], out: dace.float64[N]):
             out[i] = -a[i]
 
 
+@dace.program
+def calls_loop_and_branch(a: dace.float64[N], out: dace.float64[N]):
+    loop_and_branch(a, out)
+
+
 def regions_of(sdfg):
-    for cfg in sdfg.all_control_flow_regions():
+    for cfg in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(cfg, ConditionalBlock):
             continue
         for node in cfg.nodes():
@@ -33,6 +38,21 @@ def test_every_region_is_bracketed():
 
     assert RegionBoundaryStates().apply_pass(sdfg, {}) > 0
     for cfg, region in regions_of(sdfg):
+        assert all(isinstance(e.src, dace.SDFGState) for e in cfg.in_edges(region))
+        assert all(isinstance(e.dst, dace.SDFGState) for e in cfg.out_edges(region))
+    sdfg.validate()
+
+
+def test_regions_inside_a_nested_sdfg_are_bracketed():
+    """The pass descends into nested SDFGs, where the same allocation bug applies."""
+    sdfg = calls_loop_and_branch.to_sdfg(simplify=False)
+    nested = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert nested, 'the fixture must keep a nested SDFG'
+    inner_regions = [(cfg, r) for cfg, r in regions_of(sdfg) if cfg.sdfg is not sdfg]
+    assert inner_regions, 'the nested SDFG must contain a region'
+
+    RegionBoundaryStates().apply_pass(sdfg, {})
+    for cfg, region in inner_regions:
         assert all(isinstance(e.src, dace.SDFGState) for e in cfg.in_edges(region))
         assert all(isinstance(e.dst, dace.SDFGState) for e in cfg.out_edges(region))
     sdfg.validate()
@@ -72,5 +92,6 @@ def test_result_is_unchanged():
 
 if __name__ == '__main__':
     test_every_region_is_bracketed()
+    test_regions_inside_a_nested_sdfg_are_bracketed()
     test_leading_region_keeps_start_block()
     test_result_is_unchanged()

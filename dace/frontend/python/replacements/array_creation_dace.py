@@ -36,8 +36,6 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
         n for n in symbolic.symlist(resolved)
         if n in sdfg.arrays and n not in sdfg.symbols and sdfg.arrays[n].total_size == 1
     ]
-    if not names:
-        return shape
 
     # One symbol per distinct name; sorted() keeps the promotion states deterministic.
     replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}

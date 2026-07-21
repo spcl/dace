@@ -1,6 +1,7 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import properties, symbolic
+from dace.libraries.blas.blas_helpers import matrix_view
 from copy import deepcopy as dc
 from typing import Any, Dict
 import warnings
@@ -9,22 +10,12 @@ from math import prod
 
 def _matrix_subset_size(subset):
     """
-    Returns an operand's size in the matrix view ``SpecializeMatMul`` matched on: the raw size if
-    already 2D, otherwise the squeezed size.
-
-    The dispatcher selects GEMM when an operand is 2D raw *or* 2D once squeezed, so validation,
-    expansion and codegen must read that same view. Reading only the raw subset rejects a
-    ``(NQ, 1, NP)`` reshape; reading only the squeezed one rejects a genuine ``(N, 1)`` column.
+    Returns an operand's size in the matrix view ``SpecializeMatMul`` matched on.
 
     :param subset: The subset of the memlet accessing the operand.
-    :return: The 2D size if either view supplies one, otherwise the squeezed size.
+    :return: The size in the matrix view.
     """
-    size = subset.size()
-    if len(size) == 2:
-        return size
-    squeezed = dc(subset)
-    squeezed.squeeze()
-    return squeezed.size()
+    return matrix_view(subset)[0]
 
 
 def _matrix_operand(operand):
@@ -45,6 +36,7 @@ def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_o
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
     res_rhs = None
+    res_out = None
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
             size = edge.data.subset.size()

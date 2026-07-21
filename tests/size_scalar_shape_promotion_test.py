@@ -7,6 +7,8 @@ descriptor in place so it can still be read or reassigned. Each shape captures i
 two arrays sized from the same reused name keep their own extents.
 """
 import numpy as np
+import pytest
+
 import dace
 
 N = dace.symbol('N')
@@ -60,6 +62,13 @@ def size_reused_as_index(out: dace.float64[1]):
         a[i] = i * 1.0
     m = 2
     out[0] = a[m]  # the shape symbol must not be the one this index reassigns
+
+
+@dace.program
+def size_from_size_one_array(nt: dace.int64[1], out: dace.float64[4]):
+    b = np.empty(nt, dace.float64)
+    b[0] = 1.0
+    out[0] = b[0]
 
 
 def test_scalar_size_as_shape():
@@ -151,6 +160,33 @@ def test_size_symbol_is_assigned_before_the_allocation():
     assert any('delete[] b' in line for line in lines), 'the array is never freed'
 
 
+def test_a_size_one_array_is_read_through_a_subscript():
+    """A size-1 array is a valid extent, but the assignment must read ``nt[0]``, not the pointer."""
+    out = np.zeros(4)
+    size_from_size_one_array(np.array([4], dtype=np.int64), out)
+    assert np.allclose(out, [1.0, 0.0, 0.0, 0.0])
+
+
+@dace.program
+def zeros_from_size(Nt: dace.int64, out: dace.float64[1]):
+    b = np.zeros(Nt + 1, dace.float64)
+    out[0] = np.sum(b)
+
+
+@dace.program
+def ones_from_size(Nt: dace.int64, out: dace.float64[1]):
+    b = np.ones(Nt + 1, dace.float64)
+    out[0] = np.sum(b)
+
+
+@pytest.mark.parametrize('program,expected', [(zeros_from_size, 0.0), (ones_from_size, 4.0)])
+def test_the_fill_constructors_accept_a_computed_size(program, expected):
+    """zeros/ones/full build their transient on their own path, which also has to promote the size."""
+    out = np.zeros(1)
+    program(np.int64(3), out)
+    assert np.isclose(out[0], expected)
+
+
 if __name__ == '__main__':
     test_scalar_size_as_shape()
     test_size_descriptor_survives_its_use_as_a_shape()
@@ -160,3 +196,6 @@ if __name__ == '__main__':
     test_promotion_leaves_the_descriptor_in_place()
     test_shape_stays_correct_through_simplify()
     test_size_symbol_is_assigned_before_the_allocation()
+    test_a_size_one_array_is_read_through_a_subscript()
+    test_the_fill_constructors_accept_a_computed_size(zeros_from_size, 0.0)
+    test_the_fill_constructors_accept_a_computed_size(ones_from_size, 4.0)

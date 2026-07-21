@@ -5408,7 +5408,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 self.globals[str(sym)] = sym
         state = self._add_state(f'promote_{scalar}_to_{str(sym)}')
         edge = state.parent_graph.in_edges(state)[0]
-        edge.data.assignments = {str(sym): scalar}
+        # A Scalar reads by name; a size-1 array needs the subscript, or the assignment takes its pointer.
+        rhs = scalar if isinstance(desc, data.Scalar) else f'{scalar}[{", ".join(["0"] * len(desc.shape))}]'
+        edge.data.assignments = {str(sym): rhs}
         return sym
 
     def _parse_subscript_slice(self,
