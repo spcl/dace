@@ -60,6 +60,9 @@ def test_strides_alignment_symbolic_uses_int_ceil():
     _, total_size = desc.strides_from_layout(0, alignment=8)
     assert 'floor' not in str(total_size).replace('int_ceil', ''), total_size
     assert 'int_ceil' in sym2cpp(total_size), sym2cpp(total_size)
+    # alignment=1 is no padding: int_ceil(N, 1) does NOT fold back to N, so it must not be applied
+    # at all -- otherwise every unaligned symbolic descriptor carries an int_ceil.
+    assert dace.data.Array(dace.float32, [N, N]).strides_from_layout(0, 1)[1] == N * N
 
 
 if __name__ == '__main__':

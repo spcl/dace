@@ -1162,6 +1162,13 @@ class int_ceil(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return sympy.ceiling(x / y)
+        # Mirrors int_floor: dividing by 1 is a no-op. Without this an unpadded (alignment == 1)
+        # descriptor keeps an int_ceil(N, 1) that never folds back to N.
+        if y.is_Number and y == 1:
+            return x
+        # Exact division has nothing to round up, so it is plain floor division.
+        if y.is_Number and sympy.Mod(x, y).is_zero:
+            return int_floor(x, y)
 
     def _eval_is_integer(self):
         return True
