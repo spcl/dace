@@ -464,14 +464,18 @@ class RustworkxGraphHandle:
         return iter(self.unique_neighbors(self._rx.predecessor_indices(self.node_index_or_raise(node))))
 
     def in_degree(self, node):
-        # networkx returns an (empty) degree view rather than raising for an absent node.
+        # An absent node gives networkx's empty degree VIEW, not 0 -- and `[] == 0` is False,
+        # which real code depends on: dace/sdfg/validation.py asks the root SDFG for the degree
+        # of a state living in a nested region, and returning a literal 0 makes its
+        # `in_degree(state) == 0 and out_degree(state) == 0` unreachable-state check fire on a
+        # perfectly valid graph.
         if node not in self._index:
-            return 0
+            return []
         return self._rx.in_degree(self._index.index_of(node))
 
     def out_degree(self, node):
         if node not in self._index:
-            return 0
+            return []
         return self._rx.out_degree(self._index.index_of(node))
 
     def reverse(self, copy=True):
