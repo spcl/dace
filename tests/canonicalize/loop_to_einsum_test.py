@@ -97,6 +97,78 @@ def outer_axis_accumulate(A: dace.float64[N, N], t: dace.float64[N], y: dace.flo
             o = a * tt
 
 
+@dace.program
+def alpha_matmul(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    """Matmul with a compile-time coefficient: must lift with ``alpha == 2.5``."""
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                C[i, j] += 2.5 * A[i, k] * B[k, j]
+
+
+@dace.program
+def tensor_contraction(A: dace.float64[N, N, N], B: dace.float64[N, N], C: dace.float64[N, N, N]):
+    """A 4-D nest contracting one axis: ``ijl,lk->ijk``."""
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                for l in range(N):
+                    C[i, j, k] += A[i, j, l] * B[l, k]
+
+
+@dace.program
+def map_matmul(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    """MAP-form contraction: the iteration space is one MapEntry with three params and
+    the accumulation is a WCR sum, not a read/add/write."""
+    for i, j, k in dace.map[0:N, 0:N, 0:N]:
+        with dace.tasklet:
+            a << A[i, k]
+            b << B[k, j]
+            c >> C(1, lambda x, y: x + y)[i, j]
+            c = a * b
+
+
+@dace.program
+def mixed_loop_map_matmul(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    """MIXED nest: an outer ``LoopRegion`` wrapping a 2-param map scope."""
+    for i in range(N):
+        for j, k in dace.map[0:N, 0:N]:
+            with dace.tasklet:
+                a << A[i, k]
+                b << B[k, j]
+                c >> C(1, lambda x, y: x + y)[i, j]
+                c = a * b
+
+
+@dace.program
+def triangular_matvec(A: dace.float64[N, N], x: dace.float64[N], y: dace.float64[N]):
+    """A parameter-dependent (triangular) inner bound. Lifting it to a dense einsum would
+    contract over the FULL rectangle, so it must be refused -- this is also what keeps the
+    generic matcher off the triangular shapes ``LoopToSyrk``/``LoopToSyr2k`` own."""
+    for i in range(N):
+        for j in range(i):
+            y[i] += A[i, j] * x[j]
+
+
+@dace.program
+def self_referential_matmul(C: dace.float64[N, N], B: dace.float64[N, N]):
+    """The output feeds its own contraction -- a genuine loop-carried dependence, not a
+    matmul. Must be refused."""
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                C[i, j] += C[i, k] * B[k, j]
+
+
+@dace.program
+def subtracting_matmul(A: dace.float64[N, N], B: dace.float64[N, N], C: dace.float64[N, N]):
+    """``-=`` is not a ``Sum`` reduction, so it is not an einsum contraction."""
+    for i in range(N):
+        for j in range(N):
+            for k in range(N):
+                C[i, j] -= A[i, k] * B[k, j]
+
+
 def _n_einsum(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum))
 
@@ -239,6 +311,98 @@ def test_atax_style_outer_axis_accumulate_lifts():
     y_prior = y.copy()
     sdfg(A=A, t=t, y=y, N=n)
     assert np.allclose(y, y_prior + A.T @ t, rtol=1e-9, atol=1e-12)
+
+
+def test_alpha_scaled_matmul_lifts():
+    """``C[i,j] += 2.5*A[i,k]*B[k,j]``: the numeric coefficient becomes the Einsum's
+    ``alpha``, collected across the SPLIT product tasklets the frontend emits
+    (``__tmp0 = 2.5*A``; ``__tmp1 = __tmp0*B``) rather than one fused tasklet."""
+    sdfg = alpha_matmul.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
+    assert len(einsums) == 1, 'the alpha-scaled matmul must lift to exactly one Einsum node'
+    assert einsums[0].einsum_str == 'ij,jk->ik'
+    assert float(einsums[0].alpha) == 2.5, 'the 2.5 coefficient must land on the Einsum alpha'
+    assert _n_loops(sdfg) == 0
+    sdfg.validate()
+
+    n = 10
+    rng = np.random.default_rng(7)
+    A, B, C = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
+    sdfg(A=A, B=B, C=C, N=n)
+    assert np.allclose(C, 2.5 * (A @ B), rtol=1e-9, atol=1e-12)
+
+
+def test_4d_tensor_contraction_lifts():
+    """A 4-D nest whose contracted axis is the INNERMOST of four: ``ijl,lk->ijk``."""
+    sdfg = tensor_contraction.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
+    assert len(einsums) == 1, 'the 4-D contraction must lift to exactly one Einsum node'
+    assert einsums[0].einsum_str == 'ijk,kl->ijl'
+    assert _n_loops(sdfg) == 0
+    sdfg.validate()
+
+    n = 7
+    rng = np.random.default_rng(8)
+    A, B, C = rng.random((n, n, n)), rng.random((n, n)), np.zeros((n, n, n))
+    sdfg(A=A, B=B, C=C, N=n)
+    assert np.allclose(C, np.einsum('ijl,lk->ijk', A, B), rtol=1e-9, atol=1e-12)
+
+
+def test_map_form_contraction_lifts():
+    """A contraction written as ONE map with three params and a WCR-sum accumulation --
+    no LoopRegion anywhere. The nest is still recognised and the map scope is replaced
+    in place."""
+    sdfg = map_matmul.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
+    assert len(einsums) == 1, 'the map-form contraction must lift to exactly one Einsum node'
+    assert einsums[0].einsum_str == 'ij,jk->ik'
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry)], \
+        'the contraction map scope must be gone'
+    sdfg.validate()
+
+    n = 9
+    rng = np.random.default_rng(9)
+    A, B, C = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
+    sdfg(A=A, B=B, C=C, N=n)
+    assert np.allclose(C, A @ B, rtol=1e-9, atol=1e-12)
+
+
+def test_mixed_loop_and_map_contraction_lifts():
+    """A loop wrapping a map: the axes come from BOTH constructs and form one nest."""
+    sdfg = mixed_loop_map_matmul.to_sdfg(simplify=True)
+    LoopToEinsum().apply_pass(sdfg, {})
+    einsums = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Einsum)]
+    assert len(einsums) == 1, 'the mixed loop+map nest must lift to exactly one Einsum node'
+    assert einsums[0].einsum_str == 'ij,jk->ik'
+    assert _n_loops(sdfg) == 0
+    sdfg.validate()
+
+    n = 8
+    rng = np.random.default_rng(10)
+    A, B, C = rng.random((n, n)), rng.random((n, n)), np.zeros((n, n))
+    sdfg(A=A, B=B, C=C, N=n)
+    assert np.allclose(C, A @ B, rtol=1e-9, atol=1e-12)
+
+
+@pytest.mark.parametrize('program,reason', [
+    (triangular_matvec, 'a parameter-dependent (triangular) bound is not a dense contraction'),
+    (self_referential_matmul, 'the output feeding its own contraction is a loop-carried dependence'),
+    (subtracting_matmul, '``-=`` is not a Sum reduction'),
+])
+def test_refused_shapes(program, reason):
+    """Shapes that look like a contraction but must NOT be lifted. The triangular case
+    doubles as the guard that keeps this generic lift off the shapes the dedicated
+    ``LoopToSyrk`` / ``LoopToSyr2k`` BLAS lifts claim earlier in the pipeline."""
+    sdfg = program.to_sdfg(simplify=True)
+    loops_before = _n_loops(sdfg)
+    LoopToEinsum().apply_pass(sdfg, {})
+    assert _n_einsum(sdfg) == 0, reason
+    assert _n_transpose(sdfg) == 0, reason
+    assert _n_loops(sdfg) == loops_before, 'the refused nest must be left untouched'
+    sdfg.validate()
 
 
 if __name__ == '__main__':
