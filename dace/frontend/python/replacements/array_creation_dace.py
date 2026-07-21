@@ -10,7 +10,7 @@ from dace import data, dtypes, Memlet, SDFG, SDFGState
 
 from copy import deepcopy as dcpy
 from numbers import Integral
-from typing import Any, Optional
+from typing import Any, Optional, Tuple
 
 import sympy
 import numpy as np
@@ -18,7 +18,7 @@ import numpy as np
 from dace import symbolic
 
 
-def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) -> Shape:
+def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) -> Tuple[Shape, bool]:
     """
     Rewrites a shape so that a size scalar used as an extent is read through a symbol.
 
@@ -29,17 +29,19 @@ def promote_size_scalars_in_shape(pv: ProgramVisitor, sdfg: SDFG, shape: Shape) 
     :param pv: The program visitor.
     :param sdfg: The SDFG being built.
     :param shape: The requested shape.
-    :return: The shape with scalar extents replaced by symbols.
+    :return: The shape with scalar extents replaced by symbols, and whether anything was promoted.
     """
     resolved = [symbolic.pystr_to_symbolic(e) if isinstance(e, str) else e for e in shape]
     names = [
         n for n in symbolic.symlist(resolved)
         if n in sdfg.arrays and n not in sdfg.symbols and sdfg.arrays[n].total_size == 1
     ]
+    if not names:
+        return shape, False
 
     # One symbol per distinct name; sorted() keeps the promotion states deterministic.
     replacements = {symbolic.pystr_to_symbolic(n): pv.promote_scalar_to_symbol(n, fresh=True) for n in sorted(names)}
-    return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved]
+    return [e.subs(replacements) if isinstance(e, sympy.Basic) else e for e in resolved], True
 
 
 @oprepo.replaces('dace.define_local')
@@ -59,7 +61,7 @@ def _define_local_ex(pv: ProgramVisitor,
         if not isinstance(strides, (list, tuple)):
             strides = [strides]
         strides = [int(s) if isinstance(s, Integral) else s for s in strides]
-    shape = promote_size_scalars_in_shape(pv, sdfg, shape)
+    shape, _ = promote_size_scalars_in_shape(pv, sdfg, shape)
     name = pv.get_target_name()
     name, _ = sdfg.add_transient(name,
                                  shape,

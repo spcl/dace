@@ -66,9 +66,10 @@ def _numpy_full(pv: ProgramVisitor,
     if isinstance(shape, (Number, str)) or symbolic.issymbolic(shape):
         shape = [shape]
 
-    shape = promote_size_scalars_in_shape(pv, sdfg, shape)
-    # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
-    state = pv.last_block
+    shape, promoted = promote_size_scalars_in_shape(pv, sdfg, shape)
+    if promoted:
+        # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
+        state = pv.last_block
     if any(isinstance(s, str) for s in shape):
         raise DaceSyntaxError(
             pv, None, f'Data-dependent shape {shape} is currently not allowed. Only constants '
