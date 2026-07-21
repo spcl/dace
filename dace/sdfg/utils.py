@@ -2587,21 +2587,42 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # -> then create a [tasklet] that uses the scalar_val as a constant value inside
     import re
 
+    import numpy
+
     def _token_replace(code: str, src: str, dst: str) -> str:
-        # Split while keeping delimiters
-        tokens = re.split(r'(\s+|[()\[\]])', code)
+        # Whole identifiers only. Splitting on whitespace and brackets alone missed every unspaced
+        # operator -- `o = _in*3` kept the token '_in*3', so the connector was removed while the
+        # code still referenced it. The lookbehind also excludes '.', leaving `x._in` alone.
+        return re.sub(r'(?<![A-Za-z0-9_.])' + re.escape(src) + r'(?![A-Za-z0-9_])', dst, code).strip()
 
-        # Replace tokens that exactly match src
-        tokens = [dst if token.strip() == src else token for token in tokens]
+    def _scalar_literal(value: Union[float, int, str], dtype) -> str:
+        """Source-level literal for ``value``, substituted verbatim into tasklet code.
 
-        # Recombine everything
-        return ''.join(tokens).strip()
+        An integer replacing a read of a floating-point scalar is written as a float literal: the
+        surrounding code was compiled with float semantics, and turning ``_in / 2`` into ``5 / 2``
+        silently switches it to integer division in the generated C++.
+
+        :param value: the constant replacing the scalar.
+        :param dtype: declared dtype of the scalar being specialized, or None if unknown.
+        :return: the literal to substitute.
+        """
+        if isinstance(value, str):
+            return value
+        if isinstance(value, float):
+            return repr(value)
+        if dtype is not None and numpy.issubdtype(dtype.as_numpy_dtype(), numpy.floating):
+            return repr(float(value))
+        return str(value)
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
             return CodeBlock(_token_replace(input.as_string, src, dst))
         else:
             return input.replace(src, dst)
+
+    # Captured before the descriptor is removed below (see _scalar_literal).
+    scalar_desc = sdfg.arrays.get(scalar_name)
+    scalar_dtype = scalar_desc.dtype if scalar_desc is not None else None
 
     nsdfgs = []
     # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
@@ -2643,12 +2664,13 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                     # floats at 15 significant digits, so a float64 no longer round-trips
                     # bit-exactly, and it folds integer quotients into ``Rational`` literals such
                     # as ``(1 / 3)``, which the C++ backend then emits as integer division.
-                    replacer = astutils.ASTFindReplace({in_tasklet_name: str(scalar_val)})
+                    replacer = astutils.ASTFindReplace({in_tasklet_name: _scalar_literal(scalar_val, scalar_dtype)})
                     body = CodeBlock(e.dst.code.as_string, dace.dtypes.Language.Python).code
                     new_body = [ast.fix_missing_locations(replacer.visit(stmt)) for stmt in body]
                     e.dst.code = CodeBlock(code=new_body, language=dace.dtypes.Language.Python)
                 else:
-                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name, str(scalar_val)),
+                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name,
+                                                             _scalar_literal(scalar_val, scalar_dtype)),
                                          language=e.dst.code.language)
                     e.dst.code = new_code
                 state.remove_edge(e)
