@@ -159,28 +159,29 @@ def _predecessors_in(parent: ControlFlowRegion, child: ControlFlowBlock) -> Set[
     return out
 
 
-def _block_reads_symbols(block: ControlFlowBlock) -> Set[str]:
+def _block_reads_symbols(block: ControlFlowBlock) -> Optional[Set[str]]:
     """All symbols read anywhere inside a block (state, region, etc.).
 
-    Uses ``free_symbols`` where available; falls back to a manual scan of
-    interstate-edge conditions and assignment RHSes for regions.
+    This is a legality predicate, so it fails CLOSED: an unreadable ``free_symbols`` or condition
+    yields ``None`` rather than a partial set, because a partial set silently drops the very read
+    the caller is looking for and lets an illegal hoist through.
 
     :param block: The state or region to scan.
-    :returns: The set of symbol names read inside ``block``.
+    :returns: The set of symbol names read inside ``block``, or ``None`` if it cannot be determined.
     """
     syms: Set[str] = set()
     if isinstance(block, SDFGState):
         try:
             syms |= {str(s) for s in block.free_symbols}
         except Exception:
-            pass
+            return None
         return syms
     if isinstance(block, ControlFlowRegion):
         for st in block.all_states():
             try:
                 syms |= {str(s) for s in st.free_symbols}
             except Exception:
-                pass
+                return None
         for e in block.all_interstate_edges():
             for rhs in e.data.assignments.values():
                 syms |= _free(rhs)
@@ -188,7 +189,7 @@ def _block_reads_symbols(block: ControlFlowBlock) -> Set[str]:
                 try:
                     syms |= {str(s) for s in e.data.condition.get_free_symbols()}
                 except Exception:
-                    pass
+                    return None
     return syms
 
 
@@ -261,7 +262,8 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     # ``child`` saw the assignment via the original edge anyway.
     preds = _predecessors_in(parent, child)
     for b in preds:
-        if key in _block_reads_symbols(b):
+        reads = _block_reads_symbols(b)
+        if reads is None or key in reads:
             return False  # L3: a predecessor would observe the moved assignment
         b_asyms, b_wdata = _block_writes(b)
         if key in b_asyms or key in b_wdata:
@@ -289,13 +291,23 @@ def _legal_to_hoist_into(parent: ControlFlowRegion, child: ControlFlowRegion, ke
     return True
 
 
-def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG) -> Optional[ControlFlowRegion]:
+def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: SDFG,
+                      origin: ControlFlowBlock) -> Optional[ControlFlowRegion]:
     """Walk up the ``parent_graph`` chain from ``edge_region`` to find the
     outermost ancestor ``D`` where the move is legal under L1-L6. Returns
     ``None`` if the binding all-or-nothing rule is not met or if no move
     is legal (D == ``edge_region``).
+
+    :param origin: The source block of the edge carrying the assignment. Even the first hoist step
+                   moves the assignment ahead of everything in ``edge_region`` that runs before this
+                   block, so those blocks are checked here; ``_legal_to_hoist_into`` only ever sees
+                   ``edge_region`` from the outside and cannot look in.
     """
     rhs_syms = _free(rhs)
+    for b in _predecessors_in(edge_region, origin) | {origin}:
+        reads = _block_reads_symbols(b)
+        if reads is None or key in reads:
+            return None
     dest: ControlFlowRegion = edge_region
     walker: ControlFlowRegion = edge_region
     while True:
@@ -377,7 +389,7 @@ def _cascade_once(sdfg: SDFG) -> int:
                 continue
             # Snapshot keys -- we mutate the dict as we go.
             for key, rhs in list(edge.data.assignments.items()):
-                dest = _find_destination(cfg, key, rhs, sdfg)
+                dest = _find_destination(cfg, key, rhs, sdfg, edge.src)
                 if dest is None:
                     continue
                 child = _direct_child(dest, cfg)

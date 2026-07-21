@@ -335,6 +335,46 @@ def test_refuses_when_body_uses_bare_inner_iterator():
     assert res is None
 
 
+@dace.program
+def scaled_outer(a: dace.float64[N * N], b: dace.float64[N * N]):
+    for i in range(0, N, 4):
+        for ii in range(4):
+            a[2 * i + ii] = b[2 * i + ii]
+
+
+@dace.program
+def squared_both(a: dace.float64[N * N], b: dace.float64[N * N]):
+    for i in range(0, N, 4):
+        for ii in range(4):
+            a[i * i + ii * ii] = b[i * i + ii * ii]
+
+
+@pytest.mark.parametrize('program,index', [(scaled_outer, lambda i, ii: 2 * i + ii),
+                                           (squared_both, lambda i, ii: i * i + ii * ii)])
+def test_refuses_when_iterators_do_not_enter_as_their_sum(program, index):
+    """``i`` and ``ii`` co-occurring is not enough -- they must enter as ``i + ii``.
+
+    The rewrite substitutes ``ii -> k - i`` then ``i -> 0``, so ``2*i + ii`` collapses to ``k`` and
+    ``i*i + ii*ii`` to ``k*k``. Both mention the two iterators together, so a co-occurrence audit
+    admits them; with ``N = 8`` the first writes ``a[0,1,2,3,8,9,10,11]`` but the collapsed loop
+    writes ``a[0:8]``.
+    """
+    sdfg = program.to_sdfg(simplify=True)
+    assert UntileLoops().apply_pass(sdfg, {}) is None
+
+    n = 8
+    rng = np.random.default_rng(7)
+    a = np.zeros(n * n)
+    b = rng.standard_normal(n * n)
+    ref = a.copy()
+    for i in range(0, n, 4):
+        for ii in range(4):
+            ref[index(i, ii)] = b[index(i, ii)]
+
+    sdfg(a=a, b=b, N=n)
+    assert np.allclose(a, ref)
+
+
 def test_untiles_when_outer_start_is_not_zero():
     """``for i in range(P, N, 4): for ii in range(4): a[i+ii]`` with ``P != 0``
     (a tiled stencil walking the interior ``[P, N)``) collapses to a single

@@ -381,5 +381,63 @@ def test_unroll_reduction_11_accs_value_and_reduce():
     assert (_nmaps(sdfg) + _nreduces(sdfg)) >= 1, 'the multi-accumulator unrolled reduction must lift to a map/reduce'
 
 
+@dace.program
+def unrolled_lanes_read_different_arrays(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N],
+                                         c: dace.float64[N]):
+    for i in range(0, N, 2):
+        c[i] = a[i] * b[i]
+        c[i + 1] = a[i + 1] * d[i + 1]
+
+
+@dace.program
+def unrolled_lanes_write_different_arrays(a: dace.float64[N], c: dace.float64[N], e: dace.float64[N]):
+    for i in range(0, N, 2):
+        c[i] = a[i] * 2.0
+        e[i + 1] = a[i + 1] * 2.0
+
+
+def test_lanes_differing_only_by_array_are_not_rerolled():
+    """Two lanes whose tasklet text matches but whose ARRAYS differ are not interchangeable.
+
+    Both lanes here read ``__out = __in1 * __in2``, so comparing lane bodies by tasklet code alone
+    calls them identical and drops lane 1 -- after which every odd element of ``c`` is computed from
+    ``b`` instead of ``d``.
+    """
+    n = 16
+    rng = np.random.default_rng(31)
+    a, b, d = rng.standard_normal(n), rng.standard_normal(n), rng.standard_normal(n)
+    expected = np.zeros(n)
+    expected[0::2] = a[0::2] * b[0::2]
+    expected[1::2] = a[1::2] * d[1::2]
+
+    sdfg = unrolled_lanes_read_different_arrays.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got = np.zeros(n)
+    sdfg(a=a, b=b, d=d, c=got, N=n)
+    assert np.allclose(got, expected), f'odd lane took the wrong source array: {got} != {expected}'
+
+
+def test_lanes_writing_different_arrays_are_not_rerolled():
+    """Same tasklet text and same READ array, but the lanes write different destinations.
+
+    Collapsing onto lane 0 would leave ``e`` entirely unwritten.
+    """
+    n = 16
+    rng = np.random.default_rng(32)
+    a = rng.standard_normal(n)
+    exp_c, exp_e = np.zeros(n), np.zeros(n)
+    exp_c[0::2] = a[0::2] * 2.0
+    exp_e[1::2] = a[1::2] * 2.0
+
+    sdfg = unrolled_lanes_write_different_arrays.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    got_c, got_e = np.zeros(n), np.zeros(n)
+    sdfg(a=a, c=got_c, e=got_e, N=n)
+    assert np.allclose(got_c, exp_c)
+    assert np.allclose(got_e, exp_e), f'the second lane\'s destination was dropped: {got_e} != {exp_e}'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

@@ -705,5 +705,43 @@ def test_three_level_nest_rhs_uses_middle_loop_var_refuses():
     assert ('loop_k', 'x', 'j + 1') in _assignments_inside_loops(sdfg)
 
 
+def test_read_of_key_before_the_assignment_inside_the_body_refuses():
+    """L3 also has to hold for blocks INSIDE the region carrying the assignment.
+
+    The body reads ``kp1`` in ``body_pre`` and only then assigns ``kp1 = K + 1`` on the edge to
+    ``body_post``. Hoisting to the root makes that read observe ``K + 1`` on the very first
+    iteration instead of the value bound before the loop, so ``a[0]`` is never written. The
+    predecessor scan only walks the parent region, which cannot see inside the body.
+    """
+    sdfg = dace.SDFG('read_before_assign')
+    sdfg.add_symbol('N', dace.int64)
+    sdfg.add_symbol('K', dace.int64)
+    sdfg.add_symbol('kp1', dace.int64)
+    sdfg.add_array('a', [4], dace.float64)
+
+    entry = sdfg.add_state('entry', is_start_block=True)
+    loop = LoopRegion('body_loop',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = 0',
+                      update_expr='i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry, loop, InterstateEdge(assignments={'kp1': '0'}))
+
+    body_pre = loop.add_state('body_pre', is_start_block=True)
+    tasklet = body_pre.add_tasklet('use_kp1', {}, {'o'}, 'o = 1.0')
+    body_pre.add_edge(tasklet, 'o', body_pre.add_access('a'), None, dace.Memlet('a[kp1]'))
+    body_post = loop.add_state('body_post')
+    loop.add_edge(body_pre, body_post, InterstateEdge(assignments={'kp1': 'K + 1'}))
+
+    assert _apply(sdfg) == 0
+    assert ('body_loop', 'kp1', 'K + 1') in _assignments_inside_loops(sdfg)
+
+    # N = 2, K = 1: iteration 0 reads kp1 == 0, iteration 1 reads kp1 == 2.
+    a = np.zeros(4)
+    sdfg(a=a, N=2, K=1)
+    assert np.array_equal(a, np.array([1.0, 0.0, 1.0, 0.0])), f'first iteration read the hoisted value: {a}'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
