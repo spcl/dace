@@ -99,10 +99,11 @@ def test_ite_header_exists_and_declares_template():
     with open(header) as f:
         text = f.read()
     assert "template" in text
-    # Loose signature check -- must accept (bool, T, T). The function lives at
-    # top level (un-namespaced) to match the codegen convention used for
-    # ``left_shift``/``ROUND`` in ``dace/math.h``.
-    assert re.search(r"ITE\s*\(\s*bool\s+\w+\s*,\s*T\s+\w+\s*,\s*T\s+\w+\s*\)", text), text
+    # Loose signature check -- must accept a bool condition and two arms. The arms are
+    # independently deduced (``TA``/``TB``) so a blend against a differently-typed literal still
+    # deduces. The function lives at top level (un-namespaced) to match the codegen convention
+    # used for ``left_shift``/``ROUND`` in ``dace/math.h``.
+    assert re.search(r"ITE\s*\(\s*bool\s+\w+\s*,\s*\w+\s+\w+\s*,\s*\w+\s+\w+\s*\)", text), text
 
 
 def test_ite_compiled_in_sdfg_matches_python_reference():
