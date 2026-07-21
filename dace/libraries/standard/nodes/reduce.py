@@ -250,7 +250,15 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         nstate.add_memlet_path(r, ome, ime, t, dst_conn='b', memlet=inmm)
         nstate.add_memlet_path(accread, ime, t, dst_conn='a', memlet=dace.Memlet('acc[0]'))
         nstate.add_memlet_path(t, imx, accwrite, src_conn='o', memlet=dace.Memlet('acc[0]', wcr=node.wcr))
-        nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
+        if nsdfg.arrays['acc'].dtype == nsdfg.arrays['_out'].dtype:
+            nstate.add_memlet_path(accwrite, omx, w, memlet=outm)
+        else:
+            # The accumulator keeps the input type so partial results are not truncated; a
+            # mixed-type reduction (Fortran ``SUM`` of an integer array into a real) then needs a
+            # tasklet to carry the cast, since an access-to-access edge copies raw bytes.
+            cast = nstate.add_tasklet('store', {'a'}, {'o'}, 'o = a')
+            nstate.add_edge(accwrite, None, cast, 'a', dace.Memlet('acc[0]'))
+            nstate.add_memlet_path(cast, omx, w, src_conn='o', memlet=outm)
 
         # Rename outer connectors and add to node
         inedge._dst_conn = '_in'
