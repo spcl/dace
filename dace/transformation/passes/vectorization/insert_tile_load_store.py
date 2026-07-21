@@ -32,7 +32,7 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
                                                                             no_transient_scalar_stores)
 from dace.transformation.passes.vectorization.utils.subsets import an_side_subset, infer_edge_endpoints
 from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
-                                                                        _build_symbol_definition_map)
+                                                                        build_symbol_definition_map)
 
 
 def _assert_post_stage_invariants(state: SDFGState) -> None:
@@ -833,7 +833,7 @@ class InsertTileLoadStore(ppl.Pass):
             symbol (not a tile-node gather index).
         """
         import dace.symbolic as _sym
-        defs = _build_symbol_definition_map(inner_sdfg, state=inner_state)
+        defs = build_symbol_definition_map(inner_sdfg, state=inner_state)
 
         def _chase(name: str, seen: set):
             if name in seen:
@@ -977,7 +977,10 @@ class InsertTileLoadStore(ppl.Pass):
             free = {str(s) for s in parsed.free_symbols}
             if any(v in free for v in iter_vars):
                 from dace.transformation.passes.vectorization.utils.tasklets import materialise_lane_id_index_tile
-                return materialise_lane_id_index_tile(inner_state, begin_str, iter_vars, tuple(self.widths),
+                return materialise_lane_id_index_tile(inner_state,
+                                                      begin_str,
+                                                      iter_vars,
+                                                      tuple(self.widths),
                                                       name_hint=name_hint)
             return None  # no data-dependent symbol / not a lane expr
         sym_to_conn: Dict[str, Tuple[str, AccessNode]] = {}

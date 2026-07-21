@@ -262,7 +262,7 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
     return None
 
 
-def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict[str, sympy.Expr]:
+def build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict[str, sympy.Expr]:
     """Map ``symbol_name -> defining sympy expression`` for symbols resolvable within ``inner_sdfg``
     (optionally reaching-def-disambiguated at ``state``).
 
@@ -310,8 +310,11 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
             defs[k] = expr
 
     # --- source 2: scalars written by a single tasklet ``__out = <body>`` ---
-    # name -> set of resolved-expr strings; keep only unambiguous singletons.
-    scalar_defs: Dict[str, Set[str]] = {}
+    # name -> set of resolved exprs; keep only unambiguous singletons. Keyed on the EXPRESSION, not
+    # on its printed form: sympy expressions hash structurally, so they dedupe just as well, and
+    # printing one is expensive -- the round trip (print here, re-parse below, print again for the
+    # recurrence scan) made this the single most costly step of the tile pipeline on a large body.
+    scalar_defs: Dict[str, Set[sympy.Expr]] = {}
     for sd in inner_sdfg.all_sdfgs_recursive():
         for state in sd.states():
             for node in state.nodes():
@@ -338,15 +341,16 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
                     if ie.dst_conn and ie.data is not None and ie.data.data is not None:
                         rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(ie.data.data)
                 if rename:
-                    rhs_expr = rhs_expr.subs(rename)
-                scalar_defs.setdefault(node.data, set()).add(str(rhs_expr))
+                    # ``xreplace``, not ``subs``: every key is a plain symbol being renamed to
+                    # another plain symbol, which is exact structural replacement. ``subs`` sorts
+                    # the keys and re-sympifies them to handle expression patterns none of these are.
+                    rhs_expr = rhs_expr.xreplace(rename)
+                scalar_defs.setdefault(node.data, set()).add(rhs_expr)
 
     for name, rhs_set in scalar_defs.items():
         if name in defs or len(rhs_set) != 1:
             continue  # ISE def wins / ambiguous scalar def -> skip
-        expr = _safe_sympify(next(iter(rhs_set)))
-        if expr is not None:
-            defs[name] = expr
+        defs[name] = next(iter(rhs_set))
     # A symbol whose own definition references itself (``j = j + 1``) is a loop-carried RECURRENCE:
     # its value changes between program points. Such a loop is never a tiled parallel map (LoopToMap
     # refuses recurrences) → access stays in scalar control flow, so leave the symbol UNRESOLVED,
@@ -366,11 +370,8 @@ def _build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict
                 recurrence_syms.add(sym)
                 break
     for name, rhs_set in scalar_defs.items():
-        for rhs in rhs_set:
-            rexpr = _safe_sympify(rhs)
-            if rexpr is not None and name in {str(s) for s in rexpr.free_symbols}:
-                recurrence_syms.add(name)
-                break
+        if any(name in {str(s) for s in rhs.free_symbols} for rhs in rhs_set):
+            recurrence_syms.add(name)
     # Taint every def transitively reaching a recurrence symbol, to a fixpoint. A def that
     # references a recurrence symbol is itself unstable (``LEN_1D_minus_k = LEN_1D - k``, ``k``
     # carried; ``k = j + 1``, ``j`` carried), and so is any def that references such a tainted mint
@@ -407,7 +408,7 @@ def resolve_index_expr(expr: sympy.Expr,
     Frontend promotes a computed index ``i + offset1`` to a scalar then to a symbol
     ``__sym_i_plus_offset1`` in the memlet subset; classifier would else see that opaque symbol as
     loop-invariant. Substitutes each resolvable free symbol (see
-    :func:`_build_symbol_definition_map`) with its definition, recursively, to a fixpoint or
+    :func:`build_symbol_definition_map`) with its definition, recursively, to a fixpoint or
     ``_max_depth``. Cycle/ambiguity safe: unresolvable symbols untouched.
 
     :param expr: The (sympified) index expression to resolve.
@@ -418,7 +419,7 @@ def resolve_index_expr(expr: sympy.Expr,
     """
     if expr is None:
         return expr
-    defs = _build_symbol_definition_map(inner_sdfg) if _defs is None else _defs
+    defs = build_symbol_definition_map(inner_sdfg) if _defs is None else _defs
     if not defs:
         return expr
     cur = expr
@@ -438,7 +439,7 @@ def resolve_index_expr(expr: sympy.Expr,
 def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is a transient Scalar whose value is loaded from a (non-Scalar) Array -- a
     gather-index scalar (``N__slice = Xiv[j]``, written by a memlet COPY). The frontend promotes such
-    a scalar to a subset symbol (``__sym_N__slice = N__slice``); ``_build_symbol_definition_map``
+    a scalar to a subset symbol (``__sym_N__slice = N__slice``); ``build_symbol_definition_map``
     source 2 only rewrites TASKLET-defined scalars to their source array, so a COPY-defined one is
     missed and the array name never surfaces. The scalar is state-local, so inlining it into a later
     state's subset references it out of scope (undeclared-identifier compile error) -- keep the
@@ -457,7 +458,9 @@ def _scalar_loaded_from_array(sdfg: SDFG, name: str) -> bool:
                 if isinstance(src, nodes.AccessNode):
                     sources = [src.data]
                 elif isinstance(src, nodes.Tasklet):
-                    sources = [e.data.data for e in state.in_edges(src) if e.data is not None and e.data.data is not None]
+                    sources = [
+                        e.data.data for e in state.in_edges(src) if e.data is not None and e.data.data is not None
+                    ]
                 else:
                     sources = []
                 for sname in sources:
@@ -510,7 +513,7 @@ def propagate_subset(subset, inner_sdfg: Optional[SDFG], state=None):
     """
     if inner_sdfg is None or subset is None or not hasattr(subset, "ranges"):
         return None
-    defs = _build_symbol_definition_map(inner_sdfg, state)
+    defs = build_symbol_definition_map(inner_sdfg, state)
     if not defs:
         return None
 
@@ -795,7 +798,8 @@ def _resolve_gather_index_an(inner_sdfg: Optional[SDFG], expr: sympy.Expr) -> Op
 def classify_tile_access(subset: Range,
                          iter_vars: Sequence[str],
                          inner_sdfg: Optional[SDFG] = None,
-                         state=None) -> TileAccess:
+                         state=None,
+                         sym_defs: Optional[Dict[str, sympy.Expr]] = None) -> TileAccess:
     """Classify a memlet subset for tile lib-node dispatch.
 
     :param subset: The :class:`Range` to classify (typically a memlet's ``subset``).
@@ -804,6 +808,12 @@ def classify_tile_access(subset: Range,
         symbols. ``None`` outside the body context (gather-index field left empty).
     :param state: Optional access state; disambiguates multiply-assigned promoted index symbols by
         reaching definition (one ``__sym_i_plus_offset1`` per program point).
+    :param sym_defs: The symbol-definition map for ``(inner_sdfg, state)``, when the caller already
+        has one. Building it scans every interstate edge and scalar write in the body, which is
+        wasted work for a caller classifying many subsets of the SAME body -- the per-lane subset
+        walk over a large tiled state does exactly that, and rebuilding it per subset made the
+        predicate quadratic. Not cached across calls on purpose: passes mutate the body between
+        them, and a stale map would silently mis-classify an access.
     :returns: A :class:`TileAccess` record. Always returns, never raises. Unrecognisable patterns
         degrade to GATHER (correctness fallback).
     """
@@ -824,7 +834,7 @@ def classify_tile_access(subset: Range,
     # Resolve promoted index symbols (``__sym_i_plus_offset1`` -> ``i + offset1``) once per subset so
     # each dim's iter-var dependence is visible. Empty/unresolvable leaves exprs untouched. ``state``
     # disambiguates multiply-assigned interstate symbols by reaching def.
-    _sym_defs = _build_symbol_definition_map(inner_sdfg, state)
+    _sym_defs = build_symbol_definition_map(inner_sdfg, state) if sym_defs is None else sym_defs
 
     for d, (lo, _hi, _stp) in enumerate(subset.ranges):
         lo_sym = _safe_sympify(lo)

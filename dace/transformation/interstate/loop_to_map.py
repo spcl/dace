@@ -223,11 +223,18 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
         return False
     step_s = symbolic.pystr_to_symbolic(step)
     start_s = symbolic.pystr_to_symbolic(start)
-    A1 = sp.simplify(a1 * step_s)
-    A2 = sp.simplify(a2 * step_s)
-    B1 = sp.simplify(a1 * start_s + b1)
-    B2 = sp.simplify(a2 * start_s + b2)
-    diff = sp.simplify(B2 - B1)
+    # Plain arithmetic, not ``sp.simplify``. Nothing below asks these for a canonical form -- only
+    # ``is_Integer`` / ``is_number`` and a gcd -- and sympy already folds numeric products and sums
+    # on construction. ``simplify`` is the general simplifier: it descends into ``factor_terms``
+    # and ``Factors``, which on this kernel's write set ran long enough to look like a hang (the
+    # two-level tiled Jacobi stencil, whose every write pair reaches here). Only the DIFFERENCE
+    # needs cancellation, and only across a product an ``Add`` will not flatten on its own
+    # (``2*(t + 1) - 2*t - 2``), which is exactly what ``expand`` is for.
+    A1 = a1 * step_s
+    A2 = a2 * step_s
+    B1 = a1 * start_s + b1
+    B2 = a2 * start_s + b2
+    diff = sp.expand(B2 - B1)
     if A1 == 0 and A2 == 0:
         return diff.is_number and diff != 0
     # A strided or offset loop yields symbolic ``A_k`` only when the step/start

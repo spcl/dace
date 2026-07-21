@@ -4,7 +4,7 @@
 Policy (locked): ``assert_X`` siblings kept alongside their ``X`` counterparts; every
 loud-failure helper stays available. Removing them shifts silent corruption into the pipeline.
 """
-from typing import Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import sympy
 
@@ -358,10 +358,24 @@ def map_body_is_tile_lowerable(state: SDFGState, map_entry: dace.nodes.MapEntry)
     :func:`_map_body_per_lane_subsets`), a superset of the true W lane vars: it can only refuse
     MORE, never fewer.
     """
-    from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
+    from dace.transformation.passes.vectorization.utils.tile_access import (PerDimKind, classify_tile_access,
+                                                                            build_symbol_definition_map)
+    # One symbol-definition map per body, not per subset. Building it scans every interstate edge and
+    # scalar write in the body, and a large tiled state yields many subsets that all share the same
+    # body -- rebuilding per subset made this predicate quadratic in the state size, enough to look
+    # like a hang on a two-level tiled stencil. Scoped to this call, so no pass can mutate the body
+    # out from under it.
+    sym_defs_cache: Dict[Tuple[int, int], Dict[str, Any]] = {}
     for subset, inner_sdfg, inner_state, iter_vars in _map_body_per_lane_subsets(state, map_entry):
+        key = (id(inner_sdfg), id(inner_state))
+        if key not in sym_defs_cache:
+            sym_defs_cache[key] = build_symbol_definition_map(inner_sdfg, inner_state)
         try:
-            rec = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
+            rec = classify_tile_access(subset,
+                                       iter_vars=iter_vars,
+                                       inner_sdfg=inner_sdfg,
+                                       state=inner_state,
+                                       sym_defs=sym_defs_cache[key])
         except Exception:  # noqa: BLE001 -- a store we cannot classify, we cannot prove injective:
             return False  # fail closed, keep the map scalar (bit-exact) rather than risk a race.
         for d, kind in enumerate(rec.per_dim_kind):
