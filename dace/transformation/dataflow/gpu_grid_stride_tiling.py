@@ -107,7 +107,7 @@ class GPUGridStridedTiling(transformation.SingleStateTransformation):
         tile_o_dim_new = self._find_new_dim(sdfg, graph, o_entry, new_dim_prefix, o_entry.map.params[0])
         tile_i_dim_new = self._find_new_dim(sdfg, graph, i_entry, new_dim_prefix, i_entry.map.params[0])
 
-        grid_dim = sympy.Min(max_grid_dim, (o_to + 1 - o_from) // o_step)
+        grid_dim = sympy.Min(max_grid_dim, symbolic.int_floor(o_to + 1 - o_from, o_step))  # int_floor, never `//`
 
         # TODO: how to deal with approximated values?
         # begin, end, step of all four maps

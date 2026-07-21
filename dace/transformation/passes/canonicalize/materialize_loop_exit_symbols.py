@@ -162,7 +162,9 @@ def _trip_count(loop: LoopRegion) -> Optional[str]:
     if start is None or end is None or stride is None:
         return None
     try:
-        n = symbolic.simplify((end - start) // stride + 1)
+        # int_floor, never `//`: sympy distributes floor() over the sum and sym2cpp drops it, so the
+        # materialized trip count would truncate term by term.
+        n = symbolic.simplify(symbolic.int_floor(end - start, stride) + 1)
     except Exception:
         return None
     return symbolic.symstr(n)

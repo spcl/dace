@@ -154,7 +154,7 @@ class SplitArray(ppl.Pass):
                     step = loop_analysis.get_loop_stride(n)
                     if beg is None or end is None or step is None:
                         continue
-                    extent = ((end + 1) - beg) // step
+                    extent = dace.symbolic.int_floor((end + 1) - beg, step)  # int_floor, never `//`
                     if extent.free_symbols:
                         continue
                     try:

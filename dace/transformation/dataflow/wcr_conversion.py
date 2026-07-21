@@ -1235,10 +1235,11 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                 # param counts come from the write's dims; a scalar / whole-array source broadcasts.
                 params = [f'__wcr_i{k}' for k in range(len(dims))]
                 psyms = [symbolic.pystr_to_symbolic(p) for p in params]
-                me, mx = state.add_map('augassign_map', {
-                    p: subsets.Range([(0, (rng[1] - rng[0]) // rng[2], 1)])
-                    for p, (_, rng) in zip(params, dims)
-                })
+                me, mx = state.add_map(
+                    'augassign_map', {
+                        p: subsets.Range([(0, symbolic.int_floor(rng[1] - rng[0], rng[2]), 1)])
+                        for p, (_, rng) in zip(params, dims)
+                    })
                 dst_pe = _index_dims(out_subset, dims, psyms)
                 in_dims = _multi_element_dims(in_subset) if in_subset is not None else []
                 if in_subset is not None and in_dims:

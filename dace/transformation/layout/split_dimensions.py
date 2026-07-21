@@ -76,7 +76,8 @@ class SplitDimensions(ppl.Pass):
                 for k, v in inner_block_replacement_map.items()
             }
             # non-unit range: overapproximate to full block below
-            range_len = ((e + 1) - b) // s
+            range_len = dace.symbolic.int_floor((e + 1) - b,
+                                                s)  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
             if range_len == 1:
                 assert e == b
                 assert s == 1
@@ -91,7 +92,8 @@ class SplitDimensions(ppl.Pass):
             return (new_b, new_e, new_s)
         else:
             # non-unit range: overapproximate to full block below
-            range_len = ((e + 1) - b) // s
+            range_len = dace.symbolic.int_floor((e + 1) - b,
+                                                s)  # int_floor, never `//` (sympy floor is dropped by sym2cpp)
             if range_len == 1:
                 assert e == b
                 assert s == 1

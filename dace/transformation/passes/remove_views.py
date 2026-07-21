@@ -207,7 +207,9 @@ def _delinearize_flat(flat, astrides: List[int], array_shape: List[int]):
     """
     if len(array_shape) == 1:
         return [flat]
-    return [(flat // astr) % shp for astr, shp in zip(astrides, array_shape)]
+    # int_floor, never `//`: `//` builds sympy floor(), which sympy distributes and sym2cpp then
+    # prints without the floor, so each term truncates separately and the index lands off by one.
+    return [symbolic.int_floor(flat, astr) % shp for astr, shp in zip(astrides, array_shape)]
 
 
 def _reshape_subset(

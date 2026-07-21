@@ -147,3 +147,37 @@ def test_serialize_symbolic_float_path_is_idempotent(value):
     s2 = serialize_symbolic(loaded)
     assert s1 == s2, (f'serialize_symbolic not idempotent across the float/sympy.Basic branches: '
                       f'save 1 (float)={s1!r}, save 2 (sympy.Float)={s2!r}')
+
+
+@pytest.mark.parametrize("numerator, denominator", [("(N + 1) * 4", 8), ("i - 1", 2), ("2 * i + 3", 4)])
+def test_int_floor_survives_codegen_where_floordiv_does_not(numerator, denominator):
+    """Symbolic index/shape arithmetic must use ``int_floor``, never ``//``.
+
+    ``expr // d`` builds ``sympy.floor(expr / d)``; sympy then distributes the division over the sum
+    INSIDE the floor, and ``sym2cpp`` prints the argument without the floor. Each term is left to
+    truncate on its own, so ``((N+1)*4)//8`` emits ``N/2 + 1/2`` -- at N=3 that is 1, not 2.
+    """
+    from dace.codegen.targets.cpp import sym2cpp
+    from dace.symbolic import int_floor
+
+    expr = pystr_to_symbolic(numerator)
+    floored = sym2cpp(int_floor(expr, denominator))
+    assert f"/ {denominator})" in floored, f"int_floor lost its divisor in codegen: {floored}"
+    assert "1 / 2" not in floored, f"a rational leaked into an integer index: {floored}"
+
+    for value in range(0, 8):
+        substituted = {s: value for s in expr.free_symbols}
+        expected = int(expr.subs(substituted)) // denominator
+        actual = int(int_floor(expr, denominator).subs(substituted))
+        assert actual == expected, f"int_floor({expr}, {denominator}) at {value}: {actual} != {expected}"
+
+
+def test_floordiv_does_not_survive_codegen():
+    """Pins WHY int_floor is mandatory: the ``//`` spelling loses its divisor on the way to C, so a
+    well-meaning revert to ``//`` fails here rather than in a wrong number."""
+    from dace.codegen.targets.cpp import sym2cpp
+    from dace.symbolic import int_floor
+
+    n = pystr_to_symbolic("N")
+    assert "/ 8)" not in sym2cpp((n + 1) * 4 // 8)
+    assert "/ 8)" in sym2cpp(int_floor((n + 1) * 4, 8))
