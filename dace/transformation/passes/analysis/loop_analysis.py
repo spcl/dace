@@ -261,21 +261,42 @@ def affine_in_iv(
 
     for iv_name in referenced:
         iv_sym = sym_by_name[iv_name]
-        try:
-            scale = symbolic.simplify(sympy.diff(e, iv_sym))
-        except Exception:
+        # ``sympy.simplify`` is a sledgehammer for deciding this: reaching it through a comparison
+        # sends it into ``equals``/``is_constant``, which samples numerically via mpmath PSLQ and
+        # dominates the whole IV pass. Distribution alone settles almost every affine split, so
+        # ``expand`` screens first and ``simplify`` is only consulted when the cheap form still
+        # leaves the IV in the scale or the remainder.
+        #
+        # The screen decides only WHETHER to fold. What actually gets folded is always recomputed
+        # with ``simplify`` below, because ``scale``/``offset`` are substituted into the SDFG
+        # verbatim -- an expanded-but-unsimplified form would be equal in value yet different in
+        # text, changing emitted subsets for every fold this pass performs.
+        scale = offset = None
+        screened_by_expand = False
+        for normalize in (sympy.expand, symbolic.simplify):
+            try:
+                cand_scale = normalize(sympy.diff(e, iv_sym))
+                cand_offset = normalize(e - cand_scale * iv_sym)
+            except Exception:
+                break
+            cand_scale_free = {str(s) for s in cand_scale.free_symbols}
+            cand_offset_free = {str(s) for s in cand_offset.free_symbols}
+            if cand_scale_free & iv_names or iv_name in cand_offset_free or cand_offset_free & iv_names:
+                continue
+            scale, offset = cand_scale, cand_offset
+            screened_by_expand = normalize is sympy.expand
+            break
+        if scale is None:
             continue
+        if screened_by_expand:
+            try:
+                scale = symbolic.simplify(sympy.diff(e, iv_sym))
+                offset = symbolic.simplify(e - scale * iv_sym)
+            except Exception:
+                continue
         scale_free = {str(s) for s in scale.free_symbols}
-        if scale_free & iv_names:
-            continue
-        try:
-            offset = symbolic.simplify(e - scale * iv_sym)
-        except Exception:
-            continue
         offset_free = {str(s) for s in offset.free_symbols}
-        if iv_name in offset_free:
-            continue
-        if offset_free & iv_names:
+        if scale_free & iv_names or iv_name in offset_free or offset_free & iv_names:
             continue
         if invariant_syms is not None:
             if not ((scale_free | offset_free) <= invariant_syms):

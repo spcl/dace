@@ -344,8 +344,14 @@ class LiftTrivialIf(ppl.Pass):
             assert cfb not in graph.nodes()
             rmed_count += 1
 
-        sdutil.set_nested_sdfg_parent_references(graph.sdfg)
-        graph.sdfg.reset_cfg_list()
+        # Both of these walk the whole SDFG, and this function runs once per control-flow block,
+        # so doing them unconditionally made the pass quadratic in block count: on CLOUDSC they
+        # were ~10s of a 15s run while the condition analysis itself stayed under a second.
+        # Nothing was spliced when nothing was removed, so the parent references and the cfg
+        # list both still hold.
+        if rmed_count:
+            sdutil.set_nested_sdfg_parent_references(graph.sdfg)
+            graph.sdfg.reset_cfg_list()
 
         return rmed_count
 
@@ -389,6 +395,10 @@ class LiftTrivialIf(ppl.Pass):
         relabeled = self._make_unique_names(sdfg)
         sdfg.reset_cfg_list()
         rmed_count = self._detect_trivial_ifs_and_rm_cfg(sdfg)
+        # The per-region bookkeeping below is gated on having actually removed something, so do the
+        # repair once here unconditionally: this pass has always left nested-SDFG parent references
+        # refreshed on exit, and a caller may be relying on that rather than on the removal itself.
+        sdutil.set_nested_sdfg_parent_references(sdfg)
         sdfg.reset_cfg_list()
         if not rmed_count and not relabeled:
             return None
