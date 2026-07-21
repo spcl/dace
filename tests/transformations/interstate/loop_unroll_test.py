@@ -234,9 +234,19 @@ def test_unroll_loop_with_negative_iterate_values():
 
     loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
     assert len(loops) == 0
-    # 5 unrolled iterations (i = 0, -1, -2, -3, -4), each its own inlined state, plus the
-    # empty start-block predecessor LoopUnroll prepends (the loop is its region's start block).
-    assert sdfg.number_of_nodes() == 6
+    # 5 unrolled iterations (i = 0, -1, -2, -3, -4). The body here is a ControlFlowRegion rather
+    # than a bare state, so each iteration inlines to TWO states (``<it>_for_body`` and
+    # ``<it>_end``), plus the empty start-block predecessor LoopUnroll prepends because the loop
+    # is its region's start block.
+    #
+    # This previously read 6, which two compounding bugs happened to produce together: the trip
+    # count was truncated to 3 iterations (the exclusive range bound was hardcoded one unit ABOVE
+    # loop_diff, which is the wrong side when counting down), and the predecessor was skipped
+    # entirely because its guard tested ``loop_diff > 0`` -- false for every descending loop.
+    # 3 iterations x 2 states + no predecessor = 6.
+    assert sdfg.number_of_nodes() == 11
+    iterates = [n.label for n in sdfg.nodes() if n.label.endswith('_for_body')]
+    assert len(iterates) == 5
 
     loops = {n for n in sdfg.all_control_flow_regions() if isinstance(n, LoopRegion)}
     assert len(loops) == 0
