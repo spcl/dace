@@ -5,4 +5,4 @@ conversion logic is needed here. Matches
 `from networkx.algorithms.flow import edmondskarp; edmondskarp.edmonds_karp` exactly, so
 dace/sdfg/analysis/cutout.py needs no changes beyond the import swap.
 """
-from networkx.algorithms.flow.edmondskarp import edmonds_karp
+from networkx.algorithms.flow.edmondskarp import edmonds_karp  # noqa: F401 -- deliberate re-export

@@ -90,8 +90,7 @@ def test_symbol_only_nested_propagation():
     nested_sdfg.add_symbol('N', dace.int32)
     nested_sdfg.add_symbol('i', dace.int32)
     nested_sdfg.add_array('A', [1], dace.int32)
-    loop = LoopRegion('loop', condition_expr='i < N', loop_var='i', initialize_expr='i = 0',
-                      update_expr='i = i + 1')
+    loop = LoopRegion('loop', condition_expr='i < N', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
     nested_sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     tasklet = body.add_tasklet('write', {}, {'out'}, 'out = i')

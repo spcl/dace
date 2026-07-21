@@ -89,8 +89,8 @@ def run_pipeline(sdfg: dace.SDFG, backend: str) -> Dict[str, float]:
     return {'simplify': simplify_time, 'config_prop_loopunroll': pass_time}
 
 
-def filtered_inputs(sdfg: dace.SDFG,
-                    inputs: Dict[str, Union['object', int, float]]) -> Dict[str, Union['object', int, float]]:
+def filtered_inputs(sdfg: dace.SDFG, inputs: Dict[str, Union['object', int,
+                                                             float]]) -> Dict[str, Union['object', int, float]]:
     """Restrict a generated CloudSC input dict to the names ``sdfg`` actually still
     expects. ``specialize``/``specialize_scalar`` can remove a symbol/scalar from the
     compiled call signature entirely, so a stale full input dict (built once, shared

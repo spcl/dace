@@ -13,7 +13,7 @@ import pytest
 
 import dace
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
-                                                    generate_cloudsc_inputs, make_sequential)
+                                                            generate_cloudsc_inputs, make_sequential)
 from tests.perf.cloudsc_backend_pipeline import filtered_inputs, run_pipeline
 
 _BACKENDS = ['networkx'] + (['rustworkx'] if importlib.util.find_spec('rustworkx') is not None else [])

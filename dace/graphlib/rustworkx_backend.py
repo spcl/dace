@@ -462,11 +462,11 @@ class RustworkxDiGraphMatcher:
         node_matcher = (lambda a, b: self._node_match(a, b)) if self._node_match else None
         edge_matcher = (lambda a, b: self._edge_match(a, b)) if self._edge_match else None
         mappings = rustworkx.digraph_vf2_mapping(self._G1._rx,
-                                                  self._G2._rx,
-                                                  node_matcher=node_matcher,
-                                                  edge_matcher=edge_matcher,
-                                                  subgraph=True,
-                                                  induced=True)
+                                                 self._G2._rx,
+                                                 node_matcher=node_matcher,
+                                                 edge_matcher=edge_matcher,
+                                                 subgraph=True,
+                                                 induced=True)
         for mapping in mappings:
             yield {self._G1._index.node_at(a): self._G2._index.node_at(b) for a, b in mapping.items()}
 
@@ -611,9 +611,9 @@ class RustworkxBackend:
         source_idx = _index_of(G, source, NodeNotFound, f'Source {source} is not in G')
         target_idx = _index_of(G, target, NodeNotFound, f'Target {target} is not in G')
         lengths = rustworkx.dijkstra_shortest_path_lengths(G._rx,
-                                                             source_idx,
-                                                             edge_cost_fn=lambda _: 1.0,
-                                                             goal=target_idx)
+                                                           source_idx,
+                                                           edge_cost_fn=lambda _: 1.0,
+                                                           goal=target_idx)
         if target_idx not in lengths:
             raise NetworkXNoPath(f'No path between {source} and {target}.')
         return int(lengths[target_idx])

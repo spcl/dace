@@ -128,7 +128,7 @@ class LoopUnroll(xf.MultiStateTransformation):
                                    index: int,
                                    label_suffix: Optional[str] = None) -> ControlFlowRegion:
         it_label = loop.label + '_' + loop.loop_variable + (label_suffix
-                                                             if label_suffix is not None else symbolic.symstr(value))
+                                                            if label_suffix is not None else symbolic.symstr(value))
         if not dtypes.validate_name(it_label):
             # A concrete (non-symbolic) iterate value can still render into an invalid
             # identifier -- e.g. a negative int's ``str()`` contains a bare ``-``
