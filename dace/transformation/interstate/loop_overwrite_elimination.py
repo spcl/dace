@@ -24,6 +24,30 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
 
+    def _last_iteration(self):
+        """The last value the iteration variable actually ATTAINS, or None if the range is unknown.
+
+        ``get_loop_end`` returns the inclusive bound implied by the loop CONDITION (``i < 10`` -> 9),
+        which is NOT the last attained iterate whenever the stride does not divide the trip range:
+        ``range(0, 10, 2)`` attains 8 and never 9.
+
+        Both the loop-carried-dependency guard in ``can_be_applied`` and the substitution in ``apply``
+        must reason about the SAME index -- eliminating the loop keeps exactly this iteration. They used
+        to compute it separately and disagreed (the guard tested ``end``, ``apply`` substituted the real
+        iterate), so the guard validated an index the body was never pinned to and a genuinely
+        loop-carried-dependent loop was eliminated. Deriving it once here is what keeps them in step.
+
+        ``int_floor``, never ``//``: on sympy operands ``//`` builds ``sympy.floor``, which the code
+        generator lowers to C ``/`` -- truncation toward zero, not floor -- so the emitted index
+        disagreed with the analyzed one for a symbolic bound.
+        """
+        start = loop_analysis.get_init_assignment(self.loop)
+        end = loop_analysis.get_loop_end(self.loop)
+        stride = loop_analysis.get_loop_stride(self.loop)
+        if start is None or end is None or stride is None:
+            return None
+        return start + symbolic.int_floor(end - start, stride) * stride
+
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # Check if this is a for-loop with known range.
         start = loop_analysis.get_init_assignment(self.loop)
@@ -157,11 +181,7 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        start = loop_analysis.get_init_assignment(self.loop)
-        end = loop_analysis.get_loop_end(self.loop)
-        stride = loop_analysis.get_loop_stride(self.loop)
-
-        last_iteration = start + symbolic.int_floor(end - start, stride) * stride
+        last_iteration = self._last_iteration()
         itervar = self.loop.loop_variable
 
         # Rewrite each occurence of the loop variable in the loop body
