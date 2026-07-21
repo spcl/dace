@@ -400,7 +400,12 @@ def _find_unconditionally_executed_states(sdfg: SDFG) -> Set[SDFGState]:
     states = dominators[dummy_sink]
     # remove dummy state
     sdfg.remove_node(dummy_sink)
-    return states
+    # The dominators of the top-level CFG are ControlFlowBlocks, which since control-flow regions
+    # also include LoopRegions and ConditionalBlocks -- not only SDFGStates. Callers index the
+    # returned blocks as dataflow graphs (``state.in_edges(access_node)``), and a region's node set
+    # holds blocks rather than AccessNodes, so handing one back raises KeyError. Dropping them only
+    # loses write sites, which is the safe direction for an under-approximation.
+    return {state for state in states if isinstance(state, SDFGState)}
 
 
 def _unsqueeze_memlet_subsetunion(internal_memlet: Memlet, external_memlet: Memlet, parent_sdfg: dace.SDFG,
