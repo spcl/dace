@@ -9,6 +9,7 @@ lowered to SIMD blend. Only two-branch ``if/else``, single-state arms, shared wr
 """
 import ast
 import copy
+import itertools
 import re
 from typing import Dict, Optional, Tuple
 
@@ -98,6 +99,95 @@ def scope_defined_symbols(scope) -> set:
         return set(scope.map.params) | {c for c in scope.in_connectors if not c.startswith('IN_')}
     assert isinstance(scope, LoopRegion)
     return {scope.loop_variable}
+
+
+def iteration_symbol_ranges(cb: ConditionalBlock) -> Optional[Dict[str, Tuple]]:
+    """``{iteration symbol: (min, max)}`` for every map/loop scope enclosing ``cb``.
+
+    :param cb: the conditional block whose enclosing scopes are measured.
+    :returns: the per-symbol inclusive range, or ``None`` if any enclosing scope's range cannot be
+        read (a ``LoopRegion``, whose bounds live in init / condition / update code rather than as
+        a range) -- callers must then treat the extent as unknown.
+    """
+    ranges: Dict[str, Tuple] = {}
+    for scope in get_parent_map_and_loop_scopes(root_sdfg=cb.sdfg, node=cb, parent_state=None):
+        if not isinstance(scope, dace.nodes.MapEntry):
+            return None
+        for param, (lo, hi, _step) in zip(scope.map.params, scope.map.range.ndrange()):
+            ranges[str(param)] = (lo, hi)
+    return ranges
+
+
+def provably_nonnegative(expr) -> bool:
+    """Whether ``expr`` is provably ``>= 0`` for every legal value of its free symbols.
+
+    Array extents and iteration counts are positive integers, but a bare sympy symbol carries no
+    such assumption, so ``LEN_1D - 1 >= 0`` (the top index of a ``LEN_1D``-long array) is
+    unprovable as written. Re-declare the remaining symbols as positive integers -- the standing
+    assumption for a DaCe shape / range symbol -- before asking. Still fails closed: an expression
+    that stays indeterminate (``LEN_1D - 2``) returns ``False``.
+
+    :param expr: The symbolic expression to test.
+    :returns: ``True`` only if non-negativity is proven.
+    """
+    expr = symbolic.simplify(expr)
+    if expr.is_number:
+        return bool(expr >= 0)
+    positive = {s: sympy.Symbol(s.name, positive=True, integer=True) for s in expr.free_symbols}
+    return sympy.simplify(expr.subs(positive)).is_nonnegative is True
+
+
+def arm_accesses_are_in_range_unguarded(cb: ConditionalBlock) -> bool:
+    """Whether every access in every arm stays IN BOUNDS with the guard removed.
+
+    If-conversion makes both arms' accesses unconditional, so it is sound only when those accesses
+    were never relying on the guard for their range. The two cases look identical to
+    :func:`condition_guards_iteration_symbol` but are not:
+
+    * ``if i < N - 1: s += a[i + 1] * a[i + 1]`` -- lane ``i = N-1`` would read ``a[N]``. The guard
+      IS the bounds check; if-conversion fabricates the out-of-bounds read. Must be masked.
+    * ``if i + 1 < N/2: a[i] = b[i] + c[i]*d[i] else: a[i] = b[i] + e[i]*d[i]`` (TSVC s276) -- every
+      access is ``[i]``, in range for every ``i`` the map runs. The guard only selects WHICH value
+      is stored, so evaluating both arms and blending is safe and exact.
+
+    Proof method: substitute the enclosing iteration symbols at the CORNERS of their ranges and
+    require each subset to sit inside its descriptor there. Corners bound the extremes only for an
+    expression that is affine in those symbols, so a higher-degree index is refused rather than
+    sampled. FAILS CLOSED throughout -- an unreadable range, a non-affine index, or a bound that
+    cannot be proven all return ``False``, which just keeps today's refusal.
+
+    :param cb: the candidate conditional block.
+    :returns: ``True`` only if every arm access is provably in range without the guard.
+    """
+    ranges = iteration_symbol_ranges(cb)
+    if not ranges:  # no enclosing map (nothing to prove) still returns {} -> nothing is guarded
+        return False
+    syms = [symbolic.pystr_to_symbolic(name) for name in ranges]
+    corners = [dict(zip(ranges, combo)) for combo in itertools.product(*(ranges[n] for n in ranges))]
+
+    for _cond, body in cb.branches:
+        if not isinstance(body, ControlFlowRegion):
+            return False
+        for state in body.all_states():
+            for edge in state.edges():
+                memlet = edge.data
+                if memlet is None or memlet.data is None:
+                    continue
+                desc = cb.sdfg.arrays.get(memlet.data)
+                if desc is None or memlet.subset is None:
+                    return False
+                if len(memlet.subset.ndrange()) != len(desc.shape):
+                    return False
+                for (begin, end, _step), extent in zip(memlet.subset.ndrange(), desc.shape):
+                    for expr, bound, low in ((begin, None, True), (end, extent - 1, False)):
+                        expr = symbolic.pystr_to_symbolic(str(expr))
+                        if any(sympy.degree(expr, s) > 1 for s in syms if s in expr.free_symbols):
+                            return False  # corners do not bound a non-affine index
+                        for corner in corners:
+                            at = expr.subs({symbolic.pystr_to_symbolic(k): v for k, v in corner.items()})
+                            if not provably_nonnegative(at if low else bound - at):
+                                return False
+    return True
 
 
 def condition_guards_iteration_symbol(cb: ConditionalBlock) -> bool:
@@ -378,7 +468,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         :param cb: candidate conditional block.
         :returns: ``True`` if ``cb`` matches a variant above.
         """
-        if condition_guards_iteration_symbol(cb):
+        if condition_guards_iteration_symbol(cb) and not arm_accesses_are_in_range_unguarded(cb):
             return False
         if len(cb.branches) == 2:
             (cond0, body0), (cond1, body1) = cb.branches
@@ -1076,8 +1166,8 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         for e in edges:
             if e is not None and sym in (e.data.assignments or {}):
                 del e.data.assignments[sym]
-        still_assigned = any(sym in (e.data.assignments or {})
-                             for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges())
+        still_assigned = any(sym in (e.data.assignments or {}) for cfg in sdfg.all_control_flow_regions(recursive=True)
+                             for e in cfg.edges())
         if still_assigned:
             return
         if sym in sdfg.symbols:
@@ -1117,8 +1207,10 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # consumers, the kept assignment serves them while the per-lane lift tasklet supplies the
         # vector form for the ITE. Collect ALL edges assigning cond_sym (not just ``defining_edge``)
         # so a multi-edge symbol is not left dangling by removing it globally after deleting one.
-        cond_edges = [e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
-                      if cond_sym in (e.data.assignments or {})]
+        cond_edges = [
+            e for cfg in sdfg.all_control_flow_regions(recursive=True) for e in cfg.edges()
+            if cond_sym in (e.data.assignments or {})
+        ]
         self._drop_interstate_symbol(sdfg, cond_sym, cond_edges, skip_cb=skip_cb)
         # Prune each inlined scalar symbol's definitions once it has no remaining consumer (its only
         # use was the now-inlined cond RHS). A still-consumed symbol keeps its def -- the inlined
