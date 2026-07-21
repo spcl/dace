@@ -211,7 +211,7 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         f'(Storage: {sdfg.arrays[container].storage}) in host code interstate edge', sdfg, eid)
 
     # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(region)
 
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
@@ -870,9 +870,14 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                          for oe in state.out_edges(dst_node)}):
                         pass
                 else:
-                    raise InvalidSDFGEdgeError(
-                        f"Memlet creates an invalid path (sink node {dst_node}"
-                        " should be a data node)", sdfg, state_id, eid)
+                    if isinstance(dst_node, nd.Tasklet) and len(dst_node.in_connectors) == 0 and len(
+                            dst_node.out_connectors) == 0:
+                        # Tasklets with no input or output connector -> sync tasklet -> OK
+                        pass
+                    else:
+                        raise InvalidSDFGEdgeError(
+                            f"Memlet creates an invalid path (sink node {dst_node}"
+                            " should be a data node)", sdfg, state_id, eid)
         # If scope(dst) is disjoint from scope(src), it's an illegal memlet
         else:
             raise InvalidSDFGEdgeError("Illegal memlet between disjoint scopes", sdfg, state_id, eid)
@@ -888,11 +893,13 @@ def validate_state(state: 'dace.sdfg.SDFGState',
                     eid,
                 )
 
-        # Verify that source and destination subsets contain the same
-        # number of elements
-        if not e.data.allow_oob and e.data.other_subset is not None and not (
-            (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
-            (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
+        # Verify that source and destination subsets contain the same number of
+        # elements. The check only applies when BOTH endpoints are ``AccessNode``s
+        # backed by arrays (so ``.data`` and ``.veclen`` are meaningful); if either
+        # side is a ``Stream`` access node the volumes legitimately differ.
+        if (not e.data.allow_oob and e.data.other_subset is not None and isinstance(src_node, nd.AccessNode)
+                and isinstance(dst_node, nd.AccessNode) and not isinstance(sdfg.arrays[src_node.data], dt.Stream)
+                and not isinstance(sdfg.arrays[dst_node.data], dt.Stream)):
             src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
             dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
             if symbolic.inequal_symbols(src_expr, dst_expr):
