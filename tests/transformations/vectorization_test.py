@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+from dace.sdfg import nodes
 from dace.transformation.dataflow import Vectorization
 
 
@@ -93,9 +94,15 @@ def test_vectorization_symbolic_range_uses_int_floor():
     terms once sym2cpp drops the floor, so the trip count is wrong for a symbolic bound.
     """
     sdfg: dace.SDFG = tovec_uneven.to_sdfg()
+    # Vectorization matches the simplified shape, and to_sdfg only simplifies when
+    # optimizer.automatic_simplification is on -- which the CI matrix also runs OFF. Simplify
+    # here, like every sibling test does, so this checks the range expression either way.
+    sdfg.simplify()
     # strided_map=False is the branch that divides the range; the strided form never divides.
     assert sdfg.apply_transformations(Vectorization, options={'vector_len': 2, 'strided_map': False}) == 1
-    ranges = [str(r) for state in sdfg.states() for n in state.nodes() if hasattr(n, 'map') for r in n.map.range]
+    ranges = [
+        str(r) for state in sdfg.states() for n in state.nodes() if isinstance(n, nodes.MapEntry) for r in n.map.range
+    ]
     assert not any('floor' in r.replace('int_floor', '') for r in ranges), ranges
 
 
