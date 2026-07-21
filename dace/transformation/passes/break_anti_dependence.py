@@ -17,13 +17,86 @@ and at least one is WAR.
 It trades an extra array + an O(N) copy for parallelism, so it is meant to run
 **optionally** (a tuning knob), not as part of the default pipeline.
 """
+from functools import lru_cache
 from typing import Any, Dict, Optional, Set
+
+import sympy
 
 from dace import data, dtypes, properties, symbolic, Memlet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.loop_fission import _single_compute_state
+
+
+def _subset_key(subset):
+    """A hashable identity for a subset that captures exactly what
+    :meth:`BreakAntiDependence._dep_class` reads off it -- its ``ndrange``.
+
+    Used to drop duplicate subsets before the read x write cross product. Falls
+    back to the string form for the odd subset whose bounds are not hashable.
+    """
+    if subset is None:
+        return None
+    key = tuple(subset.ndrange())
+    try:
+        hash(key)
+    except TypeError:
+        return str(subset)
+    return key
+
+
+@lru_cache(maxsize=8192, typed=True)
+def _reparsed_index(raw):
+    """A memlet subset bound re-read through DaCe's own parser.
+
+    The print-and-reparse round trip normalises the expression the way the rest of
+    the pass expects (DaCe's converter maps ``/`` onto ``int_floor`` and friends).
+    Printing a SymPy expression is expensive and the same handful of index bounds
+    recurs across the whole read x write cross product, so the round trip is
+    memoized on the incoming expression.
+    """
+    return symbolic.pystr_to_symbolic(str(raw))
+
+
+@lru_cache(maxsize=8192, typed=True)
+def _index_under_bindings(expr, bindings):
+    """``expr`` with the loop's iedge bindings inlined (see
+    :meth:`BreakAntiDependence._collect_iedge_substitutions`).
+
+    ``bindings`` is the substitution map as a tuple of pairs so the result can be
+    memoized: the map is the same for every subset of a given loop, and the same
+    few index bounds recur across the read x write cross product, while
+    ``Basic.subs`` over a body-sized binding map is not cheap.
+    """
+    return symbolic.simplify(expr.subs(dict(bindings)))
+
+
+@lru_cache(maxsize=8192, typed=True)
+def _is_identically_zero(diff) -> bool:
+    """``True`` iff ``diff`` is the zero expression, i.e. the two indices alias.
+
+    ``sympy.simplify`` decides this but costs about a millisecond per call, and the
+    subset-difference test runs once per (read, write, dimension) triple -- it
+    dominated the pass. Two exact shortcuts avoid it:
+
+    * ``expand`` is a COMPLETE zero test for a polynomial: a polynomial is
+      identically zero iff its expanded form is, and DaCe symbols are mutually
+      independent, so a nonzero expanded linear form (``jk - jl``, the shape
+      essentially every memlet-index difference takes) is decided outright.
+    * anything non-polynomial (``int_floor``, ``Mod``, an opaque function) falls
+      back to the full ``simplify``, so no verdict changes.
+
+    Memoized because index differences repeat heavily across the read x write
+    cross product. SymPy hashing ignores DaCe symbol dtype metadata, which is
+    irrelevant here: the result is a purely algebraic yes/no.
+    """
+    expanded = sympy.expand(diff)
+    if expanded.is_zero:
+        return True
+    if expanded.is_polynomial(*expanded.free_symbols):
+        return False
+    return symbolic.simplify(diff) == 0
 
 
 def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
@@ -107,7 +180,7 @@ class BreakAntiDependence(ppl.Pass):
             # Symbolic stride: defer the positivity check to the runtime guard.
             return True
 
-    def _dep_class(self, read, write, ivar, loop=None, sdfg=None):
+    def _dep_class(self, read, write, ivar, loop=None, sdfg=None, iedge_subs=None):
         """Classify the dependence between a read and a write subset (both affine
         point accesses) of one array under unit-stride iteration of ``ivar``.
 
@@ -132,6 +205,12 @@ class BreakAntiDependence(ppl.Pass):
               reads the FINAL value left in that location; interleaved, it reads the
               RUNNING one.
             * ``('complex', None)``         -- give up
+
+        ``iedge_subs`` is the loop's iedge substitution map (see
+        :meth:`_collect_iedge_substitutions`). It depends only on ``loop`` and
+        ``ivar``, never on the two subsets, so callers that classify many pairs
+        of the same loop compute it once and pass it in; ``None`` means "derive
+        it here".
         """
         isym = symbolic.pystr_to_symbolic(ivar)
         rr, wr = list(read.ndrange()), list(write.ndrange())
@@ -144,20 +223,22 @@ class BreakAntiDependence(ppl.Pass):
         # Single ``.subs(...)`` + ``simplify(...)`` is sufficient for the
         # patterns we target (the bindings we admit reference the iterator
         # directly; see :meth:`_collect_iedge_substitutions` for the gate).
-        iedge_subs = self._collect_iedge_substitutions(loop, isym, sdfg) if loop is not None else {}
+        if iedge_subs is None:
+            iedge_subs = self._collect_iedge_substitutions(loop, isym, sdfg) if loop is not None else {}
+        bindings = tuple(iedge_subs.items())
         carried_offset = None
         for (rb, re_, _), (wb, we_, _) in zip(rr, wr):
             if rb != re_ or wb != we_:
                 return ('complex', None)  # not a single-element (point) access
-            rb = symbolic.pystr_to_symbolic(str(rb))
-            wb = symbolic.pystr_to_symbolic(str(wb))
-            if iedge_subs:
-                rb = symbolic.simplify(rb.subs(iedge_subs))
-                wb = symbolic.simplify(wb.subs(iedge_subs))
+            rb = _reparsed_index(rb)
+            wb = _reparsed_index(wb)
+            if bindings:
+                rb = _index_under_bindings(rb, bindings)
+                wb = _index_under_bindings(wb, bindings)
             r_has = isym in rb.free_symbols
             w_has = isym in wb.free_symbols
             if not r_has and not w_has:
-                if symbolic.simplify(rb - wb) != 0:
+                if not _is_identically_zero(rb - wb):
                     return ('none', None)  # different fixed index -> never alias
                 continue
             # carried dimension: decompose ``wb`` as ``alpha * isym + beta`` with
@@ -168,12 +249,18 @@ class BreakAntiDependence(ppl.Pass):
             # the new positive-stride iterator ``k``. Both cases are sound for
             # the snapshot-and-redirect rewrite; only the iteration-direction
             # interpretation of ``carried_offset`` differs.
-            if isym not in symbolic.simplify(wb - isym).free_symbols:
+            # ``simplify`` never introduces a free symbol that was not already there,
+            # so an ``isym`` the raw (already term-collected) difference has dropped
+            # stays dropped -- test that first and only simplify when it has not.
+            wb_minus_i = wb - isym
+            if isym not in wb_minus_i.free_symbols or isym not in symbolic.simplify(wb_minus_i).free_symbols:
                 alpha = 1
-            elif isym not in symbolic.simplify(wb + isym).free_symbols:
-                alpha = -1
             else:
-                return ('complex', None)
+                wb_plus_i = wb + isym
+                if isym not in wb_plus_i.free_symbols or isym not in symbolic.simplify(wb_plus_i).free_symbols:
+                    alpha = -1
+                else:
+                    return ('complex', None)
             if carried_offset is not None:
                 return ('complex', None)  # more than one carried dimension
             carried_offset = symbolic.simplify(rb - wb)
@@ -506,32 +593,55 @@ class BreakAntiDependence(ppl.Pass):
             asserted ``> 0`` at runtime for the rename to be sound; empty when
             the offset is a numeric positive constant.
         """
-        reads: Dict[str, list] = {}
-        writes: Dict[str, list] = {}
+        # Subsets are DEDUPED by their ndrange -- the only thing :meth:`_dep_class`
+        # ever reads off a subset -- so two subsets with the same ndrange classify
+        # identically. The verdicts are consumed as a set, so dropping the
+        # duplicates cannot change the outcome; it only avoids re-deriving the same
+        # answer (an array touched from dozens of states otherwise blows the read x
+        # write cross product up quadratically).
+        reads: Dict[str, Dict[Any, Any]] = {}
+        writes: Dict[str, Dict[Any, Any]] = {}
         for st in loop.all_states():
             for n in st.data_nodes():
                 if not isinstance(sdfg.arrays.get(n.data), data.Array):
                     continue
                 for e in st.out_edges(n):
                     if e.data is not None and not e.data.is_empty():
-                        reads.setdefault(n.data, []).append(e.data.get_src_subset(e, st) or e.data.subset)
+                        sub = e.data.get_src_subset(e, st) or e.data.subset
+                        reads.setdefault(n.data, {}).setdefault(_subset_key(sub), sub)
                 for e in st.in_edges(n):
                     if e.data is not None and not e.data.is_empty():
-                        writes.setdefault(n.data, []).append(e.data.get_dst_subset(e, st) or e.data.subset)
+                        sub = e.data.get_dst_subset(e, st) or e.data.subset
+                        writes.setdefault(n.data, {}).setdefault(_subset_key(sub), sub)
 
         internal_syms = self._loop_internal_symbols(loop)
+        # Loop-invariant: depends on the loop and its iterator only, not on the
+        # subsets being classified. Computed once here instead of once per
+        # (read, write) pair -- it walks every interstate edge of the loop body,
+        # which dominated the pass on deeply nested SDFGs.
+        iedge_subs = self._collect_iedge_substitutions(loop, symbolic.pystr_to_symbolic(loop.loop_variable), sdfg)
 
         renamable = []
-        for name in reads:
-            if name not in writes:
+        for name, read_subsets in reads.items():
+            write_subsets = writes.get(name)
+            if not write_subsets:
                 continue  # read-only in loop -> no anti-dependence to break
-            classes = [
-                self._dep_class(r, w, loop.loop_variable, loop=loop, sdfg=sdfg) for r in reads[name]
-                for w in writes[name]
-            ]
-            verdicts = {c[0] for c in classes}
-            if 'RAW' in verdicts or 'complex' in verdicts:
+            # A single RAW / complex verdict disqualifies the array, so stop at the
+            # first one rather than classifying the whole cross product.
+            classes = []
+            disqualified = False
+            for r in read_subsets.values():
+                for w in write_subsets.values():
+                    c = self._dep_class(r, w, loop.loop_variable, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)
+                    if c[0] == 'RAW' or c[0] == 'complex':
+                        disqualified = True
+                        break
+                    classes.append(c)
+                if disqualified:
+                    break
+            if disqualified:
                 continue  # true dependence (or unanalyzable) -> not sound to rename
+            verdicts = {c[0] for c in classes}
             # WAR_symbolic offsets must be LOOP-INVARIANT -- free symbols may not
             # intersect any iteration variable of this loop OR of any nested
             # map / loop. Otherwise the read position varies inside the body in
@@ -651,7 +761,7 @@ class BreakAntiDependence(ppl.Pass):
         # Collect every write subset of `name` in the loop body (same criterion
         # as :meth:`_renamable_arrays`) so each read edge can be classified and
         # only the strict read-ahead ones moved.
-        writes = []
+        unique_writes: Dict[Any, Any] = {}
         for st in loop.all_states():
             for n in st.data_nodes():
                 if n.data != name:
@@ -660,13 +770,18 @@ class BreakAntiDependence(ppl.Pass):
                     if e.data is not None and not e.data.is_empty():
                         ws = e.data.get_dst_subset(e, st) or e.data.subset
                         if ws is not None:
-                            writes.append(ws)
+                            unique_writes.setdefault(_subset_key(ws), ws)
+        writes = list(unique_writes.values())
+        iedge_subs = self._collect_iedge_substitutions(loop, symbolic.pystr_to_symbolic(ivar), sdfg)
 
         # Read edges to redirect: those whose subset is a strict read-ahead
         # against EVERY write (WAR / WAR_symbolic / WAR_indirected). A read that
         # is `none` (same index) or otherwise not purely read-ahead stays live.
         ahead = {'WAR', 'WAR_symbolic', 'WAR_indirected'}
         to_move = []
+        # Read subsets with the same ndrange classify identically, so the verdict is
+        # cached per subset instead of re-derived for every edge that carries it.
+        is_ahead: Dict[Any, bool] = {}
         for st in loop.all_states():
             for n in list(st.data_nodes()):
                 if n.data != name:
@@ -677,8 +792,16 @@ class BreakAntiDependence(ppl.Pass):
                     rs = e.data.get_src_subset(e, st) or e.data.subset
                     if rs is None:
                         continue
-                    kinds = {self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg)[0] for w in writes}
-                    if kinds and kinds <= ahead:
+                    key = _subset_key(rs)
+                    verdict = is_ahead.get(key)
+                    if verdict is None:
+                        kinds = {
+                            self._dep_class(rs, w, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)[0]
+                            for w in writes
+                        }
+                        verdict = bool(kinds) and kinds <= ahead
+                        is_ahead[key] = verdict
+                    if verdict:
                         to_move.append((st, e))
         if not to_move:
             return  # no genuine read-ahead edge to break -> nothing (and no snapshot)
@@ -743,6 +866,7 @@ class BreakAntiDependence(ppl.Pass):
             return 0
         ivar = loop.loop_variable
         internal_syms = self._loop_internal_symbols(loop)
+        iedge_subs = self._collect_iedge_substitutions(loop, symbolic.pystr_to_symbolic(ivar), sdfg)
         applied = 0
 
         written = sorted(
@@ -769,7 +893,10 @@ class BreakAntiDependence(ppl.Pass):
                     rs = e.data.get_src_subset(e, state) if e.data is not None else None
                     if rs is None:
                         continue
-                    verdicts = [self._dep_class(rs, ws, ivar, loop=loop, sdfg=sdfg) for ws in write_subsets]
+                    verdicts = [
+                        self._dep_class(rs, ws, ivar, loop=loop, sdfg=sdfg, iedge_subs=iedge_subs)
+                        for ws in write_subsets
+                    ]
                     kinds = {v[0] for v in verdicts}
                     if kinds & {'RAW', 'complex'}:
                         continue  # a RAW read must keep its live-array value -- never move it
