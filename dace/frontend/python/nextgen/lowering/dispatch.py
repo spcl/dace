@@ -580,9 +580,18 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     falls back to a callback).
     """
     inferred = state.inference.infer_call(call)
-    if inferred is None or not inferred.is_data or target is None:
-        # No registry entry, a multi-output result, or an unused result:
-        # the interpreter fallback preserves semantics in all three cases.
+    if inferred is None:
+        return False  # No registry entry: the interpreter fallback preserves semantics.
+    if inferred.is_none_output:
+        if target is not None:
+            # A call typed as zero-output but assigned to a target (e.g.
+            # ``b = A.fill(0)``) isn't a form any mechanism below produces;
+            # the interpreter fallback preserves Python's own semantics
+            # (assigning ``None``).
+            return False
+    elif not inferred.is_data or target is None:
+        # A multi-output result or an unused (bare-statement) data-valued
+        # result: the interpreter fallback preserves semantics in both cases.
         return False
 
     # NumPy universal functions, direct (numpy.add(...)) or through one of
@@ -594,7 +603,9 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     # where=/axis=/keepdims=/initial=, which the elementwise mechanism has no
     # way to honor) -- defers to the actual registry ufunc implementation
     # through the same deferred-expansion mechanism used for other
-    # replacements below.
+    # replacements below. A zero-output call (e.g. ``A.fill(0)``) is never a
+    # ufunc match, so it falls through untouched to deferred replacement
+    # expansion at the end of this function.
     ufunc_form = state.inference.resolve_ufunc_call(call)
     if ufunc_form is not None:
         ufunc, ufunc_method = ufunc_form
@@ -692,13 +703,18 @@ def _method_call_receiver(call: ast.Call, state: LoweringState) -> Optional[Data
     return resolve_access(call.func.value, state)
 
 
-def _lower_replacement_call(target: ast.expr, call: ast.Call, qualname: str, inferred, statement: ast.stmt,
+def _lower_replacement_call(target: Optional[ast.expr], call: ast.Call, qualname: str, inferred, statement: ast.stmt,
                             state: LoweringState) -> bool:
     """
     Emit a deferred :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
     for a vetted registry replacement (free function or bound method).
     Returns False when the call is not vetted or an argument cannot be
     resolved (the caller falls back).
+
+    :param target: The assignment target, or None for a bare-statement,
+        zero-output call (``inferred.is_none_output``) — resolved through the
+        same method-family lookup (:func:`_method_call_receiver`,
+        :func:`_method_registered`) as a targeted method call.
     """
     name = qualname
     receiver: Optional[str] = None
@@ -707,7 +723,13 @@ def _lower_replacement_call(target: ast.expr, call: ast.Call, qualname: str, inf
         if not _replacement_registered(name):
             name = None
             # Not a registered free function: try the method family
-            # (``_method_rep``), e.g. ``A.copy()``/``A.fill(0)``.
+            # (``_method_rep``), e.g. ``A.copy()``/``A.fill(0)``. Works for
+            # both a targeted, data-valued method call and a bare-statement,
+            # zero-output one (e.g. ``A.fill(0)``) -- this check doesn't
+            # depend on ``target``/``inferred.is_none_output`` because the
+            # caller's own gates above already guarantee the two are paired
+            # correctly (targeted only when data-valued, untargeted only
+            # when zero-output) before execution ever reaches here.
             receiver_access = _method_call_receiver(call, state)
             if receiver_access is not None and _method_registered(receiver_access.descriptor, call.func.attr):
                 receiver = receiver_access.container
@@ -729,10 +751,24 @@ def _lower_replacement_call(target: ast.expr, call: ast.Call, qualname: str, inf
         data_arguments = data_arguments | {receiver}
     if not _expansion_viable(name, arguments, keywords, data_arguments, state, receiver=receiver):
         return False
-    target_access = _call_target_access(target, inferred, statement, state)
+    if target is None:
+        # No frontend-declared target container to write into (a bare
+        # statement): the schedule tree still requires a registered
+        # container reference, so use the call's own data operand (the
+        # method receiver, or the first data-valued argument for a
+        # zero-output free function like ``dace.comm.Bcast``) as a stand-in.
+        # ``visit_ReplacementCallNode`` never dereferences it as a copy
+        # destination for a genuinely zero-output replacement (its result is
+        # ``None``/``[]``).
+        target_container = receiver or next(
+            (value for value in arguments if isinstance(value, str) and value in data_arguments), None)
+        if target_container is None:
+            return False
+    else:
+        target_container = _call_target_access(target, inferred, statement, state).container
     state.emitter.emit(
         tn.ReplacementCallNode(qualname=name,
-                               target=target_access.container,
+                               target=target_container,
                                arguments=arguments,
                                keyword_arguments=keywords,
                                data_arguments=data_arguments,

@@ -47,9 +47,13 @@ class Inferred:
     Classification of a canonical expression.
 
     :param kind: ``'data'`` (container access), ``'symbolic'`` (symbol
-                 expression), ``'constant'`` (compile-time value), or
+                 expression), ``'constant'`` (compile-time value),
                  ``'static'`` (compile-time Python sequence, see
-                 :class:`~dace.frontend.python.nextgen.semantics.values.StaticSequence`).
+                 :class:`~dace.frontend.python.nextgen.semantics.values.StaticSequence`),
+                 or ``'none'`` (a call whose registry descriptor inference
+                 confirmed a zero-output/pure-side-effect signature, e.g.
+                 ``A.fill(0)`` — distinct from :func:`infer_call` returning
+                 Python ``None`` for "no registry entry matched").
     :param descriptor: Result data descriptor for ``'data'`` expressions.
     :param value: The symbolic expression, constant, or static sequence otherwise.
     """
@@ -60,6 +64,10 @@ class Inferred:
     @property
     def is_data(self) -> bool:
         return self.kind == 'data'
+
+    @property
+    def is_none_output(self) -> bool:
+        return self.kind == 'none'
 
     @property
     def is_pyobject(self) -> bool:
@@ -181,7 +189,9 @@ class InferenceService:
             return self._infer_operator(node)
         if isinstance(node, ast.Call):
             inferred = self.infer_call(node)
-            if inferred is not None:
+            # A zero-output ('none') call has no value to use as an
+            # expression operand; only a genuine result is usable here.
+            if inferred is not None and inferred.kind != 'none':
                 return inferred
         raise UnsupportedFeatureError(f'Cannot infer type of expression: {astutils.unparse(node)}',
                                       self.context.filename,
@@ -280,7 +290,7 @@ class InferenceService:
 
         # Method calls on data containers (a.sum(), a.copy(), ...)
         if isinstance(node.func, ast.Attribute):
-            base = self._bound_descriptor_of(node.func.value)
+            base = self.bound_descriptor_of(node.func.value)
             if base is not None:
                 infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(base), node.func.attr)
                 if infer_fn is not None:
@@ -388,7 +398,7 @@ class InferenceService:
                 return value
         return None
 
-    def _bound_descriptor_of(self, node: ast.expr) -> Optional[data.Data]:
+    def bound_descriptor_of(self, node: ast.expr) -> Optional[data.Data]:
         """
         The container descriptor a canonical expression is bound to, if any.
 
@@ -417,15 +427,24 @@ class InferenceService:
     def _registry_inference(self, infer_fn: Any, *args: Any, **kwargs: Any) -> Optional[Inferred]:
         """Invoke a registry inference function defensively and normalize its
         result. Only single-descriptor results are supported; multi-output
-        inference results fall back."""
+        inference results fall back. An empty tuple/list is the registry
+        convention for a confirmed zero-output/pure-side-effect signature
+        (e.g. ``infers_method_descriptor('Array', 'fill')`` — see
+        ``array_creation.py``), distinguished here (``kind='none'``) from
+        "no registry entry matched" (``None``), which callers must not
+        conflate: one is a typed call with nothing to assign, the other is an
+        untyped call that should fall back to a callback."""
         try:
             result = infer_fn(*args, **kwargs)
         except Exception:
             return None
         if isinstance(result, data.Data):
             return Inferred(kind='data', descriptor=result)
-        if isinstance(result, (tuple, list)) and len(result) == 1 and isinstance(result[0], data.Data):
-            return Inferred(kind='data', descriptor=result[0])
+        if isinstance(result, (tuple, list)):
+            if len(result) == 1 and isinstance(result[0], data.Data):
+                return Inferred(kind='data', descriptor=result[0])
+            if len(result) == 0:
+                return Inferred(kind='none')
         return None
 
     def parse_access(self, node: Union[ast.Name, ast.Subscript]) -> MemletExpr:
