@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, Optional, Protocol, runtime_checkable
 from dace import dtypes
 
 # Re-exported for backward compatibility (they used to be defined in this module).
-from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG
+from dace.codegen.ctypes_compiled_sdfg import CtypesCompiledSDFG, ReloadableDLL  # noqa: F401 [unused-import]  # Compatibility reexport.
 
 
 @runtime_checkable
