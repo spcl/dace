@@ -551,8 +551,19 @@ class SymbolPropagation(ppl.Pass):
         # The candidate symbols that are no longer read here were propagated.
         return candidates & (free_before - self._block_free_symbols(cfg_blk, parent))
 
-    # Combines two symbol dictionaries, setting the value to None if they don't agree. Directly modifies sym1
     def _combine_syms(self, sym1: Dict[str, Any], sym2: Dict[str, Any]) -> None:
+        """Meet of two symbol tables at a control-flow join; modifies ``sym1`` in place.
+
+        A symbol keeps its value only when BOTH sides agree. A key present on one side and absent
+        from the other carries no shared guarantee -- absence means "no value known on that path",
+        not "unchanged" -- so it becomes live (``None``). Without the second loop a branch whose
+        binding the array-access / View / mutated-scalar filters in :meth:`_get_in_syms` dropped
+        lets the other branch's value escape the join: cloudsc's ``then: fac = 1.0`` vs
+        ``else: fac = zfokoop[jl]`` folded every post-join use of ``fac`` to the literal ``1.0``.
+        """
         for sym, val in sym2.items():
             if sym not in sym1 or sym1[sym] != val:
+                sym1[sym] = None
+        for sym in sym1:
+            if sym not in sym2:
                 sym1[sym] = None
