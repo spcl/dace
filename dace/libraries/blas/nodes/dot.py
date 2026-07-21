@@ -43,20 +43,18 @@ class ExpandDotPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
+        # A one-iteration map here would fork a thread team to write a single scalar
         init_tasklet = init_state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
         init_state.add_edge(init_tasklet, "_out", init_state.add_write("_result"), None, dace.Memlet("_result[0]"))
 
-        # Sequential: the accumulation is a WCR into one scalar, which a parallel schedule lowers to
-        # an atomic, and thread arrival order then decides how the sum is reassociated. That costs
-        # bit-reproducibility across thread counts, which a reference expansion must not do.
+        # Multiplication map
         state.add_mapped_tasklet("dot", {"__i": f"0:{n}"}, {
             "__x": dace.Memlet("_x[__i]"),
             "__y": dace.Memlet("_y[__i]")
         },
                                  mul_program, {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
-                                 output_nodes=None,
-                                 schedule=dtypes.ScheduleType.Sequential)
+                                 output_nodes=None)
 
         return sdfg
 

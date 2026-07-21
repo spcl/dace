@@ -264,6 +264,60 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         return nsdfg
 
 
+def stage_gpu_reduction_output(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+    """Route a GPU reduction whose destination is not device-resident through a device transient.
+
+    The device expansions write through a device pointer, so a host destination -- typically a
+    scalar reduced over every axis -- reaches codegen as an illegal copy. Reduce into a one-element
+    GPU_Global transient instead and let the edge out of it lower to the device-to-host copy.
+    """
+    outedge = state.out_edges(node)[0]
+    desc = sdfg.arrays[outedge.data.data]
+    if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        return
+
+    name, _ = sdfg.add_array(f'{node.label}_gpu_out', [1],
+                             desc.dtype,
+                             storage=dtypes.StorageType.GPU_Global,
+                             transient=True,
+                             find_new_name=True)
+    staged = state.add_access(name)
+    state.add_edge(node, outedge.src_conn, staged, None, dace.Memlet(f'{name}[0:1]'))
+    state.add_edge(staged, None, outedge.dst, outedge.dst_conn, dcpy(outedge.data))
+    state.remove_edge(outedge)
+
+
+@dace.library.expansion
+class ExpandReduceAuto(pm.ExpandTransformation):
+    """
+        Dispatches to one of the existing expansions based on the node's schedule, which
+        ``set_default_schedule_and_storage_types`` assigns before expansion:
+
+        * ``Sequential`` (the node is nested in a parallel map) -> the sequential accumulator,
+          whose combination order is fixed and therefore independent of the thread count. It needs
+          an identity to seed the accumulator, so a node without one goes the parallel way.
+        * a GPU schedule -> ``ExpandReduceGPUAuto``, which plans the device schedule itself and
+          falls back to the pure expansion when it cannot.
+        * anything else, including a schedule nobody inferred -> OpenMP, which emits a real
+          ``reduction()`` clause instead of a per-element atomic. It reassociates, so it is not
+          reproducible across thread counts; that is the accepted cost of a parallel reduction.
+    """
+    environments = []
+
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        ExpandReduceAuto.environments = []
+        if node.schedule == dtypes.ScheduleType.Sequential and node.identity is not None:
+            return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
+        if node.schedule in dtypes.GPU_SCHEDULES:
+            stage_gpu_reduction_output(node, state, sdfg)
+            expanded = ExpandReduceGPUAuto.expansion(node, state, sdfg)
+            # The GPU expansion picks its own environments when it delegates to CUB
+            ExpandReduceAuto.environments = list(ExpandReduceGPUAuto.environments)
+            return expanded
+        return ExpandReduceOpenMP.expansion(node, state, sdfg)
+
+
 @dace.library.expansion
 class ExpandReduceOpenMP(pm.ExpandTransformation):
     """
@@ -1343,6 +1397,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
+        'auto': ExpandReduceAuto,
         'pure': ExpandReducePure,
         'pure-seq': ExpandReducePureSequentialDim,
         'OpenMP': ExpandReduceOpenMP,
@@ -1354,7 +1409,7 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
         # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAll
     }
 
-    default_implementation = 'pure'
+    default_implementation = 'auto'
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)
