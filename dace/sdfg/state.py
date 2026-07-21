@@ -703,7 +703,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
         # Free symbols from nodes
         for n in self.nodes():
             if isinstance(n, nd.EntryNode):
-                new_symbols |= set(n.new_symbols(sdfg, self, {}).keys())
+                new_symbols |= n.new_symbol_names(self)
             elif isinstance(n, nd.AccessNode):
                 # Add data descriptor symbols
                 freesyms |= set(map(str, n.desc(sdfg).used_symbols(all_symbols)))

@@ -120,7 +120,7 @@ class ReferenceToView(ppl.Pass):
                 # Check if any of the symbols is a scope symbol
                 entry = state.entry_node(node)
                 while entry is not None:
-                    if fsyms & entry.new_symbols(sdfg, state, {}).keys():
+                    if fsyms & entry.new_symbol_names(state):
                         result.remove(cand)
                         break
                     entry = state.entry_node(entry)

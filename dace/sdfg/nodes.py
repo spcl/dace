@@ -260,6 +260,10 @@ class Node(object):
             scope entries) to their type. """
         return {}
 
+    def new_symbol_names(self, state) -> Set[str]:
+        """ Returns the names :meth:`new_symbols` defines, without inferring their types. """
+        return set()
+
     def infer_connector_types(self, sdfg, state):
         """
         Infers and fills remaining connectors (i.e., set to None) with their
@@ -780,6 +784,11 @@ class NestedSDFG(CodeNode):
 class EntryNode(Node):
     """ A type of node that opens a scope (e.g., Map or Consume). """
 
+    @property
+    def dynamic_input_connectors(self) -> Set[str]:
+        """ Input connectors carrying dynamic scope inputs rather than a memlet path. """
+        return set(c for c in self.in_connectors if not c.startswith('IN_'))
+
     def validate(self, sdfg, state):
         self.map.validate(sdfg, state, self)
 
@@ -857,7 +866,7 @@ class MapEntry(EntryNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
         return set(k for k in self._map.range.free_symbols if k not in dyn_inputs)
 
     def new_symbols(self, sdfg, state, symbols) -> Dict[str, dtypes.typeclass]:
@@ -867,12 +876,20 @@ class MapEntry(EntryNode):
             result[p] = dtypes.result_type_of(infer_expr_type(rng[0], symbols), infer_expr_type(rng[1], symbols))
 
         # Handle the dynamic map ranges.
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
         for e in state.in_edges(self):
             if e.dst_conn in dyn_inputs:
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
         return result
+
+    def new_symbol_names(self, state) -> Set[str]:
+        dyn_inputs = self.dynamic_input_connectors
+        # Zipped as in new_symbols: a param without a matching range defines nothing.
+        return ({p
+                 for p, _ in zip(self._map.params, self._map.range)}
+                | {e.dst_conn
+                   for e in state.in_edges(self) if e.dst_conn in dyn_inputs})
 
     def used_symbols_within_scope(self, parent_state: 'dace.SDFGState', all_symbols: bool = False) -> Set[str]:
         """
@@ -888,7 +905,7 @@ class MapEntry(EntryNode):
         # Free symbols from nodes
         for n in parent_state.all_nodes_between(self, parent_state.exit_node(self)):
             if isinstance(n, EntryNode):
-                new_symbols |= set(n.new_symbols(parent_sdfg, parent_state, {}).keys())
+                new_symbols |= n.new_symbol_names(parent_state)
             elif isinstance(n, AccessNode):
                 # Add data descriptor symbols
                 free_symbols |= set(map(str, n.desc(parent_sdfg).used_symbols(all_symbols)))
@@ -1178,7 +1195,7 @@ class ConsumeEntry(EntryNode):
 
     @property
     def free_symbols(self) -> Set[str]:
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
         result = set(self._consume.num_pes.free_symbols)
         if self._consume.condition is not None:
             result |= set(self._consume.condition.get_free_symbols())
@@ -1190,7 +1207,7 @@ class ConsumeEntry(EntryNode):
         result[self._consume.pe_index] = infer_expr_type(self._consume.num_pes, symbols)
 
         # Add dynamic inputs
-        dyn_inputs = set(c for c in self.in_connectors if not c.startswith('IN_'))
+        dyn_inputs = self.dynamic_input_connectors
 
         # Try to get connector type from connector
         for e in state.in_edges(self):
@@ -1198,6 +1215,10 @@ class ConsumeEntry(EntryNode):
                 result[e.dst_conn] = (self.in_connectors[e.dst_conn] or sdfg.arrays[e.data.data].dtype)
 
         return result
+
+    def new_symbol_names(self, state) -> Set[str]:
+        dyn_inputs = self.dynamic_input_connectors
+        return {self._consume.pe_index} | {e.dst_conn for e in state.in_edges(self) if e.dst_conn in dyn_inputs}
 
 
 @dace.serialize.serializable
