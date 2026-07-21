@@ -38,7 +38,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import parse_memlet
 from dace.frontend.python.nextgen.canonical.cpa import ExplicitConsume, ExplicitTasklet
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
-from dace.frontend.python.nextgen.lowering.access import indirect_index_reads, resolve_access
+from dace.frontend.python.nextgen.lowering.access import indirect_index_reads, resolve_access, substitute_index_reads
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import _LocationShim
 
@@ -177,7 +177,7 @@ def _lower_indirect_memlet(connector_expression: ast.expr, array_expression: ast
         index_names[astutils.unparse(read)] = synthetic
 
     # The element access moves into the tasklet code over a full-array connector
-    index_code = astutils.unparse(_substitute_reads(array_expression.slice, index_names))
+    index_code = astutils.unparse(substitute_index_reads(array_expression.slice, index_names))
     if is_input:
         in_memlets[connector + '__arr'] = Memlet(data=array_access.container, subset=array_access.subset)
         prelude.append(f'{connector} = {connector}__arr[{index_code}]')
@@ -191,22 +191,6 @@ def _fresh_connector(prefix: str, in_memlets: Dict[str, Memlet], out_memlets: Di
     while f'{prefix}{index}' in in_memlets or f'{prefix}{index}' in out_memlets:
         index += 1
     return f'{prefix}{index}'
-
-
-def _substitute_reads(index_expression: ast.expr, index_names: Dict[str, str]) -> ast.expr:
-    """Replace collected inner data reads in an index expression with their
-    synthetic connector names (matched by unparsed source text)."""
-    result = copy.deepcopy(index_expression)
-
-    class _Replacer(ast.NodeTransformer):
-
-        def visit(self, node: ast.AST) -> ast.AST:
-            key = astutils.unparse(node) if isinstance(node, ast.expr) else None
-            if key in index_names:
-                return ast.copy_location(ast.Name(id=index_names[key], ctx=ast.Load()), node)
-            return super().visit(node)
-
-    return ast.fix_missing_locations(_Replacer().visit(result))
 
 
 def _parse_tasklet_memlet(memlet_expression: ast.expr, connector_expression: ast.expr, defined: Dict,

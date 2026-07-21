@@ -6,9 +6,12 @@ containers, subsets, and connector-substituted tasklet code.
 import ast
 import copy
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from dace import data, dtypes, subsets, symbolic
+from dace.memlet import Memlet
+from dace.sdfg import nodes
+from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
@@ -30,6 +33,12 @@ class DataAccess:
     #: broadcast/indexed against an iteration space — the tasklet code indexes
     #: it directly (e.g. ``__in0[__ind1]``).
     indirect: bool = False
+    #: ``newaxis``/``None`` insertion positions in the NumPy result shape
+    #: (see ``MemletExpr.new_axes``), applied by :attr:`numpy_shape` AFTER
+    #: dropping/keeping subset dimensions -- a newaxis position does not
+    #: correspond to any subset dimension at all, so it cannot be modeled by
+    #: :attr:`kept_dims`, which only ever filters existing subset entries.
+    new_axes: Tuple[int, ...] = ()
 
     @property
     def is_scalar_access(self) -> bool:
@@ -40,12 +49,17 @@ class DataAccess:
         """
         The NumPy-semantic result shape of this access: slice-formed
         dimensions are kept (``a[0:20, 1:2]`` → (20, 1)), integer-indexed
-        dimensions are dropped (``a[0:20, 1]`` → (20,)). Empty for scalar
-        element accesses.
+        dimensions are dropped (``a[0:20, 1]`` → (20,)), and any
+        ``newaxis``/``None`` positions are inserted as size-1 dimensions.
+        Empty for scalar element accesses with no newaxes.
         """
         if self.kept_dims is None:
-            return nondegenerate_shape(self.subset)
-        return [size for size, kept in zip(self.subset.size(), self.kept_dims) if kept]
+            shape = nondegenerate_shape(self.subset)
+        else:
+            shape = [size for size, kept in zip(self.subset.size(), self.kept_dims) if kept]
+        for position in sorted(self.new_axes, reverse=True):
+            shape.insert(position, 1)
+        return shape
 
 
 def nondegenerate_shape(subset: subsets.Range) -> List:
@@ -53,21 +67,45 @@ def nondegenerate_shape(subset: subsets.Range) -> List:
     return [s for s in subset.size() if s != 1]
 
 
-def _kept_dimensions(slice_node: ast.expr, ndim: int) -> Optional[List[bool]]:
+def kept_dimensions(slice_node: ast.expr, ndim: int) -> Optional[List[bool]]:
     """
     Which subset dimensions a subscript keeps in its NumPy result shape:
     slice-formed indices keep their dimension, integer indices drop it, and
-    unindexed trailing dimensions are kept. Returns None (unknown) for index
-    forms this analysis does not model (``...``, ``None``/newaxis).
+    unindexed trailing dimensions are kept.
+
+    ``newaxis``/``None`` elements are excluded before this analysis runs --
+    they don't consume or correspond to a source dimension at all, so they
+    play no part in deciding which SUBSET dimensions survive (see
+    ``DataAccess.new_axes`` for how they're reinserted afterward). A single
+    ``Ellipsis`` element expands in place to however many implicit full
+    slices are needed to cover the remaining real dimensions (Python itself
+    rejects a slice with more than one ``Ellipsis``, so more than one here
+    always means the index list is otherwise malformed).
+
+    Returns None (unknown -- caller must not blindly squeeze) when the
+    element count doesn't add up against ``ndim`` (a malformed or
+    not-yet-canonicalized index).
     """
-    elements = list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
+    raw_elements = list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
+    elements = [
+        element for element in raw_elements if not (isinstance(element, ast.Constant) and element.value is None)
+    ]
+    ellipsis_positions = [
+        i for i, element in enumerate(elements) if isinstance(element, ast.Constant) and element.value is Ellipsis
+    ]
+    if len(ellipsis_positions) > 1:
+        return None
+    if ellipsis_positions:
+        position = ellipsis_positions[0]
+        explicit_count = len(elements) - 1
+        fill = ndim - explicit_count
+        if fill < 0:
+            return None
+        filler = [ast.Slice(lower=None, upper=None, step=None)] * fill
+        elements = elements[:position] + filler + elements[position + 1:]
     if len(elements) > ndim:
         return None
-    kept: List[bool] = []
-    for element in elements:
-        if isinstance(element, ast.Constant) and (element.value is Ellipsis or element.value is None):
-            return None
-        kept.append(isinstance(element, ast.Slice))
+    kept: List[bool] = [isinstance(element, ast.Slice) for element in elements]
     kept.extend([True] * (ndim - len(kept)))
     return kept
 
@@ -131,8 +169,8 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
                 state.context.filename,
                 node,
                 category='data-dependent-subscript')
-        kept = None if expr.new_axes else _kept_dimensions(node.slice, len(subset.ranges))
-        return DataAccess(base_container, subset, base_descriptor, kept_dims=kept)
+        kept = kept_dimensions(node.slice, len(subset.ranges))
+        return DataAccess(base_container, subset, base_descriptor, kept_dims=kept, new_axes=tuple(expr.new_axes or ()))
     return None
 
 
@@ -351,6 +389,105 @@ def substitute_data_operands(expr: ast.expr,
 
     code = astutils.unparse(ast.fix_missing_locations(_Substituter().visit(rewritten)))
     return code, operands
+
+
+def substitute_index_reads(index_expression: ast.expr, index_names: Dict[str, str]) -> ast.expr:
+    """
+    Replace collected data reads in an index expression with their synthetic
+    connector names (matched by unparsed source text). Shared between the
+    explicit-tasklet indirect-memlet rule
+    (:mod:`~dace.frontend.python.nextgen.lowering.rules.dataflow_explicit`)
+    and :func:`lower_indirect_write` below -- both move a data-dependent
+    index's element access into tasklet code the same way.
+    """
+    result = copy.deepcopy(index_expression)
+
+    class _Replacer(ast.NodeTransformer):
+
+        def visit(self, node: ast.AST) -> ast.AST:
+            key = astutils.unparse(node) if isinstance(node, ast.expr) else None
+            if key in index_names:
+                return ast.copy_location(ast.Name(id=index_names[key], ctx=ast.Load()), node)
+            return super().visit(node)
+
+    return ast.fix_missing_locations(_Replacer().visit(result))
+
+
+def lower_indirect_write(target: ast.Subscript,
+                         value: ast.expr,
+                         statement: ast.stmt,
+                         state: LoweringState,
+                         wcr: Optional[str] = None) -> bool:
+    """
+    Lower a write into a subscript whose index is data-dependent
+    (``hist[bin] += 1``, ``hist[bin] = x``) inside a dataflow scope, as a
+    genuine indirect write: the base array becomes a full-array OUTPUT
+    connector, each data-dependent index subexpression becomes a synthetic
+    input connector, and the element write moves into the tasklet code
+    (``__arr[__ind0, ...] = <value>``) -- the mirror of this module's own
+    READ-side indirection (:func:`substitute_data_operands`'s
+    ``_indirect_subscript``), and the same shape
+    ``rules/dataflow_explicit.py::_lower_indirect_memlet`` already implements
+    for explicit-tasklet syntax (``local >> A[A_col[j]]``), ported here for
+    ordinary assignment statements, which have no such syntax to hook into.
+
+    Returns False when the target's index is not actually data-dependent (no
+    indirect reads found), so the caller falls through to the ordinary
+    paths -- which, for that case, correctly resolve the target directly.
+
+    :param wcr: Conflict-resolution lambda for an accumulating write
+                (``hist[bin] += 1``). An indirect write takes WCR
+                UNCONDITIONALLY when accumulating -- a stronger rule than
+                ``conflict.accumulation_wcr`` applies to a plain (direct)
+                target: the index expression may name the same element from
+                two different map iterations, and no subset inspection can
+                rule that out (the same reasoning
+                ``advanced_indexing.emit_scatter`` already applies to
+                accumulating advanced-index writes). A plain (non-accumulating)
+                overwrite needs no WCR: like NumPy's own fancy-index
+                assignment, which of several colliding writes wins is
+                unspecified, not a correctness hazard the frontend must guard.
+    :raises UnsupportedFeatureError: If the base container or an index read is
+        unknown or interpreter-only (a pyobject scalar from an earlier
+        callback fallback, which cannot participate in dataflow).
+    """
+    if not isinstance(target.value, (ast.Name, ast.Attribute)):
+        return False
+    reads = indirect_index_reads(target, state)
+    if not reads:
+        return False
+    base_access = resolve_access(target.value, state)
+    if base_access is None or isinstance(base_access.descriptor.dtype, dtypes.pyobject):
+        raise UnsupportedFeatureError(
+            f'Indirect write references unknown or interpreter-only container "{astutils.unparse(target.value)}"',
+            state.context.filename,
+            target,
+            category='indirect-memlet')
+
+    index_names: Dict[str, str] = {}
+    in_memlets: Dict[str, Memlet] = {}
+    for read in reads:
+        access = resolve_access(read, state)
+        if access is None or isinstance(access.descriptor.dtype, dtypes.pyobject):
+            raise UnsupportedFeatureError('Indirect write index references an unknown or interpreter-only container',
+                                          state.context.filename,
+                                          target,
+                                          category='indirect-memlet')
+        connector = f'__ind{len(index_names)}'
+        in_memlets[connector] = Memlet(data=access.container, subset=access.subset)
+        index_names[astutils.unparse(read)] = connector
+
+    index_code = astutils.unparse(substitute_index_reads(target.slice, index_names))
+
+    code, operands = substitute_data_operands(value, state, connector_prefix='__val')
+    for connector, operand in operands:
+        in_memlets[connector] = Memlet(data=operand.container, subset=operand.subset)
+
+    out_memlets = {'__arr': Memlet(data=base_access.container, subset=base_access.subset, wcr=wcr)}
+    line = getattr(statement, 'lineno', 0)
+    tasklet = nodes.Tasklet(f'indirect_write_{line}', set(in_memlets), {'__arr'}, f'__arr[{index_code}] = {code}')
+    state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+    return True
 
 
 def indexed_subset(access: DataAccess, params: List[str], result_shape: List) -> subsets.Range:

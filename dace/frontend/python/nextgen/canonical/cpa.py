@@ -306,16 +306,64 @@ def is_atomexpr(node: ast.AST) -> bool:
     return False
 
 
+def _is_bounded_index_operand(node: ast.AST) -> bool:
+    """
+    Check whether an expression is valid AS PART OF an index expression: an
+    atom, or a data subscript (``A_col[j]``) whose OWN index is atom-only.
+
+    This is deliberately NOT :func:`is_operand`: ``is_operand``'s own
+    Subscript branch calls :func:`is_index`, which calls :func:`is_index_expr`
+    -- if that in turn called ``is_operand`` again on a subscript operand, the
+    two functions would mutually recurse with no depth bound, making
+    ``A[x[x[i]]]`` (and any deeper nesting) canonical. This helper is the
+    depth cutoff: it allows exactly the one level of subscript nesting
+    genuine indirection needs (``x[A_col[j]]``'s ``A_col[j]``), and requires
+    that nesting's OWN index to be a plain atom, matching every other
+    depth-1 rule in this grammar (``is_atomexpr``, ``is_index_expr`` itself).
+    Anything deeper is not canonical; ANF hoists it into a temporary instead.
+    """
+    if is_atom(node):
+        return True
+    if isinstance(node, ast.Subscript):
+        return is_dataref(node.value) and _is_atom_index(node.slice)
+    if isinstance(node, ast.UnaryOp):
+        return _is_bounded_index_operand(node.operand)
+    return False
+
+
+def _is_atom_index(node: ast.AST) -> bool:
+    """
+    Check whether a subscript index is built from atoms (and depth-1
+    arithmetic on atoms) only -- the innermost level
+    :func:`_is_bounded_index_operand` allows a nested subscript's own index
+    to use. Deliberately admits ``ptr[i + 1]``-shaped bounds (a BinOp of two
+    atoms), matching :func:`is_index_expr`'s own top-level allowance -- this
+    is the measured-working dynamic-range-bound pattern
+    (``A[ptr[i]:ptr[i+1]]``, the map-range half of the indirection
+    machinery) and must not regress. What it does NOT admit is another
+    subscript at this level (``ptr[q[i]]``): that is the actual unbounded
+    case being cut off.
+    """
+    if isinstance(node, ast.Slice):
+        return all(part is None or _is_atom_index(part) for part in (node.lower, node.upper, node.step))
+    if isinstance(node, ast.Tuple):
+        return all(_is_atom_index(element) for element in node.elts)
+    if isinstance(node, ast.BinOp):
+        return is_atom(node.left) and is_atom(node.right)
+    return is_atom(node)
+
+
 def is_index_expr(node: ast.AST) -> bool:
     """
-    Check whether an expression is a canonical index expression (depth-1): an
-    operand, or a binary operation of two operands (e.g. the ``i + 1`` in
-    ``A[i + 1]``, or the ``A_col[j]`` data-read operand in ``x[A_col[j]]``).
+    Check whether an expression is a canonical index expression (depth-1): a
+    bounded index operand (see :func:`_is_bounded_index_operand`), or a
+    binary operation of two of them (e.g. the ``i + 1`` in ``A[i + 1]``, or
+    the ``A_col[j]`` data-read operand in ``x[A_col[j]]``).
     """
-    if is_operand(node):
+    if _is_bounded_index_operand(node):
         return True
     if isinstance(node, ast.BinOp):
-        return is_operand(node.left) and is_operand(node.right)
+        return _is_bounded_index_operand(node.left) and _is_bounded_index_operand(node.right)
     return False
 
 

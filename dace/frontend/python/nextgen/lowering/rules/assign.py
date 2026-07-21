@@ -38,7 +38,8 @@ from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.semantics import structures as structure_support
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
-from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
+from dace.frontend.python.nextgen.lowering.access import (DataAccess, lower_indirect_write, nondegenerate_shape,
+                                                          resolve_access)
 from dace.frontend.python.nextgen.lowering.mechanisms import conflict, static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import Inferred
@@ -104,8 +105,8 @@ def _lower_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state
     """
     Lower an accumulation as a conflict-resolved write of the accumulated value
     alone, dropping the self-read that the WCR subsumes. Returns False when the
-    target does not resolve to a data access, so the caller falls through to the
-    ordinary assignment paths.
+    target does not resolve to a data access AND is not an indirect target
+    either, so the caller falls through to the ordinary assignment paths.
 
     Falling through is what keeps the commuted form (``b = x + b``, detected by
     ``canonical/passes.py::DetectAccumulations``) safe for non-numeric values:
@@ -117,16 +118,20 @@ def _lower_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state
         return False
     if not isinstance(statement.value, ast.BinOp):
         return False
-    try:
-        target_access = resolve_access(target, state)
-    except UnsupportedFeatureError:
-        return False
-    if target_access is None:
-        return False
     # The accumulated value is whichever operand is not the self-read. A
     # desugared ``AugAssign`` carries no side marker and is always left-folded.
     accumulated = (statement.value.left
                    if getattr(statement, 'accumulator_side', 'left') == 'right' else statement.value.right)
+    try:
+        target_access = resolve_access(target, state)
+    except UnsupportedFeatureError:
+        # A data-dependent target (``hist[bin] += 1``): not a plain access,
+        # but possibly an indirect one -- see lowering.access.lower_indirect_write.
+        if isinstance(target, ast.Subscript) and lower_indirect_write(target, accumulated, statement, state, wcr=wcr):
+            return True
+        return False
+    if target_access is None:
+        return False
     dispatch.lower_computation(target_access, accumulated, statement, state, wcr=wcr)
     return True
 
@@ -192,6 +197,21 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
             # ``x[A_col[j]]``): falls through to the computation path below,
             # which lowers indirection through the elementwise mechanism.
             access = None
+        if access is not None and access.kept_dims is None and access.subset.size() and access.new_axes:
+            # ``DataAccess.numpy_shape``'s fallback for a genuinely unmodeled
+            # index form (more elements than dimensions, more than one
+            # ``Ellipsis``, ...) blindly squeezes every size-1 subset
+            # dimension via ``nondegenerate_shape`` -- fine on its own since
+            # there is nothing to disambiguate, but combined with ``new_axes``
+            # insertions (positions computed against the SAME assumed shape)
+            # it can silently produce a wrong result. ``kept_dimensions``
+            # already handles the ordinary Ellipsis/newaxis cases correctly
+            # (see its docstring); this only remains reachable for whatever
+            # it still can't model, so fail loudly instead of guessing.
+            raise UnsupportedFeatureError('Cannot determine the exact NumPy result shape of this subscript',
+                                          state.context.filename,
+                                          value,
+                                          category='data-dependent-subscript')
         if access is not None and access.numpy_shape:
             _lower_view_binding(target, access, state)
             return
@@ -354,6 +374,12 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
     try:
         target_access = resolve_access(target, state)
     except UnsupportedFeatureError as reason:
+        # A data-dependent target (``hist[bin] = x``): not a plain access,
+        # but possibly an indirect one. No WCR needed for a plain overwrite --
+        # like NumPy's own fancy-index assignment, which of several colliding
+        # writes wins is unspecified, not a hazard the frontend must guard.
+        if lower_indirect_write(target, value, statement, state):
+            return
         dispatch.fallback_to_callback(statement, state, reason)
         return
     if target_access is None:
@@ -364,7 +390,15 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
 
     # Subset-to-subset copy
     if isinstance(value, (ast.Name, ast.Subscript)):
-        source_access = resolve_access(value, state)
+        try:
+            source_access = resolve_access(value, state)
+        except UnsupportedFeatureError:
+            # Not a directly resolvable access (e.g. a data-dependent index
+            # like ``hist[bin]``): falls through to the computation path
+            # below, which lowers indirection through the elementwise
+            # mechanism -- the same guard already applied to the analogous
+            # probe in ``_lower_name_assign``.
+            source_access = None
         if (source_access is not None and not source_access.is_scalar_access and not target_access.is_scalar_access
                 and nondegenerate_shape(source_access.subset) == nondegenerate_shape(target_access.subset)):
             state.emitter.emit(
@@ -434,6 +468,12 @@ def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringSta
         access.descriptor.strides[i] * step
         for i, (keep, (_, _, step)) in enumerate(zip(selected, access.subset.ranges)) if keep
     ] if isinstance(access.descriptor, data.Array) else None
+    if strides is not None:
+        # A newaxis-inserted dimension has no corresponding source stride --
+        # it only ever has one valid index (0), so any value is safe; 0
+        # matches NumPy's own convention for a size-1 broadcast/newaxis axis.
+        for position in sorted(access.new_axes):
+            strides.insert(position, 0)
     view_descriptor = data.ArrayView(access.descriptor.dtype, shape, strides=strides)
     view_name = state.context.add_container(target.id, view_descriptor)
     state.context.bind(target.id, view_name)
