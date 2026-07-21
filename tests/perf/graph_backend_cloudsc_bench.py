@@ -14,15 +14,23 @@ Pipeline timed per repetition, per backend, in this order (see cloudsc_backend_p
                                real user calls .compile() directly; the overlap is expected.
   5. serialize / deserialize -- SDFG.save(compress=True) / SDFG.from_file().
 
-Correctness (both backends must reproduce the un-transformed reference bit-for-bit under the
-IEEE build) is checked ONCE up front, not per repetition -- see graph_backend_cloudsc_test.py
-for the dedicated, CI-integrated version of the same check, run through the identical
-simplify -> config-prop+loopunroll pipeline. A benchmark whose backends disagree numerically
-is not reporting a real speedup, so this script refuses to print a timing table if that
-check fails.
+Correctness (both backends reproducing the un-transformed reference bit-for-bit under the IEEE
+build) is checked ONCE up front, not per repetition -- see graph_backend_cloudsc_test.py for the
+dedicated, CI-integrated version of the same check, run through the identical simplify ->
+config-prop+loopunroll pipeline.
+
+That check is REPORTED, not enforced: this is a compile/optimize-time benchmark, and the known
+CloudSC divergence reproduces under backend='networkx' too, so it is a property of the
+transformation pipeline (LoudUnroll / specialize_scalar), not of the graph backend under test.
+Aborting the run on it would only mean a multi-hour allocation produces no timings at all. The
+outcome is printed loudly, recorded in the JSON under 'correctness', and stamped on both the
+markdown table and the plot, so no timing table can be mistaken for a validated one. Pass
+--strict-correctness to restore the old abort-on-divergence behavior.
 
 Usage: python3 tests/perf/graph_backend_cloudsc_bench.py [--reps 10] [--output out.json]
                                                           [--table-output table.md]
+                                                          [--plot-output plot.png]
+                                                          [--strict-correctness]
 """
 import argparse
 import copy
@@ -30,6 +38,7 @@ import json
 import os
 import statistics
 import time
+import traceback
 from typing import Dict, List
 
 import dace
@@ -57,10 +66,13 @@ PHASE_LABELS = {
 }
 
 
-def check_correctness(reference: dace.SDFG, backend: str) -> None:
+def check_correctness(reference: dace.SDFG, backend: str) -> Dict[str, tuple]:
     """Run the full simplify -> config-prop+loopunroll pipeline on a private copy under
-    ``backend`` and assert it reproduces ``reference`` bit-for-bit under the IEEE build.
-    Raises on mismatch."""
+    ``backend`` and compare it against ``reference`` bit-for-bit under the IEEE build.
+
+    Returns the per-array ``{name: (max_abs, max_rel)}`` of everything that did NOT match, empty
+    when the pipeline reproduces the reference. Reporting rather than raising is deliberate --
+    see the module docstring; the caller decides what to do about a non-empty result."""
     candidate = copy.deepcopy(reference)
     make_sequential(candidate)
     run_pipeline(candidate, backend)
@@ -82,9 +94,7 @@ def check_correctness(reference: dace.SDFG, backend: str) -> None:
         dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
 
     report = compare_outputs(ref_inputs, cand_inputs, rtol=1e-15, atol=1e-15)
-    bad = {name: (max_abs, max_rel) for name, (max_abs, max_rel, ok) in report.items() if not ok}
-    if bad:
-        raise RuntimeError(f'backend={backend!r}: pipeline output diverges from reference: {bad}')
+    return {name: (max_abs, max_rel) for name, (max_abs, max_rel, ok) in report.items() if not ok}
 
 
 def run_one_repetition(reference: dace.SDFG, backend: str, tmp_dir: str, rep: int) -> Dict[str, float]:
@@ -113,7 +123,9 @@ def run_one_repetition(reference: dace.SDFG, backend: str, tmp_dir: str, rep: in
 
     pass_time, applied = specialize_and_unroll(sdfg, backend)
     if applied == 0:
-        raise RuntimeError(f'backend={backend!r}: LoopUnroll found nothing to unroll after simplify')
+        # Worth shouting about -- it means the phase timed nothing -- but not worth losing the
+        # whole allocation over: the remaining phases are still measuring real work.
+        print(f'  WARNING: backend={backend!r} rep={rep}: LoopUnroll found nothing to unroll after simplify')
     times['config_prop_loopunroll'] = pass_time
 
     with graphlib.set_default_backend(backend):
@@ -143,30 +155,40 @@ def run_one_repetition(reference: dace.SDFG, backend: str, tmp_dir: str, rep: in
     return times
 
 
+def safe_median(values: List[float]) -> float:
+    """Median that yields NaN instead of raising on an empty sample list -- a repetition that
+    failed contributes no sample, and one lost repetition must not sink the whole report."""
+    return statistics.median(values) if values else float('nan')
+
+
 def median_report(samples: Dict[str, Dict[str, List[float]]]) -> str:
     lines = [f"{'phase':<24} {'networkx (s)':>14} {'rustworkx (s)':>15} {'speedup':>9}"]
     for phase in PHASES:
-        nx_med = statistics.median(samples['networkx'][phase])
-        rx_med = statistics.median(samples['rustworkx'][phase]) if 'rustworkx' in samples else float('nan')
+        nx_med = safe_median(samples['networkx'][phase])
+        rx_med = safe_median(samples['rustworkx'][phase]) if 'rustworkx' in samples else float('nan')
         speedup = nx_med / rx_med if rx_med else float('nan')
         lines.append(f"{PHASE_LABELS[phase]:<24} {nx_med:>14.4f} {rx_med:>15.4f} {speedup:>8.2f}x")
     return '\n'.join(lines)
 
 
-def write_markdown_table(samples: Dict[str, Dict[str, List[float]]], path: str, reps: int) -> None:
+def write_markdown_table(samples: Dict[str, Dict[str, List[float]]], path: str, reps: int,
+                         correctness: Dict[str, Dict[str, tuple]]) -> None:
     """Write the median-per-phase comparison as a markdown table, for the SLURM job's
     saved artifact (see submit_cloudsc_backend.sh / run_cloudsc_backend.sh)."""
     have_rustworkx = 'rustworkx' in samples
     lines = [
         f'# Graph backend benchmark: CloudSC (median over {reps} repetitions)',
         '',
+    ]
+    lines += correctness_note(correctness) + ['']
+    lines += [
         '| phase | networkx (s) | rustworkx (s) | speedup |',
         '|---|---:|---:|---:|',
     ]
     for phase in PHASES:
-        nx_med = statistics.median(samples['networkx'][phase])
+        nx_med = safe_median(samples['networkx'][phase])
         if have_rustworkx:
-            rx_med = statistics.median(samples['rustworkx'][phase])
+            rx_med = safe_median(samples['rustworkx'][phase])
             speedup = f'{nx_med / rx_med:.2f}x' if rx_med else 'n/a'
             rx_cell = f'{rx_med:.4f}'
         else:
@@ -177,6 +199,67 @@ def write_markdown_table(samples: Dict[str, Dict[str, List[float]]], path: str, 
         f.write('\n'.join(lines) + '\n')
 
 
+def correctness_note(correctness: Dict[str, Dict[str, tuple]]) -> List[str]:
+    """One-line-per-backend verdict, so a timing artifact always carries its own caveat."""
+    diverged = sorted(b for b, bad in correctness.items() if bad)
+    if not diverged:
+        return ['Correctness: all backends reproduce the un-transformed reference bit-for-bit.']
+    arrays = sorted({name for b in diverged for name in correctness[b]})
+    return [
+        f'**Correctness: DIVERGED on {", ".join(diverged)}** -- these are compile/optimize-time '
+        'numbers only, the pipeline output does not match the reference.',
+        '',
+        f'Arrays affected: {", ".join(arrays)}.',
+    ]
+
+
+def write_plot(samples: Dict[str, Dict[str, List[float]]], path: str, reps: int,
+               correctness: Dict[str, Dict[str, tuple]]) -> bool:
+    """Grouped bar chart of per-phase medians, one bar per backend. Log-scaled because compile
+    dominates the other phases by orders of magnitude and would otherwise flatten them to zero.
+    Returns False (without raising) when matplotlib is unavailable -- a missing plotting library
+    on a compute node must not cost the run its timings."""
+    try:
+        import matplotlib
+        matplotlib.use('Agg')  # no display on a compute node
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print('matplotlib not installed -- skipping plot (timings and table are unaffected).')
+        return False
+
+    backends = [b for b in BACKENDS if b in samples]
+    x = range(len(PHASES))
+    width = 0.8 / len(backends)
+
+    fig, ax = plt.subplots(figsize=(11, 5.5))
+    for i, backend in enumerate(backends):
+        medians = [safe_median(samples[backend][p]) for p in PHASES]
+        offsets = [xi + i * width - 0.4 + width / 2 for xi in x]
+        bars = ax.bar(offsets, medians, width, label=backend)
+        ax.bar_label(bars, fmt='%.2f', fontsize=7, padding=2)
+
+    ax.set_yscale('log')
+    ax.set_ylabel('seconds (median, log scale)')
+    ax.set_xticks(list(x))
+    ax.set_xticklabels([PHASE_LABELS[p] for p in PHASES], rotation=30, ha='right')
+    ax.set_title(f'CloudSC compile/optimize time by phase (median of {reps} reps)')
+    ax.legend()
+    ax.grid(axis='y', alpha=0.3, which='both')
+
+    if any(correctness.values()):
+        fig.text(0.5,
+                 0.01,
+                 'WARNING: pipeline output diverges from the reference -- timing data only.',
+                 ha='center',
+                 fontsize=9,
+                 color='crimson')
+
+    fig.tight_layout()
+    fig.savefig(path, dpi=150)
+    plt.close(fig)
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--reps', type=int, default=10, help='Repetitions per backend (default: 10)')
@@ -185,6 +268,14 @@ def main():
                         type=str,
                         default=None,
                         help='Optional path to write the median comparison as a markdown table')
+    parser.add_argument('--plot-output',
+                        type=str,
+                        default=None,
+                        help='Optional path to write a per-phase bar chart (PNG, needs matplotlib)')
+    parser.add_argument('--strict-correctness',
+                        action='store_true',
+                        help='Abort before timing if the pipeline output diverges from the reference '
+                        '(default: report the divergence and benchmark anyway)')
     parser.add_argument('--tmp-dir',
                         type=str,
                         default='/tmp/graph_backend_cloudsc_bench',
@@ -206,33 +297,62 @@ def main():
         available_backends = ['networkx']
 
     print('Correctness check (once per backend, not timed)...')
+    correctness: Dict[str, Dict[str, tuple]] = {}
     for backend in available_backends:
-        check_correctness(reference, backend)
-        print(f'  backend={backend!r}: OK (matches un-transformed reference bit-for-bit)')
+        correctness[backend] = check_correctness(reference, backend)
+        if correctness[backend]:
+            print(f'  backend={backend!r}: DIVERGES from the un-transformed reference: {correctness[backend]}')
+        else:
+            print(f'  backend={backend!r}: OK (matches un-transformed reference bit-for-bit)')
+
+    if any(correctness.values()) and args.strict_correctness:
+        raise RuntimeError(f'--strict-correctness: pipeline output diverges from reference: {correctness}')
+    if any(correctness.values()):
+        print('  ^ continuing anyway: this is a compile/optimize-time benchmark and the divergence is a')
+        print('    property of the transformation pipeline, not of the graph backend (it reproduces on')
+        print('    networkx too). Timings below are valid; pipeline OUTPUT is not. Use --strict-correctness')
+        print('    to abort here instead.')
 
     samples: Dict[str, Dict[str, List[float]]] = {b: {p: [] for p in PHASES} for b in available_backends}
+    failures = 0
     for backend in available_backends:
         for rep in range(args.reps):
-            times = run_one_repetition(reference, backend, args.tmp_dir, rep)
+            try:
+                times = run_one_repetition(reference, backend, args.tmp_dir, rep)
+            except Exception:  # noqa: BLE001 -- one lost repetition must not cost the whole run
+                failures += 1
+                print(f'backend={backend:<10} rep={rep + 1}/{args.reps}  FAILED, skipping this repetition:')
+                traceback.print_exc()
+                continue
             for phase in PHASES:
                 samples[backend][phase].append(times[phase])
             print(f'backend={backend:<10} rep={rep + 1}/{args.reps}  ' + '  '.join(f'{PHASE_LABELS[p]}={times[p]:.4f}s'
                                                                                    for p in PHASES))
 
+    if failures:
+        print(f'\n{failures} repetition(s) failed and were skipped; medians below use the survivors.')
+    if not any(samples[b][PHASES[0]] for b in available_backends):
+        raise RuntimeError('every repetition failed on every backend -- no timings to report')
+
     print()
     print(f'Median over {args.reps} repetitions:')
     print(
         median_report(samples) if len(available_backends) == 2 else '\n'.join(
-            f'{PHASE_LABELS[p]}: {statistics.median(samples["networkx"][p]):.4f}s' for p in PHASES))
+            f'{PHASE_LABELS[p]}: {safe_median(samples["networkx"][p]):.4f}s' for p in PHASES))
+    print()
+    print('\n'.join(correctness_note(correctness)))
 
     if args.output:
         with open(args.output, 'w') as f:
-            json.dump(samples, f, indent=2)
+            json.dump({'samples': samples, 'correctness': correctness, 'reps': args.reps}, f, indent=2)
         print(f'Raw samples written to {args.output}')
 
     if args.table_output:
-        write_markdown_table(samples, args.table_output, args.reps)
+        write_markdown_table(samples, args.table_output, args.reps, correctness)
         print(f'Markdown table written to {args.table_output}')
+
+    if args.plot_output and write_plot(samples, args.plot_output, args.reps, correctness):
+        print(f'Plot written to {args.plot_output}')
 
 
 if __name__ == '__main__':

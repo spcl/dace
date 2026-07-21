@@ -88,6 +88,7 @@ echo "Output dir: ${OUTDIR}"
     --reps "${REPS}" \
     --output "${OUTDIR}/results.json" \
     --table-output "${OUTDIR}/results_table.md" \
+    --plot-output "${OUTDIR}/results_plot.png" \
     --tmp-dir "${OUTDIR}/scratch"
 
 echo
