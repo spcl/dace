@@ -244,6 +244,16 @@ class RustworkxGraphHandle:
         self.multigraph = multigraph
         self._rx = rustworkx.PyDiGraph(multigraph=multigraph)
         self._index = NodeIndexMap()
+        # {rustworkx edge index: networkx-style multigraph key}. A multigraph key names ONE of
+        # the parallel edges between a fixed (u, v), and callers store it and hand it back later
+        # (dace.sdfg.graph.OrderedMultiDiGraph keeps it as edge.key and removes by it). rustworkx's
+        # own edge index CANNOT serve as that name: it is a property of one PyDiGraph's insertion
+        # history, so any rebuild -- __deepcopy__ below, which regroups edges by source node --
+        # reassigns it, while the caller's stored key stays as it was. That silently turned
+        # `remove_edge(c, d, key)` into "remove whichever edge now happens to hold that index",
+        # deleting an unrelated edge and leaving the intended one in place. Keys here are
+        # per-(u, v) counters, exactly like networkx's, and are carried through every rebuild.
+        self._edge_keys = {}
 
     # -- construction / mutation, mirrors networkx.DiGraph's own method signatures ----------
 
@@ -268,27 +278,73 @@ class RustworkxGraphHandle:
         if not self.multigraph and self._rx.has_edge(ui, vi):
             self._rx.get_edge_data(ui, vi).update(attr)
             return None
-        return self._rx.add_edge(ui, vi, dict(attr))
+        key = self.add_edge_with_key(ui, vi, dict(attr), self.next_edge_key(ui, vi))
+        # networkx.DiGraph.add_edge returns None; only MultiDiGraph.add_edge returns a key.
+        return key if self.multigraph else None
+
+    def add_edge_with_key(self, ui, vi, payload, key):
+        """Add one edge carrying an explicit networkx-style key, and return that key. Split out
+        so rebuild paths (build_bulk / __deepcopy__) can carry the ORIGINAL keys across instead
+        of minting new ones -- the property that makes a caller-held key survive a deepcopy."""
+        idx = self._rx.add_edge(ui, vi, payload)
+        self._edge_keys[idx] = key
+        return key
+
+    def next_edge_key(self, ui, vi):
+        """A key not already naming a parallel (ui, vi) edge, chosen by networkx's own rule:
+        start at the pair's current edge count and step up until free. That is not always the
+        lowest free value (after removing key 0 of {0, 1}, networkx yields 2, not 0) -- matching
+        the rule, not just the uniqueness property, keeps stored keys comparable across backends.
+        """
+        if not self.multigraph:
+            return 0
+        taken = {self._edge_keys[i] for i in self._rx.edge_indices_from_endpoints(ui, vi)}
+        key = len(taken)
+        while key in taken:
+            key += 1
+        return key
+
+    def edge_index_for_key(self, ui, vi, key):
+        """The rustworkx edge index currently holding (ui, vi, key), or None. Scans the parallel
+        edges of one node pair -- at most a handful in any DaCe graph."""
+        for idx in self._rx.edge_indices_from_endpoints(ui, vi):
+            if self._edge_keys.get(idx) == key:
+                return idx
+        return None
 
     def remove_node(self, node):
-        self._rx.remove_node(self.node_index_or_raise(node))
+        # networkx removes a node's incident edges along with it, which rustworkx also does --
+        # but their keys have to be dropped too, or a later edge recycling that index would
+        # inherit a stale key.
+        idx = self.node_index_or_raise(node)
+        for edge_idx in self._rx.incident_edges(idx, all_edges=True):
+            self._edge_keys.pop(edge_idx, None)
+        self._rx.remove_node(idx)
         self._index.remove(node)
 
     def remove_edge(self, u, v, key=None):
         import rustworkx
-        # Multigraph callers pass back the key add_edge returned, to name ONE parallel edge --
-        # dace.sdfg.graph's OrderedMultiDiGraph stores it as edge.key. Our key is rustworkx's
-        # own globally-unique edge index (networkx numbers per (u, v) instead, but callers only
-        # ever round-trip the value, never assume its numbering), so it removes by index.
-        if key is not None:
-            try:
-                self._rx.remove_edge_from_index(key)
-                return
-            except (rustworkx.NoEdgeBetweenNodes, IndexError):
-                raise NetworkXError(f'The edge {u}-{v} with key {key} is not in the graph.')
         ui, vi = self.node_index_or_raise(u), self.node_index_or_raise(v)
+        # Multigraph callers pass back the key add_edge returned, to name ONE parallel edge --
+        # dace.sdfg.graph's OrderedMultiDiGraph stores it as edge.key. Resolve it through the
+        # (u, v) pair rather than treating it as a rustworkx edge index: see __init__'s note on
+        # _edge_keys for why the index is not a stable name for an edge.
+        if key is not None:
+            idx = self.edge_index_for_key(ui, vi, key)
+            if idx is None:
+                raise NetworkXError(f'The edge {u}-{v} with key {key} is not in the graph.')
+            self._rx.remove_edge_from_index(idx)
+            del self._edge_keys[idx]
+            return
         try:
-            self._rx.remove_edge(ui, vi)
+            # networkx removes the LAST-added parallel edge when no key is given; rustworkx's
+            # remove_edge picks its own, so name the same one explicitly.
+            candidates = self._rx.edge_indices_from_endpoints(ui, vi)
+            if not candidates:
+                raise rustworkx.NoEdgeBetweenNodes
+            idx = max(candidates)
+            self._rx.remove_edge_from_index(idx)
+            self._edge_keys.pop(idx, None)
         except rustworkx.NoEdgeBetweenNodes:
             # NoEdgeBetweenNodes is not a NetworkXError subclass, so `except NetworkXError:`
             # handlers would miss it entirely.
@@ -390,6 +446,16 @@ class RustworkxGraphHandle:
         for u_idx, u in self._index.idx_to_obj.items():
             for _, v_idx, payload in reversed(list(self._rx.out_edges(u_idx))):
                 yield u, self._index.node_at(v_idx), payload
+
+    def edges_with_payload_and_keys(self):
+        """As edges_with_payload, plus each edge's networkx-style multigraph key, so a rebuild can
+        carry keys across unchanged (see build_bulk / __deepcopy__). Uses out_edge_indices in the
+        same reversed order as out_edges so index i lines up with edge i."""
+        for u_idx, u in self._index.idx_to_obj.items():
+            edges = reversed(list(self._rx.out_edges(u_idx)))
+            indices = reversed(list(self._rx.out_edge_indices(u_idx)))
+            for (_, v_idx, payload), edge_idx in zip(edges, indices):
+                yield u, self._index.node_at(v_idx), payload, self._edge_keys.get(edge_idx, 0)
 
     @property
     def nodes(self):
@@ -528,8 +594,8 @@ class RustworkxGraphHandle:
         payloads = self.node_payloads_by_index()
         result.build_bulk(((copy.deepcopy(node, memo), copy.deepcopy(payloads[idx], memo))
                            for idx, node in self._index.idx_to_obj.items()),
-                          ((copy.deepcopy(u, memo), copy.deepcopy(v, memo), copy.deepcopy(payload, memo))
-                           for u, v, payload in self.edges_with_payload()))
+                          ((copy.deepcopy(u, memo), copy.deepcopy(v, memo), copy.deepcopy(payload, memo), key)
+                           for u, v, payload, key in self.edges_with_payload_and_keys()))
         return result
 
     def build_bulk(self, nodes_with_payload, edges_with_payload):
@@ -539,13 +605,35 @@ class RustworkxGraphHandle:
         whole batch at once (and return indices in argument order, so NodeIndexMap stays faithful
         to insertion order -- the property NodeView._list depends on). Only valid on an empty
         handle with no duplicate nodes, which is exactly what every conversion path here has.
+
+        Edge items are (u, v, payload) or (u, v, payload, key). Pass the key form to PRESERVE
+        caller-visible multigraph keys across a rebuild (__deepcopy__ does); with the 3-tuple form
+        keys are minted fresh, which is right for conversion paths whose result no caller holds a
+        key into.
         """
         nodes_with_payload = list(nodes_with_payload)
         indices = self._rx.add_nodes_from([payload for _, payload in nodes_with_payload])
         for (node, _), index in zip(nodes_with_payload, indices):
             self._index.add(node, index)
-        self._rx.add_edges_from([(self._index.index_of(u), self._index.index_of(v), payload)
-                                 for u, v, payload in edges_with_payload])
+
+        # Keys for the 3-tuple form are minted here rather than via next_edge_key: the edges are
+        # not in the graph yet (that is the point of the bulk add), so it would see no parallel
+        # edges and hand every one of them key 0.
+        minted = {}
+        endpoints = []
+        for edge in edges_with_payload:
+            u, v, payload = edge[0], edge[1], edge[2]
+            ui, vi = self._index.index_of(u), self._index.index_of(v)
+            if len(edge) == 4:
+                key = edge[3]
+            else:
+                key = minted.get((ui, vi), 0)
+            minted[(ui, vi)] = max(minted.get((ui, vi), 0), key) + 1
+            endpoints.append((ui, vi, payload, key))
+
+        edge_indices = self._rx.add_edges_from([(ui, vi, payload) for ui, vi, payload, _ in endpoints])
+        for (_, _, _, key), edge_idx in zip(endpoints, edge_indices):
+            self._edge_keys[edge_idx] = key
 
 
 def _index_of(G, node, exc_type, message):

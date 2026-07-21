@@ -3,6 +3,7 @@
     backend='networkx' (the trivial/reference case) and backend='rustworkx' (skipped
     automatically if rustworkx is not installed, e.g. dace[fastgraph] was not pip-installed --
     see .github/workflows/graph-backend-ci.yml for the CI job that always has it available). """
+import copy
 import importlib.util
 
 import networkx
@@ -648,3 +649,71 @@ def test_topological_sort_handles_multigraph_parallel_edges(backend):
         G.add_edge('a', 'b')
         G.add_edge('b', 'c')
         assert list(gl.topological_sort(G)) == ['a', 'b', 'c']
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_multigraph_key_survives_deepcopy(backend):
+    """ A multigraph key names ONE parallel edge between a fixed (u, v), and callers store it and
+        hand it back later -- dace.sdfg.graph.OrderedMultiDiGraph keeps it as edge.key and removes
+        by it, so every SDFG state depends on the key still naming the same edge after the SDFG is
+        deep-copied (which codegen does on every compile).
+
+        rustworkx's own edge index cannot serve as that name: it reflects one PyDiGraph's insertion
+        history, and __deepcopy__ rebuilds edges grouped by source node, so the indices come out
+        renumbered while the caller's stored key does not. Here c->d is added FIRST but from a LATER
+        node, so the rebuild cannot coincidentally reproduce the original numbering -- removing
+        (c, d) by its key deleted a->b instead, leaving c->d in place. The graph stayed internally
+        consistent, so the corruption only surfaced much later, as scope traversal failing on a
+        state whose _nx mirror had silently lost unrelated edges. """
+
+    def build(graph):
+        for node in 'abcd':
+            graph.add_node(node)
+        key_cd = graph.add_edge('c', 'd', data='cd')
+        graph.add_edge('a', 'b', data='ab')
+        return key_cd
+
+    with gl.set_default_backend('networkx'):
+        reference = gl.MultiDiGraph()
+        reference_key = build(reference)
+        reference_copy = copy.deepcopy(reference)
+        reference_copy.remove_edge('c', 'd', reference_key)
+        expected = sorted(reference_copy.edges())
+
+    with gl.set_default_backend(backend):
+        G = gl.MultiDiGraph()
+        key = build(G)
+        H = copy.deepcopy(G)
+        H.remove_edge('c', 'd', key)
+        assert sorted(H.edges()) == expected == [('a', 'b')]
+        # the original must be untouched by its copy's mutation
+        assert sorted(G.edges()) == [('a', 'b'), ('c', 'd')]
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_multigraph_keys_are_per_node_pair(backend):
+    """ networkx numbers multigraph keys per (u, v), not globally, so the same key value names a
+        different edge for a different pair. Callers may hold several keys at once, so two live
+        parallel edges of one pair must never share one. Keys are compared against a real networkx
+        run rather than hardcoded: the numbering rule (start at the pair's edge count, then step
+        until free) is observable, and code that stores keys can depend on it. """
+
+    def build(graph):
+        keys = [
+            graph.add_edge('a', 'b', data='1'),
+            graph.add_edge('a', 'b', data='2'),
+            graph.add_edge('c', 'd', data='3'),
+        ]
+        graph.remove_edge('a', 'b', keys[0])
+        keys.append(graph.add_edge('a', 'b', data='4'))
+        return keys
+
+    with gl.set_default_backend('networkx'):
+        expected = build(gl.MultiDiGraph())
+
+    with gl.set_default_backend(backend):
+        G = gl.MultiDiGraph()
+        assert build(G) == expected
+        assert expected[0] != expected[1]  # two live parallel edges never share a key
+        assert expected[2] == expected[0]  # ... but keys DO restart per node pair
+        assert G.number_of_edges() == 3

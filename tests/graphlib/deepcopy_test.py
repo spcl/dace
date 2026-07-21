@@ -133,6 +133,11 @@ class _CountingRx:
     def out_edges(self, idx):
         return self.inner.out_edges(idx)
 
+    # Per-NODE (like out_edges), not per-edge: the deepcopy pairs each edge with its multigraph
+    # key, which has to survive the rebuild -- see test_multigraph_key_survives_deepcopy.
+    def out_edge_indices(self, idx):
+        return self.inner.out_edge_indices(idx)
+
 
 @pytest.mark.skipif(importlib.util.find_spec('rustworkx') is None, reason='rustworkx backend not installed')
 def test_rustworkx_deepcopy_fetches_payloads_in_bulk():
