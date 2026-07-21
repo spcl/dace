@@ -1299,14 +1299,14 @@ class CanonicalizationPipeline(ppl.Pass):
 
     CATEGORY: str = 'Canonicalization'
 
-    validate = properties.Property(dtype=bool, default=False, desc='Validate the SDFG at the end.')
+    validate = properties.Property(dtype=bool, default=True, desc='Validate the SDFG at the end.')
     validate_all = properties.Property(
         dtype=bool,
-        default=False,
-        desc='Validate the SDFG after EVERY stage (a debugging bisect aid: it pinpoints which stage '
-        'produced an invalid SDFG). Off by default -- the final ``validate`` still catches an invalid '
-        'result, and re-validating the whole SDFG after each of ~140 stages is a large cost on a big '
-        'kernel (channel_flow: ~45s). Set True while debugging a pass regression.')
+        default=True,
+        desc='Validate the SDFG after EVERY stage that reported a modification, which pinpoints the '
+        'stage that produced an invalid SDFG instead of only catching it at the end. Affordable by '
+        'default because it is scoped: a stage returning None is skipped, and a Pipeline validates '
+        'its own sub-passes rather than re-walking the whole SDFG here. Set False to skip it.')
     unroll_limit = properties.Property(dtype=int,
                                        default=DEFAULT_UNROLL_LIMIT,
                                        desc='Unroll constant-trip loops <= this many iterations (0 disables).')
@@ -1353,8 +1353,8 @@ class CanonicalizationPipeline(ppl.Pass):
         'False (set by the vectorizer) keeps the residual as raw maps it can lower.')
 
     def __init__(self,
-                 validate: bool = False,
-                 validate_all: bool = False,
+                 validate: bool = True,
+                 validate_all: bool = True,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
@@ -1434,8 +1434,15 @@ class CanonicalizationPipeline(ppl.Pass):
                                semantic_lifting=self.semantic_lifting)
         for _label, unit in stages:
             _assert_self_contained(unit)
-            unit.apply_pass(sdfg, {})
-            if self.validate_all:
+            # A Pipeline validates its own members when asked, so scope validation to the
+            # sub-pass that actually changed something instead of re-walking the whole SDFG here.
+            is_pipeline = isinstance(unit, ppl.Pipeline)
+            if self.validate_all and is_pipeline:
+                unit.validate_subpasses = True
+            result = unit.apply_pass(sdfg, {})
+            # apply_pass returns non-None iff it modified the SDFG, so an unchanged SDFG needs no
+            # re-validation -- that is what makes validate_all affordable by default.
+            if self.validate_all and result is not None and not is_pipeline:
                 sdfg.validate()
         if self.validate:
             sdfg.validate()
@@ -1444,7 +1451,7 @@ class CanonicalizationPipeline(ppl.Pass):
 
 def canonicalize(sdfg: SDFG,
                  validate: bool = True,
-                 validate_all: bool = False,
+                 validate_all: bool = True,
                  unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                  peel_limit: Optional[int] = None,
                  break_anti_dependence: Optional[bool] = None,
