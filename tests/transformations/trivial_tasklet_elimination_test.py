@@ -76,17 +76,21 @@ def test_trivial_tasklet_with_map():
     tasklet_nodes = {x for x in st.nodes() if isinstance(x, dace.nodes.Tasklet)}
     assert tasklet_nodes == {init_tasklet, copy_tasklet, bcast_tasklet}
 
+    # Only the MapEntry-sourced copy is eliminated. The stage-out tasklet (AccessNode -> tasklet
+    # -> MapExit) is deliberately kept: splicing it away would leave a <scalar> -> MapExit edge
+    # whose memlet names the outer array `v`, which the validator rejects. See the expr_index == 2
+    # guard in TrivialTaskletElimination.can_be_applied.
     count = sdfg.apply_transformations_repeated(TrivialTaskletElimination)
-    assert count == 2
+    assert count == 1
 
     tasklet_nodes = {x for x in st.nodes() if isinstance(x, dace.nodes.Tasklet)}
-    assert tasklet_nodes == {init_tasklet}
+    assert tasklet_nodes == {init_tasklet, bcast_tasklet}
 
     assert len(st.in_edges(tmp2_node)) == 1
     assert st.in_edges(tmp2_node)[0].src == me
 
     assert len(st.out_edges(tmp2_node)) == 1
-    assert st.out_edges(tmp2_node)[0].dst == mx
+    assert st.out_edges(tmp2_node)[0].dst == bcast_tasklet
 
 
 def test_trivial_tasklet_with_implicit_cast():
@@ -121,6 +125,52 @@ def test_trivial_tasklet_with_implicit_cast():
     # not applied because of data types mismatch on read/write nodes
     count = sdfg.apply_transformations_repeated(TrivialTaskletElimination)
     assert count == 0
+
+
+def _direct_copy_sdfg(name: str, in_ty, out_ty):
+    """AccessNode -> copy tasklet -> AccessNode, with no enclosing map (expr_index 0)."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_symbol("s", in_ty)
+    sdfg.add_array("v", (N, ), out_ty)
+    st = sdfg.add_state()
+
+    tmp1_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), in_ty, transient=True)
+    tmp1_node = st.add_access(tmp1_name)
+    init_tasklet = st.add_tasklet("init", {}, {"out"}, "out = s")
+    st.add_edge(init_tasklet, "out", tmp1_node, None, dace.Memlet(tmp1_node.data))
+
+    tmp2_name, _ = sdfg.add_scalar(sdfg.temp_data_name(), out_ty, transient=True)
+    tmp2_node = st.add_access(tmp2_name)
+    copy_tasklet = st.add_tasklet("copy", {"inp"}, {"out"}, "out = inp")
+    st.add_edge(tmp1_node, None, copy_tasklet, "inp", dace.Memlet(tmp1_node.data))
+    st.add_edge(copy_tasklet, "out", tmp2_node, None, dace.Memlet(tmp2_node.data))
+
+    st.add_mapped_tasklet(
+        "bcast",
+        dict(i=f"0:{N}"),
+        inputs={"inp": dace.Memlet(f"{tmp2_node.data}[0]")},
+        input_nodes={tmp2_node.data: tmp2_node},
+        code="out = inp",
+        outputs={"out": dace.Memlet("v[i]")},
+        external_edges=True,
+    )
+    sdfg.validate()
+    return sdfg
+
+
+def test_trivial_tasklet_direct_cast_not_eliminated():
+    """A direct AccessNode -> tasklet -> AccessNode copy across differing dtypes performs an
+    implicit cast, so eliminating it into a plain memlet copy would silently drop the conversion.
+    The dtype guard must therefore apply to expr_index 0 too, not only to the map-scoped forms."""
+    sdfg = _direct_copy_sdfg("direct_cast", dace.int32, dace.int64)
+    assert sdfg.apply_transformations_repeated(TrivialTaskletElimination) == 0
+
+
+def test_trivial_tasklet_direct_same_dtype_eliminated():
+    """The same shape with matching dtypes carries no cast, so it must still be eliminated --
+    the guard must not refuse every direct copy."""
+    sdfg = _direct_copy_sdfg("direct_same_dtype", dace.int32, dace.int32)
+    assert sdfg.apply_transformations_repeated(TrivialTaskletElimination) > 0
 
 
 def test_trivial_tasklet_map_source_preserves_offset_subset():
@@ -168,4 +218,6 @@ if __name__ == '__main__':
     test_trivial_tasklet()
     test_trivial_tasklet_with_map()
     test_trivial_tasklet_with_implicit_cast()
+    test_trivial_tasklet_direct_cast_not_eliminated()
+    test_trivial_tasklet_direct_same_dtype_eliminated()
     test_trivial_tasklet_map_source_preserves_offset_subset()
