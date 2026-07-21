@@ -1048,7 +1048,18 @@ class KernelSpec:
 
         self.kernel_map_entry: nodes.MapEntry = kernel_map_entry
         self.kernel_map: nodes.Map = kernel_map_entry.map
-        self.kernel_name: str = f'{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}'
+        # The map label plus the cfg/block/node ids are unique only *within* one SDFG. The launch
+        # wrapper is emitted as ``extern "C" __dace_runkernel_<kernel_name>`` (and the ``__global__``
+        # stub whose address is passed to ``cudaLaunchKernel`` is named after it too), so two
+        # separately-compiled SDFGs that happen to produce the same label and ids export the same
+        # symbols. Linking both into one scope -- which the PyTorch C++ extension dispatcher does
+        # with a model's forward and backward libraries -- makes one program's launches bind to the
+        # other's identically-named kernel. That launches successfully and reports no CUDA error, it
+        # just runs the wrong kernel with mismatched argument roles (an output parameter silently
+        # becomes an input), so gradients come back as zeros. Qualify with the top-level SDFG name,
+        # which is what distinguishes the two compiled programs.
+        self.kernel_name: str = (f'{cudaCodeGen._global_sdfg.name}_{kernel_map_entry.map.label}_{cfg.cfg_id}'
+                                 f'_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}')
 
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
