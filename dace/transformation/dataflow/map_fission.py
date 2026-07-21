@@ -309,13 +309,24 @@ class MapFission(transformation.SingleStateTransformation):
                     map_syms.update(edge.data.subset.free_symbols)
                 if edge.data.data in parent_sdfg.arrays:
                     map_syms.update(parent_sdfg.arrays[edge.data.data].free_symbols)
+            # Only symbols the ENCLOSING scope actually defines can be mapped in. A map parameter is
+            # scope-defined: it exists inside its own map and nowhere else, so once a map has been
+            # pushed into a nested SDFG its iterator must appear in neither the free symbols nor the
+            # symbol mapping of anything outside it. Mapping one anyway makes it free at the parent
+            # boundary, whose mapping nothing then fills in -- an invalid SDFG that MapFission
+            # re-creates on every reapplication (TSVC s1119: 491 applications, ~490 levels deep).
+            # Indexing symbols_defined_at directly also raised KeyError for exactly this case
+            # (TSVC s114: `KeyError: '_loop_it_0'`).
+            defined_at_node = graph.symbols_defined_at(nsdfg_node)
             for sym in map_syms:
                 symname = str(sym)
                 if symname in outer_map.params:
                     continue
                 if symname not in nsdfg_node.symbol_mapping.keys():
+                    if symname not in defined_at_node:
+                        continue
                     nsdfg_node.symbol_mapping[symname] = sym
-                    nsdfg_node.sdfg.symbols[symname] = graph.symbols_defined_at(nsdfg_node)[symname]
+                    nsdfg_node.sdfg.symbols[symname] = defined_at_node[symname]
 
             # Remove map symbols from nested mapping
             for name in outer_map.params:
