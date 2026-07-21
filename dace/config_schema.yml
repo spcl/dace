@@ -666,6 +666,27 @@ required:
                     ``python -m dace.frontend.python.nextgen.coverage report
                     <file>``.
 
+            boolean_index_strategy:
+                type: str
+                title: NumPy boolean-mask read (nextgen frontend) allocation strategy
+                default: view
+                description: >
+                    Controls how the nextgen frontend lowers ``B = A[mask]``
+                    for a full-shape boolean array ``mask``, whose result
+                    size (the count of ``True`` elements) is only known at
+                    runtime. ``view`` (default) does a single pass over the
+                    source, compacting into an upper-bound (source-sized)
+                    backing buffer and exposing the result as a view over its
+                    first ``M`` elements -- cheaper in compute, wastes
+                    ``N - M`` elements of backing memory. ``exact`` does two
+                    passes -- a pure count-only reduction resolves ``M``
+                    first, then a second pass compacts directly into an
+                    exactly ``M``-sized array -- costing a second read of
+                    ``mask`` but never over-allocating. See
+                    ``tests/sdfg/deferred_symbol_boolean_filter_test.py`` for
+                    the underlying mechanism, verified independently of the
+                    frontend.
+
             dont_fuse_callbacks:
                 type: bool
                 title: Do not fuse callbacks

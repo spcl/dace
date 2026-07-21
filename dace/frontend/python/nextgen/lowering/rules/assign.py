@@ -54,6 +54,8 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     # results inference cannot see) types it.
     if isinstance(target, ast.Name):
         apply_annotation_hint(target.id, statement, state)
+        if isinstance(value, ast.Subscript) and _lower_boolean_gather_assign(target, value, statement, state):
+            return
 
     if isinstance(value, ast.Call):
         from dace.frontend.python.nextgen.lowering.rules import calls
@@ -208,6 +210,46 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
     if inferred.kind == 'symbolic' and target.id.startswith('__anf'):
         state.context.symbolic_scalar_values[target_access.container] = inferred.value
     dispatch.lower_computation(target_access, value, statement, state)
+
+
+def _lower_boolean_gather_assign(target: ast.Name, value: ast.Subscript, statement: ast.Assign,
+                                 state: LoweringState) -> bool:
+    """
+    Lower ``B = A[mask]`` (NumPy boolean-mask indexing on the RHS). Returns
+    False when ``value`` is not exactly this shape, so the caller falls
+    through to the ordinary assignment paths -- this includes any OTHER
+    boolean-mask use (nested in an expression, combined with other indices):
+    only the bare top-level assignment of the whole access is implemented,
+    everything else still reaches the existing ``analyze()``/
+    ``has_boolean_index`` rejection unchanged.
+
+    Tried BEFORE generic inference (``state.inference.infer(value)`` in
+    :func:`lower_assign`) rather than after it, deliberately: inference has no
+    correct way to type ``B`` before the element count is computed (it would
+    otherwise silently answer with the mask's OWN shape, treating it like an
+    ordinary same-shape index array), so this performs typing and lowering
+    together instead, in :func:`advanced_indexing.emit_boolean_gather`.
+    """
+    from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+
+    if not isinstance(value.value, (ast.Name, ast.Attribute)):
+        return False
+    try:
+        base = resolve_access(value.value, state)
+        if base is None:
+            return False
+        expr = state.inference.parse_access(value)
+        if not expr.arrdims or not advanced_indexing.has_boolean_index(expr, state.context):
+            return False
+        mask_container = advanced_indexing.resolve_single_boolean_mask(value, expr, base.container, state.context,
+                                                                       state.inference)
+        access = advanced_indexing.emit_boolean_gather(target.id, base.container, base.descriptor, mask_container,
+                                                       statement, state)
+        state.context.bind(target.id, access.container)
+        return True
+    except UnsupportedFeatureError as reason:
+        dispatch.fallback_to_callback(statement, state, reason)
+        return True
 
 
 def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Inferred, statement: ast.Assign,

@@ -35,10 +35,23 @@ Result-shape rules implemented here (all from NumPy, verified against classic):
 - ``None``/``newaxis`` inserts a singleton, before or after the advanced chunk
   depending on the same contiguity rule.
 
-Boolean masks are deliberately excluded on the read side, matching classic
-(``newast.py::_add_read_slice``: "Boolean array indexing is only supported for
-assignment targets"): the result size depends on runtime data, so it cannot be
-allocated at build time.
+Boolean-mask *writes* (``A[mask] = ...``) lower as a guarded update over the
+full array -- no allocation needed, since positions are static even though the
+written *count* is data-dependent (see :func:`emit_masked_write`).
+
+Boolean-mask *reads* (``B = A[mask]``) are different: the result itself is
+data-dependent in size. :func:`emit_boolean_gather` supports the bare
+top-level form (``B = A[mask]``, the whole assignment) by minting a fresh SDFG
+symbol from a runtime-computed element count and using it to size the result
+-- see ``tests/sdfg/deferred_symbol_boolean_filter_test.py`` for the
+underlying mechanism, proven independently of this frontend, including the
+two configurable strategies (``frontend.boolean_index_strategy``) and a
+load-bearing pitfall (the WCR accumulator needs an explicit zero-init) found
+while building it. A boolean-mask read nested inside a larger expression, or
+combined with another index, still falls back to a callback exactly as before
+-- matching classic (``newast.py::_add_read_slice``: "Boolean array indexing
+is only supported for assignment targets") for everything except this one
+new, narrowly-scoped case.
 """
 import ast
 import copy
@@ -50,7 +63,8 @@ import numpy
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
-from dace.sdfg import nodes
+from dace.properties import CodeBlock
+from dace.sdfg import InterstateEdge, nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.memlet_parser import MemletExpr
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
@@ -248,36 +262,17 @@ def emit_masked_write(node: ast.Subscript, expr: MemletExpr, container: str, des
     with no conflict resolution needed (distinct iterations write distinct
     elements) and no dynamic allocation (nothing is gathered).
 
-    This is why masks work on the assignment-target side but not as a read:
-    ``b = A[mask]`` would have to allocate a result whose length is only known
-    at runtime.
+    Unlike the mask *read* path (:func:`emit_boolean_gather`), no allocation
+    is needed here even though the count is data-dependent: positions are
+    static (every candidate element is visited exactly once), only the
+    number that end up written varies.
 
     :raises UnsupportedFeatureError: If the mask is combined with an integer
         index array, if the mask shape does not cover the target, or if the
         assigned value is not elementwise-uniform over the mask.
     """
-    index_map = index_arrays(expr)
-    masks = [index for index in index_map.values() if _index_dtype(index, state.context) == dtypes.bool]
-    if len(masks) != len(index_map):
-        raise UnsupportedFeatureError('Boolean-mask indexing cannot be combined with integer array indexing',
-                                      state.context.filename,
-                                      node,
-                                      category='advanced-indexing')
-    if len(masks) != 1:
-        raise UnsupportedFeatureError('Only a single boolean mask index is supported',
-                                      state.context.filename,
-                                      node,
-                                      category='advanced-indexing')
-    mask_container = _index_container(masks[0], next(iter(index_map)), container, state.context, state.inference, node)
-    mask_shape = list(state.context.containers[mask_container].shape)
+    mask_container = resolve_single_boolean_mask(node, expr, container, state.context, state.inference)
     target_shape = list(expr.subset.size())
-    if mask_shape != target_shape:
-        raise UnsupportedFeatureError(
-            f'Boolean mask of shape {tuple(mask_shape)} does not cover the indexed '
-            f'region of shape {tuple(target_shape)}',
-            state.context.filename,
-            node,
-            category='advanced-indexing')
 
     line = getattr(statement, 'lineno', 0)
     parameters = [f'__i{i}' for i in range(len(target_shape))]
@@ -323,6 +318,232 @@ def substitute_masked_operands(value: ast.expr, state: LoweringState):
     a masked write."""
     from dace.frontend.python.nextgen.lowering.access import substitute_data_operands
     return substitute_data_operands(value, state, connector_prefix='__val')
+
+
+def resolve_single_boolean_mask(node: ast.Subscript, expr: MemletExpr, container: str, context, inference) -> str:
+    """
+    The single boolean-mask container an access uses, when the *whole* index
+    is exactly one full-coverage boolean mask -- no other index arrays, no
+    partial coverage. Shared by mask writes (:func:`emit_masked_write`) and
+    mask reads (:func:`emit_boolean_gather`).
+
+    :raises UnsupportedFeatureError: If combined with an integer index array,
+        if more than one boolean mask is present, or if the mask's shape does
+        not cover the indexed region.
+    """
+    index_map = index_arrays(expr)
+    masks = [index for index in index_map.values() if _index_dtype(index, context) == dtypes.bool]
+    if len(masks) != len(index_map):
+        raise UnsupportedFeatureError('Boolean-mask indexing cannot be combined with integer array indexing',
+                                      context.filename,
+                                      node,
+                                      category='advanced-indexing')
+    if len(masks) != 1:
+        raise UnsupportedFeatureError('Only a single boolean mask index is supported',
+                                      context.filename,
+                                      node,
+                                      category='advanced-indexing')
+    mask_container = _index_container(masks[0], next(iter(index_map)), container, context, inference, node)
+    mask_shape = list(context.containers[mask_container].shape)
+    target_shape = list(expr.subset.size())
+    if mask_shape != target_shape:
+        raise UnsupportedFeatureError(
+            f'Boolean mask of shape {tuple(mask_shape)} does not cover the indexed '
+            f'region of shape {tuple(target_shape)}',
+            context.filename,
+            node,
+            category='advanced-indexing')
+    return mask_container
+
+
+def emit_boolean_gather(target_name: str, base_container: str, base_descriptor: data.Data, mask_container: str,
+                        statement: ast.stmt, state: LoweringState) -> DataAccess:
+    """
+    Lower ``B = A[mask]`` (a full-coverage boolean-mask read): a
+    data-dependent-size gather.
+
+    Only the bare top-level assignment reaches here (see
+    ``rules.assign._lower_boolean_gather_assign``); the general advanced-index
+    read path (:func:`analyze`/:func:`emit_gather`) still rejects a boolean
+    mask everywhere else (nested in an expression, combined with another
+    index), matching classic.
+
+    Two configurable strategies (``frontend.boolean_index_strategy``), both
+    verified independently of this frontend in
+    ``tests/sdfg/deferred_symbol_boolean_filter_test.py``:
+
+    - ``'view'`` (default) -- ONE pass over ``A``/``mask``: a stream push,
+      fused with a WCR sum computing the count, into an upper-bound
+      (source-sized) backing buffer; the result is a :class:`~...treenodes.ViewNode`
+      over the buffer's first ``M`` elements. Cheaper in compute, wastes
+      ``N - M`` elements of backing memory.
+    - ``'exact'`` -- TWO passes: a pure count-only reduction resolves ``M``
+      first (no per-element writes at all), then a compaction pass whose
+      stream drains directly into an exactly ``M``-sized array. Costs a
+      second read of ``mask``, never over-allocates.
+
+    Both mint a fresh SDFG symbol from the runtime-computed count via a plain
+    interstate-edge assignment (:class:`~...treenodes.AssignNode`) -- the same
+    "frontend mints a symbol, registers it directly in the repository's symbol
+    table" shape ``lowering.rules.control_flow._dynamic_bound`` already uses
+    for dynamic map bounds, generalized here to an ordinary (non-map-range)
+    symbol. The WCR accumulator is explicitly zeroed first: its initial memory
+    is uninitialized garbage, not zero -- omitting this produces a build that
+    compiles cleanly and often *appears* to work, then segfaults
+    non-deterministically (see the referenced test's module docstring).
+
+    ``B`` is registered as an ordinary (transient) local container in both
+    strategies, exactly like any other computed intermediate -- NOT forced
+    non-transient, even though that would make it directly callable from
+    outside the compiled program (as the referenced test does by hand): a
+    compiled SDFG's calling convention needs every argument's memory to
+    already exist before the call, which is impossible for a size only
+    known mid-call, so an always-external ``B`` would silently demand a
+    caller-supplied ``M``/``B`` for a plain local variable that may never
+    leave the program. If ``B`` is genuinely the program's *return* value,
+    the same boundary limitation applies regardless of this function --
+    unsupported for now, tracked as future work (a two-kernel count-then-fill
+    dispatch pattern), not specific to either strategy here.
+    """
+    from dace.config import Config
+
+    dtype = base_descriptor.dtype
+    source_size = data._prod(base_descriptor.shape)
+    strategy = Config.get('frontend', 'boolean_index_strategy')
+    line = getattr(statement, 'lineno', 0)
+
+    nnz_container = state.context.add_container(f'__nnz_{line}', data.Array(dtypes.uint32, [1]), transient=True)
+    _emit_zero_init(nnz_container, state)
+
+    if strategy == 'exact':
+        _emit_boolean_count(base_container, mask_container, nnz_container, source_size, line, state)
+        count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', state)
+        result_container = state.context.add_container(target_name, data.Array(dtype, [count_symbol]))
+        _emit_boolean_compact(base_container, mask_container, result_container, source_size, count_symbol, line, state)
+    else:
+        buf_container = state.context.add_container(f'__buf_{line}', data.Array(dtype, [source_size]), transient=True)
+        _emit_boolean_count_and_fill(base_container, mask_container, buf_container, nnz_container, source_size, line,
+                                     state)
+        count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', state)
+        result_container = state.context.add_container(target_name,
+                                                       data.ArrayView(dtype, [count_symbol]),
+                                                       transient=True)
+        view_descriptor = state.context.containers[result_container]
+        buf_descriptor = state.context.containers[buf_container]
+        state.emitter.emit(
+            tn.ViewNode(target=result_container,
+                        source=buf_container,
+                        memlet=Memlet(data=buf_container, subset=subsets.Range([(0, count_symbol - 1, 1)])),
+                        src_desc=buf_descriptor,
+                        view_desc=view_descriptor))
+
+    descriptor = state.context.containers[result_container]
+    return DataAccess(result_container, subsets.Range.from_array(descriptor), descriptor)
+
+
+def _emit_zero_init(container: str, state: LoweringState) -> None:
+    """
+    Zero a freshly-allocated scalar-shaped accumulator before a WCR reduction
+    runs into it. Its allocated memory is NOT zero-initialized by default --
+    skipping this produces a build that compiles cleanly and typically
+    *appears* to work, then segfaults non-deterministically depending on what
+    happened to already be on the heap (found the hard way, see
+    ``tests/sdfg/deferred_symbol_boolean_filter_test.py``'s module docstring).
+    """
+    tasklet = nodes.Tasklet('zero_init', set(), {'z'}, 'z = 0')
+    state.emitter.emit(
+        tn.TaskletNode(node=tasklet,
+                       in_memlets={},
+                       out_memlets={'z': Memlet(data=container, subset=subsets.Range([(0, 0, 1)]), volume=1)}))
+
+
+def _resolve_symbol_from_scalar(scalar_container: str, hint: str, state: LoweringState) -> symbolic.symbol:
+    """
+    Mint a fresh SDFG symbol and resolve its value from a scalar container
+    computed earlier in this same lowering, via a plain interstate-edge
+    assignment. Registered directly in the repository's symbol table, the
+    same shape ``lowering.rules.control_flow._dynamic_bound`` uses for
+    dynamic map bounds (``__dynN``) -- this is an ordinary, non-map-range
+    symbol instead, usable in any later container's shape.
+    """
+    name = state.context.fresh_name(f'__{hint}')
+    symbol = symbolic.symbol(name, dtypes.int64)
+    state.context.symbols[name] = symbol
+    assignment = f'{scalar_container}[0]'
+    state.emitter.emit(
+        tn.AssignNode(name=name, value=CodeBlock(assignment), edge=InterstateEdge(assignments={name: assignment})))
+    return symbol
+
+
+def _boolean_filter_map(base_container: str, mask_container: str, source_size, name: str):
+    """The shared map header (index ``i`` over ``[0, source_size)``) and its
+    two source-read memlets, for both the count-only and count+fill maps."""
+    parameter = symbolic.symbol('i')
+    # Two distinct subset objects -- SDFG validation rejects two memlets
+    # sharing one (same footgun documented on ``emit_masked_write``'s ``__in``
+    # memlet above).
+    in_memlets = {
+        'a': Memlet(data=base_container, subset=subsets.Range([(parameter, parameter, 1)]), volume=1),
+        'm': Memlet(data=mask_container, subset=subsets.Range([(parameter, parameter, 1)]), volume=1),
+    }
+    map_node = nodes.MapEntry(nodes.Map(name, ['i'], subsets.Range([(0, source_size - 1, 1)])))
+    return map_node, in_memlets
+
+
+def _emit_boolean_count(base_container: str, mask_container: str, nnz_container: str, source_size, line: int,
+                        state: LoweringState) -> None:
+    """'exact' strategy, pass 1: a pure count, no per-element writes at all."""
+    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, source_size, f'boolean_count_{line}')
+    in_memlets = {'m': in_memlets['m']}  # the count doesn't need to read A at all
+    tasklet = nodes.Tasklet(f'boolean_count_{line}', {'m'}, {'osz'}, 'osz = 1 if m else 0')
+    out_memlets = {
+        'osz':
+        Memlet(data=nnz_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0, wcr='lambda x, y: x + y')
+    }
+    with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
+        state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+
+
+def _emit_boolean_count_and_fill(base_container: str, mask_container: str, buf_container: str, nnz_container: str,
+                                 source_size, line: int, state: LoweringState) -> None:
+    """'view' strategy: one pass, fused count + compaction push into an
+    upper-bound-sized backing buffer."""
+    dtype = state.context.containers[base_container].dtype
+    stream_container = state.context.add_container(f'__stream_{line}', data.Stream(dtype, 1), transient=True)
+    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, source_size, f'boolean_filter_{line}')
+    tasklet = nodes.Tasklet(f'boolean_filter_{line}', {'a', 'm'}, {'b', 'osz'}, 'if m:\n    b = a\nosz = 1 if m else 0')
+    out_memlets = {
+        'b':
+        Memlet(data=stream_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0),
+        'osz':
+        Memlet(data=nnz_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0, wcr='lambda x, y: x + y'),
+    }
+    with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
+        state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+    state.emitter.emit(
+        tn.CopyNode(target=buf_container,
+                    memlet=Memlet(data=stream_container,
+                                  subset=subsets.Range([(0, 0, 1)]),
+                                  other_subset=subsets.Range([(0, source_size - 1, 1)]))))
+
+
+def _emit_boolean_compact(base_container: str, mask_container: str, result_container: str, source_size,
+                          count_symbol: symbolic.symbol, line: int, state: LoweringState) -> None:
+    """'exact' strategy, pass 2: compact directly into the exactly-sized
+    result array (its stream never needs to hold more than ``count_symbol``
+    elements, since that many is exactly how many the mask selects)."""
+    dtype = state.context.containers[base_container].dtype
+    stream_container = state.context.add_container(f'__stream_{line}', data.Stream(dtype, 1), transient=True)
+    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, source_size, f'boolean_compact_{line}')
+    tasklet = nodes.Tasklet(f'boolean_compact_{line}', {'a', 'm'}, {'b'}, 'if m:\n    b = a')
+    out_memlets = {'b': Memlet(data=stream_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0)}
+    with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
+        state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+    state.emitter.emit(
+        tn.CopyNode(target=result_container,
+                    memlet=Memlet(data=stream_container,
+                                  subset=subsets.Range([(0, 0, 1)]),
+                                  other_subset=subsets.Range([(0, count_symbol - 1, 1)]))))
 
 
 def _value_subset(operand: DataAccess, access: AdvancedIndex) -> subsets.Range:

@@ -579,6 +579,13 @@ class pointer(typeclass):
         self.ctype = wrapped_typeclass.ctype + "*"
         self.ctype_unaligned = wrapped_typeclass.ctype_unaligned + "*"
         self.dtype = self
+        # Not set by typeclass.__init__ (this class doesn't call it), but
+        # to_string() unconditionally reads it -- without this, any code
+        # path that stringifies a pointer typeclass (e.g. dead-code
+        # elimination's connector-removal hint injection) hits a raw
+        # AttributeError instead of falling through to to_string()'s
+        # documented `self.typename or self.type.__name__` fallback.
+        self.typename = None
 
     def to_json(self):
         return {'type': 'pointer', 'dtype': self._typeclass.to_json()}

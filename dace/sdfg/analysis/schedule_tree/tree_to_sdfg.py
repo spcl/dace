@@ -884,9 +884,20 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         src_name = node.memlet.data
         source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
 
-        # assumption: target access node doesn't exist yet
-        assert node.target not in access_cache
-        target = self._current_state.add_write(node.target)
+        # Reuse a cached write-only access node for the target, the same
+        # write-after-write-avoidance idiom used in _connect_scope_exit above
+        # ("only re-use cached write-only nodes, e.g. don't create a cycle").
+        # Without this, a LATER CopyNode reading this same target within the
+        # same state (e.g. a computed intermediate immediately copied
+        # elsewhere) creates a fresh, disconnected access node instead of
+        # reading from the one just written -- invisible to execution order
+        # (a data dependency is still established via the shared name and
+        # per-state sequencing), but it makes the write look like a dead end
+        # to node-local dataflow analyses such as DeadDataflowElimination,
+        # which found and removed the "unread" producer entirely.
+        if node.target not in access_cache or self._current_state.out_degree(access_cache[node.target]) > 0:
+            access_cache[node.target] = self._current_state.add_write(node.target)
+        target = access_cache[node.target]
 
         self._current_state.add_memlet_path(source, target, memlet=node.memlet)
 
