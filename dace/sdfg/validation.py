@@ -300,18 +300,21 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
                             f'Transient data container "{name}" contains undefined symbol in dimension {i}, '
                             f'which is required for memory allocation', sdfg, None)
 
-                # Check strides if array
-                for i, stride in enumerate(desc.strides):
-                    if symbolic.is_undefined(stride):
-                        raise InvalidSDFGError(
-                            f'Transient data container "{name}" contains undefined symbol in stride {i}, '
-                            f'which is required for memory allocation', sdfg, None)
+                # Only descriptors that are really allocated have strides/total_size to check. A
+                #  DistributedDescriptor (ProcessGrid/SubArray/RedistrArray) describes an MPI
+                #  communicator and has neither, so test for the allocated kinds positively -- an
+                #  unknown Data subclass is then skipped rather than crashing here.
+                if isinstance(desc, (dt.Array, dt.Scalar, dt.Stream, dt.Structure)):
+                    for i, stride in enumerate(desc.strides):
+                        if symbolic.is_undefined(stride):
+                            raise InvalidSDFGError(
+                                f'Transient data container "{name}" contains undefined symbol in stride {i}, '
+                                f'which is required for memory allocation', sdfg, None)
 
-                # Check total size
-                if symbolic.is_undefined(desc.total_size):
-                    raise InvalidSDFGError(
-                        f'Transient data container "{name}" has undefined total size, '
-                        f'which is required for memory allocation', sdfg, None)
+                    if symbolic.is_undefined(desc.total_size):
+                        raise InvalidSDFGError(
+                            f'Transient data container "{name}" has undefined total size, '
+                            f'which is required for memory allocation', sdfg, None)
 
                 # Check any other undefined symbols in the data descriptor
                 if any(symbolic.is_undefined(s) for s in desc.used_symbols(all_symbols=False)):
