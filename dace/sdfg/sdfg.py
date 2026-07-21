@@ -1494,9 +1494,10 @@ class SDFG(ControlFlowRegion):
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data containers are read and written in this SDFG. Does
-        not include reads to subsets of containers that have previously been
-        written within the same state.
+        Determines what data containers are read and written in this SDFG.
+
+        Includes all reads including reads to subsets of containers that have
+        previously been written.
 
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
