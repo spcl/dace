@@ -451,6 +451,13 @@ class RustworkxBackend:
         G = _coerce(G)
         source_idx = _index_of(G, source, NodeNotFound, f'Source {source} is not in G')
         target_idx = _index_of(G, target, NodeNotFound, f'Target {target} is not in G')
+        # networkx counts the trivial length-0 path, so has_path(G, x, x) is True for any node in
+        # G regardless of cycles; rustworkx.has_path returns False for source == target. Matching
+        # networkx here is load-bearing: the symbol-write-scopes analysis' _find_dominating_write
+        # probes a loop guard's self-reachability this way, and a False silently swaps the SSA
+        # symbol suffixes assigned to two otherwise-identical loops.
+        if source_idx == target_idx:
+            return True
         return rustworkx.has_path(G._rx, source_idx, target_idx)
 
     def immediate_dominators(self, G, start):

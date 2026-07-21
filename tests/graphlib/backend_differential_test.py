@@ -36,6 +36,26 @@ def test_has_path(backend):
 
 
 @pytest.mark.parametrize('backend', _BACKENDS)
+def test_has_path_trivial_self_path_matches_real_networkx(backend):
+    """ networkx counts the trivial length-0 path, so has_path(G, x, x) is True for any node in G
+        -- cycle or not -- whereas rustworkx.has_path alone returns False for source == target.
+        The symbol-write-scopes analysis' _find_dominating_write probes a loop guard's
+        self-reachability exactly this way; a False silently misattributes the second loop's reads
+        to the first loop's write, swapping the SSA symbol suffixes (i_0/i_1) between two
+        structurally-identical loops (tests/passes/symbol_ssa_test.py and
+        symbol_write_scopes_analysis_test.py's test_loop_iter_symbol_reused_fused). """
+    with gl.set_default_backend(backend):
+        G = _diamond()
+        assert gl.has_path(G, 'a', 'a')  # reachable via the trivial path, no cycle through 'a'
+        assert gl.has_path(G, 'e', 'e')  # isolated node, still trivially reaches itself
+
+        cyclic = gl.DiGraph()
+        cyclic.add_edge('x', 'y')
+        cyclic.add_edge('y', 'x')
+        assert gl.has_path(cyclic, 'x', 'x')  # genuine cycle back to self
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
 def test_immediate_dominators(backend):
     with gl.set_default_backend(backend):
         G = _diamond()
