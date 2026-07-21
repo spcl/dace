@@ -121,6 +121,15 @@ class StateFusion(transformation.MultiStateTransformation):
                     return True
         return False
 
+    @staticmethod
+    def is_pystate_ordered(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+        """True if ``tasklet`` carries a ``__pystate`` token -- a data dependence kept ordered across fusion."""
+        for edge in state.all_edges(tasklet):
+            neighbor = edge.dst if edge.src is tasklet else edge.src
+            if isinstance(neighbor, nodes.AccessNode) and neighbor.data == '__pystate':
+                return True
+        return False
+
     def has_path(self, first_state: SDFGState, second_state: SDFGState,
                  match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], node_a: nodes.Node, node_b: nodes.Node) -> bool:
         """ Check for paths between the two states if they are fused. """
@@ -309,13 +318,16 @@ class StateFusion(transformation.MultiStateTransformation):
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
 
-            if len(resulting_ccs) > 1:
-                # Side-effect tasklets cannot be fused if could lead to data races
-                for node in first_state.nodes():
-                    if isinstance(node, nodes.Tasklet) and node.side_effects:
+            # A side-effect node (fusion barrier, I/O, side-effecting library node) must never be fused:
+            # fusion preserves only dataflow order. Exception: __pystate-ordered callbacks keep their order
+            # via that data dependence and are gated by frontend.dont_fuse_callbacks above.
+            for state in (first_state, second_state):
+                for node in state.nodes():
+                    if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
+                        if StateFusion.is_pystate_ordered(state, node):
+                            continue
                         return False
-                for node in second_state.nodes():
-                    if isinstance(node, nodes.Tasklet) and node.side_effects:
+                    if isinstance(node, nodes.LibraryNode) and node.has_side_effects:
                         return False
 
             # Check for data races
