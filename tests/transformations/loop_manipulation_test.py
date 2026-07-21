@@ -29,7 +29,9 @@ def test_unroll():
     sdfg.simplify()
     assert len(sdfg.nodes()) == 1
     sdfg.apply_transformations(LoopUnroll)
-    assert len(sdfg.nodes()) == 5 * 2
+    # LoopUnroll prepends an empty predecessor state when the unrolled loop is the graph's own
+    # start block (avoids an ambiguous start block after unrolling) -- +1 past the 5*2 body nodes.
+    assert len(sdfg.nodes()) == 5 * 2 + 1
     sdfg.simplify()
     assert len(sdfg.nodes()) == 1
     A = np.random.rand(20)
