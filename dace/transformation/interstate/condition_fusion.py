@@ -4,7 +4,6 @@ import copy
 from dace import sdfg as sd, properties
 from dace.properties import CodeBlock
 from dace.sdfg import utils as sdutil
-from dace.sdfg import nodes
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, ConditionalBlock
 from dace.transformation import transformation as xf
 
