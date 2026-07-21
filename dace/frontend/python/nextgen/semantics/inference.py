@@ -654,6 +654,18 @@ class InferenceService:
             # own rules, not the subset's -- index arrays broadcast together and
             # collapse the indexed dimensions into one chunk.
             from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+            if advanced_indexing.has_boolean_index(expr, self.context):
+                # A boolean mask's result size depends on how many elements it
+                # selects, which is not known until it is actually read --
+                # genuinely undefined at this (pure, side-effect-free) point,
+                # not merely unhandled. Only the bare top-level assignment
+                # form (``B = A[mask]``) resolves this deferred dimension,
+                # in ``rules.assign._lower_boolean_gather_assign``, which is
+                # tried BEFORE this function ever runs for that case; this
+                # answer is for every other use (nested in an expression,
+                # combined with another index), which still cannot lower and
+                # will fall back to a callback downstream.
+                return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, [symbolic.UndefinedSymbol()]))
             shape = [s for s in advanced_indexing.output_shape(expr, self.context, self, node) if s != 1]
             if not shape:
                 return Inferred(kind='data', descriptor=data.Scalar(base.descriptor.dtype))
