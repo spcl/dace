@@ -193,12 +193,14 @@ def generate_cuda_code(sdfg: dace.SDFG) -> int:
     below is not vacuous. Runs on a deepcopy -- ``generate_code`` raises control flow and infers
     types/storage in place.
 
-    Legacy backend on purpose: the default ``experimental`` CUDA codegen crashes on this
-    "kernel nested inside a host map" shape on the ``extended`` branch (``AttributeError: 'MapEntry'
-    object has no attribute 'desc'``). The fix lives on ``new-gpu-codegen-dev`` (43c17295a) and is not
-    here; drop the override once it lands.
+    Uses the ``experimental`` backend: it used to crash on this "kernel nested inside a host map"
+    shape, which is exactly what CLOUDSC produces (the nblocks map stays on the host), because
+    ``KernelSpec`` resolved the stream descriptor through ``edge.src`` -- an AccessNode only when
+    the kernel is top-level, an enclosing MapEntry here. That fix has landed on ``extended``, and
+    the experimental backend is what gives CLOUDSC the schedule it wants: every kernel on stream 0
+    with a single terminal sync, where legacy spreads the same graph over four streams.
     """
-    with set_temporary('compiler', 'cuda', 'implementation', value='legacy'):
+    with set_temporary('compiler', 'cuda', 'implementation', value='experimental'):
         objects = generate_code(copy.deepcopy(sdfg))
     cuda = [obj for obj in objects if obj.language == 'cu']
     assert cuda, 'CUDA codegen emitted no .cu object -- the graph is not device-scheduled'
