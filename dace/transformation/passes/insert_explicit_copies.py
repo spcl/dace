@@ -120,13 +120,15 @@ class InsertExplicitCopies(ppl.Pass):
             src_name = src_node.data
             dst_name = dst_node.data
 
-            # Resolve src and dst subset. Self-copy: subset is the dst side;
-            # otherwise the memlet path maps ``data`` to an endpoint.
-            if src_name == dst_name:
-                src_subset, dst_subset = memlet.other_subset, memlet.subset
-            else:
-                src_subset = memlet.get_src_subset(edge, state)
-                dst_subset = memlet.get_dst_subset(edge, state)
+            # Resolve src and dst subset. ``get_src_subset`` / ``get_dst_subset`` are the only correct
+            # readers of the ``subset`` / ``other_subset`` pair: which side ``subset`` names is carried
+            # by the memlet's own ``_is_data_src`` flag, NOT derivable from the endpoint names. A
+            # self-copy is no exception -- both endpoints match ``memlet.data``, so the flag is what
+            # decides, and ``try_initialize`` defaults it to src-relative. This is what the legacy
+            # generator lowers a copy edge with (``cpp.memlet_copy_to_absolute_strides``); reading
+            # the pair positionally instead reverses every src-relative self-copy.
+            src_subset = memlet.get_src_subset(edge, state)
+            dst_subset = memlet.get_dst_subset(edge, state)
 
             # Derive any side the memlet did not carry from the array shape (handles
             # implicit copies between different-shaped but same-volume arrays).

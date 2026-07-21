@@ -374,10 +374,15 @@ def test_insert_view_dst_round_trip_numerical():
     assert np.all(A[0] == 0) and np.all(A[2:] == 0)
 
 
-def test_insert_self_copy_subset_is_dst_side():
-    """Self-copy ``p -> p``: ``subset`` maps to ``_out`` (dst), ``other_subset`` to ``_in`` (src); reversing them
-    would silently produce a backwards copy."""
-    sdfg = dace.SDFG("self_copy_subset_dst")
+def test_insert_self_copy_subset_is_src_side():
+    """Self-copy ``p -> p``: ``subset`` maps to ``_in`` (src), ``other_subset`` to ``_out`` (dst).
+
+    Which side ``subset`` names is carried by the memlet's own ``_is_data_src`` flag, never derivable
+    from the endpoint names -- and for a self-copy both endpoints match ``memlet.data``, so
+    ``try_initialize`` defaults the flag to src-relative. Reading the pair positionally instead
+    reverses the copy, which is why the run below is part of the test: it pins the direction against
+    the generator rather than against the pass's own bookkeeping."""
+    sdfg = dace.SDFG("self_copy_subset_src")
     sdfg.add_array("p", [4, 5], dace.float64)
 
     st = sdfg.add_state("s")
@@ -394,8 +399,15 @@ def test_insert_self_copy_subset_is_dst_side():
     in_e = [e for e in st.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME][0]
     out_e = [e for e in st.out_edges(cn) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME][0]
 
-    assert str(in_e.data.subset) == "0:4, 3", (f"src side should read column 3 (other_subset); got {in_e.data.subset}")
-    assert str(out_e.data.subset) == "0:4, 4", (f"dst side should write column 4 (subset); got {out_e.data.subset}")
+    assert str(in_e.data.subset) == "0:4, 4", (f"src side should read column 4 (subset); got {in_e.data.subset}")
+    assert str(out_e.data.subset) == "0:4, 3", (f"dst side should write column 3 (other_subset); "
+                                                f"got {out_e.data.subset}")
+
+    p = np.arange(20, dtype=np.float64).reshape(4, 5).copy()
+    expected = p.copy()
+    expected[:, 3] = expected[:, 4]
+    _compile_and_run(sdfg, dict(p=p))
+    np.testing.assert_array_equal(p, expected)
 
 
 def _check_reshape_copy(sdfg, dst_name, dst_shape):
