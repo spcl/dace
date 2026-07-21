@@ -40,14 +40,48 @@ export OMP_NUM_THREADS="${SLURM_CPUS_ON_NODE:-1}"
 # named 'tests.corpus').
 export PYTHONPATH="${REPO}:${PYTHONPATH:-}"
 
-# Whatever `python3` resolves to in the calling environment (matches tests/perf/run_perf_ab.sh's
-# own convention) -- set PYTHON_BIN explicitly to override, e.g. for a specific pyenv/venv.
-PYTHON_BIN="${PYTHON_BIN:-python3}"
+# Pick an interpreter that actually satisfies dace's floor (setup.py: >=3.10). Do NOT just
+# trust the name `python3`: on a Cray/SLES compute node that can be the ancient system 3.6
+# while `python` is the loaded 3.12, which fails deep inside the import with a baffling
+# "No module named 'dataclasses'" (stdlib since 3.7) instead of an actionable message.
+python_ok() {
+    command -v "$1" >/dev/null 2>&1 && "$1" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 10) else 1)' \
+        >/dev/null 2>&1
+}
+
+if [ -n "${PYTHON_BIN:-}" ]; then
+    python_ok "${PYTHON_BIN}" || {
+        echo "ERROR: PYTHON_BIN='${PYTHON_BIN}' is missing or older than the 3.10 dace requires." >&2
+        exit 1
+    }
+else
+    for candidate in python3 python; do
+        python_ok "${candidate}" && PYTHON_BIN="${candidate}" && break
+    done
+    [ -n "${PYTHON_BIN:-}" ] || {
+        echo "ERROR: no python >=3.10 found (tried: python3, python). Set PYTHON_BIN explicitly." >&2
+        exit 1
+    }
+fi
+
+# The whole point of this benchmark is networkx vs rustworkx. Without rustworkx the run still
+# "succeeds" but silently measures one backend -- on an exclusive multi-hour allocation that is
+# a wasted job, so fail fast instead. Override for a deliberate single-backend baseline run.
+if ! "${PYTHON_BIN}" -c 'import rustworkx' >/dev/null 2>&1; then
+    if [ "${ALLOW_MISSING_RUSTWORKX:-0}" != "1" ]; then
+        echo "ERROR: rustworkx is not installed for ${PYTHON_BIN} -- this benchmark would only" >&2
+        echo "       measure the networkx backend. Install it:" >&2
+        echo "         ${PYTHON_BIN} -m pip install rustworkx        # or: pip install -e '.[fastgraph]'" >&2
+        echo "       Set ALLOW_MISSING_RUSTWORKX=1 for a deliberate networkx-only baseline." >&2
+        exit 1
+    fi
+    echo "WARNING: rustworkx missing, running networkx-only (ALLOW_MISSING_RUSTWORKX=1)."
+fi
 
 cd "${REPO}"
 
 echo "Job: ${SLURM_JOB_ID:-local}  Node: $(hostname)  Reps: ${REPS}"
-echo "Python: ${PYTHON_BIN}"
+echo "Python: ${PYTHON_BIN} ($(${PYTHON_BIN} -c 'import sys; print(sys.version.split()[0])'))"
 echo "Output dir: ${OUTDIR}"
 
 "${PYTHON_BIN}" tests/perf/graph_backend_cloudsc_bench.py \
