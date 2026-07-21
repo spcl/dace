@@ -877,7 +877,10 @@ class VectorizeMultiDim(ppl.Pipeline):
             # GPU path: tile only innermost maps inside a GPU kernel (GPU_Device-scheduled,
             # or Sequential under a GPU_Device parent across NSDFG boundaries); host-side maps
             # are skipped so their half2 __device__ intrinsics never leak into host code.
-            MarkTileDims(widths=widths_t, require_gpu_resident=is_gpu_device),
+            # ``assume_even`` must match the ``SplitMapForTileRemainder`` above: the two decide
+            # independently whether a provably-short dim is tiled, and a disagreement leaves a
+            # strided map wrapped around a scalar body.
+            MarkTileDims(widths=widths_t, require_gpu_resident=is_gpu_device, assume_even=assume_even),
             StrideMapByTileWidths(widths=widths_t),
         ]
         # Walker-primary tiling: the walker stages every non-transient AccessNode inside

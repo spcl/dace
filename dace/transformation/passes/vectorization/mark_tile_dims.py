@@ -53,10 +53,21 @@ class MarkTileDims(ppl.Pass):
         "tiled: its half2 __device__ intrinsics would not compile in host code.",
     )
 
+    assume_even = properties.Property(
+        dtype=bool,
+        allow_none=False,
+        default=False,
+        desc="Mirrors the orchestrator's even-extent assumption. When True there is no remainder "
+        "machinery at all, so a dim whose extent is provably below the width cannot be tiled -- "
+        "widening it would read past the extent. When False (the masked / scalar-tail models) a "
+        "short dim IS tiled, as an empty interior plus one masked remainder tile.",
+    )
+
     def __init__(self,
                  widths: Tuple[int, ...] = (8, ),
                  skip_ineligible: bool = False,
-                 require_gpu_resident: bool = False):
+                 require_gpu_resident: bool = False,
+                 assume_even: bool = False):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
@@ -65,6 +76,10 @@ class MarkTileDims(ppl.Pass):
         :param require_gpu_resident: True -> skip any innermost map not executing inside a GPU
             kernel (see property doc). Set by GPU orchestrator so only device-resident maps are
             half2-tiled.
+        :param assume_even: True -> the caller guarantees every tiled extent is a whole number of
+            tiles and no remainder is emitted, so a provably-short dim must stay scalar. Must match
+            the ``SplitMapForTileRemainder`` running alongside, or the two disagree about which
+            maps are tiled and a strided map ends up with a scalar body.
         :raises ValueError: If ``widths`` length not in ``{1, 2, 3}``.
         """
         super().__init__()
@@ -73,6 +88,7 @@ class MarkTileDims(ppl.Pass):
         self.widths = list(widths)
         self.skip_ineligible = skip_ineligible
         self.require_gpu_resident = require_gpu_resident
+        self.assume_even = assume_even
 
     def modifies(self) -> ppl.Modifies:
         """Read-only pass.
@@ -119,17 +135,20 @@ class MarkTileDims(ppl.Pass):
             if step != 1 and str(step) != "1":
                 return self._fail_or_skip(
                     f"map {map_entry.label!r} dim {iv!r} has step {step!r}; v2 requires step == 1")
-            # A provably-too-small dim (extent < tile width) cannot be tiled -- keep the whole map
-            # scalar. NOT an error (unlike step != 1): a scalar / constant ``gmap`` or a short loop
-            # simply is not a width-W vector target (widening it reads past the extent). Return
-            # None to skip; SplitMapForTileRemainder refuses the same dim, so the two passes agree.
-            # A symbolic extent stays tiled -- the masked remainder / assume_even runtime guard
-            # handles a runtime trip < W.
-            try:
-                if int(symbolic.simplify(ub - lb + 1)) < W:
-                    return None
-            except (TypeError, ValueError):
-                pass
+            # A provably-too-small dim (extent < tile width) is tiled ONLY where a remainder exists
+            # to cover it: the masked / scalar-tail models peel an empty interior plus one masked
+            # remainder tile, and the mask keeps the short dim in bounds, so a trip-4 map at W=8
+            # still vectorises. Under ``assume_even`` there is no remainder machinery at all and
+            # widening would read past the extent, so the map stays scalar -- which is also what
+            # ``SplitMapForTileRemainder`` decides on that path, and the two must agree or a strided
+            # map ends up with a scalar body. NOT an error either way (unlike step != 1). A symbolic
+            # extent stays tiled: the masked remainder / runtime guard handles a runtime trip < W.
+            if self.assume_even:
+                try:
+                    if int(symbolic.simplify(ub - lb + 1)) < W:
+                        return None
+                except (TypeError, ValueError):
+                    pass
             global_ubs.append(str(ub + 1))
         return TileDimSpec(
             iter_vars=iter_vars,
