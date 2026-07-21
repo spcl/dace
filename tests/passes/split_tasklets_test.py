@@ -1068,6 +1068,56 @@ def test_split_function_call_intermediate_uses_operand_type():
         f"function-call intermediate not typed from its float32 operand: {split_dtypes}"
 
 
+
+def test_second_run_does_not_reuse_first_runs_split_scalars():
+    """A later run must not re-issue the earlier run's split-scalar names.
+
+    The names are ``<ssa_var>_split_<index>`` with the index restarting per run, so a second
+    run over the same SDFG used to hand an unrelated intermediate the first run's descriptor:
+    one register scalar aliased by two independent SSA values (here also with the wrong dtype,
+    and -- since the two live in different map scopes -- an outright codegen failure).
+    """
+    sdfg = dace.SDFG('split_rerun')
+    sdfg.add_array('a', [4], dace.float64)
+    sdfg.add_array('c', [4], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', dict(i='0:4'))
+    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp * 2.0 + 3.0')
+    state.add_memlet_path(state.add_access('a'), entry, tasklet, dst_conn='inp', memlet=dace.Memlet('a[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_access('c'), src_conn='out', memlet=dace.Memlet('c[i]'))
+
+    SplitTasklets().apply_pass(sdfg, {})
+    first_run = {name for name in sdfg.arrays if SplitTasklets.tmp_access_identifier in name}
+    assert first_run, 'the first run is expected to introduce split scalars'
+
+    # A second splittable tasklet in the SAME state, over a different dtype -- exactly what the
+    # vectorizer produces after canonicalize has already run the pass once.
+    sdfg.add_array('ai', [4], dace.int64)
+    sdfg.add_array('ci', [4], dace.int64)
+    entry2, exit2 = state.add_map('m2', dict(j='0:4'))
+    tasklet2 = state.add_tasklet('t2', {'inp'}, {'out'}, 'out = inp * 2 + 3')
+    state.add_memlet_path(state.add_access('ai'), entry2, tasklet2, dst_conn='inp', memlet=dace.Memlet('ai[j]'))
+    state.add_memlet_path(tasklet2, exit2, state.add_access('ci'), src_conn='out', memlet=dace.Memlet('ci[j]'))
+
+    SplitTasklets().apply_pass(sdfg, {})
+    second_run = {name for name in sdfg.arrays if SplitTasklets.tmp_access_identifier in name} - first_run
+    assert second_run, 'the second run is expected to introduce split scalars of its own'
+
+    for name in first_run:
+        occurrences = [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == name]
+        assert len(occurrences) == 1, f'{name} reused by the second run: {len(occurrences)} access nodes'
+    for name in second_run:
+        assert sdfg.arrays[name].dtype == dace.int64, f'{name} inherited the first run dtype {sdfg.arrays[name].dtype}'
+
+    sdfg.validate()
+    a = numpy.arange(4, dtype=numpy.float64)
+    c = numpy.zeros(4, dtype=numpy.float64)
+    ai = numpy.arange(4, dtype=numpy.int64)
+    ci = numpy.zeros(4, dtype=numpy.int64)
+    sdfg(a=a, c=c, ai=ai, ci=ci)
+    assert numpy.allclose(c, a * 2.0 + 3.0)
+    assert numpy.array_equal(ci, ai * 2 + 3)
+
 if __name__ == "__main__":
     test_split_infers_complex_intermediate_with_int_symbol()
     test_split_function_call_intermediate_uses_operand_type()
