@@ -8,6 +8,24 @@ from dace import data, nodes, Memlet
 from dace.transformation.passes.remove_views import RemoveViews
 
 
+def dangling_connectors(sdfg: dace.SDFG):
+    """Every connector in the SDFG that has no edge attached to it, as ``(state, node, side, conn)``.
+
+    ``validate`` reports the first one it meets, but only after ``scope_dict`` has succeeded -- a
+    graph whose scopes are already broken never reaches that check. Listing them directly keeps the
+    assertion about the connectors themselves.
+    """
+    rows = []
+    for parent in sdfg.all_sdfgs_recursive():
+        for state in parent.states():
+            for node in state.nodes():
+                wired_in = {e.dst_conn for e in state.in_edges(node)}
+                wired_out = {e.src_conn for e in state.out_edges(node)}
+                rows += [(state.label, str(node), 'in', c) for c in node.in_connectors if c not in wired_in]
+                rows += [(state.label, str(node), 'out', c) for c in node.out_connectors if c not in wired_out]
+    return rows
+
+
 def _count_views(sdfg: dace.SDFG) -> int:
     num = 0
     for n, _ in sdfg.all_nodes_recursive():
@@ -707,6 +725,83 @@ def test_view_in_interstate_edge():
     np.testing.assert_allclose(B_new, B_ref)
 
 
+def test_view_edge_from_map_entry():
+    """Read view staged in through a Map: ``A -> MapEntry -> V -> tasklet``.
+
+    The view's defining edge starts at the MapEntry, not at the viewed AccessNode (which sits at
+    the far end of the memlet path, outside the scope). Splicing the view out must leave the
+    MapEntry on the path -- reattaching the consumer to the outer AccessNode instead drops the
+    scope node's outgoing edge and leaves its ``IN_1``/``OUT_1`` pair dangling.
+    """
+    sdfg = dace.SDFG('view_edge_from_map_entry')
+    sdfg.add_array('A', [4, 3], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+    sdfg.add_view('vrow', [3], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    b = state.add_write('B')
+    entry, exit_node = state.add_map('rows', {'i': '0:4'})
+    v = state.add_access('vrow')
+    t = state.add_tasklet('pick', {'inp'}, {'out'}, 'out = inp')
+
+    state.add_memlet_path(a, entry, v, memlet=Memlet(data='A', subset='i, 0:3'))
+    state.add_edge(v, None, t, 'inp', Memlet(data='vrow', subset='1'))
+    state.add_memlet_path(t, exit_node, b, src_conn='out', memlet=Memlet(data='B', subset='i'))
+
+    sdfg.validate()
+    assert _count_views(sdfg) == 1
+
+    assert RemoveViews().apply_pass(sdfg, {}) is not None
+    assert _count_views(sdfg) == 0
+    assert dangling_connectors(sdfg) == []
+    sdfg.validate()
+    # The consumer must still hang off the MapEntry, not off the outer AccessNode.
+    assert state.scope_dict()[t] is entry
+
+    a_arr = np.arange(12, dtype=np.float64).reshape(4, 3)
+    b_arr = np.zeros(4, dtype=np.float64)
+    sdfg(A=a_arr, B=b_arr)
+    np.testing.assert_allclose(b_arr, a_arr[:, 1])
+
+
+def test_view_edge_into_map_exit():
+    """Write view staged out through a Map: ``tasklet -> V -> MapExit -> B``.
+
+    Mirror of :func:`test_view_edge_from_map_entry`: the defining edge ends at the MapExit, so
+    reattaching the producer to the outer AccessNode leaves the MapExit's ``IN_1`` dangling.
+    """
+    sdfg = dace.SDFG('view_edge_into_map_exit')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4, 3], dace.float64)
+    sdfg.add_view('vrow', [3], dace.float64)
+
+    state = sdfg.add_state()
+    a = state.add_read('A')
+    b = state.add_write('B')
+    entry, exit_node = state.add_map('rows', {'i': '0:4'})
+    v = state.add_access('vrow')
+    t = state.add_tasklet('spread', {'inp'}, {'out'}, 'out = inp + 1.0')
+
+    state.add_memlet_path(a, entry, t, dst_conn='inp', memlet=Memlet(data='A', subset='i'))
+    state.add_edge(t, 'out', v, None, Memlet(data='vrow', subset='1'))
+    state.add_memlet_path(v, exit_node, b, memlet=Memlet(data='B', subset='i, 0:3'))
+
+    sdfg.validate()
+    assert _count_views(sdfg) == 1
+
+    assert RemoveViews().apply_pass(sdfg, {}) is not None
+    assert _count_views(sdfg) == 0
+    assert dangling_connectors(sdfg) == []
+    sdfg.validate()
+    assert state.scope_dict()[t] is entry
+
+    a_arr = np.arange(4, dtype=np.float64)
+    b_arr = np.zeros((4, 3), dtype=np.float64)
+    sdfg(A=a_arr, B=b_arr)
+    np.testing.assert_allclose(b_arr[:, 1], a_arr + 1.0)
+
+
 # ---------------------------------------------------------------------------
 
 if __name__ == '__main__':
@@ -726,3 +821,5 @@ if __name__ == '__main__':
     test_strided_column_view()
     test_flatten_view()
     test_view_in_interstate_edge()
+    test_view_edge_from_map_entry()
+    test_view_edge_into_map_exit()
