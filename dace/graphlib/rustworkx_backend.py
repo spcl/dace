@@ -115,6 +115,36 @@ class AdjacencyView:
     def keys(self):
         return list(self._handle.successors(self._u))
 
+    def __len__(self):
+        return len(list(self._handle.successors(self._u)))
+
+
+class NeighborMapView:
+    """`G.pred` / `G.succ`: subscript a node to get its neighbours, matching networkx's
+    adjacency mapping shape closely enough for the real call sites (`len(cfg.nx.pred[u])`,
+    `for v in cfg.nx.pred[u]` in dace/sdfg/analysis/cfg.py)."""
+
+    def __init__(self, handle, direction):
+        self._handle = handle
+        self._direction = direction
+
+    def _neighbors(self, node):
+        if self._direction == 'pred':
+            return list(self._handle.predecessors(node))
+        return list(self._handle.successors(node))
+
+    def __getitem__(self, node):
+        return self._neighbors(node)
+
+    def __contains__(self, node):
+        return node in self._handle
+
+    def __iter__(self):
+        return iter(self._handle.nodes())
+
+    def __len__(self):
+        return self._handle.number_of_nodes()
+
 
 class NodeView:
     """`G.nodes` supports both bare iteration (`for n in G.nodes:`) and being called
@@ -244,8 +274,18 @@ class RustworkxGraphHandle:
         self._rx.remove_node(self.node_index_or_raise(node))
         self._index.remove(node)
 
-    def remove_edge(self, u, v):
+    def remove_edge(self, u, v, key=None):
         import rustworkx
+        # Multigraph callers pass back the key add_edge returned, to name ONE parallel edge --
+        # dace.sdfg.graph's OrderedMultiDiGraph stores it as edge.key. Our key is rustworkx's
+        # own globally-unique edge index (networkx numbers per (u, v) instead, but callers only
+        # ever round-trip the value, never assume its numbering), so it removes by index.
+        if key is not None:
+            try:
+                self._rx.remove_edge_from_index(key)
+                return
+            except (rustworkx.NoEdgeBetweenNodes, IndexError):
+                raise NetworkXError(f'The edge {u}-{v} with key {key} is not in the graph.')
         ui, vi = self.node_index_or_raise(u), self.node_index_or_raise(v)
         try:
             self._rx.remove_edge(ui, vi)
@@ -307,6 +347,18 @@ class RustworkxGraphHandle:
 
     # Small pieces of the networkx graph API that callers reach for on any graph-like object;
     # without them an otherwise-valid call site dies with AttributeError only under this backend.
+    @property
+    def pred(self):
+        return NeighborMapView(self, 'pred')
+
+    @property
+    def succ(self):
+        return NeighborMapView(self, 'succ')
+
+    @property
+    def adj(self):
+        return NeighborMapView(self, 'succ')
+
     def is_multigraph(self):
         return self.multigraph
 
