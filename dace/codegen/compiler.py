@@ -464,7 +464,7 @@ def get_program_handle(
     library_path: Union[pathlib.Path, str],
     sdfg: 'dace.SDFG',
     stub_library_path: Union[pathlib.Path, str, None] = None,
-) -> csd.CompiledSDFG:
+) -> csd.CtypesCompiledSDFG:
     """Construct a  ``CompiledSDFG`` form a precompiled library directly.
 
     This function is similar to the (preferred) ``load_precompiled_sdfg()``. However,
@@ -483,7 +483,7 @@ def get_program_handle(
     assert libstub_path.is_file()
 
     lib = csd.ReloadableDLL(library_filename=library_path, libstub_path=libstub_path)
-    return csd.CompiledSDFG(sdfg, lib, sdfg.arg_names)
+    return csd.CtypesCompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
 def load_from_file(sdfg, binary_filename):
@@ -600,7 +600,7 @@ def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.P
 def load_precompiled_sdfg(
     folder: Union[pathlib.Path, str],
     sdfg: Optional['dace.SDFG'] = None,
-) -> csd.CompiledSDFG:
+) -> csd.CtypesCompiledSDFG:
     """Loads a precompiled SDFG from ``folder``.
 
     If ``sdfg`` is not given then the function expects to find the ``program.sdfg(z)``
