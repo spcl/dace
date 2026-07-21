@@ -94,23 +94,55 @@ class FuseBranchedTailRemainder(ppl.Pass):
         """Strip a tile-remainder marker suffix to recover the shared base label."""
         return label[:-len(marker)] if label.endswith(marker) else label
 
+    @staticmethod
+    def _is_split_sibling(main_entry: MapEntry, rem_entry: MapEntry) -> bool:
+        """Is ``rem_entry`` the tail :class:`SplitMapForTileRemainder` peeled off ``main_entry``?
+
+        The split leaves one structural signature: identical prefix dims, and an innermost tail
+        range starting exactly one past the interior's end (interior ``[lb : main_end]``, tail
+        ``[main_end + 1 : ub]``). Checked rather than assumed, because a map label is not unique --
+        an SDFG routinely holds several ``_Mult__map`` scopes -- so a shared base label alone can
+        name maps that were never split from each other.
+        """
+        main_ranges, rem_ranges = list(main_entry.map.range.ranges), list(rem_entry.map.range.ranges)
+        if len(main_ranges) != len(rem_ranges) or not main_ranges:
+            return False
+        if main_entry.map.params != rem_entry.map.params:
+            return False
+        if any(str(a) != str(b) for a, b in zip(main_ranges[:-1], rem_ranges[:-1])):
+            return False
+        return symbolic.simplify(rem_ranges[-1][0] - main_ranges[-1][1] - 1) == 0
+
     def _find_pairs(self, state: dace.SDFGState) -> List[Tuple[MapEntry, MapEntry]]:
         """Pair every top-level ``__tile_main`` map with the ``__scalar_tail`` sibling it split from.
+
+        A tail is consumed by at most one main, and a main with no structural sibling is left
+        alone -- fusing it with some other map's tail would silently run that map's body over the
+        wrong range.
 
         :param state: A dataflow state to scan.
         :returns: ``[(main_entry, remainder_entry), ...]`` for pairs in ``state``.
         """
         scope = state.scope_dict()
-        mains: Dict[str, MapEntry] = {}
-        tails: Dict[str, MapEntry] = {}
+        mains: Dict[str, List[MapEntry]] = {}
+        tails: Dict[str, List[MapEntry]] = {}
         for node in state.nodes():
             if not isinstance(node, MapEntry) or scope[node] is not None:
                 continue  # only top-level (kernel-level) maps
             if node.map.label.endswith(TILE_MAIN_MARKER):
-                mains[self._base_label(node.map.label, TILE_MAIN_MARKER)] = node
+                mains.setdefault(self._base_label(node.map.label, TILE_MAIN_MARKER), []).append(node)
             elif node.map.label.endswith(SCALAR_TAIL_MARKER):
-                tails[self._base_label(node.map.label, SCALAR_TAIL_MARKER)] = node
-        return [(mains[b], tails[b]) for b in mains if b in tails]
+                tails.setdefault(self._base_label(node.map.label, SCALAR_TAIL_MARKER), []).append(node)
+
+        pairs: List[Tuple[MapEntry, MapEntry]] = []
+        for base, main_entries in mains.items():
+            available = list(tails.get(base, []))
+            for main_entry in main_entries:
+                sibling = next((t for t in available if self._is_split_sibling(main_entry, t)), None)
+                if sibling is not None:
+                    available.remove(sibling)
+                    pairs.append((main_entry, sibling))
+        return pairs
 
     @staticmethod
     def _sole_body_nsdfg(state: dace.SDFGState, entry: MapEntry) -> Optional[NestedSDFG]:

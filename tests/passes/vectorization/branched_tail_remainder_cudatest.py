@@ -36,6 +36,7 @@ from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeMultiDim
 
 N = dace.symbol("N")
+M = dace.symbol("M")
 
 
 @dace.program
@@ -50,6 +51,14 @@ def _neighbor16(A: dace.float16[N], D: dace.float16[N]):
     # so the NumPy oracle is unambiguous and the comparison is exactly bit-exact.
     for i in dace.map[1:N - 1]:
         D[i] = A[i - 1] + A[i + 1]
+
+
+@dace.program
+def _add16_2d(A: dace.float16[M, N], B: dace.float16[M, N], C: dace.float16[M, N]):
+    # Two-dim: only the innermost dim is tiled + fused, the outer ``i`` rides along as a prefix
+    # param. The fused map keeps that prefix dim, and the else-branch tail loop must run per ``i``.
+    for i, j in dace.map[0:M, 1:N - 1]:
+        C[i, j] = A[i, j] + B[i, j]
 
 
 @dace.program
@@ -186,6 +195,49 @@ def test_branched_tail_structure_if_vector_else_scalar():
     assert "int_floor" not in if_cond.as_string, f"if-condition carries a split residue: {if_cond.as_string}"
 
 
+def test_pairs_are_matched_structurally_not_by_label():
+    """A main is fused only with the tail actually split off it.
+
+    Map labels are not unique -- an SDFG routinely holds several ``_Mult__map`` scopes, so several
+    ``foo__tile_main`` maps can share a base label. Pairing on the label alone lets a main whose
+    extent was divisible (no tail of its own) capture a SIBLING's tail and run its body over the
+    wrong range. The tail's innermost range starts exactly one past its own interior's end, which
+    is what identifies the real pair.
+    """
+    from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                       TILE_MAIN_MARKER)
+
+    sdfg = dace.SDFG("label_collision")
+    state = sdfg.add_state("s", is_start_block=True)
+    # Two same-base-label mains. Only the second was split: its interior ends at 63 and the tail
+    # picks up at 64. The first covers [0:128) whole -- no tail belongs to it.
+    whole, _ = state.add_map(f"foo{TILE_MAIN_MARKER}", dict(i="0:128"))
+    interior, _ = state.add_map(f"foo{TILE_MAIN_MARKER}", dict(i="0:64"))
+    tail, _ = state.add_map(f"foo{SCALAR_TAIL_MARKER}", dict(i="64:70"))
+
+    pairs = FuseBranchedTailRemainder(widths=(8, ))._find_pairs(state)
+    assert pairs == [(interior, tail)], "the tail must pair with the interior it was split from"
+    assert all(main is not whole for main, _ in pairs), "an unsplit main must not capture a sibling's tail"
+
+
+def test_a_tail_is_consumed_by_only_one_main():
+    """Two genuine pairs sharing a base label each keep their own tail."""
+    from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import (SCALAR_TAIL_MARKER,
+                                                                                       TILE_MAIN_MARKER)
+
+    sdfg = dace.SDFG("two_pairs")
+    state = sdfg.add_state("s", is_start_block=True)
+    main_a, _ = state.add_map(f"foo{TILE_MAIN_MARKER}", dict(i="0:64"))
+    tail_a, _ = state.add_map(f"foo{SCALAR_TAIL_MARKER}", dict(i="64:70"))
+    main_b, _ = state.add_map(f"foo{TILE_MAIN_MARKER}", dict(i="0:32"))
+    tail_b, _ = state.add_map(f"foo{SCALAR_TAIL_MARKER}", dict(i="32:35"))
+
+    pairs = FuseBranchedTailRemainder(widths=(8, ))._find_pairs(state)
+    assert sorted((id(m), id(t)) for m, t in pairs) == sorted([(id(main_a), id(tail_a)), (id(main_b), id(tail_b))])
+
+
 def test_branched_tail_emits_single_kernel():
     """The emitted device (``.cu``) TU contains exactly ONE ``__global__`` kernel for the fused
     region -- the two-kernel remainder is folded into one -- with a split-residue-free bound."""
@@ -258,6 +310,42 @@ def test_branched_tail_neighbor_stencil_bitexact(width):
         got = cupy.asnumpy(dD)
         exp = np.zeros(n, np.float16)
         exp[1:n - 1] = A[0:n - 2] + A[2:n]
+        assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
+
+    assert _run_in_fork(work) == 0
+
+
+@pytest.mark.gpu
+@pytest.mark.parametrize("width", [8, 4])
+def test_branched_tail_outer_param_bitexact(width):
+    """A tiled map carrying an OUTER (prefix) param: only the innermost dim is fused, and the
+    else-branch tail loop has to run once per outer index. Verifies the WHOLE output, so a tail
+    that runs for the wrong ``i`` -- or only for one of them -- shows up as a mismatch."""
+
+    def work():
+        import numpy as np
+        import cupy
+        sdfg = _prep(_add16_2d)
+        sdfg.name = f"bt_add16_2d_w{width}"
+        VectorizeGPU(VectorizeConfig(widths=(width, ), remainder_strategy="branched_tail")).apply_pass(sdfg, {})
+        # Pin the fused shape: un-fused, this kernel would still be numerically right, so a bare
+        # value check would pass without ever exercising the merge.
+        assert len(_top_maps(sdfg)) == 1, "the prefix-param pair must fuse to a single map"
+        assert len(_conditionals(sdfg)) == 1, "the fused body must be one if(full-tile)/else(tail)"
+        sdfg.expand_library_nodes()
+        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+        assert cu.count("__global__ void") == 1
+        shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
+        csr = sdfg.compile()
+        m, n = 5, 1024  # inner extent 1022: non-divisible by 8 and by 4, so the tail always runs
+        rng = np.random.default_rng(200 + width)
+        A = rng.random((m, n)).astype(np.float16)
+        B = rng.random((m, n)).astype(np.float16)
+        C = np.full((m, n), 7, np.float16)  # non-zero fill: a kernel that clobbers the edges shows
+        csr(A=cupy.asarray(A), B=cupy.asarray(B), C=(dC := cupy.asarray(C)), M=m, N=n)
+        got = cupy.asnumpy(dC)
+        exp = C.copy()
+        exp[:, 1:n - 1] = A[:, 1:n - 1] + B[:, 1:n - 1]
         assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
 
     assert _run_in_fork(work) == 0
