@@ -160,9 +160,9 @@ static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } 
 //
 //   x86:     __F16C__ (VCVTPH2PS/VCVTPS2PH, Ivy Bridge+) or __AVX512FP16__.
 //   AArch64: FCVT between half and single is base ARMv8-A, so IEEE-format
-//            __fp16/_Float16 conversions are always single instructions.
-//   ARM32:   only with the FP16 conversion extension (__ARM_FP16_FORMAT_IEEE
-//            plus VFPv4+ / __ARM_FEATURE_FP16_SCALAR_ARITHMETIC).
+//            _Float16 conversions are always single instructions.
+//   ARM32:   stays on the emulation. The conversion needs VFPv3-fp16/VFPv4 and
+//            there is no way to test it here; the emulation is always correct.
 //
 // Two hazards that normally make ``_Float16`` risky do NOT apply here, because
 // it is confined to these two functions and never appears in a type, a struct
