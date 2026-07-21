@@ -1154,14 +1154,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 f"Replacement '{node.qualname}' records view bindings, which deferred expansion does not support.")
 
         if isinstance(result, str) and result in sdfg.arrays:
-            # The replacement allocated its own result container: copy it into
-            # the frontend-declared target (simplify collapses the copy). The
-            # copy goes into a fresh state so it orders after the
-            # replacement's own writes.
-            self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
-            state = self._current_state
-            state.add_nedge(state.add_read(result), state.add_write(node.target),
-                            Memlet.from_array(result, sdfg.arrays[result]))
+            if result != node.target:
+                # The replacement allocated its own result container: copy it
+                # into the frontend-declared target (simplify collapses the
+                # copy). The copy goes into a fresh state so it orders after
+                # the replacement's own writes.
+                self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
+                state = self._current_state
+                state.add_nedge(state.add_read(result), state.add_write(node.target),
+                                Memlet.from_array(result, sdfg.arrays[result]))
+            # else: an in-place-mutating replacement (e.g. a pure-side-effect
+            # method call) returned its own target unchanged — the mutation
+            # already landed in the right place, so there's nothing to copy.
         elif result is not None and result != []:
             raise NotImplementedError(
                 f"Replacement '{node.qualname}' returned an unsupported result form: {type(result).__name__}")

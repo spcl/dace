@@ -296,6 +296,46 @@ def test_reshape_view_execution():
         assert np.allclose(func(A=A), expected)
 
 
+def test_fill_bare_statement_execution():
+    """A bare-statement, zero-output method call (``A.fill(value)``, no
+    assignment target) lowers through deferred replacement expansion instead
+    of falling back to a callback: the descriptor inference registry already
+    types it as zero-output (``()``), and dispatch now reaches that same
+    zero-output path when there's no assignment target to gate on."""
+
+    @dace.program
+    def prog(A: dace.float64[10]):
+        A.fill(2.0)
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1
+    assert calls[0].qualname == 'fill'
+    assert calls[0].receiver == 'A'
+
+    func = tree.as_sdfg().compile()
+    A = np.random.rand(10)
+    func(A=A)
+    assert np.allclose(A, np.full(10, 2.0))
+
+
+def test_call_with_target_still_requires_target():
+    """A call typed as ordinarily data-valued (not zero-output) still
+    requires a real assignment target -- the ``target is None`` relaxation
+    is scoped to the zero-output form only, so an unused, data-valued call
+    result keeps falling back to a callback rather than silently lowering
+    with a discarded result."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 5, 6]):
+        np.sum(A, axis=(0, 2))  # result discarded, no assignment
+
+    tree = nextgen.parse_program(prog)
+    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
 if __name__ == '__main__':
     test_sum_tuple_axis_structure()
     test_sum_tuple_axis_execution()
@@ -314,3 +354,5 @@ if __name__ == '__main__':
     test_hstack_list_of_containers_execution()
     test_nonviable_replacement_falls_back()
     test_reshape_view_execution()
+    test_fill_bare_statement_execution()
+    test_call_with_target_still_requires_target()
