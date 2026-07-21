@@ -560,6 +560,7 @@ def get_binary_name(
     object_folder: Union[pathlib.Path, str],
     sdfg_name: str,
     lib_extension: Optional[str] = None,
+    lib_prefix: Optional[str] = None,
     folder_mode: Optional[str] = None,
 ) -> pathlib.Path:
     """Returns the supposed location of the compiled library given the boundary conditions.
@@ -570,11 +571,16 @@ def get_binary_name(
                           If not given the config option `compiler.library_extension` is used.
     :param folder_mode: The save mode for the build folder. If not given the config
                         option `compiler.build_folder_mode` is used.
+    :param lib_prefix: The prefix name for the library. If not given the config
+                        option `compiler.library_prefix` is used.
     """
     if lib_extension is None:
         lib_extension = Config.get('compiler', 'library_extension')
+    if lib_prefix is None:
+        lib_prefix = Config.get('compiler', 'library_prefix')
     if folder_mode is None:
         folder_mode = Config.get('compiler', 'build_folder_mode')
+    assert lib_extension and lib_prefix and folder_mode
 
     folder_hirarchy = [object_folder]
     if folder_mode == 'development':
@@ -585,7 +591,7 @@ def get_binary_name(
     else:
         raise ValueError(f"Unknown folder mode '{folder_mode}' found.")
 
-    return pathlib.Path(os.path.join(*folder_hirarchy, f'lib{sdfg_name}.{lib_extension}'))
+    return pathlib.Path(os.path.join(*folder_hirarchy, f'{lib_prefix}{sdfg_name}.{lib_extension}'))
 
 
 def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
