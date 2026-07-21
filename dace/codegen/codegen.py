@@ -16,6 +16,7 @@ from dace.sdfg import infer_types
 from dace.codegen.instrumentation import InstrumentationProvider
 from dace.sdfg.state import SDFGState
 from dace.transformation.pass_pipeline import FixedPointPipeline
+from dace.transformation.passes.region_boundary_states import RegionBoundaryStates
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 
@@ -197,6 +198,10 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # TODO: move earlier / into modular codegen; kept here for now to preserve legacy-test semantics.
         FixedPointPipeline([ControlFlowRaising()]).apply_pass(sdfg, {})
 
+    # Data sized by a symbol that a region's incoming edge assigns can only be allocated once the region is entered.
+    RegionBoundaryStates().apply_pass(sdfg, {})
+
+    # Before generating the code, run type inference on the SDFG connectors
     infer_types.infer_connector_types(sdfg)
 
     infer_types.set_default_schedule_and_storage_types(sdfg, None)

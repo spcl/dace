@@ -27,7 +27,7 @@ def doitgen_kernel(A: dc.float64[NR, NQ, NP], C4: dc.float64[NP, NP]):
     # Ideal - not working because Matmul with dim > 3 unsupported
     # A[:] = np.reshape(np.reshape(A, (NR, NQ, 1, NP)) @ C4, (NR, NQ, NP))
     for r in range(NR):
-        A[r, :, :] = np.reshape(np.reshape(A[r], (NQ, NP)) @ C4, (NQ, NP))
+        A[r, :, :] = np.reshape(np.reshape(A[r], (NQ, 1, NP)) @ C4, (NQ, NP))
 
 
 def initialize(NR, NQ, NP, datatype=np.float64):

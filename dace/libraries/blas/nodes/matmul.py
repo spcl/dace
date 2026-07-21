@@ -1,16 +1,42 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace import properties, symbolic
+from dace.libraries.blas.blas_helpers import matrix_view
 from copy import deepcopy as dc
 from typing import Any, Dict
 import warnings
 from math import prod
 
 
+def _matrix_subset_size(subset):
+    """
+    Returns an operand's size in the matrix view ``SpecializeMatMul`` matched on.
+
+    :param subset: The subset of the memlet accessing the operand.
+    :return: The size in the matrix view.
+    """
+    return matrix_view(subset)[0]
+
+
+def _matrix_operand(operand):
+    """
+    Returns a GEMM operand as ``(edge, descriptor, shape, strides)`` in its matrix view, applying
+    the rule of :func:`_matrix_subset_size` so shape and strides come from the same view.
+
+    :param operand: One of the three tuples returned by :func:`_get_matmul_operands`.
+    :return: The edge, outer descriptor, and 2D shape and strides.
+    """
+    edge, desc, size, strides, squeezed_size, squeezed_strides = operand
+    if len(size) == 2:
+        return edge, desc, size, strides
+    return edge, desc, squeezed_size, squeezed_strides
+
+
 def _get_matmul_operands(node, state, sdfg, name_lhs="_a", name_rhs="_b", name_out="_c"):
     """Returns the matrix multiplication input edges, arrays, and shape."""
     res_lhs = None
     res_rhs = None
+    res_out = None
     for edge in state.all_edges(node):
         if edge.dst_conn in [name_lhs, name_rhs]:
             size = edge.data.subset.size()
@@ -137,8 +163,11 @@ def _get_codegen_gemm_opts(node, state, sdfg, adesc, bdesc, cdesc, alpha, beta, 
     from dace.codegen.common import sym2cpp
     from dace.libraries.blas.blas_helpers import get_gemm_opts
 
-    (_, _, ashape, astride, _, _), (_, _, bshape, bstride, _, _), (_, _, cshape, cstride, _,
-                                                                   _) = _get_matmul_operands(node, state, sdfg)
+    # M/N/K and the leading dimensions come from the matrix view the dispatcher matched.
+    adata, bdata, cdata = _get_matmul_operands(node, state, sdfg)
+    _, _, ashape, astride = _matrix_operand(adata)
+    _, _, bshape, bstride = _matrix_operand(bdata)
+    _, _, cshape, cstride = _matrix_operand(cdata)
 
     if node.transA:
         ashape = list(reversed(ashape))

@@ -12,6 +12,7 @@ from .optional_arrays import OptionalArrayInference
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
 from .scalar_fission import PrivatizeScalars, ScalarFission
+from .region_boundary_states import RegionBoundaryStates
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays
 from .simplify import SimplifyPass
