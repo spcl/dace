@@ -1,6 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 import dace as dc
 import numpy as np
+import pytest
 import os
 
 N = dc.symbol('N')
@@ -321,6 +322,75 @@ def test_issue_2100():
     sdfg.validate()
 
 
+@pytest.mark.xfail(strict=True,
+                   reason="ProgramVisitor._add_access rebases the nested connector to the local "
+                   "symbol's range (descriptor N-1 long, body indexes [j-1]) but builds the memlet "
+                   "from the raw rng, so the callee indexes from an origin the caller never passed "
+                   "and every access shifts by the range start. The propagated range it needs is "
+                   "computed into `tmp_memlet` and discarded; using it verbatim is NOT the fix -- it "
+                   "regresses the nested-dependency case to a negative-start subset.")
+def test_nonzero_start_loop_in_map_keeps_its_origin():
+    """A loop inside a ``dc.map`` whose range does not start at 0.
+
+    ``_add_access`` rebases the nested connector to the local symbol's range -- with ``j`` over
+    ``1:N`` the descriptor is ``N-1`` long and the body indexes ``[j-1]``. The memlet feeding it must
+    carry the matching outer range ``[1:N]``; built from the raw ``[j]`` it resolves to the whole row,
+    so the callee indexed from an origin the caller never passed and every access shifted down by one.
+    The loop then ran ``0..N-2`` instead of ``1..N-1``: silently wrong numbers, no error.
+
+    Carry-free on purpose -- the defect is the non-zero START, not the dependence.
+    """
+    M = dc.symbol('M')
+
+    @dc.program
+    def shifted(aa: dc.float64[M, M], bb: dc.float64[M, M]):
+        for i in dc.map[0:M]:
+            for j in range(1, M):
+                aa[i, j] = aa[i, j] + bb[i, j]
+
+    n = 5
+    rng = np.random.default_rng(0)
+    aa = rng.random((n, n))
+    bb = rng.random((n, n))
+    expected = aa.copy()
+    for i in range(n):
+        for j in range(1, n):
+            expected[i, j] = expected[i, j] + bb[i, j]
+
+    shifted(aa=aa, bb=bb, M=n)
+    assert np.allclose(aa, expected)
+
+
+@pytest.mark.xfail(strict=True,
+                   reason="ProgramVisitor._add_access rebases the nested connector to the local "
+                   "symbol's range (descriptor N-1 long, body indexes [j-1]) but builds the memlet "
+                   "from the raw rng, so the callee indexes from an origin the caller never passed "
+                   "and every access shifts by the range start. The propagated range it needs is "
+                   "computed into `tmp_memlet` and discarded; using it verbatim is NOT the fix -- it "
+                   "regresses the nested-dependency case to a negative-start subset.")
+def test_nonzero_start_loop_in_map_with_carry():
+    """The same shape carrying a loop-carried dependence (TSVC s1119), which is how this surfaced."""
+    M = dc.symbol('M')
+
+    @dc.program
+    def carried(aa: dc.float64[M, M], bb: dc.float64[M, M]):
+        for i in dc.map[0:M]:
+            for j in range(1, M):
+                aa[i, j] = aa[i, j - 1] + bb[i, j]
+
+    n = 5
+    rng = np.random.default_rng(1)
+    aa = rng.random((n, n))
+    bb = rng.random((n, n))
+    expected = aa.copy()
+    for i in range(n):
+        for j in range(1, n):
+            expected[i, j] = expected[i, j - 1] + bb[i, j]
+
+    carried(aa=aa, bb=bb, M=n)
+    assert np.allclose(aa, expected)
+
+
 if __name__ == "__main__":
     test_nested_name_accesses()
     test_nested_offset_access()
@@ -335,3 +405,5 @@ if __name__ == "__main__":
     test_access_to_nested_transient_dappy()
     test_issue_1139()
     test_issue_2100()
+    test_nonzero_start_loop_in_map_keeps_its_origin()
+    test_nonzero_start_loop_in_map_with_carry()

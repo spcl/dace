@@ -287,11 +287,13 @@ def nest_sdfg_subgraph(sdfg: SDFG, subgraph: SubgraphView, start: Optional[SDFGS
                 out_state.add_edge(tasklet, '__out', acc, None, Memlet.from_array(nname, ndesc))
                 write_set.add(name)
 
-        # Add NestedSDFG node. It must be GIVEN what it reads from OUTSIDE, and ``nsdfg.free_symbols``
-        # draws exactly that line: a region-bound iterator is not free in the SDFG holding the region,
-        # an ``i = i + 1`` still is. Mapping a self-bound symbol makes it free at the PARENT boundary,
-        # where nothing defines it -- invalid, and MapFission re-creates it on every reapplication.
-        fsymbols = (sdfg.symbols.keys() - defined_symbols) | nsdfg.free_symbols
+        # Add NestedSDFG node. ``strictly_defined_symbols`` already carries the counters the subgraph
+        # binds itself, and subtracting it is what keeps a region-bound iterator out of the mapping --
+        # mapping one makes it free at the PARENT boundary, where nothing defines it. Do NOT also drop
+        # the rest of ``defined_symbols``: an inter-state assignment target still crosses the boundary
+        # (nest-forge stages a float read as exactly such a symbol and needs it in the ABI).
+        fsymbols = sdfg.symbols.keys() | nsdfg.free_symbols
+        fsymbols.update(defined_symbols)
         fsymbols = fsymbols - strictly_defined_symbols
         mapping = {s: s for s in fsymbols}
         cnode = new_state.add_nested_sdfg(nsdfg, read_set, write_set, mapping)
