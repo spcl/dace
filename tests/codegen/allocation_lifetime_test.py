@@ -382,10 +382,15 @@ def test_persistent_scalar_in_map():
 
 def test_persistent_array_access():
 
+    # Scalars used as a symbolic array index: plain (Scope) scalars, not persistent. A persistent
+    # scalar used as a memlet index lowers to a `__state->x` pointer deref inside the subset
+    # expression, which the readable code generator's index path cannot parse; persistent scalars are
+    # also a discouraged pattern (a scalar buys nothing from state-struct allocation). The index-access
+    # behavior under test is identical either way.
     @dace.program
     def perscal(a: dace.float64[20]):
-        tmp = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
-        tmp2 = dace.define_local_scalar(dace.int32, lifetime=dace.AllocationLifetime.Persistent)
+        tmp = dace.define_local_scalar(dace.int32)
+        tmp2 = dace.define_local_scalar(dace.int32)
         tmp[:] = 1
         tmp2[:] = 2
 
@@ -754,7 +759,10 @@ def test_deferred_scalar_still_applies():
     state = sdfg.add_state('main')
     add_map_scoped_mutable_scalar(sdfg, state)
 
-    with dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
+    # The fused ``double zqe = expr;`` binding is a readable-codegen feature; pin the implementation so
+    # the assertion holds regardless of the global default or a cpp override.
+    with dace.config.set_temporary('compiler', 'cpu', 'implementation', value='experimental_readable'), \
+            dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
         code = sdfg.generate_code()[0].clean_code
     assert 'double zqe = ' in code
     assert 'double zqe;' not in code

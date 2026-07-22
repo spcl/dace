@@ -267,7 +267,13 @@ class MarkConstInit(ppl.Pass):
     def _is_candidate(self, desc: dt.Data) -> bool:
         # A plain transient array/scalar only -- never a view, reference, stream, structure, or
         # container-array (whose element addressing is not the plain flat index).
+        # Scope lifetime only: a Persistent/Global/External descriptor lives in the state struct and
+        # may hold a different value on each invocation (persistent) or one supplied from outside, so
+        # folding its write to a compile-time constant is unsound -- and would leave the descriptor
+        # claiming state-struct allocation while its value became a bare constant, which the readable
+        # generator's `__state->` access can no longer resolve.
         return (isinstance(desc, (dt.Scalar, dt.Array)) and desc.transient
+                and desc.lifetime == dtypes.AllocationLifetime.Scope
                 and not isinstance(desc, (dt.View, dt.Reference, dt.Stream, dt.Structure, dt.ContainerArray)))
 
     def _symbolic_data_refs(self, sdfg: SDFG) -> Set[str]:

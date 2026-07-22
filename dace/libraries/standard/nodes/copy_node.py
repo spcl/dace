@@ -409,9 +409,18 @@ def _make_memcpy_tasklet(node: "CopyLibraryNode", parent_state: dace.SDFGState, 
         region. Use ``MappedTasklet`` for strided subsets.
     """
     label = "MemcpyCUDA1D" if cuda else "MemcpyCPU"
+    # A host ``std::memcpy`` dereferences both endpoints from host code, which is valid for ANY two
+    # host-resident storages (Heap/ThreadLocal/Pinned/Default) -- the storage *kind* is irrelevant,
+    # only host-vs-device matters. So the CPU path does not require matching storages; it forbids
+    # only a CPU/GPU boundary (which needs ``cudaMemcpy``, the ``cuda`` path). The Auto selector
+    # already routes any GPU-touching copy away from MemcpyCPU; this guard also protects a
+    # hand-selected MemcpyCPU.
     inp_name, inp, in_subset, out_name, out, out_subset = node.validate(parent_state.sdfg,
                                                                         parent_state,
-                                                                        allow_cross_storage=cuda)
+                                                                        allow_cross_storage=True)
+    if not cuda and _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
+        raise ValueError(f"{label} is a host memcpy but crosses the CPU/GPU boundary "
+                         f"(got {inp.storage} -> {out.storage}). Use a MemcpyCUDA1D variant.")
     single_elt = (in_subset.num_elements_exact() == 1 and out_subset.num_elements_exact() == 1)
     if single_elt:
         # Single element: strides are irrelevant, safe to ignore.

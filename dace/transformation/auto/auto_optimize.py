@@ -518,8 +518,14 @@ def make_transients_persistent(sdfg: SDFG,
                 if (dnode.root_data != dnode.data
                         and nsdfg.arrays[dnode.root_data].lifetime != dtypes.AllocationLifetime.Persistent):
                     continue
-                # Only convert arrays and scalars that are not registers
-                if not desc.transient or type(desc) not in {dt.Array, dt.Scalar}:
+                # Only convert transient arrays -- never a scalar or a provably single-element array.
+                # Persistent (state-struct) allocation buys nothing for a single element, and a
+                # persistent scalar has no state-struct-value form in the readable code generator; a
+                # symbolically-sized array (possibly >1) is still eligible.
+                if not desc.transient or type(desc) is not dt.Array:
+                    not_persistent.add(dnode.data)
+                    continue
+                if all(symbolic.equal(s, 1) is True for s in desc.shape):
                     not_persistent.add(dnode.data)
                     continue
                 if desc.storage == dtypes.StorageType.Register:
