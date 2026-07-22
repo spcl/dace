@@ -3,6 +3,7 @@
 
 import copy
 import os
+import re
 import warnings
 from collections import defaultdict
 from typing import TYPE_CHECKING, Dict, List, Set
@@ -351,8 +352,12 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         validate_control_flow_region(sdfg, sdfg, initialized_transients, symbols, references, **context)
 
     except InvalidSDFGError as ex:
-        # If the SDFG is invalid, save it
-        fpath = os.path.join('_dacegraphs', 'invalid.sdfgz')
+        # If the SDFG is invalid, save it. The name carries the SDFG and the pid: a fixed
+        # ``invalid.sdfgz`` is overwritten by whichever validation fails last, so two jobs failing
+        # concurrently (or one failure followed by any later probe) leaves the wrong graph on disk
+        # to debug -- silently, since the path in the message still looks right.
+        safe_name = re.sub(r'\W+', '_', sdfg.name)[:80] or 'sdfg'
+        fpath = os.path.join('_dacegraphs', f'invalid_{safe_name}_{os.getpid()}.sdfgz')
         sdfg.save(fpath, exception=ex, compress=True)
         ex.path = fpath
         raise
