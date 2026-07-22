@@ -21,6 +21,7 @@ import warnings
 import dace
 from dace.config import Config
 from dace.codegen import command_db
+from dace.codegen import compiler_family
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
@@ -276,7 +277,7 @@ def prepare_precompiled_header(targets) -> Optional[str]:
     executable = Config.get('compiler', 'cpu', 'executable')
     cxx = make_absolute(executable) if executable else 'c++'
     flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
-             shlex.split(Config.get('compiler', 'cpu', 'args') or '') +
+             shlex.split(compiler_family.cpu_args() or '') +
              CMAKE_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), []))
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')

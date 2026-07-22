@@ -132,9 +132,25 @@ def replay(entries: Sequence[Dict[str, str]], build_folder: str, jobs: int) -> b
             # an exception raised by one of those is dropped rather than reaching the handler below.
             if not all(list(pool.map(run, compiles))):
                 return False
-        return all(run(e) for e in entries if e.get('file') in produced)
+        if not all(run(e) for e in entries if e.get('file') in produced):
+            return False
     except OSError:
         return False
+    write_compile_commands(compiles, build_folder)
+    return True
+
+
+def write_compile_commands(compiles: Sequence[Dict[str, str]], build_folder: str) -> None:
+    """Write ``compile_commands.json`` for a replayed build.
+
+    CMake emits it whenever it configures; a replay never runs CMake, so without this a build folder
+    reached by a cache hit has no compile database -- clangd stops working on generated code, and the
+    only record of the exact flags a translation unit was compiled with disappears on precisely the
+    builds we do most often. The recipe already holds every compile, so this is one file write.
+    """
+    database = [{key: entry[key] for key in ('directory', 'command', 'file')} for entry in compiles]
+    with open(os.path.join(build_folder, 'compile_commands.json'), 'w') as fh:
+        json.dump(database, fh, indent=2)
 
 
 def clear(build_folder: str) -> None:

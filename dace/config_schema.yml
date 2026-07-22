@@ -190,11 +190,12 @@ required:
 
             build_type:
                 type: str
-                default: RelWithDebInfo
+                default: Release
                 title: Build configuration
                 description: >
-                    Configuration type for CMake build (can be Debug, Release,
-                    RelWithDebInfo, or MinSizeRel).
+                    Configuration type for the CMake build (Debug, Release,
+                    RelWithDebInfo, or MinSizeRel). Sole source of the
+                    optimization level; the per-target ``args`` add to it.
 
             allow_shadowing:
                 type: bool
@@ -328,9 +329,15 @@ required:
                     args:
                         type: str
                         title: Arguments
-                        description: Compiler argument flags
-                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
-                        default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
+                        description: >
+                            Additional flags on top of the CMake build type. No ``-O``:
+                            the level comes from ``compiler.build_type``.
+                            ``default_<family>`` is used when the host compiler is that
+                            family (see ``dace.codegen.compiler_family``); nvc++ rejects
+                            several of the GCC/Clang switches below.
+                        default: '-fPIC -Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default_nvhpc: '-fPIC -Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
+                        default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
                         type: str
@@ -370,15 +377,19 @@ required:
                     args:
                         type: str
                         title: nvcc Arguments
-                        description: Compiler argument flags for CUDA
-                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-O3 --use_fast_math'
+                        description: >
+                            Additional nvcc flags on top of the CMake build type. No ``-O``:
+                            the level comes from ``compiler.build_type``.
+                        default: '-lineinfo -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter'
+                        default_Windows: ''
 
                     hip_args:
                         type: str
                         title: hipcc Arguments
-                        description: Compiler argument flags for HIP
-                        default: '-fPIC -O3 -ffast-math -Wno-unused-parameter'
+                        description: >
+                            Additional hipcc flags on top of the CMake build type. No ``-O``:
+                            the level comes from ``compiler.build_type``.
+                        default: '-fPIC -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str
