@@ -2,9 +2,10 @@
 """Python-side registration of the low-precision dtypes bfloat16 / float8_e4m3fn /
 float8_e5m2 (backed by ml_dtypes, named verbatim as ml_dtypes names them).
 
-The C++ runtime headers for these are intentionally not implemented yet, so
-these tests cover the dtype registration / frontend / serialization layers only
--- NOT compilation (only CPU float16 is expected to compile for now).
+These tests cover the dtype registration / frontend / serialization layers only.
+bfloat16 additionally has a C++ runtime type and compiles end to end -- that is
+covered by tests/bfloat16_cpu_test.py and tests/bfloat16_gpu_test.py. The float8
+runtime headers are not implemented yet, so those two remain Python-side only.
 """
 import ml_dtypes
 import numpy as np

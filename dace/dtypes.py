@@ -271,8 +271,9 @@ _CTYPES = {
     "dace::complex64",
     numpy.complex128:
     "dace::complex128",
-    # Low-precision types (runtime C++ headers not yet implemented -- see
-    # ``dace::bfloat16`` / ``dace::float8_e4m3`` / ``dace::float8_e5m2``).
+    # Low-precision types. ``dace::bfloat16`` is implemented in
+    # dace/runtime/include/dace/types.h (emulated on the host, __nv_bfloat16 /
+    # __hip_bfloat16 on GPU); the two float8 runtime types are not implemented yet.
     ml_dtypes.bfloat16:
     "dace::bfloat16",
     ml_dtypes.float8_e4m3fn:
@@ -466,6 +467,31 @@ class typeclass(object):
         return self.ctype + ' ' + name
 
 
+def float_limits(dtype: typeclass):
+    """Machine limits for any floating-point type in :data:`FLOAT_TYPES`.
+
+    ``numpy.finfo`` only accepts types NumPy itself classifies as inexact, and the
+    ml_dtypes-backed scalars (bfloat16, float8_e4m3fn, float8_e5m2) are not: they
+    subclass ``numpy.generic`` directly, so ``numpy.issubdtype(bfloat16, numpy.floating)``
+    is False and ``numpy.finfo(bfloat16)`` raises "not inexact". ``ml_dtypes.finfo``
+    is a superset that covers those *and* the native NumPy floats, returning
+    identical limits for the latter, so it is used for every float type rather than
+    only for the ones NumPy rejects -- one path, no per-dtype branching.
+    """
+    return ml_dtypes.finfo(dtype.as_numpy_dtype())
+
+
+def is_floating_point(dtype: typeclass) -> bool:
+    """Whether `dtype` is a real floating-point type, ml_dtypes-backed ones included.
+
+    ``numpy.issubdtype(..., numpy.floating)`` alone misses bfloat16 / float8_*, which
+    NumPy does not classify as inexact; the registry in :data:`FLOAT_TYPES` covers
+    those. Both are consulted so that wrapper typeclasses (e.g. a vector of float32),
+    which are not registry members but do report a float NumPy dtype, keep working.
+    """
+    return numpy.issubdtype(dtype.as_numpy_dtype(), numpy.floating) or dtype in FLOAT_TYPES
+
+
 def max_value(dtype: typeclass):
     """Get a max value literal for `dtype`."""
     nptype = dtype.as_numpy_dtype()
@@ -473,8 +499,8 @@ def max_value(dtype: typeclass):
         return True
     elif numpy.issubdtype(nptype, numpy.integer):
         return numpy.iinfo(nptype).max
-    elif numpy.issubdtype(nptype, numpy.floating):
-        return numpy.finfo(nptype).max
+    elif is_floating_point(dtype):
+        return float_limits(dtype).max
 
     raise TypeError('Unsupported type "%s" for maximum' % dtype)
 
@@ -486,8 +512,8 @@ def min_value(dtype: typeclass):
         return False
     elif numpy.issubdtype(nptype, numpy.integer):
         return numpy.iinfo(nptype).min
-    elif numpy.issubdtype(nptype, numpy.floating):
-        return numpy.finfo(nptype).min
+    elif is_floating_point(dtype):
+        return float_limits(dtype).min
 
     raise TypeError('Unsupported type "%s" for minimum' % dtype)
 
@@ -1270,8 +1296,9 @@ else:
     # Low-precision types backed by ml_dtypes scalars (numpy-registered), named
     # verbatim as ml_dtypes names them. E4M3 is the finite ``fn`` variant
     # (max +-448, no inf) -- the hardware E4M3 of NVIDIA __nv_fp8_e4m3 / AMD /
-    # OCP training. The C++ runtime headers (dace::bfloat16 / dace::float8_e4m3fn
-    # / dace::float8_e5m2) are not implemented yet -- this registers the
+    # OCP training. ``dace::bfloat16`` has a full C++ runtime type and compiles
+    # end to end; the float8 runtime headers (dace::float8_e4m3fn /
+    # dace::float8_e5m2) are not implemented yet, so those two register the
     # Python-side dtypes only.
     bfloat16 = typeclass(ml_dtypes.bfloat16)
     float8_e4m3fn = typeclass(ml_dtypes.float8_e4m3fn)
