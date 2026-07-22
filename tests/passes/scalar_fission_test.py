@@ -1,9 +1,11 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests the scalar fission pass. """
 
+import numpy as np
 import pytest
 
 import dace
+from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.scalar_fission import ScalarFission
 from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
@@ -469,8 +471,6 @@ def test_privatize_loop_local_undominated_through_map_scope():
     old name and the SDFG fails validation. Regression: polybench ``durbin`` (loop-local
     reduction accumulator ``sum``).
     """
-    from dace.sdfg.state import LoopRegion
-
     sdfg = dace.SDFG('durbin_undominated_through_map')
     sdfg.add_array('data', [8, 8], dace.float64)
     sdfg.add_array('out', [8], dace.float64)
@@ -507,3 +507,165 @@ def test_privatize_loop_local_undominated_through_map_scope():
     # ... and the FULL memlet path was renamed, so the SDFG still validates (no
     # IN_x(old)/OUT_x(new) mismatch across the map exit).
     sdfg.validate()
+
+
+def wcr_loop_accumulator_sdfg(name):
+    """``acc = 100``; ``chk[0] = acc``; then for i: ``acc += A[i]``; ``out[i] = acc``.
+
+    The in-loop read of ``acc`` is dominated by the WCR write inside the loop body, so that
+    write becomes its own write-scope key. It is a read-modify-write, though: versioning it
+    restarts the accumulator from never-written storage and drops the seed.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [8], dace.float64)
+    sdfg.add_array('chk', [1], dace.float64)
+    sdfg.add_array('out', [8], dace.float64)
+    sdfg.add_scalar('acc', dace.float64, transient=True)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    t_seed = init.add_tasklet('seed', {}, {'o'}, 'o = 100.0')
+    init.add_edge(t_seed, 'o', init.add_access('acc'), None, dace.Memlet('acc[0]'))
+
+    # A read of the seed, so the seeding write is a write-scope of its own and the fission
+    # path (more than one dominating scope) is actually reached.
+    pre = sdfg.add_state('pre')
+    sdfg.add_edge(init, pre, dace.InterstateEdge())
+    t_peek = pre.add_tasklet('peek', {'i'}, {'o'}, 'o = i')
+    pre.add_edge(pre.add_read('acc'), None, t_peek, 'i', dace.Memlet('acc[0]'))
+    pre.add_edge(t_peek, 'o', pre.add_write('chk'), None, dace.Memlet('chk[0]'))
+
+    loop = LoopRegion('loop', 'i < 8', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(pre, loop, dace.InterstateEdge())
+
+    body = loop.add_state('body', is_start_block=True)
+    t_add = body.add_tasklet('add', {'a'}, {'o'}, 'o = a')
+    body.add_edge(body.add_read('A'), None, t_add, 'a', dace.Memlet('A[i]'))
+    body.add_edge(t_add, 'o', body.add_access('acc'), None, dace.Memlet('acc[0]', wcr='lambda x, y: x + y'))
+
+    tail = loop.add_state('tail')
+    loop.add_edge(body, tail, dace.InterstateEdge())
+    t_store = tail.add_tasklet('store', {'a'}, {'o'}, 'o = a')
+    tail.add_edge(tail.add_read('acc'), None, t_store, 'a', dace.Memlet('acc[0]'))
+    tail.add_edge(t_store, 'o', tail.add_write('out'), None, dace.Memlet('out[i]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def wcr_between_plain_writes_sdfg(name, wcr):
+    """``s = A[0]``; ``m1 = s``; ``s <op>= 2``; ``m2 = s``; ``s = 5``; ``out = s``.
+
+    Three dominating write-scopes, the middle one a read-modify-write when ``wcr`` is set.
+
+    :param name: SDFG name.
+    :param wcr: Write-conflict-resolution lambda source for the middle write, or ``None`` for a
+                plain (killing) write.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_array('m1', [1], dace.float64)
+    sdfg.add_array('m2', [1], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    t_init = init.add_tasklet('t_init', {'i'}, {'o'}, 'o = i')
+    init.add_edge(init.add_read('A'), None, t_init, 'i', dace.Memlet('A[0]'))
+    init.add_edge(t_init, 'o', init.add_access('s'), None, dace.Memlet('s[0]'))
+
+    peek1 = sdfg.add_state('peek1')
+    sdfg.add_edge(init, peek1, dace.InterstateEdge())
+    t_p1 = peek1.add_tasklet('t_p1', {'i'}, {'o'}, 'o = i')
+    peek1.add_edge(peek1.add_read('s'), None, t_p1, 'i', dace.Memlet('s[0]'))
+    peek1.add_edge(t_p1, 'o', peek1.add_write('m1'), None, dace.Memlet('m1[0]'))
+
+    upd = sdfg.add_state('upd')
+    sdfg.add_edge(peek1, upd, dace.InterstateEdge())
+    t_upd = upd.add_tasklet('t_upd', {}, {'o'}, 'o = 2.0')
+    upd.add_edge(t_upd, 'o', upd.add_access('s'), None, dace.Memlet('s[0]', wcr=wcr))
+
+    peek2 = sdfg.add_state('peek2')
+    sdfg.add_edge(upd, peek2, dace.InterstateEdge())
+    t_p2 = peek2.add_tasklet('t_p2', {'i'}, {'o'}, 'o = i')
+    peek2.add_edge(peek2.add_read('s'), None, t_p2, 'i', dace.Memlet('s[0]'))
+    peek2.add_edge(t_p2, 'o', peek2.add_write('m2'), None, dace.Memlet('m2[0]'))
+
+    reset = sdfg.add_state('reset')
+    sdfg.add_edge(peek2, reset, dace.InterstateEdge())
+    t_reset = reset.add_tasklet('t_reset', {}, {'o'}, 'o = 5.0')
+    reset.add_edge(t_reset, 'o', reset.add_access('s'), None, dace.Memlet('s[0]'))
+
+    use = sdfg.add_state('use')
+    sdfg.add_edge(reset, use, dace.InterstateEdge())
+    t_use = use.add_tasklet('t_use', {'i'}, {'o'}, 'o = i')
+    use.add_edge(use.add_read('s'), None, t_use, 'i', dace.Memlet('s[0]'))
+    use.add_edge(t_use, 'o', use.add_write('out'), None, dace.Memlet('out[0]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_wcr_accumulator_in_loop_not_versioned():
+    """A WCR accumulator whose result is read inside the loop must not be versioned.
+
+    Without the guard the pass split ``acc`` into ``acc``/``acc_0``/``acc_1``; the loop then
+    accumulated into the never-seeded ``acc_1`` and produced ``[1, 3, 6, ... 36]`` instead of
+    ``[101, 103, 106, ... 136]`` -- the seed was silently dropped.
+    """
+    sdfg = wcr_loop_accumulator_sdfg('wcr_loop_accumulator')
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.arange(1.0, 9.0, dtype=np.float64)
+    chk = np.zeros(1, dtype=np.float64)
+    out = np.zeros(8, dtype=np.float64)
+    sdfg(A=A, chk=chk, out=out)
+    assert np.allclose(out, 100.0 + np.cumsum(A)), f'WCR accumulator computed {out.tolist()}'
+    assert chk[0] == 100.0
+    assert set(sdfg.arrays.keys()) == before, (f'ScalarFission versioned a WCR accumulator: '
+                                               f'{sorted(set(sdfg.arrays.keys()) - before)}')
+
+
+def test_wcr_write_between_plain_writes_not_versioned():
+    """A WCR write between two plain writes must not start a version.
+
+    Without the guard the three scopes became ``s``/``s_0``/``s_1``/``s_2``, the ``CR: Product``
+    combined against never-written storage and ``m2`` came out ``0.0`` instead of ``6.0``. The
+    trailing plain write is a legitimate version boundary, but the chain it would cut runs
+    through the WCR write, so the whole container is left alone.
+    """
+    sdfg = wcr_between_plain_writes_sdfg('wcr_between_plain', 'lambda x, y: x * y')
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    A = np.array([3.0], dtype=np.float64)
+    m1 = np.zeros(1, dtype=np.float64)
+    m2 = np.zeros(1, dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, m1=m1, m2=m2, out=out)
+    assert (m1[0], m2[0], out[0]) == (3.0, 6.0, 5.0), f'got {m1[0]}, {m2[0]}, {out[0]}'
+    assert set(sdfg.arrays.keys()) == before, (f'ScalarFission versioned a WCR-updated scalar: '
+                                               f'{sorted(set(sdfg.arrays.keys()) - before)}')
+
+
+def test_plain_writes_still_fission():
+    """Guard against over-reach: the same shape with a plain middle write MUST still fission."""
+    sdfg = wcr_between_plain_writes_sdfg('plain_between_plain', None)
+    before = set(sdfg.arrays.keys())
+
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert set(sdfg.arrays.keys()) - before, 'plain dominating writes must still be versioned'
+
+    A = np.array([3.0], dtype=np.float64)
+    m1 = np.zeros(1, dtype=np.float64)
+    m2 = np.zeros(1, dtype=np.float64)
+    out = np.zeros(1, dtype=np.float64)
+    sdfg(A=A, m1=m1, m2=m2, out=out)
+    assert (m1[0], m2[0], out[0]) == (3.0, 2.0, 5.0), f'got {m1[0]}, {m2[0]}, {out[0]}'

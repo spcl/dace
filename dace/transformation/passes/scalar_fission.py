@@ -92,6 +92,16 @@ class ScalarFission(ppl.Pass):
             if None in write_scope_dict:
                 self._privatize_loop_local_undominated(sdfg, name, write_scope_dict[None], results)
 
+            # A write-conflict-resolution write does not KILL the previous value, it reads it
+            # (see :meth:`is_wcr_write`), so it cannot start a new single-assignment version.
+            # Skipping just that one scope is not enough: the write before it would still be
+            # versioned while the WCR write kept the old name, cutting the chain between them. So a
+            # container with a version-starting WCR write is left whole. (The undominated
+            # privatization above is unaffected: it renames a loop's entire access group at once,
+            # a pure alpha-rename that stays correct for an accumulator.)
+            if any(w is not None and self.is_wcr_write(w[0], w[1]) for w in write_scope_dict):
+                continue
+
             # If there is only one (dominating) scope, no further fission is needed.
             if len([w for w in write_scope_dict if w is not None]) <= 1:
                 continue
@@ -137,6 +147,29 @@ class ScalarFission(ppl.Pass):
 
     def report(self, pass_retval: Any) -> Optional[str]:
         return f'Renamed {len(pass_retval)} scalars: {pass_retval}.'
+
+    @staticmethod
+    def is_wcr_write(state: SDFGState, node: nd.AccessNode) -> bool:
+        """Whether ``node`` is written through a write-conflict-resolution memlet.
+
+        A WCR edge (``CR: Sum``, ``CR: Product``, ``CR: Min`` ...) is a READ-MODIFY-WRITE of its
+        destination: the resolution combines the incoming value with what the container already
+        holds. ``ScalarWriteShadowScopes`` sees only the write and reports it as a dominating one,
+        so fission would start a new version there -- and the resolution would then combine against
+        that fresh, never-written version instead of the value the previous write left behind.
+
+        The exposure is real rather than hypothetical: every in-pipeline caller runs this pass
+        BEFORE ``AugAssignToWCR``, when an accumulator is still a plain read-tasklet-write chain
+        and no WCR edge exists. The readable CPU generator's ``ssa_loop_scalars`` step re-runs it at
+        CODEGEN time, on a graph where those chains are already WCR memlets. On CLOUDSC full_cpu
+        that fissioned the ``ZQSAT`` saturation accumulator (``CR: Product`` / ``CR: Min``) and
+        moved 10 output arrays by up to 2.1e+01.
+
+        :param state: The state holding ``node``.
+        :param node: The written access node.
+        :returns: ``True`` if any incoming memlet carries a write-conflict resolution.
+        """
+        return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(node))
 
     @staticmethod
     def _inout_nsdfg_carried(sdfg: SDFG) -> Set[str]:
