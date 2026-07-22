@@ -32,6 +32,9 @@ constant set sits on every ``MIN``/``MAX`` and ``< rlmin`` boundary, so a
 harmless floating-point reassociation flips branches and masquerades as a bug.
 """
 import copy
+import hashlib
+import os
+from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -40,6 +43,7 @@ import sympy
 import dace
 from dace import dtypes
 from dace.sdfg import nodes
+from dace.config import set_temporary
 from tests.corpus.cloudsc.cloudsc import cloudsc_py
 
 #: Shape symbols and named integer index scalars. The cloud species ``ncldq*``
@@ -228,15 +232,88 @@ IEEE_CPU_ARGS: str = '-std=c++14 -fPIC -O0 -fopenmp -fno-fast-math -ffp-contract
 #: cleanly -- so the suite never enables it.
 O3_CPU_ARGS: str = '-std=c++14 -fPIC -O3 -fopenmp -fno-fast-math -ffp-contract=off'
 
+#: Files whose contents change the parsed SDFG. The program itself, and this builder -- an edit to
+#: either must mint a fresh cache entry rather than resume a stale one.
+CACHE_SOURCE_FILES = (Path(__file__), Path(cloudsc_py.f.__code__.co_filename))
+
+
+def cloudsc_cache_dir() -> Optional[Path]:
+    """Directory holding parsed-SDFG cache entries, or ``None`` when caching is off.
+
+    Off by setting ``DACE_CLOUDSC_SDFG_CACHE=0``. Otherwise ``DACE_CLOUDSC_SDFG_CACHE`` names the
+    directory, defaulting to ``~/.cache/dace_cloudsc_sdfg`` -- a stable location, deliberately NOT a
+    per-run pytest tmp dir, since the whole point is to survive across runs.
+    """
+    value = os.environ.get('DACE_CLOUDSC_SDFG_CACHE', '')
+    if value in ('0', 'off', 'false', 'no'):
+        return None
+    return Path(value) if value else Path.home() / '.cache' / 'dace_cloudsc_sdfg'
+
+
+def cloudsc_cache_key(simplify: bool) -> str:
+    """Digest of everything that decides the parsed SDFG: the source files, the ``simplify`` flag,
+    and the dace version (``to_sdfg`` semantics and the ``.sdfgz`` format both move with it)."""
+    hasher = hashlib.sha256()
+    hasher.update(f'dace={dace.__version__};simplify={simplify}'.encode())
+    for path in CACHE_SOURCE_FILES:
+        try:
+            hasher.update(path.read_bytes())
+        except OSError:
+            # A source we cannot read cannot be proven unchanged, so fold its absence in and let the
+            # entry differ from any run that could read it.
+            hasher.update(f'<unreadable:{path}>'.encode())
+    return hasher.hexdigest()[:16]
+
 
 def build_cloudsc_sdfg(simplify: bool = False) -> dace.SDFG:
-    """Build a fresh runnable SDFG from the inlined CloudSC program.
+    """Build a runnable SDFG from the inlined CloudSC program, persistently cached.
+
+    The ``to_sdfg`` parse is minutes, and its result is a pure function of the program source, the
+    ``simplify`` flag and the dace version -- so it is cached across runs under
+    :func:`cloudsc_cache_dir`, keyed by :func:`cloudsc_cache_key`. The cache is advisory: an entry is
+    written only after the freshly built SDFG validates, loaded STRICTLY (any element the reader
+    cannot rebuild raises rather than being silently dropped), and validated again on load. A miss, a
+    stale key, or an entry that fails either check just rebuilds. It can never substitute a wrong SDFG
+    for the right one -- at worst it costs the parse it was meant to save.
 
     :param simplify: Whether to run the simplify pipeline while building.
     :returns: A validated CloudSC SDFG.
     """
+    cache_dir = cloudsc_cache_dir()
+    entry = cache_dir / f'cloudsc_{"simplified" if simplify else "nosimplify"}_{cloudsc_cache_key(simplify)}.sdfgz' \
+        if cache_dir else None
+
+    if entry is not None and entry.is_file():
+        try:
+            # Strict load: a checkpoint that lost anything through JSON raises here instead of loading
+            # a quietly-degraded graph that then validates and runs subtly wrong.
+            with set_temporary('testing', 'deserialize_exception', value=True):
+                sdfg = dace.SDFG.from_file(str(entry))
+            sdfg.validate()
+            return sdfg
+        except Exception:
+            # Unusable entry -- drop it and fall through to a fresh build, which re-publishes.
+            try:
+                entry.unlink()
+            except OSError:
+                pass
+
     sdfg = cloudsc_py.to_sdfg(simplify=simplify)
     sdfg.validate()
+
+    if entry is not None:
+        # Publish atomically via a private temp name so a concurrent reader never sees a half-written
+        # file. A failure to cache is never fatal -- the built SDFG is already correct.
+        try:
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            staging = entry.with_suffix(f'.sdfgz.{os.getpid()}')
+            sdfg.save(str(staging), compress=True)
+            os.replace(staging, entry)
+        except Exception:
+            try:
+                staging.unlink()
+            except (OSError, NameError):
+                pass
     return sdfg
 
 
