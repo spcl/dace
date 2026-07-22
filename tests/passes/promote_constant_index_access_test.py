@@ -2,6 +2,7 @@
 """Tests for :class:`~dace.transformation.passes.promote_constant_index_access.\
 PromoteConstantIndexAccess`. Each test is driven by a small ``@dace.program`` so the SDFG
 shape exercises the actual pass entry point (no hand-built SDFG plumbing)."""
+import json
 import sys
 
 import numpy as np
@@ -13,6 +14,11 @@ from dace.sdfg import nodes
 from dace.transformation.passes.promote_constant_index_access import PromoteConstantIndexAccess
 
 N = dace.symbol('N')
+
+
+def _snapshot(sdfg: dace.SDFG) -> str:
+    """A stable serialization of ``sdfg``, to assert a refused pass left it untouched."""
+    return json.dumps(sdfg.to_json(), sort_keys=True, default=str)
 
 
 def _num_maps(sdfg: dace.SDFG) -> int:
@@ -58,10 +64,20 @@ def test_unconditional_constant_index_promoted():
     assert np.allclose(out, expected)
 
 
-def test_conditional_write_with_external_live_in():
-    """The cloudsc shape: the in-loop write is gated by a runtime flag carried in a
-    length-1 array. When the flag is off the unconditional read must observe the external
-    live-in value of ``arr[c]``."""
+def test_refuses_conditional_write_with_unconditional_read():
+    """A conditionally-written slot read unconditionally has an upward-exposed read: the
+    pass cannot show the read sees this iteration's write, so it must refuse.
+
+    This shape used to be promoted (it is the cloudsc ``if yrecldp_laericesed`` pattern),
+    on the reasoning that the prologue load reproduces the external live-in value when the
+    guard does not fire. That reasoning only holds when the guard is loop-*invariant* --
+    true on every iteration or on none. PCIA has no invariance analysis, and with a
+    loop-varying guard the same shape is a silent miscompile; see
+    :func:`test_refuses_loop_varying_guard_and_stays_correct`, which is the counterexample
+    that forces the whole class to be refused. Recovering the invariant subcase needs a
+    loop-invariance analysis of every guard controlling a write to the slot.
+
+    The un-promoted SDFG must still compute the right answer, both guard values."""
 
     @dace.program
     def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int64[1]):
@@ -71,13 +87,10 @@ def test_conditional_write_with_external_live_in():
             out[jl] = arr[2] * scale[jl]
 
     sdfg = kern.to_sdfg(simplify=True)
-    loops_before = _num_loops(sdfg)
+    before = _snapshot(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is not None, 'expected the conditional-write slot to be promoted'
-    sdfg.validate()
-    # The promoted loop is now parallelizable -- LoopToMap should convert it.
-    assert _apply_loop_to_map(sdfg) >= 1
-    assert _num_loops(sdfg) < loops_before
+    assert res is None, 'the conditional-write slot has an upward-exposed read and must be refused'
+    assert _snapshot(sdfg) == before, 'a pass that does not apply must not mutate the SDFG'
 
     n = 8
     rng = np.random.default_rng(1)
@@ -393,17 +406,12 @@ def test_multi_slot_refuses_if_symbolic_access_to_same_array():
                          'every access to that array is a constant point.')
 
 
-def test_promotes_through_conditional_block_in_body():
-    """The cloudsc ``for_767_X`` body shape: the iteration's species-specific slot is
-    written inside an ``if yrecldp_laericesed`` conditional block. PCIA must
-    promote ``arr[c]`` through the conditional structure -- the post-loop reads
-    are at other slots only, the conditional governs only the write, and the
-    body otherwise has only loop-invariant transient work.
+def test_refuses_conditional_block_in_body():
+    """The cloudsc ``for_767_X`` body shape (write inside ``if yrecldp_laericesed``).
 
-    Failure mode before the extension: PCIA's slot-detection finds
-    ``arr[c]`` but the speculative post-promote LoopToMap check still refuses
-    because the conditional write reads as a loop-carried structure.
-    """
+    The slot being dead post-loop is not enough: the unconditional read is upward-exposed
+    within an iteration, so PCIA refuses. Dead-after-the-loop and defined-before-the-read
+    are independent premises and the pass needs both."""
 
     @dace.program
     def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag: dace.int32,
@@ -416,13 +424,10 @@ def test_promotes_through_conditional_block_in_body():
         sink[0] = arr[2]
 
     sdfg = kern.to_sdfg(simplify=True)
+    before = _snapshot(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is not None, ('PCIA must promote arr[3] through the conditional-write body; '
-                             'the slot is dead post-loop and the conditional is the only barrier.')
-    maps_added = _apply_loop_to_map(sdfg)
-    sdfg.validate()
-    assert maps_added >= 1, ('Post-promotion LoopToMap should accept the conditional-write loop -- the '
-                             "conditional doesn't introduce a loop-carried dependence on its own.")
+    assert res is None, 'the conditionally-written arr[3] is read upward-exposed and must be refused'
+    assert _snapshot(sdfg) == before, 'a pass that does not apply must not mutate the SDFG'
 
 
 def test_promotes_outer_loop_with_multiple_inner_constant_indexed_writes():
@@ -508,17 +513,11 @@ def test_promotes_multi_dim_constant_slot():
     assert np.allclose(out_run, out_ref)
 
 
-def test_promotes_through_double_nested_conditionals():
-    """The cloudsc ``for_767_X`` body has TWO nested ConditionalBlocks before
-    the constant-index access. PCIA's verification must use per-loop
-    ``LoopToMap.can_be_applied`` (not the whole-SDFG ``match_patterns`` walk
-    that has a CFG-traversal coverage gap on nested regions).
-
-    Failure mode before the per-loop fix: whole-SDFG ``match_patterns`` did not
-    surface loops nested inside multiple ConditionalBlocks even when direct
-    ``can_be_applied`` accepts them, so PCIA's speculate-promote-verify-keep
-    pipeline saw "no transition to mappable" and undid every promotion.
-    """
+def test_refuses_double_nested_conditionals():
+    """Two nested ConditionalBlocks guarding the write, unconditional read after them --
+    same upward-exposed read as the single-conditional case, refused for the same reason.
+    Nesting depth is irrelevant: no branch structure that PCIA can see establishes a
+    must-def."""
 
     @dace.program
     def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], flag_a: dace.int32, flag_b: dace.int32,
@@ -531,12 +530,10 @@ def test_promotes_through_double_nested_conditionals():
         sink[0] = arr[3]  # different slot post-loop
 
     sdfg = kern.to_sdfg(simplify=True)
+    before = _snapshot(sdfg)
     res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
-    assert res is not None, ('PCIA must promote arr[2] through two nested ConditionalBlocks; the '
-                             "per-loop ``_l2m_accepts`` check is the path that surfaces this match.")
-    maps_added = _apply_loop_to_map(sdfg)
-    sdfg.validate()
-    assert maps_added >= 1
+    assert res is None, 'doubly-guarded write with an unconditional read must be refused'
+    assert _snapshot(sdfg) == before, 'a pass that does not apply must not mutate the SDFG'
 
 
 def test_refuses_partial_multi_dim_slot():
@@ -700,8 +697,11 @@ def test_undo_restores_all_arr_nodes_when_state_has_several():
     sdfg.add_array('arr', [4], dace.float64, transient=False)
     sdfg.add_array('out', [8], dace.float64, transient=False)
     sdfg.add_array('acc', [1], dace.float64, transient=False)
-    loop = LoopRegion(label='lp', condition_expr='jl < 8', loop_var='jl',
-                      initialize_expr='jl = 0', update_expr='jl = jl + 1')
+    loop = LoopRegion(label='lp',
+                      condition_expr='jl < 8',
+                      loop_var='jl',
+                      initialize_expr='jl = 0',
+                      update_expr='jl = jl + 1')
     sdfg.add_node(loop, is_start_block=True)
     b = loop.add_state(label='body', is_start_block=True)
 
@@ -714,10 +714,12 @@ def test_undo_restores_all_arr_nodes_when_state_has_several():
     b.add_edge(tw, 'a1', aw1, None, dace.Memlet(data='arr', subset='1'))
 
     # Two SEPARATE arr[1] read nodes in the same state -- the multi-node case.
-    ar1a = b.add_read('arr'); ar1b = b.add_read('arr')
+    ar1a = b.add_read('arr')
+    ar1b = b.add_read('arr')
     t1 = b.add_tasklet('u1', {'a'}, {'o'}, 'o = a * 2.0')
     t2 = b.add_tasklet('u2', {'a'}, {'o'}, 'o = a * 3.0')
-    o1 = b.add_access('out'); o2 = b.add_access('out')
+    o1 = b.add_access('out')
+    o2 = b.add_access('out')
     b.add_edge(ar1a, None, t1, 'a', dace.Memlet(data='arr', subset='1'))
     b.add_edge(ar1b, None, t2, 'a', dace.Memlet(data='arr', subset='1'))
     b.add_edge(t1, 'o', o1, None, dace.Memlet(data='out', subset='jl'))
@@ -725,7 +727,9 @@ def test_undo_restores_all_arr_nodes_when_state_has_several():
 
     # Loop-carried acc reduction: L2M refuses regardless of arr, so the arr promotion is
     # reverted (the path under test). PCIA itself refuses acc (in-body RMW).
-    ra = b.add_read('acc'); ro = b.add_read('out'); aw = b.add_access('acc')
+    ra = b.add_read('acc')
+    ro = b.add_read('out')
+    aw = b.add_access('acc')
     tacc = b.add_tasklet('a', {'p', 'x'}, {'n'}, 'n = p + x')
     b.add_edge(ra, None, tacc, 'p', dace.Memlet(data='acc', subset='0'))
     b.add_edge(ro, None, tacc, 'x', dace.Memlet(data='out', subset='jl'))
@@ -733,10 +737,200 @@ def test_undo_restores_all_arr_nodes_when_state_has_several():
 
     PromoteConstantIndexAccess().apply_pass(sdfg, {})
 
-    isolated = [n.data for sd in sdfg.all_sdfgs_recursive() for st in sd.states()
-                for n in st.nodes() if isinstance(n, nodes.AccessNode) and st.degree(n) == 0]
+    isolated = [
+        n.data for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+        if isinstance(n, nodes.AccessNode) and st.degree(n) == 0
+    ]
     assert not isolated, f'reverted promotion left isolated nodes: {isolated}'
     sdfg.validate()
+
+
+_UE_N = 8
+_UE_T = 4
+
+
+def test_refuses_upward_exposed_read_before_inner_writing_loop():
+    """Regression: the slot is read at the TOP of the outer iteration and written only by an
+    inner loop underneath it, so iteration ``t`` must observe iteration ``t-1``'s write.
+
+    Both pre-existing gates pass on this shape: ``_slot_has_in_body_rmw`` looks for a
+    dataflow read->write cycle and the read feeds ``hist``, not the write; ``_not_live_out``
+    only scans blocks outside the loop and the read is inside it. Promoting anyway replaced
+    every ``hist[t]`` with the pre-loop value -- ``[10, 10, 10, 10]`` instead of
+    ``[10, 16, 18, 20]``. ``arr`` is a transient that is dead after the nest, so the
+    separately-known missing-epilogue-writeback gap cannot explain it.
+    """
+
+    @dace.program
+    def kern(A: dace.float64[_UE_N], hist: dace.float64[_UE_T], out: dace.float64[_UE_T, _UE_N]):
+        arr = np.zeros((4, ), dtype=np.float64)
+        arr[1] = 5.0
+        for t in range(_UE_T):
+            hist[t] = arr[1] * 2.0
+            for i in range(_UE_N):
+                arr[1] = A[i] + t
+                out[t, i] = arr[1] * 3.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    before = _snapshot(sdfg)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is None, f'the upward-exposed read of arr[1] must block promotion; got {res}'
+    assert _snapshot(sdfg) == before, 'a pass that does not apply must not mutate the SDFG'
+
+    A = np.arange(1.0, _UE_N + 1.0)
+    ref_arr = np.zeros(4)
+    ref_arr[1] = 5.0
+    ref_hist = np.zeros(_UE_T)
+    ref_out = np.zeros((_UE_T, _UE_N))
+    for t in range(_UE_T):
+        ref_hist[t] = ref_arr[1] * 2.0
+        for i in range(_UE_N):
+            ref_arr[1] = A[i] + t
+            ref_out[t, i] = ref_arr[1] * 3.0
+
+    hist = np.zeros(_UE_T)
+    out = np.zeros((_UE_T, _UE_N))
+    sdfg(A=A, hist=hist, out=out)
+    assert np.allclose(hist, ref_hist), f'hist mismatch: got {hist}, expected {ref_hist}'
+    assert np.allclose(out, ref_out)
+
+
+def test_refuses_when_enclosing_loop_back_edge_reaches_the_read():
+    """Regression: the slot is read by a block that PRECEDES the promoted loop inside an
+    enclosing ``LoopRegion``. The enclosing loop's back edge runs that block again after the
+    inner loop, so the inner loop's writes are live-out through it.
+
+    The live-out scan walked only forward-reachable blocks, and a back edge is not an edge of
+    the region's graph -- the read was invisible and the inner loop was promoted, dropping
+    every ``hist[t]`` for ``t > 0``. Here ``arr`` is a parameter so both an in-body
+    upward-exposed read (outer loop) and the back-edge liveness (inner loop) are in play;
+    the inner loop is refused specifically by the liveness fix.
+    """
+
+    @dace.program
+    def kern(A: dace.float64[_UE_N], arr: dace.float64[4], hist: dace.float64[_UE_T], out: dace.float64[_UE_T, _UE_N]):
+        for t in range(_UE_T):
+            hist[t] = arr[1] * 2.0
+            for i in range(_UE_N):
+                arr[1] = A[i] + t
+                out[t, i] = arr[1] * 3.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    inner = [
+        r for r in sdfg.all_control_flow_regions()
+        if isinstance(r, LoopRegion) and not any(isinstance(b, LoopRegion) for b in r.nodes())
+    ]
+    assert len(inner) == 1, 'expected exactly one innermost loop in the fixture'
+    slot = dace.subsets.Range([(1, 1, 1)])
+    assert not PromoteConstantIndexAccess()._not_live_out(inner[0], 'arr', slot), (
+        'the enclosing loop back edge must make the preceding read of arr[1] count as live-out')
+
+    before = _snapshot(sdfg)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is None, f'arr[1] is live-out through the enclosing back edge; got {res}'
+    assert _snapshot(sdfg) == before, 'a pass that does not apply must not mutate the SDFG'
+
+    A = np.arange(1.0, _UE_N + 1.0)
+    rng = np.random.default_rng(5)
+    arr_in = rng.random(4)
+    ref_arr = arr_in.copy()
+    ref_hist = np.zeros(_UE_T)
+    ref_out = np.zeros((_UE_T, _UE_N))
+    for t in range(_UE_T):
+        ref_hist[t] = ref_arr[1] * 2.0
+        for i in range(_UE_N):
+            ref_arr[1] = A[i] + t
+            ref_out[t, i] = ref_arr[1] * 3.0
+
+    arr_run = arr_in.copy()
+    hist = np.zeros(_UE_T)
+    out = np.zeros((_UE_T, _UE_N))
+    sdfg(A=A, arr=arr_run, hist=hist, out=out)
+    assert np.allclose(hist, ref_hist), f'hist mismatch: got {hist}, expected {ref_hist}'
+    assert np.allclose(out, ref_out)
+    assert np.allclose(arr_run, ref_arr)
+
+
+def test_refuses_loop_varying_guard_and_stays_correct():
+    """The counterexample that forces the whole conditional-write class to be refused.
+
+    ``if jl % 2 == 0: arr[2] = ...`` followed by an unconditional read: the odd iterations
+    read the even iteration's write. A prologue load reproduces the pre-loop value instead,
+    so promotion changes every odd element. Both older gates accept this shape
+    (``_slot_has_in_body_rmw`` is ``False``, ``_not_live_out`` is ``True``); only the
+    must-def gate refuses it -- which is why the invariant-guard cloudsc shape, which PCIA
+    cannot distinguish from this one, is refused too.
+    """
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N]):
+        for jl in range(N):
+            if jl % 2 == 0:
+                arr[2] = scale[jl]
+            out[jl] = arr[2] * 3.0
+
+    sdfg = kern.to_sdfg(simplify=True)
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    assert len(loops) == 1
+    pcia = PromoteConstantIndexAccess()
+    slot = dace.subsets.Range([(2, 2, 1)])
+    # The two gates that predate the must-def check both say "go ahead" here.
+    assert not pcia._slot_has_in_body_rmw(loops[0], 'arr', slot)
+    assert pcia._not_live_out(loops[0], 'arr', slot)
+    assert not pcia.slot_reads_are_must_defined(loops[0], 'arr', slot)
+
+    before = _snapshot(sdfg)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is None, f'a loop-varying guard leaves the read upward-exposed; got {res}'
+    assert _snapshot(sdfg) == before, 'a pass that does not apply must not mutate the SDFG'
+
+    n = 12
+    rng = np.random.default_rng(3)
+    arr_in = rng.random(5)
+    scale = rng.random(n)
+    ref_arr = arr_in.copy()
+    ref = np.zeros(n)
+    for jl in range(n):
+        if jl % 2 == 0:
+            ref_arr[2] = scale[jl]
+        ref[jl] = ref_arr[2] * 3.0
+
+    out = np.zeros(n)
+    sdfg(arr=arr_in.copy(), out=out, scale=scale, N=n)
+    assert np.allclose(out, ref), f'got {out}, expected {ref}'
+
+
+def test_promotes_when_write_dominates_read_across_states():
+    """Value-preserving counterpart: the must-def is established by a *different* block than
+    the one holding the read. Write in the first body state, read in the second -- the write
+    state dominates the read state inside the loop, so the premise holds and PCIA promotes.
+    """
+
+    @dace.program
+    def kern(arr: dace.float64[5], out: dace.float64[N], scale: dace.float64[N], tmp: dace.float64[N]):
+        for jl in range(N):
+            arr[1] = 0.002 * scale[jl]
+            tmp[jl] = scale[jl] + 1.0
+            out[jl] = arr[1] * tmp[jl]
+
+    sdfg = kern.to_sdfg(simplify=True)
+    res = PromoteConstantIndexAccess().apply_pass(sdfg, {})
+    assert res is not None, 'a write that dominates the read inside the body must still promote'
+    sdfg.validate()
+    assert _apply_loop_to_map(sdfg) >= 1
+
+    n = 10
+    rng = np.random.default_rng(23)
+    arr_in = rng.random(5)
+    scale = rng.random(n)
+    expected_tmp = scale + 1.0
+    expected_out = (0.002 * scale) * expected_tmp
+
+    out = np.zeros(n)
+    tmp = np.zeros(n)
+    sdfg(arr=arr_in.copy(), out=out, scale=scale, tmp=tmp, N=n)
+    assert np.allclose(tmp, expected_tmp)
+    assert np.allclose(out, expected_out)
 
 
 if __name__ == '__main__':

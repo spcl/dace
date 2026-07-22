@@ -8,28 +8,39 @@ though every iteration sees an independent value at the slot. Buffering the slot
 per-iteration scalar removes the false dependence so the loop parallelizes::
 
     for i in range(N):                for i in range(N):       # now a Map
-        if cond(i): arr[1] = f(i) ->      t = arr[1]           # load live-in
-        out[i] = arr[1] * g(i)            if cond(i): t = f(i)
+        arr[1] = f(i)             ->      t = arr[1]           # prologue: live-in
+        out[i] = arr[1] * g(i)            t = f(i)             # must-def, before any read
                                           out[i] = t * g(i)
 
 Unlike :class:`~dace.transformation.passes.buffer_expansion.BufferExpansion`, the array
 ``arr`` is *not* loop-local (it's read or written outside the loop too), so the slot must be
-treated as a value, not a buffer with private layout. The conditional-write case is the
-realistic one (cloudsc's ``zvqx[1] = ...`` inside an ``if yrecldp_laericesed`` guard): the
-prologue load captures the external "live-in" value the unconditional read would observe
-when the guard does not fire.
+treated as a value, not a buffer with private layout.
+
+The prologue load exists so a read the body reaches before its own write still observes
+*something*; it is NOT what makes such a read correct. It supplies the pre-loop value, and
+the only iteration for which that is the right answer is one where no earlier iteration
+wrote the slot. Hence the must-def gate below.
 
 Safety. The pass refuses unless ``arr[c]``:
 
 - is the **only** subset of ``arr`` read or written inside the loop body (no mixed
   ``arr[c]`` / ``arr[i]`` accesses),
 - has no WCR / reduction edge,
+- has **no upward-exposed read in the body** -- on every iteration, every read of
+  ``arr[c]`` is preceded by a write of ``arr[c]`` from that same iteration (a genuine
+  must-def), or the body writes ``arr[c]`` nowhere at all. This is the classical
+  privatization premise and it is what makes the prologue load value-preserving: a read
+  that is *not* must-defined observes the previous iteration's write in the original
+  loop, and the pre-loop value in the promoted loop. See
+  :meth:`PromoteConstantIndexAccess.slot_reads_are_must_defined`,
 - is **not live-out at that slot** -- the loop's writes to ``arr[c]`` are unobservable
   outside the loop. The check is *slot-precise*: a post-loop read of a different element
   of ``arr`` (``arr[k]`` for some ``k != c``) does not block promotion, because the
   in-loop writes to ``arr[c]`` don't affect that other element. The cloudsc pattern
   where a species loop writes ``zvqx[1]`` and a downstream consumer reads ``zvqx[2..4]``
-  fits naturally under this gate.
+  fits naturally under this gate. "After the loop" includes the blocks that *precede* the
+  loop inside an enclosing :class:`~dace.sdfg.state.LoopRegion`: the enclosing loop's back
+  edge runs them again after this loop finishes.
 
 The pass is intentionally narrow: when the loop's writes to ``arr[c]`` *are* observed
 outside the loop (live-out at slot ``c``), we refuse rather than try to preserve the
@@ -53,6 +64,14 @@ reverted so the SDFG does not grow needlessly.
       have that machinery yet, and adding it would change the SDFG more than the
       parallelism gain justifies. The slot-precise live-out check only allows
       promotion when no post-loop read targets *this* specific slot.
+    - **A conditionally-written slot with an unconditional read is refused.** The
+      must-def gate cannot prove the read sees this iteration's write, and it does not
+      in general: with a loop-varying guard (``if jl % 2 == 0: arr[c] = ...``) the
+      unguarded iterations read the previous iteration's value, which the prologue load
+      does not reproduce. The cloudsc ``if yrecldp_laericesed`` shape is only safe
+      because that guard is loop-*invariant* -- true on every iteration or on none.
+      Recovering it needs a loop-invariance analysis of the guarding conditions (and of
+      every other write to the slot); until that exists, the class is refused.
 
 The pass assumes the loop body is flat dataflow: tasklets + AccessNodes connected by
 plain memlets. NestedSDFG-mediated accesses to the same array are not considered.
@@ -62,15 +81,28 @@ import copy
 import io
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+import networkx as nx
+import networkx.algorithms.shortest_paths as nxsp
+
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import (AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion,
+                             LoopRegion, SDFGState)
 from dace.transformation import pass_pipeline as ppl
+from dace.transformation.passes.analysis.analysis import must_write_state
 
 #: Array lifetimes we are allowed to attach a privatized scalar to (the scalar follows
 #: the same scoping rules; persistent / global lifetimes are out of scope for v1).
 _PRIVATIZABLE_LIFETIMES = (dtypes.AllocationLifetime.Scope, dtypes.AllocationLifetime.SDFG)
+
+#: Per-block ``(read, written)`` data names, the shape
+#: :func:`~dace.transformation.passes.analysis.analysis.must_write_state` consumes.
+AccessSetMap = Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]
+#: Per-region immediate-dominator maps.
+IdomMap = Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]]
+#: ``must_write_state`` memo, keyed by ``(data name, id(block))``.
+MustWriteCache = Dict[Tuple[str, int], Optional[SDFGState]]
 
 
 class _Promotion:
@@ -177,8 +209,8 @@ class PromoteConstantIndexAccess(ppl.Pass):
     See the module docstring. For every loop the SDFG (and its nested SDFGs) contains that
     ``LoopToMap`` currently refuses, the pass picks the candidate ``(arr, c)`` pairs that
     pass the safety check, replaces every ``arr[c]`` access in the body with a fresh
-    per-iteration scalar (prologue-loaded from ``arr[c]`` so the conditional-write case
-    still observes the external live-in value), and keeps the rewrite only if the loop
+    per-iteration scalar (prologue-loaded from ``arr[c]`` so a read the body reaches before
+    its own write still observes the pre-loop value), and keeps the rewrite only if the loop
     then becomes parallelizable.
     """
 
@@ -367,10 +399,167 @@ class PromoteConstantIndexAccess(ppl.Pass):
                 # epilogue writeback or tighten those tests + refuse here.
                 if self._slot_has_in_body_rmw(loop, name, point):
                     continue
+                # The prologue-load rewrite is value-preserving only if no read of the
+                # slot is upward-exposed at the top of an iteration. Anything the
+                # must-def analysis cannot prove is a refusal, never a permission.
+                if not self.slot_reads_are_must_defined(loop, name, point):
+                    continue
                 if not self._not_live_out(loop, name, slot=point):
                     continue
                 results.append((name, point))
         return results
+
+    def slot_reads_are_must_defined(self, loop: LoopRegion, name: str, slot: subsets.Range) -> bool:
+        """Whether every read of ``name[slot]`` in ``loop``'s body sees a write from its OWN iteration.
+
+        This is the premise the whole rewrite stands on. The promoted body reads a scalar that
+        the prologue seeds from ``arr[slot]``, and once the loop is a map that seed is the
+        *pre-loop* value on every iteration -- the loop no longer writes ``arr`` at all. So a
+        read that is upward-exposed (reached at the top of an iteration with no preceding
+        write in that iteration) changes value: originally it observed the previous
+        iteration's write, after promotion it observes the pre-loop value. The reduction
+        subcase of that is caught by :meth:`_slot_has_in_body_rmw`, but only when the read
+        flows back into the write; a read that feeds anything else (``hist[t] = arr[1] * 2``
+        ahead of an inner loop that writes ``arr[1]``) is just as loop-carried and is not a
+        dataflow cycle, so it needs this check.
+
+        Two ways the premise holds:
+
+        * the body writes ``name[slot]`` nowhere -- every read observes the live-in value,
+          which is exactly what the prologue copies; or
+        * every read is must-defined: preceded, on *every* path through one iteration, by a
+          write of the same slot.
+
+        Must-def is decided with the same machinery
+        (:func:`~dace.transformation.passes.analysis.analysis.must_write_state`) that
+        :class:`~dace.transformation.passes.analysis.analysis.ScalarWriteShadowScopes` uses,
+        fed a slot-precise access-set map so the whole-container reasoning answers a
+        per-element question. The dominator walk deliberately stops at ``loop``: a write
+        outside it happened in a different iteration (or before the loop), and cannot cover
+        this iteration's read.
+
+        Anything the analysis cannot place -- an interstate edge that merely mentions the
+        array, a loop condition that reads it -- is a refusal, not a permission.
+
+        :param loop: The loop whose body is analyzed.
+        :param name: The array name.
+        :param slot: The constant point being considered for promotion.
+        :returns: ``True`` only when the premise is established.
+        """
+        body_states = list(loop.all_states())
+        if not body_states:
+            return True
+
+        # Slot-precise (read, write) sets keyed by ARRAY name but recording only accesses that
+        # hit ``slot``: the shape ``must_write_state`` expects, narrowed to one element.
+        # Only a write at the state's TOP scope counts as a must-def -- one inside a map scope
+        # does not run at all when the map range is empty, so it establishes nothing. Reads
+        # are collected at every scope: a read inside a map still has to be covered.
+        access_sets: AccessSetMap = {}
+        reads: Dict[SDFGState, List[nodes.AccessNode]] = {}
+        writes: Dict[SDFGState, List[nodes.AccessNode]] = {}
+        for state in body_states:
+            read_nodes: List[nodes.AccessNode] = []
+            write_nodes: List[nodes.AccessNode] = []
+            for node in state.nodes():
+                if not isinstance(node, nodes.AccessNode) or node.data != name:
+                    continue
+                if self._edges_touch_slot(state.out_edges(node), name, slot):
+                    read_nodes.append(node)
+                if state.entry_node(node) is None and self._edges_touch_slot(state.in_edges(node), name, slot):
+                    write_nodes.append(node)
+            reads[state] = read_nodes
+            writes[state] = write_nodes
+            access_sets[state] = ({name} if read_nodes else set(), {name} if write_nodes else set())
+
+        if not any(writes.values()):
+            return True
+        if not any(reads.values()):
+            return True
+
+        # Symbolic reads of the array: an iedge assignment/condition, or the loop's own
+        # header expressions. Their position in the iteration is not modeled here, so with
+        # writes present in the body the honest answer is "cannot tell" -> refuse.
+        for edge in loop.all_interstate_edges():
+            ied = edge.data
+            if ied is None:
+                continue
+            if any(rhs and self._expr_references_name(rhs, name) for rhs in ied.assignments.values()):
+                return False
+            if ied.condition is not None and self._expr_references_name(ied.condition.as_string, name):
+                return False
+        for code in (loop.loop_condition, loop.init_statement, loop.update_statement):
+            if code is not None and self._expr_references_name(code.as_string, name):
+                return False
+
+        # Region-level access sets + immediate dominators, for every region inside the loop.
+        idom: IdomMap = {}
+        for cfg in loop.all_control_flow_regions():
+            region_reads: Set[str] = set()
+            region_writes: Set[str] = set()
+            for state in cfg.all_states():
+                region_reads |= access_sets[state][0]
+                region_writes |= access_sets[state][1]
+            access_sets[cfg] = (region_reads, region_writes)
+            if isinstance(cfg, ConditionalBlock):
+                # A ConditionalBlock has no edges; each branch dominates only itself.
+                idom[cfg] = {branch: branch for _, branch in cfg.branches}
+            else:
+                idom[cfg] = nx.immediate_dominators(cfg.nx, cfg.start_block)
+
+        cache: MustWriteCache = {}
+        for state, read_nodes in reads.items():
+            for read in read_nodes:
+                if not self._read_is_must_defined(loop, name, slot, state, read, writes[state], access_sets, idom,
+                                                  cache):
+                    return False
+        return True
+
+    def _read_is_must_defined(self, loop: LoopRegion, name: str, slot: subsets.Range, state: SDFGState,
+                              read: nodes.AccessNode, state_writes: List[nodes.AccessNode], access_sets: AccessSetMap,
+                              idom: IdomMap, cache: MustWriteCache) -> bool:
+        """Whether one read AccessNode of ``name[slot]`` is preceded by a write in the same iteration."""
+        # The read node is itself written at the slot -- the write is ordered before the read.
+        # Only at the top scope: inside a map, an empty range leaves the node unwritten.
+        if state.entry_node(read) is None and self._edges_touch_slot(state.in_edges(read), name, slot):
+            return True
+        # Another write of the slot in the same state, with a dataflow path to the read.
+        for cand in state_writes:
+            if cand is not read and nxsp.has_path(state.nx, cand, read):
+                return True
+        # A block that dominates the read and writes the slot on every path through itself.
+        pivot: ControlFlowBlock = state
+        region: Optional[AbstractControlFlowRegion] = state.parent_graph
+        # ``idom`` covers exactly the regions inside ``loop``; leaving that set means the walk
+        # left the loop without finding a cover, which is a refusal.
+        while region is not None and region in idom:
+            region_idom = idom[region]
+            block = region_idom.get(pivot)
+            if block is pivot:
+                block = None
+            while block is not None:
+                if must_write_state(name, block, access_sets, idom, cache) is not None:
+                    return True
+                nxt = region_idom.get(block)
+                block = None if nxt is block else nxt
+            if region is loop:
+                # Above the promoted loop lies a different iteration; nothing there covers
+                # this read.
+                return False
+            pivot = region
+            region = region.parent_graph
+        return False
+
+    @classmethod
+    def _edges_touch_slot(cls, edges, name: str, slot: subsets.Range) -> bool:
+        """Whether any of ``edges`` carries a memlet on exactly ``name[slot]``."""
+        for edge in edges:
+            memlet = edge.data
+            if memlet is None or memlet.data != name or not isinstance(memlet.subset, subsets.Range):
+                continue
+            if cls._point_subsets_equal(memlet.subset, slot):
+                return True
+        return False
 
     def _slot_has_in_body_rmw(self, loop: LoopRegion, name: str, slot: subsets.Range) -> bool:
         """``True`` iff some write of ``name[slot]`` inside the loop body has a
@@ -575,6 +764,14 @@ class PromoteConstantIndexAccess(ppl.Pass):
         (those are what we're privatizing). Any access in a predecessor of the loop
         (live-in) is also permitted -- the prologue load handles it.
 
+        Back edges. When an enclosing region is a :class:`~dace.sdfg.state.LoopRegion`, its
+        back edge is not an edge of the region's graph, so a plain forward walk reports the
+        blocks *before* ``loop`` as unreachable -- yet the enclosing loop runs them again
+        after ``loop`` finishes, and they observe the writes it made. Every block of an
+        enclosing LoopRegion therefore counts as "after", not just the forward-reachable
+        ones. Without this, ``for t: hist[t] = arr[1]; for i: arr[1] = ...`` reads as
+        "``arr[1]`` is dead after the inner loop" and the inner loop is wrongly promoted.
+
         :param slot: When given, the check is *slot-precise*: a post-loop access to a
             *different* element of ``arr`` does not count as a live-out conflict, because
             the in-loop writes to ``arr[slot]`` don't affect those other elements. This
@@ -598,6 +795,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
                         continue
                     reachable.add(e.dst)
                     frontier.append(e.dst)
+            if isinstance(parent, LoopRegion):
+                # The enclosing loop's back edge re-runs the whole region after ``cur``.
+                reachable.update(b for b in parent.nodes() if b is not cur)
             for block in reachable:
                 for state in self._states_of(block):
                     if state in loop_states:
@@ -693,8 +893,9 @@ class PromoteConstantIndexAccess(ppl.Pass):
                                          find_new_name=True)
 
         # Prologue: insert a state at the head of the loop body that copies arr[c] -> t.
-        # This load gives the unconditional read the external "live-in" value even when
-        # the in-loop write is conditional and doesn't fire on this iteration.
+        # The must-def gate has already established that every read of the slot in the body
+        # sees a write from its own iteration; the load only keeps the scalar defined on
+        # entry (and carries the live-in for a body that never writes the slot).
         old_start = loop.start_block
         prologue = loop.add_state_before(old_start, label=f'{arr_name}_at_{c_str}_load', is_start_block=True)
         src = prologue.add_access(arr_name)
