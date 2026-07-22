@@ -110,6 +110,33 @@ def test_family_matches_cmakes_compiler_id(executable, tmp_path):
     assert compiler_family.detect(executable) == cmake_compiler_id(executable, tmp_path).lower()
 
 
+def test_appending_flags_keeps_the_family_default(monkeypatch):
+    """Appending must extend the family's flags, not revert to the GCC ones.
+
+    ``Config.append`` is how DaCe itself adds flags -- LIKWID appends ``-DLIKWID_PERFMON -fopenmp``
+    so its headers stop compiling to no-ops, PAPI a vectorization-report flag -- and it is literally
+    ``current += value``. An implementation that treats "differs from the default" as "the user chose
+    this" hands nvc++ the four switches it rejects the moment instrumentation is enabled, turning a
+    working build into a configure error. Forces the family so the assertion holds on any host.
+    """
+    monkeypatch.setattr(compiler_family, 'detect', lambda _executable: 'nvhpc')
+    nvhpc = Config.get_metadata('compiler', 'cpu', 'args')['default_nvhpc']
+    with set_temporary('compiler', 'cpu', 'args', value=Config.get_default('compiler', 'cpu', 'args')):
+        Config.append('compiler', 'cpu', 'args', value=' -DLIKWID_PERFMON -fopenmp ')
+        got = compiler_family.cpu_args()
+    assert got.startswith(nvhpc), f'append discarded the nvhpc base: {got!r}'
+    assert '-DLIKWID_PERFMON' in got and '-fopenmp' in got, f'append lost the appended flags: {got!r}'
+    for flag in ('-fno-math-errno', '-fno-trapping-math', '-freciprocal-math', '-Wno-unused-label'):
+        assert flag not in got, f'append reintroduced {flag}, which nvc++ rejects: {got!r}'
+
+
+def test_hand_written_args_are_left_alone(monkeypatch):
+    """A value that is not the shipped default plus a suffix belongs to whoever wrote it."""
+    monkeypatch.setattr(compiler_family, 'detect', lambda _executable: 'nvhpc')
+    with set_temporary('compiler', 'cpu', 'args', value='-fPIC -my-own-flag'):
+        assert compiler_family.cpu_args() == '-fPIC -my-own-flag'
+
+
 def test_nvhpc_default_avoids_the_switches_nvcpp_rejects():
     """Pins the four that fail, so a well-meaning sync of the GNU default into the NVHPC one is
     caught even on a box with no nvc++ to compile with."""

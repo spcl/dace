@@ -77,8 +77,25 @@ def host_compiler() -> str:
 
 
 def cpu_args() -> str:
-    """``compiler.cpu.args``, specialized to the host compiler this build will use."""
+    """``compiler.cpu.args``, specialized to the host compiler this build will use.
+
+    The shipped default is the GCC/Clang spelling; a family needing different switches has its
+    ``default_<family>`` sibling substituted for it.
+
+    Substitution replaces the shipped default as a PREFIX rather than swapping the whole string,
+    because appending is how DaCe itself adds flags: LIKWID appends ``-DLIKWID_PERFMON -fopenmp`` to
+    activate its headers, PAPI a vectorization-report flag, and ``Config.append`` is literally
+    ``current += value``. Treating any difference from the default as "the user chose this" would let
+    those appends drag the GCC flags back in -- on NVHPC that turns a working build into
+    ``nvc++-Error-Unknown switch: -fno-math-errno`` the moment instrumentation is switched on.
+
+    A value that does NOT start with the shipped default was written by hand and is returned
+    untouched: a family default is a better starting point, never a reason to overrule someone who
+    stated what they wanted.
+    """
     configured = Config.get('compiler', 'cpu', 'args')
-    if configured != Config.get_default('compiler', 'cpu', 'args'):
+    shipped = Config.get_default('compiler', 'cpu', 'args')
+    family = Config.get_metadata('compiler', 'cpu', 'args').get('default_' + detect(host_compiler()))
+    if family is None or not configured.startswith(shipped):
         return configured
-    return Config.get_metadata('compiler', 'cpu', 'args').get('default_' + detect(host_compiler()), configured)
+    return family + configured[len(shipped):]
