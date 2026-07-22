@@ -64,6 +64,16 @@ class InlineTaskletConnectors(ppl.Pass):
         conn = edge.src_conn if is_output else edge.dst_conn
         if not conn:
             return None
+        # A connector DECLARED as a pointer is used as a pointer by the body, so it cannot be
+        # rewritten into a value access. The case that matters is a callback: the body is a call
+        # into a foreign C function whose signature we do not own, and an out-parameter is a ``T*``
+        # the callee writes through. The classic lowering binds it as ``T* __out_x = &x;``;
+        # inlining it emits the bare ``x``, which the C++ compiler rejects with
+        # "cannot convert 'double' to 'double*' in argument passing". Array connectors are
+        # unaffected -- their whole-array subsets already fail the single-element test below.
+        conntype = node.out_connectors[conn] if is_output else node.in_connectors[conn]
+        if isinstance(conntype, dtypes.pointer):
+            return None
         memlet = edge.data
         if memlet.data is None or memlet.data not in osdfg.arrays:
             return None
