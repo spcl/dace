@@ -904,7 +904,7 @@ required:
                                     backend sinks a dead declaration to first use regardless.
                             scalar_init_style:
                                 type: str
-                                default: fused
+                                default: split
                                 title: Mutable scalar declaration / first-write fusion
                                 description: >
                                     Applies to: experimental_readable ONLY (legacy always declares a scope
