@@ -231,23 +231,12 @@ class StateFusion(transformation.MultiStateTransformation):
                     if node.data == '__pystate':
                         return False
 
-            # NOTE: This is quick fix for MPI Waitall (probably also needed for
-            # Wait), until we have a better SDFG representation of the buffer
-            # dependencies.
-            try:
-                next(node for node in first_state.nodes()
-                     if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
-                     or node.label == '_Waitall_')
-                return False
-            except StopIteration:
-                pass
-            try:
-                next(node for node in second_state.nodes()
-                     if (isinstance(node, nodes.LibraryNode) and type(node).__name__ == 'Waitall')
-                     or node.label == '_Waitall_')
-                return False
-            except StopIteration:
-                pass
+            # Library nodes and nested SDFGs carry dependencies fusion cannot see.
+            # Tasklet callbacks are governed by dont_fuse_callbacks above.
+            for state in (first_state, second_state):
+                for node in state.nodes():
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
+                        return False
 
             # If second state has other input edges, there might be issues
             # Exceptions are when none of the states contain dataflow, unless
@@ -310,13 +299,11 @@ class StateFusion(transformation.MultiStateTransformation):
                                                                             second_cc_input, second_cc_output)
 
             if len(resulting_ccs) > 1:
-                # Side-effect tasklets cannot be fused if could lead to data races
-                for node in first_state.nodes():
-                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
-                        return False
-                for node in second_state.nodes():
-                    if isinstance(node, nodes.CodeNode) and getattr(node, 'side_effects', False):
-                        return False
+                # Declared side effects would race across parallel components.
+                for state in (first_state, second_state):
+                    for node in state.nodes():
+                        if isinstance(node, nodes.Tasklet) and node.side_effects:
+                            return False
 
             # Check for data races
             for fused_cc in resulting_ccs:

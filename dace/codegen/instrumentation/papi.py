@@ -12,7 +12,7 @@ from dace.sdfg.nodes import EntryNode, MapEntry, MapExit, Tasklet
 from dace.sdfg.graph import SubgraphView
 from dace.memlet import Memlet
 from dace.sdfg import scope_contains_scope
-from dace.sdfg.state import DataflowGraphView
+from dace.sdfg.state import DataflowGraphView, SDFGState
 
 import sympy as sp
 import os
@@ -483,10 +483,12 @@ class PAPIUtils(object):
     def is_papi_used(sdfg: dace.SDFG) -> bool:
         """ Returns True if any of the SDFG elements includes PAPI counter
             instrumentation. """
+        instrumented_types = (SDFGState, nodes.AccessNode, nodes.Tasklet, nodes.NestedSDFG, nodes.MapEntry,
+                              nodes.ConsumeEntry)
         for node, _ in sdfg.all_nodes_recursive():
             if isinstance(node, nodes.EntryNode) and node.map.instrument == dace.InstrumentationType.PAPI_Counters:
                 return True
-            if hasattr(node, 'instrument') and node.instrument == dace.InstrumentationType.PAPI_Counters:
+            if isinstance(node, instrumented_types) and node.instrument == dace.InstrumentationType.PAPI_Counters:
                 return True
         return False
 
