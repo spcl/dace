@@ -86,7 +86,7 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
                 dst_is_tile = dst_desc.transient and not isinstance(dst_desc, data.Scalar)
                 intra_staging = src_is_tile and dst_is_tile
             if not (either_is_scalar or bridge_to_output or input_staging or intra_staging):
-                src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg)
+                src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg, state)
                 raise AssertionError(f"design 3.8.3 (2) violation: AN -> AN edge survives staging "
                                      f"but neither endpoint is a Scalar bridge or a transient->output "
                                      f"writeback. src={src_data!r}[{src_subset}] -> "
@@ -437,10 +437,12 @@ class InsertTileLoadStore(ppl.Pass):
                 continue  # No reads -- sink AN handled by phase 2.
             mask_an_for_this = (self._find_mask_producer_an(inner_state, mask_name) if mask_name else None)
             try:
-                src_data, src_subset, _dst_data, _dst_subset = infer_edge_endpoints(pre_stage_out_edges[0], inner_sdfg)
+                src_data, src_subset, _dst_data, _dst_subset = infer_edge_endpoints(pre_stage_out_edges[0], inner_sdfg,
+                                                                                    inner_state)
             except Exception:  # noqa: BLE001
                 continue
-            subset = (src_subset if src_data == an.data else an_side_subset(pre_stage_out_edges[0], an, inner_sdfg))
+            subset = (src_subset
+                      if src_data == an.data else an_side_subset(pre_stage_out_edges[0], an, inner_sdfg, inner_state))
             if subset is None:
                 continue
             record = classify_tile_access(subset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
@@ -457,8 +459,8 @@ class InsertTileLoadStore(ppl.Pass):
                 gather_groups: Dict[str, list] = {}
                 for e in pre_stage_out_edges:
                     try:
-                        e_sd, e_ss, _edd, _eds = infer_edge_endpoints(e, inner_sdfg)
-                        e_sub = e_ss if e_sd == an.data else an_side_subset(e, an, inner_sdfg)
+                        e_sd, e_ss, _edd, _eds = infer_edge_endpoints(e, inner_sdfg, inner_state)
+                        e_sub = e_ss if e_sd == an.data else an_side_subset(e, an, inner_sdfg, inner_state)
                     except Exception:  # noqa: BLE001
                         e_sub = None
                     gather_groups.setdefault(str(e_sub), []).append((e, e_sub))
@@ -527,8 +529,8 @@ class InsertTileLoadStore(ppl.Pass):
             struct_groups: Dict[str, list] = {}
             for e in pre_stage_out_edges:
                 try:
-                    e_sd, e_ss, _edd, _eds = infer_edge_endpoints(e, inner_sdfg)
-                    e_sub = e_ss if e_sd == an.data else an_side_subset(e, an, inner_sdfg)
+                    e_sd, e_ss, _edd, _eds = infer_edge_endpoints(e, inner_sdfg, inner_state)
+                    e_sub = e_ss if e_sd == an.data else an_side_subset(e, an, inner_sdfg, inner_state)
                 except Exception:  # noqa: BLE001
                     e_sub = None
                 struct_groups.setdefault(str(e_sub), []).append((e, e_sub))
@@ -546,7 +548,7 @@ class InsertTileLoadStore(ppl.Pass):
                     # else an N-D ``an`` copies its full shape into the scalar bridge (see
                     # ``stage_constant_access``).
                     try:
-                        const_sub = an_side_subset(s_edges[0], an, inner_sdfg)
+                        const_sub = an_side_subset(s_edges[0], an, inner_sdfg, inner_state)
                     except Exception:  # noqa: BLE001 -- exotic edge: descriptor-shape default
                         const_sub = None
                     # ``stage_constant_access`` builds a SCALAR bridge -- valid only for a
@@ -625,7 +627,7 @@ class InsertTileLoadStore(ppl.Pass):
                 continue
             mask_an_for_this = (self._find_mask_producer_an(inner_state, mask_name) if mask_name else None)
             try:
-                wsubset = an_side_subset(pre_stage_in_edges[0], an, inner_sdfg)
+                wsubset = an_side_subset(pre_stage_in_edges[0], an, inner_sdfg, inner_state)
             except Exception:  # noqa: BLE001
                 continue
             wrecord = classify_tile_access(wsubset, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
@@ -1191,7 +1193,7 @@ class InsertTileLoadStore(ppl.Pass):
         prefix_begins = None
         if orig_edge is not None:
             try:
-                _sd, _ss, dst_data, dst_subset = infer_edge_endpoints(orig_edge, sdfg)
+                _sd, _ss, dst_data, dst_subset = infer_edge_endpoints(orig_edge, sdfg, inner_state)
                 if dst_data == consumer_an.data and dst_subset is not None and len(dst_subset.ranges) == D:
                     prefix_begins = [dst_subset.ranges[d][0] for d in range(D - K)]
             except Exception:  # noqa: BLE001 -- exotic edge; fall back to full extent

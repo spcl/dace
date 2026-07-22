@@ -125,16 +125,15 @@ def _is_copy_tasklet(node) -> bool:
         lhs in node.out_connectors
 
 
-def _node_side_subset(edge, node, array: str):
-    """The subset of ``edge`` on ``node``'s side, where ``node`` is an AccessNode
-    of ``array``. For a same-array self-copy DaCe puts the source region in
-    ``subset`` and the destination in ``other_subset``; otherwise the ``array``
-    side is whichever of ``subset`` / ``other_subset`` matches ``memlet.data``."""
+def _node_side_subset(state, edge, node):
+    """The subset of ``edge`` on ``node``'s side, where ``node`` is an endpoint of ``edge``.
+
+    Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
+    ``_is_data_src`` flag, NOT by the endpoint names -- when both ends name the same array (an
+    intermediate scratch reusing the operand's name) a name test cannot disambiguate at all.
+    ``get_src_subset`` / ``get_dst_subset`` are the only correct readers of the pair."""
     mem = edge.data
-    other = edge.dst if node is edge.src else edge.src
-    if isinstance(other, nodes.AccessNode) and other.data == array:
-        return mem.subset if node is edge.src else mem.other_subset
-    return mem.subset if mem.data == array else mem.other_subset
+    return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
 def _extract_permutation_copy(state: SDFGState):
@@ -171,8 +170,8 @@ def _extract_permutation_copy(state: SDFGState):
     sink_ies = [e for e in state.in_edges(sink) if e.data is not None and not e.data.is_empty()]
     if len(src_oes) != 1 or len(sink_ies) != 1:
         return None
-    read_subset = _node_side_subset(src_oes[0], src, in_array)
-    write_subset = _node_side_subset(sink_ies[0], sink, out_array)
+    read_subset = _node_side_subset(state, src_oes[0], src)
+    write_subset = _node_side_subset(state, sink_ies[0], sink)
     if read_subset is None or write_subset is None:
         return None
     return in_array, out_array, read_subset, write_subset

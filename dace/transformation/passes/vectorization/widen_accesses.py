@@ -200,7 +200,7 @@ class WidenAccesses(ppl.Pass):
                     continue
                 for edge in list(state.out_edges(an)) + list(state.in_edges(an)):
                     try:
-                        sub = an_side_subset(edge, an, inner_sdfg)
+                        sub = an_side_subset(edge, an, inner_sdfg, state)
                     except Exception:  # noqa: BLE001 -- helper may refuse exotic edges
                         lane_dep.add(an.data)  # conservative
                         break
@@ -503,7 +503,7 @@ class WidenAccesses(ppl.Pass):
         :returns: ``True`` if the read is lane-dependent (dest must widen), else ``False``.
         """
         try:
-            sub = an_side_subset(edge, edge.src, inner_sdfg)
+            sub = an_side_subset(edge, edge.src, inner_sdfg, state)
         except Exception:  # noqa: BLE001 -- helper may refuse exotic edges
             return True
         try:
@@ -575,7 +575,7 @@ class WidenAccesses(ppl.Pass):
                     continue
                 for edge in list(inner_state.out_edges(an)) + list(inner_state.in_edges(an)):
                     try:
-                        sub = an_side_subset(edge, an, inner_sdfg)
+                        sub = an_side_subset(edge, an, inner_sdfg, inner_state)
                     except Exception:  # noqa: BLE001
                         continue
                     if sub is None:

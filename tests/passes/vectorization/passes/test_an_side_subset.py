@@ -34,7 +34,7 @@ def test_data_matches_an_returns_subset():
     """edge.data.data == an.data -> return edge.data.subset."""
     sdfg, state, a, b = _build_an_to_an()
     edge = state.add_edge(a, None, b, None, Memlet("A[2:5]"))
-    out = an_side_subset(edge, a, sdfg)
+    out = an_side_subset(edge, a, sdfg, state)
     assert out == subsets.Range([(2, 4, 1)])
 
 
@@ -44,7 +44,7 @@ def test_data_points_at_other_returns_other_subset():
     mem = Memlet(data="B", subset=subsets.Range([(0, 7, 1)]))
     mem.other_subset = subsets.Range([(2, 5, 1)])
     edge = state.add_edge(a, None, b, None, mem)
-    out = an_side_subset(edge, a, sdfg)
+    out = an_side_subset(edge, a, sdfg, state)
     assert out == subsets.Range([(2, 5, 1)])
 
 
@@ -53,7 +53,7 @@ def test_no_other_subset_reconstructs_from_descriptor():
     sdfg, state, a, b = _build_an_to_an(shape_a=(4, ), shape_b=(4, ))
     mem = Memlet(data="B", subset=subsets.Range([(0, 3, 1)]))
     edge = state.add_edge(a, None, b, None, mem)
-    out = an_side_subset(edge, a, sdfg)
+    out = an_side_subset(edge, a, sdfg, state)
     assert out == subsets.Range([(0, 3, 1)])
 
 
@@ -62,7 +62,7 @@ def test_multi_dim_full_shape_reconstruction():
     sdfg, state, a, b = _build_an_to_an(shape_a=(4, 8), shape_b=(4, 8))
     mem = Memlet(data="B", subset=subsets.Range([(0, 3, 1), (0, 7, 1)]))
     edge = state.add_edge(a, None, b, None, mem)
-    out = an_side_subset(edge, a, sdfg)
+    out = an_side_subset(edge, a, sdfg, state)
     assert out == subsets.Range([(0, 3, 1), (0, 7, 1)])
 
 
@@ -75,14 +75,14 @@ def test_refuses_edge_not_incident_on_an():
     d = state.add_access("D")
     edge = state.add_edge(c, None, d, None, Memlet("C[0:8]"))
     with pytest.raises(ValueError, match="not an endpoint"):
-        an_side_subset(edge, a, sdfg)
+        an_side_subset(edge, a, sdfg, state)
 
 
 def test_empty_memlet_falls_back_to_descriptor():
     """Empty Memlet on an AN-incident edge: full-shape fallback fires."""
     sdfg, state, a, b = _build_an_to_an(shape_a=(6, ), shape_b=(6, ))
     edge = state.add_edge(a, None, b, None, Memlet())
-    out = an_side_subset(edge, a, sdfg)
+    out = an_side_subset(edge, a, sdfg, state)
     assert out == subsets.Range([(0, 5, 1)])
 
 
@@ -95,7 +95,7 @@ def test_infer_edge_endpoints_an_to_an():
     mem = Memlet(data="A", subset=subsets.Range([(2, 5, 1)]))
     mem.other_subset = subsets.Range([(0, 3, 1)])
     edge = state.add_edge(a, None, b, None, mem)
-    src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg)
+    src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg, state)
     assert src_data == "A"
     assert src_subset == subsets.Range([(2, 5, 1)])
     assert dst_data == "B"
@@ -110,7 +110,7 @@ def test_infer_edge_endpoints_non_an_endpoint_returns_none():
     sdfg, state, a, _b = _build_an_to_an()
     t = state.add_tasklet("t", inputs={"_in"}, outputs=set(), code="pass")
     edge = state.add_edge(a, None, t, "_in", Memlet("A[0:8]"))
-    src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg)
+    src_data, src_subset, dst_data, dst_subset = infer_edge_endpoints(edge, sdfg, state)
     assert src_data == "A"
     assert src_subset == subsets.Range([(0, 7, 1)])
     assert dst_data is None

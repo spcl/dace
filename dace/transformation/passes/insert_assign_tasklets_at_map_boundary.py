@@ -99,14 +99,12 @@ class InsertAssignTaskletsAtMapBoundary(ppl.Pass):
             src_an = edge.src
             dst_an = edge.dst
             mem = edge.data
-            # Identify which side of the memlet matches each AccessNode.
-            if mem.data == src_an.data:
-                src_subset = mem.subset
-                dst_subset = mem.other_subset
-            else:
-                assert mem.data == dst_an.data
-                src_subset = mem.other_subset
-                dst_subset = mem.subset
+            # Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
+            # ``_is_data_src`` flag, NOT by the endpoint names: a self-copy ``A -> A`` matches
+            # ``mem.data`` on BOTH sides, so a name test picks the source arbitrarily and reverses
+            # half of them. ``get_src_subset`` / ``get_dst_subset`` are the only correct readers.
+            src_subset = mem.get_src_subset(edge, state)
+            dst_subset = mem.get_dst_subset(edge, state)
             tasklet = state.add_tasklet(
                 name=f"_assign_{src_an.data}_to_{dst_an.data}",
                 inputs={"_in"},

@@ -396,7 +396,9 @@ class BufferExpansion(ppl.Pass):
                 in_edges, out_edges = state.in_edges(node), state.out_edges(node)
                 if any(e.data is not None and e.data.wcr is not None for e in in_edges):
                     return False  # reduction edge -> genuine accumulation, not a scratch buffer
-                in_subsets = [s for s in (BufferExpansion._arr_subset(e, name) for e in in_edges) if s is not None]
+                in_subsets = [
+                    s for s in (BufferExpansion._arr_subset(state, e, node) for e in in_edges) if s is not None
+                ]
                 if in_subsets:
                     saw_write = True
                     if isinstance(block, SDFGState):  # only unconditional writes are credited for dominance
@@ -405,7 +407,7 @@ class BufferExpansion(ppl.Pass):
                     continue
                 saw_read = True
                 for e in out_edges:
-                    read = BufferExpansion._arr_subset(e, name)
+                    read = BufferExpansion._arr_subset(state, e, node)
                     if read is None:
                         continue
                     # Written then read at this node -> defined this iteration. A single covering
@@ -520,14 +522,19 @@ class BufferExpansion(ppl.Pass):
         return cur
 
     @staticmethod
-    def _arr_subset(edge, name: str):
-        """The subset of ``edge``'s memlet that refers to data ``name`` (subset or other_subset)."""
+    def _arr_subset(state, edge, node):
+        """The subset of ``edge``'s memlet on ``node``'s side.
+
+        Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
+        ``_is_data_src`` flag, NOT by the endpoint names. On a self-copy ``A -> A`` both endpoints
+        match ``memlet.data``, so a name test hands the READ region back as the destination node's
+        write -- a level shift ``A[k] = A[k-1]`` then looks like a write that covers its own read and
+        the loop-carried dependence is expanded away.
+        """
         memlet = edge.data
         if memlet is None:
             return None
-        if memlet.data == name:
-            return memlet.subset
-        return memlet.other_subset
+        return memlet.get_src_subset(edge, state) if edge.src is node else memlet.get_dst_subset(edge, state)
 
     # -- expansion ----------------------------------------------------------------------
 
@@ -554,13 +561,21 @@ class BufferExpansion(ppl.Pass):
                 if id(edge) in seen or edge.data is None:
                     continue
                 memlet = edge.data
+                # ``subset`` addresses ``memlet.data``, ``other_subset`` the opposite endpoint. On a
+                # self-copy ``A -> A`` BOTH sides address ``name``, so both must gain the new index;
+                # an if/elif keyed on the data name rewrites one and leaves the other at the old rank.
+                self_copy = (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)
+                             and edge.src.data == name and edge.dst.data == name)
+                rewrote = False
                 if memlet.data == name and memlet.subset is not None:
                     edits.append((memlet, 'subset', memlet.subset))
                     memlet.subset = _insert_index(memlet.subset, index, axis)
-                    seen.add(id(edge))
-                elif memlet.other_subset is not None and self._touches(edge, name):
+                    rewrote = True
+                if memlet.other_subset is not None and self._touches(edge, name) and (self_copy or not rewrote):
                     edits.append((memlet, 'other_subset', memlet.other_subset))
                     memlet.other_subset = _insert_index(memlet.other_subset, index, axis)
+                    rewrote = True
+                if rewrote:
                     seen.add(id(edge))
         return _Expansion(desc, old[0], old[1], old[2], old[3], edits)
 

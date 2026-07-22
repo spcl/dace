@@ -17,7 +17,7 @@ from dace.subsets import Range
 from dace.transformation.passes.vectorization.utils.name_schemes import LaneIdScheme
 
 
-def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG):
+def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG, state: 'dace.SDFGState'):
     """``(src_data_name, src_subset, dst_data_name, dst_subset)`` for a memlet edge, both endpoints
     inferred.
 
@@ -31,6 +31,7 @@ def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG):
 
     :param edge: A memlet-carrying edge.
     :param sdfg: SDFG owning the endpoint descriptors.
+    :param state: The state holding ``edge`` (resolves which end each subset belongs to).
     :returns: ``(src_data_name, src_subset, dst_data_name, dst_subset)``; ``subset`` fields are fresh
         :class:`Range` copies (safe to mutate) or ``None`` for non-AN endpoints.
     """
@@ -45,27 +46,28 @@ def infer_edge_endpoints(edge: Edge, sdfg: dace.SDFG):
     src_subset: Optional[Range] = None
     dst_subset: Optional[Range] = None
     if src_an is not None:
-        src_subset = an_side_subset(edge, src_an, sdfg)
+        src_subset = an_side_subset(edge, src_an, sdfg, state)
     if dst_an is not None:
-        dst_subset = an_side_subset(edge, dst_an, sdfg)
+        dst_subset = an_side_subset(edge, dst_an, sdfg, state)
     return src_data, src_subset, dst_data, dst_subset
 
 
-def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG) -> Range:
+def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG, state: 'dace.SDFGState') -> Range:
     """Return the subset belonging to ``an`` on the AN-incident ``edge``.
 
-    Per TILIFICATION_TRANSFORMATION_DESIGN.md section 3.7, an AN-incident edge carries one array's
-    subset as ``edge.data.subset`` (array named by ``edge.data.data``) and the other side as
-    ``edge.data.other_subset``. Absent ``other_subset`` = implicit full-shape copy, so the AN's full
-    descriptor range is the answer.
+    An AN-incident edge carries one endpoint's region in ``edge.data.subset`` and the other's in
+    ``edge.data.other_subset``. **Which end ``subset`` names is carried by the memlet's own
+    ``_is_data_src`` flag, not by ``edge.data.data``**: on a self-copy ``A -> A`` both endpoints match
+    ``data``, so a name test hands the SAME subset to both ends and the read region silently doubles
+    as the write region. ``get_src_subset`` / ``get_dst_subset`` are the only correct readers of the
+    pair, and are what the CPU generator lowers a copy edge with.
 
-    This three-way is the **only correct way** to read an AN's subset from an AN-incident edge.
-    Direct ``edge.data.subset`` reads silently pick the wrong array when ``data`` points at the other
-    endpoint. Every consumer (classifier, staging pass, lib-node emitter) routes through this helper.
+    Absent side = implicit full-shape copy, so the AN's full descriptor range is the answer.
 
     :param edge: An edge with ``an`` as one of its endpoints.
     :param an: The :class:`AccessNode` whose subset is wanted.
     :param sdfg: The SDFG owning ``an`` (descriptor lookup for the full-shape fallback).
+    :param state: The state holding ``edge`` (resolves which end ``an`` is).
     :returns: A fresh :class:`Range` carrying ``an``'s subset on ``edge``.
     :raises ValueError: When ``edge`` has no memlet or its endpoints don't include ``an``.
     """
@@ -74,10 +76,9 @@ def an_side_subset(edge: Edge, an: AccessNode, sdfg: dace.SDFG) -> Range:
         raise ValueError(f"an_side_subset: edge {edge} has no memlet")
     if edge.src is not an and edge.dst is not an:
         raise ValueError(f"an_side_subset: AN {an.data!r} is not an endpoint of edge {edge}")
-    if mem.data == an.data and mem.subset is not None:
-        return copy.deepcopy(mem.subset)
-    if mem.other_subset is not None:
-        return copy.deepcopy(mem.other_subset)
+    side = mem.get_src_subset(edge, state) if edge.src is an else mem.get_dst_subset(edge, state)
+    if side is not None:
+        return copy.deepcopy(side)
     desc = an.desc(sdfg)
     return Range([(0, s - 1, 1) for s in desc.shape])
 

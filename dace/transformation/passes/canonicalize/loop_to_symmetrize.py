@@ -89,20 +89,16 @@ def _is_copy_tasklet(node) -> bool:
         lhs in node.out_connectors
 
 
-def _node_side_subset(edge, node, array: str):
-    """The subset of ``edge`` on ``node``'s side, where ``node`` is an
-    AccessNode of ``array``.
+def _node_side_subset(state, edge, node):
+    """The subset of ``edge`` on ``node``'s side, where ``node`` is an endpoint of ``edge``.
 
-    For a self-copy edge (both ends ``array``) DaCe puts the source region in
-    ``subset`` and the destination region in ``other_subset``; otherwise the
-    ``array`` side is whichever of ``subset`` / ``other_subset`` matches
-    ``memlet.data``.
+    Which of ``subset`` / ``other_subset`` names the source is carried by the memlet's own
+    ``_is_data_src`` flag, NOT by the endpoint names -- and this pass matches exactly the case where
+    the names cannot disambiguate, a self-copy ``X -> X``. ``get_src_subset`` / ``get_dst_subset``
+    are the only correct readers of the pair.
     """
     mem = edge.data
-    other = edge.dst if node is edge.src else edge.src
-    if isinstance(other, nodes.AccessNode) and other.data == array:
-        return mem.subset if node is edge.src else mem.other_subset
-    return mem.subset if mem.data == array else mem.other_subset
+    return mem.get_src_subset(edge, state) if node is edge.src else mem.get_dst_subset(edge, state)
 
 
 def _point_indices(subset, outer: str, inner: str) -> Optional[list]:
@@ -231,8 +227,8 @@ class LoopToSymmetrize(ppl.Pass):
         sink_ies = [e for e in state.in_edges(sink) if e.data is not None and not e.data.is_empty()]
         if len(src_oes) != 1 or len(sink_ies) != 1:
             return None
-        read_subset = _node_side_subset(src_oes[0], src, array)
-        write_subset = _node_side_subset(sink_ies[0], sink, array)
+        read_subset = _node_side_subset(state, src_oes[0], src)
+        write_subset = _node_side_subset(state, sink_ies[0], sink)
         read_order = _point_indices(read_subset, outer_var, inner_var)
         write_order = _point_indices(write_subset, outer_var, inner_var)
         if read_order is None or write_order is None or read_order != list(reversed(write_order)):
