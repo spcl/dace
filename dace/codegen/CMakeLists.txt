@@ -36,7 +36,10 @@ foreach(DACE_FILE ${DACE_FILES})
   # Make the path absolute
   set(DACE_FILE ${DACE_SRC_DIR}/${DACE_FILE})
   # Now treat the file according to the deduced target
-  if(${DACE_FILE_TARGET} STREQUAL "cuda")
+  # ``experimental_cuda`` is a CUDA target as much as ``cuda``: the CUDA code generator
+  # defaults to the experimental implementation, so omitting it leaves the generated file
+  # compiled as plain C++, where every CUDA symbol it emits is undeclared.
+  if(${DACE_FILE_TARGET} STREQUAL "experimental_cuda" OR ${DACE_FILE_TARGET} STREQUAL "cuda")
     if(${DACE_FILE_TARGET_TYPE} MATCHES "hip")
       set(DACE_ENABLE_HIP ON)
       set(DACE_HIP_FILES ${DACE_HIP_FILES} ${DACE_FILE})
@@ -85,7 +88,9 @@ if(DACE_ENABLE_CUDA)
   set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
 
   find_package(CUDAToolkit REQUIRED)
-  set(CMAKE_CUDA_STANDARD 17)
+  # Match the CUDA C++ standard to the CPU one (DACE_CPP_STANDARD): it governs both the
+  # device compile and the nvcc host pass, so device code gets the same dialect.
+  set(CMAKE_CUDA_STANDARD ${DACE_CPP_STANDARD})
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
@@ -264,6 +269,25 @@ if(DACE_ENABLE_HIP)
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES LANGUAGE HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
 endif() # DACE_ENABLE_HIP
+
+# Auxiliary source files contributed by library environments (e.g. nvcc-compiled
+# ``.cu`` wrappers for libnodes whose host-side tasklet cannot directly emit a
+# CUDA kernel launch). Anything ending in ``.cu`` here also implies the SDFG
+# wants CUDA enabled.
+string(REPLACE ";" " " DACE_ENV_AUXILIARY_SOURCES_NORMALISED "${DACE_ENV_AUXILIARY_SOURCES}")
+separate_arguments(DACE_ENV_AUXILIARY_SOURCES_LIST UNIX_COMMAND "${DACE_ENV_AUXILIARY_SOURCES_NORMALISED}")
+foreach(AUX_FILE ${DACE_ENV_AUXILIARY_SOURCES_LIST})
+  if(AUX_FILE STREQUAL "")
+    continue()
+  endif()
+  if(AUX_FILE MATCHES "\\.cu$")
+    if(NOT DACE_ENABLE_CUDA)
+      set(DACE_ENABLE_CUDA ON)
+    endif()
+    set_source_files_properties("${AUX_FILE}" PROPERTIES LANGUAGE CUDA)
+  endif()
+  list(APPEND DACE_CPP_FILES "${AUX_FILE}")
+endforeach()
 
 # Additional target-specific CMake files
 foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
