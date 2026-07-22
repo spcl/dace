@@ -67,7 +67,6 @@ Fifteen keys.
 | `scalar_init_style` | **`fused`** | readable only |
 | `const_init` | **`on`** | readable only |
 | `explicit_copy` | **`on`** | readable only |
-| `ssa_loop_scalars` | `off` | readable only |
 | `scalar_emission_type` | `keep` | readable only |
 | `loop_index_type` | `auto` | **both** |
 | `loop_bound_cmp` | `lt` | **both** |
@@ -138,11 +137,6 @@ emits no `<array>_idx` helper, so there is no access path to re-spell and it ign
   its dead runtime writes removed) or `const T x = expr;`. Default `on` because the pass already
   runs; the key exists to take it *out*. **Not a pure spelling axis** — a `constexpr_static` fill
   deletes the initializing writes, so `off` emits strictly more work.
-- **`ssa_loop_scalars`** (`off` | `on`) — the only key that runs an **SDFG rewrite**, not an emission
-  change: `PrivatizeScalars` (`ScalarFission`) versions a repeatedly-reassigned scope scalar into
-  single-assignment names (`nx`, `nx_0`, …). Each version is then write-once, so `MarkConstInit`
-  turns it into a `const` binding. It runs *before* `MarkConstInit` in the `codegen.py` pipeline for
-  exactly that reason. Default `off` → pass not run → byte-identical.
 - **`const_scalar_abi`** (`by_ref` | `by_value`) — `const T& x` vs `const T x` for a read-only scalar.
   **The sign is not fixed**, which is the entire argument for making it a key: LLVM #121262 is this
   axis with the *reference* winning, while Lemire measured by-reference 4.5× *slower* on an

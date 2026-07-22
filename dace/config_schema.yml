@@ -918,8 +918,8 @@ required:
                                     ``off`` skips it, so every such transient stays a mutable buffer filled
                                     at runtime.
 
-                                    NOTE the default is ``on``, not ``off`` as with ``ssa_loop_scalars``:
-                                    this pass ALREADY runs today, so ``on`` is what reproduces today's
+                                    NOTE the default is ``on``: this pass ALREADY runs today, so ``on``
+                                    is what reproduces today's
                                     output byte-for-byte. The key exists to take it OUT, which is what
                                     makes the readable generator's two const forms separable from the rest
                                     of the group when sweeping -- a compile-time fill (``constexpr T x[N] =
@@ -978,28 +978,6 @@ required:
                                     need the ``CopyLibraryNode`` LEFT UNEXPANDED -- ``RewriteCopyForLayout``
                                     rewrites it to a ``TensorTranspose``. So the expansion belongs to this
                                     key's block in ``codegen.py``, not to the pass.
-
-                            ssa_loop_scalars:
-                                type: str
-                                default: 'on'
-                                title: Single-assignment versioning of reassigned scope scalars
-                                description: >
-                                    Applies to: experimental_readable ONLY (this runs an SDFG rewrite
-                                    inside the readable-generator pipeline in ``codegen.py``; legacy never
-                                    enters that block, so its output stays byte-identical for every value).
-
-                                    Whether a transient scalar that is REASSIGNED several times in a scope
-                                    / loop nest is versioned into single-assignment names before codegen:
-                                    ``off`` leaves it as one mutable variable; ``on`` (the default) runs
-                                    the existing :class:`~dace.transformation.passes.scalar_fission.
-                                    PrivatizeScalars` (``ScalarFission``) pass so each dominating write
-                                    becomes its own container (``nx``, ``nx_0``, ``nx_1`` ...), each
-                                    written exactly once. A single-assignment version is then a write-once
-                                    value, which ``MarkConstInit`` marks and the generator emits as
-                                    ``const T nx_0 = expr;`` -- shorter live ranges and a ``const`` per
-                                    version. This is a semantics-preserving SSA renaming (the same pass
-                                    ``simplify`` uses to unblock ``LoopToMap``), applied here purely for
-                                    the readable form; ``off`` reproduces today's output byte-for-byte.
 
                             scalar_emission_type:
                                 type: str

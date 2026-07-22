@@ -262,15 +262,13 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Pure readability rewrites over an already-valid SDFG; validate once afterwards.
-        # ssa_loop_scalars: SSA-versions reassigned scalars so each write-once version can be marked
-        # const. Must run before MarkConstInit. Default 'off' keeps output byte-identical.
-        if config.Config.get('compiler', 'cpu', 'codegen_params', 'ssa_loop_scalars') == 'on':
-            from dace.transformation.passes.scalar_fission import PrivatizeScalars
-            PrivatizeScalars().apply_pass(sdfg, {})
-            infer_types.infer_connector_types(sdfg)
-            infer_types.set_default_schedule_and_storage_types(sdfg, None)
+        # Scalar fission (``PrivatizeScalars``) is deliberately NOT run here. It is an optimization
+        # pass and belongs in the caller's pipeline, before WCR memlets exist: by codegen time an
+        # accumulator chain has been rewritten to WCR, and fissioning a read-modify-write into a
+        # fresh SSA version drops the running value (this silently miscompiled CloudSC full_cpu).
+        # A caller who wants more const-markable versions runs it in their own pipeline instead.
         # const_init: classify write-once transients as constexpr/const. Default 'on' keeps output
-        # byte-identical (unlike ssa_loop_scalars above, this already runs today).
+        # byte-identical.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'const_init') == 'on':
             Pipeline([MarkConstInit()]).apply_pass(sdfg, {})
         InlineTaskletConnectors().apply_pass(sdfg, {})

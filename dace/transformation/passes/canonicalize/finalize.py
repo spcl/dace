@@ -279,8 +279,8 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
 
     CPU deliberately does NOT run this: there the intermediates are cache-resident and shared
     across the consumer maps, so materializing once and reading beats recomputing -- the four
-    separate maps are the CPU strategy. Run BEFORE ``offload_to_gpu`` so the fusion sees plain
-    (device-agnostic) maps and the single fused map is what gets offloaded.
+    separate maps are the CPU strategy. Called by :func:`offload_to_gpu` as its first step, so the
+    fusion sees plain (device-agnostic) maps and the single fused map is what gets offloaded.
 
     :param sdfg: The SDFG to fuse in place.
     :returns: The number of ``OTFMapFusion`` applications.
@@ -289,13 +289,19 @@ def recompute_fuse_for_gpu(sdfg: SDFG) -> int:
 
 
 def offload_to_gpu(sdfg: SDFG) -> None:
-    """Move a canonicalized SDFG onto the GPU, in place: device offload then block-size choice.
+    """Move a canonicalized SDFG onto the GPU, in place: recompute-fuse, device offload, block size.
 
-    This is the canonicalize-GPU tail the user specified -- "canon-gpu runs after finalizing to
-    GPU offloading and the block-size default pass" -- so ``canonicalize(s, target='gpu');
-    finalize_for_target(s, 'gpu')`` becomes the perf-path counterpart to ``auto_optimize(s,
-    device=GPU)``. Two steps, mirroring ``auto_optimize``'s GPU tail:
+    A SEPARATE step from :func:`finalize_for_target`, not part of canonicalization: the device move
+    is where a caller's own scheduling decisions belong, so the pipeline is
+    ``canonicalize(s, target='gpu')`` -> *(any passes the caller needs on a device-agnostic graph)*
+    -> ``offload_to_gpu(s)`` -> ``finalize_for_target(s, 'gpu')``. Callers with their own offload
+    recipe (CloudSC schedules the inner maps and keeps the nblocks map sequential) substitute it
+    here and never call this function. Three steps, mirroring ``auto_optimize``'s GPU tail:
 
+    0. **Recompute-fuse** (:func:`recompute_fuse_for_gpu`): collapse producer chains into one map
+       before the device move, so the single fused map is what lands on the device (register
+       recompute beats the global-memory round-trip of materialized intermediates). CPU keeps the
+       materialized maps, which is why this lives here and not in ``finalize_for_target``.
     1. **Full offload** (unconditional): put non-transient arrays in GPU global storage
        (:func:`apply_gpu_storage`) and run ``apply_gpu_transformations`` (host<->device copies +
        ``GPU_Device`` schedules on every eligible map). Run unconditionally -- a partially-offloaded
@@ -319,9 +325,37 @@ def offload_to_gpu(sdfg: SDFG) -> None:
     (which reads the value) emits the single-stream form.
     """
     Config.set('compiler', 'cuda', 'max_concurrent_streams', value=-1)
+    recompute_fuse_for_gpu(sdfg)
     apply_gpu_storage(sdfg)
     sdfg.apply_gpu_transformations()
     select_gpu_device_block_size(sdfg)
+
+
+def assert_offloaded(sdfg: SDFG) -> None:
+    """Raise unless ``sdfg`` has actually been moved onto the device.
+
+    :func:`finalize_for_target` with ``target='gpu'`` reads the device maps and ``GPU_Global``
+    arrays that an offload creates; on a still-host-scheduled graph every GPU-specific step below
+    it is a no-op and the result is a CPU graph wearing a GPU label. Fail loudly instead.
+
+    Either signal counts, because the two legal offloads produce different mixes: the generic
+    :func:`offload_to_gpu` sets both, while a caller-supplied recipe may schedule kernels without
+    moving every non-transient (or vice versa for an all-library graph with no maps of its own).
+
+    :param sdfg: The SDFG to check, including nested SDFGs.
+    :raises ValueError: If no ``GPU_Device`` map and no ``GPU_Global`` array is present.
+    """
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device:
+            return
+    for nested in sdfg.all_sdfgs_recursive():
+        for desc in nested.arrays.values():
+            if desc.storage == dtypes.StorageType.GPU_Global:
+                return
+    raise ValueError(f"finalize_for_target(sdfg, 'gpu') needs an already-offloaded SDFG, but '{sdfg.name}' has no "
+                     "GPU_Device map and no GPU_Global array. Offload is a separate step so passes can run between "
+                     "canonicalization and the device move: call offload_to_gpu(sdfg), or your own offload recipe, "
+                     "before finalizing.")
 
 
 def sequentialize_nested_parallel_scopes(sdfg: SDFG, device: dtypes.DeviceType) -> None:
@@ -438,24 +472,29 @@ def finalize_for_target(sdfg: SDFG, target: str = 'cpu', validate: bool = True) 
     codegen to lower), then moves small constant-size transients to the stack and
     independent transients to persistent allocation. Operates in place.
 
-    :param sdfg: A canonicalized SDFG.
+    ``target='gpu'`` finalizes an **already-offloaded** graph; it does not offload one. The device
+    move is a separate step (:func:`offload_to_gpu`, or a caller's own recipe) so passes can run
+    between canonicalization and it -- ``canonicalize(s, target='gpu'); offload_to_gpu(s);
+    finalize_for_target(s, 'gpu')`` is the perf-path counterpart to ``auto_optimize(s,
+    device=GPU)``.
+
+    :param sdfg: A canonicalized SDFG; for ``target='gpu'``, an offloaded one.
     :param target: ``'cpu'`` or ``'gpu'`` (selects the fast-library priority).
     :param validate: Validate the SDFG once at the end.
     :returns: The same ``sdfg`` instance, finalized.
+    :raises ValueError: If ``target='gpu'`` and ``sdfg`` was never offloaded.
     """
     if target not in _TARGET_DEVICE:
         raise ValueError(f"target must be one of {sorted(_TARGET_DEVICE)}; got {target!r}")
     device = _TARGET_DEVICE[target]
 
-    # For GPU, offload to the device and choose thread-block dimensions BEFORE selecting library
-    # implementations and storage: the fast GPU library picks (cuBLAS/cuSolverDn/CUB) and the GPU
-    # storage rules must see the device maps and GPU_Global arrays the offload creates.
+    # Offload is NOT part of this tail: the caller runs it, so passes can be inserted between
+    # canonicalization and the device move (see :func:`offload_to_gpu`). Everything below still
+    # requires it to have happened -- the fast GPU library picks (cuBLAS/cuSolverDn/CUB) and the
+    # GPU storage rules read the device maps and GPU_Global arrays the offload creates -- so a
+    # host-scheduled graph is rejected here rather than quietly finalized as if it were CPU.
     if device == dtypes.DeviceType.GPU:
-        # Recompute-fuse producer chains into one map (register recompute beats the extra
-        # global-memory round-trips of materialized intermediates) BEFORE offloading, so the
-        # single fused map is what lands on the device. CPU keeps the materialized maps.
-        recompute_fuse_for_gpu(sdfg)
-        offload_to_gpu(sdfg)
+        assert_offloaded(sdfg)
 
     # Infer schedules BEFORE selecting library-node implementations so the selection can adhere to
     # each node's schedule: DaCe sets a library node nested in a parallel map (or re-entered per loop
