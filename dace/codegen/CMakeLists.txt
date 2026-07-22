@@ -276,6 +276,7 @@ target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 
 # Set C++ standard to C++20 (or the configured standard)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")

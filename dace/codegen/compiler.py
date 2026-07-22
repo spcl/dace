@@ -245,7 +245,7 @@ def _dace_pch_dir(targets) -> Optional[str]:
     runtime = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime', 'include')
     executable = Config.get('compiler', 'cpu', 'executable')
     cxx = make_absolute(executable) if executable else 'c++'
-    flags = ([f'-std=gnu++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
+    flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
              shlex.split(Config.get('compiler', 'cpu', 'args') or '') +
              _CMAKE_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), []))
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
