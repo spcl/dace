@@ -242,8 +242,7 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             new_range.append((nb, ne, ns))
         return new_range
 
-    def _overapprox_first_dimension(self, subst_range: List, data_name: str,
-                                    sdfg: dace.SDFG) -> Optional[List]:
+    def _overapprox_first_dimension(self, subst_range: List, data_name: str, sdfg: dace.SDFG) -> Optional[List]:
         """Widen the stride-1 axis of a substituted range to the array's full contiguous extent.
 
         Applies only when ``overapproximate_first_dimension`` is set; otherwise the range is
@@ -425,6 +424,25 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         return True
 
     @staticmethod
+    def _passthrough_is_shared(state: dace.SDFGState, scope: dace.nodes.Node, conn: str) -> bool:
+        """Whether the ``IN_x`` / ``OUT_x`` pair ``conn`` belongs to carries more than one edge.
+
+        The two sides of a passthrough are one channel, and which of them fans out depends on the
+        scope node: a map ENTRY has one producer on ``IN_x`` and one consumer edge per reader on
+        ``OUT_x``, a map EXIT the other way round. Lifting a path out of a shared channel would tear
+        out the edges the other paths still use, so both sides decide.
+
+        :param state: The state containing ``scope``.
+        :param scope: The map entry or exit owning the connector.
+        :param conn: Either half of the pair, ``IN_x`` or ``OUT_x``.
+        :returns: True iff either side carries more than one edge.
+        """
+        suffix = conn[len('IN_'):] if conn.startswith('IN_') else conn[len('OUT_'):]
+        in_edges = list(state.in_edges_by_connector(scope, 'IN_' + suffix))
+        out_edges = list(state.out_edges_by_connector(scope, 'OUT_' + suffix))
+        return len(in_edges) > 1 or len(out_edges) > 1
+
+    @staticmethod
     def _subset_symbols(*subsets: Optional[List]) -> Set[str]:
         """Collect free-symbol names referenced by one or more ``(begin, end, step)`` range lists."""
         used = set()
@@ -476,7 +494,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
             return False
 
         for conn, scope in passthrough_conns:
-            if conn is not None and len(list(state.in_edges_by_connector(scope, conn))) > 1:
+            # A passthrough is one connector PAIR and EITHER side can fan out, so both are checked.
+            # Counting only the in-edges reads the wrong side of a map ENTRY: its ``IN_x`` holds the
+            # single producer edge while ``OUT_x`` carries one edge per reader of that array inside
+            # the scope. An entry connector feeding a copy tasklet and a compute tasklet therefore
+            # looked unshared, the lift tore out the shared outer read edge along with the connector
+            # pair, and the compute tasklet was left on a connector its map no longer had --
+            # "Memlet ... coming from nonexistent connector OUT_1" out of validate().
+            if conn is not None and self._passthrough_is_shared(state, scope, conn):
                 if verbose:
                     warnings.warn(
                         f"Skipping {kind} lift in map {map_entry.map.label}: passthrough connector ``{conn}`` "
