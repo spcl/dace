@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Cholesky Decomposition",
+        "short_name": "cholesky",
+        "relative_path": "polybench/cholesky",
+        "module_name": "cholesky",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Solver",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 100 },
+            "M": { "N": 300 },
+            "L": { "N": 900 },
+            "paper": { "N": 2000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["A"]
+        },
+        "input_args": ["A"],
+        "array_args": ["A"],
+        "output_args": ["A"]
+    }
+}

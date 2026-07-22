@@ -97,12 +97,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def preprocess(self, sdfg: SDFG):
         """Prepare the SDFG for GPU code generation.
 
-        All SDFG-level transformation lives in
-        :class:`GPUCodegenPreprocessPipeline`. This method only does
-        framecode-target bookkeeping: the ``gpu_context`` statestruct
-        entry, kernel-dimension cache hand-off, frame symbol cache rebuild,
-        ``GPUStreamManager`` construction, pool-release computation, and
-        the per-kernel arglist build.
+        All SDFG-level transformation lives in :class:`GPUCodegenPreprocessPipeline`;
+        this method only does framecode-target bookkeeping (statestruct entry, cache
+        rebuild, stream manager, pool-release, per-kernel arglists).
         """
         self._frame.statestruct.append('dace::cuda::Context *gpu_context;')
         self._dispatcher._used_targets.add(self)
@@ -110,9 +107,8 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         pipeline_results: Dict[str, Any] = {}
         GPUCodegenPreprocessPipeline().apply_pass(sdfg, pipeline_results)
 
-        # The ``AddThreadBlockMaps`` Pass returns the kernel-dimension
-        # map and the set of kernels it tiled; the codegen consults both
-        # when emitting kernel launches.
+        # AddThreadBlockMaps returns the kernel-dimension map and the set of kernels it
+        # tiled; both are consulted when emitting kernel launches.
         atb_results = pipeline_results.get('AddThreadBlockMaps', {}) or {}
         self._kernel_dimensions_map = atb_results.get('kernel_dimensions_map', {})
         self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', set())
@@ -201,11 +197,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                 raise ValueError(f'Backend "{self.backend}" does not support the memory pool allocation hint')
 
             # Kept as a lazy ``filter`` to mirror the legacy ``cuda`` target bug-for-bug:
-            # materializing it (``set(...)``) would actually populate ``pool_release``,
-            # but ``deallocate_array`` looks up that dict by ``ptr()``-resolved name while
-            # the keys here are raw names, so a Persistent/External pooled array would be
-            # freed both in ``generate_state`` and in ``deallocate_array``. The filter+key
-            # mismatch is a coupled pre-existing issue to fix in both targets together.
+            # materializing it would populate ``pool_release``, but ``deallocate_array`` keys
+            # that dict by ``ptr()``-resolved names while these are raw names, so a
+            # Persistent/External pooled array would be double-freed (generate_state +
+            # deallocate_array). A coupled pre-existing issue to fix in both targets together.
             pooled = filter(lambda aname: sdfg.arrays[aname].lifetime in _GLOBAL_LIFETIMES, pooled)
 
             if reachability is None:
@@ -228,8 +223,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                             terminator = an1
                             break
 
-                    # Release at end of the last memlet path out of the terminator access node;
-                    # if the terminator sits inside a scope, defer release to the end of state.
                     # If the terminator sits inside a scope, defer release to the
                     # end of state (empty set); otherwise release at the common
                     # descendant following the ends of all memlet paths
@@ -537,7 +530,6 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             for key in handled_keys:
                 del self.pool_release[key]
 
-        # Invoke all instrumentation providers
         for instr in self._frame._dispatcher.instrumentation.values():
             if instr is not None:
                 instr.on_state_end(sdfg, cfg, state, callsite_stream, function_stream)
@@ -1013,7 +1005,6 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
             hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += " -G -g"
             flags += ' ' + ' '.join(
                 '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
                 for arch in hip_arch)
@@ -1099,9 +1090,12 @@ class KernelSpec:
         # The kernel wrapper function runs on the host; its signature receives __state,
         # every kernel argument, and exactly one gpuStream_t handle.
         gpustream_var_name = Config.get('compiler', 'cuda', 'gpu_stream_name').split(',')[1]
+        # Resolve the descriptor from the memlet, not from ``e.src``: when the kernel map sits
+        # inside a host-scheduled map the stream edge is routed through the enclosing MapEntry,
+        # so ``e.src`` is that MapEntry rather than the gpu_streams AccessNode.
         gpustream_input = [
             e for e in dace.sdfg.dynamic_map_inputs(kernel_parent_state, kernel_map_entry)
-            if e.src.desc(sdfg).dtype == dtypes.gpuStream_t
+            if e.data.data is not None and sdfg.arrays[e.data.data].dtype == dtypes.gpuStream_t
         ]
         if len(gpustream_input) > 1:
             raise ValueError(

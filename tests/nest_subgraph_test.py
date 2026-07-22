@@ -149,6 +149,39 @@ def test_tiled_program():
     sdfg.validate()
 
 
+def test_nest_scalar_with_none_subset_boundary():
+    """A scalar that crosses the nested-subgraph boundary can carry a bare,
+    whole-scalar memlet (``Memlet(data='s')``, ``subset is None``) on an internal
+    edge while its boundary edge carries an explicit ``s[0]`` subset. Re-basing a
+    ``None`` subset is a no-op, so ``nest_state_subgraph`` must skip it rather than
+    dereference ``None`` -- pre-fix this raised ``AttributeError: 'NoneType' object
+    has no attribute 'offset'`` (the azimint_hist histogram-accumulator shape that
+    ``MapToForLoop`` hit during canonicalization)."""
+    sdfg = dace.SDFG('none_subset_boundary')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_scalar('s', dace.float64, transient=True)
+    sdfg.add_array('B', [1], dace.float64)
+    state = sdfg.add_state()
+    A = state.add_read('A')
+    me, mx = state.add_map('m', dict(i='0:4'))
+    t1 = state.add_tasklet('t1', {'a'}, {'o'}, 'o = a * 2')
+    state.add_memlet_path(A, me, t1, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    # Internal edge into the map exit is a BARE whole-scalar memlet (subset None).
+    mx.add_in_connector('IN_s')
+    mx.add_out_connector('OUT_s')
+    state.add_edge(t1, 'o', mx, 'IN_s', dace.Memlet(data='s'))
+    s_out = state.add_access('s')
+    # Boundary edge out of the map carries an explicit point subset.
+    state.add_edge(mx, 'OUT_s', s_out, None, dace.Memlet('s[0]'))
+    t3 = state.add_tasklet('t3', {'x'}, {'b'}, 'b = x')
+    B = state.add_write('B')
+    state.add_edge(s_out, None, t3, 'x', dace.Memlet('s[0]'))
+    state.add_edge(t3, 'b', B, None, dace.Memlet('B[0]'))
+
+    nest_state_subgraph(sdfg, state, state.scope_subgraph(me))
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_simple_program()
     test_simple_sdfg()
@@ -157,3 +190,4 @@ if __name__ == '__main__':
     test_simple_sdfg_program()
     test_badscope()
     test_tiled_program()
+    test_nest_scalar_with_none_subset_boundary()

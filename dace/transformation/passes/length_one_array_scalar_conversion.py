@@ -18,8 +18,9 @@ import re
 from typing import Optional, Set
 
 import dace
-from dace import Memlet, properties
+from dace import Memlet, properties, subsets
 from dace.properties import CodeBlock
+from dace.sdfg import nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 
@@ -32,9 +33,9 @@ def _strip_elem_zero(expr: str, names: Set[str]) -> str:
     ends in one of ``names`` (e.g. ``bar[0]`` against scalarized ``ar``) keeps
     its subscript.
 
-    :param expr: Expression source to rewrite.
-    :param names: Names of the scalarized (now single-value) descriptors.
-    :returns: ``expr`` with the ``[0]`` accessors of ``names`` removed.
+    :param expr: source expression to rewrite.
+    :param names: names of the arrays that were scalarized.
+    :returns: ``expr`` with ``name[0]`` collapsed to ``name`` for each scalarized name.
     """
     for nm in names:
         expr = re.sub(rf'(?<![\w.]){re.escape(nm)}\[0\]', nm, expr)
@@ -49,26 +50,42 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     referenced it from interstate-edge assignments, conditional-block
     branch guards, loop-region conditions and memlet subsets.
 
+    Length-1 arrays of an ``opaque`` dtype (an external handle such as
+    ``MPI_Request`` / ``MPI_Comm``) are left untouched: a consumer that
+    takes the handle through a pointer connector (e.g. a ``dace``
+    ``Wait`` / ``Isend`` library node) needs the source to stay an
+    ``Array`` so it lowers to ``DefinedType.Pointer`` and decays to a
+    pointer.  A scalarized opaque source is copied by value instead,
+    which miscompiles (``MPI_Wait`` wants ``MPI_Request*``, not a
+    ``MPI_Request`` copy).
+
     :param recursive: Recurse into nested SDFGs (only their TRANSIENT
         length-1 arrays are rewritten -- a non-transient nested-SDFG
         arg is part of its parent's signature and rewriting it would
         change the caller's contract).
     :param transient_only: Restrict the top-level rewrite to transient
         arrays (default ``False`` -- both signature and local rewrites).
-    :param filter: When ``None`` (default), the pass scalarizes every
-        eligible top-level array as governed by ``transient_only``. When
-        a set is provided, the pass scalarizes *only* arrays whose name
-        appears in it -- and **being in the filter overrides
-        ``transient_only``**, i.e. a named array is always scalarized
-        regardless of its ``transient`` flag. The filter has no effect
-        on the nested-SDFG transient-only recursion; inner descriptors
-        keep following the recursion rule.
+    :param keep_program_outputs: When ``transient_only`` is ``False``, keep a
+        non-transient length-1 array that the SDFG WRITES (a program output --
+        the caller passes a 1-element numpy buffer to receive the return) as an
+        ``Array``, and scalarize every other length-1 array (transients and
+        read-only non-transient inputs). Has no effect when ``transient_only``
+        is ``True`` (no non-transient is rewritten then anyway).
+    :param filter: When ``None`` (default), scalarize every eligible top-level
+        array as governed by ``transient_only``. When a set is provided,
+        scalarize *only* named arrays -- and being in the filter overrides
+        ``transient_only``. Has no effect on the nested-SDFG transient-only
+        recursion.
     """
 
     recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
     transient_only = properties.Property(dtype=bool,
                                          default=False,
                                          desc="Restrict the top-level rewrite to transient arrays.")
+    keep_program_outputs = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Keep written non-transient length-1 arrays (program outputs) as Arrays; scalarize the rest.")
     filter = properties.SetProperty(
         element_type=str,
         default=None,
@@ -76,12 +93,24 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         desc="If ``None``, no filtering -- every eligible array is scalarized. If a set is "
         "provided, only top-level arrays whose name appears in it are scalarized, and being "
         "in the filter overrides the ``transient_only`` check.")
+    single_element = properties.Property(
+        dtype=bool,
+        default=False,
+        desc="Also scalarize higher-rank single-element arrays (every dim == 1, e.g. a (1, 1) "
+        "map-fusion scratch buffer), not just rank-1 length-1 arrays.")
 
-    def __init__(self, recursive: bool = True, transient_only: bool = False, filter: 'Optional[Set[str]]' = None):
+    def __init__(self,
+                 recursive: bool = True,
+                 transient_only: bool = False,
+                 keep_program_outputs: bool = False,
+                 filter: 'Optional[Set[str]]' = None,
+                 single_element: bool = False):
         super().__init__()
         self.recursive = recursive
         self.transient_only = transient_only
+        self.keep_program_outputs = keep_program_outputs
         self.filter = None if filter is None else frozenset(filter)
+        self.single_element = single_element
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Symbols
@@ -90,22 +119,82 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         return False
 
     def _rewrite(self, sdfg: dace.SDFG, transient_only: bool, apply_filter: bool) -> Set[str]:
-        """Scalarize length-1 arrays in ``sdfg``.
+        """Scalarize length-1 arrays in ``sdfg`` (modified in place).
 
-        :param sdfg: Target SDFG (modified in place).
-        :param transient_only: Restrict to transient arrays.
-        :param apply_filter: Whether the top-level ``filter`` set should gate the rewrite at
-                             this level. ``False`` for the nested-SDFG recursion: the filter
-                             refers to outer-level names, not inner descriptors.
+        :param sdfg: SDFG to rewrite.
+        :param transient_only: Restrict the rewrite to transient arrays.
+        :param apply_filter: Whether the top-level ``filter`` set gates the rewrite here.
+                             ``False`` for the nested-SDFG recursion: the filter refers to
+                             outer-level names, not inner descriptors.
         :returns: Names of the arrays that were scalarized.
         """
         scalarized: Set[str] = set()
+        # Program outputs (non-transient arrays the SDFG writes) must stay Arrays: the caller passes a
+        # 1-element numpy buffer to receive the return, which a scalar-by-value output cannot fill.
+        program_outputs: Set[str] = set()
+        if not transient_only and self.keep_program_outputs:
+            for state in sdfg.states():
+                for node in state.data_nodes():
+                    if state.in_degree(node) > 0 and not sdfg.arrays[node.data].transient:
+                        program_outputs.add(node.data)
+        # Arrays written through a nested SDFG connector must stay Arrays: a nested SDFG argument is
+        # a pointer/reference, but a scalar is passed by value -- scalarizing a written array would
+        # silently drop the write. Collect the out-edge data of every NestedSDFG node.
+        nsdfg_written: Set[str] = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, dace.nodes.NestedSDFG):
+                    for edge in state.out_edges(node):
+                        if edge.data is not None and edge.data.data is not None:
+                            nsdfg_written.add(edge.data.data)
+        # A length-1 Array that BACKS a View (some View's viewed edge points
+        # at it) must not be scalarized either: a View needs an Array source
+        # to alias -- a ``Scalar`` source is emitted ``const`` in codegen, so
+        # a write through the view (``view[0] = ...``) fails to compile
+        # (``assignment of read-only location``).  Collect every such source.
+        view_sources: Set[str] = set()
+        for state in sdfg.states():
+            for node in state.nodes():
+                if isinstance(node, nodes.AccessNode) and isinstance(sdfg.arrays.get(node.data), dace.data.View):
+                    ve = sdutil.get_view_edge(state, node)
+                    if ve is None:
+                        continue
+                    other = ve.src if ve.dst is node else ve.dst
+                    if isinstance(other, nodes.AccessNode):
+                        view_sources.add(other.data)
         for arr_name, arr in list(sdfg.arrays.items()):
-            if not (isinstance(arr, dace.data.Array) and (arr.shape == (1, ) or arr.shape == [1])):
+            if not isinstance(arr, dace.data.Array):
                 continue
-            # ``filter`` semantics: ``None`` -> no filtering (default behaviour);
-            # ``set`` -> only names in the set are scalarized, and being in the filter
-            # overrides the ``transient_only`` check.
+            # A length-1 ``View`` (incl. ``ArrayView``) subclasses ``Array``
+            # but must NOT be scalarized: a View is an alias into another
+            # array's storage, wired through a ``views`` edge that a
+            # ``Scalar`` cannot carry (``get_view_edge`` would fail and the
+            # alias would be silently dropped).  A length-1 view of a length-1
+            # array -- e.g. a Fortran scalar POINTER rebind lowered as a
+            # length-1-array view -- must stay a View.
+            if isinstance(arr, dace.data.View):
+                continue
+            # A length-1 Array that backs a View (collected above) must also
+            # stay an Array so the view retains an aliasable source.
+            if arr_name in view_sources:
+                continue
+            is_len1 = arr.shape == (1, ) or arr.shape == [1]
+            # ``single_element`` additionally scalarizes a higher-rank all-ones array (e.g. a (1, 1)
+            # map-fusion scratch buffer), not just a rank-1 length-1 array.
+            is_single = self.single_element and len(arr.shape) >= 1 and all(d == 1 for d in arr.shape)
+            if not (is_len1 or is_single):
+                continue
+            if arr_name in program_outputs or arr_name in nsdfg_written:
+                continue
+            if isinstance(arr.dtype, dace.dtypes.opaque):
+                continue
+            # Firewall: a length-1 dim marked with the ``ONE`` broadcast sentinel
+            # (design 3.8.2) must stay an Array -- scalarising would erase the
+            # broadcast intent that downstream gather / scatter lib-node lowerings
+            # need. The identity check survives sympy round-trips.
+            from dace.symbolic import ONE
+            if any(ONE in dim.free_symbols for dim in arr.shape if hasattr(dim, "free_symbols")):
+                continue
             in_filter = apply_filter and self.filter is not None and arr_name in self.filter
             if apply_filter and self.filter is not None and not in_filter:
                 continue
@@ -142,29 +231,35 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 else:
                     node.loop_condition = CodeBlock(src, dace.dtypes.Language.Python)
 
-        # Strip ``[<expr>]`` -- any subset, not just ``[0]`` -- from
-        # memlet subsets that reference the scalarized arrays.  A
-        # length-1 array has a single element, so any subset resolves
-        # to that one value; the bridge sometimes synthesises
-        # ``arr[(je) - offset_arr_d0]`` even for size-1 arrays, so
-        # collapse those to a scalar memlet.
+        # Any subset (not just ``[0]``) of a scalarized array collapses to scalar
+        # ``0``: the bridge sometimes synthesises ``arr[(je) - offset_arr_d0]`` even
+        # for size-1 arrays, and every subset resolves to the single element.
         for state in sdfg.all_states():
             for edge in state.edges():
                 mem = edge.data
                 if mem is None or mem.data is None:
                     continue
-                if mem.data not in scalarized:
+                if mem.data in scalarized:
+                    edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
                     continue
-                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
+                # A copy edge names only ONE side in ``data``; the opposite side is addressed by
+                # ``other_subset``. When THAT side is the array we just scalarized, its subset has
+                # to collapse too -- otherwise it keeps the pre-scalarization rank and validation
+                # rejects the edge ("Memlet other_subset does not match node dimension"). This bites
+                # on the ``(1, 1)`` MapFusion scratch that ``single_element`` admits: a 2-D
+                # ``other_subset`` against a now 1-D Scalar.
+                if mem.other_subset is None:
+                    continue
+                if any(
+                        isinstance(node, nodes.AccessNode) and node.data in scalarized and node.data != mem.data
+                        for node in (edge.src, edge.dst)):
+                    mem.other_subset = subsets.Range.from_string('0')
 
-        # The offset / dimension symbols that were carried purely for
-        # the rewritten arrays are now dead.  Drop them so the signature
-        # shrinks and codegen doesn't pass unused parameters.  Keep
-        # symbols still referenced by another array's shape / bounds.
-        # A symbol is still needed if it is used anywhere the SDFG references symbols (array
-        # shapes / bounds, tasklets, memlets, interstate edges); ``used_symbols(all_symbols=True)``
-        # captures all of those, so only the offset/dimension symbols that scalarization left
-        # genuinely dead are dropped.
+        # Offset / dimension symbols carried purely for the rewritten arrays are
+        # now dead; drop them so the signature shrinks and codegen doesn't pass
+        # unused parameters. ``used_symbols(all_symbols=True)`` covers every site a
+        # symbol can be referenced (shapes, bounds, tasklets, memlets, interstate
+        # edges), so only genuinely-dead offset/dim symbols are removed.
         referenced: Set[str] = {str(s) for s in sdfg.used_symbols(all_symbols=True)}
         for nm in list(sdfg.symbols):
             if nm in referenced:
@@ -195,6 +290,13 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
     ``Scalar`` to a length-1 ``Array`` (shape ``(1,)``).  Useful when a
     consumer requires a 1-element buffer rather than a by-value scalar.
 
+    ``Scalar`` data of an ``opaque`` dtype (an external handle such as
+    ``MPI_Request`` / ``MPI_Comm``) is left untouched: opaque handles
+    must keep the exact form their producer chose so the
+    array-vs-scalar / pointer-vs-value contract with the consuming
+    library node is preserved (the symmetric counterpart of the
+    ``opaque`` exemption in ``ConvertLengthOneArraysToScalars``).
+
     :param recursive: Recurse into nested SDFGs (transient-only there).
     :param transient_only: Restrict the top-level rewrite to transient
         scalars.
@@ -219,6 +321,8 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
     def _rewrite(self, sdfg: dace.SDFG, transient_only: bool) -> Set[str]:
         arrayized: Set[str] = set()
         for name, desc in [(k, v) for k, v in sdfg.arrays.items()]:
+            if isinstance(desc.dtype, dace.dtypes.opaque):
+                continue
             if isinstance(desc, dace.data.Scalar) and ((not transient_only) or desc.transient):
                 sdfg.remove_data(name, validate=False)
                 sdfg.add_array(name=name,
@@ -236,7 +340,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 mem = edge.data
                 if mem is None or mem.data is None or mem.data not in arrayized:
                     continue
-                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
+                edge.data = Memlet(data=mem.data, subset='0', wcr=mem.wcr)
         if self.recursive:
             for state in sdfg.all_states():
                 for node in state.nodes():

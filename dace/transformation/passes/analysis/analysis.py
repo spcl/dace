@@ -41,7 +41,7 @@ class StateReachability(ppl.Pass):
         return modified & ppl.Modifies.CFG
 
     def depends_on(self):
-        return {ControlFlowBlockReachability}
+        return [ControlFlowBlockReachability]
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
         """
@@ -85,23 +85,41 @@ class ControlFlowBlockReachability(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.CFG
 
+    @staticmethod
+    def blocks_within(region, memo: Dict[ControlFlowBlock, Set[ControlFlowBlock]]) -> Set[ControlFlowBlock]:
+        """``region.all_control_flow_blocks()`` memoized per region.
+
+        Every reachability entry naming a region expands it, so the unmemoized call re-walked the
+        same subtrees once per entry and dominated the pass on a deeply nested SDFG. The pass does
+        not modify the graph, so one expansion per region stays valid for the whole run.
+
+        Keyed by the region object, not ``id(region)``: the memo then holds a reference, so an
+        address cannot be recycled by a later allocation and alias a stale entry.
+        """
+        blocks = memo.get(region)
+        if blocks is None:
+            blocks = set(region.all_control_flow_blocks())
+            memo[region] = blocks
+        return blocks
+
     def _region_closure(
         self,
         region: ControlFlowRegion,
         block_reach: Dict[int, Dict[ControlFlowBlock, Set[ControlFlowBlock]]],
         cached_closures: dict[int, Set[ControlFlowBlock]],
+        region_blocks: Dict[ControlFlowBlock, Set[ControlFlowBlock]],
     ) -> Set[ControlFlowBlock]:
         closure: Set[ControlFlowBlock] = set()
         if isinstance(region, LoopRegion):
             # Any point inside the loop may reach any other point inside the loop again.
             # TODO(later): This is an overapproximation. A branch terminating in a break is excluded from this.
-            closure.update(region.all_control_flow_blocks())
+            closure.update(self.blocks_within(region, region_blocks))
             closure.add(region)  # The loop condition is also reachable.
 
         # Add all states that this region can reach in its parent graph to the closure.
         for reached_block in block_reach[region.parent_graph.cfg_id][region]:
             if isinstance(reached_block, ControlFlowRegion):
-                closure.update(reached_block.all_control_flow_blocks())
+                closure.update(self.blocks_within(reached_block, region_blocks))
             closure.add(reached_block)
 
         # Walk up the parent tree.
@@ -109,7 +127,7 @@ class ControlFlowBlockReachability(ppl.Pass):
         while pivot and not isinstance(pivot, SDFG):
             graph_id = id(pivot)
             if graph_id not in cached_closures:
-                cached_closures[graph_id] = self._region_closure(pivot, block_reach, cached_closures)
+                cached_closures[graph_id] = self._region_closure(pivot, block_reach, cached_closures, region_blocks)
             closure.update(cached_closures[graph_id])
             pivot = pivot.parent_graph
         return closure
@@ -123,6 +141,7 @@ class ControlFlowBlockReachability(ppl.Pass):
 
         single_level_reachable: Dict[int, Dict[ControlFlowBlock,
                                                Set[ControlFlowBlock]]] = defaultdict(lambda: defaultdict(set))
+        region_blocks: Dict[ControlFlowBlock, Set[ControlFlowBlock]] = {}
         for cfg in top_sdfg.all_control_flow_regions(recursive=True):
             # In networkx this is currently implemented naively for directed graphs.
             # The implementation below is faster
@@ -132,7 +151,7 @@ class ControlFlowBlockReachability(ppl.Pass):
                 for nd in v:
                     reach.add(nd)
                     if isinstance(nd, AbstractControlFlowRegion):
-                        reach.update(nd.all_control_flow_blocks())
+                        reach.update(self.blocks_within(nd, region_blocks))
                 single_level_reachable[cfg.cfg_id][n] = reach
                 if isinstance(cfg, LoopRegion):
                     single_level_reachable[cfg.cfg_id][n].update(cfg.nodes())
@@ -148,13 +167,13 @@ class ControlFlowBlockReachability(ppl.Pass):
                 for block in cfg.nodes():
                     for reached in single_level_reachable[block.parent_graph.cfg_id][block]:
                         if isinstance(reached, AbstractControlFlowRegion):
-                            result[block].update(reached.all_control_flow_blocks())
+                            result[block].update(self.blocks_within(reached, region_blocks))
                         result[block].add(reached)
                     if block.parent_graph is not sdfg:
                         graph_id = id(block.parent_graph)
                         if graph_id not in cached_closures:
                             cached_closures[graph_id] = self._region_closure(block.parent_graph, single_level_reachable,
-                                                                             cached_closures)
+                                                                             cached_closures, region_blocks)
                         result[block].update(cached_closures[graph_id])
                 reachable[cfg.cfg_id] = result
         return reachable
@@ -344,6 +363,23 @@ class FindAccessStates(ppl.Pass):
                 for access in fsyms:
                     result[access].update({e.src, e.dst})
 
+            # Data referenced in a control-flow-region condition/meta codeblock
+            # (a loop bound/condition/update, a branch or while condition) is read
+            # every time the region is entered even without an AccessNode, so it is
+            # live throughout the region. Record it in every state the region
+            # governs -- otherwise a consumer (dead-data elimination, allocation
+            # scoping) treats a data-dependent loop bound as unused and drops it,
+            # leaving a dangling reference in the condition. Interstate-edge reads
+            # are handled above; this closes the codeblock gap (mirrors the
+            # condition scan in :class:`FindSingleUseData`).
+            for cfr in sdfg.all_control_flow_regions():
+                cond_data = cfr.used_symbols(all_symbols=True, with_contents=False) & anames
+                if not cond_data:
+                    continue
+                region_states = set(cfr.all_states())
+                for access in cond_data:
+                    result[access].update(region_states)
+
             top_result[sdfg.cfg_id] = result
         return top_result
 
@@ -475,7 +511,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
         return modified & ppl.Modifies.Symbols | ppl.Modifies.CFG | ppl.Modifies.Edges | ppl.Modifies.Nodes
 
     def depends_on(self):
-        return {SymbolAccessSets, ControlFlowBlockReachability}
+        return [SymbolAccessSets, ControlFlowBlockReachability]
 
     def _find_dominating_write(self, sym: str, read: Union[ControlFlowBlock, Edge[InterstateEdge]],
                                block_idom: Dict[ControlFlowBlock, ControlFlowBlock]) -> Optional[Edge[InterstateEdge]]:
@@ -577,7 +613,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         return modified & ppl.Modifies.States
 
     def depends_on(self):
-        return {AccessSets, FindAccessNodes, ControlFlowBlockReachability}
+        return [AccessSets, FindAccessNodes, ControlFlowBlockReachability]
 
     def _find_dominating_write(self,
                                desc: str,
@@ -681,14 +717,33 @@ class ScalarWriteShadowScopes(ppl.Pass):
 
             anames = sdfg.arrays.keys()
             for desc in sdfg.arrays:
-                desc_states_with_nodes = set(access_nodes[desc].keys())
+                # Restrict to states this SDFG owns. With cloned NestedSDFGs after loop
+                # fission, cfg_id collisions can make ``FindAccessNodes[sdfg.cfg_id]`` surface
+                # states owned by a *different* clone, whose regions are absent from this
+                # SDFG's ``idom_dict`` -- ``_find_dominating_write`` then walks up into a
+                # missing region and raises ``KeyError``. Mirrors the foreign-block guard on
+                # the interstate-edge loop below (``if block.sdfg is not sdfg``).
+                # Ordered, not a set: ``SDFGState`` has no ``__hash__``, so a set iterates by id()
+                # -- an order that varies run to run (it tracks allocation history, so it shifts
+                # with whatever ran earlier in the process). That order becomes the key insertion
+                # order of ``result[desc]``, which ScalarFission consumes to allocate new
+                # descriptors, so it decides ``find_new_name`` suffixes. Membership is never
+                # tested here, so a list costs nothing.
+                desc_states_with_nodes = sorted((s for s in access_nodes[desc].keys() if s.sdfg is sdfg),
+                                                key=lambda s: (s.parent_graph.cfg_id, s.block_id))
                 for state in desc_states_with_nodes:
                     for read_node in access_nodes[desc][state][0]:
                         write = self._find_dominating_write(desc, state, read_node, access_nodes, idom_dict,
                                                             access_sets)
                         result[desc][write].add((state, read_node))
-                # Ensure accesses to interstate edges are also considered.
+                # Ensure accesses to interstate edges are also considered. ``access_sets`` spans every
+                # SDFG, but ``idom_dict`` is built only for the current one; a foreign block whose SDFG
+                # happens to declare an identically-named array (e.g. two cloned NestedSDFGs after loop
+                # fission) would otherwise walk up into a region absent from ``idom_dict``. Restrict to
+                # blocks this SDFG owns.
                 for block, accesses in access_sets.items():
+                    if block.sdfg is not sdfg:
+                        continue
                     if desc in accesses[0]:
                         out_edges = block.parent_graph.out_edges(block)
                         for oedge in out_edges:
@@ -925,7 +980,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
         self.apply_to_conditionals = True
 
     def depends_on(self):
-        return {ControlFlowBlockReachability}
+        return [ControlFlowBlockReachability]
 
     def _propagate_in_cfg(self, cfg: ControlFlowRegion, reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]],
                           starting_executions: int, starting_dynamic_executions: bool):
@@ -1079,7 +1134,7 @@ class ConditionUniqueWrites(ppl.Pass):
         return modified & ppl.Modifies.CFG
 
     def depends_on(self):
-        return {}
+        return []
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Set[nd.AccessNode]:
         """

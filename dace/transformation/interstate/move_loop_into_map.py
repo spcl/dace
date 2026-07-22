@@ -6,7 +6,7 @@ from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
 import dace.transformation.helpers as helpers
 import networkx as nx
 from dace.sdfg.scope import ScopeTree
-from dace import Memlet, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
+from dace import Memlet, data as dt, nodes, sdfg as sd, subsets as sbs, symbolic, symbol
 from dace.sdfg import nodes, propagation, utils as sdutil
 from dace.transformation import transformation
 from sympy import diff
@@ -179,6 +179,15 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
         nsdfg.sdfg.remove_node(nested_state)
         nsdfg.sdfg.add_node(inner_loop, is_start_block=True)
 
+        # ``body`` was created inside the LoopRegion, so its label is only unique *there*.
+        #  Hoisting it into ``graph`` with a raw ``add_node`` bypasses the block-name
+        #  uniquifier that ``add_state`` applies, and the label it carries is a fixed one
+        #  (``LoopToMap`` names every one of them ``single_state_body``). The second loop in
+        #  a region to go through LoopToMap + this transformation therefore produced a
+        #  duplicate, and ``validate_sdfg`` rejects the SDFG with "Found multiple blocks with
+        #  the same name". Rename against the labels actually present rather than the CFG's
+        #  cached ``_labels`` set, which a re-parenting like this one leaves stale.
+        body.label = dt.find_new_name(body.label, {block.label for block in graph.nodes()})
         graph.add_node(body, is_start_block=(graph.start_block is self.loop))
         for ie in graph.in_edges(self.loop):
             graph.add_edge(ie.src, body, ie.data)

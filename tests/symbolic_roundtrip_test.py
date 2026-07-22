@@ -69,6 +69,18 @@ def test_explicit_function_name_preserved():
     assert symstr(pystr_to_symbolic('bitwise_or(a, b)'), cpp_mode=True) == '(((a) | (b)))'
 
 
+def test_logical_shift_roundtrip():
+    # Logical (zero-fill) shifts have no plain C++ operator: unlike ``<<`` / ``>>``
+    # (which sign-extend a signed operand on the right shift) they lower to the
+    # ``dace::logical_left_shift`` / ``dace::logical_right_shift`` runtime helpers
+    # (dace/math.h), so the function spelling is kept in BOTH Python and C++ mode
+    # -- it must not collapse to an operator or to ``x * 2**y``.
+    assert _roundtrip('logical_left_shift(a, b)') == '(logical_left_shift(a, b))'
+    assert _roundtrip('logical_left_shift(a, b)', cpp_mode=True) == '(logical_left_shift(a, b))'
+    assert _roundtrip('logical_right_shift(a, b)') == '(logical_right_shift(a, b))'
+    assert _roundtrip('logical_right_shift(a, b)', cpp_mode=True) == '(logical_right_shift(a, b))'
+
+
 def test_subscript_roundtrip():
     assert _roundtrip('A[i]') == '(A[i])'
     assert _roundtrip('sizes[i, j]') == '(sizes[i, j])'
@@ -182,6 +194,25 @@ def test_float_precision_preserved():
         assert pystr_to_symbolic(huge) not in (sympy.oo, -sympy.oo)
 
 
+def test_integer_valued_float_not_collapsed():
+    # An integer-valued float (e.g. the ``1.0`` clamp in ``min(x, 1.0)``) keeps its
+    # ``.0`` and never collapses to an int: collapsing would mix int and float in a
+    # Min/Max and silently truncate the result after a serialization round-trip.
+    for src in ('0.0', '1.0', '2.0', '5.0', '100.0'):
+        assert _roundtrip(src) == src
+    # Genuine integers are left untouched.
+    for src in ('0', '1', '2', '42'):
+        assert _roundtrip(src) == src
+    # ``sympy_numeric_fix`` preserves a Python/numpy float as a sympy Float (the int
+    # collapse only ever applied to non-float inputs).
+    assert isinstance(symbolic.sympy_numeric_fix(1.0), sympy.Float)
+    assert isinstance(symbolic.sympy_numeric_fix(2.0), sympy.Float)
+    assert isinstance(symbolic.sympy_numeric_fix(1), int)
+    # Inside a Min the float clamp survives the parse -> print round-trip.
+    assert _idempotent('Min(x, 1.0)')
+    assert '1.0' in _roundtrip('Min(x, 1.0)')
+
+
 def test_infinity_roundtrip():
     assert pystr_to_symbolic('inf') == sympy.oo
     assert pystr_to_symbolic('-inf') == -sympy.oo
@@ -281,6 +312,53 @@ def test_interstate_edge_assignment_roundtrip():
     assert assigns['s'] == '1.79769313486232e+308'  # finite, full precision
 
 
+def test_symbolic_expression_serialization_preserves_integerness():
+    sdfg = dace.SDFG("roundtrip")
+
+    sdfg.add_symbol("__out_IDim_range_0", dace.int32)
+    sdfg.add_symbol("__out_IDim_range_1", dace.int32)
+
+    expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
+
+    sdfg.add_array(
+        "A",
+        shape=[expr],
+        dtype=dace.float64,
+    )
+
+    reloaded = dace.SDFG.from_json(sdfg.to_json())
+
+    original = sdfg.arrays["A"].shape[0]
+    restored = reloaded.arrays["A"].shape[0]
+
+    assert sympy.srepr(original) == sympy.srepr(restored)
+    assert original == restored
+    assert original.is_integer == restored.is_integer
+
+
+def test_symbolic_roundtrip_preserves_integerness():
+    expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
+
+    rt = symbolic.pystr_to_symbolic(symbolic.symstr(expr))
+
+    assert expr.is_integer == rt.is_integer
+
+    for s1, s2 in zip(
+            sorted(expr.free_symbols, key=str),
+            sorted(rt.free_symbols, key=str),
+    ):
+        assert s1.is_integer == s2.is_integer
+
+
+def test_max_roundtrip_keeps_integer_assumptions():
+    expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
+
+    rt = symbolic.pystr_to_symbolic(symbolic.symstr(expr))
+
+    assert expr.is_integer
+    assert rt.is_integer
+
+
 if __name__ == '__main__':
     test_operator_roundtrip_renders_operator()
     test_ternary_roundtrip()
@@ -306,3 +384,6 @@ if __name__ == '__main__':
     test_subset_indirection_detects_index_subscript()
     test_subset_indirection_detects_nested_and_multidim_subscript()
     test_interstate_edge_assignment_roundtrip()
+    test_symbolic_expression_serialization_preserves_integerness()
+    test_symbolic_roundtrip_preserves_integerness()
+    test_max_roundtrip_keeps_integer_assumptions()

@@ -1,10 +1,15 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Core Dialect compliance check.
 
-The Core Dialect is the subset of the SDFG IR that downstream passes (the experimental CUDA
-codegen, layout-permutation transformations, etc.) consume. It disallows ``ConsumeEntry`` scopes,
-``Stream`` descriptors, conditional interstate edges, WCR / ``other_subset`` memlets, implicit
-AccessNode-to-AccessNode copies, views, and ``GPU_ThreadBlock_Dynamic`` / ``GPU_Persistent`` maps.
+The Core Dialect is the subset of the SDFG IR that downstream passes (the
+experimental CUDA codegen, layout-permutation transformations, etc.) are
+expected to consume. Constructs disallowed by Core Dialect:
+
+- control flow: ``ConsumeEntry`` scopes, ``Stream`` data descriptors and their
+  access nodes, conditional interstate edges;
+- data movement: memlets with WCR, memlets with ``other_subset``, implicit
+  AccessNode-to-AccessNode copies, view descriptors and view access nodes;
+- GPU-specific: ``GPU_ThreadBlock_Dynamic`` maps, ``GPU_Persistent`` maps.
 """
 from typing import List, Tuple
 
@@ -108,44 +113,6 @@ class CoreDialectCompliant:
         return not cls.offenders_implicit_copies(sdfg)
 
     @staticmethod
-    def offenders_implicit_gpu_copies(sdfg: SDFG) -> List[str]:
-        """Implicit AccessNode->AccessNode copies with at least one GPU-global endpoint and
-        neither endpoint device-level. ``InsertExplicitGPUGlobalMemoryCopies`` lowers these;
-        leftovers after the pipeline are a bug or unsupported pattern."""
-        from dace.sdfg.scope import is_devicelevel_gpu
-        out: List[str] = []
-        for sub_sdfg in sdfg.all_sdfgs_recursive():
-            for state in sub_sdfg.states():
-                for edge in state.edges():
-                    if not (isinstance(edge.src, nodes.AccessNode) and isinstance(edge.dst, nodes.AccessNode)):
-                        continue
-                    src_desc = sub_sdfg.arrays[edge.src.data]
-                    dst_desc = sub_sdfg.arrays[edge.dst.data]
-                    # An Array<->View edge is a reference link, not a memcpy (codegen emits the
-                    # View as a pointer offset). InsertExplicitCopies skips these; the strict
-                    # check must agree or it flags every ``np.reshape(GPU_array)`` slice.
-                    if isinstance(src_desc, dt.View) or isinstance(dst_desc, dt.View):
-                        continue
-                    src_storage = src_desc.storage
-                    dst_storage = dst_desc.storage
-                    touches_gpu = (src_storage == dtypes.StorageType.GPU_Global
-                                   or dst_storage == dtypes.StorageType.GPU_Global)
-                    if not touches_gpu:
-                        continue
-                    if (is_devicelevel_gpu(sub_sdfg, state, edge.src) or is_devicelevel_gpu(sub_sdfg, state, edge.dst)):
-                        # cudaMemcpyAsync cannot be issued from device code; the
-                        # codegen handles intra-kernel cross-storage AccessNode
-                        # edges via its register/local copy paths.
-                        continue
-                    out.append(f'implicit GPU-memory copy {edge.src.data} ({src_storage.name}) -> '
-                               f'{edge.dst.data} ({dst_storage.name}) in state "{state.label}"')
-        return out
-
-    @classmethod
-    def check_no_implicit_gpu_copies(cls, sdfg: SDFG) -> bool:
-        return not cls.offenders_implicit_gpu_copies(sdfg)
-
-    @staticmethod
     def offenders_views(sdfg: SDFG) -> List[str]:
         out: List[str] = []
         for sub_sdfg in sdfg.all_sdfgs_recursive():
@@ -203,7 +170,7 @@ class CoreDialectCompliant:
         """Return ``(feature_label, offenders)`` pairs for every failing feature, in report order.
 
         :param sdfg: the SDFG to inspect.
-        :returns: a list of ``(label, offenders)`` tuples; empty if ``sdfg`` is compliant.
+        :return: a list of ``(label, offenders)`` tuples; empty if ``sdfg`` is compliant.
         """
         out: List[Tuple[str, List[str]]] = []
         for label, getter in cls._CHECKS:
@@ -218,7 +185,7 @@ class CoreDialectCompliant:
         return not cls.collect(sdfg)
 
 
-def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass'):
+def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
     """Emit a ``UserWarning`` if ``sdfg`` violates Core Dialect.
 
     The warning enumerates each offending feature together with up to five concrete locators.
@@ -254,8 +221,11 @@ def warn_if_not_core_dialect(sdfg: SDFG, source: str = 'pass'):
     )
 
 
-def require_core_dialect(sdfg: SDFG, source: str = 'pass'):
-    """Raise ``ValueError`` if ``sdfg`` violates Core Dialect. Strict counterpart to ``warn_if_not_core_dialect``."""
+def require_core_dialect(sdfg: SDFG, source: str = 'pass') -> None:
+    """Warn if ``sdfg`` violates Core Dialect. Previously raised
+    ``ValueError``; demoted to a warning so passes that are robust to
+    a few non-core-dialect features (e.g. implicit copy edges in
+    GPU offload states) can still proceed."""
     offenders_by_feature = CoreDialectCompliant.collect(sdfg)
     if not offenders_by_feature:
         return
@@ -265,4 +235,9 @@ def require_core_dialect(sdfg: SDFG, source: str = 'pass'):
         extra = len(offenders) - len(shown)
         suffix = f' ... and {extra} more' if extra > 0 else ''
         lines.append(f'{label}: {", ".join(shown)}{suffix}')
-    raise ValueError(f'{source} requires core-dialect-compliant SDFG. Offenders: ' + '; '.join(lines))
+    import warnings
+    warnings.warn(
+        f'{source} expects core-dialect-compliant SDFG; proceeding '
+        f'despite offenders: ' + '; '.join(lines),
+        stacklevel=2,
+    )

@@ -86,8 +86,22 @@ def test_propagate_parent():
     assert np.allclose(B.reshape(20), A * 2)
 
 
+def test_vectorization_symbolic_range_uses_int_floor():
+    """The vectorized map range must divide with int_floor, never `//`.
+
+    `(dim_to + 1) // vector_len` is a sum numerator: sympy splits it into separately-truncating
+    terms once sym2cpp drops the floor, so the trip count is wrong for a symbolic bound.
+    """
+    sdfg: dace.SDFG = tovec_uneven.to_sdfg()
+    # strided_map=False is the branch that divides the range; the strided form never divides.
+    assert sdfg.apply_transformations(Vectorization, options={'vector_len': 2, 'strided_map': False}) == 1
+    ranges = [str(r) for state in sdfg.states() for n in state.nodes() if hasattr(n, 'map') for r in n.map.range]
+    assert not any('floor' in r.replace('int_floor', '') for r in ranges), ranges
+
+
 if __name__ == '__main__':
     test_vectorization()
     test_vectorization_uneven()
     test_vectorization_postamble()
     test_propagate_parent()
+    test_vectorization_symbolic_range_uses_int_floor()

@@ -114,9 +114,28 @@ def _ndarray_conj(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str) ->
 
 @oprepo.replaces('abs')
 def _abs(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
-    return simple_call(pv, sdfg, state, input, 'abs')
+    # ``abs`` of a complex value is real-valued (the magnitude). Without an explicit result type,
+    # simple_call defaults it to the input dtype, leaving the output typed complex -- then a comparison
+    # like ``abs(z) < 1.0`` fails to compile (no ``operator<`` on ``std::complex``). Reduce to the scalar
+    # type for complex inputs, mirroring the np.abs ufunc path.
+    restype = None
+    if isinstance(input, str) and input in sdfg.arrays:
+        restype = complex_to_scalar(sdfg.arrays[input].dtype)
+    return simple_call(pv, sdfg, state, input, 'abs', restype)
 
 
 @oprepo.replaces('round')
 def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, Number, symbolic.symbol]):
     return simple_call(pv, sdfg, state, input, 'round', dtypes.typeclass(int))
+
+
+@oprepo.replaces('pow')
+@oprepo.replaces('dace.pow')
+@oprepo.replaces('math.pow')
+def _pow(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, x: Union[str, Number, symbolic.symbol],
+         y: Union[str, Number, symbolic.symbol]):
+    """Two-argument ``pow(x, y)`` — delegates to ``np.power`` so the resulting tasklet body uses
+    the same ``__out = __in1 ** __in2`` shape that the rest of the pipeline (in particular
+    ``PowerOperatorExpansion``) is set up to rewrite."""
+    from dace.frontend.python.replacements.ufunc import implement_ufunc
+    return implement_ufunc(pv, None, sdfg, state, 'power', [x, y], {})[0]

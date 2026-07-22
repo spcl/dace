@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "2-D Seidel stencil computation",
+        "short_name": "seidel2d",
+        "relative_path": "polybench/seidel_2d",
+        "module_name": "seidel_2d",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Solver",
+        "dwarf": "structured_grids",
+        "parameters": {
+            "S": { "TSTEPS": 8, "N": 50 },
+            "M": { "TSTEPS": 15, "N": 100 },
+            "L": { "TSTEPS": 40, "N": 200 },
+            "paper": { "TSTEPS": 100, "N": 400 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["A"]
+        },
+        "input_args": ["TSTEPS", "N", "A"],
+        "array_args": ["A"],
+        "output_args": ["A"]
+    }
+}

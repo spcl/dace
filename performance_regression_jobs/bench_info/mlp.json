@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Multi-layer Perceptron",
+        "short_name": "mlp",
+        "relative_path": "deep_learning/mlp",
+        "module_name": "mlp",
+        "func_name": "mlp",
+        "kind": "microapp",
+        "domain": "Learning",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "C_in": 3, "N": 8, "S0": 30000, "S1": 2000, "S2": 2000 },
+            "M": { "C_in": 3, "N": 8, "S0": 30000, "S1": 10000, "S2": 10000 },
+            "L": { "C_in": 3, "N": 8, "S0": 30000, "S1": 30000, "S2": 30000 },
+            "paper": { "C_in": 3, "N": 8, "S0": 30000, "S1": 10000, "S2": 1000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["C_in", "N", "S0", "S1", "S2"],
+            "output_args": ["input", "w1", "b1", "w2", "b2", "w3", "b3"]
+        },
+        "input_args": ["input", "w1", "b1", "w2", "b2", "w3", "b3"],
+        "array_args": ["input", "w1", "b1", "w2", "b2", "w3", "b3"],
+        "output_args": []
+    }
+}

@@ -6,7 +6,7 @@ import copy
 import os
 import sympy
 import sys
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union, TYPE_CHECKING
 from typing import get_origin, get_args
 import warnings
 
@@ -15,6 +15,9 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
+
+if TYPE_CHECKING:
+    from dace.codegen.compiled_sdfg import CompiledSDFG
 
 try:
     import mpi4py
@@ -102,9 +105,11 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
     for arg_name, arg_val in args.items():
         if arg_name in sdfg.arrays:
             desc = sdfg.arrays[arg_name]
-            if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
+            if not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
+            # Distributed descriptors (process grids, subarrays) have no strides
+            desc_strides = [] if isinstance(desc, data.DistributedDescriptor) else desc.strides
+            symbolic_values = list(desc.shape) + list(desc_strides) + list(desc.offset)
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
@@ -124,6 +129,11 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
                         symbols.add(newsym)
                         exclude.add(sym)
                     repldict[sym] = newsym
+
+                # ``ipow`` is a codegen-only spelling of ``Pow``; restore ``Pow`` so ``solve`` can
+                # invert the shape. A Function-head rewrite can't ride in ``repldict`` (symbol
+                # rename), so do it here.
+                sym_dim = symbolic.relax_ipow(sym_dim)
 
                 # Replace symbols with __SOLVE_ symbols so as to allow
                 # the same symbol in the called SDFG
@@ -793,7 +803,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg, cachekey
 
-    def load_precompiled_sdfg(self, path: str, *args, **kwargs) -> None:
+    def load_precompiled_sdfg(self, path: str, *args,
+                              **kwargs) -> tuple['CompiledSDFG', cached_program.ProgramCacheKey]:
         """
         Loads an external compiled SDFG object that will be invoked when the
         function is called.

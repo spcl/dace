@@ -1,9 +1,11 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ A module that contains various DaCe type definitions. """
+import builtins
 import ctypes
 import json
 import inspect
 import numpy
+import ml_dtypes
 import re
 from sympy import Float, Integer
 from collections import OrderedDict
@@ -15,6 +17,7 @@ from dace.config import Config
 from enum import auto, Enum
 from dace.attr_enum import ExtensibleAttributeEnum
 from dace.registry import undefined_safe_enum
+from dace.version import __version__
 
 
 @undefined_safe_enum
@@ -77,17 +80,18 @@ GPU_SCHEDULES = [
     ScheduleType.GPU_Persistent,
 ]
 
-# A subset of GPU schedule types for ExperimentalCUDACodeGen
 GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN = [
     ScheduleType.GPU_Device,
     ScheduleType.GPU_ThreadBlock,
     ScheduleType.GPU_Warp,
 ]
 
-# A subset of on-GPU storage types for ExperimentalCUDACodeGen
-GPU_MEMORY_STORAGES_EXPERIMENTAL_CUDACODEGEN = [
+GPU_KERNEL_ACCESSIBLE_STORAGES = [
     StorageType.GPU_Global,
     StorageType.GPU_Shared,
+    StorageType.CPU_Pinned,
+    # Register is not added because register outside a kernel
+    # is a CPU stack array, and this will not work
 ]
 
 # A subset of CPU schedule types
@@ -100,23 +104,6 @@ CPU_SCHEDULES = [
 GPU_STORAGES = [
     StorageType.GPU_Shared,
 ]
-
-GPU_RESIDENT_STORAGES = frozenset({
-    StorageType.GPU_Global,
-    StorageType.GPU_Shared,
-})
-CPU_RESIDENT_STORAGES = frozenset({
-    StorageType.CPU_Heap,
-    StorageType.CPU_Pinned,
-    StorageType.CPU_ThreadLocal,
-})
-# Storages whose memory a GPU kernel can directly dereference (device-global, shared,
-# and thread-local registers); host-resident storages are reachable only after a copy.
-GPU_KERNEL_ACCESSIBLE_STORAGES = frozenset({
-    StorageType.GPU_Global,
-    StorageType.GPU_Shared,
-    StorageType.Register,
-})
 
 
 class ReductionType(Enum):
@@ -242,27 +229,56 @@ STORAGEDEFAULT_SCHEDULE = {
 
 # Translation of types to C types
 _CTYPES = {
-    None: "void",
-    int: "int",
-    float: "float",
-    complex: "dace::complex64",
-    bool: "bool",
-    numpy.bool_: "bool",
-    numpy.int8: "int8_t",
-    numpy.int16: "int16_t",
-    numpy.int32: "int32_t",
-    numpy.intc: "int",
-    numpy.int64: "int64_t",
-    numpy.uint8: "uint8_t",
-    numpy.uint16: "uint16_t",
-    numpy.uint32: "uint32_t",
-    numpy.uintc: "dace::uint",
-    numpy.uint64: "uint64_t",
-    numpy.float16: "dace::float16",
-    numpy.float32: "float",
-    numpy.float64: "double",
-    numpy.complex64: "dace::complex64",
-    numpy.complex128: "dace::complex128",
+    None:
+    "void",
+    int:
+    "int",
+    float:
+    "float",
+    complex:
+    "dace::complex64",
+    bool:
+    "bool",
+    numpy.bool_:
+    "bool",
+    numpy.int8:
+    "int8_t",
+    numpy.int16:
+    "int16_t",
+    numpy.int32:
+    "int32_t",
+    numpy.intc:
+    "int",
+    numpy.int64:
+    "int64_t",
+    numpy.uint8:
+    "uint8_t",
+    numpy.uint16:
+    "uint16_t",
+    numpy.uint32:
+    "uint32_t",
+    numpy.uintc:
+    "dace::uint",
+    numpy.uint64:
+    "uint64_t",
+    numpy.float16:
+    "dace::float16",
+    numpy.float32:
+    "float",
+    numpy.float64:
+    "double",
+    numpy.complex64:
+    "dace::complex64",
+    numpy.complex128:
+    "dace::complex128",
+    # Low-precision types (runtime C++ headers not yet implemented -- see
+    # ``dace::bfloat16`` / ``dace::float8_e4m3`` / ``dace::float8_e5m2``).
+    ml_dtypes.bfloat16:
+    "dace::bfloat16",
+    ml_dtypes.float8_e4m3fn:
+    "dace::float8_e4m3fn",
+    ml_dtypes.float8_e5m2:
+    "dace::float8_e5m2",
 }
 
 # Translation of types to ctypes types
@@ -288,6 +304,10 @@ _FFI_CTYPES = {
     numpy.float64: ctypes.c_double,
     numpy.complex64: ctypes.c_uint64,
     numpy.complex128: ctypes.c_longdouble,
+    # Low-precision types: marshalled as their raw integer storage.
+    ml_dtypes.bfloat16: ctypes.c_uint16,
+    ml_dtypes.float8_e4m3fn: ctypes.c_uint8,
+    ml_dtypes.float8_e5m2: ctypes.c_uint8,
 }
 
 # Number of bytes per data type
@@ -313,6 +333,23 @@ _BYTES = {
     numpy.float64: 8,
     numpy.complex64: 8,
     numpy.complex128: 16,
+    ml_dtypes.bfloat16: 2,
+    ml_dtypes.float8_e4m3fn: 1,
+    ml_dtypes.float8_e5m2: 1,
+}
+
+#: Width of Python's scalar types, per ``compiler.default_data_types``.
+_DEFAULT_DATA_TYPES = {
+    'python': {
+        int: numpy.int64,
+        float: numpy.float64,
+        complex: numpy.complex128
+    },
+    'c': {
+        int: numpy.int32,
+        float: numpy.float32,
+        complex: numpy.complex64
+    },
 }
 
 
@@ -336,30 +373,15 @@ class typeclass(object):
             except AttributeError:
                 raise ValueError("Unknown type: {}".format(wrapped_type))
 
-        config_data_types = Config.get('compiler', 'default_data_types')
-
-        if wrapped_type is int:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.int64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.int32
-            else:
+        # Only Python's scalar types consult the configuration; every other type paid the lookup.
+        if wrapped_type is int or wrapped_type is float or wrapped_type is complex:
+            config_data_types = Config.get('compiler', 'default_data_types')
+            widths = _DEFAULT_DATA_TYPES.get(config_data_types.lower())
+            if widths is None:
                 raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is float:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.float64
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.float32
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is complex:
-            if config_data_types.lower() == 'python':
-                wrapped_type = numpy.complex128
-            elif config_data_types.lower() == 'c':
-                wrapped_type = numpy.complex64
-            else:
-                raise NameError("Unknown configuration for default_data_types: {}".format(config_data_types))
-        elif wrapped_type is bool:
+            wrapped_type = widths[wrapped_type]
+        elif wrapped_type is builtins.bool:
+            # This module rebinds ``bool`` to a typeclass below, so name the builtin explicitly.
             wrapped_type = numpy.bool_
         elif getattr(wrapped_type, '__name__', '') == 'bool_' and typename is None:
             typename = 'bool'
@@ -538,6 +560,16 @@ def result_type_of(lhs, *rhs):
     # Extract data sizes (seems the type itself doesn't expose this)
     size_lhs = lhs_(0).itemsize
     size_rhs = rhs_(0).itemsize
+    # ``bool`` is NumPy's lowest-rank numeric operand: ``result_type(bool, X) == X`` for
+    # any numeric X, int OR float (e.g. ``np.bool_(True) * np.int32(3)`` is ``int32(3)``).
+    # ``bool`` is NOT ``issubdtype(_, integer)``, so without this the float-precedence
+    # fallthrough below treats it as the winning "float-like" side and returns ``bool`` --
+    # truncating ``bool * int`` to 0/1 (the nussinov fp_factor ``c*t + (1-c)*e`` miscompile).
+    # The both-bool case already returned above (``lhs == rhs``).
+    if numpy.issubdtype(lhs_, numpy.bool_):
+        return rhs
+    if numpy.issubdtype(rhs_, numpy.bool_):
+        return lhs
     # Both are integers
     if numpy.issubdtype(lhs_, numpy.integer) and numpy.issubdtype(rhs_, numpy.integer):
         # If one byte width is larger, use it
@@ -903,7 +935,7 @@ class callback(typeclass):
             elif isinstance(arg, data.Data):
                 pass
             elif isinstance(arg, str):
-                arg = json_to_typeclass(arg)
+                arg = json_to_typeclass(arg, {'version': __version__})
             else:
                 raise TypeError("Cannot resolve type from: {}".format(arg))
             self.input_types.append(arg)
@@ -1134,7 +1166,7 @@ class callback(typeclass):
 
         import dace.serialize  # Avoid import loop
 
-        return callback([json_to_typeclass(rettype) if rettype else None for rettype in rettypes],
+        return callback([json_to_typeclass(rettype, context) if rettype else None for rettype in rettypes],
                         *(dace.serialize.from_json(arg, context) for arg in json_obj['arguments']))
 
     def __str__(self):
@@ -1210,6 +1242,9 @@ if TYPE_CHECKING:
     class uint32(_DaCeArray, npt.NDArray[numpy.uint32]): ...
     class uint64(_DaCeArray, npt.NDArray[numpy.uint64]): ...
     class float16(_DaCeArray, npt.NDArray[numpy.float16]): ...
+    class bfloat16(_DaCeArray, npt.NDArray): ...
+    class float8_e4m3fn(_DaCeArray, npt.NDArray): ...
+    class float8_e5m2(_DaCeArray, npt.NDArray): ...
     class float32(_DaCeArray, npt.NDArray[numpy.float32]): ...
     class float64(_DaCeArray, npt.NDArray[numpy.float64]): ...
     class complex64(_DaCeArray, npt.NDArray[numpy.complex64]): ...
@@ -1232,6 +1267,15 @@ else:
     uint32 = typeclass(numpy.uint32)
     uint64 = typeclass(numpy.uint64)
     float16 = typeclass(numpy.float16)
+    # Low-precision types backed by ml_dtypes scalars (numpy-registered), named
+    # verbatim as ml_dtypes names them. E4M3 is the finite ``fn`` variant
+    # (max +-448, no inf) -- the hardware E4M3 of NVIDIA __nv_fp8_e4m3 / AMD /
+    # OCP training. The C++ runtime headers (dace::bfloat16 / dace::float8_e4m3fn
+    # / dace::float8_e5m2) are not implemented yet -- this registers the
+    # Python-side dtypes only.
+    bfloat16 = typeclass(ml_dtypes.bfloat16)
+    float8_e4m3fn = typeclass(ml_dtypes.float8_e4m3fn)
+    float8_e5m2 = typeclass(ml_dtypes.float8_e5m2)
     float32 = typeclass(numpy.float32)
     float64 = typeclass(numpy.float64)
     complex64 = typeclass(numpy.complex64)
@@ -1260,6 +1304,9 @@ def dtype_to_typeclass(dtype=None):
         numpy.uint64: uint64,
         numpy.uintc: uint32,
         numpy.float16: float16,
+        ml_dtypes.bfloat16: bfloat16,
+        ml_dtypes.float8_e4m3fn: float8_e4m3fn,
+        ml_dtypes.float8_e5m2: float8_e5m2,
         numpy.float32: float32,
         numpy.float64: float64,
         numpy.complex64: complex64,
@@ -1272,6 +1319,10 @@ def dtype_to_typeclass(dtype=None):
         return DTYPE_TO_TYPECLASS
     return DTYPE_TO_TYPECLASS[dtype]
 
+
+FLOAT_TYPES = {float64, float32, float16, bfloat16, float8_e4m3fn, float8_e5m2}
+
+INT_TYPES = {int8, int16, int32, int64, uintp, uint8, uint16, uint32, uint64}
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
@@ -1289,6 +1340,9 @@ TYPECLASS_TO_STRING = {
     int32: "dace::int32",
     int64: "dace::int64",
     float16: "dace::float16",
+    bfloat16: "dace::bfloat16",
+    float8_e4m3fn: "dace::float8_e4m3fn",
+    float8_e5m2: "dace::float8_e5m2",
     float32: "dace::float32",
     float64: "dace::float64",
     complex64: "dace::complex64",
@@ -1305,6 +1359,9 @@ TYPECLASS_TO_LITERAL_SUFFIX = {
     uint32: 'u32',
     uint64: 'u64',
     float16: 'f16',
+    bfloat16: 'bf16',
+    float8_e4m3fn: 'e4m3fn',
+    float8_e5m2: 'e5m2',
     float32: 'f32',
     float64: 'f64',
 }
@@ -1327,7 +1384,7 @@ TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
 
 TYPECLASS_STRINGS = [
     "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
-    "uint64", "float16", "float32", "float64", "complex64", "complex128"
+    "uint64", "float16", "bfloat16", "float8_e4m3fn", "float8_e5m2", "float32", "float64", "complex64", "complex128"
 ]
 
 INTEGER_TYPES = [bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64]

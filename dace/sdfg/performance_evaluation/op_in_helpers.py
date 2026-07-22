@@ -2,14 +2,14 @@
 """ Contains class CacheLineTracker which keeps track of all arrays of an SDFG and their cache line position
 and class AccessStack which which corresponds to the stack used to compute the stack distance.
 Further, provides a curve fitting method and plotting function. """
-
+from __future__ import annotations
 import warnings
 from dace.data import Array
 import sympy as sp
 from collections import deque
 from scipy.optimize import curve_fit
 import numpy as np
-from dace import symbol
+from dace import symbol, symbolic
 
 
 class CacheLineTracker:
@@ -27,7 +27,7 @@ class CacheLineTracker:
             self.array_info[name] = a
             self.start_lines[name] = self.next_free_line
             # increase next_free_line
-            self.next_free_line += (a.total_size.subs(mapping) * a.dtype.bytes + self.L - 1) // self.L  # ceil division
+            self.next_free_line += symbolic.int_ceil(a.total_size.subs(mapping) * a.dtype.bytes, self.L)
 
     def cache_line_id(self, name: str, access: [int], mapping):
         arr = self.array_info[name]
@@ -37,7 +37,7 @@ class CacheLineTracker:
             one_d_index += (i + sp.sympify(arr.offset[dim]).subs(mapping)) * sp.sympify(arr.strides[dim]).subs(mapping)
 
         # divide by L to get the cache line id
-        return self.start_lines[name] + (one_d_index * arr.dtype.bytes) // self.L
+        return self.start_lines[name] + symbolic.int_floor(one_d_index * arr.dtype.bytes, self.L)
 
     def copy(self):
         new_clt = CacheLineTracker(self.L)
@@ -129,6 +129,12 @@ class AccessStack:
                 curr.next = Node(x)
                 curr = curr.next
         return new_stack
+
+    def replace_self(self, other: AccessStack):
+        self.top = other.top
+        self.num_calls = other.num_calls
+        self.lengh = other.length
+        self.C = other.C
 
 
 def plot(x, work_map, cache_misses, op_in_map, symbol_name, C, L, sympy_f, element, name):

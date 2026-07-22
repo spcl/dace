@@ -11,6 +11,7 @@ import ctypes
 import dataclasses
 
 from collections import OrderedDict
+from numbers import Integral
 from typing import Any, Dict, List, Set, Tuple, Union
 
 import numpy as np
@@ -89,7 +90,8 @@ class Data:
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.shape):
             raise TypeError('Shape must be a list or tuple of integer values '
                             'or symbols')
         if any((shp < 0) == True for shp in self.shape):
@@ -153,7 +155,7 @@ class Data:
 
     @property
     def veclen(self):
-        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+        return self.dtype.veclen
 
     @property
     def ctype(self):
@@ -191,7 +193,9 @@ class Data:
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                dimsize = (((self.shape[dim] + alignment - 1) // alignment) * alignment)
+                # int_ceil, never `//`: `(N + a - 1) // a` builds sympy `floor(...)`, whose argument
+                # sym2cpp prints WITHOUT the floor, truncating each term (N=1, a=8 gives 0, not 8).
+                dimsize = symbolic.int_ceil(self.shape[dim], alignment) * alignment
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
@@ -244,6 +248,18 @@ class Scalar(Data):
 
     allow_conflicts = Property(dtype=bool, default=False)
 
+    const_init = Property(dtype=bool,
+                          default=False,
+                          desc='Set by the MarkConstInit pass: this value is written exactly once '
+                          'and then read-only, so the experimental code generator may emit it '
+                          'as const/constexpr.')
+    const_init_kind = Property(dtype=str,
+                               default='none',
+                               choices=['none', 'constexpr_static', 'const_runtime'],
+                               desc="How const_init is realized: 'constexpr_static' (compile-time "
+                               "value, constexpr initializer) or 'const_runtime' (const binding of "
+                               "a runtime value).")
+
     def __init__(self,
                  dtype,
                  transient=False,
@@ -251,8 +267,12 @@ class Scalar(Data):
                  allow_conflicts=False,
                  location=None,
                  lifetime=dtypes.AllocationLifetime.Scope,
-                 debuginfo=None):
+                 debuginfo=None,
+                 const_init=False,
+                 const_init_kind='none'):
         self.allow_conflicts = allow_conflicts
+        self.const_init = const_init
+        self.const_init_kind = const_init_kind
         shape = [1]
         super(Scalar, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
@@ -279,7 +299,7 @@ class Scalar(Data):
 
     def clone(self):
         return Scalar(self.dtype, self.transient, self.storage, self.allow_conflicts, self.location, self.lifetime,
-                      self.debuginfo)
+                      self.debuginfo, self.const_init, self.const_init_kind)
 
     @property
     def strides(self):
@@ -352,6 +372,25 @@ class Scalar(Data):
             #      'If this expression is false, please refine symbol definitions in the program.')
 
         return True
+
+
+def strides_equal(packed, actual) -> bool:
+    """Stride-tuple equality that survives canonicalization.
+
+    ``RelaxIntegerPowers`` respells a packed ``N**2`` stride as ``ipow(N, 2)``, which is structurally
+    unequal but the same value -- comparing raw would misread a genuinely packed array as padded. The
+    structural fast path keeps the common case off sympy; an un-comparable expression refuses conservatively.
+    """
+    packed, actual = tuple(packed), tuple(actual)
+    if packed == actual:
+        return True
+    if len(packed) != len(actual):
+        return False
+    try:
+        return all(
+            symbolic.simplify(symbolic.relax_ipow(p) - symbolic.relax_ipow(a)).is_zero for p, a in zip(packed, actual))
+    except (TypeError, AttributeError):
+        return False
 
 
 @make_properties
@@ -442,6 +481,18 @@ class Array(Data):
                         'it is inferred by other properties and the OptionalArrayInference pass.')
     pool = Property(dtype=bool, default=False, desc='Hint to the allocator that using a memory pool is preferred')
 
+    const_init = Property(dtype=bool,
+                          default=False,
+                          desc='Set by the MarkConstInit pass: this array is written exactly once '
+                          '(possibly partially, the rest implicitly zero) and then read-only, so '
+                          'the experimental code generator may emit it as const/constexpr.')
+    const_init_kind = Property(dtype=str,
+                               default='none',
+                               choices=['none', 'constexpr_static', 'const_runtime'],
+                               desc="How const_init is realized: 'constexpr_static' (compile-time "
+                               "values, constexpr initializer list with zero-filled unwritten "
+                               "elements) or 'const_runtime' (const binding of a runtime value).")
+
     def __init__(self,
                  dtype,
                  shape,
@@ -458,13 +509,17 @@ class Array(Data):
                  total_size=None,
                  start_offset=None,
                  optional=None,
-                 pool=False):
+                 pool=False,
+                 const_init=False,
+                 const_init_kind='none'):
 
         super(Array, self).__init__(dtype, shape, transient, storage, location, lifetime, debuginfo)
 
         self.allow_conflicts = allow_conflicts
         self.may_alias = may_alias
         self.alignment = alignment
+        self.const_init = const_init
+        self.const_init_kind = const_init_kind
 
         if start_offset is not None:
             self.start_offset = start_offset
@@ -491,6 +546,7 @@ class Array(Data):
 
         self._packed_c_strides = None
         self._packed_fortran_strides = None
+        self._packed_strides_shape = tuple(shape)
 
         self.validate()
 
@@ -500,7 +556,8 @@ class Array(Data):
     def clone(self):
         return type(self)(self.dtype, self.shape, self.transient, self.allow_conflicts, self.storage, self.location,
                           self.strides, self.offset, self.may_alias, self.lifetime, self.alignment, self.debuginfo,
-                          self.total_size, self.start_offset, self.optional, self.pool)
+                          self.total_size, self.start_offset, self.optional, self.pool, self.const_init,
+                          self.const_init_kind)
 
     def to_json(self):
         attrs = serialize.all_properties_to_json(self)
@@ -535,9 +592,10 @@ class Array(Data):
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
 
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer values or symbols')
-        if any(not isinstance(off, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
                for off in self.offset):
             raise TypeError('Offset must be a list or tuple of integer values or symbols')
 
@@ -643,7 +701,7 @@ class Array(Data):
         """
         Used to set properties which depend on the shape of the array
         either to their default value, which depends on the shape, or
-        if explicitely provided to the given value. For internal use only.
+        if explicitly provided to the given value. For internal use only.
         """
         if shape is None:
             raise IndexError('Shape must not be None')
@@ -667,6 +725,7 @@ class Array(Data):
         # Clear cached values and recompute
         self._packed_c_strides = None
         self._packed_fortran_strides = None
+        self._packed_strides_shape = tuple(self.shape)
         self._packed_c_strides = self._get_packed_c_strides()
         self._packed_fortran_strides = self._get_packed_fortran_strides()
 
@@ -684,9 +743,24 @@ class Array(Data):
         self._set_shape_dependent_properties(new_shape, strides, total_size, offset)
         self.validate()
 
+    def refresh_packed_strides_cache(self) -> None:
+        """Drop both cached packed-stride tuples if they were built from a different shape.
+
+        Only ``set_shape`` refreshed them before, but plenty of passes assign ``.shape`` directly -- and a
+        symbol replacement (canonicalize re-registers symbols carrying nonnegative assumptions) rebuilds the
+        shape entries as NEW sympy objects even where the names are unchanged. A stale cache then compares
+        unequal to identical strides, so a packed array reads as padded and callers such as ``copy_node`` /
+        ``subsets`` choose a layout path on a false answer.
+        """
+        if self._packed_strides_shape != tuple(self.shape):
+            self._packed_c_strides = None
+            self._packed_fortran_strides = None
+            self._packed_strides_shape = tuple(self.shape)
+
     def _get_packed_fortran_strides(self) -> Tuple[int]:
         """Compute packed strides for Fortran-style (column-major) layout."""
         # Strides increase along the leading dimensions
+        self.refresh_packed_strides_cache()
         if self._packed_fortran_strides is None:
             strides = [1]
             accum = 1
@@ -700,6 +774,7 @@ class Array(Data):
     def _get_packed_c_strides(self) -> Tuple[int]:
         """Compute packed strides for C-style (row-major) layout."""
         # Strides increase along the trailing dimensions
+        self.refresh_packed_strides_cache()
         if self._packed_c_strides is None:
             strides = [1]
             accum = 1
@@ -712,13 +787,11 @@ class Array(Data):
 
     def is_packed_fortran_strides(self) -> bool:
         """Return True if strides match Fortran-contiguous (column-major) layout."""
-        strides = self._get_packed_fortran_strides()
-        return tuple(strides) == tuple(self.strides)
+        return strides_equal(self._get_packed_fortran_strides(), self.strides)
 
     def is_packed_c_strides(self) -> bool:
-        """Return True if strides match Fortran-contiguous (row-major) layout."""
-        strides = self._get_packed_c_strides()
-        return tuple(strides) == tuple(self.strides)
+        """Return True if strides match C-contiguous (row-major) layout."""
+        return strides_equal(self._get_packed_c_strides(), self.strides)
 
 
 @make_properties

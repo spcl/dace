@@ -49,6 +49,9 @@ class NestedDict(dict):
         super(NestedDict, self).__init__(mapping)
 
     def __getitem__(self, key):
+        # Fast path: an unqualified name has no members to walk, and this is on every sdfg.arrays[...]
+        if type(key) is str and '.' not in key:
+            return super(NestedDict, self).__getitem__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
@@ -63,6 +66,8 @@ class NestedDict(dict):
         super(NestedDict, self).__setitem__(key, val)
 
     def __contains__(self, key):
+        if type(key) is str and '.' not in key:  # fast path, as in __getitem__
+            return super(NestedDict, self).__contains__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__contains__(token)
@@ -73,7 +78,7 @@ class NestedDict(dict):
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
-            result = hasattr(desc, 'members') and token in desc.members
+            result = isinstance(desc, dt.Structure) and token in desc.members
         return result
 
     def keys(self):
@@ -119,13 +124,14 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
+    :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
     :return: A list of Memlet objects in the order they appear in the AST.
     """
     result: List[mm.Memlet] = []
@@ -136,6 +142,10 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif include_scalars and isinstance(subnode, ast.Name):
+            data = astutils.rname(subnode)
+            if data in arrays and isinstance(arrays[data], dace.data.Scalar):
+                result.append(mm.Memlet.from_array(data, arrays[data]))
 
     return result
 
@@ -341,7 +351,11 @@ class InterstateEdge(object):
 
         if replace_keys:
             for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+                # Guard as SDFG.replace_dict does: a non-name replacement (e.g. a symbolic
+                # expression, or a Symbol carrying assumptions that maps a name to itself)
+                # must not become an assignment key -- only rename when new_name is a valid name.
+                if validate_name(new_name):
+                    _replace_dict_keys(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
             vast = ast.parse(v)
@@ -393,19 +407,20 @@ class InterstateEdge(object):
 
         return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
-    def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+    def get_read_memlets(self, arrays: Dict[str, dt.Data], include_scalars: bool = False) -> List[mm.Memlet]:
         """
         Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
         both reads in the condition and in every assignment.
 
         :param arrays: A dictionary mapping names to their corresponding data descriptors (a-la ``sdfg.arrays``)
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
         :return: A list of Memlet objects for each read.
         """
         result: List[mm.Memlet] = []
-        result.extend(memlets_in_ast(self.condition.code[0], arrays))
+        result.extend(memlets_in_ast(self.condition.code[0], arrays, include_scalars=include_scalars))
         for assign in self.assignments.values():
             vast = ast.parse(assign)
-            result.extend(memlets_in_ast(vast, arrays))
+            result.extend(memlets_in_ast(vast, arrays, include_scalars=include_scalars))
 
         return result
 
@@ -470,6 +485,16 @@ class SDFG(ControlFlowRegion):
                                default=Config.get_bool('compiler', 'cpu', 'openmp_sections'),
                                desc='Whether to generate OpenMP sections in code')
 
+    openmp_array_reductions = Property(
+        dtype=bool,
+        default=False,
+        desc='Whether codegen may emit OpenMP array-section reduction clauses '
+        '(``reduction(op:A[0:n])``, plus ``#pragma omp declare reduction`` for complex '
+        'element types) for whole-buffer WCR accumulators of a parallel map, instead of '
+        'per-element atomics. Off by default (atomic path); the canonicalize pipeline turns '
+        'it on for its output. Only provably-safe contiguous cases take the clause; anything '
+        'else falls back to the atomic path.')
+
     debuginfo = DebugInfoProperty(allow_none=True)
 
     callback_mapping = DictProperty(str,
@@ -480,6 +505,9 @@ class SDFG(ControlFlowRegion):
     using_explicit_control_flow = Property(dtype=bool,
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
+
+    # Explicitly-set build folder, or None to derive it from the configuration
+    _build_folder = None
 
     def __init__(self,
                  name: str,
@@ -550,14 +578,11 @@ class SDFG(ControlFlowRegion):
         result._nodes = copy.deepcopy(self._nodes, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
-        for k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
+        result._parent = memo.get(id(self._parent))
+        result._parent_sdfg = memo.get(id(self._parent_sdfg))
+        result._parent_nsdfg_node = memo.get(id(self._parent_nsdfg_node))
         # Copy SDFG list and transformation history
-        if hasattr(self, '_transformation_hist'):
-            setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
+        result._transformation_hist = copy.deepcopy(self._transformation_hist, memo)
         result._cfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
@@ -688,6 +713,7 @@ class SDFG(ControlFlowRegion):
     @classmethod
     def from_json(cls, json_obj, context=None):
         context = context or {'sdfg': None}
+        context['version'] = json_obj.get('dace_version', context.get('version'))
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -699,13 +725,16 @@ class SDFG(ControlFlowRegion):
         edges = json_obj['edges']
 
         if 'constants_prop' in attrs:
-            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
+            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']), context=context)
         else:
             constants_prop = None
 
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
+        dace.serialize.set_properties_from_json(ret,
+                                                json_obj,
+                                                context=context,
+                                                ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -717,7 +746,7 @@ class SDFG(ControlFlowRegion):
             nodelist.append(block)
 
         for e in edges:
-            e = dace.serialize.from_json(e)
+            e = dace.serialize.from_json(e, context=context)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_block' in json_obj:
@@ -1201,7 +1230,7 @@ class SDFG(ControlFlowRegion):
     @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
-        if hasattr(self, '_build_folder'):
+        if self._build_folder is not None:
             return self._build_folder
         cache_config = Config.get('cache')
         base_folder = Config.get('default_build_folder')
@@ -1465,9 +1494,10 @@ class SDFG(ControlFlowRegion):
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data containers are read and written in this SDFG. Does
-        not include reads to subsets of containers that have previously been
-        written within the same state.
+        Determines what data containers are read and written in this SDFG.
+
+        Includes all reads including reads to subsets of containers that have
+        previously been written.
 
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).
@@ -1805,6 +1835,13 @@ class SDFG(ControlFlowRegion):
         """ Tries to find a new name by adding an underscore and a number. """
 
         names = (self._arrays.keys() | self.constants_prop.keys() | self.symbols.keys())
+        # Also avoid clashing with existing tasklet connector names: a transform
+        # minting e.g. ``add_scalar('tmp', find_new_name=True)`` must not pick a
+        # name already used as a connector (validation rejects the collision).
+        for st in self.states():
+            for n in st.nodes():
+                if isinstance(n, nd.CodeNode):
+                    names |= n.in_connectors.keys() | n.out_connectors.keys()
         return dt.find_new_name(name, names)
 
     def is_name_used(self, name: str) -> bool:
@@ -3034,13 +3071,17 @@ class SDFG(ControlFlowRegion):
                                    permissive=permissive,
                                    states=states)
 
-    def expand_library_nodes(self, recursive=True):
+    def expand_library_nodes(self, recursive=True, predicate=None):
         """
         Recursively expand all unexpanded library nodes in the SDFG,
         resulting in a "pure" SDFG that the code generator can handle.
 
         :param recursive: If True, expands all library nodes recursively,
                           including library nodes that expand to library nodes.
+        :param predicate: Optional ``node -> bool``. When given, only library nodes for
+                          which it returns True are expanded; the rest are left in place
+                          (e.g. an opaque node whose expansion is deferred to a later
+                          stage). Nested SDFGs are still descended into either way.
         """
 
         states = list(self.states())
@@ -3049,8 +3090,10 @@ class SDFG(ControlFlowRegion):
             expanded_something = False
             for node in list(state.nodes()):  # Make sure we have a copy
                 if isinstance(node, nd.NestedSDFG):
-                    node.sdfg.expand_library_nodes(recursive=recursive)  # Call recursively
+                    node.sdfg.expand_library_nodes(recursive=recursive, predicate=predicate)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):
+                    if predicate is not None and not predicate(node):
+                        continue
                     impl_name = node.expand(state)
                     if Config.get_bool('debugprint'):
                         print('Automatically expanded library node \"{}\" with '

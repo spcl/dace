@@ -49,5 +49,27 @@ def test_map_unroll():
             assert input_array[i, k, 0] + 1 == output_array[0, k, i]
 
 
+def test_gpu_map_declined_unless_permissive():
+    """A GPU map is declined by default (a device map IS the kernel launch) and offered under permissive."""
+    sdfg = dace.SDFG('gpu_unroll')
+    sdfg.add_array('A', [4], dace.float64, transient=True)
+    state = sdfg.add_state('main')
+    state.add_mapped_tasklet('fill',
+                             dict(i='0:4'), {},
+                             'out = 1.0',
+                             dict(out=dace.Memlet('A[i]')),
+                             schedule=dace.ScheduleType.GPU_Device,
+                             external_edges=True)
+    entry = next(n for n in state.nodes() if isinstance(n, dace.sdfg.nodes.MapEntry))
+
+    assert not MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
+    assert MapUnroll.can_be_applied_to(sdfg, permissive=True, map_entry=entry)
+
+    # Same map on a CPU schedule is offered either way -- the GPU schedule alone is the precondition.
+    entry.map.schedule = dace.ScheduleType.Sequential
+    assert MapUnroll.can_be_applied_to(sdfg, map_entry=entry)
+
+
 if __name__ == "__main__":
     test_map_unroll()
+    test_gpu_map_declined_unless_permissive()

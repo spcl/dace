@@ -1,27 +1,14 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``PromoteGPUScalarsToArrays`` -- replace GPU-incompatible ``Scalar``
-descriptors with length-1 ``Array`` descriptors (after storage/schedule
-inference; depends on ``InferDefaultSchedulesAndStorages``).
+descriptors with length-1 ``Array`` descriptors. Runs after storage/schedule
+inference (depends on ``InferDefaultSchedulesAndStorages``).
 
-Three rules: (1) a ``Scalar`` with ``GPU_Global``/``GPU_Shared`` storage keeps
-its storage and is widened to length-1; (2) a ``Scalar`` that is a
-**kernel output** -- written by a GPU map's ``MapExit`` -- is widened and
-forced to ``GPU_Global``; (3) a host ``Scalar`` that is an endpoint of a
-direct copy edge whose other endpoint is GPU-resident is widened but **keeps
-its host storage** -- the GPU pipeline lifts that edge to a ``CopyLibraryNode``
-whose ``cudaMemcpyAsync`` tasklet needs a pointer, and a bare ``Scalar`` source
-would codegen as ``const T* = scalar`` (missing ``&``). ``Register`` storage is
-exempt from rule 2 (thread-local stack), and the ``non_transient_only`` knob
-further restricts rule 2 to non-transient scalars (kernel-local transients then
-stay as registers).
-
-Bare-identifier references to a promoted name are subscripted ``name[0]``
-in interstate assignments, interstate conditions, ``LoopRegion``
-init/update/condition, ``ConditionalBlock`` branch conditions, and
-``NestedSDFG.symbol_mapping`` values. Memlets are left intact -- a
-``Scalar`` access already has subset ``[0]``, matching the length-1 array's
-subset. Nested SDFGs are recursed via the connector that carries the
-promoted descriptor (inner name may differ from outer).
+Two rules: (1) a ``Scalar`` with ``GPU_Global``/``GPU_Shared`` storage is
+widened to length-1 keeping its storage; (2) a ``Scalar`` written by a GPU
+map's ``MapExit`` (kernel output) is widened and forced to ``GPU_Global``.
+Bare-identifier references to a promoted name are subscripted ``name[0]`` in
+interstate/loop/branch code slots and ``symbol_mapping`` values; memlets are
+left intact since a ``Scalar`` access already carries subset ``[0]``.
 """
 import re
 from typing import Any, Dict, Optional, Callable
@@ -30,21 +17,20 @@ from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes, SDFGState
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
 
 PatternApplier: type = Callable[[str], str]
 
 
 def invalidate_array_connectors(sdfg: SDFG):
-    """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` so a follow-up
-    ``infer_connector_types`` re-derives them as pointer-typed.
+    """Reset NestedSDFG connectors whose inner descriptor is an ``Array`` to
+    ``typeclass(None)`` so a follow-up ``infer_connector_types`` re-derives
+    them as pointer-typed.
 
     A connector typed at construction time as a scalar dtype against an
     ``Array`` inner descriptor produces a wrapper signature ``T name`` that the
-    body indexes ``name[0]`` (compile error); resetting to ``typeclass(None)``
-    forces re-inference. Common cause: cuBLAS expansion's ``gpu_streams``
-    connector.
-
-    :param sdfg: SDFG whose nested-SDFG connectors are reset in place.
+    body indexes ``name[0]`` (compile error). Common cause: cuBLAS expansion's
+    ``gpu_streams`` connector.
     """
     uninferred = dtypes.typeclass(None)
     for nsdfg in sdfg.all_sdfgs_recursive():
@@ -66,25 +52,47 @@ class InferDefaultSchedulesAndStorages(ppl.Pass):
     """Pipeline-shaped wrapper around
     :func:`dace.sdfg.infer_types.set_default_schedule_and_storage_types`.
 
-    The function itself is the actual implementation -- this class exists
-    so the call can participate in a ``Pipeline`` with a real
-    ``depends_on`` edge from later passes. ``PromoteGPUScalarsToArrays``
-    in particular relies on every descriptor having a final, non-default
-    storage decision, which is exactly what this pass establishes.
+    Exists so the call can participate in a ``Pipeline`` with a real
+    ``depends_on`` edge: ``PromoteGPUScalarsToArrays`` relies on every
+    descriptor having a final, non-default storage decision.
     """
 
     def modifies(self) -> ppl.Modifies:
-        # Storage and schedule attributes live on descriptors and on
-        # ``Map`` instances respectively; both are reachable through
-        # ``Modifies.Descriptors | Modifies.Nodes``.
+        # Storage lives on descriptors, schedule on ``Map`` nodes.
         return ppl.Modifies.Descriptors | ppl.Modifies.Nodes
 
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
+    @staticmethod
+    def _schedules_and_storages(sdfg: SDFG) -> Dict[Any, Any]:
+        """Snapshot every slot ``set_default_schedule_and_storage_types`` can write.
+
+        Those are descriptor storages (keyed by ``(SDFG, name)``) and the schedules of scope
+        entry nodes / library nodes. The inference function reports nothing about what it
+        resolved, so the pass diffs a before/after snapshot. Exit nodes are skipped: their
+        schedule proxies the same :class:`~dace.sdfg.nodes.Map` as the matching entry node.
+        """
+        snapshot: Dict[Any, Any] = {}
+        for nsdfg in sdfg.all_sdfgs_recursive():
+            for name, desc in nsdfg.arrays.items():
+                snapshot[(nsdfg, name)] = desc.storage
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, (nodes.EntryNode, nodes.LibraryNode)):
+                snapshot[node] = node.schedule
+        return snapshot
+
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
+        """Resolve every ``Default`` schedule and storage in the SDFG hierarchy.
+
+        :returns: Number of schedule/storage slots whose value changed, or ``None`` if none did.
+        """
+        before = self._schedules_and_storages(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
-        return None
+        after = self._schedules_and_storages(sdfg)
+
+        changed = sum(1 for key, value in after.items() if before.get(key) != value)
+        return changed or None
 
 
 @properties.make_properties
@@ -117,118 +125,50 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Promote every GPU-incompatible scalar across the SDFG hierarchy.
 
-        :param sdfg: Root SDFG to promote scalars in (modified in place).
-        :param pipeline_results: Results of prior pipeline passes (unused).
         :returns: Number of scalars promoted, or ``None`` if nothing changed.
         """
         promoted = 0
-        # Top-down so a parent's promotion is visible when we visit the
-        # child's matching descriptor (children inherit the parent's choice
-        # -- see ``_promote_one`` for the recursion into nested SDFGs).
+        # Top-down so a parent's promotion is visible when we visit the child's
+        # matching descriptor (children inherit the parent's choice).
         for nsdfg in list(sdfg.all_sdfgs_recursive()):
             for name in list(nsdfg.arrays):
-                reason = self._needs_promotion(nsdfg, name)
-                if reason is None:
+                if not self._needs_promotion(nsdfg, name):
                     continue
-                # Rule 3 (host copy endpoint) keeps the scalar's own storage --
-                # a host->device copy source must stay on the host. Rules 1/2
-                # force GPU_Global for kernel-side scalars.
-                self._promote_one(nsdfg, name, force_gpu_global=(reason != 'copy_endpoint'))
+                self._promote_one(nsdfg, name)
                 promoted += 1
 
-        # Reset NestedSDFG connectors whose inner descriptor became an Array
-        # so ``infer_connector_types`` re-derives them as pointer-typed.
         invalidate_array_connectors(sdfg)
 
         return promoted if promoted > 0 else None
 
-    def _needs_promotion(self, sdfg: SDFG, name: str) -> Optional[str]:
-        """Classify why ``name`` must be widened, or ``None`` if it must not.
-
-        :returns: ``'gpu'`` for a GPU-storage / kernel-output scalar (Rules 1
-            and 2 -- widened and forced to ``GPU_Global``), ``'copy_endpoint'``
-            for a host scalar that is an endpoint of a cross-boundary copy edge
-            (Rule 3 -- widened but keeps its host storage), or ``None``.
-        """
+    def _needs_promotion(self, sdfg: SDFG, name: str) -> bool:
         desc = sdfg.arrays[name]
         if not isinstance(desc, data.Scalar):
-            return None
+            return False
 
         # Rule 1: GPU storage is incompatible with Scalar.
         if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
-            return 'gpu'
+            return True
 
-        # Rule 2: scalar is a kernel output -- written by a GPU map's ``MapExit``.
-        # Transient kernel outputs are skipped under the default knob (the
-        # host can never observe the value, so it can live in registers).
-        if desc.storage not in self._RULE2_EXEMPT_STORAGES and not (self.non_transient_only and desc.transient):
-            for state in sdfg.states():
-                for node in state.nodes():
-                    if not (isinstance(node, nodes.AccessNode) and node.data == name):
-                        continue
-                    for in_edge in state.in_edges(node):
-                        src = in_edge.src
-                        if not isinstance(src, nodes.ExitNode):
-                            continue
-                        entry = state.entry_node(src)
-                        if entry is not None and entry.map.schedule in dtypes.GPU_SCHEDULES:
-                            return 'gpu'
+        # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
+        if desc.storage in self._RULE2_EXEMPT_STORAGES:
+            return False
+        if self.non_transient_only and desc.transient:
+            return False
+        return written_by_gpu_map_exit(sdfg, name)
 
-        # Rule 3: host scalar that is an endpoint of a direct copy edge whose
-        # other endpoint is GPU-resident. The GPU pipeline lifts that edge to a
-        # ``CopyLibraryNode`` whose ``cudaMemcpyAsync`` tasklet types the scalar
-        # side as a pointer connector; a bare ``Scalar`` source then codegens as
-        # ``const T* = scalar`` (missing ``&``). Widening it to a length-1 host
-        # array gives the copy a real pointer. See
-        # ``dace.transformation.passes.insert_explicit_copies``.
-        if self._is_host_gpu_copy_endpoint(sdfg, name):
-            return 'copy_endpoint'
-
-        return None
-
-    @staticmethod
-    def _is_host_gpu_copy_endpoint(sdfg: SDFG, name: str) -> bool:
-        """True if ``name`` is a scalar on one side of a direct ``AccessNode ->
-        AccessNode`` copy edge whose other side is a ``GPU_RESIDENT_STORAGES``
-        array (a host<->device scalar copy that the GPU pipeline will lift)."""
-        for state in sdfg.states():
-            for edge in state.edges():
-                src, dst = edge.src, edge.dst
-                if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
-                    continue
-                if edge.data.is_empty() or edge.data.wcr is not None:
-                    continue
-                if src.data == name:
-                    other = sdfg.arrays[dst.data]
-                elif dst.data == name:
-                    other = sdfg.arrays[src.data]
-                else:
-                    continue
-                if other.storage in dtypes.GPU_RESIDENT_STORAGES:
-                    return True
-        return False
-
-    def _promote_one(self, sdfg: SDFG, name: str, force_gpu_global: bool = True):
-        """Replace a Scalar descriptor with a length-1 Array and propagate the change.
-
-        Rewrites memlets referencing it and recurses into nested SDFGs that
-        re-declare the same name as a Scalar.
-
-        :param sdfg: SDFG owning the descriptor (modified in place).
-        :param name: Name of the Scalar descriptor to promote.
-        :param force_gpu_global: When ``True`` (Rules 1/2), a non-GPU-storage
-            scalar is moved to ``GPU_Global`` because a kernel touches it.
-            When ``False`` (Rule 3), the scalar's storage is preserved -- a
-            host copy source/destination must stay on the host.
+    def _promote_one(self, sdfg: SDFG, name: str):
+        """Replace a Scalar descriptor with a length-1 Array and propagate the
+        change, recursing into nested SDFGs that re-declare the same name as a
+        Scalar.
         """
         scalar_desc: data.Scalar = sdfg.arrays[name]
 
         # Rule 2 promotes Default / CPU-side scalars to GPU_Global because
         # the kernel write needs real device memory; rule 1 keeps the
-        # pre-existing GPU storage. Rule 3 (force_gpu_global=False) keeps the
-        # host storage of a copy endpoint.
+        # pre-existing GPU storage.
         target_storage = scalar_desc.storage
-        if force_gpu_global and target_storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        if target_storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
             target_storage = dtypes.StorageType.GPU_Global
 
         array_desc = data.Array(
@@ -246,26 +186,11 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         sdfg.remove_data(name, validate=False)
         sdfg.add_datadesc(name, array_desc)
 
-        # Keep ``constants_prop`` consistent with the widened descriptor. A
-        # compile-time constant scalar (e.g. the autodiff gradient seed ``one``
-        # = 1.0) is emitted by the frame codegen straight from
-        # ``constants_prop`` as ``constexpr T name = v;`` -- ignoring the
-        # ``arrays`` descriptor. If such a constant is a copy source it is fed
-        # into a pointer-typed connector (``const T* _cpy_in = name;``), which
-        # does not compile. Re-storing it as an ``Array`` descriptor with a
-        # length-1 value makes the codegen emit ``constexpr T name[1] = {v};``,
-        # which decays to a pointer for the copy.
-        if name in sdfg.constants_prop:
-            import numpy as np
-            _, cstval = sdfg.constants_prop[name]
-            sdfg.constants_prop[name] = (array_desc, np.reshape(np.asarray(cstval), (1, )))
-
-        # The rewrite patten we need to apply.
         compiled_pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
         pattern = lambda s: compiled_pattern.sub(rf'\1[0]', s)
 
         self._rewrite_state_machine(sdfg, pattern)
-        self._rewrite_states(sdfg=sdfg, name=name, pattern=pattern, force_gpu_global=force_gpu_global)
+        self._rewrite_states(sdfg=sdfg, name=name, pattern=pattern)
 
     @staticmethod
     def _rewrite_codeblock(pattern: PatternApplier, codeblock: properties.CodeBlock) -> properties.CodeBlock:
@@ -274,13 +199,10 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         return properties.CodeBlock(new_codeblock_str, codeblock.language)
 
     def _rewrite_state_machine(self, sdfg: SDFG, pattern: PatternApplier) -> None:
-        """Rewrite bare-identifier references on every state-machine code
-        slot: interstate edges (assignments + condition), ``LoopRegion`` and
+        """Rewrite bare-identifier references on every state-machine code slot:
+        interstate edges (assignments + condition), ``LoopRegion`` and
         ``ConditionalBlock`` CodeBlocks. ``InterstateEdge.assignments`` and
         ``.condition`` are class-level properties so they always exist.
-
-        :param sdfg: SDFG whose state-machine slots are rewritten.
-        :param pattern: The rewrite pattern.
         """
         for cfg in sdfg.all_control_flow_regions():
             for edge in cfg.edges():
@@ -295,21 +217,19 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                         ise.assignments[k] = new_v
                 ise.condition = self._rewrite_codeblock(pattern, ise.condition)
 
-        # ``ConditionalBlock`` and ``LoopRegion`` carry the only CodeBlock
-        # slots reached from a state-machine walk -- a ``ControlFlowBlock``
-        # doesn't otherwise embed user expressions. Both subclass
-        # ``ControlFlowBlock`` so they appear via ``all_control_flow_blocks``.
+        # ``ConditionalBlock`` and ``LoopRegion`` carry the only CodeBlock slots
+        # a state-machine walk reaches; other blocks embed no user expressions.
         for block in sdfg.all_control_flow_blocks(recursive=True):
             if isinstance(block, ConditionalBlock):
-                for i in range(len(block._branches)):
-                    cond, branch_body = block._branches[i]
-                    if cond is not None:
-                        # ``_branches`` entries are (condition, body) tuples -- rebuild the tuple
-                        # rather than assigning into it.
-                        block._branches[i] = (self._rewrite_codeblock(pattern, cond), branch_body)
+                # Rebuild the entry rather than item-assigning into it: ``add_branch`` appends a
+                # mutable ``[condition, body]``, but ``remove_branch`` rebuilds the list with
+                # ``(c, b)`` tuples -- so ``branch[0] = ...`` raises "'tuple' object does not
+                # support item assignment" on any ConditionalBlock that has had a branch removed.
+                for i, (condition, branch_body) in enumerate(block.branches):
+                    if condition is not None:
+                        block.branches[i] = (self._rewrite_codeblock(pattern, condition), branch_body)
             elif isinstance(block, LoopRegion):
-                # ``init_statement`` / ``update_statement`` are optional --
-                # a bare ``while`` LoopRegion has only the condition.
+                # init/update are optional -- a ``while`` LoopRegion has only the condition.
                 if block.update_statement is not None:
                     block.update_statement = self._rewrite_codeblock(pattern, block.update_statement)
                 if block.init_statement is not None:
@@ -317,19 +237,12 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                 if block.loop_condition is not None:
                     block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
 
-    def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier, force_gpu_global: bool = True) -> None:
-        """Applies the promotion, `Scalar` to 'One-Element-Array', in all states.
-
-        :param sdfg: The SDFG on which we operate.
-        :param name: The name of the data that was promoted.
-        :param pattern: The rewrite pattern that we need to apply.
-        :param force_gpu_global: Propagated to nested-SDFG promotions.
-        """
+    def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier) -> None:
+        """Apply the promotion in all states."""
         for state in sdfg.states():
-            self._rewrite_state(state=state, name=name, pattern=pattern, force_gpu_global=force_gpu_global)
+            self._rewrite_state(state=state, name=name, pattern=pattern)
 
-    def _rewrite_state(self, state: SDFGState, name: str, pattern: PatternApplier,
-                       force_gpu_global: bool = True) -> None:
+    def _rewrite_state(self, state: SDFGState, name: str, pattern: PatternApplier) -> None:
         """Push the rewrite into NestedSDFGs reached from ``state``.
 
         Memlets are not touched -- a ``Scalar`` access always carries subset
@@ -338,10 +251,6 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         as a ``Scalar``, and (b) ``symbol_mapping`` values that bare-reference
         the promoted name (frontend symbol-promotion threads scalars into the
         nested scope this way).
-
-        :param state: The state in which to apply the promotion.
-        :param name: The name of the data that was promoted.
-        :param pattern: The pattern to apply.
         """
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
@@ -360,7 +269,7 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                 inner_name = iedge.dst_conn
                 if iedge.data.data == name and isinstance(node.sdfg.arrays[inner_name], data.Scalar):
                     assert inner_name not in handled_inner_names  # Can only appear once.
-                    self._promote_one(node.sdfg, inner_name, force_gpu_global=force_gpu_global)
+                    self._promote_one(node.sdfg, inner_name)
                     handled_inner_names.add(inner_name)
 
             for oedge in state.out_edges(node):
@@ -369,4 +278,4 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                 inner_name = oedge.src_conn
                 if oedge.data.data == name and inner_name not in handled_inner_names and isinstance(
                         node.sdfg.arrays[inner_name], data.Scalar):
-                    self._promote_one(node.sdfg, inner_name, force_gpu_global=force_gpu_global)
+                    self._promote_one(node.sdfg, inner_name)

@@ -113,7 +113,7 @@ def simplify_input(shape, strides, axes):
         s = shape[rem[0]]
         for i in range(len(out_strides)):
             if (out_strides[i] > r) == True or r == 1 or expr_is_contained(r, out_strides[i]):
-                out_strides[i] //= s
+                out_strides[i] = symbolic.int_floor(out_strides[i], s)
 
     return shape, strides, axes, out_shape, out_strides
 
@@ -207,9 +207,21 @@ def get_reduction_schedule(in_array: Array,
     schedule.out_shape = out_shape
     schedule.out_strides = out_strides
 
+    # The contiguous dimension is the stride-1 dimension (NOT necessarily the
+    # innermost). If some dimension has stride 1, use it. If none does -- a strided
+    # input, e.g. a non-unit-stride View (``x[:, ::2]``) whose access ``view[i]``
+    # addresses ``i * stride`` -- take the smallest-stride dimension as the innermost
+    # and emit a STRIDED reduction (``strided_input`` below): CUB handles a static
+    # stride and memory accesses use the folded ``in_strides``, so it is correct;
+    # the contiguous-vectorized fast path (which assumes unit stride) is disabled.
+    contiguous_dimension = None
     for i, s in enumerate(strides):
         if s == 1:
             contiguous_dimension = i
+    strided_input = contiguous_dimension is None
+    if strided_input:
+        concrete = [i for i, s in enumerate(strides) if not symbolic.issymbolic(s)]
+        contiguous_dimension = min(concrete, key=lambda i: strides[i]) if concrete else len(strides) - 1
 
     if len(axes) > 1:
         # we need to compute a multi-axes reduction
@@ -225,18 +237,30 @@ def get_reduction_schedule(in_array: Array,
 
         axes = schedule.changed_axes
         shape = schedule.changed_in_shape
+        # Recompute the contiguous dimension over the inner reduction's strides (a
+        # different index space than the full input), with the same stride-1 /
+        # smallest-stride-strided fallback as above.
+        contiguous_dimension = None
         for i, s in enumerate(schedule.changed_in_strides):
             if s == 1:
                 contiguous_dimension = i
+        strided_input = contiguous_dimension is None
+        if strided_input:
+            concrete = [i for i, s in enumerate(schedule.changed_in_strides) if not symbolic.issymbolic(s)]
+            contiguous_dimension = (min(concrete, key=lambda i: schedule.changed_in_strides[i])
+                                    if concrete else len(schedule.changed_in_strides) - 1)
 
     # now compute the schedule depending on contiguous or strided reduction
     if contiguous_dimension in axes:
         # we are reducing the contiguous dimension
         schedule.contiguous_dim = True
 
-        # TODO: Fix vectorization for non-exact-fitting sizes
+        # TODO: Fix vectorization for non-exact-fitting sizes.
+        # Vectorized loads assume a unit-stride contiguous dimension; a strided
+        # input (no stride-1 dimension) must not vectorize -- it reduces with the
+        # folded ``in_strides`` instead.
         if (shape[contiguous_dimension] > 32) == True and (shape[contiguous_dimension] % num_loaded_elements
-                                                           == 0) == True and use_vectorization:
+                                                           == 0) == True and use_vectorization and not strided_input:
             schedule.vectorize = True
 
         # all non-reduced dimensions in grid
@@ -261,7 +285,7 @@ def get_reduction_schedule(in_array: Array,
         if len(schedule.in_shape) == 1 and schedule.out_shape == [1]:
             schedule.one_d_reduction = True
             # increase schedule.grid to appropriate value --> each block sums up 1024 values
-            schedule.grid = [(schedule.in_shape[0] + 1024 - 1) // 1024]
+            schedule.grid = [symbolic.int_ceil(schedule.in_shape[0], 1024)]
 
     else:
         # we are reducing a non-contiguous dimension
@@ -278,7 +302,7 @@ def get_reduction_schedule(in_array: Array,
         if use_mini_warps and (shape[contiguous_dimension] <= 16) == True:
             # we turn on mini_warps
             schedule.mini_warps = True
-            schedule.num_mini_warps = warp_size // shape[contiguous_dimension]
+            schedule.num_mini_warps = symbolic.int_floor(warp_size, shape[contiguous_dimension])
             # we now use 16 * schedule.num_mini_warps threads to compute 1 output element
             schedule.block = [16, shape[contiguous_dimension]]
             schedule.shared_mem_size = shape[contiguous_dimension]

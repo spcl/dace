@@ -26,7 +26,7 @@ class ReferenceToView(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes
 
     def depends_on(self):
-        return {ap.FindAccessStates, ap.FindReferenceSources}
+        return [ap.FindAccessStates, ap.FindReferenceSources]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         """
@@ -120,7 +120,7 @@ class ReferenceToView(ppl.Pass):
                 # Check if any of the symbols is a scope symbol
                 entry = state.entry_node(node)
                 while entry is not None:
-                    if fsyms & entry.new_symbols(sdfg, state, {}).keys():
+                    if fsyms & entry.new_symbol_names(state):
                         result.remove(cand)
                         break
                     entry = state.entry_node(entry)

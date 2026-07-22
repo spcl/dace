@@ -24,12 +24,35 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.loop)]
 
-    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
-        # Check if this is a for-loop with known range.
+    def _last_iteration(self):
+        """The last value the iteration variable actually ATTAINS, or None if the range is unknown.
+
+        ``get_loop_end`` returns the inclusive bound implied by the loop CONDITION (``i < 10`` -> 9),
+        which is NOT the last attained iterate whenever the stride does not divide the trip range:
+        ``range(0, 10, 2)`` attains 8 and never 9.
+
+        Both the loop-carried-dependency guard in ``can_be_applied`` and the substitution in ``apply``
+        must reason about the SAME index -- eliminating the loop keeps exactly this iteration. They used
+        to compute it separately and disagreed (the guard tested ``end``, ``apply`` substituted the real
+        iterate), so the guard validated an index the body was never pinned to and a genuinely
+        loop-carried-dependent loop was eliminated. Deriving it once here is what keeps them in step.
+
+        ``int_floor``, never ``//``: on sympy operands ``//`` builds ``sympy.floor``, which the code
+        generator lowers to C ``/`` -- truncation toward zero, not floor -- so the emitted index
+        disagreed with the analyzed one for a symbolic bound.
+        """
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         stride = loop_analysis.get_loop_stride(self.loop)
         if start is None or end is None or stride is None:
+            return None
+        return start + symbolic.int_floor(end - start, stride) * stride
+
+    def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # Check if this is a for-loop with known range: ``_last_iteration`` is None for exactly the
+        # unknown-range cases (no init assignment, no end, or no stride).
+        last_iteration = self._last_iteration()
+        if last_iteration is None:
             return False
 
         # Check if any continue, break, or return statements are present in the loop.
@@ -132,9 +155,17 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                         return False
 
                     src_subset = copy.deepcopy(e.data.get_src_subset(e, state))
-                    src_subset.replace({self.loop.loop_variable: end})
-                    # None of write_subsets should lie within the new subset
-                    if any(intersects(ws_ss, src_subset) for ws_ss in write_subsets[dn.data]):
+                    # Pin the read to the iterate ``apply`` will actually keep, NOT to ``end`` -- see
+                    # ``_last_iteration``. Testing ``end`` examined an index the loop may never reach.
+                    src_subset.replace({self.loop.loop_variable: last_iteration})
+                    # None of write_subsets should lie within the new subset. ``intersects`` is
+                    # three-valued: True / False / None, where None means IT COULD NOT DECIDE (e.g. a
+                    # non-unit stride or tile, or an undecidable symbolic relation -- the module-level
+                    # wrapper turns that TypeError into None). None is falsy, so testing it directly let
+                    # an undecidable overlap fall through and ACCEPT, dropping a real loop-carried
+                    # dependency. Refuse unless the answer is a definite False, which is the sound
+                    # direction and matches the ``not intersects(...)`` guard on the unique-data check.
+                    if any(intersects(ws_ss, src_subset) is not False for ws_ss in write_subsets[dn.data]):
                         return False
 
         # No conditional edge may depend on the loop variable.
@@ -157,18 +188,27 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
         return True
 
     def apply(self, graph: ControlFlowRegion, sdfg: sd.SDFG):
-        start = loop_analysis.get_init_assignment(self.loop)
-        end = loop_analysis.get_loop_end(self.loop)
-        stride = loop_analysis.get_loop_stride(self.loop)
-
-        last_iteration = start + (end - start) // stride * stride
+        last_iteration = self._last_iteration()
         itervar = self.loop.loop_variable
 
-        # Rewrite each occurence of the loop variable in the loop body
-        self.loop.replace(itervar, last_iteration)
+        # Pin every occurrence of the loop variable to the surviving iterate. This substitutes a VALUE, so
+        # it must NOT go through ``replace`` -- that is a RENAME (``replace_keys=True``), which would rewrite
+        # an interstate-edge assignment's KEY to the expression, e.g. ``{'N - 1': ...}``. ``replace_keys=False``
+        # leaves assignment keys and the loop's own ``loop_variable`` alone; the loop is removed below anyway,
+        # and every reference in the body still gets the value. ``TrivialLoopElimination`` substitutes the
+        # same way for the same reason.
+        self.loop.replace_dict({itervar: str(last_iteration)},
+                               symrepl={symbolic.symbol(itervar): last_iteration},
+                               replace_keys=False)
 
-        # Add the loop contents to the parent graph.
-        graph.add_node(self.loop.start_block)
+        # Reparent the loop's blocks into the parent graph. A loop body is its own name scope, so a label
+        # that was unique inside the loop can already be taken in the destination -- rename on arrival.
+        # Every block is added explicitly, up front: the edge loop below would otherwise auto-add the
+        # non-start blocks (``OrderedDiGraph.add_edge``), bypassing the unique naming entirely. Edges are
+        # wired by object reference, so relabelling is safe. ``start_block`` goes first to keep the
+        # parent's node order as it was.
+        for block in [self.loop.start_block] + [b for b in self.loop.nodes() if b is not self.loop.start_block]:
+            graph.add_node(block, ensure_unique_name=True)
         for e in graph.in_edges(self.loop):
             graph.add_edge(e.src, self.loop.start_block, e.data)
         sink = graph.add_state(self.loop.label + "_sink")

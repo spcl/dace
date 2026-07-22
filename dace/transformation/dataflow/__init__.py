@@ -12,6 +12,7 @@ from .map_fusion_vertical import MapFusionVertical
 from .map_fusion_horizontal import MapFusionHorizontal
 from .map_fusion import MapFusion
 from .map_fission import MapFission
+from .perf_loop_nesting import PerfLoopNesting
 from .map_unroll import MapUnroll
 from .trivial_map_elimination import TrivialMapElimination
 from .otf_map_fusion import OTFMapFusion

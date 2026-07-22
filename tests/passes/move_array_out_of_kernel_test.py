@@ -3,7 +3,8 @@
 lifted transient's shape does not leak an out-of-scope outer-loop symbol into ``cudaMalloc``."""
 import sympy
 
-from dace.transformation.passes.move_array_out_of_kernel import _tile_extent
+import dace
+from dace.transformation.passes.move_array_out_of_kernel import _tile_extent, MoveArrayOutOfKernel
 
 
 def test_tile_extent_recognises_min_pattern():
@@ -31,3 +32,23 @@ def test_tile_extent_handles_outer_block_strided_loop():
     extent = _tile_extent(N - 1, sympy.Integer(0))
     assert sympy.simplify(extent - N) == 0
     assert sympy.Symbol('b_i') not in extent.free_symbols
+
+
+def test_get_new_shape_info_multidim_prepend_strides():
+    """A GPU map that prepends >1 dimension must yield packed C-layout strides.
+
+    Lifting an ``[64]`` transient out of a 2-D kernel ``map[0:128, 0:32]`` gives shape
+    ``[128, 32, 64]``; the packed strides are ``[2048, 64, 1]``. Regression: the stride loop
+    inserted the running accumulator *before* multiplying and iterated ``range_size[:-1]``, so
+    it produced ``[64, 64, 1]`` -- both prepended dims wrongly shared stride 64.
+    """
+    sdfg = dace.SDFG('move_array_strides')
+    state = sdfg.add_state('s')
+    me, _mx = state.add_map('kernel', dict(i='0:128', j='0:32'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+
+    arr = dace.data.Array(dace.float64, [64])
+    new_shape, new_strides, new_total, _new_offsets = MoveArrayOutOfKernel().get_new_shape_info(arr, [me])
+
+    assert [int(s) for s in new_shape] == [128, 32, 64], new_shape
+    assert [int(s) for s in new_strides] == [2048, 64, 1], new_strides
+    assert int(new_total) == 128 * 32 * 64, new_total

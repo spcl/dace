@@ -1,0 +1,29 @@
+{
+    "benchmark": {
+        "name": "Lenet-5",
+        "short_name": "lenet",
+        "relative_path": "deep_learning/lenet",
+        "module_name": "lenet",
+        "func_name": "lenet5",
+        "kind": "microapp",
+        "domain": "Learning",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 4, "H": 28, "W": 28 },
+            "M": { "N": 8, "H": 56, "W": 56 },
+            "L": { "N": 8, "H": 176, "W": 176 },
+            "paper": { "N": 16, "H": 256, "W": 256 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N", "H", "W"],
+            "output_args": ["input", "conv1", "conv1bias", "conv2", "conv2bias",
+                            "fc1w", "fc1b", "fc2w", "fc2b", "fc3w", "fc3b", "C_before_fc1"]
+        },
+        "input_args": ["input", "conv1", "conv1bias", "conv2", "conv2bias",
+                       "fc1w", "fc1b", "fc2w", "fc2b", "fc3w", "fc3b", "N", "C_before_fc1"],
+        "array_args": ["input", "conv1", "conv1bias", "conv2", "conv2bias",
+                       "fc1w", "fc1b", "fc2w", "fc2b", "fc3w", "fc3b"],
+        "output_args": []
+    }
+}

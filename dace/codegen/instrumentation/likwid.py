@@ -73,6 +73,68 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         the Likwid tool.
     """
 
+    MARKER_START_CODE_TEMPLATE = '''
+#pragma omp parallel
+{{
+    LIKWID_MARKER_REGISTER("{region}");
+
+    /* Temporary fix:
+     *  Case: multiple exeuctions
+     *  Problem: Markers need to be reset before new execution.
+     *  Bug: If we do this immediately after LIKEID_MARKER_GET
+     *  and before LIKWID_MARKER_CLOSE, likwid prints an false
+     *  warning complaining it can't evaluate those regions.
+     *  To avoid this ugly warning, we reset them before measuring
+     *  again.
+     */
+    #pragma omp barrier
+    LIKWID_MARKER_START("{region}");
+    LIKWID_MARKER_STOP("{region}");
+    LIKWID_MARKER_RESET("{region}");
+
+    #pragma omp barrier
+    LIKWID_MARKER_START("{region}");
+}}
+'''
+    _MARKER_STOP_CODE_TEMPLATE = '''
+#pragma omp parallel
+{{
+    LIKWID_MARKER_STOP("{region}");
+}}
+'''
+    _REPORT_CODE_TEMPLATE = '''
+#pragma omp parallel
+{{
+    int thread_id = omp_get_thread_num();
+    int nevents = MAX_NUM_EVENTS;
+    int count = 0;
+
+    LIKWID_MARKER_GET("{region}", &nevents, events[thread_id], time + thread_id, &count);
+
+    #pragma omp barrier
+    #pragma omp single
+    {{
+        int gid = perfmon_getIdOfActiveGroup();
+        char* group_name = perfmon_getGroupName(gid);
+
+        for (int t = 0; t < num_threads; t++)
+        {{
+            __state->report.add_completion("Timer", "likwid", 0, time[t] * 1000 * 1000, t, {cfg_id}, {state_id}, {node_id});
+        }}
+
+        for (int i = 0; i < nevents; i++)
+        {{
+            char* event_name = perfmon_getEventName(gid, i);
+
+            for (int t = 0; t < num_threads; t++)
+            {{
+                __state->report.add_counter("{region}", "likwid", event_name, events[t][i], t, {cfg_id}, {state_id}, {node_id});
+            }}
+        }}
+    }}
+}}
+'''
+
     perf_whitelist_schedules = [
         dtypes.ScheduleType.CPU_Multicore, dtypes.ScheduleType.CPU_Persistent, dtypes.ScheduleType.Sequential
     ]
@@ -158,9 +220,17 @@ LIKWID_MARKER_INIT;
 '''
         codegen._initcode.write(init_code)
 
+        if sdfg.instrument == dace.InstrumentationType.LIKWID_CPU:
+            marker_code = self.MARKER_START_CODE_TEMPLATE.format(region=f"sdfg_{sdfg.cfg_id}")
+            local_stream.write(marker_code)
+
     def on_sdfg_end(self, sdfg, local_stream, global_stream):
         if not self._likwid_used or sdfg.parent is not None:
             return
+
+        if sdfg.instrument == dace.InstrumentationType.LIKWID_CPU:
+            marker_code = self._MARKER_STOP_CODE_TEMPLATE.format(region=f"sdfg_{sdfg.cfg_id}")
+            local_stream.write(marker_code)
 
         outer_code = f'''
 int num_threads;
@@ -175,39 +245,18 @@ double time[num_threads];
 '''
         local_stream.write(outer_code, sdfg)
 
+        if sdfg.instrument == dace.InstrumentationType.LIKWID_CPU:
+            report_code = self._REPORT_CODE_TEMPLATE.format(region=f"sdfg_{sdfg.cfg_id}",
+                                                            cfg_id=sdfg.cfg_id,
+                                                            state_id=-1,
+                                                            node_id=-1)
+            local_stream.write(report_code)
+
         for region, cfg_id, state_id, node_id in self._regions:
-            report_code = f'''
-#pragma omp parallel
-{{
-    int thread_id = omp_get_thread_num();
-    int nevents = MAX_NUM_EVENTS;
-    int count = 0;
-
-    LIKWID_MARKER_GET("{region}", &nevents, events[thread_id], time + thread_id, &count);
-
-    #pragma omp barrier
-    #pragma omp single
-    {{
-        int gid = perfmon_getIdOfActiveGroup();
-        char* group_name = perfmon_getGroupName(gid);
-
-        for (int t = 0; t < num_threads; t++)
-        {{
-            __state->report.add_completion("Timer", "likwid", 0, time[t] * 1000 * 1000, t, {cfg_id}, {state_id}, {node_id});
-        }}
-
-        for (int i = 0; i < nevents; i++)
-        {{
-            char* event_name = perfmon_getEventName(gid, i);
-
-            for (int t = 0; t < num_threads; t++)
-            {{
-                __state->report.add_counter("{region}", "likwid", event_name, events[t][i], t, {cfg_id}, {state_id}, {node_id});
-            }}
-        }}
-    }}
-}}
-'''
+            report_code = self._REPORT_CODE_TEMPLATE.format(region=region,
+                                                            cfg_id=cfg_id,
+                                                            state_id=state_id,
+                                                            node_id=node_id)
             local_stream.write(report_code)
 
         exit_code = '''

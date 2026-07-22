@@ -540,6 +540,55 @@ def test_scope_multisize():
     sdfg()
 
 
+@pytest.mark.parametrize('schedule', [dace.ScheduleType.Sequential, dace.ScheduleType.CPU_Multicore])
+def test_code_only_container_read_scope(schedule):
+    """A transient Scalar written via an AccessNode in one nested-SDFG state and read
+    ONLY from a sibling state's tasklet CODE (free name -- no connector/memlet/AccessNode).
+    The allocation-scope analysis must count the code-only use, or the declaration lands
+    inside the writing state's brace scope and the read does not compile (the cloudsc
+    ``zqe_5`` shape, produced by SymbolPropagation folding ``zqe = zqe_5`` into tasklet
+    code). Regression test for determine_allocation_lifetime's code-instance collection.
+    """
+    sdfg = dace.SDFG(f'code_only_read_{schedule.name}')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    state = sdfg.add_state('main')
+
+    nest = dace.SDFG('nest')
+    nest.add_scalar('a_in', dace.float64, transient=False)
+    nest.add_scalar('b_out', dace.float64, transient=False)
+    nest.add_scalar('zqe', dace.float64, transient=True)
+
+    # State A: write zqe through a proper AccessNode.
+    st_a = nest.add_state('stA')
+    ra = st_a.add_read('a_in')
+    tw = st_a.add_tasklet('writer', {'a'}, {'o'}, 'o = a * 2.0')
+    wz = st_a.add_write('zqe')
+    st_a.add_edge(ra, None, tw, 'a', dace.Memlet('a_in[0]'))
+    st_a.add_edge(tw, 'o', wz, None, dace.Memlet('zqe[0]'))
+
+    # State B: read zqe ONLY from tasklet code (no AccessNode / memlet).
+    st_b = nest.add_state_after(st_a, 'stB')
+    rb = st_b.add_read('a_in')
+    tr = st_b.add_tasklet('reader', {'__in_b'}, {'__out'}, '__out = min(zqe, __in_b)')
+    wb = st_b.add_write('b_out')
+    st_b.add_edge(rb, None, tr, '__in_b', dace.Memlet('a_in[0]'))
+    st_b.add_edge(tr, '__out', wb, None, dace.Memlet('b_out[0]'))
+
+    me, mx = state.add_map('m', dict(i='0:16'), schedule=schedule)
+    nsdfg = state.add_nested_sdfg(nest, inputs={'a_in'}, outputs={'b_out'})
+    an_a = state.add_read('A')
+    an_b = state.add_write('B')
+    state.add_memlet_path(an_a, me, nsdfg, dst_conn='a_in', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(nsdfg, mx, an_b, src_conn='b_out', memlet=dace.Memlet('B[i]'))
+
+    a = np.random.rand(16)
+    b = np.zeros(16)
+    sdfg(A=a, B=b)
+    # b = min(2a, a) = a for a >= 0.
+    assert np.allclose(b, a)
+
+
 def test_multisize():
     """ An array that needs to be allocated once, with runtime-dependent sizes. """
     sdfg = dace.SDFG('test')
@@ -613,4 +662,6 @@ if __name__ == '__main__':
     test_branched_allocation('singlevalue')
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
+    test_code_only_container_read_scope(dace.ScheduleType.Sequential)
+    test_code_only_container_read_scope(dace.ScheduleType.CPU_Multicore)
     test_multisize()

@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Scalar, Vector and Matrix Multiplication",
+        "short_name": "gesummv",
+        "relative_path": "polybench/gesummv",
+        "module_name": "gesummv",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "LinAlg",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 2000 },
+            "M": { "N": 4000 },
+            "L": { "N": 14000 },
+            "paper": { "N": 11200 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["alpha", "beta", "A", "B", "x"]
+        },
+        "input_args": ["alpha", "beta", "A", "B", "x"],
+        "array_args": ["A", "B", "x"],
+        "output_args": []
+    }
+}

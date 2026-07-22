@@ -396,11 +396,89 @@ class ExpandCuTensor(ExpandTransformation):
         return tasklet
 
 
+@library.expansion
+class ExpandTBLIS(ExpandTransformation):
+    """TensorDot via TBLIS ``tblis_tensor_mult`` -- native, transpose-free CPU contraction.
+
+    Reuses the cuTENSOR mode assignment, then renders integer modes as single-char index
+    labels (the einsum-style strings TBLIS consumes). ``C`` is initialized scaled by 0 so the
+    call overwrites (``C = A*B``) rather than accumulating (``C = A*B + C``).
+    """
+
+    environments = [environments.TBLIS]
+
+    # dace dtype -> (tblis init suffix, C element type)
+    TYPE_MAP = {dace.float32: ("s", "float"), dace.float64: ("d", "double")}
+
+    @staticmethod
+    def contraction_labels(num_left, num_right, left_axes, right_axes, permutation=None):
+        """Einsum-style index labels ``(idx_a, idx_b, idx_c)`` for the contraction.
+
+        Contracted right modes borrow the matching left mode's label (shared index = summed);
+        free modes get fresh labels; the output is the free-left ++ free-right modes, permuted.
+        Correct iff ``np.einsum(f'{idx_a},{idx_b}->{idx_c}', A, B)`` equals the tensordot.
+        """
+        left_modes = list(range(num_left))
+        right_modes = [left_axes[right_axes.index(i)] if i in right_axes else num_left + i for i in range(num_right)]
+        out_modes = [i for i in left_modes if i not in left_axes]
+        out_modes.extend([i for i in right_modes if i not in left_axes])
+        if permutation and permutation != list(range(len(permutation))):
+            out_modes = [out_modes[i] for i in permutation]
+        label_of = {}
+        for m in left_modes + right_modes:
+            if m not in label_of:
+                if len(label_of) >= 26:
+                    raise NotImplementedError("TBLIS TensorDot: more than 26 distinct modes")
+                label_of[m] = chr(ord('a') + len(label_of))
+        return (''.join(label_of[m] for m in left_modes), ''.join(label_of[m] for m in right_modes),
+                ''.join(label_of[m] for m in out_modes))
+
+    @staticmethod
+    def expansion(node, parent_state, parent_sdfg):
+        left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
+
+        dtype = out_tensor.dtype.base_type
+        if dtype not in ExpandTBLIS.TYPE_MAP:
+            raise NotImplementedError(f"TBLIS TensorDot does not support dtype {dtype}; supported: "
+                                      f"{sorted(str(t) for t in ExpandTBLIS.TYPE_MAP)}")
+        suffix, ctype = ExpandTBLIS.TYPE_MAP[dtype]
+
+        idx_a, idx_b, idx_c = ExpandTBLIS.contraction_labels(len(left_tensor.shape), len(right_tensor.shape),
+                                                             node.left_axes, node.right_axes, node.permutation)
+
+        def carr(name, vals):
+            if len(vals) == 0:
+                return f"ptrdiff_t* {name} = nullptr;"
+            return f"ptrdiff_t {name}[] = {{{', '.join(symstr(v) for v in vals)}}};"
+
+        code = f"""
+            {carr('lenA', list(left_tensor.shape))}
+            {carr('strideA', list(left_tensor.strides))}
+            {carr('lenB', list(right_tensor.shape))}
+            {carr('strideB', list(right_tensor.strides))}
+            {carr('lenC', list(out_tensor.shape))}
+            {carr('strideC', list(out_tensor.strides))}
+            using namespace tblis;
+            tblis_tensor A, B, C;
+            tblis_init_tensor_{suffix}(&A, {len(left_tensor.shape)}, lenA, ({ctype}*)_left_tensor, strideA);
+            tblis_init_tensor_{suffix}(&B, {len(right_tensor.shape)}, lenB, ({ctype}*)_right_tensor, strideB);
+            tblis_init_tensor_scaled_{suffix}(&C, ({ctype})0, {len(out_tensor.shape)}, lenC, ({ctype}*)_out_tensor, strideC);
+            tblis_tensor_mult(NULL, NULL, &A, "{idx_a}", &B, "{idx_b}", &C, "{idx_c}");
+        """
+
+        return dace.sdfg.nodes.Tasklet(node.name,
+                                       node.in_connectors,
+                                       node.out_connectors,
+                                       code,
+                                       language=dace.dtypes.Language.CPP,
+                                       side_effects=True)
+
+
 @library.node
 class TensorDot(nodes.LibraryNode):
     """ Implements tensor dot-product. """
 
-    implementations = {"pure": ExpandPure, "TTGT": ExpandTTGT, "cuTENSOR": ExpandCuTensor}
+    implementations = {"pure": ExpandPure, "TTGT": ExpandTTGT, "cuTENSOR": ExpandCuTensor, "TBLIS": ExpandTBLIS}
     default_implementation = None
 
     left_axes = properties.ListProperty(element_type=int, default=[], desc="Left tensor's contracting modes")

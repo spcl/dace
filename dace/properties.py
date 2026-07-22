@@ -12,11 +12,12 @@ import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
+from packaging.version import parse as parse_version
 from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
-from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.data import Data as dData
@@ -41,6 +42,20 @@ def _coerce_symbolic_property_value(value):
     return pystr_to_symbolic(value, simplify=False)
 
 
+def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
+    """
+    A backwards compatibility deserializer for symbolic properties. If the version of the
+    context is less than ``2.0.0a4``, it will use the old ``pystr_to_symbolic`` deserializer.
+    Otherwise, it will use the new ``symbolic.deserialize_symbolic`` function.
+    """
+    version = (context or {}).get("version", None)
+    if version is None:
+        raise TypeError("Context must contain version information for symbolic deserialization")
+    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+        return pystr_to_symbolic(value, simplify=False)
+    return symbolic.deserialize_symbolic(value)
+
+
 ###############################################################################
 # External interface to guarantee correct usage
 ###############################################################################
@@ -59,6 +74,10 @@ class PropertyError(Exception):
 class Property(Generic[T]):
     """ Class implementing properties of DaCe objects that conform to strong
     typing, and allow conversion to and from strings to be edited. """
+
+    #: Field name in the owning class, and the "_"-prefixed name it is stored under. Set by make_properties.
+    attr_name: Optional[str] = None
+    private_name: Optional[str] = None
 
     def __init__(
             self,
@@ -164,16 +183,17 @@ class Property(Generic[T]):
         # If a custom getter is specified, use it
         if self.getter:
             return self.getter(obj)
-        if not hasattr(self, "attr_name"):
-            raise RuntimeError("Attribute name not set")
         # Otherwise look for attribute prefixed by "_"
-        return getattr(obj, "_" + self.attr_name)
+        name = self.private_name
+        if name is None:
+            raise RuntimeError("Attribute name not set")
+        return getattr(obj, name)
 
     def __set__(self, obj, val):
         # If custom setter is specified, use it
         if self.setter:
             return self.setter(obj, val)
-        if not hasattr(self, "attr_name"):
+        if self.private_name is None:
             raise RuntimeError("Attribute name not set")
         # Fail on None unless explicitly allowed
         if val is None and not self.allow_none:
@@ -203,7 +223,7 @@ class Property(Generic[T]):
                 and (val is not None or not self.allow_none):
             if val not in self.choices:
                 raise ValueError("Value {} not present in choices: {}".format(val, self.choices))
-        setattr(obj, "_" + self.attr_name, val)
+        setattr(obj, self.private_name, val)
 
     # Python Properties of this Property class
 
@@ -331,6 +351,7 @@ def make_properties(cls):
     # Set the property name to its field name in the class
     for name, prop in properties.items():
         prop.attr_name = name
+        prop.private_name = "_" + name  # precomputed: __get__/__set__ must not rebuild it per access
         prop.owner = cls
     # Grab properties from baseclass(es)
     own_properties = copy.copy(properties)
@@ -515,18 +536,18 @@ class ListProperty(Property[List[T]]):
         else:
             return list(s)
 
-    def from_json(self, data, sdfg=None):
+    def from_json(self, data, context=None):
         if data is None:
             return data
         if not isinstance(data, list):
             raise TypeError('ListProperty expects a list input, got %s' % data)
         if _is_symbolic_type(self.element_type):
-            return [symbolic.deserialize_symbolic(elem) for elem in data]
+            return [_symbolic_deserializer(elem, context=context) for elem in data]
         if _is_symbolic_converter(self.element_type):
-            return [symbolic.deserialize_symbolic(elem) for elem in data]
+            return [_symbolic_deserializer(elem, context=context) for elem in data]
         # If element knows how to convert itself, let it
         if hasattr(self.element_type, "from_json"):
-            return [self.element_type.from_json(elem) for elem in data]
+            return [self.element_type.from_json(elem, context) for elem in data]
         # Type-checks (casts) to the element type
         return list(map(self.element_type, data))
 
@@ -554,12 +575,17 @@ class TransformationHistProperty(Property):
             return None
         return [elem.to_json() if elem is not None else None for elem in hist]
 
-    def from_json(self, data, sdfg=None):
+    def from_json(self, data, context=None):
         if data is None:
             return data
         if not isinstance(data, list):
             raise TypeError('TransformationHistProperty expects a list input, got %s' % data)
-        return [dace.serialize.from_json(elem) for elem in data]
+        # A history entry names its transformation class, and both the serializer registry and
+        # subclass discovery only know classes whose module was imported. Local import because
+        # dace.transformation imports this module.
+        from dace.transformation.transformation import load_builtin_transformations
+        load_builtin_transformations()
+        return [dace.serialize.from_json(elem, context=context) for elem in data]
 
 
 class DictProperty(Property):
@@ -657,7 +683,7 @@ class DictProperty(Property):
     def from_string(s):
         return dict(s)
 
-    def from_json(self, data, sdfg=None):
+    def from_json(self, data, context=None):
         if data is None:
             return data
         if not isinstance(data, dict):
@@ -669,17 +695,17 @@ class DictProperty(Property):
 
         def _convert_key(key):
             if _is_symbolic_type(self.key_type):
-                return symbolic.deserialize_symbolic(key)
+                return _symbolic_deserializer(key, context)
             if _is_symbolic_converter(self.key_type):
-                return symbolic.deserialize_symbolic(key)
-            return self.key_type.from_json(key, sdfg) if key_json else self.key_type(key)
+                return _symbolic_deserializer(key, context)
+            return self.key_type.from_json(key, context) if key_json else self.key_type(key)
 
         def _convert_value(value):
             if _is_symbolic_type(self.value_type):
-                return symbolic.deserialize_symbolic(value)
+                return _symbolic_deserializer(value, context)
             if _is_symbolic_converter(self.value_type):
-                return symbolic.deserialize_symbolic(value)
-            return self.value_type.from_json(value, sdfg) if value_json else self.value_type(value)
+                return _symbolic_deserializer(value, context)
+            return self.value_type.from_json(value, context) if value_json else self.value_type(value)
 
         return {_convert_key(k): _convert_value(v) for k, v in data.items()}
 
@@ -1053,7 +1079,7 @@ class CodeBlock(object):
         return ret
 
     @staticmethod
-    def from_json(tmp, sdfg=None):
+    def from_json(tmp, context=None):
         if tmp is None:
             return None
         if isinstance(tmp, CodeBlock):
@@ -1204,8 +1230,8 @@ class SubsetProperty(Property):
         except AttributeError:
             return SubsetProperty.to_string(val)
 
-    def from_json(self, val, sdfg=None):
-        return dace.serialize.from_json(val)
+    def from_json(self, val, context=None):
+        return dace.serialize.from_json(val, context)
 
 
 class SymbolicProperty(Property):
@@ -1238,10 +1264,10 @@ class SymbolicProperty(Property):
             return None
         return symbolic.serialize_symbolic(val)
 
-    def from_json(self, val, sdfg=None):
+    def from_json(self, val, context=None):
         if val is None:
             return None
-        return symbolic.deserialize_symbolic(val)
+        return _symbolic_deserializer(val, context=context)
 
 
 class DataProperty(Property):
@@ -1342,10 +1368,10 @@ class ShapeProperty(Property):
             return None
         return [symbolic.serialize_symbolic(o) for o in obj]
 
-    def from_json(self, d, sdfg=None):
+    def from_json(self, d, context=None):
         if d is None:
             return None
-        return tuple([symbolic.deserialize_symbolic(m) for m in d])
+        return tuple([_symbolic_deserializer(m, context=context) for m in d])
 
     def __set__(self, obj, val):
         if isinstance(val, list):
@@ -1419,7 +1445,7 @@ class TypeClassProperty(Property):
             return TypeClassProperty.from_string(obj)
         elif isinstance(obj, dict):
             # Let the deserializer handle this
-            return dace.serialize.from_json(obj)
+            return dace.serialize.from_json(obj, context=context)
         else:
             raise TypeError("Cannot parse type from: {}".format(obj))
 
@@ -1460,7 +1486,7 @@ class NestedDataClassProperty(Property):
             return NestedDataClassProperty.from_string(obj)
         elif isinstance(obj, dict):
             # Let the deserializer handle this
-            return dace.serialize.from_json(obj)
+            return dace.serialize.from_json(obj, context=context)
         else:
             raise TypeError("Cannot parse type from: {}".format(obj))
 
@@ -1493,7 +1519,7 @@ class DataclassProperty(Property):
             return None
         return obj.dict()
 
-    def from_json(self, d, sdfg=None):
+    def from_json(self, d, context=None):
         if d is None:
             return None
         return self.dtype.parse_obj(d)

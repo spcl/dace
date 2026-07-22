@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "A transpose times A times x",
+        "short_name": "atax",
+        "relative_path": "polybench/atax",
+        "module_name": "atax",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "LinAlg",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "M": 4000, "N": 5000 },
+            "M": { "M": 10000, "N": 12500 },
+            "L": { "M": 20000, "N": 25000 },
+            "paper": { "M": 18000, "N": 22000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["M", "N"],
+            "output_args": ["x", "A"]
+        },
+        "input_args": ["A", "x"],
+        "array_args": ["A", "x"],
+        "output_args": []
+    }
+}

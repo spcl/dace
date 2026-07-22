@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import functools
-from copy import deepcopy as dc
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
@@ -14,9 +13,7 @@ def _get_transpose_input(node, state, sdfg):
     """Returns the transpose input edge, array, and shape."""
     for edge in state.in_edges(node):
         if edge.dst_conn == "_inp":
-            subset = dc(edge.data.subset)
-            idx = subset.squeeze()
-            size = subset.size()
+            size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_input_arraynode(state, edge).data)
             return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError("Transpose input connector \"_inp\" not found.")
@@ -26,9 +23,7 @@ def _get_transpose_output(node, state, sdfg):
     """Returns the transpose output edge, array, and shape."""
     for edge in state.out_edges(node):
         if edge.src_conn == "_out":
-            subset = dc(edge.data.subset)
-            idx = subset.squeeze()
-            size = subset.size()
+            size, idx = blas_helpers.matrix_view(edge.data.subset)
             outer_array = sdfg.data(dace.sdfg.find_output_arraynode(state, edge).data)
             return edge, outer_array, (size[0], size[1]), (outer_array.strides[idx[0]], outer_array.strides[idx[1]])
     raise ValueError("Transpose output connector \"_out\" not found.")
@@ -166,7 +161,10 @@ class ExpandTransposeOpenBLAS(ExpandTransformation):
             alpha = "dace::blas::BlasConstants::Get().Complex128Pone()"
             cast = '(double*)'
         else:
-            raise ValueError("Unsupported type for OpenBLAS omatcopy extension: " + str(dtype))
+            # OpenBLAS omatcopy only covers the four BLAS floating types; any other
+            # element type (e.g. an int64 index/count grid) falls back to the native
+            # element-wise transpose, matching the differing-type fallback above.
+            return ExpandTransposePure.make_sdfg(node, state, sdfg)
         # TODO: Add stride support
         _, _, (m, n), _ = _get_transpose_input(node, state, sdfg)
         # Adaptations for BLAS API
@@ -248,18 +246,14 @@ class Transpose(dace.sdfg.nodes.LibraryNode):
             raise ValueError("Expected exactly one input to transpose operation")
         for _, _, _, dst_conn, memlet in state.in_edges(self):
             if dst_conn == '_inp':
-                subset = dc(memlet.subset)
-                subset.squeeze()
-                in_size = subset.size()
+                in_size, _ = blas_helpers.matrix_view(memlet.subset)
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from transpose operation")
         out_memlet = out_edges[0].data
         if len(in_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
-        out_subset = dc(out_memlet.subset)
-        out_subset.squeeze()
-        out_size = out_subset.size()
+        out_size, _ = blas_helpers.matrix_view(out_memlet.subset)
         if len(out_size) != 2:
             raise ValueError("Transpose operation only supported on matrices")
         if list(out_size) != [in_size[1], in_size[0]]:

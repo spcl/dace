@@ -1,8 +1,5 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-# NOTE: Fortran2003 must be imported before Fortran2008. In fparser 0.2.3, importing Fortran2008
-# first triggers a Fortran2008 -> Fortran2003 -> label_do_stmt_r816 -> Fortran2008.Loop_Control
-# back-import; on Python 3.14 this raises ImportError from the partially-initialized Fortran2008
-# module. Importing Fortran2003 first breaks the cycle (and is the isort-sorted order anyway).
+# NOTE: Fortran2003 needs to be imported before Fortran2008 (circular import otherwise).
 from fparser.two import Fortran2003 as f03
 from fparser.two import Fortran2008 as f08
 from fparser.two import symbol_table

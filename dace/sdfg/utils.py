@@ -1,6 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Various utility functions to create, traverse, and modify SDFGs. """
 
+import ast
 import collections
 import copy
 import warnings
@@ -8,6 +9,7 @@ import networkx as nx
 import time
 
 import dace.sdfg.nodes
+from dace.frontend.python import astutils
 from dace.codegen import compiled_sdfg as csdfg, compiler as sdfg_compiler
 from dace.sdfg.graph import MultiConnectorEdge
 from dace.sdfg.sdfg import SDFG, InterstateEdge
@@ -123,19 +125,19 @@ def dfs_topological_sort(G, sources=None, condition=None, reverse=False):
     :note: If a source is not specified then a source is chosen arbitrarily and
            repeatedly until all components in the graph are searched.
     """
+    is_dace_graph = isinstance(G, gr.Graph)
     if reverse:
-        source_nodes = 'sink_nodes'
+        source_nodes = G.sink_nodes if is_dace_graph else None
         predecessors = G.successors
         neighbors = G.predecessors
     else:
-        source_nodes = 'source_nodes'
+        source_nodes = G.source_nodes if is_dace_graph else None
         predecessors = G.predecessors
         neighbors = G.successors
 
     if sources is None:
         # produce edges for all components
-        src_nodes = getattr(G, source_nodes, lambda: G)
-        nodes = list(src_nodes())
+        nodes = list(source_nodes()) if source_nodes is not None else list(G)
         if len(nodes) == 0:
             nodes = G
     else:
@@ -331,19 +333,19 @@ def scope_aware_topological_sort(G: SDFGState,
     :param reverse: If True, the graph will be traversed in reverse order (entering scopes via their exit node)
     :param visited: An optional set that will be filled with the visited nodes.
     """
+    is_dace_graph = isinstance(G, gr.Graph)
     if reverse:
-        source_nodes = 'sink_nodes'
+        source_nodes = G.sink_nodes if is_dace_graph else None
         predecessors = G.successors
         neighbors = G.predecessors
     else:
-        source_nodes = 'source_nodes'
+        source_nodes = G.source_nodes if is_dace_graph else None
         predecessors = G.predecessors
         neighbors = G.successors
 
     if sources is None:
         # produce edges for all components
-        src_nodes = getattr(G, source_nodes, lambda: G)
-        nodes = list(src_nodes())
+        nodes = list(source_nodes()) if source_nodes is not None else list(G)
         if len(nodes) == 0:
             nodes = G
     else:
@@ -1681,20 +1683,33 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
+    :note: If rank 0's compilation raises, the error is broadcast and re-raised
+           on *every* rank, so a build failure fails the whole job fast instead
+           of deadlocking the other ranks at the build-folder broadcast below
+           (rank 0 would never reach the broadcast, leaving the rest blocked).
     :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
     rank = comm.Get_rank()
     func = None
     folder = None
+    error = None
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        func = sdfg.compile(validate=validate)
-        folder = sdfg.build_folder
+        try:
+            func = sdfg.compile(validate=validate)
+            folder = sdfg.build_folder
+        except BaseException as exc:  # noqa: BLE001 -- re-raised on every rank
+            import traceback
+            error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
 
-    # Broadcasts build folder.
-    folder = comm.bcast(folder, root=0)
+    # Broadcast the build folder (or rank 0's compile error).  Sending both in
+    # one bcast keeps the collective sequence identical on every rank.
+    error, folder = comm.bcast((error, folder), root=0)
+    if error is not None:
+        raise RuntimeError("distributed_compile: rank 0 compilation failed; all ranks abort "
+                           f"to avoid a collective deadlock. Rank 0 traceback:\n{error}")
 
     # Loads compiled SDFG.
     if rank > 0:
@@ -1848,7 +1863,11 @@ def _tswds_cf_region(
                     yield from _tswds_cf_region(sdfg, edge.src, symbols, recursive)
 
             # Add edge symbols into defined symbols
-            issyms = edge.data.new_symbols(sdfg, symbols)
+            try:
+                issyms = edge.data.new_symbols(sdfg, symbols)
+            except Exception as e:
+                print(f"Error while getting new symbols from edge {edge} in region {region}: {e}")
+                raise Exception(e)
             symbols.update({k: v for k, v in issyms.items() if v is not None})
 
             # Destination
@@ -2446,9 +2465,13 @@ def get_constant_data(scope: Union[ControlFlowRegion, SDFGState, nd.NestedSDFG, 
             if ie.data is not None and ie.data.data is not None:
                 used_data.add(ie.data.data)
         for oe in state.out_edges(state.exit_node(scope)):
+            # A dependency edge carries no memlet (``oe.data`` or ``oe.data.data``
+            # is None) -- skip it, otherwise ``oe.data.data`` raises AttributeError.
+            # An output datum is both written and used, so ``used - written`` nets
+            # it out of the const set regardless.
             if oe.data is not None and oe.data.data is not None:
                 written_data.add(oe.data.data)
-            used_data.add(oe.data.data)
+                used_data.add(oe.data.data)
 
         return used_data - written_data
     else:
@@ -2561,13 +2584,52 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # -> For 2: Rm. dynamic in connector, remove the edge and the node if the degree is None
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
-    # -> then [tasklet(assign const value)] -> [access node] -> [tasklet]
+    # -> then create a [tasklet] that uses the scalar_val as a constant value inside
+    import re
+
+    import numpy
+
+    def _token_replace(code: str, src: str, dst: str) -> str:
+        # Whole identifiers only. Splitting on whitespace and brackets alone missed every unspaced
+        # operator -- `o = _in*3` kept the token '_in*3', so the connector was removed while the
+        # code still referenced it. The lookbehind also excludes '.', leaving `x._in` alone.
+        return re.sub(r'(?<![A-Za-z0-9_.])' + re.escape(src) + r'(?![A-Za-z0-9_])', dst, code).strip()
+
+    def _scalar_literal(value: Union[float, int, str], dtype) -> str:
+        """Source-level literal for ``value``, substituted verbatim into tasklet code.
+
+        An integer replacing a read of a floating-point scalar is written as a float literal: the
+        surrounding code was compiled with float semantics, and turning ``_in / 2`` into ``5 / 2``
+        silently switches it to integer division in the generated C++.
+
+        :param value: the constant replacing the scalar.
+        :param dtype: declared dtype of the scalar being specialized, or None if unknown.
+        :return: the literal to substitute.
+        """
+        if isinstance(value, str):
+            return value
+        if isinstance(value, float):
+            return repr(value)
+        if dtype is not None and numpy.issubdtype(dtype.as_numpy_dtype(), numpy.floating):
+            return repr(float(value))
+        return str(value)
 
     def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
         if isinstance(input, CodeBlock):
-            return CodeBlock(input.as_string.replace(src, dst))
+            return CodeBlock(_token_replace(input.as_string, src, dst))
         else:
             return input.replace(src, dst)
+
+    # Captured before the descriptor is removed below (see _scalar_literal).
+    scalar_desc = sdfg.arrays.get(scalar_name)
+    scalar_dtype = scalar_desc.dtype if scalar_desc is not None else None
+
+    nsdfgs = []
+    # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, nd.NestedSDFG):
+                nsdfgs.append((node, state, state.in_edges(node), state.out_edges(node)))
 
     # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
     # For nestedSDFGs we will remove
@@ -2578,7 +2640,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if scalar_name in sdfg.symbols:
             sdfg.remove_symbol(scalar_name)
 
-    nsdfgs = set()
     c = 0
     for state in sdfg.all_states():
         # Check dynamic inputs
@@ -2596,22 +2657,27 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             assert e.data.data == scalar_name
 
             if isinstance(e.dst, nd.Tasklet):
-                assign_tasklet = state.add_tasklet(f"assign_{scalar_name}",
-                                                   inputs={},
-                                                   outputs={"_out"},
-                                                   code=f"_out = {scalar_val}")
-                tmp_name = f"__tmp_{scalar_name}_{c}"
-                c += 1
-                copydesc = copy.deepcopy(sdfg.arrays[scalar_name])
-                copydesc.transient = True
-                copydesc.storage = dace.StorageType.Register
-                sdfg.add_datadesc(tmp_name, copydesc)
-                scl_an = state.add_access(tmp_name)
+                in_tasklet_name = e.dst_conn
+                if e.dst.code.language == dace.dtypes.Language.Python:
+                    # Substitute directly on the tasklet AST. A sympy round-trip
+                    # (``pystr_to_symbolic`` -> ``subs`` -> ``pycode``) is lossy here: it prints
+                    # floats at 15 significant digits, so a float64 no longer round-trips
+                    # bit-exactly, and it folds integer quotients into ``Rational`` literals such
+                    # as ``(1 / 3)``, which the C++ backend then emits as integer division.
+                    replacer = astutils.ASTFindReplace({in_tasklet_name: _scalar_literal(scalar_val, scalar_dtype)})
+                    body = CodeBlock(e.dst.code.as_string, dace.dtypes.Language.Python).code
+                    new_body = [ast.fix_missing_locations(replacer.visit(stmt)) for stmt in body]
+                    e.dst.code = CodeBlock(code=new_body, language=dace.dtypes.Language.Python)
+                else:
+                    new_code = CodeBlock(code=_token_replace(e.dst.code.as_string, in_tasklet_name,
+                                                             _scalar_literal(scalar_val, scalar_dtype)),
+                                         language=e.dst.code.language)
+                    e.dst.code = new_code
                 state.remove_edge(e)
-                state.add_edge(assign_tasklet, "_out", scl_an, None, dace.memlet.Memlet.from_array(tmp_name, copydesc))
-                state.add_edge(scl_an, None, dst, e.dst_conn, dace.memlet.Memlet.from_array(tmp_name, copydesc))
                 if e.src_conn is not None:
                     src.remove_out_connector(e.src_conn)
+                if e.dst_conn is not None:
+                    dst.remove_in_connector(e.dst_conn)
             else:
                 state.remove_edge(e)
                 if e.src_conn is not None:
@@ -2643,8 +2709,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                     _s = s.subs(scalar_name, scalar_val)
                     new_range_list.append((_b, _e, _s))
                 node.map.range = dace.subsets.Range(new_range_list)
-            elif isinstance(node, nd.NestedSDFG):
-                nsdfgs.add(node.sdfg)
 
     # Replace on for CFGs as
     for cfg in sdfg.all_control_flow_regions():
@@ -2666,14 +2730,165 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if scalar_name in sdfg.parent_nsdfg_node.symbol_mapping:
             del sdfg.parent_nsdfg_node.symbol_mapping[scalar_name]
 
-    for nsdfg in nsdfgs:
-        _specialize_scalar_impl(root, nsdfg, scalar_name, scalar_val)
+    for nsdfg_node, state, in_edges, out_edges in nsdfgs:
+        in_data_mapping = {ie.data.data: ie.dst_conn for ie in in_edges if ie.data.data is not None}
+        out_data_mapping = {oe.data.data: oe.src_conn for oe in out_edges if oe.data.data is not None}
+        assert scalar_name not in out_data_mapping
+        if scalar_name in in_data_mapping:
+            _specialize_scalar_impl(root, nsdfg_node.sdfg, in_data_mapping[scalar_name], scalar_val)
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
-    assert isinstance(scalar_name, str)
-    assert isinstance(scalar_val, (float, int, str))
+    import sympy
+
+    assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_val)}"
+
+    def _sympy_to_python_number(val):
+        """Convert any SymPy numeric type to a native Python int or float."""
+        if isinstance(val, sympy.Integer):
+            return int(val)
+        elif isinstance(val, (sympy.Float, sympy.Rational)):
+            return float(val)
+        elif isinstance(val, sympy.Number):
+            # Fallback for any other sympy numeric type
+            return float(val.evalf())
+        return val  # unchanged if not a number
+
+    assert isinstance(
+        scalar_val,
+        (float, int, str,
+         sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(scalar_val)}"
+    if not isinstance(scalar_val, (float, int, str)):
+        if isinstance(scalar_val, sympy.Number):
+            scalar_val = _sympy_to_python_number(scalar_val)
+
     _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+
+
+def specialize_symbol(sdfg: 'dace.SDFG', symbol_name: str, value: Union[float, int, str]):
+    """Bake a free symbol to a constant value, recursively through nested SDFGs.
+
+    Substitutes ``symbol_name`` with ``value`` everywhere (subsets, memlets,
+    tasklets, interstate edges) and drops the now-unused symbol. ``replace_dict``
+    on a single SDFG does not descend into nested SDFG bodies, so this walks every
+    SDFG via :meth:`all_sdfgs_recursive` and also strips the symbol from each
+    nested SDFG node's ``symbol_mapping``. For a *scalar data container* holding
+    the value, use :func:`specialize_scalar`.
+
+    :param sdfg: The SDFG to specialize.
+    :param symbol_name: The symbol to replace.
+    :param value: The constant value to substitute in.
+    """
+    val = str(value)
+    for sd in list(sdfg.all_sdfgs_recursive()):
+        # Drop the symbol's interstate-edge definitions first: baking it to a constant makes them dead,
+        # and ``replace_dict`` would otherwise rewrite the assignment *key* into a literal -- an invalid
+        # ``<value> = ...`` edge (hit on the frontend's ``dim = dim`` buffer-dimension materializers).
+        for e in sd.all_interstate_edges(recursive=False):
+            e.data.assignments.pop(symbol_name, None)
+        if symbol_name in sd.symbols or any(str(s) == symbol_name for s in sd.free_symbols):
+            sd.replace_dict({symbol_name: val})
+        if symbol_name in sd.symbols:
+            sd.remove_symbol(symbol_name)
+    # Strip the symbol from any nested SDFG node's symbol_mapping that still maps it.
+    for node, _ in sdfg.all_nodes_recursive():
+        if isinstance(node, NestedSDFG):
+            node.symbol_mapping.pop(symbol_name, None)
+
+
+def demote_symbol_to_scalar(sdfg: 'dace.SDFG',
+                            symbol_str: str,
+                            default_type: 'dace.dtypes.typeclass' = None,
+                            in_scalar_name: str = None):
+    import dace.sdfg.construction_utils as cutil
+    import dace.sdfg.tasklet_utils as tutil
+
+    if default_type is None:
+        default_type = dace.int32
+
+    # If assignment is to symbol_str, append it to last scalar before
+    if symbol_str in sdfg.symbols:
+        sym_dtype = sdfg.symbols[symbol_str]
+    else:
+        print(
+            f"Symbol {symbol_str} not in the symbols of {sdfg.label} ({sdfg.symbols}), setting to default type {default_type}"
+        )
+        sym_dtype = default_type
+
+    # If top-level and in free symbols
+    # Or not top-level and in symbol mapping need to make it non transient
+    # TODO:
+    is_top_level = sdfg.parent_nsdfg_node is None
+    is_transient = not ((is_top_level and symbol_str in sdfg.free_symbols) or
+                        ((not is_top_level) and symbol_str in sdfg.parent_nsdfg_node.symbol_mapping))
+
+    if is_transient is False:
+        if in_scalar_name is None:
+            raise Exception(
+                "Scalar to symbol demotion only works if the resulting scalar would be transient or an input scalar name is provided"
+            )
+
+    if symbol_str in sdfg.symbols:
+        sdfg.remove_symbol(symbol_str)
+
+    if is_transient is True:
+        sdfg.add_scalar(name=symbol_str,
+                        dtype=sym_dtype,
+                        storage=dace.dtypes.StorageType.Register,
+                        transient=is_transient)
+        scalar_name = symbol_str
+    else:
+        scalar_name = in_scalar_name
+
+    # For any tasklet that uses the symbol - make an access node to the scalar and connect through the in connector
+    # 1. Replace all symbols of name appearing
+    # 2.1 If symbol <- expr in any interstate edge
+    # 2.2 Add a new state before edge.dst, and add assignment to the scalar
+
+    # 1
+    # Replace all code in tasklets and access nodes
+    for g in sdfg.all_states():
+        for n in g.nodes():
+            if isinstance(n, dace.nodes.Tasklet):
+                assert isinstance(g, dace.SDFGState)
+                sdict = g.scope_dict()
+                if tutil.tasklet_has_symbol(n, symbol_str):
+                    # 2. If used in tasklet try to replace symbol name with an in connector and add an access to the scalar
+                    # Sanity check no tasklet should assign to a symbol
+                    lhs, rhs = n.code.as_string.split(" = ", 2)
+                    tasklet_lhs = lhs.strip()
+                    assert symbol_str != tasklet_lhs
+                    assert symbol_str != "True"
+                    assert symbol_str != "False"
+                    tutil.tasklet_replace_code(n, {symbol_str: f"_in_{symbol_str}"})
+                    n.add_in_connector(f"_in_{symbol_str}")
+                    access = g.add_access(scalar_name)
+                    g.add_edge(access, None, n, f"_in_{symbol_str}", dace.memlet.Memlet(expr=f"{scalar_name}[0]"))
+                    # If parent scope is not None add a dependency edge to it
+                    if sdict[n] is not None:
+                        g.add_edge(sdict[n], None, access, None, dace.memlet.Memlet())
+
+    # 2
+    for e in sdfg.all_interstate_edges():
+        matching_assignments = {(k, v) for k, v in e.data.assignments.items() if k.strip() == symbol_str}
+        if len(matching_assignments) > 0:
+            # Add them to the next state
+            state = e.dst.parent_graph.add_state_before(e.dst,
+                                                        label=f"_{e.dst}_sym_assign",
+                                                        is_start_block=e.dst.parent_graph.start_block == e.dst)
+            # Go through all matching assignments
+            # Add symbols etc. as necessary
+            for k, v in matching_assignments:
+                del e.data.assignments[k]
+                symbol_str = k.strip()
+                if symbol_str in state.sdfg.symbols:
+                    state.sdfg.remove_symbol(symbol_str)
+                if symbol_str not in g.sdfg.arrays:
+                    state.sdfg.add_scalar(name=symbol_str,
+                                          dtype=sym_dtype,
+                                          storage=dace.dtypes.StorageType.Register,
+                                          transient=is_transient)
+                cutil.generate_assignment_as_tasklet_in_state(state, k, v)
 
 
 def in_edge_with_name(node: nd.Node, state: SDFGState, name: str) -> MultiConnectorEdge:

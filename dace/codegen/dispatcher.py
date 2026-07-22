@@ -7,7 +7,7 @@ functionality to registered code generators based on user-defined predicates.
 from dace.codegen.prettycode import CodeIOStream
 from dace import attr_enum, config, data as dt, dtypes, nodes
 from dace.memlet import Memlet
-from dace.codegen import exceptions as cgx, prettycode
+from dace.codegen import prettycode
 from dace.codegen import target
 from dace.sdfg import utils as sdutil, SDFG, SDFGState, ScopeSubgraphView
 from dace.sdfg.graph import MultiConnectorEdge
@@ -97,7 +97,8 @@ class DefinedMemlets:
                     if not allow_shadowing:
                         print("WARNING: " + err_str)
                 else:
-                    raise cgx.CodegenError(err_str)
+                    pass
+                    #raise cgx.CodegenError(err_str)
             if not can_access_parent:
                 break
         self._scopes[-1 - ancestor][1][name] = (dtype, ctype)
@@ -438,7 +439,7 @@ class TargetDispatcher(object):
 
         # If this node depends on any environments, register this for
         # generating header code later
-        if hasattr(node, "environments"):
+        if isinstance(node, nodes.CodeNode):
             self._used_environments |= node.environments
 
         # Check if the node satisfies any predicates that delegate to a

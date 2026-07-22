@@ -23,6 +23,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend.python import astutils
+from dace.transformation.passes.analysis import scopes as scope_analysis
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, propagation
 from dace.properties import LambdaProperty
@@ -49,6 +50,22 @@ def mangle_dace_state_struct_name(sdfg: Union[SDFG, str]) -> str:
     if not dtypes.validate_name(type_name):
         raise ValueError(f"The mangled type name `{type_name}` of the state struct of SDFG '{name}' is invalid.")
     return type_name
+
+
+def readable_cpu_codegen_active() -> bool:
+    return Config.get('compiler', 'cpu', 'implementation') == 'experimental_readable'
+
+
+def const_scalar_by_value() -> bool:
+    """Whether a READ-ONLY scalar is bound by const VALUE (``const T x``) rather than by const
+    reference (``const T& x``, the legacy convention).
+
+    Only the experimental readable generator honours ``compiler.cpu.const_scalar_abi``; the legacy
+    generator always binds by reference, so its output stays byte-identical. The two forms are
+    semantically identical -- which is faster is a backend artifact (see the config description),
+    so it is a knob rather than a hardcoded choice."""
+    return (readable_cpu_codegen_active()
+            and Config.get('compiler', 'cpu', 'codegen_params', 'const_scalar_abi') == 'by_value')
 
 
 def copy_expr(
@@ -266,6 +283,7 @@ def ptr(name: str, desc: data.Data, sdfg: SDFG = None, framecode: 'DaCeCodeGener
     # Special case: If memory is persistent and defined in this SDFG, add state
     # struct to name
     if (desc.transient and desc.lifetime in (dtypes.AllocationLifetime.Persistent, dtypes.AllocationLifetime.External)):
+
         if desc.storage == dtypes.StorageType.CPU_ThreadLocal:  # Use unambiguous name for thread-local arrays
             return f'__{sdfg.cfg_id}_{name}'
         elif not is_cuda_codegen_in_device(framecode):  # GPU kernels cannot access state
@@ -339,7 +357,9 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
             defined_type = DefinedType.Scalar
             if is_write is False:
                 typedef = make_const(typedef)
-            ref = '&'
+            # A read-only scalar binds by const reference (legacy, and the readable default) or by
+            # const value, per ``compiler.cpu.const_scalar_abi`` -- see const_scalar_by_value().
+            ref = '' if (is_write is False and const_scalar_by_value()) else '&'
         else:
             # constexpr arrays
             if memlet.data in dispatcher.frame.symbols_and_constants(sdfg):
@@ -356,10 +376,15 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
                 # flag off.
                 typedef = make_const(typedef)
     elif defined_type == DefinedType.Scalar:
-        typedef = defined_ctype if is_scalar else (defined_ctype + '*')
+        typedef = defined_ctype if is_scalar else (defined_ctype + '* __restrict__')
+        # A read-only scalar binds by const reference (legacy, and the readable default) or by const
+        # value, per ``compiler.cpu.const_scalar_abi`` -- see const_scalar_by_value(). A WRITTEN
+        # scalar always keeps its reference.
+        by_value = (is_scalar and is_write is False and not isinstance(desc, data.Structure)
+                    and const_scalar_by_value())
         if is_write is False and not isinstance(desc, data.Structure):
             typedef = make_const(typedef)
-        ref = '&' if is_scalar else ''
+        ref = '' if by_value else ('&' if is_scalar else '')
         defined_type = DefinedType.Scalar if is_scalar else DefinedType.Pointer
         offset_expr = ''
     elif defined_type in (DefinedType.Stream, DefinedType.Object):
@@ -452,8 +477,7 @@ def ndcopy_to_strided_copy(
     """
 
     # Cannot degenerate tiled copies
-    # In the case where subset is of type Indices, there are no tile_sizes
-    if hasattr(subset, 'tile_sizes') and any(ts != 1 for ts in subset.tile_sizes):
+    if isinstance(subset, subsets.Range) and any(ts != 1 for ts in subset.tile_sizes):
         return None
 
     # If the copy is contiguous, the difference between the first and last
@@ -498,14 +522,23 @@ def ndcopy_to_strided_copy(
         if copy_shape == src_copy_shape:
             srcdim = copydim
         else:
-            srcdim = next(i for i, c in enumerate(src_copy_shape) if c != 1)
+            # A broadcast source (all-ones shape -- e.g. a Scalar splat into a
+            # width-W tile) has no single strided dimension this 1D fast path can
+            # name. Decline (return None) so the caller falls back to the general
+            # ND-copy emitter, which handles the degenerate/zero source stride.
+            # (Guards the bare ``next``, which otherwise raises StopIteration.)
+            srcdim = next((i for i, c in enumerate(src_copy_shape) if c != 1), None)
+            if srcdim is None:
+                return None
 
         # In destination strides
         dst_copy_shape = dst_subset.size_exact()
         if copy_shape == dst_copy_shape:
             dstdim = copydim
         else:
-            dstdim = next(i for i, c in enumerate(dst_copy_shape) if c != 1)
+            dstdim = next((i for i, c in enumerate(dst_copy_shape) if c != 1), None)
+            if dstdim is None:
+                return None
 
         # Return new copy
         return [copy_shape[copydim]], [src_strides[srcdim]], [dst_strides[dstdim]]
@@ -881,9 +914,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         # ``gpuStream_t``-typed in-connector. Bind the legacy
         # ``__dace_current_stream`` symbol to that connector value so any
         # Tasklet body that still names the symbol (e.g. an already-lowered
-        # ``cudaMemcpyAsync`` libnode expansion) keeps compiling without
-        # the ``_cuda_stream`` attribute / ``_annotate_legacy_cuda_stream``
-        # back-channel.
+        # ``cudaMemcpyAsync`` libnode expansion) keeps compiling without the
+        # legacy ``_cuda_stream`` back-channel.
         gpu_stream_conn = next((cname for cname, ctype in node.in_connectors.items() if ctype == dtypes.gpuStream_t),
                                None)
         body_str = node.code.as_string if hasattr(node.code, 'as_string') else str(node.code)
@@ -917,9 +949,8 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             # is set, yet library code (e.g. the cuBLAS env's
             # ``cublasSetStream(_, __dace_current_stream)``) still references
             # the variable. Emit a nullptr fallback so that compiles.
-            # Experimental codegen never reaches this branch: it explicitly
-            # sets ``_cuda_stream`` on every tasklet that references
-            # ``__dace_current_stream`` via ``_annotate_legacy_cuda_stream``.
+            # Experimental codegen never reaches this branch: its tasklets carry
+            # a ``gpuStream_t`` connector and take the connector-rebind branch above.
             callsite_stream.write(
                 '%sStream_t __dace_current_stream = nullptr;' % common.get_gpu_backend(),
                 cfg,
@@ -964,7 +995,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             callsite_stream.write(mlir_out_name + " = mlir_entry" + mlir_func_uid + "(" + mlir_in_untyped + ");")
 
         if node.language == dtypes.Language.CPP:
-            callsite_stream.write(type(node).__properties__["code"].to_string(node.code), cfg, state_id, node)
+            callsite_stream.write(codegen.rewrite_cpp_tasklet_body(node, sdfg, state_dfg), cfg, state_id, node)
 
         if not is_devicelevel_gpu(sdfg, state_dfg, node) and hasattr(node, "_cuda_stream"):
             # Resolve the active CUDA codegen class based on configuration.
@@ -1005,7 +1036,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             memlets[vconn] = (memlet, False, None, conntype)
 
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
-    defined_symbols = state_dfg.symbols_defined_at(node)
+    defined_symbols = scope_analysis.defined_at(codegen._frame.symbol_scopes, state_dfg, node)
 
     defined_symbols.update({
         k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))
@@ -1016,14 +1047,14 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
         if connector is not None:
             defined_symbols.update({connector: conntype})
 
-    callsite_stream.write("// Tasklet code (%s)\n" % node.label, cfg, state_id, node)
+    callsite_stream.write(codegen.tasklet_body_comment(node), cfg, state_id, node)
     for stmt in body:
         stmt = copy.deepcopy(stmt)
         rk = StructInitializer(sdfg).visit(stmt)
         if isinstance(stmt, ast.Expr):
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit_TopLevelExpr(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit_TopLevelExpr(stmt)
         else:
-            rk = DaCeKeywordRemover(sdfg, memlets, sdfg.constants, codegen).visit(stmt)
+            rk = codegen.make_keyword_remover(sdfg, memlets).visit(stmt)
 
         if rk is not None:
             # Unparse to C++ and add 'auto' declarations if locals not declared
@@ -1218,22 +1249,15 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                     else:
                         var_type, ctypedef = self.codegen._dispatcher.defined_vars.get(ptrname)
                         if var_type == DefinedType.Scalar:
-                            newnode = ast.Name(id="%s = %s;" % (
-                                ptrname,
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            ))
+                            newnode = ast.Name(id=cppunparse.cpp_assignment(ptrname, value))
                         elif isinstance(desc, data.View):
-                            newnode = ast.Name(id="%s = %s;" % (
-                                cpp_array_expr(self.sdfg, memlet, codegen=self.codegen),
-                                cppunparse.cppunparse(value, expr_semicolon=False),
-                            ))
+                            newnode = ast.Name(id=cppunparse.cpp_assignment(
+                                cpp_array_expr(self.sdfg, memlet, codegen=self.codegen), value))
                         else:
                             array_interface_name = self.codegen.ptr(ptrname, desc, self.sdfg, memlet.dst_subset, True,
                                                                     None, None, True)
-                            newnode = ast.Name(
-                                id=f"{array_interface_name}"
-                                f"[{cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)}]"
-                                f" = {cppunparse.cppunparse(value, expr_semicolon=False)};")
+                            index = cpp_array_expr(self.sdfg, memlet, with_brackets=False, codegen=self.codegen._frame)
+                            newnode = ast.Name(id=cppunparse.cpp_assignment(f"{array_interface_name}[{index}]", value))
                     return self._replace_assignment(newnode, node)
             except TypeError:  # cannot determine truth value of Relational
                 pass
@@ -1252,8 +1276,7 @@ class DaCeKeywordRemover(ExtNodeTransformer):
                                                        indices=sym2cpp(subscript),
                                                        dtype=dtype) + ';')
         else:
-            newnode = ast.Name(id="%s[%s] = %s;" %
-                               (target, sym2cpp(subscript), cppunparse.cppunparse(value, expr_semicolon=False)))
+            newnode = ast.Name(id=cppunparse.cpp_assignment(f"{target}[{sym2cpp(subscript)}]", value))
 
         return self._replace_assignment(newnode, node)
 
@@ -1369,7 +1392,7 @@ class StructInitializer(ExtNodeTransformer):
 
         # Find all struct types in SDFG
         for array in sdfg.arrays.values():
-            if array is None or not hasattr(array, "dtype"):
+            if array is None:
                 continue
             if isinstance(array.dtype, dace.dtypes.struct):
                 self._structs[array.dtype.name] = array.dtype

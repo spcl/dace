@@ -142,7 +142,7 @@ class _ConfigData(threading.local):
             self._cfg_filename = filename
             try:
                 if os.path.isfile(filename):
-                    self.load()
+                    self.load(filename, None)
                     break
             except (FileNotFoundError, PermissionError, OSError):
                 # If any filesystem-related error happened during file load, move on to next candidate
@@ -402,7 +402,7 @@ class Config(object):
     @staticmethod
     def get_default(*key_hierarchy):
         """ Returns the default value of a given configuration entry.
-            Takes into accound current operating system.
+            Takes into account current operating system.
 
             :param key_hierarchy: A tuple of strings leading to the
                                   configuration entry.

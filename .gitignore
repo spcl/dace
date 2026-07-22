@@ -179,6 +179,10 @@ _build/
 
 /*.sdfg
 
+# Ignore serialized SDFG dumps everywhere except the committed test fixtures
+*.sdfgz
+!tests/**/*.sdfgz
+
 
 .DS_STORE
 .DS_Store
@@ -194,3 +198,115 @@ _all_tests/
 # Ignore downloaded ONNX models
 /*.onnx
 /*.bin
+latex-tools/
+.claude/
+_session_scratch/
+_numcheck.py
+_numcheck.log
+_numcheck_one.py
+_runall.sh
+_numresults.tsv
+_repro.py
+_repro2.py
+_st_repro.py
+_repro.py
+_repro2.py
+_wcr*.log
+_reg.log
+_corr*.log
+_dualcanon_one.py
+_runall_dual.sh
+_dualresults.tsv
+_runall_dual.log
+_perf_one.py
+_perfall.sh
+_perfresults.tsv
+_abtest_interchange.py
+_corrsweep.py
+_corr_pb.txt
+_corr_np.txt
+_corr_canon_fast.txt
+_atax_one.py
+_atax_canon.txt
+_atax_canon_check.py
+_redfix_check.py
+_redfix.txt
+_gs_corr_check.py
+_gscorr.txt
+_gs_trace.py
+_gs_trace.txt
+_noexpand_check.py
+_noexpand.txt
+_corr_only.txt
+_ix_check.py
+_perf_finalize.py
+_tsvc_wcr.txt
+_tsvc_wcr2.txt
+_rvcheck.tsv
+report-*.json
+_k3mm_canon.py
+_k3mm2.txt
+_k3mm.txt
+_k3mm_dbg.py
+_stage_prof.py
+_stageprof.txt
+_load_time.py
+_loadtime.txt
+_k3mm_bisect.py
+_k3mmb.txt
+_fresh_check.py
+_freshchk.txt
+_tol_check.py
+_tolchk.txt
+_numdbg.py
+_numdbg_*.txt
+_numdbg2.py
+_numdbg2_*.txt
+_jac_bisect.py
+_jacbisect.txt
+_jac_bisect2.py
+_jacbisect2.txt
+_jac_lower.py
+_jaclower.txt
+_jac_struct.py
+_jacstruct.txt
+
+# canonicalize perf harness per-kernel result files
+perf_results/
+
+# Never commit key / secret material anywhere in this repo.
+*.pem
+*.key
+*_key
+id_rsa*
+id_ed25519*
+id_ecdsa*
+*.ppk
+.ssh/
+*.p12
+*.pfx
+
+# Fortran / flang / object build artifacts (test f2py / -emit-hlfir runs).
+*.mod
+*.smod
+*.hlfir
+*.o
+
+# pytest-xdist per-worker DaCe caches (.dacecache_gw0, ...) and any
+# nested .dacecache* — build artifacts, never committed.
+.dacecache*
+# Stray in-repo-root cmake build output (the bridge builds under
+# dace/frontend/hlfir/build; these only appear from an accidental
+# top-level cmake invocation).
+/CMakeCache.txt
+/CMakeFiles/
+/cmake_install.cmake
+/Makefile
+/lib*.a
+
+# Local secrets / tokens
+.mtoken
+dace/transformation/layout/cost_model/build/
+
+# cloudsc_variants perf job: cached Phase-A parallelized SDFG (expensive to rebuild)
+performance_regression_jobs/cloudsc_variants/cache/

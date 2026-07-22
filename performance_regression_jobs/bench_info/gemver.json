@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Vector Multiplication and Matrix Addition",
+        "short_name": "gemver",
+        "relative_path": "polybench/gemver",
+        "module_name": "gemver",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "LinAlg",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 1000 },
+            "M": { "N": 3000 },
+            "L": { "N": 10000 },
+            "paper": { "N": 8000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["alpha", "beta", "A", "u1", "v1", "u2", "v2", "w", "x", "y", "z"]
+        },
+        "input_args": ["alpha", "beta", "A", "u1", "v1", "u2", "v2", "w", "x", "y", "z"],
+        "array_args": ["A", "u1", "v1", "u2", "v2", "w", "x", "y", "z"],
+        "output_args": ["A", "w", "x"]
+    }
+}

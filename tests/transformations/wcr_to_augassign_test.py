@@ -40,6 +40,224 @@ def test_mapped_tasklet():
     assert (np.allclose(val, ref))
 
 
+def test_noncommutative_operand_order():
+    """A subtraction WCR ``a[i] = a[i] - v[i]`` must lower to ``old - new``, not
+    ``new - old``. Binding the WCR operands by argument name (not body position)
+    keeps this correct; the prior position-based wiring silently produced
+    ``new - old`` for non-commutative ops. The write is injective (``a[i]``), so
+    the conversion's soundness gate allows it inside the parallel Map.
+    """
+    N = 16
+    sdfg = dace.SDFG('wcr_sub_order')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('v', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(i=f'0:{N}'))
+    tasklet = state.add_tasklet('t', {'inp'}, {'out'}, 'out = inp')
+    v_node = state.add_read('v')
+    a_node = state.add_write('a')
+    state.add_memlet_path(v_node, me, tasklet, dst_conn='inp', memlet=dace.Memlet('v[i]'))
+    state.add_memlet_path(tasklet,
+                          mx,
+                          a_node,
+                          src_conn='out',
+                          memlet=dace.Memlet(data='a', subset='i', wcr='lambda a, b: a - b'))
+
+    rng = np.random.default_rng(0)
+    a0 = rng.random(N)
+    v0 = rng.random(N)
+    ref = a0 - v0  # a[i] = a[i] - v[i]
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 1
+    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges())
+
+    a = a0.copy()
+    sdfg(a=a, v=v0.copy())
+    assert np.allclose(a, ref), f"operand order wrong: got {a[:3]} expected {ref[:3]}"
+
+
+def test_scalar_source_multidim_target_subset():
+    """expr_index-2 (``AccessNode -[wcr]-> AccessNode``): a SCALAR WCR source (the
+    per-iteration transient ``NormalizeWCRSource`` inserts) writing a
+    MULTI-DIMENSIONAL target element (``aa[2, 3]``). Reverting must read the source
+    at its OWN scalar subset, not the target's 2-D slice -- regression for the
+    s2101 / s2275 corpus failure ``Memlet subset does not match node dimension
+    (expected 1, got 2)``. The soundness check is that the reverted SDFG validates
+    and preserves the value (``aa[2, 3] += src``).
+    """
+    sdfg = dace.SDFG('wcr_scalar_src_md')
+    sdfg.add_array('aa', [4, 4], dace.float64)
+    sdfg.add_scalar('src', dace.float64, transient=True)
+    state = sdfg.add_state()
+    producer = state.add_tasklet('produce', {}, {'o'}, 'o = 1.0')
+    src = state.add_access('src')
+    aa = state.add_write('aa')
+    state.add_edge(producer, 'o', src, None, dace.Memlet('src[0]'))
+    # WCR source is the scalar ``src``; target is the 2-D element aa[2, 3]
+    # (``other_subset`` unset -- the shape NormalizeWCRSource + LoopToMap produce).
+    state.add_edge(src, None, aa, None, dace.Memlet(data='aa', subset='2, 3', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 1
+    sdfg.validate()  # regression: previously raised the dimension mismatch here
+    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), "WCR must be gone after revert"
+
+    rng = np.random.default_rng(0)
+    aa0 = rng.random((4, 4))
+    ref = aa0.copy()
+    ref[2, 3] += 1.0
+    got = aa0.copy()
+    sdfg(aa=got)
+    assert np.allclose(got, ref), "reverting a scalar-source multidim-target WCR must preserve the value"
+
+
+def test_slice_source_offset_wcr():
+    """expr_index-2 slice WCR ``A[0:n] (wcr+)= B[k:k+n]`` with a SHIFTED source (``k != 0``).
+    The reverted elementwise map must read the source at its OWN ``k + i``, not at the
+    destination's ``i`` -- regression for the offset bug where the map param indexed both the
+    write and the read by the destination's range (reading ``B[0:n]``)."""
+    n, k = 6, 2
+    sdfg = dace.SDFG('wcr_slice_offset')
+    sdfg.add_array('A', [n], dace.float64)
+    sdfg.add_array('B', [n + k], dace.float64)
+    state = sdfg.add_state()
+    rb = state.add_read('B')
+    wa = state.add_write('A')
+    state.add_edge(rb, None, wa, None,
+                   dace.Memlet(data='A', subset=f'0:{n}', other_subset=f'{k}:{k + n}', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 1, 'the slice WCR (matching extent, shifted source) must revert'
+    sdfg.validate()
+    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'WCR must be gone after revert'
+
+    rng = np.random.default_rng(1)
+    A0 = rng.random(n)
+    B = rng.random(n + k)
+    ref = A0 + B[k:k + n]
+    got = A0.copy()
+    sdfg(A=got, B=B)
+    assert np.allclose(got, ref), f'A[i] += B[k+i]; got {got}, ref {ref}'
+
+
+def test_symbolic_overapproximated_wcr_refused_no_typeerror():
+    """A WCR write with a SYMBOLIC over-approximated subset (a data-dependent
+    scatter: the subset spans ``npt`` elements but the volume is 1) must be
+    refused cleanly. Pre-fix the guard ``subset.num_elements() > volume`` raised
+    ``TypeError: cannot determine truth value of Relational: npt > 1`` -- the two
+    symbolic sizes cannot be bool-coerced by a raw ``>`` -- which the
+    pattern-match framework only swallowed to a printed warning. ``can_be_applied``
+    now decides the size comparison symbolically and returns ``False`` (keeps the
+    WCR) instead of raising (the azimint_hist histogram-accumulator shape).
+
+    Calls ``can_be_applied`` directly so the pre-fix ``TypeError`` would propagate
+    (the framework's ``apply_transformations`` wrapper otherwise hides it).
+    """
+    npt = dace.symbol('npt')
+    sdfg = dace.SDFG('wcr_symbolic_overapprox')
+    sdfg.add_array('hist', [npt], dace.float64)
+    sdfg.add_scalar('v', dace.float64, transient=True)
+    state = sdfg.add_state()
+    prod = state.add_tasklet('p', {}, {'o'}, 'o = 1.0')
+    vnode = state.add_access('v')
+    hist = state.add_write('hist')
+    state.add_edge(prod, 'o', vnode, None, dace.Memlet('v[0]'))
+    # Over-approximated dynamic scatter: subset 0:npt (npt elements), volume 1.
+    m = dace.Memlet(data='hist', subset=f'0:{npt}', wcr='lambda a, b: a + b')
+    m.volume = 1
+    m.dynamic = True
+    state.add_edge(vnode, None, hist, None, m)
+
+    # expr_index 2 == ``inp -[wcr]-> output`` (AccessNode -> AccessNode).
+    xform = WCRToAugAssign()
+    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), {
+        WCRToAugAssign.inp: state.node_id(vnode),
+        WCRToAugAssign.output: state.node_id(hist),
+    }, expr_index=2)
+    # Must return False without raising (pre-fix this raised the symbolic TypeError).
+    assert xform.can_be_applied(state, 2, sdfg) is False
+
+
+def test_mapexit_wcr_injective_reverts():
+    """expr_index-4: WCR stranded on the OUTER ``map_exit -> output`` edge (over-approximated to
+    the whole array), while the inner ``tasklet -> map_exit`` edge carries the precise per-iteration
+    write with NO WCR. This is the shape ``AugAssignToWCR`` + ``LoopToMap`` leave for an injective
+    in-place slice aug-assign whose loop only became a Map late (seidel's ``A[i, 1:-1] +=
+    <neighbours>`` after its ``j``-loop is lifted). The write ``A[j]`` is injective over the map
+    param and the tasklet already reads ``A[j]`` back, so the WCR is a spurious atomic over a
+    conflict-free store and must revert to a plain indexed write."""
+    N = 8
+    sdfg = dace.SDFG('mapexit_wcr_inj')
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(j=f'0:{N}'))
+    tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 + __in2)')
+    a_read = state.add_read('A')
+    b_read = state.add_read('B')
+    a_write = state.add_write('A')
+    # tasklet reads the destination element A[j] back (__in1) + the incoming operand B[j] (__in2)
+    state.add_memlet_path(a_read, me, tasklet, dst_conn='__in1', memlet=dace.Memlet('A[j]'))
+    state.add_memlet_path(b_read, me, tasklet, dst_conn='__in2', memlet=dace.Memlet('B[j]'))
+    # inner edge: precise A[j], NO WCR
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    state.add_edge(tasklet, '__out', mx, 'IN_A', dace.Memlet('A[j]'))
+    # outer edge: over-approximated A[0:N], the WCR lives HERE
+    state.add_edge(mx, 'OUT_A', a_write, None, dace.Memlet(data='A', subset=f'0:{N}', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 1, 'the injective map-exit WCR must revert'
+    sdfg.validate()
+    assert all(e.data.wcr is None for s in sdfg.all_states() for e in s.edges()), 'WCR must be gone after revert'
+
+    rng = np.random.default_rng(3)
+    A0 = rng.random(N)
+    B = rng.random(N)
+    ref = A0 + B  # A[j] = A[j] + B[j]
+    got = A0.copy()
+    sdfg(A=got, B=B)
+    assert np.allclose(got, ref), f'A[j] += B[j]; got {got}, ref {ref}'
+
+
+def test_mapexit_wcr_reduction_kept():
+    """expr_index-4 must REFUSE a genuine reduction: a map-exit WCR whose per-iteration write is a
+    CONSTANT target (``acc[0]`` does not vary with the map param) is a real cross-lane reduction,
+    not an injective store. Reverting to a plain store would introduce a data race, so the
+    injectivity gate keeps the WCR (later lowered to an OMP reduction / atomic)."""
+    N = 8
+    sdfg = dace.SDFG('mapexit_wcr_reduce')
+    sdfg.add_array('acc', [1], dace.float64)
+    sdfg.add_array('B', [N], dace.float64)
+    state = sdfg.add_state()
+    me, mx = state.add_map('m', dict(j=f'0:{N}'))
+    tasklet = state.add_tasklet('augassign', {'__in1', '__in2'}, {'__out'}, '__out = (__in1 + __in2)')
+    acc_read = state.add_read('acc')
+    b_read = state.add_read('B')
+    acc_write = state.add_write('acc')
+    state.add_memlet_path(acc_read, me, tasklet, dst_conn='__in1', memlet=dace.Memlet('acc[0]'))
+    state.add_memlet_path(b_read, me, tasklet, dst_conn='__in2', memlet=dace.Memlet('B[j]'))
+    mx.add_in_connector('IN_A')
+    mx.add_out_connector('OUT_A')
+    state.add_edge(tasklet, '__out', mx, 'IN_A', dace.Memlet('acc[0]'))
+    state.add_edge(mx, 'OUT_A', acc_write, None, dace.Memlet(data='acc', subset='0', wcr='lambda a, b: a + b'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations(WCRToAugAssign)
+    assert applied == 0, 'a constant-target (reduction) map-exit WCR must NOT revert'
+    assert any(e.data.wcr is not None for s in sdfg.all_states() for e in s.edges()), 'reduction WCR must be kept'
+
+
 if __name__ == '__main__':
     test_tasklet()
     test_mapped_tasklet()
+    test_noncommutative_operand_order()
+    test_scalar_source_multidim_target_subset()
+    test_slice_source_offset_wcr()
+    test_symbolic_overapproximated_wcr_refused_no_typeerror()
+    test_mapexit_wcr_injective_reverts()
+    test_mapexit_wcr_reduction_kept()

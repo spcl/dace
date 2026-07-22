@@ -272,7 +272,7 @@ def parse_assumptions(assumptions, array_symbols):
     for sym, assum in condensed_assumptions.items():
         i = 0
         for g in assum.greater:
-            replacement_symbol = sp.Symbol(f'_p_{sym}', positive=True, integer=True)
+            replacement_symbol = sp.Symbol(f'_p_{sym}', nonnegative=True, integer=True)
             all_subs[i][0].update({sp.Symbol(sym): replacement_symbol + g})
             all_subs[i][1].update({replacement_symbol: sp.Symbol(sym) - g})
             i += 1

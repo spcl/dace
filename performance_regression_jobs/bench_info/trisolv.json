@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Triangular solver",
+        "short_name": "trisolv",
+        "relative_path": "polybench/trisolv",
+        "module_name": "trisolv",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Solver",
+        "dwarf": "dense_linear_algebra",
+        "parameters": {
+            "S": { "N": 2000 },
+            "M": { "N": 5000 },
+            "L": { "N": 14000 },
+            "paper": { "N": 16000 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["L", "x", "b"]
+        },
+        "input_args": ["L", "x", "b"],
+        "array_args": ["L", "x", "b"],
+        "output_args": ["b"]
+    }
+}

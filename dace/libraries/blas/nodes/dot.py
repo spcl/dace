@@ -43,17 +43,16 @@ class ExpandDotPure(ExpandTransformation):
         init_state = sdfg.add_state(node.label + "_initstate")
         state = sdfg.add_state_after(init_state, node.label + "_state")
 
-        # Initialization map
-        init_state.add_mapped_tasklet("_i_dotnit", {"__i_unused": "0:1"}, {},
-                                      "_out = 0", {"_out": dace.Memlet("_result[0]")},
-                                      external_edges=True)
+        # A one-iteration map here would fork a thread team to write a single scalar
+        init_tasklet = init_state.add_tasklet("_dot_init", {}, {"_out"}, "_out = 0")
+        init_state.add_edge(init_tasklet, "_out", init_state.add_write("_result"), None, dace.Memlet("_result[0]"))
 
         # Multiplication map
         state.add_mapped_tasklet("dot", {"__i": f"0:{n}"}, {
             "__x": dace.Memlet("_x[__i]"),
             "__y": dace.Memlet("_y[__i]")
         },
-                                 mul_program, {"__out": dace.Memlet(f"_result[0]", wcr="lambda x, y: x + y")},
+                                 mul_program, {"__out": dace.Memlet("_result[0]", wcr="lambda x, y: x + y")},
                                  external_edges=True,
                                  output_nodes=None)
 

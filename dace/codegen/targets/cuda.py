@@ -20,6 +20,8 @@ from dace.codegen.targets import cpp
 from dace.codegen.common import update_persistent_desc
 from dace.codegen.targets.cpp import (codeblock_to_cpp, cpp_array_expr, memlet_copy_to_absolute_strides, sym2cpp,
                                       synchronize_streams, unparse_cr, mangle_dace_state_struct_name)
+from dace.codegen.targets.cpu import (collect_gpu_block_reductions, register_gpu_block_reduction,
+                                      drain_gpu_block_reduction)
 from dace.codegen.target import IllegalCopy, TargetCodeGenerator, make_absolute
 from dace.config import Config
 from dace.frontend import operations
@@ -78,6 +80,10 @@ class CUDACodeGen(TargetCodeGenerator):
         self._kernel_map = None
         self._kernel_state = None
         self._kernel_grid_conditions: List[str] = []
+        # Reductions folded by thread-block cub::BlockReduce for the current kernel
+        # (one per map-exit WCR accumulator). Filled at kernel-scope entry, drained at
+        # exit. See cpu.collect_gpu_block_reductions / generate_kernel_scope.
+        self._gpu_block_reductions: List[dict] = []
         self._scope_has_collaborative_copy = False
         self._localcode = CodeIOStream()
         self._globalcode = CodeIOStream()
@@ -265,7 +271,7 @@ class CUDACodeGen(TargetCodeGenerator):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             # Skip SDFGs without memory pool hints
             pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if getattr(arr, 'pool', False) is True and arr.transient)
+                         if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
             if not pooled:
                 continue
             self.has_pool = True
@@ -493,7 +499,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         return [self._codeobject]
 
     def node_dispatch_predicate(self, sdfg, state, node):
-        if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
+        # NOTE: Works on nodes and scopes
+        if isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)):
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
         if self._in_device_code:
@@ -2268,6 +2275,22 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
 
         scope_entry = dfg_scope.source_nodes()[0]
 
+        # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold scalar map-exit
+        # WCR accumulators via cub::BlockReduce + one atomic/block, not one atomic/thread.
+        # Default path only (no explicit tb map). Partial register identity-inited BEFORE the
+        # bounds guard (out-of-range threads still join the fold); per-thread atomic suppressed;
+        # block fold emitted once the guard closes below.
+        # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back to
+        # a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
+        self._gpu_block_reductions = []
+        if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent
+                and Config.get_bool('compiler', 'emit_tree_reductions')):
+            self._gpu_block_reductions = collect_gpu_block_reductions(sdfg, cfg.node(state_id), node, block_dims,
+                                                                      self._frame)
+        covered = self._cpu_codegen._gpu_block_reduction_covered
+        for red in self._gpu_block_reductions:
+            kernel_stream.write(register_gpu_block_reduction(red, covered), cfg, state_id, node)
+
         # Generate conditions for this block's execution using min and max
         # element, e.g., skipping out-of-bounds threads in trailing block
         # unless this is handled by another map down the line
@@ -2306,6 +2329,14 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
         if (not has_tbmap and not has_dtbmap and node.map.schedule != dtypes.ScheduleType.GPU_Persistent):
             for _ in kernel_map.params:
                 kernel_stream.write('}', cfg, state_id, node)
+
+        # Drain thread-block reductions: bounds guard closed → all threads live for the cub
+        # fold (out-of-range partials hold the identity set above). Here, not at MapExit,
+        # because this default path closes the guard inline.
+        for i, red in enumerate(self._gpu_block_reductions):
+            kernel_stream.write(drain_gpu_block_reduction(red, '%s_%d' % (kernel_name, i), covered), cfg, state_id,
+                                node)
+        self._gpu_block_reductions = []
 
         self._block_dims = None
         self._kernel_map = None
@@ -2687,6 +2718,22 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             # Emit internal array allocation here (deallocation handled at MapExit)
             self._frame.allocate_arrays_in_scope(sdfg, cfg, scope_entry, function_stream, callsite_stream)
 
+            # GPU thread-block reduction (mirror of CPU reduction(op:var)): fold each scalar
+            # device-map-exit WCR accumulator via cub::BlockReduce + one atomic/block. Partial
+            # (allocated just above) identity-inited BEFORE the bounds guard (out-of-range
+            # threads still join the fold); per-thread atomic suppressed; fold emitted once the
+            # guard closes at the thread-block MapExit. Detected on the enclosing device map,
+            # whose exit carries the reduction WCR.
+            # Gated by compiler.emit_tree_reductions: OFF skips the block fold so the WCR falls back
+            # to a per-thread atomicAdd (correct but contended) instead of cub::BlockReduce.
+            self._gpu_block_reductions = []
+            if Config.get_bool('compiler', 'emit_tree_reductions'):
+                self._gpu_block_reductions = collect_gpu_block_reductions(sdfg, dfg, scope_entry, self._block_dims,
+                                                                          self._frame)
+            covered = self._cpu_codegen._gpu_block_reduction_covered
+            for red in self._gpu_block_reductions:
+                callsite_stream.write(register_gpu_block_reduction(red, covered), cfg, state_id, scope_entry)
+
             # Generate conditions for this block's execution using min and max
             # element, e.g. skipping out-of-bounds threads in trailing block
             minels = brange.min_element()
@@ -2867,6 +2914,15 @@ gpuError_t __err = {backend}LaunchKernel((void*){kname}, dim3({gdims}), dim3({bd
             for i in range(len(node.map.params)):
                 callsite_stream.write('}', cfg, state_id, node)
 
+            # Drain thread-block reductions primed at scope entry: bounds guard just closed →
+            # all threads live for the (barrier-using) cub fold. Out-of-range threads carry the
+            # identity; thread 0 commits the single atomic.
+            covered = self._cpu_codegen._gpu_block_reduction_covered
+            for i, red in enumerate(self._gpu_block_reductions):
+                callsite_stream.write(drain_gpu_block_reduction(red, '%s_%d' % (node.map.label, i), covered), cfg,
+                                      state_id, node)
+            self._gpu_block_reductions = []
+
         elif node.map.schedule == dtypes.ScheduleType.GPU_ThreadBlock_Dynamic:
             # Close lambda function
             callsite_stream.write('});', cfg, state_id, node)
@@ -3007,13 +3063,14 @@ def _get_storagename(storage):
 
 
 def _get_const_params(dfg_scope):
+    # Single source of truth for read-only (const) kernel arguments:
+    # ``sdutil.get_constant_data`` (dace/sdfg/utils.py), which the experimental CUDA
+    # code generator also uses. It derives writes from ``read_and_write_sets`` /
+    # ``all_nodes_between`` so a container written anywhere inside the scope -- e.g.
+    # a scatter accumulator written through a nested SDFG (the write surfaces in the
+    # parent as an incoming memlet) -- is correctly NOT const, whereas the previous
+    # scope-exit-only heuristic missed it and emitted a ``const T*`` argument that
+    # clashed with the nested function's non-const (written) parameter.
     state = dfg_scope.graph
-    sdfg = dfg_scope.parent
     scope_entry = dfg_scope.source_nodes()[0]
-    scope_exit = dfg_scope.sink_nodes()[0]
-    input_params = set(e.data.data for e in state.in_edges(scope_entry))
-    output_params = set(e.data.data for e in state.out_edges(scope_exit))
-    toplevel_params = set(node.data for node in dfg_scope.nodes()
-                          if isinstance(node, nodes.AccessNode) and sdfg.arrays[node.data].toplevel)
-    dynamic_inputs = set(e.data.data for e in dace.sdfg.dynamic_map_inputs(state, scope_entry))
-    return input_params - (output_params | toplevel_params | dynamic_inputs)
+    return sdutil.get_constant_data(scope_entry, state)

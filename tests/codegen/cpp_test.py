@@ -10,6 +10,19 @@ from dace.codegen.targets import cpp
 from dace.subsets import Range
 
 
+def test_ndcopy_to_strided_copy_declines_broadcast_source():
+    """A broadcast source (a Scalar / length-1 splatted into a width-W tile) has no
+    single strided source dimension the 1D fast path can name. It must decline
+    (return ``None``) so the caller falls back to the general ND-copy emitter --
+    not raise ``StopIteration`` on the bare ``next`` (the adi ``stage_v_w0 ->
+    v_tile_out`` scalar-broadcast miscompile)."""
+    src_subset = Range([(0, 0, 1)])  # size 1 -> broadcast source
+    dst_subset = Range([(0, 7, 1)])  # size 8
+    assert cpp.ndcopy_to_strided_copy([8], [1], [1], [8], [1], dst_subset, src_subset, dst_subset) is None
+    # Symmetric: a broadcast destination (all-ones dst shape) also declines.
+    assert cpp.ndcopy_to_strided_copy([8], [8], [1], [1], [1], src_subset, dst_subset, src_subset) is None
+
+
 def test_reshape_strides_multidim_array_all_dims_unit():
     r = Range([(0, 0, 1), (0, 0, 1)])
 

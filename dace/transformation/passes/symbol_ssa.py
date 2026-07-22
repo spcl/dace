@@ -23,7 +23,7 @@ class StrictSymbolSSA(ppl.ControlFlowRegionPass):
         return modified & ppl.Modifies.Symbols | ppl.Modifies.Edges | ppl.Modifies.Nodes | ppl.Modifies.States
 
     def depends_on(self):
-        return {ap.SymbolWriteScopes}
+        return [ap.SymbolWriteScopes]
 
     def apply(self, region, pipeline_results) -> Optional[Dict[str, Set[str]]]:
         """

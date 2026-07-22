@@ -9,6 +9,7 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
+set(DACE_PCH_DIR "" CACHE STRING "Directory holding a precompiled <dace/dace.h> to force-include")
 
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
@@ -50,7 +51,21 @@ foreach(DACE_FILE ${DACE_FILES})
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
+  # Remember the generated HOST sources separately: they are the only ones a precompiled
+  # <dace/dace.h> may be forced into (see below).
+  if(NOT DACE_FILE_EXT STREQUAL ".cu")
+    set(DACE_GENERATED_HOST_FILES ${DACE_GENERATED_HOST_FILES} ${DACE_FILE})
+  endif()
 endforeach()
+
+# Reuse the precompiled DaCe runtime header built by dace/codegen/build_cache.py. Scoped to the
+# generated host sources on purpose: forcing <dace/dace.h> into an environment's auxiliary
+# translation unit, or into a .cu that nvcc compiles, can break a file that never asked for it.
+# If the flags it was built with do not match, the compiler just ignores it and compiles normally.
+if(DACE_PCH_DIR AND DACE_GENERATED_HOST_FILES)
+  set_source_files_properties(${DACE_GENERATED_HOST_FILES} PROPERTIES
+                              COMPILE_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")
+endif()
 
 # Internal dependencies
 set(DACE_RUNTIME_DIR ${CMAKE_SOURCE_DIR}/../runtime)
@@ -74,7 +89,10 @@ if(DACE_ENABLE_CUDA)
   set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
 
   find_package(CUDAToolkit REQUIRED)
-  set(CMAKE_CUDA_STANDARD 17)
+  # Match the CUDA C++ standard to the CPU one (DACE_CPP_STANDARD, default 20). This governs both
+  # the device compile and the nvcc host-compiler pass, so device code may use the same C++20
+  # features the readable generator emits on the host (e.g. ``consteval`` index/size helpers).
+  set(CMAKE_CUDA_STANDARD ${DACE_CPP_STANDARD})
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
@@ -94,7 +112,7 @@ if(DACE_ENABLE_CUDA)
 
   set(CMAKE_CUDA_ARCHITECTURES "${LOCAL_CUDA_ARCHITECTURES}")
   enable_language(CUDA)
-  list(APPEND DACE_LIBS CUDA::cudart CUDA::nvtx3)
+  list(APPEND DACE_LIBS CUDA::cudart)
   add_definitions(-DWITH_CUDA)
 
   if (MSVC_IDE)
@@ -252,7 +270,26 @@ if(DACE_ENABLE_HIP)
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES HIP_SOURCE_PROPERTY_FORMAT 1)
   set_source_files_properties(${DACE_HIP_FILES} PROPERTIES LANGUAGE HIP)
   set(DACE_OBJECTS ${DACE_OBJECTS} ${DACE_HIP_FILES})
-endif() # DACE_ENABLE_HIP
+endif()
+
+# Auxiliary source files contributed by library environments (e.g. nvcc-compiled
+# ``.cu`` wrappers for libnodes whose host-side tasklet cannot directly emit a
+# CUDA kernel launch). Anything ending in ``.cu`` here also implies the SDFG
+# wants CUDA enabled.
+string(REPLACE ";" " " DACE_ENV_AUXILIARY_SOURCES_NORMALISED "${DACE_ENV_AUXILIARY_SOURCES}")
+separate_arguments(DACE_ENV_AUXILIARY_SOURCES_LIST UNIX_COMMAND "${DACE_ENV_AUXILIARY_SOURCES_NORMALISED}")
+foreach(AUX_FILE ${DACE_ENV_AUXILIARY_SOURCES_LIST})
+  if(AUX_FILE STREQUAL "")
+    continue()
+  endif()
+  if(AUX_FILE MATCHES "\\.cu$")
+    if(NOT DACE_ENABLE_CUDA)
+      set(DACE_ENABLE_CUDA ON)
+    endif()
+    set_source_files_properties("${AUX_FILE}" PROPERTIES LANGUAGE CUDA)
+  endif()
+  list(APPEND DACE_CPP_FILES "${AUX_FILE}")
+endforeach()
 
 # Additional target-specific CMake files
 foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
@@ -270,6 +307,16 @@ target_link_options(${DACE_PROGRAM_NAME} BEFORE PRIVATE ${OpenMP_CXX_FLAGS})
 
 # Set C++ standard to C++20 (or the configured standard)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+
+# Optional additive static archive (lib<name>.a) built from the same objects as
+# the shared library. Opt-in via compiler.static_archive; the .so is untouched.
+if (DACE_STATIC_ARCHIVE)
+    add_library(${DACE_PROGRAM_NAME}_static STATIC ${DACE_CPP_FILES} ${DACE_OBJECTS})
+    target_link_libraries(${DACE_PROGRAM_NAME}_static PUBLIC ${DACE_LIBS})
+    target_compile_options(${DACE_PROGRAM_NAME}_static BEFORE PRIVATE ${OpenMP_CXX_FLAGS})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY OUTPUT_NAME ${DACE_PROGRAM_NAME})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+endif()
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")

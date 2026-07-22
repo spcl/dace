@@ -1,0 +1,60 @@
+name: Integration Tests
+
+# End-to-end integration tests (CloudSC dwarf): the full transform/parallelize
+# chains on the real kernel, compared step-by-step to the un-transformed reference.
+# They build and compile the multi-thousand-line CloudSC SDFG many times, so they
+# are far too slow for the per-push ``General Tests`` matrix (which excludes the
+# ``integration`` marker). This workflow runs them on pull requests to the release
+# branches, nightly, and on demand.
+
+on:
+  pull_request:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 3 * * *'
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  cloudsc-e2e:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10']
+
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: 'recursive'
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        # Make dependency setup faster
+        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
+        sudo dpkg-reconfigure man-db
+        # Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+        pip install pytest-xdist
+        pip install -e ".[testing]"
+
+    - name: CloudSC end-to-end integration tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # The chains drive simplification explicitly (build with ``simplify=False``,
+        # then apply it as a step), so pin the automatic heuristic off.
+        export DACE_optimizer_automatic_simplification=0
+        # Each parametrized regime builds and compiles the whole SDFG repeatedly;
+        # a couple of workers parallelize the regimes without oversubscribing memory.
+        pytest -n 2 -m integration --tb=short --timeout_method thread --timeout=2400 \
+          tests/corpus/cloudsc_parallelize_chain_test.py \
+          tests/corpus/cloudsc_transform_chain_test.py

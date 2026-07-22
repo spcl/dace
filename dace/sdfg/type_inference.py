@@ -464,7 +464,14 @@ def _infer_dtype(t: Union[ast.Name, ast.Attribute]):
     if isinstance(dtype, np.dtype):
         return dtypes.typeclass(dtype.type)
 
-    return None
+    # C / numpy dtype aliases that are not attributes of ``dtypes`` (``double``,
+    # ``single``, ``short``, ...) still name a concrete type. ``typeclass`` resolves
+    # them and raises for a non-dtype name (a math function like ``sqrt``), so a
+    # cast call ``double(N)`` types as its target rather than falling to ``None``.
+    try:
+        return dtypes.typeclass(dtype_str)
+    except (ValueError, KeyError, TypeError):
+        return None
 
 
 def _Attribute(t, symbols, inferred_symbols):

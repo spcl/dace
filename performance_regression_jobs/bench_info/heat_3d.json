@@ -1,0 +1,26 @@
+{
+    "benchmark": {
+        "name": "Heat-3D",
+        "short_name": "heat3d",
+        "relative_path": "polybench/heat_3d",
+        "module_name": "heat_3d",
+        "func_name": "kernel",
+        "kind": "microbench",
+        "domain": "Physics",
+        "dwarf": "structured_grids",
+        "parameters": {
+            "S": { "TSTEPS": 25, "N": 25 },
+            "M": { "TSTEPS": 50, "N": 40 },
+            "L": { "TSTEPS": 100, "N": 70 },
+            "paper": { "TSTEPS": 500, "N": 120 }
+        },
+        "init": {
+            "func_name": "initialize",
+            "input_args": ["N"],
+            "output_args": ["A", "B"]
+        },
+        "input_args": ["TSTEPS", "A", "B"],
+        "array_args": ["A", "B"],
+        "output_args": ["A", "B"]
+    }
+}

@@ -1,0 +1,105 @@
+name: CPU Codegen + External TU
+
+# 5th codegen CI runner: the experimental ("new") CPU code generator and its knobs vs the legacy
+# generator, plus external translation units (per-TU split), crossed with BOTH library builders --
+# cmake and native (the no-cmake direct-compile path). The two builders consume the same flat
+# per-TU source list, so a split that links under cmake must link under native too; running both is
+# what guards the recursive source-collection that feeds each.
+#
+# CPU job (hosted): the readable knob suite + CPU external TU (legacy AND experimental_readable),
+# x {cmake, native}. GPU job (self-hosted): the same generators emitting device code on the NEW cuda
+# backend. The GPU external-TU (Model 2, one .cu per top-level kernel) test joins the GPU job once the
+# feature is wired -- it is gated until then and intentionally not listed here (a gated skip must not
+# masquerade as coverage).
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  cpu-codegen:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        build_mode: [cmake, native]
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.12'
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        # cmake + a BLAS/LAPACK stack: the readable library-lowering test lowers BLAS library nodes,
+        # and the corpus kernels link against cBLAS/LAPACKE.
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+        pip install pytest-xdist
+        pip install -e ".[testing]"
+    - name: Codegen knob suite + CPU external TU (build_mode=${{ matrix.build_mode }})
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # The one axis this workflow adds on top of the default (cmake) runs: the native builder.
+        export DACE_compiler_build_mode=${{ matrix.build_mode }}
+        # Deterministic reduction order for the bit-exact legacy-vs-experimental corpus compare.
+        export OMP_NUM_THREADS=1
+        # Both suites drive legacy AND experimental_readable internally; -m "not gpu" keeps the CPU job
+        # CPU-only. The GPU external-TU file's codegen-shape tests (per-kernel .cu split) are not gpu
+        # marked and run here too -- they only generate code, no device needed.
+        pytest -v --tb=short --timeout_method thread --timeout=600 -m "not gpu" \
+          tests/codegen/readable \
+          tests/codegen/split_nsdfg_translation_units_test.py
+
+  gpu-codegen:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: [self-hosted, gpu]
+    strategy:
+      fail-fast: false
+      matrix:
+        build_mode: [cmake, native]
+    env:
+      CUDACXX: /usr/local/cuda/bin/nvcc
+      # Emit device code through the NEW cuda generator for every SDFG in this job.
+      DACE_compiler_cuda_implementation: experimental
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        rm -f ~/.dace.conf
+        rm -rf .dacecache tests/.dacecache
+        python -m venv ~/.venv
+        source ~/.venv/bin/activate
+        python -m pip install --upgrade pip
+        pip install pytest-xdist cupy
+        pip uninstall -y dace
+        pip install -e ".[testing]"
+    - name: Readable codegen on GPU, new cuda backend (build_mode=${{ matrix.build_mode }})
+      run: |
+        source ~/.venv/bin/activate
+        export NOSTATUSBAR=1
+        export DACE_cache=single
+        export DACE_compiler_build_mode=${{ matrix.build_mode }}
+        export OMP_NUM_THREADS=1
+        export PATH=$PATH:/usr/local/cuda/bin
+        # The readable suite's GPU variants (corpus equivalence + view/scalar/tasklet codegen) exercise
+        # the experimental CPU generator feeding kernel tasklets to the NEW cuda backend. This includes
+        # the GPU external-TU (Model 2) run tests: one .cu per top-level kernel, linked in-binary via the
+        # child handle ABI, correctness vs the single-TU build, under both builders.
+        pytest -v --tb=short --timeout_method thread --timeout=600 -m "gpu" \
+          tests/codegen/readable

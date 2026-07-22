@@ -109,6 +109,66 @@ def test_pass_flattens_nested_gpu_kernels_validates_clean():
     sdfg.validate()
 
 
+def _build_nested_kernel_with_internal_inout_node() -> dace.SDFG:
+    """Outer ``GPU_Device`` kernel wrapping a NestedSDFG whose inner ``GPU_Device`` map
+    has a *non-transient* array as an internal inout ``AccessNode`` (written then read
+    inside the kernel body: ``c_read -> map -> t1 -> c_mid -> t2 -> map -> c_write``).
+
+    This is the shape that drives the inout-collection branch of ``_move_map_to_if``.
+    """
+    K = dace.symbol('K', dtype=dace.int32)
+    J = dace.symbol('J', dtype=dace.int32)
+
+    sdfg = dace.SDFG('lower_nested_inout')
+    sdfg.add_array('C', [K, J], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+
+    state = sdfg.add_state('s')
+    outer_me, outer_mx = state.add_map('vertical_loop', dict(__k='0:K'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+
+    inner = dace.SDFG('nested_sdfg')
+    inner.add_symbol('__k', dace.int32)
+    inner.add_array('c_io', [J], dace.float64, storage=dace.dtypes.StorageType.GPU_Global)
+    inner_state = inner.add_state('nested_root', is_start_block=True)
+
+    me, mx = inner_state.add_map('horizontal_loop', dict(__j='0:J'), schedule=dace.dtypes.ScheduleType.GPU_Device)
+    c_read = inner_state.add_read('c_io')
+    c_mid = inner_state.add_access('c_io')  # internal inout node (non-transient)
+    c_write = inner_state.add_write('c_io')
+    t1 = inner_state.add_tasklet('bump', {'i'}, {'o'}, 'o = i + 1.0')
+    t2 = inner_state.add_tasklet('bump2', {'i'}, {'o'}, 'o = i + 2.0')
+    inner_state.add_memlet_path(c_read, me, t1, dst_conn='i', memlet=dace.Memlet('c_io[__j]'))
+    inner_state.add_edge(t1, 'o', c_mid, None, dace.Memlet('c_io[__j]'))
+    inner_state.add_edge(c_mid, None, t2, 'i', dace.Memlet('c_io[__j]'))
+    inner_state.add_memlet_path(t2, mx, c_write, src_conn='o', memlet=dace.Memlet('c_io[__j]'))
+
+    nsdfg = state.add_nested_sdfg(inner, {'c_io'}, {'c_io'}, symbol_mapping={'__k': '__k'})
+    c_outer_read = state.add_read('C')
+    c_outer_write = state.add_write('C')
+    state.add_memlet_path(c_outer_read, outer_me, nsdfg, dst_conn='c_io', memlet=dace.Memlet('C[__k, 0:J]'))
+    state.add_memlet_path(nsdfg, outer_mx, c_outer_write, src_conn='c_io', memlet=dace.Memlet('C[__k, 0:J]'))
+    return sdfg
+
+
+def test_inner_kernel_with_internal_inout_node_lowers_clean():
+    """A non-transient array that is an internal inout ``AccessNode`` is collected by
+    data name (a ``str``), not by the ``AccessNode`` object -- otherwise the pass leaks a
+    node into the NestedSDFG connector set and raises ``KeyError`` on ``sdfg.arrays[node]``."""
+    sdfg = _build_nested_kernel_with_internal_inout_node()
+
+    NestedGPUDeviceMapLowering().apply_pass(sdfg, {})
+
+    top, inner = _count_gpu_device_maps(sdfg)
+    assert (top, inner) == (1, 0), (top, inner)
+    # Every NestedSDFG connector must be a real (str) array name, never an AccessNode.
+    for s in sdfg.all_sdfgs_recursive():
+        for cf_state in s.states():
+            for n in cf_state.nodes():
+                if isinstance(n, dace.nodes.NestedSDFG):
+                    for conn in list(n.in_connectors) + list(n.out_connectors):
+                        assert isinstance(conn, str), conn
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))

@@ -23,6 +23,42 @@ from dace.libraries.standard.environments.cuda import CUDA
 
 from dace.libraries.standard import reduction_planner as red_planner
 
+#: Output storage locations a GPU device reduction (a CUB ``DeviceReduce`` launch or a device-map
+#: reduction schedule) can write into directly. ``GPU_Global`` is device memory; ``CPU_Pinned`` is
+#: page-locked host memory that is device-addressable. Any other storage
+#: (``Register`` / ``CPU_Heap`` / ``Default`` / ...) is host-only: a device reduction must then write
+#: a ``GPU_Global`` scratch and copy the result out at the storage boundary (see
+#: :func:`route_gpu_reduce_result_to_host_output`).
+GPU_REDUCE_DEVICE_WRITABLE_STORAGE = (dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned)
+
+
+def route_gpu_reduce_result_to_host_output(nsdfg: SDFG, last_state: SDFGState, dtype, out_shape, out_strides,
+                                           host_storage: dtypes.StorageType) -> None:
+    """Rewire a GPU-reduction nested SDFG whose result was written into a device array named ``_out``
+    so that ``_out`` becomes the real (host) output connector, fed by a device->host copy.
+
+    The reduction body built ``_out`` as ``GPU_Global`` device memory (a device kernel cannot write
+    host memory). This renames that device buffer to a ``GPU_Global`` transient scratch, adds a fresh
+    non-transient ``_out`` in the real output's (host) storage, and appends a state copying the
+    scratch to it -- the device->host copy DaCe emits at the storage boundary. Value-exact: the whole
+    reduced result is copied, and any WCR the reduction applied is already folded into the scratch.
+
+    :param nsdfg: the reduction nested SDFG whose current ``_out`` array holds the device result.
+    :param last_state: the terminal state that wrote the device result (the copy is appended after it).
+    :param dtype: the output element type.
+    :param out_shape: the reduced-output shape (the scratch and host ``_out`` share it).
+    :param out_strides: the host output's strides.
+    :param host_storage: the real output's (host) storage type.
+    """
+    nsdfg.replace('_out', '_out_gpu')
+    scratch = nsdfg.arrays['_out_gpu']
+    scratch.transient = True
+    scratch.storage = dtypes.StorageType.GPU_Global
+    nsdfg.add_array('_out', out_shape, dtype, strides=out_strides, storage=host_storage)
+    copy_state = nsdfg.add_state_after(last_state)
+    copy_state.add_nedge(copy_state.add_read('_out_gpu'), copy_state.add_write('_out'),
+                         dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
+
 
 @dace.library.expansion
 class ExpandReducePure(pm.ExpandTransformation):
@@ -56,10 +92,12 @@ class ExpandReducePure(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
+        # Kept-dim stride = ARRAY stride × input subset STEP → strided input (a[0:2N:2])
+        # indexes right elements; subset begin folded into _in ptr by caller. Step-1 unchanged.
         nsdfg.add_array('_in',
                         insubset.size(),
                         input_data.dtype,
-                        strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
+                        strides=[input_data.strides[orig] * insubset[j][2] for j, orig in enumerate(isqdim)],
                         storage=input_data.storage)
 
         nsdfg.add_array('_out',
@@ -191,10 +229,12 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
+        # Kept-dim stride = ARRAY stride × input subset STEP → strided input (a[0:2N:2])
+        # indexes right elements; subset begin folded into _in ptr by caller. Step-1 unchanged.
         nsdfg.add_array('_in',
                         insubset.size(),
                         input_data.dtype,
-                        strides=[s for i, s in enumerate(input_data.strides) if i in isqdim],
+                        strides=[input_data.strides[orig] * insubset[j][2] for j, orig in enumerate(isqdim)],
                         storage=input_data.storage)
 
         nsdfg.add_array('_out',
@@ -264,6 +304,60 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
         return nsdfg
 
 
+def stage_gpu_reduction_output(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+    """Route a GPU reduction whose destination is not device-resident through a device transient.
+
+    The device expansions write through a device pointer, so a host destination -- typically a
+    scalar reduced over every axis -- reaches codegen as an illegal copy. Reduce into a one-element
+    GPU_Global transient instead and let the edge out of it lower to the device-to-host copy.
+    """
+    outedge = state.out_edges(node)[0]
+    desc = sdfg.arrays[outedge.data.data]
+    if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        return
+
+    name, _ = sdfg.add_array(f'{node.label}_gpu_out', [1],
+                             desc.dtype,
+                             storage=dtypes.StorageType.GPU_Global,
+                             transient=True,
+                             find_new_name=True)
+    staged = state.add_access(name)
+    state.add_edge(node, outedge.src_conn, staged, None, dace.Memlet(f'{name}[0:1]'))
+    state.add_edge(staged, None, outedge.dst, outedge.dst_conn, dcpy(outedge.data))
+    state.remove_edge(outedge)
+
+
+@dace.library.expansion
+class ExpandReduceAuto(pm.ExpandTransformation):
+    """
+        Dispatches to one of the existing expansions based on the node's schedule, which
+        ``set_default_schedule_and_storage_types`` assigns before expansion:
+
+        * ``Sequential`` (the node is nested in a parallel map) -> the sequential accumulator,
+          whose combination order is fixed and therefore independent of the thread count. It needs
+          an identity to seed the accumulator, so a node without one goes the parallel way.
+        * a GPU schedule -> ``ExpandReduceGPUAuto``, which plans the device schedule itself and
+          falls back to the pure expansion when it cannot.
+        * anything else, including a schedule nobody inferred -> OpenMP, which emits a real
+          ``reduction()`` clause instead of a per-element atomic. It reassociates, so it is not
+          reproducible across thread counts; that is the accepted cost of a parallel reduction.
+    """
+    environments = []
+
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        ExpandReduceAuto.environments = []
+        if node.schedule == dtypes.ScheduleType.Sequential and node.identity is not None:
+            return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
+        if node.schedule in dtypes.GPU_SCHEDULES:
+            stage_gpu_reduction_output(node, state, sdfg)
+            expanded = ExpandReduceGPUAuto.expansion(node, state, sdfg)
+            # The GPU expansion picks its own environments when it delegates to CUB
+            ExpandReduceAuto.environments = list(ExpandReduceGPUAuto.environments)
+            return expanded
+        return ExpandReduceOpenMP.expansion(node, state, sdfg)
+
+
 @dace.library.expansion
 class ExpandReduceOpenMP(pm.ExpandTransformation):
     """
@@ -318,9 +412,13 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
         outer_loops = len(axes) != input_dims
 
+        # ``collapse(1)`` is a no-op (the default); only emit the clause when it collapses >1 loop.
+        def collapse_clause(ndims):
+            return 'collapse(%d) ' % ndims if ndims > 1 else ''
+
         # Create OpenMP clause
         if outer_loops:
-            code = '#pragma omp parallel for collapse({cdim})\n'.format(cdim=output_dims)
+            code = ('#pragma omp parallel for ' + collapse_clause(output_dims)).rstrip() + '\n'
         else:
             code = ''
 
@@ -341,17 +439,17 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         if node.identity is not None:
             code += '%s = %s;\n' % (outexpr, sym2cpp(node.identity))
 
-        # Reduction OpenMP clause
-        code += '#pragma omp parallel for collapse({cdim}) ' \
-          'reduction({rtype}: {oexpr})\n'.format(cdim=len(axes), rtype=omptype,
-            oexpr=outexpr)
+        # Reduction OpenMP clause (``collapse(1)`` is the no-op default, so drop it for a single axis)
+        code += ('#pragma omp parallel for ' + collapse_clause(len(axes)) +
+                 'reduction({rtype}: {oexpr})\n'.format(rtype=omptype, oexpr=outexpr))
 
         # Reduction loops
         for i, axis in enumerate(sorted(axes)):
             sz = sym2cpp(inedge.data.subset.size()[axis])
             code += 'for (int _i{i} = 0; _i{i} < {sz}; ++_i{i}) {{\n'.format(i=i, sz=sz)
 
-        # Prepare input offset expression
+        # Input offset: per-axis stride = ARRAY stride × input subset STEP → strided input
+        # (a[0:2N:2]) walks right elements; subset begin folded into _in ptr by caller.
         in_offset = []
         ictr, octr = 0, 0
         for i in range(input_dims):
@@ -361,7 +459,7 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
             else:
                 result = '_o%d' % octr
                 octr += 1
-            in_offset.append('%s * %s' % (result, sym2cpp(input_data.strides[i])))
+            in_offset.append('%s * %s' % (result, sym2cpp(input_data.strides[i] * inedge.data.subset[i][2])))
         in_offset = ' + '.join(in_offset)
 
         # Reduction expression
@@ -390,10 +488,24 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
 
 @dace.library.expansion
 class ExpandReduceCUDADevice(pm.ExpandTransformation):
+    """Device-wide CUB reduce (whole array).
+
+    Temp storage from per-stream CUB scratch pool tagged ``ReduceTag`` (see
+    ``cub_scratch.cuh``, :class:`~dace.libraries.sort.environments.cub.ReduceScratch`):
+    default-stream entry pre-allocated 128 MB at SDFG init, other streams lazily; reused
+    per stream, grown in place on demand, freed at SDFG exit. ``__dace_current_stream``
+    threads both scratch lookup and CUB call → no cross-stream race on the pool.
     """
-        GPU implementation of the reduce node running as a device-wide kernel
-        (uses CUB).
-    """
+
+    @classmethod
+    def _resolve_environments(cls):
+        # Lazy import: ReduceScratch lives in dace.libraries.sort.environments.cub, whose
+        # __init__ pulls in standard.environments.cuda → avoid standard↔sort import race.
+        if cls.environments is None or len(cls.environments) < 2:
+            from dace.libraries.sort.environments.cub import ReduceScratch
+            cls.environments = [CUDA, ReduceScratch]
+        return cls.environments
+
     environments = [CUDA]
 
     _SPECIAL_RTYPES = {
@@ -423,10 +535,9 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         if not sqaxes:  # Degenerate reduction
             return ExpandReducePure.expansion(node, state, sdfg)
 
-        # Setup all locations in which code will be written
+        # Code sinks. No per-libnode init/exit: the per-stream ReduceTag pool
+        # (ReduceScratch) owns scratch lifecycle for all CUB reduce calls.
         cuda_globalcode = CodeIOStream()
-        cuda_initcode = CodeIOStream()
-        cuda_exitcode = CodeIOStream()
         host_globalcode = CodeIOStream()
         host_localcode = CodeIOStream()
         output_memlet = output_edge.data
@@ -495,27 +606,25 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
                           'Falling back to the pure expansion.')
             return ExpandReducePureSequentialDim.expansion(node, state, sdfg)
 
-        # Verify that data is on the GPU
-        if input_data.storage not in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]:
+        # Verify that the INPUT is on the GPU (CUB DeviceReduce reads a device/pinned pointer). A
+        # host input cannot feed a device reduce, so fall back to the pure expansion.
+        if input_data.storage not in GPU_REDUCE_DEVICE_WRITABLE_STORAGE:
             warnings.warn('Input of GPU reduction must either reside '
                           ' in global GPU memory or pinned CPU memory')
             return ExpandReducePure.expansion(node, state, sdfg)
 
-        if output_data.storage not in [dtypes.StorageType.GPU_Global, dtypes.StorageType.CPU_Pinned]:
-            warnings.warn('Output of GPU reduction must either reside '
-                          ' in global GPU memory or pinned CPU memory')
-            return ExpandReducePure.expansion(node, state, sdfg)
+        # Storage-aware OUTPUT: CUB writes a raw device pointer. A device-writable output
+        # (GPU_Global / CPU_Pinned) is written directly (the tasklet is returned as-is). A host output
+        # is NOT a reason to fall back to the slow pure loop -- instead CUB writes a GPU_Global len-1
+        # scratch and a trailing device->host copy moves the result to the real output (built below).
+        output_on_device = output_data.storage in GPU_REDUCE_DEVICE_WRITABLE_STORAGE
 
         # Determine reduction type
         kname = (ExpandReduceCUDADevice._SPECIAL_RTYPES[redtype]
                  if redtype in ExpandReduceCUDADevice._SPECIAL_RTYPES else 'Reduce')
 
-        # Create temp memory for this GPU
-        cuda_globalcode.write(
-            """
-            void *__cub_storage_{sdfg}_{state}_{node} = NULL;
-            size_t __cub_ssize_{sdfg}_{state}_{node} = 0;
-        """.format(sdfg=sdfg.name, state=state_id, node=node_id), state.parent_graph, state_id, node)
+        # Pull in per-stream CUB scratch pool env (ReduceScratch, cub_scratch.cuh).
+        ExpandReduceCUDADevice._resolve_environments()
 
         if reduce_all_axes:
             reduce_type = 'DeviceReduce'
@@ -543,33 +652,18 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
             reduce_range_use = 'num_segments, {it}, {it} + 1'.format(it=iterator_use)
             reduce_range_call = '%s, %s' % (num_segments, segment_size)
 
-        # Call CUB to get the storage size, allocate and free it
-        cuda_initcode.write(
-            """
-            cub::{reduce_type}::{kname}(nullptr, __cub_ssize_{sdfg}_{state}_{node},
-                                        ({intype}*)nullptr, ({outtype}*)nullptr, {reduce_range}{redop});
-            cudaMalloc(&__cub_storage_{sdfg}_{state}_{node}, __cub_ssize_{sdfg}_{state}_{node});
-""".format(sdfg=sdfg.name,
-           state=state_id,
-           node=node_id,
-           reduce_type=reduce_type,
-           reduce_range=reduce_range,
-           redop=reduce_op,
-           intype=input_data.dtype.ctype,
-           outtype=output_data.dtype.ctype,
-           kname=kname), state.parent_graph, state_id, node)
-
-        cuda_exitcode.write(
-            'cudaFree(__cub_storage_{sdfg}_{state}_{node});'.format(sdfg=sdfg.name, state=state_id, node=node_id),
-            state.parent_graph, state_id, node)
-
-        # Write reduction function definition
+        # Reduce fn: query temp-storage size, fetch from per-stream ReduceTag pool
+        # (lazy alloc new streams, grow in place on demand), then run CUB.
         cuda_globalcode.write("""
 DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
 void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
 {{
-cub::{reduce_type}::{kname}(__cub_storage_{id}, __cub_ssize_{id},
-                            input, output, {reduce_range_use}{redop}, stream);
+    size_t _cub_needed = 0;
+    cub::{reduce_type}::{kname}(nullptr, _cub_needed,
+                                input, output, {reduce_range_use}{redop}, stream);
+    void* _cub_scratch = ::dace::cub::get_scratch<::dace::cub::ReduceTag>(_cub_needed, stream);
+    cub::{reduce_type}::{kname}(_cub_scratch, _cub_needed,
+                                input, output, {reduce_range_use}{redop}, stream);
 }}
         """.format(id=idstr,
                    intype=input_data.dtype.ctype,
@@ -589,21 +683,29 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
                    intype=input_data.dtype.ctype,
                    outtype=output_data.dtype.ctype), state.parent_graph, state_id, node)
 
+        # Storage-aware tasklet connector names. A device-writable output returns the tasklet
+        # directly, so its connectors must be the outer ``_in`` / ``_out`` the node exposes. A host
+        # output wraps the tasklet in a nested SDFG whose boundary arrays are named ``_in`` / ``_out``;
+        # the tasklet's connectors must therefore NOT collide with those array names, so use
+        # ``_cub_in`` / ``_cub_out`` and wire the output to the GPU scratch.
+        if output_on_device:
+            tin, tout = '_in', '_out'
+        else:
+            tin, tout = '_cub_in', '_cub_out'
+
         # Call reduction function where necessary
-        host_localcode.write('__dace_reduce_{id}(_in, _out, {reduce_range_call}, __dace_current_stream);'.format(
-            id=idstr, reduce_range_call=reduce_range_call))
+        host_localcode.write('__dace_reduce_{id}({tin}, {tout}, {reduce_range_call}, __dace_current_stream);'.format(
+            id=idstr, tin=tin, tout=tout, reduce_range_call=reduce_range_call))
 
         # Make tasklet
-        tnode = dace.nodes.Tasklet('reduce', {'_in': dace.pointer(input_data.dtype)},
-                                   {'_out': dace.pointer(output_data.dtype)},
+        tnode = dace.nodes.Tasklet('reduce', {tin: dace.pointer(input_data.dtype)},
+                                   {tout: dace.pointer(output_data.dtype)},
                                    host_localcode.getvalue(),
                                    language=dace.Language.CPP)
 
-        # Add the rest of the code
+        # Add the rest of the code (scratch init/exit lives in the env).
         sdfg.append_global_code(host_globalcode.getvalue())
         sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
-        sdfg.append_init_code(cuda_initcode.getvalue(), 'cuda')
-        sdfg.append_exit_code(cuda_exitcode.getvalue(), 'cuda')
 
         # Rename outer connectors and add to node
         input_edge._dst_conn = '_in'
@@ -611,7 +713,42 @@ DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduc
         node.add_in_connector('_in')
         node.add_out_connector('_out')
 
-        return tnode
+        # Device-writable output: CUB writes the output pointer directly.
+        if output_on_device:
+            return tnode
+
+        # Host output: wrap the CUB tasklet in a nested SDFG that reduces into a GPU_Global scratch
+        # and copies it to the real (host) ``_out`` -- a device->host copy at the storage boundary.
+        # The tasklet's ``_cub_out`` connector is wired to the scratch, never to host memory.
+        outsubset = dcpy(output_edge.data.subset)
+        osqdim = outsubset.squeeze()
+        if len(osqdim) == 0:  # scalar output
+            osqdim = [0]
+
+        nsdfg = SDFG('reduce_cub')
+        nsdfg.add_array('_in',
+                        insubset.size(),
+                        input_data.dtype,
+                        strides=[input_data.strides[orig] * insubset[j][2] for j, orig in enumerate(isqdim)],
+                        storage=input_data.storage)
+        nsdfg.add_transient('_out_gpu', outsubset.size(), output_data.dtype, storage=dtypes.StorageType.GPU_Global)
+        nsdfg.add_array('_out',
+                        outsubset.size(),
+                        output_data.dtype,
+                        strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
+                        storage=output_data.storage)
+
+        nstate = nsdfg.add_state()
+        rin = nstate.add_read('_in')
+        nstate.add_node(tnode)
+        nstate.add_edge(rin, None, tnode, tin, dace.Memlet.from_array('_in', nsdfg.arrays['_in']))
+        scratch_write = nstate.add_write('_out_gpu')
+        nstate.add_edge(tnode, tout, scratch_write, None, dace.Memlet.from_array('_out_gpu', nsdfg.arrays['_out_gpu']))
+
+        copy_state = nsdfg.add_state_after(nstate)
+        copy_state.add_nedge(copy_state.add_read('_out_gpu'), copy_state.add_write('_out'),
+                             dace.Memlet.from_array('_out', nsdfg.arrays['_out']))
+        return nsdfg
 
 
 @dace.library.expansion
@@ -736,6 +873,107 @@ class ExpandReduceCUDABlock(pm.ExpandTransformation):
         node.add_in_connector('_in')
         node.add_out_connector('_out')
 
+        return tnode
+
+
+@dace.library.expansion
+class ExpandReduceCUDABlockAtomic(pm.ExpandTransformation):
+    """Thread-block reduce committing ONE atomic per block to a global output.
+
+    ``cub::BlockReduce`` folds the block to a single value (thread 0); thread 0 does one
+    ``reduce_atomic`` into the length-1 global output. Grid-of-blocks shape for the GPU
+    tile path: many blocks → one output, one atomic each (vs device-wide CUB scratch).
+    Unlike :class:`ExpandReduceCUDABlock` (register output, one block per output), output
+    is GPU-global length-1 so every block's atomic hits the same element. ``__shared__``
+    temp storage + atomic emitted inside the tasklet → stateless ``tile -> global`` node.
+    """
+    environments = [CUDA]
+
+    @staticmethod
+    def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
+        from dace.codegen.prettycode import CodeIOStream
+        from dace.codegen.targets.cpp import unparse_cr_split, cpp_array_expr
+
+        node.validate(sdfg, state)
+        input_edge: graph.MultiConnectorEdge = state.in_edges(node)[0]
+        output_edge: graph.MultiConnectorEdge = state.out_edges(node)[0]
+        input_dims = len(input_edge.data.subset)
+        input_data = sdfg.arrays[input_edge.data.data]
+        output_data = sdfg.arrays[output_edge.data.data]
+
+        cuda_globalcode = CodeIOStream()
+        localcode = CodeIOStream()
+
+        redtype = detect_reduction_type(node.wcr)
+        node_id = state.node_id(node)
+        state_id = state.parent_graph.node_id(state)
+        idstr = '{sdfg}_{state}_{node}'.format(sdfg=sdfg.name, state=state_id, node=node_id)
+
+        output_memlet = output_edge.data
+        if node.out_connectors:
+            dtype = next(node.out_connectors.values())
+        else:
+            dtype = sdfg.arrays[output_memlet.data].dtype
+        output_type = dtype.ctype
+
+        if node.identity is None:
+            raise ValueError('For block-atomic reduce nodes, the initial value (identity) must be specified')
+
+        # Build the reduce functor (block fold) and pick the matching atomic.
+        if redtype == dtypes.ReductionType.Custom:
+            body, [arg1, arg2] = unparse_cr_split(sdfg, node.wcr)
+            cuda_globalcode.write(
+                """
+        struct __reduce_{id} {{
+            template <typename T>
+            DACE_HDFI T operator()(const T &{arg1}, const T &{arg2}) const {{
+                {contents}
+            }}
+        }};""".format(id=idstr, arg1=arg1, arg2=arg2, contents=body), state.parent_graph, state_id, node_id)
+            redop = '__reduce_%s()' % idstr
+            atomic = 'dace::wcr_custom<%s>::template reduce_atomic(__reduce_%s(), %%s, %%s)' % (output_type, idstr)
+        else:
+            credtype = 'dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:]
+            redop = 'dace::_wcr_fixed<%s, %s>()' % (credtype, output_type)
+            atomic = 'dace::_wcr_fixed<%s, %s>::reduce_atomic(%%s, %%s)' % (credtype, output_type)
+
+        # BlockReduce thread count = flattened GPU-device-map block dims (via
+        # devicelevel_block_size), emitted as symbolic template arg → specializes to a
+        # constant at codegen but stays symbolic-tolerant (unlike constant-only block expansion).
+        block_dims = devicelevel_block_size(sdfg, state, node)
+        if block_dims is None:
+            raise ValueError('Block-atomic GPU reduction must occur within a GPU kernel')
+        num_threads = symstr(functools.reduce(lambda a, b: a * b, block_dims, 1))
+        if node.axes is not None and len(node.axes) < input_dims:
+            raise ValueError('Only full reduction is supported for block-atomic reduce; use the pure expansion')
+        if input_data.storage != dtypes.StorageType.Register:
+            raise ValueError('Block-atomic reduction requires a GPU register input (the per-thread partial)')
+
+        # ``_out`` addresses the global length-1 output element; take its address for the atomic.
+        out_ref = cpp_array_expr(sdfg, output_memlet)
+        localcode.write("""
+        typedef cub::BlockReduce<{type}, {numthreads}> BlockReduce_{id};
+        __shared__ typename BlockReduce_{id}::TempStorage temp_storage_{id};
+        {type} __block_result_{id} = BlockReduce_{id}(temp_storage_{id}).Reduce({input}, {redop});
+        if (threadIdx.x == 0 && threadIdx.y == 0 && threadIdx.z == 0) {{
+            {atomic};
+        }}
+            """.format(id=idstr,
+                       type=output_type,
+                       numthreads=num_threads,
+                       input=input_edge.data.data,
+                       redop=redop,
+                       atomic=atomic % ('&(%s)' % out_ref, '__block_result_%s' % idstr)))
+
+        tnode = dace.nodes.Tasklet('reduce', {'_in': dace.pointer(input_data.dtype)},
+                                   {'_out': dace.pointer(output_data.dtype)},
+                                   localcode.getvalue(),
+                                   language=dace.Language.CPP)
+        sdfg.append_global_code(cuda_globalcode.getvalue(), 'cuda')
+        input_edge._dst_conn = '_in'
+        output_edge._src_conn = '_out'
+        node.add_in_connector('_in')
+        node.add_out_connector('_out')
         return tnode
 
 
@@ -893,6 +1131,13 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         """
         from dace.codegen import common
 
+        # This expansion emits inline device code needing no external environment. Reset here so a
+        # previous Custom-WCR delegation (which sets the CUB scratch environments below) does not leak
+        # its 128 MB scratch-pool environment onto this non-Custom expansion. ``ExpandTransformation``
+        # attaches ``type(self).environments`` to the expanded node, so the value at the end of this
+        # method call is the one that takes effect.
+        ExpandReduceGPUAuto.environments = []
+
         node.validate(sdfg, state)
         inedge: graph.MultiConnectorEdge = state.in_edges(node)[0]
         outedge: graph.MultiConnectorEdge = state.out_edges(node)[0]
@@ -921,13 +1166,46 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             warnings.warn('Cannot use GPUAuto expansion: node.identity is None. Falling back to Pure expansion')
             return ExpandReducePure.expansion(node, state, sdfg)
 
+        # A Custom WCR (e.g. an ITE ``a if a > b else b`` -- argmax/argmin-style tiebreak) cannot be
+        # expressed through the ``dace::warpReduce<ReductionType, T>`` primitive this expansion uses
+        # (that primitive is templated on a FIXED reduction type, with no Custom variant). Rather than
+        # raise or fall back to the slow pure loop, delegate to the CUB ``DeviceReduce`` expansion,
+        # which lowers a Custom op as a device functor (``struct __reduce_{id}``) -- an efficient
+        # device reduction that is storage-aware (host output via a GPU scratch + copy). Identity is
+        # guaranteed set here (checked above), which CUB device requires.
+        if detect_reduction_type(node.wcr) == dtypes.ReductionType.Custom:
+            # The CUB DeviceReduce functor path emits ``::dace::cub::get_scratch<ReduceTag>`` and needs
+            # the per-stream scratch-pool environment (ReduceScratch). ``ExpandTransformation.apply``
+            # attaches THIS transformation's ``environments`` to the delegated expansion, so carry the
+            # CUB scratch environments here (reset to ``[]`` for the non-Custom path above).
+            ExpandReduceGPUAuto.environments = list(ExpandReduceCUDADevice._resolve_environments())
+            return ExpandReduceCUDADevice.expansion(node, state, sdfg)
+
         # Standardize and squeeze axes
         axes = node.axes if node.axes is not None else [i for i in range(len(inedge.data.subset))]
         # this removes reduction of size 1 axes from the list
         axes = [axis for axis in axes if axis in isqdim]
 
+        # When the reduce reads a View (e.g. the sliced ``x[:, 2*i:2*i+2, ...]`` window feeding a
+        # maxpool, or a reshaped array), a View is ``source_ptr + offset`` with its own strides/step.
+        # Resolve it to a plain array describing the actual viewed region: fold the input memlet
+        # subset's step into the underlying strides (exactly like :class:`ExpandReducePure`). This lets
+        # the planner schedule the efficient device reduction directly over the (possibly strided) view,
+        # and keeps ``_in`` a plain array rather than a bare View access node (which is an invalid
+        # nested-SDFG input connector with no defining view edge). Non-View inputs are handed to the
+        # planner unchanged.
+        if isinstance(raw_input_data, dace.data.View):
+            in_subset = inedge.data.subset
+            planner_input = dace.data.Array(
+                raw_input_data.dtype,
+                in_subset.size(),
+                storage=raw_input_data.storage,
+                strides=[raw_input_data.strides[i] * in_subset[i][2] for i in range(len(in_subset))])
+        else:
+            planner_input = raw_input_data
+
         # call the planner script
-        schedule = red_planner.get_reduction_schedule(raw_input_data, axes, warp_size=warp_size)
+        schedule = red_planner.get_reduction_schedule(planner_input, axes, warp_size=warp_size)
 
         if schedule.error:
             # return pure expansion if error
@@ -938,18 +1216,36 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
         # Create nested SDFG
         nsdfg = SDFG('reduce')
 
-        input_data = dcpy(raw_input_data)
+        input_data = dcpy(planner_input)
         input_data.transient = False
         input_data.shape = schedule.in_shape
         input_data.strides = schedule.in_strides
         nsdfg.add_datadesc('_in', input_data)
 
         output_data = dcpy(raw_output_data)
+        # The reduction body writes ``_out`` from GPU device maps, so ``_out`` must be device-writable.
+        # If the real output already lives in device memory, ``_out`` IS that output (written directly).
+        # If it lives on the host (Register / CPU_Heap / Default / ...), ``_out`` is built as a
+        # GPU_Global scratch here and, once the reduction body is complete, renamed to a transient and
+        # copied to the real host output by :func:`route_gpu_reduce_result_to_host_output` -- so the GPU
+        # kernels never write host memory (and no slow pure fallback is taken).
+        output_on_device = raw_output_data.storage in GPU_REDUCE_DEVICE_WRITABLE_STORAGE
+
+        # ``_out``'s declared strides must match the memory it is written into. The planner derives
+        # ``out_strides`` from the INPUT array, which is only a valid layout for the reconciled host
+        # scratch. When ``_out`` IS the real device output (written directly) and that output is a
+        # strided View (e.g. ``output[:, i, j, :]``), those input-derived strides send the writes to
+        # the wrong offsets, so use the real output's strides for the written (squeezed) region.
+        out_strides = schedule.out_strides
+        if output_on_device:
+            osqdim = dcpy(outedge.data.subset).squeeze()
+            if len(osqdim) == len(schedule.out_shape):
+                out_strides = [raw_output_data.strides[i] for i in osqdim]
         nsdfg.add_array('_out',
                         schedule.out_shape,
                         output_data.dtype,
-                        strides=schedule.out_strides,
-                        storage=output_data.storage)
+                        strides=out_strides,
+                        storage=(output_data.storage if output_on_device else dtypes.StorageType.GPU_Global))
 
         nstate = nsdfg.add_state()
 
@@ -1094,7 +1390,10 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             ctype = output_data.dtype
             redtype = detect_reduction_type(node.wcr)
             if redtype == dtypes.ReductionType.Custom:
-                raise NotImplementedError
+                # Unreachable: a Custom WCR is delegated to the CUB DeviceReduce functor path at the
+                # top of this expansion (``dace::warpReduce`` has no Custom variant).
+                raise NotImplementedError('Custom WCR must be delegated to ExpandReduceCUDADevice; '
+                                          'reached the warpReduce path unexpectedly')
             credtype = ('dace::ReductionType::' + str(redtype)[str(redtype).find('.') + 1:])
             wr = nstate.add_tasklet('warp_reduce', {'__a'}, {'__out'},
                                     f'__out = dace::warpReduce<{credtype}, {ctype}>::reduce(__a);', dtypes.Language.CPP)
@@ -1323,6 +1622,12 @@ class ExpandReduceGPUAuto(pm.ExpandTransformation):
             else:
                 nstate.add_memlet_path(cond_tasklet, bmx3, omx, w, src_conn='_output', memlet=outm)
 
+        # Host output: the reduction wrote a GPU_Global ``_out`` scratch; route it to the real
+        # (host) output via a device->host copy so a device kernel never writes host memory.
+        if not output_on_device:
+            route_gpu_reduce_result_to_host_output(nsdfg, nstate, output_data.dtype, schedule.out_shape,
+                                                   schedule.out_strides, raw_output_data.storage)
+
         # Rename outer connectors and add to node
         inedge._dst_conn = '_in'
         outedge._src_conn = '_out'
@@ -1343,18 +1648,20 @@ class Reduce(dace.sdfg.nodes.LibraryNode):
 
     # Global properties
     implementations = {
+        'auto': ExpandReduceAuto,
         'pure': ExpandReducePure,
         'pure-seq': ExpandReducePureSequentialDim,
         'OpenMP': ExpandReduceOpenMP,
         'CUDA (device)': ExpandReduceCUDADevice,
         'CUDA (block)': ExpandReduceCUDABlock,
+        'CUDA (block atomic)': ExpandReduceCUDABlockAtomic,
         'CUDA (block allreduce)': ExpandReduceCUDABlockAll,
         'GPUAuto': ExpandReduceGPUAuto
         # 'CUDA (warp)': ExpandReduceCUDAWarp,
         # 'CUDA (warp allreduce)': ExpandReduceCUDAWarpAll
     }
 
-    default_implementation = 'pure'
+    default_implementation = 'auto'
 
     # Properties
     axes = ListProperty(element_type=int, allow_none=True)

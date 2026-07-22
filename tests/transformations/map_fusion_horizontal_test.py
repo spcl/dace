@@ -275,7 +275,77 @@ def test_deterministic_label_in_horizontal_map_fusion(first_order: bool):
     assert expected_final_label == final_me.map.label
 
 
+def test_horizontal_fusion_preserves_distinct_ordering_in_edges():
+    """Regression: fusing two parallel Maps that each carry an empty-Memlet
+    ordering (WAW) in-edge from a *different* source AccessNode must preserve
+    BOTH ordering edges on the fused Map.
+
+    The empty-Memlet dedup in ``relocate_nodes`` used to key on the edge
+    destination alone while iterating ``all_edges(to_node)``. Every empty
+    in-edge shares ``dst == to_node``, so all but one were removed -- silently
+    dropping a real ordering dependency, and (because the survivor depended on
+    edge iteration order) producing an order-dependent miscompile. This showed
+    up as npbench ``cavity_flow`` at the larger dataset: the boundary writes to
+    ``u`` lost their sequencing when it got rerouted through ``v``. The dedup
+    now keys on the ``(src, dst)`` pair, so distinct-source ordering edges
+    survive while genuine duplicates still collapse.
+    """
+    sdfg = dace.SDFG(unique_name("horizontal_ordering_edges"))
+    state = sdfg.add_state(is_start_block=True)
+    for name in ("A", "u", "v", "su", "sv"):
+        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+
+    a = state.add_access("A")
+    su = state.add_access("su")  # stand-in for a prior writer of u (ordering source)
+    sv = state.add_access("sv")  # stand-in for a prior writer of v (ordering source)
+
+    _, me_u, _ = state.add_mapped_tasklet(
+        "comp_u",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("A[__i]")},
+        code="__out = __in + 1.0",
+        outputs={"__out": dace.Memlet("u[__i]")},
+        input_nodes={a},
+        external_edges=True,
+    )
+    _, me_v, _ = state.add_mapped_tasklet(
+        "comp_v",
+        map_ranges={"__i": "0:10"},
+        inputs={"__in": dace.Memlet("A[__i]")},
+        code="__out = __in + 2.0",
+        outputs={"__out": dace.Memlet("v[__i]")},
+        input_nodes={a},
+        external_edges=True,
+    )
+    # Distinct-source empty-Memlet ordering in-edges, one into each Map entry.
+    state.add_nedge(su, me_u, dace.Memlet())
+    state.add_nedge(sv, me_v, dace.Memlet())
+    sdfg.validate()
+
+    def empty_in_sources(me):
+        return sorted(e.src.data for e in state.in_edges(me)
+                      if e.data.is_empty() and isinstance(e.src, nodes.AccessNode))
+
+    assert empty_in_sources(me_u) == ["su"]
+    assert empty_in_sources(me_v) == ["sv"]
+
+    count = sdfg.apply_transformations_repeated(
+        [dftrans.MapFusionHorizontal(only_if_common_ancestor=True)],
+        validate=True,
+        validate_all=True,
+    )
+    assert count == 1, "the two same-range parallel maps must fuse"
+
+    fused = [me for me in state.nodes() if isinstance(me, nodes.MapEntry)]
+    assert len(fused) == 1
+    # BOTH ordering dependencies must survive on the fused Map -- neither array's
+    # write-ordering chain may be dropped by the empty-Memlet dedup.
+    assert empty_in_sources(fused[0]) == ["su", "sv"], \
+        "distinct-source empty ordering in-edges must not be deduped away"
+
+
 if __name__ == '__main__':
+    test_horizontal_fusion_preserves_distinct_ordering_in_edges()
     test_vertical_map_fusion_common_ancestor_is_required()
     test_vertical_map_fusion_no_common_ancestor_not_required()
     test_vertical_map_fusion_with_common_ancestor_is_required()

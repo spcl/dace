@@ -321,6 +321,41 @@ def test_c_transposed():
     assert np.allclose(c, c_expected)
 
 
+@pytest.mark.parametrize('beta', [0.0, 1.0])
+def test_einsum_dot_node(beta):
+    """A directly-constructed scalar-output ``i,i->`` Einsum node expands to a stride-aware DDOT
+    (a ``Dot`` node), NOT the degenerate 1x1 GEMM the contraction path emits (illegal ``lda=1``
+    for a strided operand -> silently dropped contraction). Covers the ``SpecializeEinsum`` dot
+    path that ``LiftEinsum`` deliberately no longer produces: ``out = alpha*dot(x,y) +
+    beta*out_prior``."""
+    from dace.libraries.blas.nodes.einsum import Einsum
+    n = 40
+    sdfg = dace.SDFG('einsum_dot')
+    sdfg.add_array('x', [n], dace.float64)
+    sdfg.add_array('y', [n], dace.float64)
+    sdfg.add_array('r', [1], dace.float64)
+    state = sdfg.add_state()
+    enode = Einsum('einsum')
+    enode.einsum_str = 'i,i->'
+    enode.alpha = 2.0
+    enode.beta = beta
+    enode.in_connectors = {'a': None, 'b': None}
+    enode.out_connectors = {'out': None}
+    state.add_node(enode)
+    state.add_edge(state.add_read('x'), None, enode, 'a', dace.Memlet(f'x[0:{n}]'))
+    state.add_edge(state.add_read('y'), None, enode, 'b', dace.Memlet(f'y[0:{n}]'))
+    state.add_edge(enode, 'out', state.add_write('r'), None, dace.Memlet('r[0]'))
+    sdfg.expand_library_nodes()
+
+    rng = np.random.default_rng(0)
+    x = rng.random(n)
+    y = rng.random(n)
+    r = np.array([7.0])
+    prior = r[0]
+    sdfg(x=x, y=y, r=r)
+    assert np.allclose(r[0], 2.0 * np.dot(x, y) + beta * prior), f'got {r[0]}'
+
+
 if __name__ == '__main__':
     test_general_einsum()
     test_matmul()

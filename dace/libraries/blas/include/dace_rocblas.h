@@ -1,10 +1,9 @@
 // Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 #pragma once
 
+#include <hip/amd_detail/amd_hip_complex.h>  // for hip*Complex
+#include <hip/hip_fp16.h>                    // for __float2half
 #include <hip/hip_runtime.h>
-#include <hip/hip_fp16.h>  // for __float2half
-#include <hip/amd_detail/amd_hip_complex.h> // for hip*Complex
-
 #include <rocblas.h>
 
 #include <cstddef>    // size_t
@@ -83,23 +82,23 @@ class _RocblasConstants {
     (void)hipMalloc(&half_pone_, sizeof(__half) * 1);
     __half half_pone = __float2half(1.0f);
     (void)hipMemcpy(half_pone_, &half_pone, sizeof(__half) * 1,
-               hipMemcpyHostToDevice);
+                    hipMemcpyHostToDevice);
     (void)hipMalloc(&float_pone_, sizeof(float) * 1);
     float float_pone = 1.0f;
     (void)hipMemcpy(float_pone_, &float_pone, sizeof(float) * 1,
-               hipMemcpyHostToDevice);
+                    hipMemcpyHostToDevice);
     (void)hipMalloc(&double_pone_, sizeof(double) * 1);
     double double_pone = 1.0;
     (void)hipMemcpy(double_pone_, &double_pone, sizeof(double) * 1,
-               hipMemcpyHostToDevice);
+                    hipMemcpyHostToDevice);
     (void)hipMalloc(&complex64_pone_, sizeof(hipComplex) * 1);
     hipComplex complex64_pone = make_hipFloatComplex(1.0f, 0.0f);
     (void)hipMemcpy(complex64_pone_, &complex64_pone, sizeof(hipComplex) * 1,
-               hipMemcpyHostToDevice);
+                    hipMemcpyHostToDevice);
     (void)hipMalloc(&complex128_pone_, sizeof(hipDoubleComplex) * 1);
     hipDoubleComplex complex128_pone = make_hipDoubleComplex(1.0, 0.0);
-    (void)hipMemcpy(complex128_pone_, &complex128_pone, sizeof(hipDoubleComplex) * 1,
-               hipMemcpyHostToDevice);
+    (void)hipMemcpy(complex128_pone_, &complex128_pone,
+                    sizeof(hipDoubleComplex) * 1, hipMemcpyHostToDevice);
 
     // Allocate custom factors and default to zero
     (void)hipMalloc(&custom_alpha_, sizeof(hipDoubleComplex) * 1);
