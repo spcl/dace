@@ -274,7 +274,8 @@ endforeach()
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 
-# Set C++ standard to C++20 (or the configured standard)
+# Standard C++, not the GNU dialect: CXX_STANDARD on its own emits -std=gnu++NN, which accepts
+# extensions that Clang then rejects.
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 

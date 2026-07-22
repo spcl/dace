@@ -38,6 +38,9 @@ except (subprocess.CalledProcessError, OSError, IndexError, ValueError):
     # Any failure in getting the CMake version counts as "not found"
     pass
 
+# Ninja generates the build for generated code (see dace/codegen/compiler.py). Any version will do.
+ninja_requires = [] if shutil.which('ninja') else ['ninja']
+
 with open("README.md", "r") as fp:
     long_description = fp.read()
 
@@ -70,7 +73,7 @@ setup(
     install_requires=[
         'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3, != 0.2.3',
         'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions'
-    ] + cmake_requires,
+    ] + cmake_requires + ninja_requires,
     extras_require={
         'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
         'testing': [

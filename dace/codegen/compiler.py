@@ -20,6 +20,7 @@ import warnings
 
 import dace
 from dace.config import Config
+from dace.codegen import command_db
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
@@ -166,15 +167,36 @@ def generate_program_folder(
     return out_path
 
 
-#: Machine-global build caches. Both are advisory: a miss, or an entry that no longer matches, costs
-#: speed and never correctness. Override the location with ``DACE_BUILD_CACHE_DIR``.
-_BUILD_CACHE = os.path.join(
-    os.environ.get('DACE_BUILD_CACHE_DIR') or tempfile.gettempdir(), f'dace_build_cache_{getpass.getuser()}')
+#: The caches are Linux/macOS only: the precompiled header is a GCC/Clang mechanism, and none of this
+#: is tested on Windows.
+CACHES_SUPPORTED = os.name != 'nt'
+
+#: Reserved name for the last-resort cache location inside the build folder. Prefixed so it cannot
+#: collide with the per-SDFG folders that sit next to it, which are named after the SDFG.
+BUILD_CACHE_FOLDER = '__dace_build_cache'
+
+
+def build_cache_root() -> str:
+    """Directory holding the machine-global build caches, which are shared by every SDFG.
+
+    All of them are advisory: a miss, or an entry that no longer matches, costs speed and never
+    correctness. RAM-backed when possible -- on HPC nodes the temp directory is often a slow shared
+    file system, where re-reading a large precompiled header costs more than it saves. Where neither
+    that nor the temp directory is usable, the caches live in the build folder instead.
+    """
+    root = os.environ.get('DACE_BUILD_CACHE_DIR')
+    if not root:
+        usable = (c for c in ('/dev/shm', tempfile.gettempdir()) if os.path.isdir(c) and os.access(c, os.W_OK))
+        root = next(usable, None)
+        if root is None:
+            return os.path.join(Config.get('default_build_folder'), BUILD_CACHE_FOLDER)
+    return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
+
 
 #: CMake's own ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults for GNU-like compilers. A precompiled header is
 #: only used if it was built with the same flags as the translation unit, so these must match what
 #: CMake appends for the build type -- note ``Debug`` is plain ``-g``.
-_CMAKE_BUILD_TYPE_FLAGS = {
+CMAKE_BUILD_TYPE_FLAGS = {
     'Debug': ['-g'],
     'Release': ['-O3', '-DNDEBUG'],
     'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
@@ -182,11 +204,19 @@ _CMAKE_BUILD_TYPE_FLAGS = {
 }
 
 
-def _cache_key(*parts: object) -> str:
+def cache_key(*parts: object) -> str:
     return hashlib.sha256('\0'.join(str(p) for p in parts).encode()).hexdigest()[:16]
 
 
-def _seed_cmake_configure(build_folder: str, key: str) -> bool:
+def newest_mtime(path: str) -> float:
+    """Modification time of ``path``, or ``0.0`` if it is not there to stat."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def seed_cmake_configure(build_folder: str, key: str) -> bool:
     """Seed a fresh build folder with an earlier configure, returning whether it was seeded.
 
     ``CMakeCache.txt`` holds the ``find_package`` results and ``CMakeFiles/<version>/`` the
@@ -194,7 +224,7 @@ def _seed_cmake_configure(build_folder: str, key: str) -> bool:
     same way, yet a fresh build folder rediscovers both for every SDFG. Seeding one without the other
     is close to worthless -- each still forces the other half of the work.
     """
-    entry = os.path.join(_BUILD_CACHE, 'configure', key)
+    entry = os.path.join(build_cache_root(), 'configure', key)
     if os.path.exists(os.path.join(build_folder, 'CMakeCache.txt')) or not os.path.isdir(entry):
         return False
     try:
@@ -212,13 +242,13 @@ def _seed_cmake_configure(build_folder: str, key: str) -> bool:
         return False
 
 
-def _publish_cmake_configure(build_folder: str, key: str) -> None:
+def publish_cmake_configure(build_folder: str, key: str) -> None:
     """Publish a fresh configure so the next SDFG can reuse it.
 
     Only the compiler-detection subdirectory is kept -- the rest of ``CMakeFiles/`` holds this
     program's object files, which must never be transplanted into another build.
     """
-    entry = os.path.join(_BUILD_CACHE, 'configure', key)
+    entry = os.path.join(build_cache_root(), 'configure', key)
     versions = glob.glob(os.path.join(build_folder, 'CMakeFiles', '[0-9]*'))
     if os.path.isdir(entry) or not versions:
         return
@@ -232,7 +262,7 @@ def _publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _dace_pch_dir(targets) -> Optional[str]:
+def prepare_precompiled_header(targets) -> Optional[str]:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags), returning its directory or ``None``.
 
     The runtime umbrella header is most of the compile time of a small kernel. Precompiling it costs
@@ -240,17 +270,17 @@ def _dace_pch_dir(targets) -> Optional[str]:
     The flags mirror the line CMake gives generated sources; should they ever drift, the compiler
     silently declines the header and compiles normally, producing the same object.
     """
-    if not Config.get_bool('compiler', 'precompiled_header'):
+    if not (CACHES_SUPPORTED and Config.get_bool('compiler', 'precompiled_header')):
         return None
     runtime = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime', 'include')
     executable = Config.get('compiler', 'cpu', 'executable')
     cxx = make_absolute(executable) if executable else 'c++'
     flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
              shlex.split(Config.get('compiler', 'cpu', 'args') or '') +
-             _CMAKE_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), []))
+             CMAKE_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), []))
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
-    pch = os.path.join(_BUILD_CACHE, 'pch', _cache_key(cxx, *flags))
+    pch = os.path.join(build_cache_root(), 'pch', cache_key(cxx, *flags))
     header = os.path.join(pch, 'dace_prewarm.h')
     newest = max((os.path.getmtime(os.path.join(r, f)) for r, _, fs in os.walk(runtime) for f in fs), default=0.0)
     try:
@@ -268,6 +298,56 @@ def _dace_pch_dir(targets) -> Optional[str]:
         return pch
     except (OSError, subprocess.SubprocessError):
         return None
+
+
+def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: int, output_stream) -> None:
+    """Configure and build ``build_folder``, seeding and publishing the configure cache around it."""
+    if Config.get('debugprint') == 'verbose':
+        print(f'Running CMake: {cmake_command}')
+
+    cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
+    reuse_configure = CACHES_SUPPORTED and Config.get_bool('compiler', 'configure_cache')
+    seeded = reuse_configure and seed_cmake_configure(build_folder, configure_key)
+    try:
+        if not identical_file_exists(cmake_filename, cmake_command):
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
+            if reuse_configure and not seeded:
+                publish_cmake_configure(build_folder, configure_key)
+    except subprocess.CalledProcessError as ex:
+        # Clean CMake directory and try once more
+        if Config.get_bool('debugprint'):
+            print('Cleaning CMake build folder and retrying...')
+        # The retry starts from an empty folder, so a seed cannot be what fails it twice -- but drop
+        # the entry anyway, or a bad one would go on poisoning every later build of this shape.
+        if seeded:
+            shutil.rmtree(os.path.join(build_cache_root(), 'configure', configure_key), ignore_errors=True)
+        shutil.rmtree(build_folder, ignore_errors=True)
+        os.makedirs(build_folder)
+        try:
+            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
+        except subprocess.CalledProcessError as ex:
+            # If still unsuccessful, print results
+            if Config.get_bool('debugprint'):
+                raise cgx.CompilerConfigurationError('Configuration failure')
+            else:
+                raise cgx.CompilerConfigurationError('Configuration failure:\n' + ex.output)
+
+    with open(cmake_filename, "w") as fp:
+        fp.write(cmake_command)
+
+    # Compile and link. ``--parallel`` is what bounds the build: Make would otherwise be serial, and
+    # Ninja would otherwise use every core.
+    try:
+        _run_liveoutput(f"cmake --build . --config {Config.get('compiler', 'build_type')} --parallel {jobs}",
+                        shell=True,
+                        cwd=build_folder,
+                        output_stream=output_stream)
+    except subprocess.CalledProcessError as ex:
+        # If unsuccessful, print results
+        if Config.get_bool('debugprint'):
+            raise cgx.CompilationError('Compiler failure')
+        else:
+            raise cgx.CompilationError('Compiler failure:\n' + ex.output)
 
 
 def configure_and_compile(
@@ -335,9 +415,14 @@ def configure_and_compile(
 
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    # Ninja's global dependency graph parallelizes a multi-source build better than Make's
+    # per-directory one, and it is what can report the commands it ran (see ``command_db``). Not on
+    # Windows, where ``-A x64`` is a Visual Studio generator option that Ninja rejects.
+    use_ninja = os.name != 'nt' and shutil.which('ninja') is not None
     cmake_command = [
         "cmake",
         "-A x64" if os.name == 'nt' else "",  # Windows-specific flag
+        "-G Ninja" if use_ninja else "",
         '"' + os.path.join(dace_path, "codegen") + '"',
         "-DDACE_SRC_DIR=\"{}\"".format(src_folder),
         "-DDACE_FILES=\"{}\"".format(";".join(files)),
@@ -390,66 +475,42 @@ def configure_and_compile(
     if cmake_link_flags:
         cmake_command.append(f'-DCMAKE_SHARED_LINKER_FLAGS="{cmake_link_flags}"')
 
-    pch_dir = _dace_pch_dir(targets)
+    pch_dir = prepare_precompiled_header(targets)
     if pch_dir:
         cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
     # Everything that decides what the configure DISCOVERS: the command minus the flags naming this
     # particular program. ``DACE_FILES`` reduces to its target subdirectories, since those -- not the
     # file names -- are what select the languages and packages the CMakeLists enables.
-    configure_key = _cache_key(
-        *[c for c in cmake_command if not c.startswith(('-DDACE_SRC_DIR=', '-DDACE_FILES=', '-DDACE_PROGRAM_NAME='))],
-        *sorted({os.path.dirname(f)
-                 for f in files}))
+    shape = [c for c in cmake_command if not c.startswith(('-DDACE_SRC_DIR=', '-DDACE_FILES=', '-DDACE_PROGRAM_NAME='))]
+    configure_key = cache_key(*shape, *sorted({os.path.dirname(f) for f in files}))
+    # A recorded build additionally pins the exact translation units and the CMake sources that
+    # produced their flags, neither of which the configure alone depends on: editing the CMakeLists
+    # or an environment's .cmake changes the real compile line without changing anything above.
+    # Every ``.cmake`` the command mentions, whichever flag carries it, plus the CMakeLists itself.
+    cmake_sources = sorted({p for c in shape for p in re.findall(r'[^"=;\s]+\.cmake', c)})
+    cmake_sources.append(os.path.join(dace_path, 'codegen', 'CMakeLists.txt'))
+    command_key = cache_key(*shape, *[f.replace(program_name, '$NAME') for f in files],
+                            *(newest_mtime(p) for p in cmake_sources))
     cmake_command = ' '.join(cmake_command)
 
-    if Config.get('debugprint') == 'verbose':
-        print(f'Running CMake: {cmake_command}')
-
-    cmake_filename = os.path.join(build_folder, 'cmake_configure.sh')
-
     ##############################################
-    # Configure
-    reuse_configure = Config.get_bool('compiler', 'configure_cache')
-    seeded = reuse_configure and _seed_cmake_configure(build_folder, configure_key)
-    try:
-        if not identical_file_exists(cmake_filename, cmake_command):
-            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
-            if reuse_configure and not seeded:
-                _publish_cmake_configure(build_folder, configure_key)
-    except subprocess.CalledProcessError as ex:
-        # Clean CMake directory and try once more
-        if Config.get_bool('debugprint'):
-            print('Cleaning CMake build folder and retrying...')
-        # The retry starts from an empty folder, so a seed cannot be what fails it twice -- but drop
-        # the entry anyway, or a bad one would go on poisoning every later build of this shape.
-        if seeded:
-            shutil.rmtree(os.path.join(_BUILD_CACHE, 'configure', configure_key), ignore_errors=True)
-        shutil.rmtree(build_folder, ignore_errors=True)
-        os.makedirs(build_folder)
-        try:
-            _run_liveoutput(cmake_command, shell=True, cwd=build_folder, output_stream=output_stream)
-        except subprocess.CalledProcessError as ex:
-            # If still unsuccessful, print results
-            if Config.get_bool('debugprint'):
-                raise cgx.CompilerConfigurationError('Configuration failure')
-            else:
-                raise cgx.CompilerConfigurationError('Configuration failure:\n' + ex.output)
-
-    with open(cmake_filename, "w") as fp:
-        fp.write(cmake_command)
-
-    # Compile and link
-    try:
-        _run_liveoutput("cmake --build . --config %s" % (Config.get('compiler', 'build_type')),
-                        shell=True,
-                        cwd=build_folder,
-                        output_stream=output_stream)
-    except subprocess.CalledProcessError as ex:
-        # If unsuccessful, print results
-        if Config.get_bool('debugprint'):
-            raise cgx.CompilationError('Compiler failure')
-        else:
-            raise cgx.CompilationError('Compiler failure:\n' + ex.output)
+    # Build. A recorded build for this exact shape replays directly; anything else -- no recording,
+    # or one that turns out not to describe this program -- goes through CMake, which then records.
+    reuse_commands = CACHES_SUPPORTED and Config.get_bool('compiler', 'command_cache')
+    recorded = command_db.load(build_cache_root(), command_key) if reuse_commands else None
+    recipe = command_db.accepts(recorded, build_folder, program_folder, program_name, files) if recorded else None
+    jobs = max(1, int(Config.get('compiler', 'build_jobs')))
+    replayed = recipe is not None and command_db.replay(recipe, build_folder, jobs)
+    if not replayed:
+        if recorded:
+            command_db.drop(build_cache_root(), command_key)
+        if recipe is not None:
+            command_db.clear(build_folder)  # it ran and failed partway, so nothing here is trustworthy
+        run_cmake(cmake_command, build_folder, configure_key, jobs, output_stream)
+        if reuse_commands and use_ninja:
+            command_db.publish(
+                build_cache_root(), command_key,
+                command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
 
     # Get the names of the library files that were generated.
     #  Currently we are still in the `development` folder mode.

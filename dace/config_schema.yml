@@ -169,6 +169,25 @@ required:
                     them for every SDFG. Purely an optimization: without a cached entry, or with a
                     stale one, CMake simply does the full configure again.
 
+            command_cache:
+                type: bool
+                default: true
+                title: Replay a recorded build instead of running CMake
+                description: >
+                    Record the compile and link commands of the first SDFG built with a given
+                    configuration (``ninja -t compdb``) and replay them for later SDFGs of the same
+                    shape, skipping CMake entirely. Purely an optimization: a missing entry, or one
+                    whose sources do not match the program being built, falls back to a full build.
+
+            build_jobs:
+                type: int
+                default: 4
+                title: Parallel compile jobs
+                description: >
+                    How many translation units the build may compile concurrently. Deliberately a
+                    small default: builds often share a machine, and each concurrent compile of a
+                    generated source can use a lot of memory.
+
             build_type:
                 type: str
                 default: RelWithDebInfo
