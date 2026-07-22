@@ -141,13 +141,28 @@ class StateFusion(transformation.MultiStateTransformation):
     def _check_all_paths(self, first_state: SDFGState, second_state: SDFGState,
                          match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], nodes_first: List[nodes.AccessNode],
                          nodes_second: List[nodes.AccessNode], first_read: bool, second_read: bool) -> bool:
-        for node_a in nodes_first:
+        # Every first-state node must be ordered before EVERY second-state node. Declaring the
+        # whole check safe as soon as ONE (node_a, node_b) pair is ordered exempts the pairs
+        # that are not -- the same any/all confusion as in ``_check_paths`` below, and here the
+        # exemption skips the subset check entirely. Collect the nodes whose ordering is not
+        # established and hand only those to the subset check, so a node that really is ordered
+        # still keeps its fusion.
+        #
+        # Cost: the ``all`` short-circuits on the first unreachable pair, so an unordered node
+        # is as cheap as before; only a genuinely ordered node pays for the full sweep. The
+        # lists here are the AccessNodes of ONE array in ONE state, so they are small -- unlike
+        # ``_check_paths``, where ``StateFusionExtended`` measured a per-triple sweep at 14.8s
+        # against 0.1ms and deliberately kept the weaker predicate.
+        def ordered(node_a: nodes.AccessNode) -> bool:
             succ_a = first_state.successors(node_a)
-            for node_b in nodes_second:
-                if all(self.has_path(first_state, second_state, match_nodes, sa, node_b) for sa in succ_a):
-                    return True
+            return all(
+                all(self.has_path(first_state, second_state, match_nodes, sa, node_b) for sa in succ_a)
+                for node_b in nodes_second)
+
+        unordered = [node_a for node_a in nodes_first if not ordered(node_a)]
         # Path not found, check memlets
-        if StateFusion.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second, second_read):
+        if unordered and StateFusion.memlets_intersect(first_state, unordered, first_read, second_state, nodes_second,
+                                                       second_read):
             return False
         return True
 
@@ -155,27 +170,48 @@ class StateFusion(transformation.MultiStateTransformation):
                                                                                               nodes.AccessNode],
                      nodes_first: List[nodes.AccessNode], nodes_second: List[nodes.AccessNode],
                      second_input: Set[nodes.AccessNode], first_read: bool, second_read: bool) -> bool:
+        # A node of ``nodes_first`` is ordered before the second state when it reaches a match
+        # node -- the merge point fusion creates -- whose second-state counterpart reaches all
+        # of ``nodes_second``. Ordering has to hold for EVERY node of ``nodes_first``: each one
+        # is a separate access to the candidate array, and each needs its own path.
+        #
+        # The suppression used to be a single ANY flag (``path_found``) shared by the whole
+        # list, so one ordered node silently exempted its unordered siblings from the subset
+        # check below. That is the "empty (happens-before) memlet read as dataflow" hazard:
+        # ``nx.has_path`` walks the raw state graph, so an ordering edge left behind by an
+        # earlier ``StateFusionExtended`` fusion was enough to declare one write ordered and
+        # thereby wave through a second, completely unordered write to the same element --
+        # a silent miscompile on a graph that still validates. Track which nodes are ordered
+        # instead, and hand only the rest to the subset check so precision is kept where the
+        # ordering genuinely holds. ``StateFusionExtended._check_paths`` already carries the
+        # equivalent rule ("using ``any`` on the first side is unsound for >= 2 writers"); this
+        # is the same rule, missing here.
         fail = False
-        path_found = False
+        ordered_nodes: Set[nodes.AccessNode] = set()
         for match in match_nodes:
             for node in nodes_first:
                 path_to = nx.has_path(first_state._nx, node, match)
                 if not path_to:
                     continue
-                path_found |= True
                 node2 = next(n for n in second_input if n.data == match.data)
                 if not all(nx.has_path(second_state._nx, node2, n) for n in nodes_second):
                     fail = True
                     break
+                ordered_nodes.add(node)
             # We keep looking for a potential match with a path that fail to find
             # a path to the second state to make sure we test memlet_intersections
             # independent of the order of the access nodes in the lists
             if fail:
                 break
 
+        # A reached merge point that does not lead to the second-state nodes taints the whole
+        # list (an ordering that looked established is not), so fall back to checking all of
+        # ``nodes_first`` as before. Otherwise only the nodes without a path need checking.
+        unordered = list(nodes_first) if fail else [node for node in nodes_first if node not in ordered_nodes]
+
         # Check for intersection (if None, fusion is ok)
-        if fail or not path_found:
-            if StateFusion.memlets_intersect(first_state, nodes_first, first_read, second_state, nodes_second,
+        if unordered:
+            if StateFusion.memlets_intersect(first_state, unordered, first_read, second_state, nodes_second,
                                              second_read):
                 return False
         return True
@@ -183,6 +219,23 @@ class StateFusion(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
+
+        # A side-effect node (fusion barrier, I/O, side-effecting library node) must never be fused:
+        # fusion preserves only dataflow order, and a side effect is ordered by the interstate edge
+        # alone. Checked BEFORE the permissive split and mirroring
+        # ``StateFusionExtended.can_be_applied``, which has always checked it unconditionally: a
+        # barrier is a correctness constraint, not one of the race heuristics permissive mode relaxes,
+        # so an empty ``side_effects=True`` tasklet inserted purely to keep two states apart has to
+        # hold in both modes. Exception: __pystate-ordered callbacks keep their order via that data
+        # dependence and are gated by frontend.dont_fuse_callbacks below.
+        for state in (first_state, second_state):
+            for node in state.nodes():
+                if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
+                    if StateFusion.is_pystate_ordered(state, node):
+                        continue
+                    return False
+                if isinstance(node, nodes.LibraryNode) and node.has_side_effects:
+                    return False
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -317,18 +370,6 @@ class StateFusion(transformation.MultiStateTransformation):
             # check for hazards
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
-
-            # A side-effect node (fusion barrier, I/O, side-effecting library node) must never be fused:
-            # fusion preserves only dataflow order. Exception: __pystate-ordered callbacks keep their order
-            # via that data dependence and are gated by frontend.dont_fuse_callbacks above.
-            for state in (first_state, second_state):
-                for node in state.nodes():
-                    if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
-                        if StateFusion.is_pystate_ordered(state, node):
-                            continue
-                        return False
-                    if isinstance(node, nodes.LibraryNode) and node.has_side_effects:
-                        return False
 
             # Check for data races
             for fused_cc in resulting_ccs:

@@ -172,5 +172,83 @@ def test_vertical_flux_prefix_scan_keeps_level_axis_sequential():
     assert _nloops(sdfg) >= 1, 'the loop-carried level accumulation must stay a sequential LoopRegion'
 
 
+# ----------------------------------------------------------------------
+# Loop-carried scratch SLOT across a fully unrolled loop
+# ----------------------------------------------------------------------
+
+SLOT_N, SLOT_T = 8, 4
+
+
+@dace.program
+def carried_scratch_slot(A: dace.float64[SLOT_N], hist: dace.float64[SLOT_T], out: dace.float64[SLOT_T, SLOT_N]):
+    """One scratch element ``arr[1]`` rewritten and re-read every iteration.
+
+    Both trip counts are constant, so canonicalize fully unrolls the nest and every
+    iteration becomes its own state holding a write of ``arr[1]`` and the read that
+    consumes it. Nothing links iteration ``i`` to iteration ``i+1`` by dataflow -- the
+    ordering is purely the state sequence -- so a state fusion that does not carry that
+    ordering over silently makes ``out[t, i]`` read a later iteration's value.
+    ``hist`` keeps the slot live across the outer iteration.
+    """
+    arr = np.zeros((4, ), dtype=np.float64)
+    arr[1] = 5.0
+    for t in range(SLOT_T):
+        hist[t] = arr[1] * 2.0
+        for i in range(SLOT_N):
+            arr[1] = A[i] + t
+            out[t, i] = arr[1] * 3.0
+
+
+def _carried_scratch_slot_oracle(A):
+    hist = np.zeros(SLOT_T)
+    out = np.zeros((SLOT_T, SLOT_N))
+    slot = 5.0
+    for t in range(SLOT_T):
+        hist[t] = slot * 2.0
+        for i in range(SLOT_N):
+            slot = A[i] + t
+            out[t, i] = slot * 3.0
+    return hist, out
+
+
+def _ambiguous_write_nodes(sdfg):
+    """AccessNodes with more than one incoming DATA write AND at least one read.
+
+    Such a node has no defined value for its readers: which of the writes they observe
+    is decided by whatever order codegen happens to emit. Empty (happens-before) memlets
+    are excluded -- they carry no data.
+    """
+    hits = []
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.AccessNode):
+                continue
+            writes = [e for e in state.in_edges(node) if not e.data.is_empty()]
+            reads = [e for e in state.out_edges(node) if not e.data.is_empty()]
+            if len(writes) > 1 and reads:
+                hits.append((state.label, node.data, len(writes), len(reads)))
+    return hits
+
+
+def test_carried_scratch_slot_value_preserving():
+    """Regression: ``StateFusion._check_paths`` used to treat "SOME first-state write of
+    the candidate is ordered before the second state" as "ALL of them are", so an
+    unrolled iteration's write to the scratch slot was fused in unordered next to the
+    following iteration's write. ``out[t, N-2]`` then received ``out[t, N-1]``'s value.
+    The SDFG stayed valid -- only the numbers were wrong."""
+    A = np.arange(1.0, SLOT_N + 1.0)
+    exp_hist, exp_out = _carried_scratch_slot_oracle(A)
+    sdfg = carried_scratch_slot.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    assert not _ambiguous_write_nodes(sdfg), \
+        f'fusion merged unordered writes onto one AccessNode: {_ambiguous_write_nodes(sdfg)}'
+    hist = np.zeros(SLOT_T)
+    out = np.zeros((SLOT_T, SLOT_N))
+    sdfg(A=A, hist=hist, out=out)
+    assert np.allclose(hist, exp_hist)
+    assert np.allclose(out, exp_out), 'unrolled iterations of the carried scratch slot were mis-fused'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

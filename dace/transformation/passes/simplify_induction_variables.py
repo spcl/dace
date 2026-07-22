@@ -8,9 +8,9 @@ use site inside the loop. When the derived-IV's defining interstate-edge
 assignment has no remaining consumers after folding, remove it.
 
 This is the DaCe-level analogue of LLVM's ``IndVarSimplify``: fewer intermediate
-scalars, cleaner subscripts, and — as a side effect — downstream passes like
-``LoopLocalMemoryReduction`` start matching patterns previously obscured by a
-derived scalar.
+scalars, cleaner subscripts, and — as a side effect — downstream pattern matchers
+(``LoopToMap`` and the parallelization-prep passes) start matching shapes that a
+derived scalar previously obscured.
 
 Scope is limited to:
   * LoopRegion induction variables (not Map parameters).
