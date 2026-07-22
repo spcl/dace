@@ -48,10 +48,18 @@ def test_gate_on_appends_offload_phase(variant):
     assert [label for label, _ in stages] == ['offload_to_gpu']
 
 
-def test_canon_cpu_ignores_the_gate():
-    """A CPU recipe must not silently turn into a GPU graph."""
-    assert 'canon_cpu' not in OFFLOAD_VARIANTS
-    assert phase_names('canon_cpu', offload=True) == phase_names('canon_cpu', offload=False)
+def test_every_variant_is_offloadable():
+    """All three recipes can be offloaded, so all three can be benchmarked and the fastest kept.
+
+    ``canon_cpu`` used to be excluded here on the grounds that a CPU recipe should not turn into a
+    GPU graph. But which recipe feeds the FASTEST offloaded graph is empirical: the CPU recipe's
+    materialized intermediates and its different fusion/collapse choices can win on the device too,
+    and excluding it a priori would decide the comparison by naming rather than by measurement.
+    Offload stays OPT-IN (``offload=True``), so nothing turns into a GPU graph unasked.
+    """
+    assert set(OFFLOAD_VARIANTS) == set(VARIANTS)
+    for variant in VARIANTS:
+        assert phase_names(variant, offload=True) == phase_names(variant, offload=False) + [OFFLOAD_PHASE]
 
 
 @pytest.mark.parametrize('variant', OFFLOAD_VARIANTS)

@@ -22,8 +22,9 @@ block structure. Four phases, in order:
 ``GPU_Global -> GPU_Device``). After phase 3 the block map's edges carry ``gpu_*`` GPU_Global data, so
 ``Default`` would silently promote the block loop onto the device.
 
-Wired into :mod:`tests.corpus.cloudsc.pipelines` as an OPT-IN terminal phase (``offload=True``, for the
-``parallelize`` and ``canon_gpu`` variants). Off by default: ``canon_gpu`` stops before offload so the
+Wired into :mod:`tests.corpus.cloudsc.pipelines` as an OPT-IN terminal phase (``offload=True``, for
+EVERY variant, so all three offloaded recipes can be benchmarked and the fastest kept). Off by
+default: ``canon_gpu`` stops before offload so the
 graph stays CPU-runnable and every phase is numeric-checked on the host. The offload phase itself is
 checked by ``validate()`` + CUDA code generation instead.
 """

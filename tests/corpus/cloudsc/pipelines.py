@@ -7,7 +7,8 @@ knob but does not offload; the cutoff is structural (``offload_to_gpu`` absent f
 so the graph stays CPU-runnable and the numeric check compiles it for the host.
 
 GPU offload is a separate OPT-IN phase (``offload=True``), appended after the variant's own phases for
-``parallelize`` and ``canon_gpu`` only (see :data:`OFFLOAD_VARIANTS`). Its check depends on the host:
+EVERY variant (see :data:`OFFLOAD_VARIANTS`) -- including ``canon_cpu``, so that all three offloaded
+recipes can be benchmarked against each other and the fastest kept. Its check depends on the host:
 where a GPU is actually usable (:func:`gpu_is_runnable`) the offloaded graph is RUN ON THE DEVICE and
 ``numeric_check`` compares it to the same reference as every other phase; where there is no GPU it
 falls back to ``validate()`` + CUDA code generation. The printed line names which of the two happened,
@@ -120,10 +121,13 @@ def pretreat_stages() -> List[Stage]:
 COALESCE_PHASE: str = 'coalesce'
 COALESCE_VARIANTS: Tuple[str, ...] = ('parallelize', )
 
-#: Name of the opt-in GPU-offload phase, and the variants it may be appended to. ``canon_cpu`` is a CPU
-#: recipe, so ``offload=True`` leaves it alone rather than producing a GPU graph nobody asked for.
+#: Name of the opt-in GPU-offload phase, and the variants it may be appended to -- now ALL of them.
+#: ``canon_cpu`` was previously excluded as "a CPU recipe", but which recipe feeds the fastest offloaded
+#: graph is an empirical question, not one to settle by naming: the CPU recipe's materialized
+#: intermediates and its different fusion/collapse choices can win on the device too. All three are
+#: benchmarked and the best is kept, so excluding one a priori would prejudge the answer.
 OFFLOAD_PHASE: str = 'offload'
-OFFLOAD_VARIANTS: Tuple[str, ...] = ('parallelize', 'canon_gpu')
+OFFLOAD_VARIANTS: Tuple[str, ...] = VARIANTS
 
 #: Device-side FP flags for the offload phase's numeric run, prepended to the configured CUDA args.
 #: The host reference legs already build strict (``IEEE_CPU_ARGS`` / the dace-fortran
