@@ -589,6 +589,178 @@ def test_code_only_container_read_scope(schedule):
     assert np.allclose(b, a)
 
 
+def add_map_scoped_mutable_scalar(sdfg: dace.SDFG, state: dace.SDFGState) -> None:
+    """``B[i] = ((A[i] * 2) + 1) * 3`` computed through a transient scalar ``zqe`` that is written
+    TWICE inside the map, so it stays a mutable scalar (a single write would be marked ``const_init``
+    and take the ``const T x = expr;`` path instead of the deferred-declaration one under test)."""
+    me, mx = state.add_map('m', dict(i='0:16'))
+    ra = state.add_read('A')
+    tw = state.add_tasklet('w', {'a'}, {'o'}, 'o = a * 2.0')
+    az1 = state.add_access('zqe')
+    tr = state.add_tasklet('r', {'z'}, {'o'}, 'o = z + 1.0')
+    az2 = state.add_access('zqe')
+    tf = state.add_tasklet('f', {'z'}, {'o'}, 'o = z * 3.0')
+    wb = state.add_write('B')
+    state.add_memlet_path(ra, me, tw, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_edge(tw, 'o', az1, None, dace.Memlet('zqe[0]'))
+    state.add_edge(az1, None, tr, 'z', dace.Memlet('zqe[0]'))
+    state.add_edge(tr, 'o', az2, None, dace.Memlet('zqe[0]'))
+    state.add_edge(az2, None, tf, 'z', dace.Memlet('zqe[0]'))
+    state.add_memlet_path(tf, mx, wb, src_conn='o', memlet=dace.Memlet('B[i]'))
+
+
+def run_deferred_scalar_case(sdfg: dace.SDFG, **extra) -> None:
+    """Compile and run ``sdfg`` with scalar declaration deferral FORCED on, and check the map result.
+
+    ``scalar_init_style`` defaults to ``split``, which disables deferral entirely, so a deferral bug is
+    invisible without this override. Every caller's SDFG has a use of ``zqe`` that the deferred
+    declaration would not be in scope of; the test is that the generated C++ still compiles."""
+    with dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
+        a = np.random.rand(16)
+        b = np.zeros(16)
+        sdfg(A=a, B=b, **extra)
+    assert np.allclose(b, (a * 2.0 + 1.0) * 3.0)
+
+
+def test_deferred_scalar_code_use_outer_scope():
+    """The scalar's accesses all live in one map, but a tasklet at STATE TOP LEVEL names it as a free
+    name in its CODE (no connector / memlet / AccessNode). The eager declaration goes to the state, so
+    deferring into the map's brace puts it out of scope of that read."""
+    sdfg = dace.SDFG('deferred_scalar_code_use_outer_scope')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_array('C', [1], dace.float64)
+    sdfg.add_scalar('zqe', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+    add_map_scoped_mutable_scalar(sdfg, state)
+
+    rc = state.add_read('A')
+    reader = state.add_tasklet('codeonly', {'a'}, {'o'}, 'o = a + zqe')
+    wc = state.add_write('C')
+    state.add_edge(rc, None, reader, 'a', dace.Memlet('A[0]'))
+    state.add_edge(reader, 'o', wc, None, dace.Memlet('C[0]'))
+
+    # C is not checked: it reads whatever `zqe` holds where the eager declaration puts it.
+    run_deferred_scalar_case(sdfg, C=np.zeros(1))
+
+
+def add_scalar_reading_nest(state: dace.SDFGState) -> dace.nodes.NestedSDFG:
+    """A NestedSDFG node computing ``cout = cin + k``, with ``k`` bound to the scalar ``zqe`` through
+    ``symbol_mapping`` -- a use of ``zqe`` with no AccessNode, no memlet and no tasklet code."""
+    nest = dace.SDFG('nest')
+    nest.add_symbol('k', dace.float64)
+    nest.add_array('cin', [1], dace.float64)
+    nest.add_array('cout', [1], dace.float64)
+    nest_state = nest.add_state('n')
+    nr = nest_state.add_read('cin')
+    nt = nest_state.add_tasklet('nt', {'x'}, {'y'}, 'y = x + k')
+    nw = nest_state.add_write('cout')
+    nest_state.add_edge(nr, None, nt, 'x', dace.Memlet('cin[0]'))
+    nest_state.add_edge(nt, 'y', nw, None, dace.Memlet('cout[0]'))
+    return state.add_nested_sdfg(nest, inputs={'cin'}, outputs={'cout'}, symbol_mapping={'k': 'zqe'})
+
+
+def test_deferred_scalar_nested_sdfg_symbol_mapping():
+    """The scalar is named by a NestedSDFG's ``symbol_mapping`` VALUE at state top level, while its
+    accesses are all inside a map. The eager declaration goes to the state; deferring into the map's
+    brace hides it from the nest's symbol binding."""
+    sdfg = dace.SDFG('deferred_scalar_nested_sdfg_symbol_mapping')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_array('C', [1], dace.float64)
+    sdfg.add_scalar('zqe', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+    add_map_scoped_mutable_scalar(sdfg, state)
+
+    rc = state.add_read('A')
+    nsdfg = add_scalar_reading_nest(state)
+    wc = state.add_write('C')
+    state.add_edge(rc, None, nsdfg, 'cin', dace.Memlet('A[0]'))
+    state.add_edge(nsdfg, 'cout', wc, None, dace.Memlet('C[0]'))
+
+    run_deferred_scalar_case(sdfg, C=np.zeros(1))
+
+
+def test_deferred_scalar_nested_sdfg_same_scope():
+    """Same NestedSDFG binding, but inside the map and ordered BEFORE the writer. The eager declaration
+    at the top of the map's brace covers it; one deferred to the writer does not -- so the whole-SDFG
+    allocation scope agrees here and only the in-scope check can refuse."""
+    sdfg = dace.SDFG('deferred_scalar_nested_sdfg_same_scope')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_array('C', [16], dace.float64)
+    sdfg.add_scalar('zqe', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+    add_map_scoped_mutable_scalar(sdfg, state)
+
+    me = next(n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry))
+    mx = state.exit_node(me)
+    writer = next(n for n in state.nodes() if isinstance(n, dace.nodes.Tasklet) and n.label == 'w')
+    ra = state.add_read('A')
+    nsdfg = add_scalar_reading_nest(state)
+    wc = state.add_write('C')
+    state.add_memlet_path(ra, me, nsdfg, dst_conn='cin', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(nsdfg, mx, wc, src_conn='cout', memlet=dace.Memlet('C[i]'))
+    # Empty memlet: an ordering edge only, forcing the nest ahead of the writer.
+    state.add_edge(nsdfg, None, writer, None, dace.Memlet())
+
+    run_deferred_scalar_case(sdfg, C=np.zeros(16))
+
+
+def test_deferred_scalar_cpp_tasklet_same_scope():
+    """A C++ (non-Python) tasklet in the SAME map scope names the scalar in its body and is emitted
+    BEFORE the writer. The eager declaration at the top of the map's brace covers it; a declaration
+    deferred to the writer does not. ``CodeBlock.get_free_symbols`` returns nothing for a non-Python
+    body, so a free-symbol-based scan cannot see this use at all -- only the raw tokens can."""
+    sdfg = dace.SDFG('deferred_scalar_cpp_tasklet_same_scope')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_array('C', [16], dace.float64)
+    sdfg.add_scalar('zqe', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+
+    me, mx = state.add_map('m', dict(i='0:16'))
+    ra = state.add_read('A')
+    cpp = state.add_tasklet('cppread', {'a'}, {'o'}, 'o = zqe + a;', language=dace.Language.CPP)
+    tw = state.add_tasklet('w', {'a'}, {'o'}, 'o = a * 2.0')
+    az1 = state.add_access('zqe')
+    tr = state.add_tasklet('r', {'z'}, {'o'}, 'o = z + 1.0')
+    az2 = state.add_access('zqe')
+    tf = state.add_tasklet('f', {'z'}, {'o'}, 'o = z * 3.0')
+    wb = state.add_write('B')
+    wc = state.add_write('C')
+    state.add_memlet_path(ra, me, cpp, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    state.add_memlet_path(cpp, mx, wc, src_conn='o', memlet=dace.Memlet('C[i]'))
+    state.add_memlet_path(ra, me, tw, dst_conn='a', memlet=dace.Memlet('A[i]'))
+    # Empty memlet: an ordering edge only, forcing the C++ tasklet ahead of the writer.
+    state.add_edge(cpp, None, tw, None, dace.Memlet())
+    state.add_edge(tw, 'o', az1, None, dace.Memlet('zqe[0]'))
+    state.add_edge(az1, None, tr, 'z', dace.Memlet('zqe[0]'))
+    state.add_edge(tr, 'o', az2, None, dace.Memlet('zqe[0]'))
+    state.add_edge(az2, None, tf, 'z', dace.Memlet('zqe[0]'))
+    state.add_memlet_path(tf, mx, wb, src_conn='o', memlet=dace.Memlet('B[i]'))
+
+    run_deferred_scalar_case(sdfg, C=np.zeros(16))
+
+
+def test_deferred_scalar_still_applies():
+    """The counterpart of the three refusal tests: a scalar with NO use outside its map scope must
+    still get the fused ``T zqe = expr;`` declaration, or the refusals above have simply turned the
+    feature off instead of making it sound."""
+    sdfg = dace.SDFG('deferred_scalar_still_applies')
+    sdfg.add_array('A', [16], dace.float64)
+    sdfg.add_array('B', [16], dace.float64)
+    sdfg.add_scalar('zqe', dace.float64, transient=True)
+    state = sdfg.add_state('main')
+    add_map_scoped_mutable_scalar(sdfg, state)
+
+    with dace.config.set_temporary('compiler', 'cpu', 'codegen_params', 'scalar_init_style', value='fused'):
+        code = sdfg.generate_code()[0].clean_code
+    assert 'double zqe = ' in code
+    assert 'double zqe;' not in code
+    run_deferred_scalar_case(sdfg)
+
+
 def test_multisize():
     """ An array that needs to be allocated once, with runtime-dependent sizes. """
     sdfg = dace.SDFG('test')
@@ -664,4 +836,9 @@ if __name__ == '__main__':
     # test_scope_multisize()
     test_code_only_container_read_scope(dace.ScheduleType.Sequential)
     test_code_only_container_read_scope(dace.ScheduleType.CPU_Multicore)
+    test_deferred_scalar_code_use_outer_scope()
+    test_deferred_scalar_nested_sdfg_symbol_mapping()
+    test_deferred_scalar_nested_sdfg_same_scope()
+    test_deferred_scalar_cpp_tasklet_same_scope()
+    test_deferred_scalar_still_applies()
     test_multisize()
