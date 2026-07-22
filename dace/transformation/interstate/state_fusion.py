@@ -121,6 +121,15 @@ class StateFusion(transformation.MultiStateTransformation):
                     return True
         return False
 
+    @staticmethod
+    def is_pystate_ordered(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
+        """True if ``tasklet`` carries a ``__pystate`` token -- a data dependence kept ordered across fusion."""
+        for edge in state.all_edges(tasklet):
+            neighbor = edge.dst if edge.src is tasklet else edge.src
+            if isinstance(neighbor, nodes.AccessNode) and neighbor.data == '__pystate':
+                return True
+        return False
+
     def has_path(self, first_state: SDFGState, second_state: SDFGState,
                  match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], node_a: nodes.Node, node_b: nodes.Node) -> bool:
         """ Check for paths between the two states if they are fused. """
