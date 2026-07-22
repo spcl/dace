@@ -155,7 +155,55 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
             return False
         if self.non_transient_only and desc.transient:
             return False
-        return written_by_gpu_map_exit(sdfg, name)
+        if written_by_gpu_map_exit(sdfg, name):
+            return True
+
+        # Rule 3: host scalar that is an endpoint of a direct copy edge whose other endpoint is
+        # GPU-resident. The GPU pipeline lifts that edge to a ``CopyLibraryNode`` whose
+        # ``cudaMemcpyAsync`` tasklet types the scalar side as a pointer connector, so a bare
+        # ``Scalar`` source codegens as ``const T* = scalar`` (missing ``&``) and fails to compile
+        # with "cannot convert 'const double' to 'const double*'".
+        #
+        # NOTE: deliberately checked last, so rule 2's exemptions above also gate it. Hoisting it
+        # earlier does catch a propagated constant feeding a host->device copy, but it then also
+        # promotes transients that rule 2 excludes on purpose and breaks multistream_copy's
+        # test_copy_sync. Promoting that constant is in any case not sufficient on its own -- the
+        # length-1 array appears to be scalarised again downstream, so the training-graph GPU
+        # tests still fail to compile. Left narrow until that interaction is understood.
+        return self._is_host_gpu_copy_endpoint(sdfg, name)
+
+    @staticmethod
+    def _is_host_gpu_copy_endpoint(sdfg: SDFG, name: str) -> bool:
+        """True if ``name`` is a scalar on one side of a direct ``AccessNode -> AccessNode`` copy
+        edge whose other side is GPU-resident (a host<->device scalar copy the pipeline will lift).
+
+        Skips anything in the SDFG's argument list. Widening changes a descriptor from ``Scalar``
+        to a length-1 ``Array``, which for an *argument* also changes the program's public
+        signature -- callers passing a scalar then fail with "Passing an object (type float32) to
+        an array". Compile-time constants and transients are not part of that signature, so they
+        can be widened freely; a non-transient argument must keep its declared type.
+        """
+        from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
+
+        if name in sdfg.arglist():
+            return False
+
+        for state in sdfg.states():
+            for edge in state.edges():
+                src, dst = edge.src, edge.dst
+                if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
+                    continue
+                if edge.data.is_empty() or edge.data.wcr is not None:
+                    continue
+                if src.data == name:
+                    other = sdfg.arrays[dst.data]
+                elif dst.data == name:
+                    other = sdfg.arrays[src.data]
+                else:
+                    continue
+                if other.storage in GPU_RESIDENT_STORAGES:
+                    return True
+        return False
 
     def _promote_one(self, sdfg: SDFG, name: str):
         """Replace a Scalar descriptor with a length-1 Array and propagate the
