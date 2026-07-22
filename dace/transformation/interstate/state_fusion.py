@@ -235,7 +235,7 @@ class StateFusion(transformation.MultiStateTransformation):
             # Tasklet callbacks are governed by dont_fuse_callbacks above.
             for state in (first_state, second_state):
                 for node in state.nodes():
-                    if isinstance(node, (nodes.CodeNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
+                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
                         return False
 
             # If second state has other input edges, there might be issues
