@@ -471,6 +471,8 @@ def test_privatize_loop_local_undominated_through_map_scope():
     old name and the SDFG fails validation. Regression: polybench ``durbin`` (loop-local
     reduction accumulator ``sum``).
     """
+    from dace.sdfg.state import LoopRegion
+
     sdfg = dace.SDFG('durbin_undominated_through_map')
     sdfg.add_array('data', [8, 8], dace.float64)
     sdfg.add_array('out', [8], dace.float64)
@@ -507,6 +509,77 @@ def test_privatize_loop_local_undominated_through_map_scope():
     # ... and the FULL memlet path was renamed, so the SDFG still validates (no
     # IN_x(old)/OUT_x(new) mismatch across the map exit).
     sdfg.validate()
+
+
+def loop_region_versions_sdfg(condition: str) -> dace.SDFG:
+    """``for i in <condition>: A = 1; out[0] = A; A = 2; out[1] = A`` then ``out[2] = A``.
+
+    Every top-level block is a ``LoopRegion``, so the read in ``end`` has a dominating write only
+    if a region may be one. Both body writes are also read in their own state, so neither is a
+    fake shadow of the other.
+    """
+    tag = ''.join(c if c.isalnum() else '_' for c in condition)
+    sdfg = dace.SDFG(f'loop_region_scalar_versions_{tag}')
+    sdfg.add_array('out', [3], dace.float64)
+    sdfg.add_scalar('A', dace.float64, transient=True)
+    sdfg.add_symbol('i', dace.int64)
+
+    loop = LoopRegion('loop', condition, 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop, is_start_block=True)
+    previous = None
+    for idx, value in enumerate((1.0, 2.0)):
+        state = loop.add_state(f'body{idx}', is_start_block=previous is None)
+        if previous is not None:
+            loop.add_edge(previous, state, dace.InterstateEdge())
+        previous = state
+        access = state.add_access('A')
+        writer = state.add_tasklet(f'w{idx}', {}, {'a'}, f'a = {value}')
+        reader = state.add_tasklet(f'r{idx}', {'a'}, {'o'}, 'o = a')
+        out = state.add_access('out')
+        state.add_edge(writer, 'a', access, None, dace.Memlet('A[0]'))
+        state.add_edge(access, None, reader, 'a', dace.Memlet('A[0]'))
+        state.add_edge(reader, 'o', out, None, dace.Memlet(f'out[{idx}]'))
+
+    end = sdfg.add_state('end')
+    sdfg.add_edge(loop, end, dace.InterstateEdge())
+    end_read = end.add_access('A')
+    end_tasklet = end.add_tasklet('re', {'a'}, {'o'}, 'o = a')
+    end_out = end.add_access('out')
+    end.add_edge(end_read, None, end_tasklet, 'a', dace.Memlet('A[0]'))
+    end.add_edge(end_tasklet, 'o', end_out, None, dace.Memlet('out[2]'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def test_loop_region_write_versions_scalar():
+    """The last write of a provably nonempty loop body roots the read after the loop.
+
+    Without that, the read in ``end`` is undominated and the two body writes are coarsened into
+    its scope, leaving one equivalence class and nothing to version.
+    """
+    sdfg = loop_region_versions_sdfg('i < 10')
+    renamed = Pipeline([ScalarFission()]).apply_pass(sdfg, {})['ScalarFission']
+    sdfg.validate()
+    assert len(renamed['A']) == 2, f'expected one container per body write, got {dict(renamed)}'
+
+
+@pytest.mark.parametrize('condition, trips', (('i < 10', 10), ('i < 0', 0)))
+def test_loop_region_write_versions_scalar_value_preserving(condition, trips):
+    want = np.array([1.0, 2.0, 2.0] if trips else [0.0, 0.0, 0.0])
+
+    reference = loop_region_versions_sdfg(condition)
+    reference.name = f'scalar_fission_region_reference_{trips}'
+    base = np.zeros(3)
+    reference.compile()(out=base)
+    assert np.allclose(base, want, rtol=1e-12, atol=1e-12), 'fixture does not compute what the test claims'
+
+    sdfg = loop_region_versions_sdfg(condition)
+    sdfg.name = f'scalar_fission_region_value_{trips}'
+    Pipeline([ScalarFission()]).apply_pass(sdfg, {})
+    got = np.zeros(3)
+    sdfg.compile()(out=got)
+    assert np.allclose(got, want, rtol=1e-12, atol=1e-12)
 
 
 def wcr_loop_accumulator_sdfg(name):

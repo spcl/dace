@@ -5,10 +5,11 @@ from dataclasses import dataclass
 
 import sympy
 
-from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import (AbstractControlFlowRegion, BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock,
+                             ControlFlowRegion, LoopRegion, ReturnBlock)
 from dace.subsets import Range
 from dace.transformation import pass_pipeline as ppl, transformation
-from dace import SDFG, SDFGState, properties, InterstateEdge, Memlet, data as dt, symbolic
+from dace import SDFG, SDFGState, dtypes, properties, InterstateEdge, Memlet, data as dt, symbolic
 from dace.sdfg.graph import Edge
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.sdfg.analysis import cfg as cfg_analysis
@@ -595,6 +596,172 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
         return result
 
 
+def enclosing_blocks(block: ControlFlowBlock) -> Iterable[ControlFlowBlock]:
+    """``block`` and every control flow region enclosing it, innermost first, stopping at the SDFG.
+
+    The SDFG itself is deliberately excluded: it encloses every block, so including it would make
+    any "is this inside a dominator?" test trivially true.
+
+    :param block: The block to walk up from.
+    :returns: The chain of blocks, ``block`` first.
+    """
+    while block is not None and not isinstance(block, SDFG):
+        yield block
+        block = block.parent_graph
+
+
+def dominated_through_region(block: ControlFlowBlock, other: ControlFlowBlock,
+                             dominators: Set[ControlFlowBlock]) -> bool:
+    """Whether ``block``, or a region enclosing it but NOT enclosing ``other``, is in ``dominators``.
+
+    ``dominators`` (the transitive closure built in :func:`ScalarWriteShadowScopes.apply_pass`) relates
+    blocks across nesting levels, but it lists a dominating REGION without listing the states inside
+    it. A write reported from inside such a region -- which :func:`must_write_state` only ever does
+    when the region must-writes -- therefore has to be recognised through its enclosing chain.
+
+    The chain is cut at the first block that also encloses ``other``: a common ancestor is in
+    ``dominators`` for every one of its own blocks (``apply_pass`` adds the containing region
+    unconditionally), so following the chain past it would report any two siblings as dominating
+    each other.
+
+    :param block: The block whose domination of ``other`` is in question.
+    :param other: The dominated block.
+    :param dominators: The transitive dominator set of ``other``.
+    :returns: ``True`` if domination is established.
+    """
+    # The plain membership test first, so this is a strict SUPERSET of what the coarsening asked
+    # before regions could be reported: it can only ever merge more, and merging more is safe.
+    if block in dominators:
+        return True
+    common = {id(b) for b in enclosing_blocks(other)}
+    for candidate in enclosing_blocks(block):
+        if id(candidate) in common:
+            return False
+        if candidate in dominators:
+            return True
+    return False
+
+
+def diverting_exit_inside(region: AbstractControlFlowRegion) -> bool:
+    """Whether ``region`` contains a ``break`` / ``continue`` / ``return`` block.
+
+    Such a block leaves ``region`` -- or the current iteration of the loop containing it -- from
+    the middle, along an edge that the region's own graph does not carry. A write that dominates
+    every SINK of that graph can therefore still be skipped, so region-level must-def reasoning
+    (:func:`must_write_state`) does not hold. Refusing the whole region is cruder than modelling
+    the diverted edges, and costs only a break/continue that is bound to a loop NESTED inside
+    ``region`` and hence could not escape it anyway.
+
+    :param region: The region to scan.
+    :returns: ``True`` if any early exit is present anywhere inside.
+    """
+    return any(isinstance(b, (BreakBlock, ContinueBlock, ReturnBlock)) for b in region.all_control_flow_blocks())
+
+
+def dominator_chain(idom: Dict[ControlFlowBlock, ControlFlowBlock], block: ControlFlowBlock) -> List[ControlFlowBlock]:
+    """``block`` followed by its immediate dominators up to the graph entry, closest first.
+
+    :param idom: The immediate-dominator map of the graph ``block`` lives in.
+    :param block: The block to walk up from.
+    :returns: The dominator chain, ``block`` itself first.
+    """
+    chain: List[ControlFlowBlock] = []
+    seen: Set[int] = set()
+    current = block
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        chain.append(current)
+        parent = idom.get(current)
+        current = parent if parent is not current else None
+    return chain
+
+
+def region_must_write_state(desc: str, region: AbstractControlFlowRegion, access_sets: Dict[ControlFlowBlock,
+                                                                                            Tuple[Set[str], Set[str]]],
+                            idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
+                            cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]) -> Optional[SDFGState]:
+    """The region case of :func:`must_write_state`, refusing anything it cannot prove.
+
+    :param desc: The data container name.
+    :param region: The candidate region.
+    :param access_sets: Per-block ``(read, write)`` sets from :class:`AccessSets`.
+    :param idom_dict: Per-region immediate dominators.
+    :param cache: The memo threaded through :func:`must_write_state`.
+    :returns: The state holding a must-def write, or ``None`` if none is proven.
+    """
+    # A ConditionalBlock. Even an exhaustive if/else in which EVERY branch writes has no single
+    # write node to name, and the result dict keys a scope on exactly one (state, node) pair --
+    # reporting one branch's node would let the consumer rename that branch's write and leave its
+    # sibling behind. The must-def premise can hold here; the result shape cannot carry it.
+    if isinstance(region, ConditionalBlock):
+        return None
+    # Nothing inside writes it at all. Cheap, and it is what keeps this off the hot path.
+    if desc not in access_sets[region][1]:
+        return None
+    # A break / continue / return can skip a write that dominates every sink of the graph.
+    if diverting_exit_inside(region):
+        return None
+    # A loop that may run zero times defines nothing after itself. ``range(N)`` with a free ``N``
+    # is zero-trip for ``N == 0``, and the nonnegative-symbol assumption gives ``N >= 0``, not
+    # ``N >= 1``, so the common case is correctly refused.
+    if isinstance(region, LoopRegion) and not loop_analysis.loop_provably_at_least_one_iteration(region):
+        return None
+
+    # Every path through the region ends in one of its sinks, so a block that must-write and
+    # dominates ALL of them is executed on every path. Walk the first sink's dominator chain and
+    # take the closest such block -- the 'last' write, matching the intra-state choice elsewhere.
+    # A write nested under a further conditional dominates no sink and is thereby refused.
+    sinks = [b for b in region.nodes() if region.out_degree(b) == 0]
+    if not sinks:
+        return None
+    chains = [dominator_chain(idom_dict[region], sink) for sink in sinks]
+    common = set(chains[0]).intersection(*(set(c) for c in chains[1:]))
+    for candidate in chains[0]:
+        if candidate in common:
+            state = must_write_state(desc, candidate, access_sets, idom_dict, cache)
+            if state is not None:
+                return state
+    return None
+
+
+def must_write_state(desc: str, block: ControlFlowBlock, access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]],
+                     idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
+                     cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]) -> Optional[SDFGState]:
+    """A state inside ``block`` that writes ``desc`` on EVERY path through ``block``, if one exists.
+
+    This is what makes a control flow REGION usable as a dominating write. Dominance alone says
+    "``block`` runs before the read"; combined with a must-def inside ``block`` it says "the read
+    sees a write from ``block``", which is the premise the whole write-scope result stands on. See
+    :func:`region_must_write_state` for what is refused, and note that ``None`` -- "not proven" --
+    is always the safe answer.
+
+    :param desc: The data container name.
+    :param block: The candidate block.
+    :param access_sets: Per-block ``(read, write)`` sets from :class:`AccessSets`.
+    :param idom_dict: Per-region immediate dominators.
+    :param cache: Memo shared across one pass invocation, keyed by ``(desc, block)``. The block
+        itself, not its ``id()``: the memo then holds a reference, so an address cannot be recycled
+        by a later allocation and alias a stale entry.
+    :returns: The state holding a must-def write, or ``None`` if none is proven.
+    """
+    key = (desc, block)
+    if key in cache:
+        return cache[key]
+    # Seed pessimistically so a (malformed) cyclic region nesting cannot recurse forever.
+    cache[key] = None
+
+    if isinstance(block, SDFGState):
+        # A state executes all of its nodes, so any write access node in it is a must-def.
+        result = block if desc in access_sets[block][1] else None
+    elif isinstance(block, AbstractControlFlowRegion):
+        result = region_must_write_state(desc, block, access_sets, idom_dict, cache)
+    else:
+        result = None  # Break / continue / return blocks hold no dataflow.
+
+    cache[key] = result
+    return result
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ScalarWriteShadowScopes(ppl.Pass):
@@ -615,14 +782,32 @@ class ScalarWriteShadowScopes(ppl.Pass):
     def depends_on(self):
         return [AccessSets, FindAccessNodes, ControlFlowBlockReachability]
 
-    def _find_dominating_write(self,
-                               desc: str,
-                               block: ControlFlowBlock,
-                               read: Union[nd.AccessNode, InterstateEdge],
-                               access_nodes: Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]],
-                               idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
-                               access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]],
-                               no_self_shadowing: bool = False) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
+    def shadow_candidates(self, sdfg: SDFG) -> Iterable[str]:
+        """The containers of ``sdfg`` whose write scopes this analysis reports.
+
+        Shadowing is decided here by graph dominance alone -- no memlet subset is ever inspected
+        (see :func:`_find_dominating_write`). That is exact for a scalar, where any write writes
+        all of the container, so "dominating write" and "must-def of the whole container" are the
+        same statement. The scalar pass therefore reports every container and leaves the
+        size-1 restriction to its consumer. :class:`ArrayWriteShadowScopes` overrides this hook
+        because for a larger container the two statements come apart.
+
+        :param sdfg: The SDFG being analyzed.
+        :returns: The names of the data containers to compute write scopes for.
+        """
+        return list(sdfg.arrays.keys())
+
+    def _find_dominating_write(
+        self,
+        desc: str,
+        block: ControlFlowBlock,
+        read: Union[nd.AccessNode, InterstateEdge],
+        access_nodes: Dict[SDFGState, Tuple[Set[nd.AccessNode], Set[nd.AccessNode]]],
+        idom_dict: Dict[ControlFlowRegion, Dict[ControlFlowBlock, ControlFlowBlock]],
+        access_sets: Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]],
+        no_self_shadowing: bool = False,
+        must_write_cache: Optional[Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]]] = None
+    ) -> Optional[Tuple[SDFGState, nd.AccessNode]]:
         if isinstance(read, nd.AccessNode):
             state: SDFGState = block
             # If the read is also a write, it shadows itself.
@@ -652,15 +837,24 @@ class ScalarWriteShadowScopes(ppl.Pass):
                 return (block, closest_candidate)
 
         # Find the dominating write state if the current block is not the dominating write state.
+        # A candidate is any block strictly dominating the read at its own nesting level. A state
+        # qualifies when it writes ``desc``; a control flow REGION qualifies when it writes ``desc``
+        # on every path through it (``must_write_state``) -- without that, a canonicalized SDFG
+        # whose top level is a sequence of LoopRegions has no candidate at all and every access of
+        # a container falls into the undominated (``None``) scope, the producing write included.
+        if must_write_cache is None:
+            must_write_cache = {}
         write_state = None
         pivot_block = block
         region = block.parent_graph
         while region is not None and write_state is None:
-            nblock = idom_dict[region][pivot_block] if idom_dict[region][pivot_block] != block else None
+            idom = idom_dict[region]
+            # Compare against ``pivot_block``, not ``block``: above the first level ``pivot_block``
+            # is the region CONTAINING the read, and a write inside it need not precede the read.
+            nblock = idom[pivot_block] if idom[pivot_block] != pivot_block else None
             while nblock is not None and write_state is None:
-                if isinstance(nblock, SDFGState) and desc in access_sets[nblock][1]:
-                    write_state = nblock
-                nblock = idom_dict[region][nblock] if idom_dict[region][nblock] != nblock else None
+                write_state = must_write_state(desc, nblock, access_sets, idom_dict, must_write_cache)
+                nblock = idom[nblock] if idom[nblock] != nblock else None
             # No dominating write found in the current control flow graph, check one further up.
             if write_state is None:
                 pivot_block = region
@@ -715,8 +909,12 @@ class ScalarWriteShadowScopes(ppl.Pass):
             block_reach: Dict[ControlFlowBlock,
                               Set[ControlFlowBlock]] = pipeline_results[ControlFlowBlockReachability.__name__]
 
+            # One memo per SDFG: ``must_write_state`` is asked the same (container, block) question
+            # once per read on the idom chain, and its region case walks a whole subtree.
+            must_write_cache: Dict[Tuple[str, ControlFlowBlock], Optional[SDFGState]] = {}
+
             anames = sdfg.arrays.keys()
-            for desc in sdfg.arrays:
+            for desc in self.shadow_candidates(sdfg):
                 # Restrict to states this SDFG owns. With cloned NestedSDFGs after loop
                 # fission, cfg_id collisions can make ``FindAccessNodes[sdfg.cfg_id]`` surface
                 # states owned by a *different* clone, whose regions are absent from this
@@ -733,8 +931,13 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                                 key=lambda s: (s.parent_graph.cfg_id, s.block_id))
                 for state in desc_states_with_nodes:
                     for read_node in access_nodes[desc][state][0]:
-                        write = self._find_dominating_write(desc, state, read_node, access_nodes, idom_dict,
-                                                            access_sets)
+                        write = self._find_dominating_write(desc,
+                                                            state,
+                                                            read_node,
+                                                            access_nodes,
+                                                            idom_dict,
+                                                            access_sets,
+                                                            must_write_cache=must_write_cache)
                         result[desc][write].add((state, read_node))
                 # Ensure accesses to interstate edges are also considered. ``access_sets`` spans every
                 # SDFG, but ``idom_dict`` is built only for the current one; a foreign block whose SDFG
@@ -749,8 +952,13 @@ class ScalarWriteShadowScopes(ppl.Pass):
                         for oedge in out_edges:
                             syms = oedge.data.free_symbols & anames
                             if desc in syms:
-                                write = self._find_dominating_write(desc, block, oedge.data, access_nodes, idom_dict,
-                                                                    access_sets)
+                                write = self._find_dominating_write(desc,
+                                                                    block,
+                                                                    oedge.data,
+                                                                    access_nodes,
+                                                                    idom_dict,
+                                                                    access_sets,
+                                                                    must_write_cache=must_write_cache)
                                 result[desc][write].add((block, oedge.data))
                 # Take care of any write nodes that have not been assigned to a scope yet, i.e., writes that are not
                 # dominating any reads and are thus not part of the results yet.
@@ -763,11 +971,14 @@ class ScalarWriteShadowScopes(ppl.Pass):
                                                                 access_nodes,
                                                                 idom_dict,
                                                                 access_sets,
-                                                                no_self_shadowing=True)
+                                                                no_self_shadowing=True,
+                                                                must_write_cache=must_write_cache)
                             result[desc][write].add((state, write_node))
 
                 # If any write A is dominated by another write B and any reads in B's scope are also reachable by A,
-                # then merge A and its scope into B's scope.
+                # then merge A and its scope into B's scope. This is what keeps a LOOP-CARRIED chain in one scope:
+                # a read early in a loop body is attributed to the write preceding the loop, while the write later in
+                # that body feeds it on every subsequent iteration -- the two must not be versioned apart.
                 to_remove = set()
                 for write, accesses in result[desc].items():
                     if write is None:
@@ -778,7 +989,11 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     for other_write, other_accesses in result[desc].items():
                         if other_write is not None and other_write[1] is write_node and other_write[0] is write_state:
                             continue
-                        if other_write is None or other_write[0] in dominators:
+                        # ``dominated_through_region``, not plain membership: a write reported from INSIDE a
+                        # dominating region has to be recognised through that region, or the merge is missed
+                        # exactly for the region writes newly found by ``must_write_state`` and a loop-carried
+                        # chain gets versioned apart.
+                        if other_write is None or dominated_through_region(other_write[0], write_state, dominators):
                             noa = len(other_accesses)
                             if noa > 0 and (noa > 1 or list(other_accesses)[0] != other_write):
                                 if any([a_state in reach for a_state, _ in other_accesses]):
@@ -790,6 +1005,128 @@ class ScalarWriteShadowScopes(ppl.Pass):
                     del result[desc][write]
             top_result[sdfg.cfg_id] = result
         return top_result
+
+
+def covers_full_extent(subset: Optional[Range], desc: dt.Data) -> bool:
+    """Whether ``subset`` provably spans the WHOLE of ``desc``.
+
+    Requires every dimension to run from ``0`` to ``shape - 1`` with unit stride. The proof is by
+    symbolic simplification to an exact zero: an expression that does not simplify away is not a
+    proof and is rejected, so a symbolic extent is never *assumed* to cover the shape. No
+    inequality reasoning is involved, hence nothing beyond the canonicalization-wide
+    "symbols are nonnegative" assumption is relied upon.
+
+    :param subset: The memlet subset to test (``None`` never covers).
+    :param desc: The data descriptor whose extent must be covered.
+    :returns: ``True`` only if coverage of the full extent is proven.
+    """
+    if not isinstance(subset, Range) or len(subset) != len(desc.shape):
+        return False
+    for (rb, re, rstep), size in zip(subset.ranges, desc.shape):
+        if symbolic.simplify(rstep - 1) != 0:
+            return False
+        if symbolic.simplify(rb) != 0:
+            return False
+        if symbolic.simplify(re - (size - 1)) != 0:
+            return False
+    return True
+
+
+def writes_whole_array(state: SDFGState, edge: Edge[Memlet], desc: dt.Data) -> bool:
+    """Whether ``edge`` (an incoming edge of an access node) provably overwrites all of ``desc``.
+
+    Refuses everything that could leave one element of the previous value observable:
+
+    * a WCR edge -- a read-modify-write, not an overwrite;
+    * a dynamic edge -- the write may not happen at all;
+    * a write handed out of a ``NestedSDFG`` connector -- the outer subset is a propagated
+      over-approximation of what the body actually writes, so it proves nothing;
+    * a subset that does not provably span the whole extent (:func:`covers_full_extent`).
+
+    The whole memlet tree is checked, not just the outer edge: a map that writes ``A[0:N]`` in
+    aggregate may still write each element under a WCR or a dynamic (conditional) inner memlet.
+
+    :param state: The state holding ``edge``.
+    :param edge: The incoming edge of the written access node.
+    :param desc: The written data descriptor.
+    :returns: ``True`` only if a full overwrite is proven.
+    """
+    for tree_edge in state.memlet_tree(edge):
+        if tree_edge.data.wcr is not None or tree_edge.data.dynamic:
+            return False
+        if isinstance(tree_edge.src, nd.NestedSDFG):
+            return False
+    return covers_full_extent(edge.data.get_dst_subset(edge, state), desc)
+
+
+def fully_overwritten_arrays(sdfg: SDFG) -> Set[str]:
+    """Transient arrays of ``sdfg`` for which EVERY write provably covers the entire array.
+
+    On such an array -- and only on such an array -- a dominating write is a must-def of the whole
+    container, which is the property the dominance-only shadow analysis silently assumes.
+
+    :param sdfg: The SDFG to scan (this SDFG only; nested SDFGs own their own descriptors).
+    :returns: The names of the arrays for which full overwrite is proven.
+    """
+    # A Reference can be pointed at any array and written through it, and that write never shows up
+    # on the target's own access nodes -- the scan below would then miss it and "prove" a full
+    # overwrite that is not one. Rather than track reference targets, refuse the whole SDFG.
+    if any(isinstance(desc, dt.Reference) for desc in sdfg.arrays.values()):
+        return set()
+
+    candidates: Set[str] = set()
+    for name, desc in sdfg.arrays.items():
+        # ``type(...) is Array`` on purpose: a View or Reference aliases another container and a
+        # ContainerArray holds descriptors rather than values -- none of them is privatizable.
+        if type(desc) is not dt.Array or not desc.transient:
+            continue
+        # Size-1 containers belong to the scalar path; leave them to ``ScalarFission``.
+        if desc.total_size == 1:
+            continue
+        # A persistent/external transient may legitimately carry its value across invocations.
+        if desc.lifetime != dtypes.AllocationLifetime.Scope:
+            continue
+        # ``may_alias`` means writes through another name can reach this one, so the writes visible
+        # on this array's access nodes are not all of its writes.
+        if desc.may_alias:
+            continue
+        candidates.add(name)
+
+    for state in sdfg.all_states():
+        for node in state.data_nodes():
+            if node.data not in candidates:
+                continue
+            desc = sdfg.arrays[node.data]
+            for edge in state.in_edges(node):
+                if edge.data.is_empty():
+                    continue
+                if not writes_whole_array(state, edge, desc):
+                    candidates.discard(node.data)
+                    break
+    return candidates
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
+class ArrayWriteShadowScopes(ScalarWriteShadowScopes):
+    """
+    Write-shadow scopes for transient arrays that every write provably overwrites in full.
+
+    The inherited search decides shadowing by dominance and never looks at a subset. That is exact
+    for scalars (any write is a full write) but false in general for arrays: a dominating write of
+    ``A[0:k]`` does not shadow a read of ``A[0:N]``, and acting on it would privatize an array that
+    still carries elements from a previous iteration -- a silent miscompile.
+
+    This pass re-establishes the missing premise instead of weakening the search: it reports only
+    the arrays of :func:`fully_overwritten_arrays`, on which "dominating write" once again means
+    "must-def of the whole container". Anything it cannot prove is simply not reported, so the
+    consumer sees no candidate and refuses.
+    """
+
+    CATEGORY: str = 'Analysis'
+
+    def shadow_candidates(self, sdfg: SDFG) -> Iterable[str]:
+        return sorted(fully_overwritten_arrays(sdfg))
 
 
 @properties.make_properties

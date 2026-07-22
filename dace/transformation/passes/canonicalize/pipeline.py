@@ -53,7 +53,7 @@ from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pat
     CleanAccessNodeToScalarSliceToTaskletPattern)
 from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
     CleanTaskletToScalarSliceToAccessNodePattern)
-from dace.transformation.passes.scalar_fission import PrivatizeScalars, ScalarFission
+from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, ScalarFission
 from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
@@ -239,6 +239,13 @@ class _PrivatizeScalarsStage(ppl.Pass):
     def depends_on(self):
         return set()
 
+    def privatizer(self) -> ppl.Pipeline:
+        """The privatization pipeline this stage adapts.
+
+        :returns: The self-resolving ``Pipeline`` to apply.
+        """
+        return PrivatizeScalars()
+
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[Any]:
         # ``PrivatizeScalars`` resolves a ``FindAccessNodes`` analysis (keyed by
         # ``cfg_id``) and a reachability analysis that calls ``reset_cfg_list`` mid-
@@ -246,7 +253,24 @@ class _PrivatizeScalarsStage(ppl.Pass):
         # then lets that reset reassign ``cfg_id`` under the cached ``FindAccessNodes``
         # result -> ``KeyError``. Refresh the list up front so both analyses agree.
         sdfg.reset_cfg_list()
-        return PrivatizeScalars().apply_pass(sdfg, {})
+        return self.privatizer().apply_pass(sdfg, {})
+
+
+@properties.make_properties
+class _PrivatizeArraysStage(_PrivatizeScalarsStage):
+    """Array sibling of :class:`_PrivatizeScalarsStage`, paired with it everywhere it runs.
+
+    A transient ARRAY reused as a per-iteration scratch buffer carries the same false
+    write/write dependence as a reused scalar, so it needs privatizing at the same points of
+    the recipe. The difference is the premise: versioning per dominating write is only
+    value-preserving when that write is a must-def of the WHOLE container, which is free for a
+    scalar and a proof obligation for an array. ``ArrayWriteShadowScopes`` discharges it and
+    reports nothing it cannot prove, so the scalar path never becomes a fallback for an
+    unproven array.
+    """
+
+    def privatizer(self) -> ppl.Pipeline:
+        return PrivatizeArrays()
 
 
 # Per-target knob presets. ``canonicalize(..., target='cpu'|'gpu')`` picks one
@@ -590,7 +614,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # adapted (_PrivatizeScalarsStage) so its analysis dependencies resolve.
     s += [('reduce', PatternMatchAndApplyRepeated([TrivialTaskletElimination()])),
           ('reduce', PatternMatchAndApplyRepeated([WCRToAugAssign()])), ('reduce', _PrivatizeScalarsStage()),
-          ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
+          ('reduce', _PrivatizeArraysStage()), ('reduce', SymbolPropagation()), ('reduce', ConstantPropagation())]
     # UntileLoops (BEFORE ShortLoopUnroll): collapse manually-tiled two-level
     # nests (``for i in range(0, N, K): for ii in range(0, K): body[i+ii]`` or
     # ``for ii in range(i, i+K): body[ii]``) back to a single ``for k in
@@ -609,6 +633,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # confuses later value analyses. Wrapped in a Pipeline so its
     # ``ScalarWriteShadowScopes`` analysis dependency is resolved.
     s += [('reduce', ppl.Pipeline([ScalarFission()]))]
+    # array fission, immediately after: the same false write/write dependence exists on a
+    # transient ARRAY reused as a per-iteration scratch buffer (``Tz = np.zeros(...)`` at the top
+    # of a loop body). Versioning it is only value-preserving when the dominating write covers the
+    # WHOLE array -- for a scalar that is free, for an array it is a proof obligation that
+    # ``ArrayWriteShadowScopes`` discharges; anything it cannot prove is left alone. Kept a
+    # separate stage rather than widening ``ScalarFission``, so the scalar path never becomes a
+    # fallback for an unproven array.
+    s += [('reduce', ppl.Pipeline([ArrayFission()]))]
     # PromoteConstantIndexAccess + BufferExpansion: both privatize loop-carried
     # false dependences that block ``LoopToMap``. PCIA promotes ``arr[c]``
     # constant-index slot writes-then-reads on a SHARED array to a per-iteration
@@ -684,10 +716,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Re-prep the freshly-unblocked loops: peel/break-antidep PROBE mappability with
     # the prep recipe but only APPLY the peel / snapshot-rename, so the peeled
     # remainder (and any body-assigned range symbol the peel introduced) still needs
-    # scalar fission + symbol/constant propagation -- the same prep the reduce stage
-    # ran -- before LoopToMap can map it. Only runs when a knob is enabled.
+    # scalar + array fission and symbol/constant propagation -- the same prep the reduce
+    # stage ran -- before LoopToMap can map it. Only runs when a knob is enabled.
     if peel_limit > 0 or break_anti_dependence:
-        s += [('peel', _PrivatizeScalarsStage()), ('peel', SymbolPropagation()), ('peel', ConstantPropagation())]
+        s += [('peel', _PrivatizeScalarsStage()), ('peel', _PrivatizeArraysStage()), ('peel', SymbolPropagation()),
+              ('peel', ConstantPropagation())]
 
     # move_if_into_loop: push guarding conditionals into loop bodies. The genuine
     # inner imperfect nest (a bare tasklet beside an inner loop) takes the
@@ -868,12 +901,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
     # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
-    # states whose intermediate scalar transients share names across
-    # siblings. Running ``PrivatizeScalars`` here renames each scope's
-    # transient so the downstream structural cleanup's same-name candidate
-    # list is short -- defence-in-depth for the StateFusionExtended same-
+    # states whose intermediate transients share names across siblings --
+    # scratch arrays as much as scalars. Renaming each scope's transient
+    # here keeps the downstream structural cleanup's same-name candidate
+    # list short -- defence-in-depth for the StateFusionExtended same-
     # name writer-merge guard.
-    s += [('reduction_to_wcr_map', _PrivatizeScalarsStage())]
+    s += [('reduction_to_wcr_map', _PrivatizeScalarsStage()), ('reduction_to_wcr_map', _PrivatizeArraysStage())]
     s += _structural_cleanup('reduction_to_wcr_map')
 
     # scatter: ``ScatterToGuardedMaps`` inserts a runtime ``IntegerSort + WCR-summed

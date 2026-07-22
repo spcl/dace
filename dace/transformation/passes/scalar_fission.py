@@ -23,8 +23,27 @@ class ScalarFission(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return modified & ppl.Modifies.AccessNodes
 
+    def shadow_analysis(self) -> type:
+        """The write-shadow-scope analysis whose result drives this pass.
+
+        :returns: The analysis ``Pass`` subclass to read ``pipeline_results`` from.
+        """
+        return ap.ScalarWriteShadowScopes
+
+    def accepts(self, desc) -> bool:
+        """Whether ``desc`` is a container this pass may fission.
+
+        Scalars accept every size-1 transient: any write to one is a full write, so the analysis'
+        dominance-only shadowing is already a must-def. :class:`ArrayFission` overrides both this
+        and :func:`shadow_analysis`.
+
+        :param desc: The data descriptor to test.
+        :returns: ``True`` if the container may be fissioned.
+        """
+        return desc.transient and desc.total_size == 1
+
     def depends_on(self):
-        return [ap.ScalarWriteShadowScopes]
+        return [self.shadow_analysis()]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[Dict[str, Set[str]]]:
         """
@@ -38,7 +57,7 @@ class ScalarFission(ppl.Pass):
         """
         results: Dict[str, Set[str]] = defaultdict(lambda: set())
 
-        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[ap.ScalarWriteShadowScopes.__name__][sdfg.cfg_id]
+        shadow_scope_dict: ap.WriteScopeDict = pipeline_results[self.shadow_analysis().__name__][sdfg.cfg_id]
 
         # A control-flow condition (branch condition, loop bound/condition) is a
         # code block that READS every data container it names -- its value must
@@ -63,12 +82,8 @@ class ScalarFission(ppl.Pass):
         for name, write_scope_dict in shadow_scope_dict.items():
             desc = sdfg.arrays[name]
 
-            # If this isn't a scalar or an array of size 1, don't do anything.
-            if desc.total_size != 1:
-                continue
-
-            # Don't rename anything that's not transient, as it may be used externally.
-            if not desc.transient:
+            # Only containers this pass owns; a non-transient one may be used externally.
+            if not self.accepts(desc):
                 continue
 
             # A scalar read by a control-flow condition is used, not a privatizable
@@ -209,7 +224,7 @@ class ScalarFission(ppl.Pass):
 
     @staticmethod
     def _rename_memlet_path(state: SDFGState, edge, old: str, new: str) -> None:
-        """Rename ``old`` -> ``new`` on every memlet along ``edge``'s FULL path.
+        """Rename ``old`` -> ``new`` on every memlet of ``edge``'s FULL memlet TREE.
 
         An access-node write/read that flows THROUGH a scope boundary (MapExit /
         MapEntry) has more than one edge carrying the same data: the inner edge
@@ -217,10 +232,16 @@ class ScalarFission(ppl.Pass):
         scope's connector. Renaming only the outermost edge -- the historical
         behavior -- left the inner edge, and therefore the scope node's pass-through
         data, as ``old``, yielding an ``IN_x(old) -> OUT_x(new)`` mismatch across the
-        MapExit that fails validation. Walking the whole memlet path renames both
-        sides of every scope boundary consistently.
+        MapExit that fails validation.
+
+        The TREE, not the path: one outer edge can fan out to several consumers
+        inside the scope (an array read like ``pn[i+1, j]`` and ``pn[i-1, j]``
+        both arriving through one ``OUT_pn`` connector). ``memlet_path`` is a single
+        linear route and renames only one of those branches, leaving its siblings
+        naming a container their endpoint no longer references. Every edge of the
+        tree belongs to the same access, so renaming all of them is exactly right.
         """
-        for pe in state.memlet_path(edge):
+        for pe in state.memlet_tree(edge):
             if pe.data is not None and pe.data.data == old:
                 pe.data.data = new
 
@@ -237,30 +258,27 @@ class ScalarFission(ppl.Pass):
         a conditional, read after the merge). A scalar that may be read before it
         is written (a non-exhaustive ``if``) is loop-carried and is left alone.
 
+        The same must hold for every OTHER loop touching the scalar, or the groups are not
+        independent and privatizing one of them breaks a def-use chain into another --
+        see :func:`_carrier_free`.
+
         :param sdfg: The SDFG being modified.
         :param name: The size-1 transient scalar.
         :param accesses: The ``None``-scope ``(block, node-or-edge)`` accesses.
         :param results: Accumulator mapping the original name to new names.
         """
-        by_loop: Dict[LoopRegion, List[Tuple]] = defaultdict(list)
-        outside_loop = False
-        for block, node in accesses:
-            loop = self._innermost_loop(block)
-            if loop is None:
-                outside_loop = True
-                break
-            by_loop[loop].append((block, node))
-        if outside_loop:
-            # An undominated access at non-loop scope is not loop-local; leave the
-            # whole scalar alone rather than split a value across scopes.
+        # The ``None`` scope is ONE equivalence class, and splitting it per loop is only
+        # value-preserving when no value crosses a group boundary (see ``_carrier_free``).
+        if not self._carrier_free(sdfg, name):
             return
 
-        for loop, loop_accesses in by_loop.items():
-            # Only privatize if every undominated access of ``name`` in this loop
-            # is in this group (don't split a single value) and the scalar has no
-            # upward-exposed use in the loop (privatization legality).
-            if not self._no_upward_exposed_use(loop, name, defined_on_entry=False):
-                continue
+        by_loop: Dict[LoopRegion, List[Tuple]] = defaultdict(list)
+        for block, node in accesses:
+            # ``_carrier_free`` already established that every access sits inside a loop and that
+            # no loop reads ``name`` before defining it, which is this group's legality condition.
+            by_loop[self._innermost_loop(block)].append((block, node))
+
+        for loop_accesses in by_loop.values():
             newname = sdfg.add_datadesc(name, sdfg.arrays[name].clone(), find_new_name=True)
             affected_states: Set[SDFGState] = set()
             for block, node in loop_accesses:
@@ -285,6 +303,60 @@ class ScalarFission(ppl.Pass):
                     node.replace_dict({name: newname})
             self._propagate_rename_into_nsdfgs(affected_states, name, newname)
             results[name].add(newname)
+
+    def _carrier_free(self, sdfg: SDFG, name: str) -> bool:
+        """Whether no value of ``name`` can flow from one loop to another, or out to non-loop scope.
+
+        The undominated (``None``) write scope is one equivalence class of accesses the shadow
+        analysis could not attribute to any dominating write. Handing each enclosing loop its own
+        copy is value-preserving only when no value crosses a group boundary; otherwise the
+        producing group is renamed away from the consuming one, and the consumer is left reading a
+        container nobody writes any more.
+
+        That was exactly the npbench ``vadv`` shape. Every top-level block of that SDFG is a
+        ``LoopRegion``, and ``_find_dominating_write`` used to accept only an ``SDFGState`` as a
+        dominating write state, so a value produced in one top-level loop (``data_col``, written by
+        the first step of the backward substitution) and consumed by the next landed wholly in the
+        ``None`` scope.
+        The producing loop has no upward-exposed use of its own and was therefore privatized alone,
+        severing the chain -- a silent miscompile, since the consuming loop still validates.
+
+        ``must_write_state`` now roots that shape properly, so ``vadv`` no longer reaches here at
+        all. This gate stays because it guards the general case, not that one instance: whatever
+        the analysis still cannot attribute remains ONE equivalence class with no def-use
+        guarantee, and over the four corpora the gate refuses 11 array and 23 scalar containers
+        that do reach it.
+
+        Establishing "dead after this loop" properly means liveness across the whole control-flow
+        hierarchy. Instead, require the stronger and much cheaper property that EVERY access of
+        ``name`` -- not only the undominated ones -- lives inside a loop that definitely defines it
+        before reading it. Then no group can observe another group's value, every group is closed
+        under def-use, and privatizing them independently cannot move a value. Anything else is
+        refused wholesale rather than split.
+
+        :param sdfg: The SDFG being modified.
+        :param name: The data container to test.
+        :returns: ``True`` if the undominated groups of ``name`` may be privatized independently.
+        """
+        loops: Set[LoopRegion] = set()
+        for state in sdfg.all_states():
+            for node in state.data_nodes():
+                if node.data != name:
+                    continue
+                loop = self._innermost_loop(state)
+                if loop is None:
+                    return False
+                loops.add(loop)
+        # Interstate-edge reads are accesses too, and one at non-loop scope consumes whatever the
+        # loops left behind just as a top-level AccessNode would.
+        for edge in sdfg.all_interstate_edges():
+            if not any(str(s) == name for s in edge.data.free_symbols):
+                continue
+            loop = self._innermost_loop(edge.src)
+            if loop is None:
+                return False
+            loops.add(loop)
+        return all(self._no_upward_exposed_use(loop, name, defined_on_entry=False) for loop in loops)
 
     @staticmethod
     def _propagate_rename_into_nsdfgs(states, old_name: str, new_name: str) -> None:
@@ -536,3 +608,51 @@ class PrivatizeScalars(ppl.Pipeline):
 
     def __init__(self):
         super().__init__([ScalarFission()])
+
+
+@transformation.explicit_cf_compatible
+class ArrayFission(ScalarFission):
+    """
+    Fission transient ARRAYS that every write provably overwrites in full, into separate data
+    containers -- the array analogue of :class:`ScalarFission`.
+
+    The renaming machinery is identical to the scalar case; what differs is the premise it needs.
+    Versioning a container per dominating write is only value-preserving when that write is a
+    must-def of the whole container, which is automatic for a scalar and has to be *proven* for an
+    array. The proof lives entirely in :class:`~dace.transformation.passes.analysis.analysis.
+    ArrayWriteShadowScopes`, which reports an array only when every one of its writes covers the
+    full extent (all dimensions, unit stride, no WCR, not dynamic, not through a NestedSDFG
+    connector). A partially written array, an array written only under a condition, or one whose
+    extent cannot be simplified to the declared shape is never reported and so is never touched.
+    """
+
+    def shadow_analysis(self) -> type:
+        return ap.ArrayWriteShadowScopes
+
+    def accepts(self, desc) -> bool:
+        # Size-1 containers stay with ``ScalarFission``; the analysis has already discharged the
+        # full-overwrite proof for everything else it reports.
+        return desc.transient and desc.total_size != 1
+
+    def report(self, pass_retval: Any) -> Optional[str]:
+        return f'Renamed {len(pass_retval)} arrays: {pass_retval}.'
+
+
+@transformation.explicit_cf_compatible
+class PrivatizeArrays(ppl.Pipeline):
+    """Give every provably fully-overwritten transient array its own name (array privatization).
+
+    The array sibling of :class:`PrivatizeScalars`: a self-contained pipeline running
+    :class:`ArrayFission` together with the analysis it depends on, so it can be applied on its own
+    -- ``PrivatizeArrays().apply_pass(sdfg, {})`` -- or dropped into a larger recipe.
+
+    A transient array reused as a per-iteration temporary (``Tz = np.zeros(...)`` at the top of a
+    loop body) is fully written before it is read on every iteration, so the iterations share only
+    its *name*. Splitting each dominating write into its own container removes that false
+    write-after-write, which is what otherwise makes a shared temporary look loop-carried. Unlike
+    the scalar case the sharing is only false when the write covers the entire array, so the
+    underlying analysis refuses every array it cannot prove that for.
+    """
+
+    def __init__(self):
+        super().__init__([ArrayFission()])

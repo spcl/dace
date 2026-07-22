@@ -198,6 +198,40 @@ def loop_provably_at_most_one_iteration(loop: LoopRegion) -> bool:
     return _provably_le(symbolic.simplify(end), symbolic.simplify(start))
 
 
+def loop_provably_at_least_one_iteration(loop: LoopRegion) -> bool:
+    """Whether ``loop`` provably runs at least one iteration.
+
+    Needed by any must-def reasoning that wants to carry a write out of a loop body: a write
+    inside a loop that may run zero times defines nothing after the loop. The mirror image of
+    :func:`loop_provably_at_most_one_iteration`, and conservative in the same direction --
+    ``False`` whenever the entry test cannot be decided.
+
+    Note the codebase-wide "symbols are NONNEGATIVE" assumption gives ``N >= 0``, not ``N >= 1``,
+    so the ubiquitous ``for i in range(N)`` is correctly REFUSED; only a concrete (or otherwise
+    provably nonempty) bound is accepted.
+
+    :param loop: The loop region to test.
+    :returns: ``True`` only if at least one iteration is proven to execute.
+    """
+    # An inverted (do-while) loop runs its body before the condition is ever observed, so the
+    # first iteration is unconditional whatever the bound says.
+    if loop.inverted:
+        return True
+    start = get_init_assignment(loop)
+    end = get_loop_end(loop)  # inclusive bound of the entry condition
+    step = get_loop_stride(loop)
+    if start is None or end is None or step is None:
+        return False
+    step = symbolic.simplify(step)
+    # The direction of the entry test follows the sign of the stride, so an unknown or zero stride
+    # decides nothing.
+    if not step.is_number or step == 0:
+        return False
+    start = symbolic.simplify(start)
+    end = symbolic.simplify(end)
+    return _provably_le(start, end) if step > 0 else _provably_le(end, start)
+
+
 @dataclass(frozen=True)
 class InductionVariable:
     """
