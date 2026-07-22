@@ -118,7 +118,8 @@ class CPUCodeGen(TargetCodeGenerator):
     def cmake_options():
         options = []
 
-        # Always pinned, so the compiler the flags were chosen for is the one CMake uses.
+        # Always pinned, so the compiler the flags were chosen for is the one CMake uses. This wins
+        # over a CMAKE_CXX_COMPILER set in a toolchain file passed through extra_cmake_args.
         options.append('-DCMAKE_CXX_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
 
         flags = compiler_family.cpu_args()
