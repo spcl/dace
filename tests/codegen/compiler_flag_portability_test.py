@@ -9,6 +9,7 @@ Compilers absent from the box yield no test case rather than a skipped one, so t
 coverage where a toolchain exists and stays silent where it does not. CI carries no NVHPC, so the
 nvc++ case runs on developer machines that have it -- worth knowing when reading a green CI run.
 """
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -76,6 +77,37 @@ def test_configured_compiler_accepts_its_flags(tmp_path):
     assert shutil.which(executable), f'configured compiler {executable!r} is not on PATH'
     result = compile_probe(executable, flags_for(executable), tmp_path)
     assert result.returncode == 0, f'configured compiler {executable} rejected DaCe\'s flags:\n{result.stderr}'
+
+
+def cmake_compiler_id(executable: str, tmp_path: Path) -> str:
+    """What CMake calls ``executable``. The second opinion, from the tool that picks the flags."""
+    (tmp_path / 'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.16)\n'
+                                             'project(probe CXX)\n'
+                                             'message(STATUS "ID=${CMAKE_CXX_COMPILER_ID}")\n')
+    out = subprocess.run(
+        ['cmake', '-S',
+         str(tmp_path), '-B',
+         str(tmp_path / 'b'), f'-DCMAKE_CXX_COMPILER={shutil.which(executable)}'],
+        capture_output=True,
+        text=True,
+        timeout=300)
+    assert out.returncode == 0, out.stderr
+    match = re.search(r'ID=(\w+)', out.stdout)
+    assert match, f'cmake did not report a compiler id for {executable}:\n{out.stdout}'
+    return match.group(1)
+
+
+@pytest.mark.parametrize('executable', AVAILABLE)
+def test_family_matches_cmakes_compiler_id(executable, tmp_path):
+    """DaCe and CMake must name the same compiler the same way.
+
+    Two independent detectors decide two halves of one build: DaCe's picks the flags, CMake's picks
+    the compiler those flags are handed to. Agreeing today is not enough -- if they ever diverge, the
+    flags chosen for one compiler are passed to another, which is how ``CXX=nvc++`` used to die on
+    ``nvc++-Error-Unknown switch: -fno-math-errno``. Family names are CMake's ids lowercased so this
+    comparison is exact rather than a mapping table that can rot.
+    """
+    assert compiler_family.detect(executable) == cmake_compiler_id(executable, tmp_path).lower()
 
 
 def test_nvhpc_default_avoids_the_switches_nvcpp_rejects():
