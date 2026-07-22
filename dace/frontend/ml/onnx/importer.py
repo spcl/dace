@@ -98,6 +98,11 @@ from dace.transformation.onnx import expand_onnx_nodes as onnx_node_expander
 from dace.libraries.onnx.converters import clean_onnx_name, convert_attribute_proto, onnx_tensor_type_to_typeclass
 from dace.libraries.onnx.nodes.onnx_op_registry import get_onnx_node, has_onnx_node
 from dace.libraries.onnx.schema import ONNXParameterType
+# ``GPU_RESIDENT_STORAGES`` ({GPU_Global, GPU_Shared}) lives in the standard-library helper,
+# not in ``dace.dtypes``. ``dtypes.GPU_STORAGES`` is a narrower set ({GPU_Shared}) and
+# ``dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES`` additionally includes host CPU_Pinned, so neither
+# is a substitute for deciding whether data is device-resident.
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 
 #: Mapping from NumPy dtypes to PyTorch dtypes for tensor conversion
 if TORCH_AVAILABLE:
@@ -617,7 +622,7 @@ class ONNXModel:
         for name, arr in self.weights.items():
             if clean_onnx_name(name) in compiled_sdfg.sdfg.arrays:
                 desc = self.sdfg.arrays[clean_onnx_name(name)]
-                cuda = desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES
+                cuda = desc.storage in GPU_RESIDENT_STORAGES
                 if type(desc) is dt.Scalar:
                     self.initialized_parameters[clean_onnx_name(name)] = arr.cuda() if cuda else arr.cpu().numpy()[()]
                 else:
@@ -722,7 +727,7 @@ class ONNXModel:
         inferred_symbols = {k: int(v) for k, v in inferred_symbols.items()}
 
         if torch_outputs is None:
-            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in dace.dtypes.GPU_RESIDENT_STORAGES
+            torch_outputs = any(self.sdfg.arrays[clean_onnx_name(o)].storage in GPU_RESIDENT_STORAGES
                                 for o in self.outputs) or any(
                                     isinstance(inp, torch.Tensor) for _, inp in clean_inputs.items())
 
@@ -774,7 +779,7 @@ def create_output_array(inferred_symbols: Dict[str, int],
             dim = dim.subs(sym, inferred_symbols[sym.name])
         return dim
 
-    cuda = desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES
+    cuda = desc.storage in GPU_RESIDENT_STORAGES
     if cuda and not use_torch:
         raise ValueError("Got use_torch=False, but received a GPU descriptor")
 

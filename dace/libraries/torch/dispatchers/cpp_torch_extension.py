@@ -23,6 +23,11 @@ from dace.autodiff import BackwardResult
 from dace.libraries.torch.environments import PyTorch
 
 from dace.libraries.torch.dispatchers.common import DaceTorchFunction, compile_and_init_sdfgs, get_arglist
+# ``GPU_RESIDENT_STORAGES`` ({GPU_Global, GPU_Shared}) lives in the standard-library helper,
+# not in ``dace.dtypes``. ``dtypes.GPU_STORAGES`` is a narrower set ({GPU_Shared}) and
+# ``dtypes.GPU_KERNEL_ACCESSIBLE_STORAGES`` additionally includes host CPU_Pinned, so neither
+# is a substitute for deciding whether data is device-resident.
+from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
 
 _REPLACED_CTYPES = {dace.int64: "int64_t", dace.uint64: "uint64_t", dace.float16: "at::Half"}
 
@@ -114,7 +119,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
         # (mirrors ``constant_initializer_code``). For a host descriptor, a plain
         # ``.clone()`` takes ownership of the leaked buffer as before.
         to_device = ('.to(torch::kCUDA)'
-                     if desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES else '.clone()')
+                     if desc.storage in GPU_RESIDENT_STORAGES else '.clone()')
         return f"""\
             Tensor {name} = torch::from_blob(
                 new float[{len(values)}]{{{values_str}}},
@@ -131,7 +136,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
                 {{{', '.join(str(s) for s in desc.shape)}}},
                 torch::TensorOptions()
                     .dtype(torch::{typeclass_to_torch_cpp_type(desc.dtype)})
-                    .device(torch::{'kCUDA' if desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES else 'kCPU'})
+                    .device(torch::{'kCUDA' if desc.storage in GPU_RESIDENT_STORAGES else 'kCPU'})
                     .layout(torch::kStrided));
             """
 
@@ -656,7 +661,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     def _is_gpu_sdfg(c):
         if c.has_gpu_code:
             return True
-        return any(desc.storage in dace.dtypes.GPU_RESIDENT_STORAGES for _, _, desc in c.sdfg.arrays_recursive())
+        return any(desc.storage in GPU_RESIDENT_STORAGES for _, _, desc in c.sdfg.arrays_recursive())
 
     with_cuda = any(_is_gpu_sdfg(c) for c in compiled_sdfgs)
     if with_cuda:
