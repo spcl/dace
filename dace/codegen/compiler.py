@@ -597,12 +597,14 @@ def get_binary_name(
 def _get_stub_library_path(sdfg_lib_path: Union[pathlib.Path, str]) -> pathlib.Path:
     """Returns the supposed location of the compiled stub library given the path of the compiled library.
     """
+    # Base assumption of the function is that the stub is located right next to the sdfg so file.
+    #  This allows us to not figuring out which folder mode is active.
     sdfg_lib_path = pathlib.Path(sdfg_lib_path)
     parent = sdfg_lib_path.parent
     lib_name = sdfg_lib_path.name
-    assert lib_name.startswith('lib') and len(lib_name) > 3
-
-    return sdfg_lib_path.parent / ('libdacestub_' + lib_name[3:])
+    lib_prefix = Config.get('compiler', 'library_prefix')
+    assert lib_name.startswith(lib_prefix)
+    return sdfg_lib_path.parent / (lib_prefix + 'dacestub_' + lib_name[len(lib_prefix):])
 
 
 def load_precompiled_sdfg(
