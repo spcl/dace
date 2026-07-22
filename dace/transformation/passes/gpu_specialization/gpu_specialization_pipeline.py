@@ -54,7 +54,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         # extended moved it into the canonicalize pipeline, so running it here too would apply it
         # twice.
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
-            AddThreadBlockMaps, ExpandLibraryNodes, NormalizeHostLevelGPUSchedules, ReinferConnectorTypes)
+            AddThreadBlockMaps, ExpandLibraryNodes, NormalizeHostLevelGPUSchedules,
+            NormalizeHostLevelGPUSchedulesEarly, ReinferConnectorTypes)
         from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays
@@ -79,6 +80,9 @@ class GPUCodegenPreprocessPipeline(Pipeline):
             synchronize_on_exit=Config.get('compiler', 'cuda', 'synchronize_on_exit'))
         super().__init__([
             InferDefaultSchedulesAndStorages(),
+            # Fix host-level tasklets touching GPU data that an expansion performed *before* the
+            # pipeline already left behind; see the class docstring for why this runs twice.
+            NormalizeHostLevelGPUSchedulesEarly(),
             NestedGPUDeviceMapLowering(),
             PromoteGPUScalarsToArrays(),
             InsertExplicitGPUGlobalMemoryCopies(),

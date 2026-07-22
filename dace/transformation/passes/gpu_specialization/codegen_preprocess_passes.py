@@ -122,6 +122,22 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
 
 @properties.make_properties
 @transformation.explicit_cf_compatible
+class NormalizeHostLevelGPUSchedulesEarly(NormalizeHostLevelGPUSchedules):
+    """:class:`NormalizeHostLevelGPUSchedules`, scheduled before nested-map lowering.
+
+    The normalization is needed twice. An expansion that ran *before* the pipeline (the ONNX
+    Dropout expansion, for one) can leave a host-level tasklet reading GPU-resident data, so the
+    SDFG is already invalid on entry; ``NestedGPUDeviceMapLowering`` validates the whole graph at
+    the end of its own pass and reports that violation before the normal, post-expansion instance
+    can wrap the tasklet. Running it once up front fixes the entry state, and the later instance
+    still handles what library expansion introduces.
+
+    A subclass only because ``Pipeline`` rejects two passes of the same type.
+    """
+
+
+@properties.make_properties
+@transformation.explicit_cf_compatible
 class AddThreadBlockMaps(ppl.Pass):
     """Tile every ``GPU_Device`` map lacking an inner ``GPU_ThreadBlock`` map (via
     :class:`AddThreadBlockMap`) and infer the resulting ``(grid, block)`` dimensions.
