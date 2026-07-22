@@ -13,6 +13,8 @@ left intact since a ``Scalar`` access already carries subset ``[0]``.
 import re
 from typing import Any, Dict, Optional, Callable
 
+import numpy as np
+
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes, SDFGState
 from dace.sdfg.state import ConditionalBlock, LoopRegion
@@ -132,45 +134,43 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         # matching descriptor (children inherit the parent's choice).
         for nsdfg in list(sdfg.all_sdfgs_recursive()):
             for name in list(nsdfg.arrays):
-                if not self._needs_promotion(nsdfg, name):
+                reason = self._needs_promotion(nsdfg, name)
+                if reason is None:
                     continue
-                self._promote_one(nsdfg, name)
+                # A host-side copy endpoint keeps its storage; every other reason means a
+                # kernel touches the value, which requires device memory.
+                self._promote_one(nsdfg, name, force_gpu_global=(reason != 'copy_endpoint'))
                 promoted += 1
 
         invalidate_array_connectors(sdfg)
 
         return promoted if promoted > 0 else None
 
-    def _needs_promotion(self, sdfg: SDFG, name: str) -> bool:
+    def _needs_promotion(self, sdfg: SDFG, name: str) -> Optional[str]:
+        """Why ``name`` must be widened, or ``None``. The reason selects the target storage."""
         desc = sdfg.arrays[name]
         if not isinstance(desc, data.Scalar):
-            return False
+            return None
 
         # Rule 1: GPU storage is incompatible with Scalar.
         if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
-            return True
-
-        # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
-        if desc.storage in self._RULE2_EXEMPT_STORAGES:
-            return False
-        if self.non_transient_only and desc.transient:
-            return False
-        if written_by_gpu_map_exit(sdfg, name):
-            return True
+            return 'gpu'
 
         # Rule 3: host scalar that is an endpoint of a direct copy edge whose other endpoint is
         # GPU-resident. The GPU pipeline lifts that edge to a ``CopyLibraryNode`` whose
         # ``cudaMemcpyAsync`` tasklet types the scalar side as a pointer connector, so a bare
-        # ``Scalar`` source codegens as ``const T* = scalar`` (missing ``&``) and fails to compile
-        # with "cannot convert 'const double' to 'const double*'".
-        #
-        # NOTE: deliberately checked last, so rule 2's exemptions above also gate it. Hoisting it
-        # earlier does catch a propagated constant feeding a host->device copy, but it then also
-        # promotes transients that rule 2 excludes on purpose and breaks multistream_copy's
-        # test_copy_sync. Promoting that constant is in any case not sufficient on its own -- the
-        # length-1 array appears to be scalarised again downstream, so the training-graph GPU
-        # tests still fail to compile. Left narrow until that interaction is understood.
-        return self._is_host_gpu_copy_endpoint(sdfg, name)
+        # ``Scalar`` codegens as ``const T* = scalar`` and fails to compile. Widening it gives the
+        # copy a real pointer. Checked before rule 2, whose exemptions do not apply: a copy
+        # endpoint is typically a transient (e.g. a propagated constant) that rule 2 skips.
+        if self._is_host_gpu_copy_endpoint(sdfg, name):
+            return 'copy_endpoint'
+
+        # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
+        if desc.storage in self._RULE2_EXEMPT_STORAGES:
+            return None
+        if self.non_transient_only and desc.transient:
+            return None
+        return 'gpu' if written_by_gpu_map_exit(sdfg, name) else None
 
     @staticmethod
     def _is_host_gpu_copy_endpoint(sdfg: SDFG, name: str) -> bool:
@@ -205,18 +205,23 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                     return True
         return False
 
-    def _promote_one(self, sdfg: SDFG, name: str):
+    def _promote_one(self, sdfg: SDFG, name: str, force_gpu_global: bool = True):
         """Replace a Scalar descriptor with a length-1 Array and propagate the
         change, recursing into nested SDFGs that re-declare the same name as a
         Scalar.
+
+        :param force_gpu_global: When True, a non-GPU scalar is moved to ``GPU_Global`` because a
+            kernel touches it. When False, its storage is preserved -- a host-side copy endpoint
+            must stay on the host; only its type changes so the copy gets a real pointer.
         """
         scalar_desc: data.Scalar = sdfg.arrays[name]
 
-        # Rule 2 promotes Default / CPU-side scalars to GPU_Global because
-        # the kernel write needs real device memory; rule 1 keeps the
-        # pre-existing GPU storage.
+        # A kernel write needs real device memory, so a Default / CPU-side scalar moves to
+        # GPU_Global; a scalar that already has GPU storage keeps it. A host copy endpoint
+        # (force_gpu_global=False) keeps its host storage.
         target_storage = scalar_desc.storage
-        if target_storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+        if force_gpu_global and target_storage not in (dtypes.StorageType.GPU_Global,
+                                                       dtypes.StorageType.GPU_Shared):
             target_storage = dtypes.StorageType.GPU_Global
 
         array_desc = data.Array(
@@ -234,11 +239,21 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         sdfg.remove_data(name, validate=False)
         sdfg.add_datadesc(name, array_desc)
 
+        # Keep the constants table consistent with the widened descriptor. A compile-time
+        # constant scalar is emitted by the frame codegen straight from it as
+        # ``constexpr T name = v;``, ignoring the descriptor in ``arrays``. Feeding such a
+        # constant into a pointer-typed copy connector then yields ``const T* = name``, which
+        # does not compile. Re-storing it as a length-1 array makes codegen emit
+        # ``constexpr T name[1] = {v};``, which decays to a pointer for the copy.
+        if name in sdfg.constants_prop:
+            _, cstval = sdfg.constants_prop[name]
+            sdfg.constants_prop[name] = (array_desc, np.reshape(np.asarray(cstval), (1, )))
+
         compiled_pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
         pattern = lambda s: compiled_pattern.sub(rf'\1[0]', s)
 
         self._rewrite_state_machine(sdfg, pattern)
-        self._rewrite_states(sdfg=sdfg, name=name, pattern=pattern)
+        self._rewrite_states(sdfg=sdfg, name=name, pattern=pattern, force_gpu_global=force_gpu_global)
 
     @staticmethod
     def _rewrite_codeblock(pattern: PatternApplier, codeblock: properties.CodeBlock) -> properties.CodeBlock:
@@ -285,7 +300,8 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
                 if block.loop_condition is not None:
                     block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
 
-    def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier) -> None:
+    def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier,
+                        force_gpu_global: bool = True) -> None:
         """Apply the promotion in all states."""
         for state in sdfg.states():
             self._rewrite_state(state=state, name=name, pattern=pattern)
