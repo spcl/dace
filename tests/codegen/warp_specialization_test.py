@@ -93,6 +93,9 @@ def test_thread_specialization_noncontiguous_blocks(block_size):
                     out = 6 + inp
 
     sdfg = thread_specialization.to_sdfg()
+    # Both parametrizations generate different code under the same name, so they would otherwise
+    # share one build folder and clobber each other's build when run in parallel.
+    sdfg.name = f"{sdfg.name}_{(block_size or 'default').replace(',', '_')}"
     sdfg.apply_gpu_transformations()
 
     # Ensure all nested maps set grid dimensions

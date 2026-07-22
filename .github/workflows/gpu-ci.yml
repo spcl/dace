@@ -63,7 +63,15 @@ jobs:
         export DACE_cache=single
         export PATH=$PATH:/usr/local/cuda/bin  # some test is calling cuobjdump, so it needs to be in path
         echo "CUDACXX: $CUDACXX"
-        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu"
+        pytest --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "gpu and not mpi"
+
+    - name: Run pytest GPU with distributed compilation
+      run: |
+        source ~/.venv/bin/activate # activate venv
+        export DACE_cache=single
+        export PATH=$PATH:/usr/local/cuda/bin
+        pip install pytest-mpi
+        mpirun -n 2 --oversubscribe pytest --tb=short --timeout_method thread --timeout=300 --with-mpi -m "gpu and mpi"
 
     - name: Run extra GPU tests
       run: |

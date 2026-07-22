@@ -67,7 +67,7 @@ jobs:
         export DACE_testing_deserialize_exception=1
         export DACE_cache=unique
         source ~/.venv/bin/activate # activate venv
-        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi"
+        mpirun -n 2 coverage run --source=dace --parallel-mode -m pytest -x --with-mpi --tb=short --timeout_method thread --timeout=300 -m "mpi and not gpu"
 
     - name: Test ScaLAPACK PBLAS with pytest
       run: |
