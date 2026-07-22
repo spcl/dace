@@ -603,12 +603,6 @@ required:
                         default: true
                         description: >
                             Subtracts the minimum measured overhead from every measurement.
-                    vectorization_analysis:
-                        type: bool
-                        title: Enable vectorization check
-                        default: false
-                        description: >
-                            Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
 
     #############################################
     # Python frontend settings
