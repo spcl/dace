@@ -697,9 +697,9 @@ namespace dace
             return std::atan(a);
         }
         template<typename T>
-        DACE_CONSTEXPR DACE_HDFI T atan2(const T& a)
+        DACE_CONSTEXPR DACE_HDFI T atan2(const T& a, const T& b)
         {
-            return std::atan2(a);
+            return std::atan2(a, b);
         }
         template<typename T>
         DACE_CONSTEXPR DACE_HDFI T tanh(const T& a)
