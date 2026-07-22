@@ -603,6 +603,14 @@ required:
                         default: true
                         description: >
                             Subtracts the minimum measured overhead from every measurement.
+                    vectorization_analysis:
+                        type: bool
+                        title: Enable vectorization check
+                        default: false
+                        description: >
+                            Asks the compiler to report which loops it vectorized. The flag is chosen
+                            per compiler from CMAKE_CXX_COMPILER_ID; only GCC writes it to
+                            ``perf/vecreport.txt``, the others report on stderr.
 
     #############################################
     # Python frontend settings

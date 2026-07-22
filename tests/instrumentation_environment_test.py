@@ -17,7 +17,9 @@ import pytest
 
 from dace.codegen.instrumentation.likwid import LIKWID, LIKWIDNvmon, LIKWIDPerfmon
 from dace.codegen.instrumentation.papi import PAPI
-from dace.config import Config
+from dace.codegen.compiler import get_environment_flags
+from dace.config import Config, set_temporary
+from dace.library import get_environments_and_dependencies
 
 #: Instrumentation providers that used to append to the global config.
 PROVIDER_SOURCES = ('dace/codegen/instrumentation/likwid.py', 'dace/codegen/instrumentation/papi.py')
@@ -82,21 +84,46 @@ def test_papi_environment_declares_the_library():
     assert 'papi' in PAPI.cmake_libraries
 
 
-def test_papi_declares_no_compile_flags():
-    """PAPI needs libpapi and nothing else.
-
-    It used to append ``-fopt-info-vec-optimized-missed=../perf/vecreport.txt`` under an
-    ``instrumentation.papi.vectorization_analysis`` switch. Nothing in DaCe ever read the report: the
-    flag was a GCC-only spelling writing to a build-relative path that no code consumed, so it is
-    gone along with the config key that gated it, rather than moved into this environment.
-    """
+def test_papi_declares_no_python_chosen_compile_flags():
+    """The vectorization flag is not a Python-side string any more; it is a CMake fragment."""
     assert PAPI.cmake_compile_flags == []
 
 
-def test_vectorization_analysis_config_is_gone():
-    """The key fed only the removed flag, so leaving it would advertise a feature that does nothing."""
-    with pytest.raises(KeyError):
-        Config.get('instrumentation', 'papi', 'vectorization_analysis')
+@pytest.mark.parametrize('enabled', [True, False])
+def test_papi_vectorization_fragment_follows_the_config(enabled):
+    """Evaluated per build, so toggling the setting is honoured rather than baked in at the first
+    instrumented SDFG the way the previous one-shot global append was."""
+    with set_temporary('instrumentation', 'papi', 'vectorization_analysis', value=enabled):
+        assert PAPI.cmake_files() == (['papi_vectorization'] if enabled else [])
+
+
+def test_papi_vectorization_fragment_is_compiler_aware():
+    """The report flag differs per compiler, and CMake is what picks the compiler.
+
+    Choosing in CMake from CMAKE_CXX_COMPILER_ID means there is no second detector in Python that
+    has to predict what CMake is about to pick -- the failure mode where flags chosen for one
+    compiler are handed to another. Asserted on the fragment's text so it holds on a machine that
+    has only one of these compilers installed, which is every CI runner.
+    """
+    fragment = pathlib.Path(__file__).resolve().parents[1] / 'dace' / 'codegen' / 'instrumentation'
+    text = (fragment / 'papi_vectorization.cmake').read_text()
+    for compiler_id, flag in (('GNU', '-fopt-info-vec'), ('Clang', '-Rpass=loop-vectorize'), ('NVHPC', '-Minfo=vect'),
+                              ('IntelLLVM', '-qopt-report')):
+        assert compiler_id in text and flag in text, f'no {compiler_id} spelling in papi_vectorization.cmake'
+    # Placed via add_compile_options so the build type's flags cannot override them.
+    assert 'add_compile_options' in text
+
+
+def test_papi_vectorization_fragment_resolves_to_a_real_file():
+    """``cmake_files`` entries are resolved against the environment's module and get ``.cmake``
+    appended; a name that does not resolve fails at configure time, not here."""
+    with set_temporary('instrumentation', 'papi', 'vectorization_analysis', value=True):
+        envs = get_environments_and_dependencies({PAPI.full_class_path()})
+        flags, _link = get_environment_flags(envs)
+    declared = [f for f in flags if 'DACE_ENV_CMAKE_FILES' in f]
+    assert declared, 'the environment declared no cmake files'
+    paths = declared[0].split('=', 1)[1].strip('"').split(';')
+    assert any(pathlib.Path(p).is_file() for p in paths if p), f'declared cmake file does not exist: {paths}'
 
 
 def test_compiler_args_survive_importing_the_providers():
