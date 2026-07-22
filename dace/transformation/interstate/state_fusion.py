@@ -231,11 +231,11 @@ class StateFusion(transformation.MultiStateTransformation):
                     if node.data == '__pystate':
                         return False
 
-            # Library nodes and nested SDFGs carry dependencies fusion cannot see.
+            # Code nodes and nested SDFGs carry dependencies fusion cannot see.
             # Tasklet callbacks are governed by dont_fuse_callbacks above.
             for state in (first_state, second_state):
                 for node in state.nodes():
-                    if isinstance(node, (nodes.LibraryNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
+                    if isinstance(node, (nodes.CodeNode, nodes.NestedSDFG)) and node.has_side_effects(sdfg):
                         return False
 
             # If second state has other input edges, there might be issues
