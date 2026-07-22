@@ -109,25 +109,23 @@ def libnode_is_sequential(node: nodes.LibraryNode, state, sdfg: SDFG) -> bool:
     enclosing scope, so a ``Reduce`` nested in a parallel map can carry ``CPU_Multicore`` rather than
     ``Sequential`` and would then wrongly open a nested ``#pragma omp parallel`` per outer iteration
     -- the "constant parallel reductions" catastrophe. Determine sequentiality from SCOPE instead:
-    a libnode is sequential if it has a parallel parent map, an enclosing loop (both re-enter it), or
-    lives inside a ``Sequential``-scheduled nested SDFG (itself nested in a parallel scope).
+    a libnode is sequential if it has a parallel parent map or an enclosing loop (both re-enter it).
 
-    :func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes` -- now LibraryNode-aware (a
-    library node is a "special tasklet") -- yields every enclosing ``MapEntry`` / ``LoopRegion``
-    across nested-SDFG boundaries, so deep nesting is handled by the existing helper rather than a
-    bespoke climb. A genuinely top-level node (no enclosing parallel map / loop, not inside a
-    ``Sequential`` nsdfg) returns ``False`` and is free to open its own OpenMP / device-parallel region.
+    A ``NestedSDFG`` node carries no ``schedule`` property of its own (only ``Map`` /
+    ``LibraryNode`` do), so "lives inside a sequential nested SDFG" is not a distinct case to probe
+    for here: :func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes` -- now
+    LibraryNode-aware (a library node is a "special tasklet") -- walks OUT across every nested-SDFG
+    boundary up to the root and yields every enclosing ``MapEntry`` / ``LoopRegion`` regardless of
+    how many nsdfg levels separate ``node`` from them, so a parallel map or loop several nsdfg levels
+    up is still found by the loop below; deep nesting is handled by the existing helper rather than a
+    bespoke climb. A genuinely top-level node (no enclosing parallel map / loop) returns ``False`` and
+    is free to open its own OpenMP / device-parallel region.
     """
     # Function-local import: ``dace.transformation.helpers`` pulls in a chain that re-enters the
     # canonicalize package, so a top-level import here would be a cycle when ``finalize`` is imported
     # as the package's first submodule.
     from dace.transformation.helpers import get_parent_map_and_loop_scopes
     if node.schedule == dtypes.ScheduleType.Sequential:
-        return True
-    # A ``Sequential`` enclosing nested SDFG (itself nested in a parallel scope) makes the libnode
-    # sequential too.
-    parent_nsdfg = state.sdfg.parent_nsdfg_node
-    if parent_nsdfg is not None and parent_nsdfg.schedule == dtypes.ScheduleType.Sequential:
         return True
     for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
         if isinstance(scope, nodes.MapEntry):
