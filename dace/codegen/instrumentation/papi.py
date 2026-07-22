@@ -47,13 +47,25 @@ class PAPI:
     cmake_libraries = ['papi']
     cmake_compile_flags = []
     cmake_link_flags = []
-    cmake_files = []
 
     headers = []
     state_fields = []
     init_code = ""
     finalize_code = ""
     dependencies = []
+
+    @staticmethod
+    def cmake_files():
+        """The vectorization report, as a CMake fragment rather than a Python-chosen flag.
+
+        Every compiler spells this differently and CMake is what picks the compiler, so the choice
+        belongs in CMake -- see ``papi_vectorization.cmake``. Evaluated per build, so toggling the
+        setting between builds is honoured instead of being baked in at the first instrumented SDFG
+        the way the previous one-shot global append was.
+        """
+        if not Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
+            return []
+        return ['papi_vectorization']
 
     @staticmethod
     def is_installed():
