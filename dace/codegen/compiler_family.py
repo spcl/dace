@@ -15,8 +15,9 @@ Family names match CMake's ``CMAKE_<LANG>_COMPILER_ID`` lowercased, so the CMake
 precompiled header -- which is built outside CMake -- name the same thing.
 """
 import functools
+import os
 import subprocess
-from typing import Sequence, Tuple
+from typing import Tuple
 
 from dace.config import Config
 
@@ -64,21 +65,20 @@ def detect(executable: str) -> str:
     return FALLBACK_FAMILY
 
 
-def resolve_args(args_key: Sequence[str], executable_key: Sequence[str], fallback_executable: str) -> str:
-    """The flag string for ``args_key``, specialized to the family of ``executable_key``'s compiler.
+def host_compiler() -> str:
+    """The C++ compiler this build will actually use.
 
-    A value the user set explicitly is returned untouched -- a family default is a better starting
-    point, never a reason to overrule someone who stated what they wanted. Only when the value is
-    still the shipped default is the ``default_<family>`` sibling consulted, and only if one exists;
-    families we ship no entry for keep the GNU-flavoured default they have today.
+    ``compiler.cpu.executable`` is DaCe's own knob and wins. ``$CXX`` is consulted next because CMake
+    honours it when DaCe passes no ``-DCMAKE_CXX_COMPILER``: without this, ``CXX=nvc++`` gets a build
+    where CMake picks nvc++ while the flags were chosen for GCC, and the configure dies on
+    ``nvc++-Error-Unknown switch: -fno-math-errno``. Detection has to look where CMake looks.
     """
-    configured = Config.get(*args_key)
-    if configured != Config.get_default(*args_key):
-        return configured
-    family = detect(Config.get(*executable_key) or fallback_executable)
-    return Config.get_metadata(*args_key).get('default_' + family, configured)
+    return Config.get('compiler', 'cpu', 'executable') or os.environ.get('CXX') or 'c++'
 
 
 def cpu_args() -> str:
-    """``compiler.cpu.args``, specialized to the configured host compiler."""
-    return resolve_args(('compiler', 'cpu', 'args'), ('compiler', 'cpu', 'executable'), 'c++')
+    """``compiler.cpu.args``, specialized to the host compiler this build will use."""
+    configured = Config.get('compiler', 'cpu', 'args')
+    if configured != Config.get_default('compiler', 'cpu', 'args'):
+        return configured
+    return Config.get_metadata('compiler', 'cpu', 'args').get('default_' + detect(host_compiler()), configured)
