@@ -5,6 +5,7 @@
 import dace
 from dace import dtypes, library, registry, symbolic
 from dace.codegen.instrumentation.provider import InstrumentationProvider
+from dace.codegen import common
 from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.sdfg import nodes
@@ -93,6 +94,10 @@ class PAPIInstrumentation(InstrumentationProvider):
 
     def __init__(self):
         self._papi_used = False
+        #: Whether this SDFG also runs work on a device. PAPI reads CPU counters, and GPU launches
+        #: are asynchronous, so without a sync a scope's counters close while its kernels are still
+        #: running -- the work lands in whichever later scope happens to be open.
+        self._gpu_used = False
         self._unique_counter = 0
         self.perf_should_instrument = False
         PAPIInstrumentation._counters = PAPIInstrumentation._counters or set(
@@ -150,6 +155,8 @@ class PAPIInstrumentation(InstrumentationProvider):
             # Declare the build requirements against this SDFG rather than the process config.
             codegen.dispatcher.used_environments.add(PAPI.full_class_path())
 
+            self._gpu_used = PAPIUtils.sdfg_uses_gpu(sdfg)
+
             # Add instrumentation includes and initialize PAPI
             global_stream.write('#include <dace/perf/papi.h>', sdfg)
             local_stream.write('''dace::perf::PAPI::init();''')
@@ -203,6 +210,8 @@ int _papi_nevents = _papi_events.size();
 
             # Declare the build requirements against this SDFG rather than the process config.
             codegen.dispatcher.used_environments.add(PAPI.full_class_path())
+
+            self._gpu_used = PAPIUtils.sdfg_uses_gpu(sdfg)
 
             # Add instrumentation includes and initialize PAPI
             global_stream.write('#include <dace/perf/papi.h>', sdfg)
@@ -572,14 +581,25 @@ __perf_cpy_{nodeid}_{unique_id}.enterCritical();'''.format(
                                               iteration: str,
                                               core_str: str = "PAPI_thread_id()"):
         pcs = self.perf_counter_string()
-        return '''dace::perf::{counter_str} __perf_{id};
+        return self.gpu_sync_string() + '''dace::perf::{counter_str} __perf_{id};
 auto& __vs_{id} = __perf_store.getNewValueSet(__perf_{id}, {id}, {core}, {it});
 __perf_{id}.enterCritical();
         '''.format(counter_str=pcs, id=unified_id, it=iteration, core=core_str)
 
-    @staticmethod
-    def perf_counter_end_measurement_string(unified_id):
-        return '__perf_{id}.leaveCritical(__vs_{id});\n'.format(id=unified_id)
+    def gpu_sync_string(self) -> str:
+        """A device sync, or nothing when this SDFG has no device work.
+
+        PAPI counts on the CPU while GPU launches are asynchronous, so a scope that dispatches
+        kernels stops counting the moment it has queued them. Synchronizing on both edges of the
+        measurement makes the numbers mean 'this scope, finished' rather than 'this scope, submitted'
+        -- and keeps the previous scope's kernels from being charged to the next one.
+        """
+        if not self._gpu_used:
+            return ''
+        return 'DACE_GPU_CHECK(%sDeviceSynchronize());\n' % common.get_gpu_backend()
+
+    def perf_counter_end_measurement_string(self, unified_id):
+        return '%s__perf_{id}.leaveCritical(__vs_{id});\n'.format(id=unified_id) % self.gpu_sync_string()
 
     @staticmethod
     def perf_section_start_string(unified_id: int, size: str, in_size: str, core_str: str = "PAPI_thread_id()"):
@@ -593,6 +613,22 @@ __perf_store.markSectionStart(%d, (long long)%s, (long long)%s, %s);''' % (unifi
 
 class PAPIUtils(object):
     """ General-purpose utilities for working with PAPI. """
+
+    @staticmethod
+    def sdfg_uses_gpu(sdfg) -> bool:
+        """Whether any part of ``sdfg``, at any nesting depth, runs on a device.
+
+        Both schedules and storage are checked: a graph can move data to the GPU without a
+        device-scheduled map in the same SDFG, and those copies are asynchronous too.
+        """
+        for node, _ in sdfg.all_nodes_recursive():
+            if isinstance(node, nodes.EntryNode) and node.schedule in dtypes.GPU_SCHEDULES:
+                return True
+        for nested in sdfg.all_sdfgs_recursive():
+            for desc in nested.arrays.values():
+                if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
+                    return True
+        return False
 
     @staticmethod
     def available_counters() -> Dict[str, int]:
