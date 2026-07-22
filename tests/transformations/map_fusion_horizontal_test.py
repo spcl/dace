@@ -344,7 +344,80 @@ def test_horizontal_fusion_preserves_distinct_ordering_in_edges():
         "distinct-source empty ordering in-edges must not be deduped away"
 
 
+def _make_slicing_map(state: dace.SDFGState, name: str, source: nodes.AccessNode, target: str,
+                      slices: int) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+    """A Map whose body writes ``slices`` disjoint columns of ``target`` from ``slices`` tasklets.
+
+    All of those writes land on the SAME ``IN_1`` of the MapExit -- one connector carrying several
+    edges, which is legal (the one-edge-per-connector rule binds a scope exit's *out*-connectors,
+    not its in-connectors). That is the shape CLOUDSC arrives in: a Fortran body assigning
+    ``zqxn2d(jl, jk, 1:5)`` becomes five nested SDFGs that ``InlineSDFGs`` flattens into five
+    tasklets all writing through one MapExit connector. ``add_mapped_tasklet`` gives each tasklet
+    its own connector, so the wiring is explicit here.
+    """
+    entry, exit_node = state.add_map(name, {"__i": "0:10"})
+
+    entry.add_in_connector("IN_1")
+    entry.add_out_connector("OUT_1")
+    state.add_edge(source, None, entry, "IN_1", dace.Memlet("A[0:10]"))
+
+    exit_node.add_in_connector("IN_1")
+    exit_node.add_out_connector("OUT_1")
+    for column in range(slices):
+        tasklet = state.add_tasklet(f"{name}_t{column}", {"__in"}, {"__out"}, f"__out = __in + {column}.0")
+        state.add_edge(entry, "OUT_1", tasklet, "__in", dace.Memlet("A[__i]"))
+        state.add_edge(tasklet, "__out", exit_node, "IN_1", dace.Memlet(f"{target}[__i, {column}]"))
+    state.add_edge(exit_node, "OUT_1", state.add_access(target), None, dace.Memlet(f"{target}[0:10, 0:{slices}]"))
+    return entry, exit_node
+
+
+def test_horizontal_fusion_relocates_a_multi_edge_connector_once():
+    """Regression: a scope connector carrying SEVERAL edges must be relocated exactly once.
+
+    ``relocate_nodes`` moves a whole ``IN_x`` / ``OUT_x`` group in one step but iterated over a
+    snapshot of the source node's *edges*. A connector holding n edges was therefore visited n
+    times: the first visit moved the group, and each of the n-1 later visits found the group
+    already empty, minted a fresh connector pair on the surviving node and attached nothing to it
+    -- ``InvalidSDFGNodeError: Dangling in-connector IN_4``. Surfaced by CLOUDSC ``full_cpu``,
+    whose MapExits carry five ``zqxn2d[i, j, 0..4]`` edges on one connector.
+    """
+    sdfg = dace.SDFG(unique_name("horizontal_multi_edge_connector"))
+    state = sdfg.add_state(is_start_block=True)
+    sdfg.add_array("A", shape=(10, ), dtype=dace.float64, transient=False)
+    for name in ("out1", "out2"):
+        sdfg.add_array(name, shape=(10, 3), dtype=dace.float64, transient=False)
+
+    a = state.add_access("A")
+    _, exit1 = _make_slicing_map(state, "comp_1", a, "out1", slices=3)
+    _, exit2 = _make_slicing_map(state, "comp_2", a, "out2", slices=3)
+    sdfg.validate()
+    edges_before = len(state.in_edges(exit1)) + len(state.in_edges(exit2))
+    assert edges_before == 6
+
+    count = sdfg.apply_transformations_repeated(
+        [dftrans.MapFusionHorizontal()],
+        validate=False,
+        validate_all=False,
+    )
+    assert count == 1, "the two same-range parallel maps must fuse"
+
+    fused_exits = count_nodes(state, nodes.MapExit, return_nodes=True)
+    assert len(fused_exits) == 1
+    fused_exit = fused_exits[0]
+
+    dangling_in = sorted(c for c in fused_exit.in_connectors
+                         if not any(e.dst_conn == c for e in state.in_edges(fused_exit)))
+    dangling_out = sorted(c for c in fused_exit.out_connectors
+                          if not any(e.src_conn == c for e in state.out_edges(fused_exit)))
+    assert not dangling_in, f"MapExit kept in-connectors with no edge: {dangling_in}"
+    assert not dangling_out, f"MapExit kept out-connectors with no edge: {dangling_out}"
+    # Nothing may be lost either: every slice write of both Maps still reaches the fused exit.
+    assert len(state.in_edges(fused_exit)) == edges_before
+    sdfg.validate()
+
+
 if __name__ == '__main__':
+    test_horizontal_fusion_relocates_a_multi_edge_connector_once()
     test_horizontal_fusion_preserves_distinct_ordering_in_edges()
     test_vertical_map_fusion_common_ancestor_is_required()
     test_vertical_map_fusion_no_common_ancestor_not_required()

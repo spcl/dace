@@ -280,6 +280,15 @@ def relocate_nodes(
         seen_empty_pairs.add(pair)
 
     # Relocation of the edges that carry data.
+    #  A passthrough connector may carry MORE THAN ONE edge -- a Map body that writes several
+    #  disjoint slices of the same array through one tasklet output lands every one of them on
+    #  the same `IN_x` (the CLOUDSC shape: five `zqxn2d[i, j, 0..4]` edges on a single MapExit
+    #  connector). The passthrough branch below relocates the whole `IN_x` / `OUT_x` group in
+    #  one go, so the group must be visited ONCE: the extra edges of a group are already
+    #  relocated (and their edge objects stale) by the time the loop reaches them, and handling
+    #  one again mints another connector pair on `to_node` that nothing is attached to --
+    #  'Dangling in-connector IN_x' out of validate().
+    relocated_in_conns: Set[str] = set()
     for edge_to_move in list(state.in_edges(from_node)):
         assert isinstance(edge_to_move.dst_conn, str)
 
@@ -300,8 +309,9 @@ def relocate_nodes(
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
-        else:
+        elif edge_to_move.dst_conn not in relocated_in_conns:
             # We have a Passthrough connection, i.e. there exists a matching `OUT_`.
+            relocated_in_conns.add(edge_to_move.dst_conn)
             old_conn = edge_to_move.dst_conn[3:]  # The connection name without prefix
             new_conn, conn_was_reused = get_new_conn_name(
                 edge_to_move=edge_to_move,
