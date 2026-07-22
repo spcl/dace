@@ -164,6 +164,45 @@ def is_same_domain_constant(rhs: str, target_dtype) -> bool:
     return lit_domain is not None and lit_domain == dtype_numeric_domain(target_dtype)
 
 
+def data_in_edges(state: SDFGState, node) -> Dict[Optional[str], Any]:
+    """In-edges of ``node`` keyed by destination connector, EXCLUDING empty memlets.
+
+    An empty memlet carries no data -- it is a happens-before ORDERING edge minted by
+    ``StateFusionExtended`` for a WAR/WAW hazard. It has no connector, so it lands under the
+    ``None`` key and then flows into the bulk ``in_edges.values()`` removal at the end of
+    every conversion, silently deleting a dependency the rest of the pipeline still needs.
+    """
+    return {e.dst_conn: e for e in state.in_edges(node) if e.data is None or not e.data.is_empty()}
+
+
+def data_out_edges(state: SDFGState, node) -> list:
+    """Out-edges of ``node`` carrying data, in order, EXCLUDING empty ordering memlets.
+
+    Every conversion resolves the produced value as ``out_edges[0]``; an ordering edge
+    sorting first would wire the lib node's result connector to a connector-less endpoint
+    and drop the real output (``s1251``: ``TileBinop`` validation fails on a ``None``
+    output). See :func:`data_in_edges`.
+    """
+    return [e for e in state.out_edges(node) if e.data is None or not e.data.is_empty()]
+
+
+def reanchor_order_edges(state: SDFGState, tasklet: Tasklet, replacement) -> None:
+    """Move ``tasklet``'s empty happens-before edges onto the node that replaces it.
+
+    Called just before the tasklet is removed. ``replacement`` is the new lib node, or -- for
+    a conversion that lowers to a plain AN->AN copy -- the copy's DESTINATION AccessNode:
+    anchoring an incoming ordering edge on the node the tasklet wrote preserves
+    "predecessor before this write", and an outgoing one preserves "this write before
+    successor", with no new reachability either way.
+    """
+    for e in state.in_edges(tasklet):
+        if e.data is not None and e.data.is_empty():
+            state.add_nedge(e.src, replacement, dace.Memlet())
+    for e in state.out_edges(tasklet):
+        if e.data is not None and e.data.is_empty():
+            state.add_nedge(replacement, e.dst, dace.Memlet())
+
+
 def _normalize_python_tasklet_body(body: str) -> Optional[str]:
     """Rewrite Python boolean syntax (``or`` / ``and``) to the C forms (``||`` / ``&&``)
     the binop detectors match. Returns ``None`` for bodies containing ``@`` (matmul is
@@ -610,7 +649,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         expansion embeds ``src_expr`` inline. A non-tile (true scalar) output stays a
         single-statement python scalar tasklet — scalar→scalar needs no tile op."""
         out_conn, expr = detected
-        out_edges = list(inner_state.out_edges(tasklet))
+        out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
             return False
         out_edge = out_edges[0]
@@ -670,6 +709,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         subset = ", ".join(f"0:{w}" for w in self.widths)
         inner_state.add_edge(tl, "_dst", out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{out_edge.dst.data}[{subset}]"))
         inner_state.remove_edge(out_edge)
+        reanchor_order_edges(inner_state, tasklet, tl)
         inner_state.remove_node(tasklet)
         return True
 
@@ -919,8 +959,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                 break
         if matched_op is None:
             return None
-        out_edges = inner_state.out_edges(tasklet)
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
+        out_edges = data_out_edges(inner_state, tasklet)
+        in_edges = data_in_edges(inner_state, tasklet)
         if len(out_edges) != 1 or a not in in_edges or b not in in_edges:
             return None
 
@@ -1049,8 +1089,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         the destination confuses the validator's data-vs-endpoint consistency check.
         """
         out_conn, a_conn = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if a_conn not in in_edges or not out_edges:
             return False
         a_edge = in_edges[a_conn]
@@ -1065,6 +1105,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                              dace.Memlet.from_memlet(a_edge.data))
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, out_edge.dst)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1095,6 +1136,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                              dace.Memlet(data=out_edge.data.data, subset=tile_subset))
         inner_state.remove_edge(a_edge)
         inner_state.remove_edge(out_edge)
+        reanchor_order_edges(inner_state, tasklet, tl)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1130,8 +1172,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         non-tile index / result) is declined so it is not silently mis-lowered.
         """
         out_conn, arr_conn, idx_conn = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if arr_conn not in in_edges or idx_conn not in in_edges or not out_edges:
             return False
         arr_edge, idx_edge, out_edge = in_edges[arr_conn], in_edges[idx_conn], out_edges[0]
@@ -1169,6 +1211,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         self._wire_mask(inner_state, load, mask_an)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, load)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1256,8 +1299,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
 
     def _convert_reduction(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         acc_conn, val_conn, op = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edge_list = inner_state.out_edges(tasklet)
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edge_list = data_out_edges(inner_state, tasklet)
         # A reduction tasklet has exactly one output (the accumulator write). For the
         # same-connector RMW form ``out_conn == acc_conn``; for the ``WCRToAugAssign``
         # form (``_detect_augassign_reduction``) the output connector differs from the
@@ -1285,6 +1328,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         acc_src = acc_in_edge.src
         for edge in list(in_edges.values()) + list(out_edge_list):
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, reduce_node)
         inner_state.remove_node(tasklet)
         # The dangled accumulator read-back may leave its source AccessNode isolated — drop
         # it (a shared accumulator AN still carrying other edges is left intact).
@@ -1303,8 +1347,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         per-lane tile; connector reading a Scalar / length-1 source → broadcast full tile.
         """
         out_conn, cond_arg, t_arg, e_arg, t_is_sym, e_is_sym = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges or cond_arg not in in_edges:
             return False
         if not t_is_sym and t_arg not in in_edges:
@@ -1370,6 +1414,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(ite, "_o", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, ite)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1419,8 +1464,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         masked store discards inactive lanes), so no compute op needs the mask.
         """
         out_conn, cond_conn, val_arg, _val_is_sym = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if cond_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
@@ -1618,8 +1663,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         # integer -- so it lowers to ``std::pow``. (``pow(a, b)`` call form likewise.)
         if op in ("**", "pow"):
             op = "pow"
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if a_conn not in in_edges or b_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
@@ -1683,6 +1728,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, binop)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1692,8 +1738,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         the ``_o`` output connector."""
         from dace.libraries.tileops import TileFMA
         out_conn, a_conn, b_conn, c_conn = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if a_conn not in in_edges or b_conn not in in_edges or c_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
@@ -1733,6 +1779,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(fma, "_o", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, fma)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1790,8 +1837,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         lane-id-dependent → per-lane tile (:meth:`_materialise_lane_id_tile`), ``kind=Tile``.
         """
         out_conn, a_conn, op, symbol_side, symbol_expr = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if a_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
@@ -1844,6 +1891,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, binop)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1926,7 +1974,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         ``expr_a``; lane-id-dependent -> materialised tile wired to ``_a``.
         """
         out_conn, op, symbol_expr = detected
-        out_edges = list(inner_state.out_edges(tasklet))
+        out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
             return False
         out_edge = out_edges[0]
@@ -1958,6 +2006,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, unop)
         inner_state.remove_node(tasklet)
         return True
 
@@ -1968,7 +2017,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         Each operand resolved independently to invariant Symbol or materialised Tile.
         """
         out_conn, op, expr_a_str, expr_b_str = detected
-        out_edges = list(inner_state.out_edges(tasklet))
+        out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
             return False
         out_edge = out_edges[0]
@@ -2005,13 +2054,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(binop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, binop)
         inner_state.remove_node(tasklet)
         return True
 
     def _convert_unop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         out_conn, a_conn, op = detected
-        in_edges = {e.dst_conn: e for e in inner_state.in_edges(tasklet)}
-        out_edges = list(inner_state.out_edges(tasklet))
+        in_edges = data_in_edges(inner_state, tasklet)
+        out_edges = data_out_edges(inner_state, tasklet)
         if a_conn not in in_edges or not out_edges:
             return False
         out_edge = out_edges[0]
@@ -2043,6 +2093,7 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         inner_state.add_edge(unop, "_c", out_edge.dst, out_edge.dst_conn, _out_memlet)
         for edge in list(in_edges.values()) + out_edges:
             inner_state.remove_edge(edge)
+        reanchor_order_edges(inner_state, tasklet, unop)
         inner_state.remove_node(tasklet)
         return True
 

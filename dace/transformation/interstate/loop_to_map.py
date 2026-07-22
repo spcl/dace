@@ -251,7 +251,31 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     return sp.Integer(diff) % g != 0
 
 
-def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, itersym, step, start) -> bool:
+def loop_varying_symbols(loop: LoopRegion) -> Set[str]:
+    """ Symbols whose value can change *while* ``loop`` runs, other than its own iterator:
+        the iterators of loops and maps nested inside its body, and everything its
+        interstate edges assign.
+
+        Every OTHER symbol a body subset mentions -- an enclosing loop's iterator, an array
+        size, a free parameter -- holds one fixed value for the loop's whole execution, so a
+        symbolic comparison of two indices that mention it is a valid statement about every
+        pair of iterations. That is what :func:`_read_write_dims_disjoint` needs.
+    """
+    varying: Set[str] = set()
+    for cfr in loop.all_control_flow_regions(recursive=True):
+        if isinstance(cfr, LoopRegion) and cfr is not loop and cfr.loop_variable:
+            varying.add(cfr.loop_variable)
+    for state in loop.all_states():
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                varying.update(node.map.params)
+    for e in loop.all_interstate_edges():
+        varying.update(e.data.assignments.keys())
+    return varying
+
+
+def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, itersym, step, start,
+                              varying: Set[str]) -> bool:
     """ True iff some dimension's read/write point-indices are provably disjoint
         across every pair of in-domain iterations (step-aware
         linear-Diophantine, see :func:`_dim_provably_disjoint`).
@@ -262,6 +286,8 @@ def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, iters
         dimensions (``aa[0, i]`` write vs ``aa[1, i-1]`` read -- row 0 can never
         equal row 1), which the propagate+intersect fallback drops when it
         restricts to iteration-dependent dimensions only.
+
+        ``varying`` is :func:`loop_varying_symbols` for the loop being lifted.
     """
     rnd = list(read.ndrange())
     wnd = list(write.ndrange())
@@ -270,19 +296,18 @@ def _read_write_dims_disjoint(read: subsets.Subset, write: subsets.Subset, iters
     for (rb, re_, _), (wb, we_, _) in zip(rnd, wnd):
         if rb != re_ or wb != we_:  # non-point dimension: cannot decide here
             continue
-        # SOUNDNESS: only a dimension indexed purely by ``itersym`` (plus
-        # literals) yields a valid cross-iteration disjointness verdict. A
-        # dimension that also contains an INNER loop variable (``a[i-1, j-1]``
-        # vs ``a[i, j]`` where ``j`` ranges) would be misjudged: ``j-1`` and
-        # ``j`` look like distinct constants w.r.t. ``i`` yet the sets overlap
-        # as ``j`` sweeps -- that is a genuine diagonal recurrence (TSVC s119).
-        # Requiring free symbols to be a subset of ``{itersym}`` is
-        # conservative (a loop-invariant symbol is also skipped) but sound.
-        allowed = {itersym}
+        # SOUNDNESS: the verdict is valid only when every symbol in the dimension holds ONE
+        # value for the loop's whole execution. ``itersym`` is exempt -- the Diophantine test
+        # reparameterizes it independently for the reading and the writing iteration. A symbol
+        # that varies INSIDE the body is not: ``a[i-1, j-1]`` vs ``a[i, j]`` seen from the ``i``
+        # loop makes ``j-1`` and ``j`` look like two distinct constants, yet the sets overlap as
+        # ``j`` sweeps -- a genuine diagonal recurrence (TSVC s119's OUTER loop). An ENCLOSING
+        # loop's iterator is fixed here, and admitting it is what lets s119's inner loop prove
+        # row ``i-1`` can never be row ``i`` (previously refused, losing all its parallelism).
         # ``ndrange()`` yields plain ints as well as sympy exprs; ``sympify`` gives both a
         # uniform ``.free_symbols`` (an int has none) without a ``getattr`` guard.
-        rw_syms = set(sp.sympify(rb).free_symbols) | set(sp.sympify(wb).free_symbols)
-        if not rw_syms <= allowed:
+        rw_syms = {s.name for s in sp.sympify(rb).free_symbols} | {s.name for s in sp.sympify(wb).free_symbols}
+        if rw_syms & varying:
             continue
         if _dim_provably_disjoint(rb, wb, itersym, step, start):
             return True
@@ -574,6 +599,17 @@ class LoopToMap(xf.MultiStateTransformation):
                 # Take all writes that are not conflicted into consideration
                 if dn.data in write_set:
                     for e in state.in_edges(dn):
+                        # An EMPTY memlet is a happens-before edge, not a write: no data moves
+                        # along it, so it cannot carry a dependency from one iteration into the
+                        # next, and the intra-iteration order it encodes survives verbatim inside
+                        # the map body. It has no subset, so the ``a*i+b`` test below would read it
+                        # as an unindexed whole-array write and refuse a perfectly parallel loop --
+                        # which is what ``StateFusionExtended`` produces for an intra-iteration WAR
+                        # (TSVC ``s1251``: ``s = b[i]+c[i]; b[i] = a[i]+d[i]; a[i] = s*e[i]`` fuses
+                        # with ordering edges into ``a``/``d`` and stopped parallelizing).
+                        # ``_read_and_write_sets`` already skips empty memlets for the same reason.
+                        if e.data is None or e.data.is_empty():
+                            continue
                         if e.data.dynamic and e.data.wcr is None:
                             # Dynamic write (no WCR) is safe across iterations if its dst subset
                             # pins an axis to the iter var (same ``a*i+b`` as non-dynamic below):
@@ -583,8 +619,6 @@ class LoopToMap(xf.MultiStateTransformation):
                             if not (dst_subset and _check_range(dst_subset, a, itersym, b, step)):
                                 return refuse(f"dynamic write to {dn.data} is not indexed by the iteration variable "
                                               f"- dst_subset={dst_subset}")
-                        if e.data is None:
-                            continue
 
                         # Unique write index per iteration: match ``a*i+b``, ``|a| >= 1``, i the
                         # iteration variable (which must be used).
@@ -653,6 +687,9 @@ class LoopToMap(xf.MultiStateTransformation):
                         return refuse(f"writes {reps[x].subset} and {reps[y].subset} to {data} "
                                       "may overlap across iterations")
 
+        # Fixed for the whole loop, so compute once and share with every read test below.
+        varying = loop_varying_symbols(self.loop)
+
         # After looping over relevant writes, consider reads that may overlap
         for state in loop_states:
             for dn in state.data_nodes():
@@ -661,13 +698,16 @@ class LoopToMap(xf.MultiStateTransformation):
                 data = dn.data
                 if data in write_memlets:
                     for e in state.out_edges(dn):
-                        if e.data is None:
+                        # Mirror of the write scan above: an empty memlet is a happens-before
+                        # edge, not a read, and its missing subset would be taken for a
+                        # whole-array read.
+                        if e.data is None or e.data.is_empty():
                             continue
 
                         # Container read AND written: match only if the locations can't race.
                         src_subset = e.data.get_src_subset(e, state)
                         if not self.test_read_memlet(sdfg, state, e, itersym, itervar, start, end, step, write_memlets,
-                                                     e.data, src_subset):
+                                                     e.data, src_subset, varying):
                             return refuse(f"read-after-write conflict on {data} within the loop body "
                                           f"- src_subset={src_subset}")
 
@@ -678,7 +718,7 @@ class LoopToMap(xf.MultiStateTransformation):
         for mmlt in isread_set:
             if mmlt.data in write_memlets:
                 if not self.test_read_memlet(sdfg, None, None, itersym, itervar, start, end, step, write_memlets, mmlt,
-                                             mmlt.subset):
+                                             mmlt.subset, varying):
                     return refuse(f"read-after-write conflict on {mmlt.data} via an inter-state edge "
                                   f"- subset={mmlt.subset}")
 
@@ -737,7 +777,8 @@ class LoopToMap(xf.MultiStateTransformation):
     def test_read_memlet(self, sdfg: SDFG, state: SDFGState, edge: gr.MultiConnectorEdge[memlet.Memlet],
                          itersym: symbolic.SymbolicType, itervar: str, start: symbolic.SymbolicType,
                          end: symbolic.SymbolicType, step: symbolic.SymbolicType,
-                         write_memlets: Dict[str, List[memlet.Memlet]], mmlt: memlet.Memlet, src_subset: subsets.Range):
+                         write_memlets: Dict[str, List[memlet.Memlet]], mmlt: memlet.Memlet, src_subset: subsets.Range,
+                         varying: Set[str]):
         from dace.sdfg.propagation import propagate_subset, align_memlet
 
         a = sp.Wild('a', exclude=[itersym])
@@ -778,7 +819,7 @@ class LoopToMap(xf.MultiStateTransformation):
             # never alias -- no cross-iteration RAW. This is strictly more precise
             # than the propagate+intersect fallback below, which drops constant
             # disproving dims and ignores the loop stride.
-            if _read_write_dims_disjoint(read, write, itersym, step, start):
+            if _read_write_dims_disjoint(read, write, itersym, step, start, varying):
                 continue
             # Same-iteration collision: if some point dimension indexes both the read and the write
             # by the same injective function of the iter var (e.g. syrk's ``C[i, :i+1]`` -- row ``i``

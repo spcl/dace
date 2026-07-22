@@ -175,7 +175,8 @@ def stage_tile_load(state: SDFGState,
                     gather_dims: Tuple[int, ...] = (),
                     idx_sources: Optional[Dict[int, AccessNode]] = None,
                     mask_an: Optional[AccessNode] = None,
-                    dst_shape: Optional[Tuple[Any, ...]] = None) -> Tuple[str, "TileLoad"]:
+                    dst_shape: Optional[Tuple[Any, ...]] = None,
+                    src_kind: str = "Tile") -> Tuple[str, "TileLoad"]:
     """Stage a tile-shaped access on ``an`` through a fresh `(widths,)` Array transient.
 
     Mint transient ``Array(shape=widths, ...)`` of ``an``'s dtype, add a :class:`TileLoad`
@@ -199,6 +200,9 @@ def stage_tile_load(state: SDFGState,
         full-K ``(W_d if dep else ONE)`` index tile while ``TileLoad`` loops only over the dep
         dims. ``ONE`` markers carry per-tile-dim dependency positionally (design 9.2, user
         2026-06-14). Default ``widths``.
+    :param src_kind: ``TileLoad`` source-operand kind. ``"Tile"`` (default) is the per-lane
+        indexed read; ``"Scalar"`` broadcasts a volume-1 source across every lane (``tile <-
+        a[0]``). ``"Symbol"`` has no ``_src`` connector and is not staged from an AccessNode.
     :returns: ``(bridge_name, load_node)`` -- staged transient name + :class:`TileLoad` instance.
     :raises ValueError: When ``gather_dims`` non-empty and ``set(gather_dims) != set(idx_sources)``.
     """
@@ -229,7 +233,8 @@ def stage_tile_load(state: SDFGState,
                     replicate_factor_per_dim=replicate_factor_per_dim,
                     src_dims=src_dims,
                     gather_dims=gather_dims,
-                    has_mask=has_mask_wired)
+                    has_mask=has_mask_wired,
+                    src_kind=src_kind)
     state.add_node(load)
     # ``AN -> TileLoad._src`` is a lib-node-boundary edge (design 3.8.2): drop
     # ``other_subset`` (the connector descriptor defines the dest shape).
@@ -435,7 +440,6 @@ class InsertTileLoadStore(ppl.Pass):
             pre_stage_out_edges = list(inner_state.out_edges(an))
             if not pre_stage_out_edges:
                 continue  # No reads -- sink AN handled by phase 2.
-            mask_an_for_this = (self._find_mask_producer_an(inner_state, mask_name) if mask_name else None)
             try:
                 src_data, src_subset, _dst_data, _dst_subset = infer_edge_endpoints(pre_stage_out_edges[0], inner_sdfg,
                                                                                     inner_state)
@@ -484,7 +488,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                                iter_vars,
                                                                begin_str,
                                                                name_hint=f"_idx_{an.data}_{k}",
-                                                               mask_an=mask_an_for_this)
+                                                               mask_an=self._mask_an(inner_state, mask_name))
                         if idx_an is None:
                             raise NotImplementedError(
                                 f"InsertTileLoadStore: could not build a tile-op gather index for "
@@ -518,7 +522,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                      src_dims=_g_src_dims,
                                                      gather_dims=gather_source_dims,
                                                      idx_sources=idx_sources,
-                                                     mask_an=mask_an_for_this)
+                                                     mask_an=self._mask_an(inner_state, mask_name))
                     self._rewire_consumers_to_bridge(inner_state, an, bridge_name, g_edges, iter_vars=iter_vars)
                     staged += 1
                 continue
@@ -561,6 +565,24 @@ class InsertTileLoadStore(ppl.Pass):
                     import dace.symbolic as _sym
                     if const_sub is not None and any(bool(_sym.simplify(sz - 1) != 0) for sz in const_sub.size()):
                         continue
+                    # ``a[i:i+W] = a0[0]`` -- a BARE copy straight into a global array, no
+                    # tasklet anywhere to splat the value. A Scalar bridge is a dead end here:
+                    # the splat is normally emitted by the lib node that CONSUMES the scalar,
+                    # and a plain AN -> AN copy has no such consumer. Broadcast into a real
+                    # ``(W,)`` tile instead, so the rewire below can stage the TileStore that
+                    # writes the window (user 2026-07-21: "if broadcast -> tile broadcast").
+                    if const_sub is not None and all(
+                            self._is_global_tile_copy_consumer(inner_state, e, iter_vars) for e in s_edges):
+                        bridge_name, _ = stage_tile_load(inner_state,
+                                                         an,
+                                                         widths=tuple(self.widths),
+                                                         src_subset=Memlet(data=an.data, subset=const_sub),
+                                                         name_hint=f"{an.data}_bcast",
+                                                         src_kind="Scalar",
+                                                         mask_an=self._mask_an(inner_state, mask_name))
+                        self._rewire_consumers_to_bridge(inner_state, an, bridge_name, s_edges, iter_vars=iter_vars)
+                        staged += 1
+                        continue
                     bridge_name = stage_constant_access(inner_state,
                                                         an,
                                                         name_hint=f"{an.data}_const",
@@ -591,7 +613,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                  dim_strides=dim_strides,
                                                  replicate_factor_per_dim=replicate,
                                                  src_dims=_s_src_dims,
-                                                 mask_an=mask_an_for_this)
+                                                 mask_an=self._mask_an(inner_state, mask_name))
                 self._rewire_consumers_to_bridge(inner_state, an, bridge_name, s_edges, iter_vars=iter_vars)
                 staged += 1
         return staged
@@ -625,7 +647,6 @@ class InsertTileLoadStore(ppl.Pass):
             # aren't all already-bridged reads, leave the AN alone (unknown shape -- stay safe).
             if pre_stage_out_edges and not all(isinstance(e.dst, (TileLoad, TileStore)) for e in pre_stage_out_edges):
                 continue
-            mask_an_for_this = (self._find_mask_producer_an(inner_state, mask_name) if mask_name else None)
             try:
                 wsubset = an_side_subset(pre_stage_in_edges[0], an, inner_sdfg, inner_state)
             except Exception:  # noqa: BLE001
@@ -650,7 +671,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                            iter_vars,
                                                            begin_str,
                                                            name_hint=f"_idx_scatter_{an.data}_{k}",
-                                                           mask_an=mask_an_for_this)
+                                                           mask_an=self._mask_an(inner_state, mask_name))
                     if idx_an is None:
                         raise NotImplementedError(
                             f"InsertTileLoadStore: could not build a tile-op scatter index for "
@@ -680,7 +701,7 @@ class InsertTileLoadStore(ppl.Pass):
                                                   dst_dims=_w_dst_dims,
                                                   gather_dims=scatter_source_dims,
                                                   idx_sources=idx_sources_w,
-                                                  mask_an=mask_an_for_this)
+                                                  mask_an=self._mask_an(inner_state, mask_name))
                 self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
                 staged += 1
                 continue
@@ -700,7 +721,7 @@ class InsertTileLoadStore(ppl.Pass):
                                               name_hint=f"{an.data}_tile_out",
                                               dim_strides=dim_strides_w,
                                               dst_dims=_s_dst_dims,
-                                              mask_an=mask_an_for_this)
+                                              mask_an=self._mask_an(inner_state, mask_name))
             self._rewire_producers_to_bridge(inner_state, an, bridge_name, pre_stage_in_edges)
             staged += 1
         return staged
@@ -1051,6 +1072,40 @@ class InsertTileLoadStore(ppl.Pass):
             if name.startswith(f"{base}_"):
                 return name
         return None
+
+    def _is_global_tile_copy_consumer(self, inner_state: SDFGState, edge, iter_vars: Tuple[str, ...]) -> bool:
+        """True when ``edge`` copies straight into a global array over a tile-varying window --
+        the shape :meth:`_maybe_stage_tilestore_to_output` can turn into a ``TileStore``.
+
+        A CONSTANT source feeding one of these is a broadcast store, not a scalar operand:
+        there is no tasklet or lib node downstream to splat the value, so the source must
+        become a real ``(W,)`` tile. An all-CONSTANT destination (``a[0] = b[0]``) is excluded
+        -- that write is loop-invariant and stays a direct copy (design 3.6, matching the same
+        guard in :meth:`_stage_writes_in_state`).
+        """
+        if not iter_vars or not isinstance(edge.dst, AccessNode):
+            return False
+        inner_sdfg = inner_state.sdfg
+        desc = inner_sdfg.arrays.get(edge.dst.data)
+        if not isinstance(desc, data.Array) or desc.transient or len(desc.shape) < len(iter_vars):
+            return False
+        try:
+            dst_sub = an_side_subset(edge, edge.dst, inner_sdfg, inner_state)
+        except Exception:  # noqa: BLE001 -- exotic edge: not a shape we can classify
+            return False
+        if dst_sub is None:
+            return False
+        record = classify_tile_access(dst_sub, iter_vars=iter_vars, inner_sdfg=inner_sdfg, state=inner_state)
+        kinds = set(record.per_dim_kind)
+        return bool(kinds) and kinds != {PerDimKind.CONSTANT} and PerDimKind.GATHER not in kinds
+
+    def _mask_an(self, inner_state: SDFGState, mask_name: Optional[str]) -> Optional[AccessNode]:
+        """The iteration-mask AccessNode to wire into a consumer, or None when no mask is in
+        scope. Call this at the point of use, never up front: the cross-state fallback in
+        :meth:`_find_mask_producer_an` MINTS an AccessNode, so looking the mask up before
+        deciding to stage leaves an isolated node behind on every bail-out path.
+        """
+        return self._find_mask_producer_an(inner_state, mask_name) if mask_name else None
 
     def _find_mask_producer_an(self, inner_state: SDFGState, mask_name: str) -> Optional[AccessNode]:
         """Find the AccessNode the TileMaskGen writes to (its OUTPUT side).
