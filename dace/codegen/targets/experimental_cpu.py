@@ -895,6 +895,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         if any(name in cfr.used_symbols(all_symbols=True, with_contents=False)
                for cfr in sdfg.all_control_flow_regions()):
             return None
+        # Read as a FREE NAME in another state's tasklet CODE -- no connector, no memlet, no
+        # AccessNode -- which every scan above is blind to: they look at data nodes, interstate
+        # edges and region conditions. ``SymbolPropagation`` produces exactly this shape by folding
+        # ``zqe = zqe_5`` into the reader's body (cloudsc ``zqe_5``). Deferring the declaration into
+        # this state's brace puts it out of scope of that read, and the C++ compiler rejects the
+        # sibling state's statement with "'zqe' was not declared in this scope".
+        if any(name in self._used_identifiers(n) for other in sdfg.states() if other is not state
+               for n in other.nodes() if isinstance(n, nodes.Tasklet)):
+            return None
         scope_dict = state.scope_dict()
         # Every access must live in ONE scope -- state top level (``None``) or one map's body. That is
         # the brace the eager declaration occupies too: a map's scope transients are declared inside its
