@@ -21,7 +21,7 @@ import numpy as np
 import pytest
 
 import dace
-from dace.codegen.compiler import CMAKE_BUILD_TYPE_FLAGS
+from dace.codegen.compiler import BUILD_TYPE_FLAGS_BY_FAMILY, CMAKE_BUILD_TYPE_FLAGS
 from dace.config import Config, set_temporary
 
 #: Every default flag string that must not carry an optimization level.
@@ -34,7 +34,7 @@ ARG_KEYS = (
 OPT_FLAG = re.compile(r'(?:^|\s)[-/]O')
 
 
-def cmake_config_flags(language: str = 'CXX') -> dict:
+def cmake_config_flags(language: str = 'CXX', executable: str = '') -> dict:
     """What CMake itself puts in ``CMAKE_<language>_FLAGS_<CONFIG>`` for this host's compiler.
 
     Asked of CMake rather than hardcoded: the point of the test is that DaCe's copy tracks the real
@@ -47,10 +47,10 @@ def cmake_config_flags(language: str = 'CXX') -> dict:
                                              'foreach(C DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)\n'
                                              f'  message(STATUS "PROBE ${{C}}=${{CMAKE_{language}_FLAGS_${{C}}}}")\n'
                                              'endforeach()\n')
-        out = subprocess.run(['cmake', '-S', str(root), '-B', str(root / 'b')],
-                             capture_output=True,
-                             text=True,
-                             timeout=300)
+        command = ['cmake', '-S', str(root), '-B', str(root / 'b')]
+        if executable:
+            command.append(f'-DCMAKE_{language}_COMPILER={shutil.which(executable)}')
+        out = subprocess.run(command, capture_output=True, text=True, timeout=300)
         assert out.returncode == 0, out.stderr
     found = {}
     for line in out.stdout.splitlines():
@@ -91,18 +91,31 @@ def test_cpu_args_keep_the_vectorization_enabling_subset():
         assert flag in default, f'compiler.cpu.args default lost {flag}: {default!r}'
 
 
-def test_pch_build_type_table_matches_cmake():
-    """``CMAKE_BUILD_TYPE_FLAGS`` is what the PCH is compiled with; CMake's own values are what the
-    translation unit gets. They must agree or the header is silently declined."""
+#: One compiler per family we keep a table for, so each table is checked against the compiler it
+#: describes. A family with no compiler installed yields no test case rather than a skip.
+FAMILY_PROBES = [(family, executable) for family, executable in (('gnu', 'g++'), ('nvhpc', 'nvc++'))
+                 if shutil.which(executable)]
+
+
+@pytest.mark.parametrize('family,executable', FAMILY_PROBES, ids=[f for f, _ in FAMILY_PROBES])
+def test_pch_build_type_table_matches_cmake(family, executable):
+    """DaCe's per-family table is what the PCH is compiled with; CMake's own values are what the
+    translation unit gets. They must agree or the header is silently declined.
+
+    Parametrized by FAMILY, not just run once against the host's default compiler: an earlier version
+    checked only the default and therefore passed while the NVHPC entry was wrong in all four
+    configurations, which is exactly the case a PCH test exists to catch.
+    """
     # Asserted rather than skipped: cmake is how DaCe compiles anything, so a box without it cannot
     # run this suite at all and "skipped" would be the wrong word for it.
     assert shutil.which('cmake'), 'cmake is not on PATH, so DaCe cannot build at all'
-    actual = cmake_config_flags('CXX')
-    assert set(CMAKE_BUILD_TYPE_FLAGS) == set(actual), 'DaCe and CMake disagree on the set of build types'
+    ours = BUILD_TYPE_FLAGS_BY_FAMILY[family]
+    actual = cmake_config_flags('CXX', executable)
+    assert set(ours) == set(actual), f'{family}: DaCe and CMake disagree on the set of build types'
     for build_type, flags in actual.items():
-        assert CMAKE_BUILD_TYPE_FLAGS[build_type] == flags, \
-            (f'{build_type}: DaCe has {CMAKE_BUILD_TYPE_FLAGS[build_type]}, CMake emits {flags}. The PCH would be '
-             'built with different flags than the TU and silently ignored.')
+        assert ours[build_type] == flags, \
+            (f'{family}/{build_type}: DaCe has {ours[build_type]}, CMake emits {flags}. The PCH would be built '
+             'with different flags than the TU and silently ignored.')
 
 
 @pytest.mark.parametrize('build_type', ['Debug', 'Release', 'RelWithDebInfo'])

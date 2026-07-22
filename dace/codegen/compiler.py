@@ -194,15 +194,41 @@ def build_cache_root() -> str:
     return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
 
 
-#: CMake's own ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults for GNU-like compilers. A precompiled header is
-#: only used if it was built with the same flags as the translation unit, so these must match what
-#: CMake appends for the build type -- note ``Debug`` is plain ``-g``.
-CMAKE_BUILD_TYPE_FLAGS = {
-    'Debug': ['-g'],
-    'Release': ['-O3', '-DNDEBUG'],
-    'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
-    'MinSizeRel': ['-Os', '-DNDEBUG'],
+#: CMake's own ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, per compiler family. This is a PREDICTION of
+#: what CMake will append, not a DaCe policy: nothing here is passed to the compiler, and changing a
+#: value changes only what the precompiled header is built with. A PCH is used only if it was
+#: compiled with the same flags as the translation unit, so a family whose entry is wrong gets a
+#: header the compiler silently declines -- the build still succeeds, just without the speedup this
+#: cache exists to provide.
+#:
+#: NVHPC differs from GNU in every configuration, which is why one shared table was not enough:
+#: Release adds ``-fast``, RelWithDebInfo omits ``-DNDEBUG`` and spells debug info ``-gopt``, and
+#: MinSizeRel is ``-O2 -s`` rather than ``-Os``. Verified by asking CMake, not from documentation.
+BUILD_TYPE_FLAGS_BY_FAMILY = {
+    'gnu': {
+        'Debug': ['-g'],
+        'Release': ['-O3', '-DNDEBUG'],
+        'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
+        'MinSizeRel': ['-Os', '-DNDEBUG'],
+    },
+    'nvhpc': {
+        'Debug': ['-g', '-O0'],
+        'Release': ['-fast', '-O3', '-DNDEBUG'],
+        'RelWithDebInfo': ['-O2', '-gopt'],
+        'MinSizeRel': ['-O2', '-s', '-DNDEBUG'],
+    },
 }
+
+#: Clang and IntelLLVM use CMake's GNU-like defaults; anything unrecognized gets them too, which is
+#: the previous behaviour for every compiler.
+CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY['gnu']
+
+
+def build_type_flags() -> list:
+    """The flags CMake will append for the configured build type and host compiler."""
+    family = compiler_family.detect(compiler_family.host_compiler())
+    table = BUILD_TYPE_FLAGS_BY_FAMILY.get(family, CMAKE_BUILD_TYPE_FLAGS)
+    return list(table.get(Config.get('compiler', 'build_type'), []))
 
 
 def cache_key(*parts: object) -> str:
@@ -277,8 +303,7 @@ def prepare_precompiled_header(targets) -> Optional[str]:
     executable = Config.get('compiler', 'cpu', 'executable')
     cxx = make_absolute(executable) if executable else 'c++'
     flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
-             shlex.split(compiler_family.cpu_args() or '') +
-             CMAKE_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), []))
+             shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
     pch = os.path.join(build_cache_root(), 'pch', cache_key(cxx, *flags))
