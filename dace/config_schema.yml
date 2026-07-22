@@ -450,7 +450,7 @@ required:
 
                     implementation:
                         type: str
-                        default: legacy
+                        default: experimental_readable
                         title: CPU code generator implementation
                         description: >
                             Selects the CPU code generator. ``legacy`` uses the classic
