@@ -120,6 +120,13 @@ class BackwardPass(nodes.LibraryNode):
     }
     default_implementation = "differentiate"
 
+    # Differentiating the forward subgraph uses per-library-node backward rules (e.g. the
+    # registered ``pure`` rule for ``dace.libraries.standard.nodes.Reduce``), which only apply
+    # while those nodes are still library nodes. Once a peer has been expanded, all autodiff
+    # sees is its lowered body -- a C++ tasklet it cannot reverse. So this node must expand
+    # before its peers; ``SDFG.expand_library_nodes`` honours the flag.
+    expand_before_peers = True
+
     given_gradients = properties.DictProperty(
         key_type=str,
         value_type=str,

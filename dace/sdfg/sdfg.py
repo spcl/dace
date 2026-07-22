@@ -3088,7 +3088,13 @@ class SDFG(ControlFlowRegion):
         while len(states) > 0:
             state = states.pop()
             expanded_something = False
-            for node in list(state.nodes()):  # Make sure we have a copy
+            # Expand ``expand_before_peers`` nodes first: their expansion inspects neighbouring
+            # library nodes and must see them un-expanded (``BackwardPass`` differentiates a
+            # ``Reduce`` via its registered backward rule, but only while it is still a library
+            # node -- once expanded it is an opaque C++ tasklet that autodiff cannot reverse).
+            # ``state.nodes()`` is otherwise in arbitrary graph order, so this was a coin flip.
+            for node in sorted(state.nodes(),  # sorted() also gives us the required copy
+                               key=lambda n: not getattr(n, 'expand_before_peers', False)):
                 if isinstance(node, nd.NestedSDFG):
                     node.sdfg.expand_library_nodes(recursive=recursive, predicate=predicate)  # Call recursively
                 elif isinstance(node, nd.LibraryNode):

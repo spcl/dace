@@ -46,6 +46,23 @@ def run_correctness(func=None, *, xfail_gpu=None):
     return test_correctness
 
 
+def _pin_reduce_to_pure(sdfg):
+    """Pin every ``Reduce`` library node to its ``pure`` expansion before lowering.
+
+    These tests expand library nodes and *then* differentiate the lowered graph. ``Reduce``
+    defaults to the ``auto`` implementation, which lowers to a C++ tasklet (OpenMP / CUDA tree
+    reduction); ``dace.autodiff`` can only reverse Python tasklets, so differentiating after
+    that expansion fails with "Expected tasklet with language Python, got language
+    Language.CPP". The ``pure`` expansion stays in Python and is differentiable. This mirrors
+    what these tests already do for ONNX ops via ``donnx.default_implementation = "pure"``.
+    """
+    from dace.libraries.standard.nodes import Reduce
+    for state in sdfg.states():
+        for node in state.nodes():
+            if isinstance(node, Reduce):
+                node.implementation = 'pure'
+
+
 class SDFGBackwardRunner:
 
     def __init__(self, sdfg, target, simplify=True):
@@ -577,6 +594,7 @@ def test_reshape_on_memlet_path():
 
     sdfg = single_state_reshape_memlet_path.to_sdfg(simplify=False)
 
+    _pin_reduce_to_pure(sdfg)
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated([StateFusion])
 
