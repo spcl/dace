@@ -922,15 +922,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
                 # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+                # NOTE: The data may leave through several nested scopes before it lands, and only the
+                #   outermost edge names where it goes, so each path is followed to its last edge. One
+                #   connector can feed several of them, hence the loop.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                    outer_edge = self.graph.memlet_path(oedge)[-1]
+                    if ((not outer_edge.data.is_empty()) and (outer_edge.data.data not in descs)
+                            and (outer_edge.data.data not in additional_descs)):
+                        additional_descs[outer_edge.data.data] = sdfg.arrays[outer_edge.data.data]
 
             else:
                 # Case is ignored.

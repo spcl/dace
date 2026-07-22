@@ -10,6 +10,7 @@ from .loop_local_memory_reduction import LoopLocalMemoryReduction
 from .optional_arrays import OptionalArrayInference
 from .pattern_matching import PatternMatchAndApply, PatternMatchAndApplyRepeated, PatternApplyOnceEverywhere
 from .prune_symbols import RemoveUnusedSymbols
+from .region_boundary_states import RegionBoundaryStates
 from .scalar_to_symbol import ScalarToSymbolPromotion
 from .simplify import SimplifyPass
 from .symbol_propagation import SymbolPropagation
