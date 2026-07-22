@@ -409,35 +409,36 @@ public:
             std::copy(event_override, event_override + sizeof...(events), event_tags);
         }
         std::string entry_name = "papi_entry";
-        const char *counter_name = nullptr;
 
         if(m_flags == ValueSetType::Default || m_flags == ValueSetType::Copy)
         {
             entry_name += " (" + std::to_string(m_nodeid) + ", " + std::to_string(m_coreid) + ", " +
                           std::to_string(m_iteration) + ", " + std::to_string((int)m_flags) + ") ";
-            counter_name = entry_name.c_str();
         }
         else if(m_flags == ValueSetType::OverheadComp)
         {
             entry_name = "papi_overhead";
-            counter_name = entry_name.c_str();
         }
         else if(m_flags == ValueSetType::marker_section_start)
         {
             entry_name = "papi_section_start (node " + std::to_string(m_nodeid) + ", core " + std::to_string(m_coreid) + ") ";
-            counter_name = (entry_name + "bytes").c_str();
+            // Named, not `(entry_name + "bytes").c_str()`: that pointer refers into a temporary
+            // std::string destroyed at the end of its own statement, so add_counter's strncpy read
+            // freed memory and the counter name reached the report as whatever the allocator had
+            // left there.
+            const std::string bytes_name = entry_name + "bytes";
             rep.add_counter(
-                (entry_name + "bytes").c_str(),
+                bytes_name.c_str(),
                 "papi",
-                counter_name,
+                bytes_name.c_str(),
                 static_cast<double>(m_values[0])
             );
             if(m_values[1] != 0) {
-                counter_name = (entry_name + "input_bytes").c_str();
+                const std::string input_bytes_name = entry_name + "input_bytes";
                 rep.add_counter(
-                    (entry_name + "input_bytes").c_str(),
+                    input_bytes_name.c_str(),
                     "papi",
-                    counter_name,
+                    input_bytes_name.c_str(),
                     static_cast<double>(m_values[1])
                 );
             }
@@ -460,16 +461,16 @@ public:
         for(const auto& e : event_tags)
         {
             if(e == 0) continue; // Skip unnecessary/invalid entries
-            const char *counter_name = (entry_name + std::to_string(e)).c_str();
-            
+            const std::string counter_name = entry_name + std::to_string(e);
+
             /*char buff[PAPI_MAX_STR_LEN] = {0};
             PAPI_event_code_to_name(e, buff);
             std::string event_name(buff);*/
             rep.add_counter(
                 //(entry_name + event_name).c_str(),
-                (entry_name + std::to_string(e)).c_str(),
+                counter_name.c_str(),
                 "papi",
-                counter_name,
+                counter_name.c_str(),
                 static_cast<double>(m_values[i])
             );
             ++i;
