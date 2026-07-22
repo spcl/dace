@@ -3,7 +3,9 @@
 
 Drives each new lib node through the ``OpenBLAS`` expansion and
 compares against numpy. Tolerance is BLAS-strict ``1e-14``. Marker
-``mkl`` schedules them into the OpenBLAS CI step.
+``lapack`` schedules them into the OpenBLAS CI step -- the same bucket
+the other OpenBLAS-backed tests use, and one the MKL-only heterogeneous
+runner does not select.
 """
 import numpy as np
 import pytest
@@ -11,6 +13,10 @@ import pytest
 import dace
 from dace.memlet import Memlet
 from dace.libraries.blas.nodes import (Axpy, Scal, Copy, Swap, Trsv, Trmv, Symv, Trsm, Trmm, Symm, Syrk, Ger)
+
+# These force ``BLA_VENDOR=OpenBLAS``, so they need libopenblas -- run them in the OpenBLAS
+# ``lapack`` step, not the ``mkl`` step (the heterogeneous runner has MKL but not OpenBLAS).
+pytestmark = pytest.mark.lapack
 
 _RTOL = 1e-14
 _ATOL = 1e-14
@@ -22,7 +28,6 @@ def _run(sdfg, **kw):
     sdfg(**kw)
 
 
-@pytest.mark.mkl
 def test_axpy_openblas():
     n, a = 16, 1.7
     rng = np.random.default_rng(0)
@@ -44,7 +49,6 @@ def test_axpy_openblas():
     np.testing.assert_allclose(res, expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
 def test_scal_openblas():
     n, a = 20, 2.5
     x = np.random.default_rng(1).standard_normal(n)
@@ -63,7 +67,6 @@ def test_scal_openblas():
     np.testing.assert_allclose(res, expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
 def test_copy_openblas():
     n = 18
     x = np.random.default_rng(5).standard_normal(n)
@@ -81,7 +84,6 @@ def test_copy_openblas():
     np.testing.assert_array_equal(y, x)
 
 
-@pytest.mark.mkl
 def test_swap_openblas():
     n = 12
     rng = np.random.default_rng(6)
@@ -107,7 +109,6 @@ def test_swap_openblas():
     np.testing.assert_array_equal(y_out, x_orig)
 
 
-@pytest.mark.mkl
 def test_trsv_openblas():
     n = 8
     rng = np.random.default_rng(7)
@@ -132,7 +133,6 @@ def test_trsv_openblas():
     np.testing.assert_allclose(x_out, expected, rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.mkl
 def test_trmv_openblas():
     n = 6
     rng = np.random.default_rng(8)
@@ -156,7 +156,6 @@ def test_trmv_openblas():
     np.testing.assert_allclose(x_out, expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
 def test_symv_openblas():
     n = 6
     rng = np.random.default_rng(9)
@@ -184,7 +183,6 @@ def test_symv_openblas():
     np.testing.assert_allclose(y_out, expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
 def test_trsm_openblas():
     m, n = 6, 4
     rng = np.random.default_rng(10)
@@ -209,7 +207,6 @@ def test_trsm_openblas():
     np.testing.assert_allclose(np.asarray(B_out), expected, rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.mkl
 def test_trmm_openblas():
     m, n = 6, 4
     rng = np.random.default_rng(11)
@@ -233,7 +230,6 @@ def test_trmm_openblas():
     np.testing.assert_allclose(np.asarray(B_out), expected, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.mkl
 def test_symm_openblas():
     m, n = 5, 4
     rng = np.random.default_rng(12)
@@ -261,7 +257,6 @@ def test_symm_openblas():
     np.testing.assert_allclose(np.asarray(C_out), expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
 def test_syrk_openblas():
     n, k = 5, 4
     A = np.random.default_rng(13).standard_normal((n, k))
@@ -284,7 +279,6 @@ def test_syrk_openblas():
     np.testing.assert_allclose(np.tril(np.asarray(C_out)), np.tril(expected), rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
 def test_ger_openblas():
     m, n = 5, 4
     rng = np.random.default_rng(14)
