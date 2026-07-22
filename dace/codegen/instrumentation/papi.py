@@ -31,13 +31,10 @@ CACHE_COUNTER_SET = ('PAPI_CA_SNP', 'PAPI_CA_SHR', 'PAPI_CA_CLN', 'PAPI_CA_ITV')
 
 @library.environment
 class PAPI:
-    """Build requirements of the PAPI instrumentation provider.
+    """Build requirements of the PAPI provider.
 
-    An environment rather than ``Config.append``: linking libpapi belongs to the SDFGs that are
-    instrumented, not to the process. Appending to ``compiler.cpu.libs`` mutated global state with no
-    restore, so every later SDFG in the session linked libpapi whether or not it was instrumented --
-    and since the append ran in ``on_sdfg_begin``, once per SDFG, the value grew without bound. An
-    environment is a deduplicated set, scoped to the SDFGs that declare it.
+    An environment, not ``Config.append``: linking libpapi belongs to the instrumented SDFGs, not
+    the process. The old append to ``compiler.cpu.libs`` ran once per SDFG and grew without bound.
     """
 
     cmake_minimum_version = None
@@ -56,13 +53,8 @@ class PAPI:
 
     @staticmethod
     def cmake_files():
-        """The vectorization report, as a CMake fragment rather than a Python-chosen flag.
-
-        Every compiler spells this differently and CMake is what picks the compiler, so the choice
-        belongs in CMake -- see ``papi_vectorization.cmake``. Evaluated per build, so toggling the
-        setting between builds is honoured instead of being baked in at the first instrumented SDFG
-        the way the previous one-shot global append was.
-        """
+        """The vectorization report as a CMake fragment (``papi_vectorization.cmake``), so CMake
+        picks the per-compiler flag. Evaluated per build, so toggling the setting is honoured."""
         if not Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
             return []
         return ['papi_vectorization']

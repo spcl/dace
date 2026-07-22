@@ -154,48 +154,43 @@ required:
                 default: true
                 title: Precompile the DaCe runtime header
                 description: >
-                    Precompile ``<dace/dace.h>`` once per compiler and flag set into a shared cache
-                    and force-include it into generated host sources. Purely an optimization: a
-                    header that does not match how a translation unit is compiled is ignored by the
-                    compiler, which then produces the same object as before.
+                    Precompile ``<dace/dace.h>`` once per compiler and flag set and force-include it
+                    into generated host sources. An optimization: a header that does not match the
+                    translation unit is ignored, producing the same object.
 
             configure_cache:
                 type: bool
                 default: true
                 title: Reuse CMake configure results across builds
                 description: >
-                    Seed each new build folder with the compiler detection and ``find_package``
-                    results of an earlier build configured the same way, instead of rediscovering
-                    them for every SDFG. Purely an optimization: without a cached entry, or with a
-                    stale one, CMake simply does the full configure again.
+                    Seed each build folder with the compiler and ``find_package`` results of an
+                    earlier build of the same shape. An optimization: without a usable entry CMake
+                    configures from scratch.
 
             command_cache:
                 type: bool
                 default: true
                 title: Replay a recorded build instead of running CMake
                 description: >
-                    Record the compile and link commands of the first SDFG built with a given
-                    configuration (``ninja -t compdb``) and replay them for later SDFGs of the same
-                    shape, skipping CMake entirely. Purely an optimization: a missing entry, or one
-                    whose sources do not match the program being built, falls back to a full build.
+                    Record the first build of a shape (``ninja -t compdb``) and replay its commands
+                    for later SDFGs, skipping CMake. An optimization: a missing or mismatched entry
+                    falls back to a full build.
 
             build_jobs:
                 type: int
                 default: 4
                 title: Parallel compile jobs
                 description: >
-                    How many translation units the build may compile concurrently. Deliberately a
-                    small default: builds often share a machine, and each concurrent compile of a
-                    generated source can use a lot of memory.
+                    Translation units compiled concurrently. Small by default: builds share
+                    machines, and each generated-source compile can use a lot of memory.
 
             build_type:
                 type: str
                 default: Release
                 title: Build configuration
                 description: >
-                    Configuration type for the CMake build (Debug, Release,
-                    RelWithDebInfo, or MinSizeRel). Sole source of the
-                    optimization level; the per-target ``args`` add to it.
+                    CMake build type (Debug, Release, RelWithDebInfo, MinSizeRel). Sole source of
+                    the optimization level; ``args`` add to it.
 
             allow_shadowing:
                 type: bool
@@ -330,11 +325,9 @@ required:
                         type: str
                         title: Arguments
                         description: >
-                            Additional flags on top of the CMake build type. No ``-O``:
-                            the level comes from ``compiler.build_type``.
-                            ``default_<family>`` is used when the host compiler is that
-                            family (see ``dace.codegen.compiler_family``); nvc++ rejects
-                            several of the GCC/Clang switches below.
+                            Flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``). ``default_<family>`` applies for that
+                            host compiler, since nvc++ rejects several switches below.
                         default: '-fPIC -Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
                         default_nvhpc: '-fPIC -Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
                         default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
@@ -378,8 +371,8 @@ required:
                         type: str
                         title: nvcc Arguments
                         description: >
-                            Additional nvcc flags on top of the CMake build type. No ``-O``:
-                            the level comes from ``compiler.build_type``.
+                            nvcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``).
                         default: '-lineinfo -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter'
                         default_Windows: ''
 
@@ -387,8 +380,8 @@ required:
                         type: str
                         title: hipcc Arguments
                         description: >
-                            Additional hipcc flags on top of the CMake build type. No ``-O``:
-                            the level comes from ``compiler.build_type``.
+                            hipcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``).
                         default: '-fPIC -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter'
 
                     cuda_arch:
@@ -608,9 +601,8 @@ required:
                         title: Enable vectorization check
                         default: false
                         description: >
-                            Asks the compiler to report which loops it vectorized. The flag is chosen
-                            per compiler from CMAKE_CXX_COMPILER_ID; only GCC writes it to
-                            ``perf/vecreport.txt``, the others report on stderr.
+                            Report which loops the compiler vectorized. Flag chosen per compiler in
+                            CMake; only GCC writes ``perf/vecreport.txt``, others use stderr.
 
     #############################################
     # Python frontend settings

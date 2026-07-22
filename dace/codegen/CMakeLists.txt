@@ -55,9 +55,9 @@ foreach(DACE_FILE ${DACE_FILES})
   endif()
 endforeach()
 
-# Reuse the precompiled DaCe runtime header. Generated host sources only: force-including
-# <dace/dace.h> into an environment's auxiliary translation unit, or into a .cu, can break a file
-# that never asked for it. A header built with mismatched flags is simply ignored by the compiler.
+# Reuse the precompiled DaCe runtime header. Generated host sources only: force-including it into an
+# environment's aux .cpp or a .cu can break a file that never asked for it. Mismatched flags are
+# ignored by the compiler.
 if(DACE_PCH_DIR AND DACE_GENERATED_HOST_FILES)
   set_source_files_properties(${DACE_GENERATED_HOST_FILES} PROPERTIES
                               COMPILE_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")

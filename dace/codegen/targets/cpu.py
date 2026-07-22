@@ -118,9 +118,8 @@ class CPUCodeGen(TargetCodeGenerator):
     def cmake_options():
         options = []
 
-        if Config.get('compiler', 'cpu', 'executable'):
-            compiler = make_absolute(Config.get('compiler', 'cpu', 'executable'))
-            options.append('-DCMAKE_CXX_COMPILER="{}"'.format(compiler))
+        # Always pinned, so the compiler the flags were chosen for is the one CMake uses.
+        options.append('-DCMAKE_CXX_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
 
         flags = compiler_family.cpu_args()
         if flags:

@@ -67,22 +67,12 @@ class LIKWID:
         return len(LIKWID.cmake_libraries()) > 0
 
 
-@library.environment
-class LIKWIDPerfmon:
-    """LIKWID with its CPU marker API active.
-
-    ``likwid.h`` compiles its ``LIKWID_MARKER_*`` macros to no-ops unless ``LIKWID_PERFMON`` is
-    defined, so the define is a build requirement of the CPU provider -- but of that provider only,
-    which is why it is a separate environment from :class:`LIKWID` rather than a field on it. The GPU
-    provider needs ``LIKWID_NVMON`` instead; defining both would activate a marker API whose
-    initialization the generated code never emits.
-
-    It is declared here rather than appended to ``compiler.cpu.args`` because that mutates global
-    config with no restore: every later SDFG in the session inherits the define, and since the append
-    ran in ``on_sdfg_begin`` -- once per SDFG -- the value grew without bound.
-
-    ``-fopenmp`` went with it: ``CMakeLists.txt`` already does ``find_package(OpenMP REQUIRED)`` and
-    links ``OpenMP::OpenMP_CXX``, so appending it added a duplicate on every compile line.
+class LIKWIDMarkers:
+    """Base for the marker-API environments. ``likwid.h`` compiles its ``LIKWID_MARKER_*`` macros to
+    no-ops unless the right define is set -- ``LIKWID_PERFMON`` for CPU, ``LIKWID_NVMON`` for GPU.
+    Each provider needs one, never both, hence two environments rather than a field on :class:`LIKWID`.
+    Declared as environments, not appended to ``compiler.cpu.args``: the append mutated global config
+    once per SDFG and grew without bound.
     """
 
     cmake_minimum_version = None
@@ -90,7 +80,7 @@ class LIKWIDPerfmon:
     cmake_variables = {}
     cmake_includes = []
     cmake_libraries = []
-    cmake_compile_flags = ['-DLIKWID_PERFMON']
+    cmake_compile_flags = []
     cmake_link_flags = []
     cmake_files = []
 
@@ -102,23 +92,15 @@ class LIKWIDPerfmon:
 
 
 @library.environment
-class LIKWIDNvmon:
-    """LIKWID with its NVIDIA marker API active; see :class:`LIKWIDPerfmon` for why it is separate."""
+class LIKWIDPerfmon(LIKWIDMarkers):
+    """LIKWID with its CPU marker API active."""
+    cmake_compile_flags = ['-DLIKWID_PERFMON']
 
-    cmake_minimum_version = None
-    cmake_packages = []
-    cmake_variables = {}
-    cmake_includes = []
-    cmake_libraries = []
+
+@library.environment
+class LIKWIDNvmon(LIKWIDMarkers):
+    """LIKWID with its NVIDIA marker API active."""
     cmake_compile_flags = ['-DLIKWID_NVMON']
-    cmake_link_flags = []
-    cmake_files = []
-
-    headers = []
-    state_fields = []
-    init_code = ""
-    finalize_code = ""
-    dependencies = [LIKWID]
 
 
 @registry.autoregister_params(type=dtypes.InstrumentationType.LIKWID_CPU)
@@ -149,8 +131,7 @@ class LIKWIDInstrumentationCPU(InstrumentationProvider):
         if not self._likwid_used:
             return
 
-        # LIKWIDPerfmon carries -DLIKWID_PERFMON and depends on LIKWID; declaring it here scopes the
-        # define to this SDFG instead of appending it to the process-wide compiler args.
+        # Scopes -DLIKWID_PERFMON to this SDFG instead of the process-wide compiler args.
         codegen.dispatcher.used_environments.add(LIKWIDPerfmon.full_class_path())
 
         self.codegen = codegen
