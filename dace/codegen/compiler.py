@@ -263,7 +263,7 @@ def load_nanobind_module(library_path, module_name: str):
 def load_nanobind_compiled_sdfg(library_path: pathlib.Path, sdfg: "dace.SDFG") -> NanobindCompiledSDFG:
     """Loads the compiled nanobind module for ``sdfg`` and mints a fresh handle.
 
-    The nanobind counterpart of ``get_program_handle()``.
+    The nanobind counterpart of ``load_ctypes_compiled_sdfg()``.
     """
     module = load_nanobind_module(library_path, sdfg.name)
     return NanobindCompiledSDFG(sdfg, module, sdfg.arg_names)
@@ -462,16 +462,18 @@ def configure_and_compile(
     return lib_path
 
 
-def get_program_handle(
+def load_ctypes_compiled_sdfg(
     library_path: Union[pathlib.Path, str],
     sdfg: 'dace.SDFG',
     stub_library_path: Union[pathlib.Path, str, None] = None,
 ) -> csd.CtypesCompiledSDFG:
-    """Construct a  ``CompiledSDFG`` form a precompiled library directly.
+    """Construct a  ``CtypesCompiledSDFG`` form a precompiled library directly.
 
-    This function is similar to the (preferred) ``load_precompiled_sdfg()``. However,
-    instead of passing the build folder of the SDFG to the function, the path to the
-    compiled library is passed directly.
+    This function requires that the SDFG was compiled with the `ctypes` interface.
+    It is the equivalent to ``load_nanobind_compiled_sdfg()` but for `ctypes`.
+
+    Note that this is a low level function and it is highly recommended to use
+    ``load_precompiled_sdfg()`` which handles both interface types.
 
     :param library_path: Path to the compiled library representing ``sdfg``.
     :param sdfg: The SDFG, will be referenced by the returned ``CompiledSDFG``.
@@ -488,13 +490,22 @@ def get_program_handle(
     return csd.CtypesCompiledSDFG(sdfg, lib, sdfg.arg_names)
 
 
-def load_from_file(sdfg, binary_filename):
+def get_program_handle(*args, **kwargs) -> csd.CtypesCompiledSDFG:
     warnings.warn(
-        'Used deprecated ``load_from_file()`` function, use ``get_program_handle()`` instead.',
+        'Used deprecated ``get_program_handle()`` function, use ``load_ctypes_compiled_sdfg()`` instead.',
         category=DeprecationWarning,
         stacklevel=2,
     )
-    return get_program_handle(library_path=binary_filename, sdfg=sdfg)
+    return load_ctypes_compiled_sdfg(*args, **kwargs)
+
+
+def load_from_file(sdfg, binary_filename):
+    warnings.warn(
+        'Used deprecated ``load_from_file()`` function, use ``load_ctypes_compiled_sdfg()`` instead.',
+        category=DeprecationWarning,
+        stacklevel=2,
+    )
+    return load_ctypes_compiled_sdfg(library_path=binary_filename, sdfg=sdfg)
 
 
 @overload
@@ -647,8 +658,7 @@ def load_precompiled_sdfg(
     # Dispatch on the interface that produced the folder (INTERFACE marker).
     if get_program_interface(folder) == 'nanobind':
         return load_nanobind_compiled_sdfg(library_path=library_path, sdfg=sdfg)
-
-    return get_program_handle(library_path=library_path, sdfg=sdfg)
+    return load_ctypes_compiled_sdfg(library_path=library_path, sdfg=sdfg)
 
 
 def safe_call_precompiled(sdfg, args, kwargs) -> None:
