@@ -5,6 +5,7 @@ import copy
 import itertools
 import warnings
 from networkx import MultiDiGraph
+from ordered_set import OrderedSet
 
 from dace.properties import CodeBlock
 from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock
@@ -887,7 +888,7 @@ def isolate_nested_sdfg(
     #  as input to the nested SDFG and the nested SDFG itself.
     #  Note that the AccessNodes serving as input and output of the nested SDFG
     #  belonging to the pre and post set, respectively, as well.
-    middle_nodes: Set[nodes.Node] = {nsdfg_node}
+    middle_nodes: OrderedSet[nodes.Node] = OrderedSet((nsdfg_node, ))
     for iedge in state.in_edges(nsdfg_node):
         if (not isinstance(iedge.src, nodes.AccessNode)) or isinstance(iedge.src.desc(state.sdfg), data.View):
             if test_if_applicable:
@@ -940,7 +941,7 @@ def isolate_nested_sdfg(
         forward_from_nsdfg.add(fnode)
         fwd_stack.extend(oedge.dst for oedge in state.out_edges(fnode))
 
-    pre_nodes: Set[nodes.Node] = set()
+    pre_nodes: OrderedSet[nodes.Node] = OrderedSet()
     to_visit: List[nodes.Node] = []
     for iedge in state.in_edges(nsdfg_node):
         input_node: nodes.AccessNode = iedge.src
@@ -967,10 +968,8 @@ def isolate_nested_sdfg(
     # These are the nodes that belongs to the Post State. There are two reasons why a
     #  node belongs to the set of post nodes.
     #  The first is that the node does not belong to any other set.
-    post_nodes: Set[nodes.Node] = {
-        node
-        for node in state.nodes() if (node not in pre_nodes) and (node not in middle_nodes)
-    }
+    post_nodes: OrderedSet[nodes.Node] = OrderedSet(node for node in state.nodes()
+                                                    if (node not in pre_nodes) and (node not in middle_nodes))
 
     # The second reason, are read dependencies, for this we have to look at the incoming
     #  edges and add any node that we need.

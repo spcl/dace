@@ -8,6 +8,7 @@ from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.sdfg.type_inference import infer_expr_type
+from ordered_set import OrderedSet
 
 
 @properties.make_properties
@@ -550,9 +551,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         param_repl: Dict[str, str],
     ) -> Union[
             Tuple[
-                Set[graph.MultiConnectorEdge[dace.Memlet]],
-                Set[graph.MultiConnectorEdge[dace.Memlet]],
-                Set[graph.MultiConnectorEdge[dace.Memlet]],
+                OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
+                OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
+                OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
             ],
             None,
     ]:
@@ -592,9 +593,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             `require_all_intermediates` and by `self.require_exclusive_intermediates`.
         """
         # The three outputs set.
-        pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
-        exclusive_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
-        shared_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = set()
+        pure_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = OrderedSet()
+        exclusive_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = OrderedSet()
+        shared_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]] = OrderedSet()
 
         # Set of intermediate nodes that we have already processed.
         processed_inter_nodes: Set[nodes.Node] = set()
@@ -848,7 +849,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
     def handle_intermediate_set(
         self,
-        intermediate_outputs: Set[graph.MultiConnectorEdge[dace.Memlet]],
+        intermediate_outputs: OrderedSet[graph.MultiConnectorEdge[dace.Memlet]],
         state: dace.SDFGState,
         sdfg: SDFG,
         first_map_exit: nodes.MapExit,
@@ -1015,7 +1016,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  the input connectors on the MapEntry, such that we know where we
             #  have to reroute inside the Map.
             # NOTE: Assumes that Map (if connected is the direct neighbour).
-            conn_names: Set[str] = set()
+            conn_names: OrderedSet[str] = OrderedSet()
             for inter_node_out_edge in state.out_edges(inter_node):
                 if inter_node_out_edge.dst == second_map_entry:
                     assert inter_node_out_edge.dst_conn.startswith("IN_")

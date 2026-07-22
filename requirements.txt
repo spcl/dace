@@ -8,3 +8,4 @@ packaging==24.1
 ply==3.11
 PyYAML==6.0.2
 sympy==1.13.3
+ordered-set==4.1.0
