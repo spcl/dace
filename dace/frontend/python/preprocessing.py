@@ -1324,7 +1324,7 @@ class CallTreeResolver(ast.NodeVisitor):
         if not isinstance(function, DaceProgram):
             # Make set of parameters from __sdfg_signature__
             parameters = [(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in function.__sdfg_signature__()[0]]
-            objname = None
+            objname = False
         else:
             parameters = [(aname, arg.kind) for aname, arg in function.signature.parameters.items()]
             objname = function.objname
