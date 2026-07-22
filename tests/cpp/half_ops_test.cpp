@@ -112,7 +112,7 @@ static void test_layout() {
 // ---------------------------------------------------------------------------
 // constexpr folding: dace::float16(<constant>) must still be a constant
 // expression, exactly like float32(<constant>) / float64(<constant>).
-// Under a pre-C++20 standard DACE_HALF_CE degrades to ``inline`` on purpose,
+// Under a pre-C++20 standard DACE_LOWP_CE degrades to ``inline`` on purpose,
 // so this only applies where std::bit_cast is available.
 // ---------------------------------------------------------------------------
 #if defined(__cpp_lib_bit_cast)

@@ -383,6 +383,59 @@ struct _wcr_fixed<ReductionType::Max, half> {
     return half(::max(float(a), float(b)));
   }
 };
+
+#ifdef DACE_HAS_BFLOAT16
+// bfloat16 has no CUDA atomicMin/Max overload either → the same 16-bit CAS, and the
+// same promote-to-float fallback on the host and pre-sm_70. bf16 min/max through
+// float is exact (bf16 -> float is a lossless shift), so both arms agree bit for bit.
+template <>
+struct _wcr_fixed<ReductionType::Min, bfloat16> {
+  static DACE_HDFI bfloat16 reduce_atomic(bfloat16 *ptr, const bfloat16 &value) {
+#if defined(DACE_USE_GPU_ATOMICS) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+    unsigned short int *iptr = (unsigned short int *)ptr;
+    unsigned short int old = *iptr, assumed;
+    do {
+      assumed = old;
+      old = atomicCAS(iptr, assumed,
+                      __bfloat16_as_ushort(bfloat16(::min(float(__ushort_as_bfloat16(assumed)), float(value)))));
+    } while (assumed != old);
+    return __ushort_as_bfloat16(old);
+#else
+    bfloat16 old = *ptr;
+    *ptr = bfloat16(::min(float(old), float(value)));
+    return old;
+#endif
+  }
+
+  DACE_HDFI bfloat16 operator()(const bfloat16 &a, const bfloat16 &b) const {
+    return bfloat16(::min(float(a), float(b)));
+  }
+};
+
+template <>
+struct _wcr_fixed<ReductionType::Max, bfloat16> {
+  static DACE_HDFI bfloat16 reduce_atomic(bfloat16 *ptr, const bfloat16 &value) {
+#if defined(DACE_USE_GPU_ATOMICS) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+    unsigned short int *iptr = (unsigned short int *)ptr;
+    unsigned short int old = *iptr, assumed;
+    do {
+      assumed = old;
+      old = atomicCAS(iptr, assumed,
+                      __bfloat16_as_ushort(bfloat16(::max(float(__ushort_as_bfloat16(assumed)), float(value)))));
+    } while (assumed != old);
+    return __ushort_as_bfloat16(old);
+#else
+    bfloat16 old = *ptr;
+    *ptr = bfloat16(::max(float(old), float(value)));
+    return old;
+#endif
+  }
+
+  DACE_HDFI bfloat16 operator()(const bfloat16 &a, const bfloat16 &b) const {
+    return bfloat16(::max(float(a), float(b)));
+  }
+};
+#endif  // DACE_HAS_BFLOAT16
 // End of specialization
 
 template <typename T>

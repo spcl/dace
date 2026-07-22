@@ -4,6 +4,7 @@
 
 #include <complex>
 #include <cstdint>
+#include <type_traits>
 
 #ifdef _MSC_VER
 // #define DACE_ALIGN(N) __declspec( align(N) )
@@ -54,20 +55,40 @@
 
 // GPU support
 #ifdef __CUDACC__
+#include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <thrust/complex.h>
 
 #include "cuda/multidim_gbar.cuh"
 
-// Workaround so that half is defined as a scalar (for reductions)
+// Workaround so that half and __nv_bfloat16 are defined as scalars (for reductions)
 namespace std {
 template <>
 struct is_scalar<half> : std::integral_constant<bool, true> {};
 template <>
 struct is_fundamental<half> : std::integral_constant<bool, true> {};
+template <>
+struct is_scalar<__nv_bfloat16> : std::integral_constant<bool, true> {};
+template <>
+struct is_fundamental<__nv_bfloat16> : std::integral_constant<bool, true> {};
 }  // namespace std
 #elif defined(__HIPCC__)
+// <hip/hip_bf16.h> defines __hip_bfloat16, the CURRENT ROCm bfloat16 -- deliberately
+// NOT the legacy <hip/hip_bfloat16.h> / hip_bfloat16 (no leading underscores). The two
+// are distinct types with no implicit conversion between them, different HIP APIs
+// expect different ones, and mixing them in one translation unit is a known build
+// breakage (ROCm/ROCm#2534). __hip_bfloat16 mirrors CUDA's __nv_bfloat16 almost
+// exactly -- same header role, same __float2bfloat16 / __bfloat162float spellings --
+// which is why a single ``dace::bfloat16`` typedef covers both vendors.
+//
+// Probed with __has_include because the header only appeared in ROCm 5.7; on an
+// older ROCm the build keeps working and simply has no dace::bfloat16, which
+// DACE_HAS_BFLOAT16 reports.
+#if __has_include(<hip/hip_bf16.h>)
+#include <hip/hip_bf16.h>
+#define DACE_HIP_HAS_BF16 1
+#endif
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 #endif
@@ -100,6 +121,21 @@ struct is_fundamental<half> : std::integral_constant<bool, true> {};
 #define DACE_CONSTEXPR_HOSTDEV const
 #endif
 
+
+// ---------------------------------------------------------------------------
+// Layout contract for the 16-bit low-precision types.
+//
+// The host side of a GPU program does data COPY, not arithmetic: dace::float16 /
+// dace::bfloat16 in a .cpp translation unit and the vendor types they become in a
+// .cu / .hip one must therefore be byte-for-byte interchangeable, or every
+// host<->device transfer silently corrupts. Asserting it here means any future edit
+// that adds a member, a vtable or an alignment attribute fails the BUILD instead.
+#define DACE_ASSERT_LOWP_LAYOUT(T)                                                    \
+  static_assert(sizeof(T) == 2, #T " must be exactly 2 bytes");                       \
+  static_assert(alignof(T) == 2, #T " must have 2-byte alignment");                   \
+  static_assert(std::is_standard_layout<T>::value, #T " must be standard layout");    \
+  static_assert(std::is_trivially_copyable<T>::value, #T " must be trivially copyable")
+
 namespace dace {
 typedef bool bool_;
 typedef int8_t int8;
@@ -118,26 +154,109 @@ typedef double float64;
 typedef thrust::complex<float> complex64;
 typedef thrust::complex<double> complex128;
 typedef half float16;
+// Native bfloat16. ``__nv_bfloat16`` has hardware arithmetic from sm_80 (Ampere);
+// below that, cuda_bf16.h still supplies the full operator surface by evaluating
+// each operation in float.
+//
+// That per-operation float evaluation agrees with the host emulation for a SINGLE
+// operation, and only for one: a fused expression does NOT agree. The host
+// computes ``a * b + c`` entirely in float and rounds once, whereas per-operation
+// device arithmetic rounds the product to bf16 before the add -- two roundings,
+// and the results genuinely differ. This is the ordinary consequence of doing
+// arithmetic in a narrow type and is not specific to bf16; it is called out here
+// only so the equivalence is not over-read. The layout, asserted below, is what
+// host<->device copies actually depend on, and that IS identical.
+typedef __nv_bfloat16 bfloat16;
+#define DACE_HAS_BFLOAT16 1
+DACE_ASSERT_LOWP_LAYOUT(float16);
+DACE_ASSERT_LOWP_LAYOUT(bfloat16);
 #elif defined(__HIPCC__)
 typedef half float16;
+// AMD's native bfloat16, the counterpart of __nv_bfloat16 above: 2 bytes of
+// unsigned short with the standard bf16 layout, a float constructor and an
+// operator float(), so it satisfies the same contract as the CUDA and host types.
+// UNTESTED AT RUNTIME -- there is no ROCm toolchain on the machine this was
+// developed on, so this branch is written from the ROCm documentation and has not
+// been compiled or executed.
+#ifdef DACE_HIP_HAS_BF16
+typedef __hip_bfloat16 bfloat16;
+#define DACE_HAS_BFLOAT16 1
+DACE_ASSERT_LOWP_LAYOUT(bfloat16);
+#endif
+DACE_ASSERT_LOWP_LAYOUT(float16);
 #else
 typedef std::complex<float> complex64;
 typedef std::complex<double> complex128;
-// Compile-time bit reinterpretation for the ``constexpr`` half<->float conversions
-// below, so ``dace::float16(<constant>)`` folds at compile time exactly like a
+// Compile-time bit reinterpretation for the ``constexpr`` conversions between
+// ``float`` and the 16-bit low-precision types below, so ``dace::float16(<constant>)``
+// and ``dace::bfloat16(<constant>)`` fold at compile time exactly like a
 // ``static_cast`` (equivalent to ``dace::float64(x)`` == ``double(x)`` for the
 // primitive typedefs). ``std::bit_cast`` (C++20, the default standard) is a
 // constant expression; pre-C++20 falls back to a runtime ``union`` pun -- identical
 // bit pattern either way (little/big-endian agnostic: it copies object bytes).
 #if defined(__cpp_lib_bit_cast)
 #include <bit>
-#define DACE_HALF_CE constexpr
-static constexpr uint32_t _dace_half_f2u(float f) { return std::bit_cast<uint32_t>(f); }
-static constexpr float _dace_half_u2f(uint32_t u) { return std::bit_cast<float>(u); }
+#define DACE_LOWP_CE constexpr
+static constexpr uint32_t dace_bits_f2u(float f) { return std::bit_cast<uint32_t>(f); }
+static constexpr float dace_bits_u2f(uint32_t u) { return std::bit_cast<float>(u); }
 #else
-#define DACE_HALF_CE inline
-static inline uint32_t _dace_half_f2u(float f) { union { float f; uint32_t u; } c; c.f = f; return c.u; }
-static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } c; c.u = u; return c.f; }
+#define DACE_LOWP_CE inline
+static inline uint32_t dace_bits_f2u(float f) { union { float f; uint32_t u; } c; c.f = f; return c.u; }
+static inline float dace_bits_u2f(uint32_t u) { union { uint32_t u; float f; } c; c.u = u; return c.f; }
+#endif
+
+// ---------------------------------------------------------------------------
+// Is a native 16-bit floating-point type available? One gate, one answer, used by
+// both the half and the bfloat16 sections below.
+//
+// A compiler VERSION FLOOR first, the compiler's own feature test second. Neither
+// alone is sound:
+//
+//  * Version floor alone is not enough: x86 GCC 12 has no ``__bf16`` at all
+//    ("unknown type name"), so a build could pass the floor and still lack the type.
+//  * Feature test alone is not enough, and this is the subtle one: on AArch64 GCC
+//    defines ``__bf16`` -- and therefore ``__BFLT16_MAX__`` -- unconditionally, but
+//    the type was STORAGE-ONLY there until GCC 13. A feature test alone would report
+//    "native bf16 available" on a compiler that rejects every use of it. The same
+//    class of trap applies to ``__FLT16_MAX__``, which GCC defines even on targets
+//    where ``_Float16`` is storage-only (``-m32 -mno-sse2``); the per-type ISA checks
+//    further down are what cover that residue.
+//
+// Floors are GCC 15 and Clang 20 -- comfortably past GCC 13 (where AArch64 ``__bf16``
+// became a real arithmetic type) and Clang 17 (where ``__bf16`` stopped being
+// storage-only on every target). Deliberately NOT a probe of ``__ARM_FEATURE_BF16``:
+// it was not predefined before GCC 15 but the fix was backported to 12.5, 13.4 and
+// 14.2, so a version test on it is wrong in both directions. Not
+// ``__ARM_BF16_FORMAT_ALTERNATIVE`` either -- that is the ARM32 port's macro, and
+// GCC on AArch64 provides ``__bf16`` without ever defining it.
+//
+// Clang defines ``__GNUC__`` too, so its branch MUST come first. Clang also defines
+// no bf16 macro of any kind, which is why the bf16 probe there is ``__is_identifier``
+// rather than a ``__BFLT16_*`` test that would silently fail closed.
+//
+// NOTE the native type is used for STORAGE AND CONVERSION ONLY, never for
+// arithmetic: every operator on dace::half / dace::bfloat16 evaluates in ``float``.
+// That is what makes the storage-only-vs-arithmetic distinction above merely a
+// build-safety question rather than a semantic one, and it matches the hardware --
+// there is no scalar bf16 ALU operation on any shipping x86 or AArch64 CPU.
+#if defined(__clang__)
+#if __clang_major__ >= 20
+#if defined(__FLT16_MAX__)
+#define DACE_NATIVE_FP16 1
+#endif
+#if defined(__is_identifier) && !__is_identifier(__bf16)
+#define DACE_NATIVE_BF16 1
+#endif
+#endif
+#elif defined(__GNUC__)
+#if __GNUC__ >= 15
+#if defined(__FLT16_MAX__)
+#define DACE_NATIVE_FP16 1
+#endif
+#if defined(__BFLT16_MAX__)
+#define DACE_NATIVE_BF16 1
+#endif
+#endif
 #endif
 
 // ---------------------------------------------------------------------------
@@ -179,11 +298,6 @@ static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } 
 //    remains ``struct half { uint16_t h; }``, so calling convention, aggregate
 //    classification and C++ mangling of every generated symbol are untouched.
 //
-// Gating macros. NOT ``__FLT16_MAX__``: GCC defines the ``__FLT16_*`` macros
-// even on targets where ``_Float16`` is storage-only and every use is a hard
-// error (verified: ``g++ -m32 -mno-sse2`` defines 16 of them), which is why GCC
-// 14's release notes tell you to test ``__SSE2__`` instead. x86 ``_Float16``
-// arrived in GCC 12 and Clang 15, hence the version guards.
 // ``__ARM_FP16_FORMAT_IEEE`` is the ACLE macro saying binary16 rather than the
 // Arm "alternative" format, which has no infinities and would not be
 // bit-compatible with the emulation; AArch64 only ever uses the IEEE format.
@@ -193,14 +307,11 @@ static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } 
 // ``__ARM_FEATURE_FP16_SCALAR_ARITHMETIC`` is the only sound way to detect it,
 // and it would only matter if we did arithmetic in the type, which we do not).
 // 32-bit ARM deliberately stays on the emulation: it is untested here.
-#if !defined(DACE_HALF_NO_NATIVE)
+#if defined(DACE_NATIVE_FP16) && !defined(DACE_HALF_NO_NATIVE)
 #if (defined(__x86_64__) || defined(__i386__)) && defined(__SSE2__) &&           \
-    (defined(__F16C__) || defined(__AVX512FP16__)) &&                           \
-    ((defined(__clang__) && __clang_major__ >= 15) ||                           \
-     (!defined(__clang__) && defined(__GNUC__) && __GNUC__ >= 12))
+    (defined(__F16C__) || defined(__AVX512FP16__))
 #define DACE_HALF_NATIVE_T _Float16
-#elif defined(__aarch64__) && defined(__ARM_FP16_FORMAT_IEEE) &&                 \
-    (defined(__clang__) || (defined(__GNUC__) && __GNUC__ >= 7))
+#elif defined(__aarch64__) && defined(__ARM_FP16_FORMAT_IEEE)
 #define DACE_HALF_NATIVE_T _Float16
 #endif
 #endif
@@ -208,7 +319,7 @@ static inline float _dace_half_u2f(uint32_t u) { union { uint32_t u; float f; } 
 #if defined(DACE_HALF_NATIVE_T)
 // A 2-byte native type bit-cast to/from uint16_t: no reinterpretation of the
 // value, so the stored representation is the same IEEE binary16 either way.
-DACE_HALF_CE uint16_t dace_half_from_float(float f) {
+DACE_LOWP_CE uint16_t dace_half_from_float(float f) {
 #if defined(__cpp_lib_bit_cast)
   return std::bit_cast<uint16_t>((DACE_HALF_NATIVE_T)f);
 #else
@@ -217,7 +328,7 @@ DACE_HALF_CE uint16_t dace_half_from_float(float f) {
   return c.u;
 #endif
 }
-DACE_HALF_CE float dace_half_to_float(uint16_t h) {
+DACE_LOWP_CE float dace_half_to_float(uint16_t h) {
 #if defined(__cpp_lib_bit_cast)
   return (float)std::bit_cast<DACE_HALF_NATIVE_T>(h);
 #else
@@ -229,8 +340,8 @@ DACE_HALF_CE float dace_half_to_float(uint16_t h) {
 #else
 // IEEE-754 binary32 -> binary16, round-to-nearest-even.
 // Based on (https://gist.github.com/rygorous/2156668)
-DACE_HALF_CE uint16_t dace_half_from_float(float f) {
-  uint32_t u = _dace_half_f2u(f);
+DACE_LOWP_CE uint16_t dace_half_from_float(float f) {
+  uint32_t u = dace_bits_f2u(f);
   uint32_t sign = u & 0x80000000u;
   u ^= sign;  // work on the magnitude
   uint16_t h;
@@ -241,8 +352,8 @@ DACE_HALF_CE uint16_t dace_half_from_float(float f) {
   } else if (u < 0x38800000u) {
     // Subnormal half or zero. Adding this magic constant and relying on
     // round-to-nearest-even FP addition aligns the mantissa correctly.
-    float mf = _dace_half_u2f(u) + _dace_half_u2f(0x3f000000u);  // 126 << 23
-    h = (uint16_t)(_dace_half_f2u(mf) - 0x3f000000u);
+    float mf = dace_bits_u2f(u) + dace_bits_u2f(0x3f000000u);  // 126 << 23
+    h = (uint16_t)(dace_bits_f2u(mf) - 0x3f000000u);
   } else {
     // Normal half: rebias exponent (127 -> 15) and round mantissa to even.
     uint32_t mant_odd = (u >> 13) & 1;
@@ -254,7 +365,7 @@ DACE_HALF_CE uint16_t dace_half_from_float(float f) {
 }
 
 // IEEE-754 binary16 -> binary32 (exact; every binary16 fits in binary32).
-DACE_HALF_CE float dace_half_to_float(uint16_t h) {
+DACE_LOWP_CE float dace_half_to_float(uint16_t h) {
   uint32_t sign = (uint32_t)(h & 0x8000) << 16;
   uint32_t exp = (h >> 10) & 0x1f;
   uint32_t mant = h & 0x3ff;
@@ -277,14 +388,14 @@ DACE_HALF_CE float dace_half_to_float(uint16_t h) {
   } else {
     out = sign | ((exp + (127 - 15)) << 23) | (mant << 13);  // normal
   }
-  return _dace_half_u2f(out);
+  return dace_bits_u2f(out);
 }
 #endif
 
-struct half {
+struct alignas(2) half {
   constexpr half() : h(0) {}
-  DACE_HALF_CE half(float f) : h(dace_half_from_float(f)) {}
-  DACE_HALF_CE operator float() const { return dace_half_to_float(h); }
+  DACE_LOWP_CE half(float f) : h(dace_half_from_float(f)) {}
+  DACE_LOWP_CE operator float() const { return dace_half_to_float(h); }
 
   // Compound assignment. Binary arithmetic, comparisons and unary minus already
   // work through the implicit ``operator float()`` and are deliberately NOT
@@ -301,7 +412,7 @@ struct half {
   // the same convert-out / compute-in-float / round-back the emulation has
   // always given for ``h = h OP x``.
 #define DACE_HALF_COMPOUND(OP)                                     \
-  DACE_HALF_CE half &operator OP##=(float f) {                     \
+  DACE_LOWP_CE half &operator OP##=(float f) {                     \
     *this = half((float)*this OP f);                               \
     return *this;                                                  \
   }
@@ -311,14 +422,147 @@ struct half {
   DACE_HALF_COMPOUND(/)
 #undef DACE_HALF_COMPOUND
 
-  DACE_HALF_CE half &operator++() { return *this += 1.0f; }
-  DACE_HALF_CE half &operator--() { return *this -= 1.0f; }
-  DACE_HALF_CE half operator++(int) { half t = *this; *this += 1.0f; return t; }
-  DACE_HALF_CE half operator--(int) { half t = *this; *this -= 1.0f; return t; }
+  DACE_LOWP_CE half &operator++() { return *this += 1.0f; }
+  DACE_LOWP_CE half &operator--() { return *this -= 1.0f; }
+  DACE_LOWP_CE half operator++(int) { half t = *this; *this += 1.0f; return t; }
+  DACE_LOWP_CE half operator--(int) { half t = *this; *this -= 1.0f; return t; }
 
   uint16_t h;
 };
 typedef half float16;
+DACE_ASSERT_LOWP_LAYOUT(float16);
+
+// ---------------------------------------------------------------------------
+// bfloat16: the leading 16 bits of an IEEE-754 binary32. Same 8-bit exponent as
+// float, mantissa truncated from 23 explicit bits to 7.
+//
+// The conversions are emulated BY DEFAULT even where a native ``__bf16`` exists,
+// which is the opposite of the choice made for ``half`` above. That is a measured
+// decision, not an oversight:
+//
+//  * bf16 -> float is a 16-bit left shift. Exact for every one of the 2^16 bit
+//    patterns, NaN payloads and subnormals included, with no branch at all.
+//  * float -> bf16 is one add (the round-to-nearest-even bias) and one shift,
+//    plus a NaN test. There is no exponent rebias and no subnormal path, because
+//    the exponent ranges are identical -- exactly what makes binary16's
+//    conversion expensive and bf16's nearly free.
+//
+// There is no scalar bf16 arithmetic or conversion instruction to switch to on
+// any shipping CPU. AVX512-BF16 is three instructions (VCVTNE2PS2BF16,
+// VCVTNEPS2BF16, VDPBF16PS) -- packed conversion and a dot product; AMX-BF16 is a
+// tile dot product; AVX10.2 adds packed-only bf16 arithmetic. On AArch64,
+// FEAT_BF16 is BFCVT plus widening dot/matrix ops, and Arm's ACLE says so
+// outright: "It is expected that arithmetic using standard C operators be used
+// using a single-precision floating point format and the value be converted to
+// __bf16 when required" (arm-software.github.io/acle).
+//
+// So ``__bf16`` is a compiler abstraction over the same convert-compute-in-float
+// dance, and under GCC it is a disastrously slow one -- GCC never inlines
+// __truncsfbf2 / __extendbfsf2, so each element costs a PLT call and the loop
+// cannot vectorize. Measured here (2^24 conversions, -O2 -march=native, AVX512-BF16
+// host): emulation 4.0 ms, native __bf16 129 ms -- 32x slower. Enabling it by
+// default would be a large regression on the primary compiler.
+//
+// Two further semantic notes, both found by differential testing:
+//  * Narrowing through ``__bf16`` is bit-identical to the emulation for all 2^32
+//    float inputs, NaN payloads included -- so the opt-in below is safe.
+//  * Widening is NOT identical: the native path quiets signalling NaNs (126 of the
+//    2^16 patterns change), while the shift reproduces the bits exactly. Widening
+//    therefore always uses the shift, opt-in or not.
+//
+// Native ``__bf16`` is therefore detected (DACE_NATIVE_BF16, above) but NOT used
+// unless DACE_BFLOAT16_USE_NATIVE is defined explicitly. That is the one place this
+// header does not simply follow the native gate, and it is not a preference -- both
+// compilers were measured and both are worse:
+//
+//  * GCC 15, -O2 -march=native, 2^24 conversions: emulation 4.0 ms, native 129 ms.
+//    GCC never inlines __truncsfbf2, so each element is a PLT call and the loop
+//    cannot vectorize. A 32x regression.
+//  * Clang 21, -march=native: native narrowing FLUSHES SUBNORMALS TO ZERO. The
+//    AVX512-BF16 VCVTNEPS2BF16 instruction always flushes denormal output and treats
+//    denormal input as zero, and does not consult MXCSR (Intel SDM). Verified here:
+//    the float 0x00008001 narrows to 0x0000 where the emulation gives 0x0001, so
+//    every bf16 subnormal silently becomes zero. That is a numerical change, not a
+//    speed trade.
+//
+// So the emulation is the default on both, and the opt-in exists for a target where
+// neither applies. Narrowing through ``__bf16`` was verified bit-identical to the
+// emulation for all 2^32 float inputs under GCC (NaN payloads included), which is
+// what makes the opt-in safe there.
+#if defined(DACE_BFLOAT16_USE_NATIVE) && defined(DACE_NATIVE_BF16)
+#define DACE_BFLOAT16_NATIVE_T __bf16
+#endif
+
+DACE_LOWP_CE uint16_t dace_bfloat16_from_float(float f) {
+#if defined(DACE_BFLOAT16_NATIVE_T)
+#if defined(__cpp_lib_bit_cast)
+  return std::bit_cast<uint16_t>((DACE_BFLOAT16_NATIVE_T)f);
+#else
+  union { DACE_BFLOAT16_NATIVE_T n; uint16_t u; } c;
+  c.n = (DACE_BFLOAT16_NATIVE_T)f;
+  return c.u;
+#endif
+#else
+  uint32_t u = dace_bits_f2u(f);
+  // NaN must be handled before rounding: the bias below can carry into the
+  // exponent and turn a NaN whose payload lives in the discarded low bits into
+  // an infinity. Keep sign and high payload bits, and force the mantissa MSB so
+  // the result stays a (quiet) NaN.
+  if ((u & 0x7fffffffu) > 0x7f800000u) {
+    return (uint16_t)((u >> 16) | 0x0040u);
+  }
+  // Round-to-nearest-even on the 16 discarded bits: add half an ulp, plus one
+  // more when the retained bit is odd so exact ties go to the even neighbour.
+  // No overflow check is needed -- a finite float that rounds past the largest
+  // finite bf16 becomes infinity, which is the correct IEEE result, and the
+  // largest non-NaN input (0xff800000) cannot wrap the 32-bit add.
+  uint32_t bias = 0x7fffu + ((u >> 16) & 1u);
+  return (uint16_t)((u + bias) >> 16);
+#endif
+}
+
+// Exact for every bit pattern: bf16 IS the top half of a float. Always the shift,
+// never the native widening, which quiets signalling NaNs (see above).
+DACE_LOWP_CE float dace_bfloat16_to_float(uint16_t b) { return dace_bits_u2f((uint32_t)b << 16); }
+
+// alignas(2), NOT __attribute__((packed)). A single uint16_t member cannot have
+// padding, so "packed" buys nothing -- and bare packed would drop alignof to 1,
+// which would BREAK the layout identity with __nv_bfloat16 / __hip_bfloat16
+// (both size 2, align 2) that makes a host<->device copy bit-exact. The
+// static_asserts below are what actually pin the layout, and they fail the build
+// rather than silently corrupting a copy.
+struct alignas(2) bfloat16 {
+  constexpr bfloat16() : h(0) {}
+  DACE_LOWP_CE bfloat16(float f) : h(dace_bfloat16_from_float(f)) {}
+  DACE_LOWP_CE operator float() const { return dace_bfloat16_to_float(h); }
+
+  // Operator surface identical to ``half`` above, for the same reasons: binary
+  // arithmetic, comparisons and unary minus come from the implicit
+  // ``operator float()``, and overloading them here would make a mixed
+  // expression such as ``b + 1.0f`` ambiguous. Only compound assignment needs
+  // an explicit definition, because the built-in one requires an lvalue of
+  // arithmetic type. Semantics are ``b = bfloat16(float(b) OP x)`` -- compute in
+  // float, round back once.
+#define DACE_BFLOAT16_COMPOUND(OP)                                 \
+  DACE_LOWP_CE bfloat16 &operator OP##=(float f) {                 \
+    *this = bfloat16((float)*this OP f);                           \
+    return *this;                                                  \
+  }
+  DACE_BFLOAT16_COMPOUND(+)
+  DACE_BFLOAT16_COMPOUND(-)
+  DACE_BFLOAT16_COMPOUND(*)
+  DACE_BFLOAT16_COMPOUND(/)
+#undef DACE_BFLOAT16_COMPOUND
+
+  DACE_LOWP_CE bfloat16 &operator++() { return *this += 1.0f; }
+  DACE_LOWP_CE bfloat16 &operator--() { return *this -= 1.0f; }
+  DACE_LOWP_CE bfloat16 operator++(int) { bfloat16 t = *this; *this += 1.0f; return t; }
+  DACE_LOWP_CE bfloat16 operator--(int) { bfloat16 t = *this; *this -= 1.0f; return t; }
+
+  uint16_t h;
+};
+#define DACE_HAS_BFLOAT16 1
+DACE_ASSERT_LOWP_LAYOUT(bfloat16);
 
 #ifdef _OPENMP
 // OpenMP has no built-in reduction over a class type: ``reduction(+: x)`` on a
@@ -366,6 +610,25 @@ typedef half float16;
     initializer(omp_priv = dace::half(1.0f))
 #pragma omp declare reduction(|| : dace::half : omp_out = dace::half((float)((float)omp_out || (float)omp_in))) \
     initializer(omp_priv = dace::half(0.0f))
+
+// The identical set for ``dace::bfloat16``, for the identical reasons -- see the
+// commentary above, all of which applies verbatim. In particular ``-`` combines
+// with ``+=`` (OpenMP sums the per-thread negated copies), and ``&``, ``|``,
+// ``^`` are absent because OpenMP rejects them for ``float`` as well: bfloat16
+// must accept exactly what float32 accepts, no more.
+#pragma omp declare reduction(+ : dace::bfloat16 : omp_out += omp_in) initializer(omp_priv = dace::bfloat16(0.0f))
+#pragma omp declare reduction(- : dace::bfloat16 : omp_out += omp_in) initializer(omp_priv = dace::bfloat16(0.0f))
+#pragma omp declare reduction(* : dace::bfloat16 : omp_out *= omp_in) initializer(omp_priv = dace::bfloat16(1.0f))
+#pragma omp declare reduction(min : dace::bfloat16 : omp_out = (float)omp_in < (float)omp_out ? omp_in : omp_out) \
+    initializer(omp_priv = dace::bfloat16(__builtin_huge_valf()))
+#pragma omp declare reduction(max : dace::bfloat16 : omp_out = (float)omp_in > (float)omp_out ? omp_in : omp_out) \
+    initializer(omp_priv = dace::bfloat16(-__builtin_huge_valf()))
+#pragma omp declare reduction(&& : dace::bfloat16 :                                                   \
+    omp_out = dace::bfloat16((float)((float)omp_out && (float)omp_in)))                               \
+    initializer(omp_priv = dace::bfloat16(1.0f))
+#pragma omp declare reduction(|| : dace::bfloat16 :                                                   \
+    omp_out = dace::bfloat16((float)((float)omp_out || (float)omp_in)))                               \
+    initializer(omp_priv = dace::bfloat16(0.0f))
 #endif
 #endif
 

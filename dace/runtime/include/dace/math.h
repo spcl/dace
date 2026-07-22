@@ -245,6 +245,39 @@ DACE_CONSTEXPR __device__ __forceinline__ dace::float16 max(
     const T& a, const dace::float16& b, const Ts&... c) {
   return (dace::float16(a) > b) ? max(dace::float16(a), c...) : max(b, c...);
 }
+
+// The same workarounds for dace::bfloat16 (__nv_bfloat16), which has the same
+// two properties: not trivially convertible, and device-only comparisons.
+template <typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::bfloat16 min(
+    const dace::bfloat16& a, const dace::bfloat16& b, const Ts&... c) {
+  return (a < b) ? min(a, c...) : min(b, c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::bfloat16 min(
+    const dace::bfloat16& a, const T& b, const Ts&... c) {
+  return (a < dace::bfloat16(b)) ? min(a, c...) : min(dace::bfloat16(b), c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::bfloat16 min(
+    const T& a, const dace::bfloat16& b, const Ts&... c) {
+  return (dace::bfloat16(a) < b) ? min(dace::bfloat16(a), c...) : min(b, c...);
+}
+template <typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::bfloat16 max(
+    const dace::bfloat16& a, const dace::bfloat16& b, const Ts&... c) {
+  return (a > b) ? max(a, c...) : max(b, c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::bfloat16 max(
+    const dace::bfloat16& a, const T& b, const Ts&... c) {
+  return (a > dace::bfloat16(b)) ? max(a, c...) : max(dace::bfloat16(b), c...);
+}
+template <typename T, typename... Ts>
+DACE_CONSTEXPR __device__ __forceinline__ dace::bfloat16 max(
+    const T& a, const dace::bfloat16& b, const Ts&... c) {
+  return (dace::bfloat16(a) > b) ? max(dace::bfloat16(a), c...) : max(b, c...);
+}
 #endif
 
 #ifndef DACE_SYNTHESIS
