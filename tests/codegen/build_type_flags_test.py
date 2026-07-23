@@ -1,15 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``compiler.build_type`` is the single source of the optimization level.
-
-Two levels on one command line is not something the standard defines; every compiler we target
-happens to take the last one, which is how a stray ``-O3`` in ``compiler.cpu.args`` used to beat the
-``-O2`` of the configured build type. These tests pin the split instead of relying on that: the args
-carry no ``-O``, and the build type carries nothing else.
-
-The ``CMAKE_BUILD_TYPE_FLAGS`` check matters beyond tidiness -- the precompiled header is built
-outside CMake from that table, and a header whose flags do not match the translation unit is
-silently ignored, costing build time with no visible failure.
-"""
+"""``compiler.build_type`` is the sole source of the optimization level: args carry no ``-O``, the
+build type carries nothing else. The per-family table also feeds the PCH build, so a wrong entry
+makes the compiler silently decline the header."""
 import json
 import re
 import shutil
@@ -35,11 +27,8 @@ OPT_FLAG = re.compile(r'(?:^|\s)[-/]O')
 
 
 def cmake_config_flags(language: str = 'CXX', executable: str = '') -> dict:
-    """What CMake itself puts in ``CMAKE_<language>_FLAGS_<CONFIG>`` for this host's compiler.
-
-    Asked of CMake rather than hardcoded: the point of the test is that DaCe's copy tracks the real
-    thing, and a second hardcoded copy would only pin the two hardcodings to each other.
-    """
+    """What CMake puts in ``CMAKE_<language>_FLAGS_<CONFIG>`` for this compiler. Asked of CMake, not
+    hardcoded: the test is that DaCe's copy tracks the real thing."""
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / 'CMakeLists.txt').write_text('cmake_minimum_required(VERSION 3.16)\n'
@@ -67,25 +56,22 @@ def cmake_config_flags(language: str = 'CXX', executable: str = '') -> dict:
 
 @pytest.mark.parametrize('key', ARG_KEYS, ids=lambda k: '_'.join(k[1:]))
 def test_arg_defaults_carry_no_optimization_level(key):
-    """An ``-O`` here is appended before CMake's per-config flags and loses to them, so a user who
-    sets one gets no error and no effect -- the worst kind of knob."""
+    """An ``-O`` here loses to CMake's per-config flags: no error, no effect -- the worst knob."""
     default = Config.get_default(*key) or ''
     assert not OPT_FLAG.search(default), f'{".".join(key)} default carries an optimization level: {default!r}'
 
 
 @pytest.mark.parametrize('key', ARG_KEYS, ids=lambda k: '_'.join(k[1:]))
 def test_arg_defaults_are_not_fast_math(key):
-    """``-ffast-math`` / ``--use_fast_math`` enable finite-math and reassociation, which change
-    results: NPBench's LU fails under them because its initialization is not diagonally dominant.
-    The granular flags that survive are checked positively below."""
+    """fast-math enables finite-math and reassociation, which change results (NPBench LU fails). The
+    granular flags that survive are checked below."""
     default = Config.get_default(*key) or ''
     assert '-ffast-math' not in default and '--use_fast_math' not in default, \
         f'{".".join(key)} default enables fast-math: {default!r}'
 
 
 def test_cpu_args_keep_the_vectorization_enabling_subset():
-    """The four flags that let the vectorizer through libm calls (sin/cos) without changing
-    results. Dropping one silently costs vectorization, which no other test would notice."""
+    """The four flags that let the vectorizer through libm calls without changing results."""
     default = Config.get_default('compiler', 'cpu', 'args')
     for flag in ('-fno-math-errno', '-fno-trapping-math', '-fno-signed-zeros', '-freciprocal-math'):
         assert flag in default, f'compiler.cpu.args default lost {flag}: {default!r}'
@@ -99,15 +85,9 @@ FAMILY_PROBES = [(family, executable) for family, executable in (('gnu', 'g++'),
 
 @pytest.mark.parametrize('family,executable', FAMILY_PROBES, ids=[f for f, _ in FAMILY_PROBES])
 def test_pch_build_type_table_matches_cmake(family, executable):
-    """DaCe's per-family table is what the PCH is compiled with; CMake's own values are what the
-    translation unit gets. They must agree or the header is silently declined.
-
-    Parametrized by FAMILY, not just run once against the host's default compiler: an earlier version
-    checked only the default and therefore passed while the NVHPC entry was wrong in all four
-    configurations, which is exactly the case a PCH test exists to catch.
-    """
-    # Asserted rather than skipped: cmake is how DaCe compiles anything, so a box without it cannot
-    # run this suite at all and "skipped" would be the wrong word for it.
+    """DaCe's per-family table must equal CMake's own values, or the PCH is declined. Parametrized by
+    family, not just the host default -- an earlier default-only check passed while every NVHPC entry
+    was wrong."""
     assert shutil.which('cmake'), 'cmake is not on PATH, so DaCe cannot build at all'
     ours = BUILD_TYPE_FLAGS_BY_FAMILY[family]
     actual = cmake_config_flags('CXX', executable)
@@ -120,11 +100,8 @@ def test_pch_build_type_table_matches_cmake(family, executable):
 
 @pytest.mark.parametrize('build_type', ['Debug', 'Release', 'RelWithDebInfo'])
 def test_compile_line_has_exactly_the_build_types_optimization_level(build_type):
-    """End to end: build a real SDFG and read the compiler's own record of how it was invoked.
-
-    ``compile_commands.json`` is the only witness that does not re-derive the flags the way the code
-    under test does.
-    """
+    """End to end: build a real SDFG and read ``compile_commands.json`` -- the only witness that does
+    not re-derive the flags the way the code under test does."""
 
     @dace.program
     def addone(inp: dace.float64[8], out: dace.float64[8]):

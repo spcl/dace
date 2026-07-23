@@ -1,15 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Instrumentation must declare its build requirements, not append them to the global config.
-
-``Config.append('compiler', 'cpu', 'args', ...)`` mutates process-wide state with no restore, and the
-providers did it from ``on_sdfg_begin`` -- once per SDFG. So the flags accumulated without bound and
-leaked into every later SDFG in the session, instrumented or not. DaCe already has the right
-mechanism: an environment's ``cmake_compile_flags``/``cmake_libraries`` are a deduplicated set scoped
-to the SDFGs that use it.
-
-These tests need neither LIKWID nor PAPI installed, which matters because CI has neither -- the
-regression they guard would otherwise be invisible until a user hit it.
-"""
+"""Instrumentation declares build requirements as environments, not ``Config.append``. The old
+append ran per SDFG from ``on_sdfg_begin``, grew without bound, and leaked into every later SDFG; an
+environment's flags/libs are a deduplicated set scoped to its users. Needs neither LIKWID nor PAPI
+installed, since CI has neither."""
 import ast
 import pathlib
 
@@ -50,12 +43,8 @@ def config_append_targets(source: pathlib.Path):
 
 @pytest.mark.parametrize('relative', PROVIDER_SOURCES)
 def test_providers_do_not_mutate_global_compiler_config(relative):
-    """The regression guard: a provider must not reach for ``Config.append`` again.
-
-    Asserted against the source rather than by running the providers, because doing it the other way
-    needs LIKWID and PAPI installed -- and on a machine without them the provider returns early, so a
-    reintroduced append would go unnoticed exactly where CI runs.
-    """
+    """A provider must not reach for ``Config.append`` again. Checked against the source, not by
+    running the providers, which return early without LIKWID/PAPI installed -- i.e. on CI."""
     source = repo_root() / relative
     assert source.is_file(), f'{relative} not found; update PROVIDER_SOURCES'
     offenders = [t for t in config_append_targets(source) if t in FORBIDDEN_KEYS]
@@ -74,8 +63,7 @@ def test_likwid_environments_carry_their_defines():
 
 
 def test_likwid_does_not_re_add_openmp():
-    """``CMakeLists.txt`` already does ``find_package(OpenMP REQUIRED)`` and links OpenMP::OpenMP_CXX,
-    so the provider adding ``-fopenmp`` only duplicated it on every compile line."""
+    """CMakeLists already links OpenMP::OpenMP_CXX, so a provider ``-fopenmp`` only duplicated it."""
     for env in (LIKWID, LIKWIDPerfmon, LIKWIDNvmon):
         assert '-fopenmp' not in env.cmake_compile_flags
 
@@ -98,13 +86,9 @@ def test_papi_vectorization_fragment_follows_the_config(enabled):
 
 
 def test_papi_vectorization_fragment_is_compiler_aware():
-    """The report flag differs per compiler, and CMake is what picks the compiler.
-
-    Choosing in CMake from CMAKE_CXX_COMPILER_ID means there is no second detector in Python that
-    has to predict what CMake is about to pick -- the failure mode where flags chosen for one
-    compiler are handed to another. Asserted on the fragment's text so it holds on a machine that
-    has only one of these compilers installed, which is every CI runner.
-    """
+    """The report flag differs per compiler, and CMake picks the compiler -- so choosing in CMake
+    avoids a Python detector that must predict CMake's pick. Asserted on the fragment's text, so it
+    holds with only one compiler installed."""
     fragment = pathlib.Path(__file__).resolve().parents[1] / 'dace' / 'codegen' / 'instrumentation'
     text = (fragment / 'papi_vectorization.cmake').read_text()
     for compiler_id, flag in (('GNU', '-fopt-info-vec'), ('Clang', '-Rpass=loop-vectorize'), ('NVHPC', '-Minfo=vect'),
@@ -115,8 +99,7 @@ def test_papi_vectorization_fragment_is_compiler_aware():
 
 
 def test_papi_vectorization_fragment_resolves_to_a_real_file():
-    """``cmake_files`` entries are resolved against the environment's module and get ``.cmake``
-    appended; a name that does not resolve fails at configure time, not here."""
+    """``cmake_files`` entries resolve against the env's module with ``.cmake`` appended."""
     with set_temporary('instrumentation', 'papi', 'vectorization_analysis', value=True):
         envs = get_environments_and_dependencies({PAPI.full_class_path()})
         flags, _link = get_environment_flags(envs)

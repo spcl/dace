@@ -1,14 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""The shipped ``compiler.*.args`` defaults must be accepted by every compiler we claim to support.
-
-They are written for GCC and Clang, and nvc++ rejects four of those switches outright -- an NVHPC
-user hits a hard compile error before any DaCe code runs. :mod:`dace.codegen.compiler_family` picks a
-per-family default; these tests check that each family's default actually compiles under that family.
-
-Compilers absent from the box yield no test case rather than a skipped one, so this file adds
-coverage where a toolchain exists and stays silent where it does not. CI carries no NVHPC, so the
-nvc++ case runs on developer machines that have it -- worth knowing when reading a green CI run.
-"""
+"""Each family's ``compiler.*.args`` default must compile under that family. The GCC/Clang defaults
+have four switches nvc++ rejects, so :mod:`dace.codegen.compiler_family` picks a per-family default.
+Absent compilers yield no test case (not a skip); CI has no NVHPC, so nvc++ runs on dev machines."""
 import re
 import shutil
 import subprocess
@@ -57,11 +50,8 @@ def test_default_flags_are_accepted(executable, tmp_path):
 
 @pytest.mark.parametrize('executable', AVAILABLE)
 def test_family_detection_agrees_with_the_compiler(executable, tmp_path):
-    """Detection reads predefined macros, so it must not be fooled by a name.
-
-    Clang and nvc++ both define ``__GNUC__``; a detector that tested it first would call all three
-    GNU and hand nvc++ flags it cannot parse.
-    """
+    """Detection reads predefined macros, not the name. Clang and nvc++ both define ``__GNUC__``, so
+    testing it first would call all three GNU and hand nvc++ flags it cannot parse."""
     family = compiler_family.detect(executable)
     assert family in {name for _, name in compiler_family.FAMILY_MACROS}, f'unknown family {family!r}'
     expected = {'g++': 'gnu', 'clang++': 'clang', 'nvc++': 'nvhpc', 'icpx': 'intelllvm'}
@@ -71,8 +61,7 @@ def test_family_detection_agrees_with_the_compiler(executable, tmp_path):
 
 
 def test_configured_compiler_accepts_its_flags(tmp_path):
-    """Always runs, whatever this box has: the compiler DaCe is actually configured to use must
-    accept the flags DaCe is actually going to pass it."""
+    """The configured compiler must accept the flags DaCe will pass it. Always runs."""
     executable = Config.get('compiler', 'cpu', 'executable') or 'c++'
     assert shutil.which(executable), f'configured compiler {executable!r} is not on PATH'
     result = compile_probe(executable, flags_for(executable), tmp_path)
@@ -99,26 +88,16 @@ def cmake_compiler_id(executable: str, tmp_path: Path) -> str:
 
 @pytest.mark.parametrize('executable', AVAILABLE)
 def test_family_matches_cmakes_compiler_id(executable, tmp_path):
-    """DaCe and CMake must name the same compiler the same way.
-
-    Two independent detectors decide two halves of one build: DaCe's picks the flags, CMake's picks
-    the compiler those flags are handed to. Agreeing today is not enough -- if they ever diverge, the
-    flags chosen for one compiler are passed to another, which is how ``CXX=nvc++`` used to die on
-    ``nvc++-Error-Unknown switch: -fno-math-errno``. Family names are CMake's ids lowercased so this
-    comparison is exact rather than a mapping table that can rot.
-    """
+    """DaCe (picks the flags) and CMake (picks the compiler) must name the compiler the same way, or
+    flags for one go to another -- how ``CXX=nvc++`` used to die on ``-fno-math-errno``. Family names
+    are CMake's ids lowercased, so the comparison is exact."""
     assert compiler_family.detect(executable) == cmake_compiler_id(executable, tmp_path).lower()
 
 
 def test_appending_flags_keeps_the_family_default(monkeypatch):
-    """Appending must extend the family's flags, not revert to the GCC ones.
-
-    ``Config.append`` is how DaCe itself adds flags -- LIKWID appends ``-DLIKWID_PERFMON -fopenmp``
-    so its headers stop compiling to no-ops, PAPI a vectorization-report flag -- and it is literally
-    ``current += value``. An implementation that treats "differs from the default" as "the user chose
-    this" hands nvc++ the four switches it rejects the moment instrumentation is enabled, turning a
-    working build into a configure error. Forces the family so the assertion holds on any host.
-    """
+    """Appending must extend the family default, not revert to GCC's. ``Config.append`` (``current +=
+    value``) is how DaCe adds flags, e.g. LIKWID's ``-DLIKWID_PERFMON``; treating "differs from
+    default" as "user chose this" would hand nvc++ its four rejected switches. Family forced."""
     monkeypatch.setattr(compiler_family, 'detect', lambda _executable: 'nvhpc')
     nvhpc = Config.get_metadata('compiler', 'cpu', 'args')['default_nvhpc']
     with set_temporary('compiler', 'cpu', 'args', value=Config.get_default('compiler', 'cpu', 'args')):
@@ -138,8 +117,7 @@ def test_hand_written_args_are_left_alone(monkeypatch):
 
 
 def test_nvhpc_default_avoids_the_switches_nvcpp_rejects():
-    """Pins the four that fail, so a well-meaning sync of the GNU default into the NVHPC one is
-    caught even on a box with no nvc++ to compile with."""
+    """Pins the four failing switches, catching a GNU->NVHPC sync even without nvc++ installed."""
     nvhpc = Config.get_metadata('compiler', 'cpu', 'args')['default_nvhpc']
     for flag in ('-fno-math-errno', '-fno-trapping-math', '-freciprocal-math', '-Wno-unused-label'):
         assert flag not in nvhpc, f'nvhpc default carries {flag}, which nvc++ rejects: {nvhpc!r}'
