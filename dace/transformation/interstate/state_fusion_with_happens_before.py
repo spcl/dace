@@ -553,6 +553,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             resulting_ccs: List[CCDesc] = StateFusionExtended.find_fused_components(first_cc_input, first_cc_output,
                                                                                     second_cc_input, second_cc_output)
 
+            if len(resulting_ccs) > 1:
+                # Declared side effects would race across parallel components.
+                for state in (first_state, second_state):
+                    for node in state.nodes():
+                        if isinstance(node, nodes.Tasklet) and node.side_effects:
+                            return False
+
             # Check for data races
             for fused_cc in resulting_ccs:
                 # Write-Write hazard - data is output of both first and second
