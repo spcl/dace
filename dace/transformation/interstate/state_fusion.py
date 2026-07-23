@@ -121,15 +121,6 @@ class StateFusion(transformation.MultiStateTransformation):
                     return True
         return False
 
-    @staticmethod
-    def is_pystate_ordered(state: SDFGState, tasklet: nodes.Tasklet) -> bool:
-        """True if ``tasklet`` carries a ``__pystate`` token -- a data dependence kept ordered across fusion."""
-        for edge in state.all_edges(tasklet):
-            neighbor = edge.dst if edge.src is tasklet else edge.src
-            if isinstance(neighbor, nodes.AccessNode) and neighbor.data == '__pystate':
-                return True
-        return False
-
     def has_path(self, first_state: SDFGState, second_state: SDFGState,
                  match_nodes: Dict[nodes.AccessNode, nodes.AccessNode], node_a: nodes.Node, node_b: nodes.Node) -> bool:
         """ Check for paths between the two states if they are fused. """
@@ -219,25 +210,6 @@ class StateFusion(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
-
-        # A side-effect node (fusion barrier, I/O, side-effecting library node) must never be fused:
-        # fusion preserves only dataflow order, and a side effect is ordered by the interstate edge
-        # alone. Checked BEFORE the permissive split and mirroring
-        # ``StateFusionExtended.can_be_applied``, which has always checked it unconditionally: a
-        # barrier is a correctness constraint, not one of the race heuristics permissive mode relaxes,
-        # so an empty ``side_effects=True`` tasklet inserted purely to keep two states apart has to
-        # hold in both modes. Exception: __pystate-ordered callbacks keep their order via that data
-        # dependence and are gated by frontend.dont_fuse_callbacks below.
-        # One predicate for every code node: ``CodeNode.has_side_effects(sdfg)`` is overridden by
-        # Tasklet, LibraryNode and NestedSDFG (which answers for the nodes it contains, resolved
-        # against its own SDFG), so the caller no longer has to know which kind it is holding.
-        for state in (first_state, second_state):
-            for node in state.nodes():
-                if not isinstance(node, nodes.CodeNode) or not node.has_side_effects(sdfg):
-                    continue
-                if isinstance(node, nodes.Tasklet) and StateFusion.is_pystate_ordered(state, node):
-                    continue
-                return False
 
         out_edges = graph.out_edges(first_state)
         in_edges = graph.in_edges(first_state)
@@ -361,6 +333,13 @@ class StateFusion(transformation.MultiStateTransformation):
             # check for hazards
             resulting_ccs: List[CCDesc] = StateFusion.find_fused_components(first_cc_input, first_cc_output,
                                                                             second_cc_input, second_cc_output)
+
+            if len(resulting_ccs) > 1:
+                # Declared side effects would race across parallel components.
+                for state in (first_state, second_state):
+                    for node in state.nodes():
+                        if isinstance(node, nodes.Tasklet) and node.side_effects:
+                            return False
 
             # Check for data races
             for fused_cc in resulting_ccs:
