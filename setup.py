@@ -71,10 +71,9 @@ setup(
     },
     include_package_data=True,
     install_requires=[
-        'numpy', 'ml_dtypes', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply',
-        'fparser >= 0.1.3, != 0.2.3', 'dill', 'pyreadline;platform_system=="Windows"', 'packaging',
-        'typing-extensions', 'ordered-set >= 4.0.0'
-    ] + cmake_requires + ninja_requires,
+        'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3, != 0.2.3',
+        'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions', 'ml_dtypes'
+    ] + cmake_requires,
     extras_require={
         'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
         # Optional: exact-integer polyhedral engine for the WavefrontSkew canonicalization pass
