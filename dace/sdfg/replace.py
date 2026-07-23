@@ -199,7 +199,7 @@ def replace_properties_dict(node: Any,
             # Don't replace variables that appear as an input or an output
             # connector, as this should shadow the outer declaration.
             reduced_repl = set(repl.keys())
-            if hasattr(node, 'in_connectors'):
+            if isinstance(node, nodes.Node):
                 reduced_repl -= set(node.in_connectors.keys()) | set(node.out_connectors.keys())
             reduced_repl = {k: repl[k] for k in reduced_repl}
             replace_in_codeblock(propval, reduced_repl, node)

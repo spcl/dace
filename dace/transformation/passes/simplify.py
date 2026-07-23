@@ -115,7 +115,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
         if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(p, '__explicit_cf_compatible__') or p.__explicit_cf_compatible__ == False):
+            if not p.__explicit_cf_compatible__:
                 warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
                               'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +
