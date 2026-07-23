@@ -199,10 +199,9 @@ required:
                 default: true
                 title: Replay a recorded build instead of running CMake
                 description: >
-                    Record the compile and link commands of the first SDFG built with a given
-                    configuration (``ninja -t compdb``) and replay them for later SDFGs of the same
-                    shape, skipping CMake entirely. Purely an optimization: a missing entry, or one
-                    whose sources do not match the program being built, falls back to a full build.
+                    Record the first build of a shape (``ninja -t compdb``) and replay its commands
+                    for later SDFGs, skipping CMake. An optimization: a missing or mismatched entry
+                    falls back to a full build.
 
             build_type:
                 type: str
@@ -279,21 +278,8 @@ required:
                 default: 4
                 title: Parallel compile jobs for the CMake build
                 description: >
-                    How many source files the CMake build may compile concurrently
-                    (passed as ``cmake --build . --parallel <N>``). Applies to
-                    ``build_mode: cmake``.
-
-                    Deliberately a SMALL default rather than the core count: builds
-                    often share a machine, and each concurrent C++ compile of a
-                    generated file can take a lot of memory, so an unbounded build is
-                    a good way to run a box out of RAM. Raise it on a machine you own.
-
-                    This is what makes
-                    ``compiler.cpu.codegen_params.split_nsdfg_translation_units``
-                    pay off: that knob turns one huge translation unit into several,
-                    and this one lets them compile at the same time. With the Ninja
-                    generator (used automatically when ``ninja`` is on PATH) the bound
-                    is also what keeps Ninja from defaulting to every core.
+                    Translation units compiled concurrently. Small by default: builds share
+                    machines, and each generated-source compile can use a lot of memory.
 
             allow_shadowing:
                 type: bool
@@ -427,9 +413,13 @@ required:
                     args:
                         type: str
                         title: Arguments
-                        description: Compiler argument flags
+                        description: >
+                            Flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``). ``default_<family>`` applies for that
+                            host compiler, since nvc++ rejects several switches below.
                         default: '-fPIC -Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
-                        default_Windows: '/O2 /fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
+                        default_nvhpc: '-fPIC -Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
+                        default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
                         type: str
@@ -1050,15 +1040,19 @@ required:
                     args:
                         type: str
                         title: nvcc Arguments
-                        description: Compiler argument flags for CUDA
+                        description: >
+                            nvcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``).
                         default: '-lineinfo -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-O3'
+                        default_Windows: ''
 
                     hip_args:
                         type: str
                         title: hipcc Arguments
-                        description: Compiler argument flags for HIP
-                        default: '-fPIC -O3 -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter'
+                        description: >
+                            hipcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``).
+                        default: '-fPIC -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str
@@ -1357,7 +1351,8 @@ required:
                         title: Enable vectorization check
                         default: false
                         description: >
-                            Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
+                            Report which loops the compiler vectorized. Flag chosen per compiler in
+                            CMake; only GCC writes ``perf/vecreport.txt``, others use stderr.
 
     #############################################
     # Python frontend settings

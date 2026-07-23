@@ -21,6 +21,7 @@ import warnings
 import dace
 from dace.config import Config
 from dace.codegen import command_db
+from dace.codegen import compiler_family
 from dace.codegen import exceptions as cgx
 from dace.codegen.target import TargetCodeGenerator
 from dace.codegen.codeobject import CodeObject
@@ -167,22 +168,20 @@ def generate_program_folder(
     return out_path
 
 
-#: The caches are Linux/macOS only: the precompiled header is a GCC/Clang mechanism, and none of this
-#: is tested on Windows.
+#: Untested on Windows.
 CACHES_SUPPORTED = os.name != 'nt'
 
-#: Reserved name for the last-resort cache location inside the build folder. Prefixed so it cannot
-#: collide with the per-SDFG folders that sit next to it, which are named after the SDFG.
+#: Last-resort cache location inside the build folder. Prefixed so it cannot collide with the
+#: per-SDFG folders next to it, which are named after the SDFG.
 BUILD_CACHE_FOLDER = '__dace_build_cache'
 
 
 def build_cache_root() -> str:
-    """Directory holding the machine-global build caches, which are shared by every SDFG.
+    """Directory holding the machine-global build caches, shared by every SDFG.
 
-    All of them are advisory: a miss, or an entry that no longer matches, costs speed and never
-    correctness. RAM-backed when possible -- on HPC nodes the temp directory is often a slow shared
-    file system, where re-reading a large precompiled header costs more than it saves. Where neither
-    that nor the temp directory is usable, the caches live in the build folder instead.
+    All advisory: a miss costs speed, never correctness. RAM-backed when possible, since on HPC
+    nodes the temp directory is often a shared file system where re-reading a large precompiled
+    header costs more than it saves.
     """
     root = os.environ.get('DACE_BUILD_CACHE_DIR')
     if not root:
@@ -193,15 +192,34 @@ def build_cache_root() -> str:
     return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
 
 
-#: CMake's own ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults for GNU-like compilers. A precompiled header is
-#: only used if it was built with the same flags as the translation unit, so these must match what
-#: CMake appends for the build type -- note ``Debug`` is plain ``-g``.
-CMAKE_BUILD_TYPE_FLAGS = {
-    'Debug': ['-g'],
-    'Release': ['-O3', '-DNDEBUG'],
-    'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
-    'MinSizeRel': ['-Os', '-DNDEBUG'],
+#: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
+#: precompiled header with the same flags the translation unit will get; nothing here reaches the
+#: real build. A wrong entry costs the PCH speedup, never correctness. NVHPC needs its own row --
+#: it differs from GNU in every config. Verified against CMake, not documentation.
+BUILD_TYPE_FLAGS_BY_FAMILY = {
+    'gnu': {
+        'Debug': ['-g'],
+        'Release': ['-O3', '-DNDEBUG'],
+        'RelWithDebInfo': ['-O2', '-g', '-DNDEBUG'],
+        'MinSizeRel': ['-Os', '-DNDEBUG'],
+    },
+    'nvhpc': {
+        'Debug': ['-g', '-O0'],
+        'Release': ['-fast', '-O3', '-DNDEBUG'],
+        'RelWithDebInfo': ['-O2', '-gopt'],
+        'MinSizeRel': ['-O2', '-s', '-DNDEBUG'],
+    },
 }
+
+#: Clang, IntelLLVM and anything unrecognized use CMake's GNU-like defaults.
+CMAKE_BUILD_TYPE_FLAGS = BUILD_TYPE_FLAGS_BY_FAMILY['gnu']
+
+
+def build_type_flags() -> list:
+    """The flags CMake will append for the configured build type and host compiler."""
+    family = compiler_family.detect(compiler_family.host_compiler())
+    table = BUILD_TYPE_FLAGS_BY_FAMILY.get(family, CMAKE_BUILD_TYPE_FLAGS)
+    return list(table.get(Config.get('compiler', 'build_type'), []))
 
 
 def cache_key(*parts: object) -> str:
@@ -219,10 +237,9 @@ def newest_mtime(path: str) -> float:
 def seed_cmake_configure(build_folder: str, key: str) -> bool:
     """Seed a fresh build folder with an earlier configure, returning whether it was seeded.
 
-    ``CMakeCache.txt`` holds the ``find_package`` results and ``CMakeFiles/<version>/`` the
-    ``project()`` compiler and ABI detection. Neither can differ between two programs configured the
-    same way, yet a fresh build folder rediscovers both for every SDFG. Seeding one without the other
-    is close to worthless -- each still forces the other half of the work.
+    ``CMakeCache.txt`` holds the ``find_package`` results, ``CMakeFiles/<version>/`` the compiler
+    and ABI detection. Neither differs between two programs configured the same way; both are copied
+    together, since seeding one still forces the other half of the work.
     """
     entry = os.path.join(build_cache_root(), 'configure', key)
     if os.path.exists(os.path.join(build_folder, 'CMakeCache.txt')) or not os.path.isdir(entry):
@@ -245,8 +262,8 @@ def seed_cmake_configure(build_folder: str, key: str) -> bool:
 def publish_cmake_configure(build_folder: str, key: str) -> None:
     """Publish a fresh configure so the next SDFG can reuse it.
 
-    Only the compiler-detection subdirectory is kept -- the rest of ``CMakeFiles/`` holds this
-    program's object files, which must never be transplanted into another build.
+    Only the compiler-detection subdirectory is kept; the rest of ``CMakeFiles/`` holds this
+    program's objects, which must never move to another build.
     """
     entry = os.path.join(build_cache_root(), 'configure', key)
     versions = glob.glob(os.path.join(build_folder, 'CMakeFiles', '[0-9]*'))
@@ -265,19 +282,16 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
 def prepare_precompiled_header(targets) -> Optional[str]:
     """Precompile ``<dace/dace.h>`` once per (compiler, flags), returning its directory or ``None``.
 
-    The runtime umbrella header is most of the compile time of a small kernel. Precompiling it costs
-    more than it saves for a single translation unit, so the cache across SDFGs is what makes it pay.
-    The flags mirror the line CMake gives generated sources; should they ever drift, the compiler
-    silently declines the header and compiles normally, producing the same object.
+    The runtime umbrella header is most of the compile time of a small kernel; caching it across
+    SDFGs is what makes precompiling pay. Should the flags drift from CMake's line, the compiler
+    silently declines the header and produces the same object.
     """
     if not (CACHES_SUPPORTED and Config.get_bool('compiler', 'precompiled_header')):
         return None
     runtime = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'runtime', 'include')
-    executable = Config.get('compiler', 'cpu', 'executable')
-    cxx = make_absolute(executable) if executable else 'c++'
+    cxx = make_absolute(compiler_family.host_compiler())
     flags = ([f'-std=c++{Config.get("compiler", "cpp_standard")}', '-fPIC', '-fopenmp'] +
-             shlex.split(Config.get('compiler', 'cpu', 'args') or '') +
-             CMAKE_BUILD_TYPE_FLAGS.get(Config.get('compiler', 'build_type'), []))
+             shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
     pch = os.path.join(build_cache_root(), 'pch', cache_key(cxx, *flags))
@@ -317,8 +331,7 @@ def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: i
         # Clean CMake directory and try once more
         if Config.get_bool('debugprint'):
             print('Cleaning CMake build folder and retrying...')
-        # The retry starts from an empty folder, so a seed cannot be what fails it twice -- but drop
-        # the entry anyway, or a bad one would go on poisoning every later build of this shape.
+        # Drop the seed: a bad one would poison every later build of this shape.
         if seeded:
             shutil.rmtree(os.path.join(build_cache_root(), 'configure', configure_key), ignore_errors=True)
         shutil.rmtree(build_folder, ignore_errors=True)
@@ -335,8 +348,7 @@ def run_cmake(cmake_command: str, build_folder: str, configure_key: str, jobs: i
     with open(cmake_filename, "w") as fp:
         fp.write(cmake_command)
 
-    # Compile and link. ``--parallel`` is what bounds the build: Make would otherwise be serial, and
-    # Ninja would otherwise use every core.
+    # ``--parallel`` bounds the build; Ninja would otherwise use every core.
     try:
         _run_liveoutput(f"cmake --build . --config {Config.get('compiler', 'build_type')} --parallel {jobs}",
                         shell=True,
@@ -460,8 +472,8 @@ def configure_and_compile(
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
     cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
-    # Free -- the generator already knows the commands -- and it is what lets tooling, and the
-    # precompiled-header test, see the exact flags a generated source is compiled with.
+    # Free -- the generator already knows the commands -- and lets tooling see a generated source's
+    # exact compile flags.
     cmake_command.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
 
     # Set linker and linker arguments, iff they have been specified
@@ -478,15 +490,12 @@ def configure_and_compile(
     pch_dir = prepare_precompiled_header(targets)
     if pch_dir:
         cmake_command.append(f'-DDACE_PCH_DIR="{pch_dir}"')
-    # Everything that decides what the configure DISCOVERS: the command minus the flags naming this
-    # particular program. ``DACE_FILES`` reduces to its target subdirectories, since those -- not the
-    # file names -- are what select the languages and packages the CMakeLists enables.
+    # What the configure DISCOVERS: the command minus the flags naming this program. ``DACE_FILES``
+    # reduces to its target subdirectories, which select the languages and packages CMake enables.
     shape = [c for c in cmake_command if not c.startswith(('-DDACE_SRC_DIR=', '-DDACE_FILES=', '-DDACE_PROGRAM_NAME='))]
     configure_key = cache_key(*shape, *sorted({os.path.dirname(f) for f in files}))
-    # A recorded build additionally pins the exact translation units and the CMake sources that
-    # produced their flags, neither of which the configure alone depends on: editing the CMakeLists
-    # or an environment's .cmake changes the real compile line without changing anything above.
-    # Every ``.cmake`` the command mentions, whichever flag carries it, plus the CMakeLists itself.
+    # A replay also pins the exact translation units and the CMake sources behind their flags:
+    # editing the CMakeLists or an environment's .cmake changes the compile line but nothing above.
     cmake_sources = sorted({p for c in shape for p in re.findall(r'[^"=;\s]+\.cmake', c)})
     cmake_sources.append(os.path.join(dace_path, 'codegen', 'CMakeLists.txt'))
     command_key = cache_key(*shape, *[f.replace(program_name, '$NAME') for f in files],

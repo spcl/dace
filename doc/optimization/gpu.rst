@@ -150,7 +150,7 @@ settings. For example:
         default_block_size: 64,1,1
 
         # Override default HIP arguments (optional)
-        hip_args: -std=c++17 -fPIC -O3 -ffast-math -Wno-unused-parameter
+        hip_args: -std=c++17 -fPIC -fno-math-errno -fno-trapping-math -Wno-unused-parameter
 
 
 Subsequently, any GPU DaCe program will use HIP.

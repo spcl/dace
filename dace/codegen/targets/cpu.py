@@ -10,9 +10,7 @@ import warnings
 import numpy as np
 
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
-from dace.config import set_temporary
-from dace.codegen import cppunparse, exceptions as cgx
-from dace.codegen.codeobject import CodeObject
+from dace.codegen import compiler_family, cppunparse, exceptions as cgx
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
@@ -553,12 +551,12 @@ class CPUCodeGen(TargetCodeGenerator):
     def cmake_options():
         options = []
 
-        if Config.get('compiler', 'cpu', 'executable'):
-            compiler = make_absolute(Config.get('compiler', 'cpu', 'executable'))
-            options.append('-DCMAKE_CXX_COMPILER="{}"'.format(compiler))
+        # Always pinned, so the compiler the flags were chosen for is the one CMake uses. This wins
+        # over a CMAKE_CXX_COMPILER set in a toolchain file passed through extra_cmake_args.
+        options.append('-DCMAKE_CXX_COMPILER="{}"'.format(make_absolute(compiler_family.host_compiler())))
 
-        if Config.get('compiler', 'cpu', 'args'):
-            flags = Config.get('compiler', 'cpu', 'args')
+        flags = compiler_family.cpu_args()
+        if flags:
             options.append('-DCMAKE_CXX_FLAGS="{}"'.format(flags))
 
         return options
