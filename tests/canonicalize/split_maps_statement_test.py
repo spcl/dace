@@ -50,6 +50,13 @@ def _three_out(x: dace.float64[N], A: dace.float64[N], B: dace.float64[N], C: da
         C[i] = t - 3.0
 
 
+@dace.program
+def _dependent(x: dace.float64[N], A: dace.float64[N], B: dace.float64[N]):
+    for i in dace.map[0:N]:
+        A[i] = x[i] + 1.0
+        B[i] = A[i] * 2.0  # reads the just-written value -- the frontend wraps this in a NestedSDFG
+
+
 def _value_preserved(prog, arrays, n=16):
     raw = prog.to_sdfg(simplify=True)
     ref = {k: v.copy() for k, v in arrays.items()}
@@ -79,6 +86,15 @@ def test_two_global_outputs_split_into_one_map_each():
 def test_three_global_outputs_split_into_three_maps():
     cand = _value_preserved(_three_out, {'x': _rand(), 'A': np.zeros(16), 'B': np.zeros(16), 'C': np.zeros(16)})
     assert _nmaps(cand) == 3
+    assert not _materialized_buffers(cand)
+
+
+def test_a_dependent_read_after_write_splits_by_recomputing_the_local():
+    """``B[i]=A[i]*2`` reads a value written earlier in the SAME map; the frontend wraps it in a plain
+    NestedSDFG. The split inlines that body and recomputes the shared local in each map -- so the two
+    maps are independent, no cross-map buffer, value preserved."""
+    cand = _value_preserved(_dependent, {'x': _rand(), 'A': np.zeros(16), 'B': np.zeros(16)})
+    assert _nmaps(cand) == 2
     assert not _materialized_buffers(cand)
 
 

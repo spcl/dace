@@ -259,9 +259,18 @@ class SplitStatements(ppl.Pass):
                 out_names.append(e.data.data)
         if len(out_names) < 2:
             return False
-        # PLAIN leaf map only: no nested map / NestedSDFG in the body (those go to _replicate_components).
         scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
         inner = [n for n in scope.nodes() if n not in (entry, xit)]
+        # A PLAIN dataflow NestedSDFG body (a dependent read-after-write the frontend wrapped, e.g.
+        # ``A[i]=..; B[i]=A[i]*2``) is inlined FIRST, so the split sees flat tasklets and a shared local
+        # is duplicated like any other. A CONDITIONAL / indirection-symbol body is NOT inlined -- it
+        # cannot live directly in a map scope and is _replicate_components' job.
+        if (len(inner) == 1 and isinstance(inner[0], nodes.NestedSDFG) and not _has_conditional(inner[0].sdfg)
+                and not _has_interstate_assignments(inner[0].sdfg)):
+            inline_cls.apply_to(cfg, nested_sdfg=inner[0], save=False, verify=False)
+            scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
+            inner = [n for n in scope.nodes() if n not in (entry, xit)]
+        # PLAIN leaf map only: no nested map / NestedSDFG in the body (those go to _replicate_components).
         if not inner or any(isinstance(n, (nodes.NestedSDFG, nodes.MapEntry, nodes.MapExit)) for n in inner):
             return False
         before = {n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)}
