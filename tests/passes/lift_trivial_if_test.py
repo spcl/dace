@@ -267,6 +267,146 @@ def test_simplify_pipeline_includes_lift_trivial_if():
     assert len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)}) == 0
 
 
+from dace.sdfg.state import LoopRegion
+
+
+def _get_loop_with_conditional(branch_cond: str,
+                               with_else: bool = False,
+                               init: str = "i = 2",
+                               cond: str = "i < 10",
+                               update: str = "i = i + 1"):
+    """Build ``for i in [init..cond): if (branch_cond) [else ...]`` with real
+    dataflow on the live arm, so the conditional sits inside a ``LoopRegion`` whose
+    iteration range governs whether ``branch_cond`` is a range tautology/contradiction.
+
+    :param branch_cond: Condition on the guarded ``if`` arm.
+    :param with_else: If ``True`` add an else arm carrying the dataflow (so the
+        guarded arm being a contradiction must keep the else).
+    :returns: The SDFG with the loop as its start block.
+    """
+    sdfg = dace.SDFG("loopcond")
+    _, A = sdfg.add_array("A", [10], dace.float64)
+    sdfg.add_array("B", [10], dace.float64)
+    loop = LoopRegion(label="myloop",
+                      condition_expr=cond,
+                      loop_var="i",
+                      initialize_expr=init,
+                      update_expr=update,
+                      sdfg=sdfg)
+    sdfg.add_node(loop, is_start_block=True)
+    cb = ConditionalBlock(label="cfb", sdfg=sdfg, parent=loop)
+    loop.add_node(cb, is_start_block=True)
+    guarded = ControlFlowRegion(label="guarded", sdfg=sdfg, parent=cb)
+    cb.add_branch(condition=CodeBlock(branch_cond), branch=guarded)
+    guarded.add_state(label="g_s", is_start_block=True)  # every arm needs a start block to be valid
+    live = guarded
+    if with_else:
+        els = ControlFlowRegion(label="els", sdfg=sdfg, parent=cb)
+        cb.add_branch(condition=None, branch=els)
+        els.add_state(label="e_s", is_start_block=True)
+        live = els
+    s1 = live.start_block  # the dataflow goes on the branch that survives
+    s1.add_edge(s1.add_access("A"), None, s1.add_access("B"), None, dace.memlet.Memlet.from_array("A", A))
+    return sdfg
+
+
+def _num_conditionals(sdfg) -> int:
+    return len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)})
+
+
+# Guards that are a contradiction over ``i in [2, 9]`` -- the guarded branch never runs.
+_RANGE_CONTRADICTION = ["i == 0", "i == 1", "i == 10", "i == 100", "i < 2", "i <= 1", "i > 9", "i >= 10", "0 == i"]
+
+# Guards that are a tautology over ``i in [2, 9]`` -- the guarded branch always runs.
+_RANGE_TAUTOLOGY = ["not (i == 0)", "i != 0", "i < 10", "i <= 9", "i > 1", "i >= 2", "i != 100"]
+
+# Guards genuinely data-dependent over ``i in [2, 9]`` -- must NOT be folded.
+_RANGE_RUNTIME = ["i == 5", "i < 4", "i > 6", "i == 9"]
+
+
+@pytest.mark.parametrize("cond", _RANGE_CONTRADICTION)
+def test_iteration_range_contradiction_single_branch_removed(cond: str):
+    """A single-branch ``if`` whose guard is false for every iteration of the
+    enclosing loop is dropped (its body never runs)."""
+    sdfg = _get_loop_with_conditional(cond)
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_conditionals(sdfg) == 0
+
+
+@pytest.mark.parametrize("cond", _RANGE_TAUTOLOGY)
+def test_iteration_range_tautology_single_branch_lifted(cond: str):
+    """A single-branch ``if`` whose guard holds for every iteration of the enclosing
+    loop is lifted: the body always runs, so the redundant guard is discarded."""
+    sdfg = _get_loop_with_conditional(cond)
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_conditionals(sdfg) == 0
+
+
+@pytest.mark.parametrize("cond", _RANGE_CONTRADICTION)
+def test_iteration_range_contradiction_if_else_keeps_else(cond: str):
+    """An ``if/else`` whose guard is a range contradiction keeps only the else body."""
+    sdfg = _get_loop_with_conditional(cond, with_else=True)
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_conditionals(sdfg) == 0
+
+
+@pytest.mark.parametrize("cond", _RANGE_RUNTIME)
+def test_iteration_range_runtime_guard_preserved(cond: str):
+    """A guard that is neither always-true nor always-false over the loop range is a
+    genuine per-iteration branch and must be left in place."""
+    sdfg = _get_loop_with_conditional(cond)
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_conditionals(sdfg) == 1
+
+
+def test_iteration_range_symbolic_upper_bound():
+    """The range reasoning works with a symbolic upper bound: ``i in [2, N-1]`` makes
+    ``i == 0`` a contradiction and ``not(i == 1)`` a tautology, regardless of ``N``."""
+    N = dace.symbol("N")
+    contra = _get_loop_with_conditional("i == 0", cond="i < N")
+    contra.add_symbol("N", N.dtype)
+    LiftTrivialIf().apply_pass(contra, {})
+    contra.validate()
+    assert _num_conditionals(contra) == 0
+
+    tauto = _get_loop_with_conditional("not (i == 1)", cond="i < N")
+    tauto.add_symbol("N", N.dtype)
+    LiftTrivialIf().apply_pass(tauto, {})
+    tauto.validate()
+    assert _num_conditionals(tauto) == 0
+
+
+def test_iteration_range_no_enclosing_loop_is_not_folded():
+    """Without an enclosing loop there is no iteration range, so ``i == 0`` is a
+    free-symbol condition the pass must leave alone."""
+    sdfg = _get_sdfg("i == 0")
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert _num_conditionals(sdfg) == 1
+
+
+def test_should_reapply_only_on_block_count_change():
+    """The pass re-runs only when the number of control-flow blocks changed (a conditional added or
+    removed, or a loop peel shifting an enclosing range), not when interstate-edge contents change --
+    those never create or destroy a conditional."""
+    from dace.transformation import pass_pipeline as ppl
+    p = LiftTrivialIf()
+    assert p.should_reapply(ppl.Modifies.States)
+    assert p.should_reapply(ppl.Modifies.CFG)  # CFG includes States
+    assert not p.should_reapply(ppl.Modifies.InterstateEdges)
+    assert not p.should_reapply(ppl.Modifies.Nothing)
+    assert not p.should_reapply(ppl.Modifies.Symbols | ppl.Modifies.Memlets)
+
+
 if __name__ == "__main__":
     for c in _ALWAYS_TRUE:
         test_single_condition(c)
@@ -284,3 +424,4 @@ if __name__ == "__main__":
 
     test_cfg_is_a_middle_node()
     test_simplify_pipeline_includes_lift_trivial_if()
+    test_should_reapply_only_on_block_count_change()
