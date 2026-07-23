@@ -394,6 +394,69 @@ def test_iteration_range_no_enclosing_loop_is_not_folded():
     assert _num_conditionals(sdfg) == 1
 
 
+def test_trivial_if_with_nested_sdfg_reparents_correctly():
+    """Lifting a trivial-if whose branch holds a NestedSDFG must leave that nested SDFG's parent
+    pointers consistent after the branch is spliced up -- the per-splice local repair. The SDFG
+    must still validate, and the nested SDFG must now be parented to the outer SDFG."""
+    inner = dace.SDFG("inner")
+    inner.add_array("A", [5], dace.float64)
+    ns = inner.add_state("ns", is_start_block=True)
+    t = ns.add_tasklet("w", set(), {"o"}, "o = 1.0")
+    ns.add_edge(t, "o", ns.add_access("A"), None, dace.memlet.Memlet("A[0]"))
+
+    sdfg = dace.SDFG("outer_ns")
+    sdfg.add_array("A", [5], dace.float64)
+    cb = ConditionalBlock(label="cfb", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cb, is_start_block=True)
+    body = ControlFlowRegion(label="body", sdfg=sdfg, parent=cb)
+    cb.add_branch(condition=CodeBlock("1 == 1"), branch=body)
+    st = body.add_state("bs", is_start_block=True)
+    nnode = st.add_nested_sdfg(inner, set(), {"A"})
+    st.add_edge(nnode, "A", st.add_access("A"), None, dace.memlet.Memlet("A[0:5]"))
+
+    sdfg.validate()
+    LiftTrivialIf().apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert _num_conditionals(sdfg) == 0
+    found = [n for s in sdfg.all_states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
+    assert len(found) == 1
+    assert found[0].sdfg.parent_sdfg is sdfg
+    assert found[0].sdfg.parent is not None
+    assert found[0].sdfg.parent_nsdfg_node is found[0]
+
+
+def test_trivial_cond_check_is_cached():
+    """The per-condition check is memoized (module-level, ``typed=True``) so repeated guards -- across
+    conditionals and across FixedPointPipeline re-invocations -- skip the sympy work without changing
+    the verdict."""
+    from dace.transformation.passes.lift_trivial_if import _trivial_cond_check_cached
+    _trivial_cond_check_cached.cache_clear()
+    assert _trivial_cond_check_cached("1 == 1", True) is True
+    base = _trivial_cond_check_cached.cache_info()
+    for _ in range(5):
+        assert _trivial_cond_check_cached("1 == 1", True) is True
+    after = _trivial_cond_check_cached.cache_info()
+    assert after.hits - base.hits == 5  # repeats served from cache
+    assert after.misses == base.misses  # no new sympy evaluation
+    # Distinct string and distinct truth value are distinct keys, and verdicts are still correct.
+    assert _trivial_cond_check_cached("1 == 2", True) is False
+    assert _trivial_cond_check_cached("1 == 1", False) is False
+
+
+def test_should_reapply_only_on_block_count_change():
+    """The pass re-runs only when the number of control-flow blocks changed (a conditional added or
+    removed, or a loop peel shifting an enclosing range), not when interstate-edge contents change --
+    those never create or destroy a conditional."""
+    from dace.transformation import pass_pipeline as ppl
+    p = LiftTrivialIf()
+    assert p.should_reapply(ppl.Modifies.States)
+    assert p.should_reapply(ppl.Modifies.CFG)  # CFG includes States
+    assert not p.should_reapply(ppl.Modifies.InterstateEdges)
+    assert not p.should_reapply(ppl.Modifies.Nothing)
+    assert not p.should_reapply(ppl.Modifies.Symbols | ppl.Modifies.Memlets)
+
+
 if __name__ == "__main__":
     for c in _ALWAYS_TRUE:
         test_single_condition(c)
@@ -411,3 +474,6 @@ if __name__ == "__main__":
 
     test_cfg_is_a_middle_node()
     test_simplify_pipeline_includes_lift_trivial_if()
+    test_trivial_if_with_nested_sdfg_reparents_correctly()
+    test_trivial_cond_check_is_cached()
+    test_should_reapply_only_on_block_count_change()
