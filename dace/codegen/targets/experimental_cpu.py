@@ -840,7 +840,15 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # that also indexes ``A``, leaving that TU referencing an undefined ``A_idx``. Keying on
         # ``id(function_stream)`` instead is NOT the fix: many host streams feed the one frame TU, and
         # that is exactly the duplicate-definition bug the file-owner key exists to prevent.
-        file_key = self._current_tu_key if self.calling_codegen is self else id(function_stream)
+        #
+        # A device (.cu) file has the same shape: the delegating GPU codegen sets ``calling_codegen``
+        # to itself and feeds MANY streams (one per kernel/nested-SDFG scope, plus the file-scope
+        # global stream) into the single ``<name>_cuda.cu`` translation unit it owns. Keying on
+        # ``id(function_stream)`` there re-emits an identical ``<name>_idx`` per stream -> the same
+        # C++ redefinition. ``ExperimentalCUDACodeGen`` builds exactly one CodeObject (.cu), so key
+        # device emission on ``id(self.calling_codegen)`` -- one key for the whole .cu, each helper
+        # emitted once.
+        file_key = self._current_tu_key if self.calling_codegen is self else id(self.calling_codegen)
         emitted = self._emitted_functions.setdefault(file_key, set())
         for registry in (self._index_functions, self._size_functions):
             for name, defn in registry.items():

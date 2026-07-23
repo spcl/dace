@@ -573,7 +573,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     cond = self._generate_condition_from_location(name, index_fn(), tasklet.location[name])
                     scope_manager.open(condition=cond)
 
-            self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            # Tag this as device (.cu) generation so the delegate's generated-function dedup keys on
+            # the .cu owner, not the host TU -- otherwise a ``<name>_idx`` helper flushed here lands in
+            # the .cu under the host key and is re-emitted under the device key = a C++ redefinition.
+            old_codegen = self._cpu_codegen.calling_codegen
+            self._cpu_codegen.calling_codegen = self
+            try:
+                self._cpu_codegen._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+            finally:
+                self._cpu_codegen.calling_codegen = old_codegen
 
     def _generate_condition_from_location(self, name: str, index_expr: str, location: Union[int, str,
                                                                                             subsets.Range]) -> str:
@@ -1012,11 +1020,23 @@ class KernelSpec:
         self.kernel_map: nodes.Map = kernel_map_entry.map
         self.kernel_name: str = f'{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}'
 
+        self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
-        self.kernel_constants: Set[str] = kernel_const_data | kernel_const_symbols
-
-        self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+        # A pointer (Array/View) arg may be ``const`` ONLY when it is read-only in this kernel, i.e. in
+        # ``kernel_const_data`` (read-set minus write-set). ``get_constant_symbols`` can surface a WRITTEN
+        # data container's name as a "constant symbol" -- its MapEntry branch returns
+        # ``used_symbols_within_scope`` (which includes data names used in subset/offset expressions) and,
+        # unlike the CFG branches, never subtracts writes. Letting such a name into ``kernel_constants``
+        # const-qualifies a written output pointer -> ``expression must be a modifiable lvalue``. Drop any
+        # pointer arg that is not genuinely read-only; scalar-symbol args are unaffected.
+        written_pointers = {
+            name
+            for name, data in self.arglist.items()
+            if isinstance(data, (dt.Array, dt.View)) and name not in kernel_const_data
+        }
+        self.kernel_constants: Set[str] = (kernel_const_data | kernel_const_symbols) - written_pointers
 
         restore_in_device_code = cudaCodeGen._in_device_code
 
