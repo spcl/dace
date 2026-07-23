@@ -23,6 +23,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend.python import astutils
+from dace.transformation.passes.analysis import scopes as scope_analysis
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, propagation
 from dace.properties import LambdaProperty
@@ -939,7 +940,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             memlets[vconn] = (memlet, False, None, conntype)
 
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
-    defined_symbols = state_dfg.symbols_defined_at(node)
+    defined_symbols = scope_analysis.defined_at(codegen._frame.symbol_scopes, state_dfg, node)
 
     defined_symbols.update({
         k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))

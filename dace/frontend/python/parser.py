@@ -107,7 +107,9 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
             desc = sdfg.arrays[arg_name]
             if not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(desc.strides) + list(desc.offset)
+            # Distributed descriptors (process grids, subarrays) have no strides
+            desc_strides = [] if isinstance(desc, data.DistributedDescriptor) else desc.strides
+            symbolic_values = list(desc.shape) + list(desc_strides) + list(desc.offset)
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
