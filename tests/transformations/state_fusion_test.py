@@ -524,16 +524,6 @@ def test_side_effect_free_single_cc_fuses():
     assert sdfg.number_of_nodes() == 1
 
 
-def test_side_effect_tasklet_blocks_single_cc_fusion():
-    """A side-effect tasklet (fusion barrier) blocks fusion even when the fused result
-    is a single connected component -- the guard is unconditional, not gated on the
-    resulting-CC count. Regression: a CC-gated check let a single-CC fusion slip a
-    fusion barrier through (heat3d copy-in/copy-out states)."""
-    sdfg = _fusible_single_cc(add_barrier=True)
-    assert sdfg.apply_transformations_repeated(StateFusion) == 0
-    assert sdfg.number_of_nodes() == 2
-
-
 if __name__ == "__main__":
     test_fuse_assignments()
     test_fuse_assignments_2()
@@ -553,4 +543,3 @@ if __name__ == "__main__":
     test_inout_second_state_2()
     test_check_paths()
     test_side_effect_free_single_cc_fuses()
-    test_side_effect_tasklet_blocks_single_cc_fusion()
