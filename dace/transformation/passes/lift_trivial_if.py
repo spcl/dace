@@ -3,7 +3,7 @@
 import ast
 import re
 from functools import lru_cache
-from Maintainer.dace.dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock
+from dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock
 import dace
 from typing import Any, Dict, Optional, Union
 from dace import SDFG, ControlFlowRegion
