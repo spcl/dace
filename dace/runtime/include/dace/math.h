@@ -556,8 +556,21 @@ namespace dace
             return result;
         }
 
-        template<typename T>
-        DACE_HDFI T ipow(const T& a, const unsigned int& b) {
+        // Scalar types seed at ``T(1)`` so ``ipow(a, 0) == 1``.
+        template<typename T,
+                 typename std::enable_if<std::is_constructible<T, int>::value>::type* = nullptr>
+        DACE_HDFI T ipow(const T a, const unsigned int b) {
+            T result = T(1);
+            for (unsigned int i = 0; i < b; ++i)
+                result *= a;
+            return result;
+        }
+
+        // Vector types have no scalar constructor, so seed at ``a``. Only ever reached with a
+        // compile-time exponent >= 1 (the constant-power path emits a literal 1 for exponent 0).
+        template<typename T,
+                 typename std::enable_if<!std::is_constructible<T, int>::value>::type* = nullptr>
+        DACE_HDFI T ipow(const T a, const unsigned int b) {
             T result = a;
             for (unsigned int i = 1; i < b; ++i)
                 result *= a;
@@ -756,5 +769,11 @@ namespace dace
 
 }
 
+// Global-scope wrapper (like ``min`` / ``max`` / ``int_ceil``) so codegen can emit the
+// bare ``ipow`` in loop bounds / interstate edges; forwards to ``dace::math::ipow``.
+template <typename T, typename U>
+static DACE_HDFI T ipow(const T& a, const U& b) {
+    return dace::math::ipow(a, b);
+}
 
 #endif  // __DACE_MATH_H
