@@ -34,12 +34,11 @@ class FortranIONode(nodes.LibraryNode):
     """Abstract base for a Fortran external-file I/O library node.
 
     Fortran I/O has observable side effects (it touches the file system), so
-    these nodes report :pyattr:`has_side_effects` and must never be removed as
+    these nodes report :py:meth:`has_side_effects` and must never be removed as
     dead code even when, like ``WRITE``, they have no output connectors.
     """
 
-    @property
-    def has_side_effects(self) -> bool:
+    def has_side_effects(self, sdfg) -> bool:
         return True
 
     def _ordered_items(self, sdfg, state, prefix: str, edges_in: bool) -> List[Tuple[str, object, str, bool]]:

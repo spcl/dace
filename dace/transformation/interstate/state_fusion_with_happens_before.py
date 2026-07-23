@@ -242,7 +242,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         for node in state.nodes():
             if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
                 return True
-            if isinstance(node, nodes.LibraryNode) and node.has_side_effects:
+            if isinstance(node, nodes.LibraryNode) and node.has_side_effects(sdfg):
                 return True
             if isinstance(node, nodes.NestedSDFG):
                 for nested_state in node.sdfg.states():

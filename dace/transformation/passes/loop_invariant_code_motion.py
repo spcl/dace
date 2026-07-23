@@ -281,12 +281,9 @@ def _region_has_work(region: Any) -> bool:
 def _region_has_side_effect(region: Any) -> bool:
     if isinstance(region, SDFGState):
         for n in region.nodes():
-            if isinstance(n, nodes.Tasklet):
-                if getattr(n, "side_effects", False):
-                    return True
-            if isinstance(n, nodes.LibraryNode):
-                if getattr(n, "has_side_effects", False):
-                    return True
+            if isinstance(n, nodes.CodeNode) and not isinstance(n, nodes.NestedSDFG) and n.has_side_effects(
+                    region.sdfg):
+                return True
             for oe in region.out_edges(n):
                 if oe.data is not None and oe.data.wcr is not None:
                     return True
