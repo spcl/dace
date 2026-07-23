@@ -237,6 +237,9 @@ class CUDACodeGen(TargetCodeGenerator):
         # Annotate CUDA streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
 
+        # Stream-unaware GPU callbacks -> default stream (see method).
+        self._default_stream_unaware_gpu_callbacks(sdfg)
+
         # Find points where memory should be released to the memory pool
         self._compute_pool_release(sdfg)
 
@@ -945,6 +948,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         max_events = max(state_events)
 
         return max_streams, max_events
+
+    def _default_stream_unaware_gpu_callbacks(self, top_sdfg: SDFG):
+        """A GPU-touching callback not using ``__dace_current_stream`` is forced onto the null stream."""
+        for sd in top_sdfg.all_sdfgs_recursive():
+            for state in sd.states():
+                for node in list(state.nodes()):
+                    if not (isinstance(node, nodes.Tasklet) and node.side_effects):
+                        continue
+                    if is_devicelevel_gpu(sd, state, node):
+                        continue
+                    if not any(
+                            e.data.data in sd.arrays and sd.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
+                            for e in state.all_edges(node)):
+                        continue
+                    if '__dace_current_stream' in node.code.as_string:  # stream-aware: leave as is
+                        continue
+                    warnings.warn(
+                        f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
+                        'movement is forced onto the default stream. This is only correct if the callback uses '
+                        'the default stream; for any other stream, add a "dace.current_stream" argument to the '
+                        'callback and use it (e.g. cupy ExternalStream).', UserWarning)
+                    for n in nx.node_connected_component(state.nx.to_undirected(as_view=True), node):
+                        n._cuda_stream = 'nullptr'
 
     def _emit_copy(self, state_id: int, src_node: nodes.Node, src_storage: dtypes.StorageType, dst_node: nodes.Node,
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
