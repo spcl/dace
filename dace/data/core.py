@@ -155,7 +155,7 @@ class Data:
 
     @property
     def veclen(self):
-        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+        return self.dtype.veclen
 
     @property
     def ctype(self):

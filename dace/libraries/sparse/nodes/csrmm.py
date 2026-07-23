@@ -12,7 +12,7 @@ import numpy as np
 
 
 def _is_complex(dtype):
-    if hasattr(dtype, "is_complex") and callable(dtype.is_complex):
+    if isinstance(dtype, dtypes.typeclass):
         return dtype.is_complex()
     else:
         return dtype in [np.complex64, np.complex128]
