@@ -873,8 +873,8 @@ def test_intermediate_is_localized_to_a_scalar(prog):
 
 @pytest.mark.parametrize("n", [4, 16, 48, 64])
 def test_intermediate_localization_holds_across_sizes(n):
-    applied, exact, big_before, big_after = fuse_and_measure(localize_scalar_chain, mk(n=n, names=("a", "b", "acc",
-                                                                                                   "out")), n)
+    applied, exact, big_before, big_after = fuse_and_measure(localize_scalar_chain,
+                                                             mk(n=n, names=("a", "b", "acc", "out")), n)
     assert applied >= 1 and exact
     assert len(big_after) < len(big_before)
 
@@ -1069,3 +1069,55 @@ def test_contraction_never_crashes_without_an_intermediate():
     applied, exact, big_before, big_after = fuse_and_measure(prog, mk(names=("a", "b", "c")), 48)
     assert applied == 1 and exact
     assert big_before == big_after == []  # nothing transient to contract
+
+
+def test_fuse_survives_first_id_shift_after_second_removed():
+    """Regression: ``apply`` read ``self.first`` AGAIN after ``_merge`` spliced ``second`` out of the CFG.
+    ``self.first`` is a PatternNode that re-resolves by node-id, and removing ``second`` shifts the ids, so
+    the second read resolved the wrong node / raised ``NodeNotFoundError`` when ``first`` sat at a HIGHER
+    CFG index than the removed ``second``.
+
+    That index order is exactly what statement-fission produces: a loop fissioned into clauses (appended,
+    high ids) followed by an ORIGINAL loop (low id). Two INDEPENDENT recurrences fission into two non-DOALL
+    loops; fusing the later clause with the disjoint recurrence after it is the legal shift-risk pair.
+    """
+    from dace.sdfg.state import LoopRegion
+    from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+    from dace.transformation.passes.loop_fission import LoopFission
+
+    @dace.program
+    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
+        for i in range(1, N - 1):
+            d[i] = d[i - 1] + a[i]  # recurrence on d, independent of c -> fissionable
+            c[i] = c[i - 1] + a[i]  # recurrence on c, independent of d
+        for i in range(1, N - 1):
+            b[i] = b[i - 1] + a[i]  # recurrence, arrays disjoint from the c-clause
+
+    n = 24
+    inputs = mk(n)
+    ref = prog.to_sdfg(simplify=True)
+    ref.name = "id_shift_ref"
+    ref_bufs = {k: v.copy() for k, v in inputs.items()}
+    ref(**ref_bufs, N=n)
+
+    sd = prog.to_sdfg(simplify=True)
+    SplitStatements().apply_pass(sd, {})
+    LoopFission().apply_pass(sd, {})
+
+    # the legal pair whose `first` sits at a higher CFG index than `second` (removing `second` shifts it).
+    target = None
+    for first in [n for n in sd.nodes() if isinstance(n, LoopRegion) and n.loop_variable]:
+        out = sd.out_edges(first)
+        if len(out) == 1 and isinstance(out[0].dst, LoopRegion):
+            second = out[0].dst
+            if sd.node_id(first) > sd.node_id(second) and FuseLoops.can_be_applied_to(sd, first=first, second=second):
+                target = (first, second)
+    assert target is not None, "expected a legal shift-risk pair after fission"
+
+    FuseLoops.apply_to(sd, first=target[0], second=target[1])  # must not raise NodeNotFoundError
+    sd.validate()
+    sd.name = "id_shift_fused"
+    got = {k: v.copy() for k, v in inputs.items()}
+    sd(**got, N=n)
+    for k in inputs:
+        assert np.allclose(got[k], ref_bufs[k], equal_nan=True), f"{k!r} diverged after the shift-risk fuse"

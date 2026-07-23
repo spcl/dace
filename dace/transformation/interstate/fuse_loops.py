@@ -97,8 +97,14 @@ class FuseLoops(transformation.MultiStateTransformation):
         return self._fusion_legal(first, second, s1, s2)
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
-        self._merge(sdfg, graph, self.first, self.second)
-        self._contract_localized_intermediates(sdfg, self.first)
+        # Bind the loop OBJECT before _merge mutates the CFG. `self.first` is a PatternNode descriptor
+        # that re-resolves by node-id on every access, and _merge's `cfg.remove_node(second)` shifts the
+        # ids -- so reading `self.first` AFTER the merge can resolve the wrong node or raise
+        # NodeNotFoundError. `first` survives the merge (only `second` is spliced out), so the reference
+        # stays valid.
+        first = self.first
+        self._merge(sdfg, graph, first, self.second)
+        self._contract_localized_intermediates(sdfg, first)
 
     # ----- legality kernel (shared source of truth; the LoopFusion pass calls this transformation) -----
 
