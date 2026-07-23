@@ -302,7 +302,7 @@ class StateFusion(transformation.MultiStateTransformation):
                 # Declared side effects would race across parallel components.
                 for state in (first_state, second_state):
                     for node in state.nodes():
-                        if isinstance(node, nodes.Tasklet) and node.side_effects(sdfg):
+                        if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
                             return False
 
             # Check for data races
