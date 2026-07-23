@@ -53,7 +53,7 @@ def test_aligned_allocation_property():
 def test_heap_allocation_aligned_new_cpp17():
     """With cpp_standard >= 17 (the default), heap arrays use aligned operator new/delete."""
     code = _heap_transient_sdfg('aligned_new_probe').generate_code()[0].clean_code
-    assert 'new (std::align_val_t(64)) double[2]' in code
+    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*\[2\]', code)
     assert '::operator delete[](tmp, std::align_val_t(64));' in code
     assert 'DACE_ALIGN(64)[' not in code  # the attribute is invalid in a new expression
     assert 'delete[] tmp' not in code  # would pair the unaligned deallocation function
@@ -66,7 +66,7 @@ def test_heap_allocation_plain_new_below_cpp17():
     """Below C++17 there is no aligned operator new; emit no annotation at all."""
     with set_temporary('compiler', 'cpp_standard', value='14'):
         code = _heap_transient_sdfg('plain_new_probe').generate_code()[0].clean_code
-    assert 'new double[2]' in code
+    assert re.search(r'new\s+double\s*\[2\]', code)
     assert 'delete[] tmp' in code
     assert 'align_val_t' not in code
     assert 'DACE_ALIGN(64)[' not in code
