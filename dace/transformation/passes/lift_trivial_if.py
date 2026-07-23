@@ -3,6 +3,7 @@
 import ast
 import re
 from functools import lru_cache
+from Maintainer.dace.dace.sdfg.state import BreakBlock, ContinueBlock, ReturnBlock
 import dace
 from typing import Any, Dict, Optional, Union
 from dace import SDFG, ControlFlowRegion
@@ -90,7 +91,12 @@ class LiftTrivialIf(ppl.Pass):
         deep-copy could not resolve the enclosing SDFG because it sits outside the copied subtree.
         Scoped to the moved ``block``, never the whole SDFG.
         """
-        states = [block] if isinstance(block, dace.SDFGState) else block.all_states()
+        if isinstance(block, dace.SDFGState):
+            states = [block]
+        elif isinstance(block, (ReturnBlock, ContinueBlock, BreakBlock)):
+            states = []
+        else:
+            states = block.all_states()
         for state in states:
             for node in state.nodes():
                 if isinstance(node, dace.nodes.NestedSDFG) and node.sdfg is not None:
