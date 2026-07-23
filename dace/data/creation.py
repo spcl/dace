@@ -74,6 +74,10 @@ def create_datadescriptor(obj, no_custom_desc=False):
 
         if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
+        elif hasattr(obj, 'dtype') and obj.dtype.type in dtypes.dtype_to_typeclass():
+            # ml_dtypes bf16/fp8 present as opaque 'V2'/'V1' in __array_interface__; resolve from the
+            # registered scalar type instead of the void heuristic below.
+            dtype = dtypes.dtype_to_typeclass(obj.dtype.type)
         else:
             if np.dtype(interface['typestr']).type is np.void:  # Struct from __array_interface__
                 if 'descr' in interface:
@@ -85,7 +89,8 @@ def create_datadescriptor(obj, no_custom_desc=False):
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
             else:
                 dtype = dtypes.typeclass(np.dtype(interface['typestr']).type)
-        itemsize = np.dtype(interface['typestr']).itemsize
+        # ml_dtypes fp8 reports an unparseable '<f1' typestr; trust the array's own itemsize.
+        itemsize = obj.itemsize if hasattr(obj, 'itemsize') else np.dtype(interface['typestr']).itemsize
         if len(interface['shape']) == 0:
             return Scalar(dtype, storage=storage)
         return Array(dtype=dtype,

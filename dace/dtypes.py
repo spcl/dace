@@ -4,6 +4,7 @@ import ctypes
 import json
 import inspect
 import numpy
+import ml_dtypes
 import re
 from sympy import Float, Integer
 from collections import OrderedDict
@@ -227,6 +228,9 @@ _CTYPES = {
     numpy.uintc: "dace::uint",
     numpy.uint64: "uint64_t",
     numpy.float16: "dace::float16",
+    ml_dtypes.bfloat16: "dace::bfloat16",
+    ml_dtypes.float8_e4m3fn: "dace::float8_e4m3fn",
+    ml_dtypes.float8_e5m2: "dace::float8_e5m2",
     numpy.float32: "float",
     numpy.float64: "double",
     numpy.complex64: "dace::complex64",
@@ -256,6 +260,10 @@ _FFI_CTYPES = {
     numpy.float64: ctypes.c_double,
     numpy.complex64: ctypes.c_uint64,
     numpy.complex128: ctypes.c_longdouble,
+    # Low-precision types: marshalled as their raw integer storage.
+    ml_dtypes.bfloat16: ctypes.c_uint16,
+    ml_dtypes.float8_e4m3fn: ctypes.c_uint8,
+    ml_dtypes.float8_e5m2: ctypes.c_uint8,
 }
 
 # Number of bytes per data type
@@ -281,6 +289,9 @@ _BYTES = {
     numpy.float64: 8,
     numpy.complex64: 8,
     numpy.complex128: 16,
+    ml_dtypes.bfloat16: 2,
+    ml_dtypes.float8_e4m3fn: 1,
+    ml_dtypes.float8_e5m2: 1,
 }
 
 
@@ -1178,6 +1189,9 @@ if TYPE_CHECKING:
     class uint32(_DaCeArray, npt.NDArray[numpy.uint32]): ...
     class uint64(_DaCeArray, npt.NDArray[numpy.uint64]): ...
     class float16(_DaCeArray, npt.NDArray[numpy.float16]): ...
+    class bfloat16(_DaCeArray, npt.NDArray): ...
+    class float8_e4m3fn(_DaCeArray, npt.NDArray): ...
+    class float8_e5m2(_DaCeArray, npt.NDArray): ...
     class float32(_DaCeArray, npt.NDArray[numpy.float32]): ...
     class float64(_DaCeArray, npt.NDArray[numpy.float64]): ...
     class complex64(_DaCeArray, npt.NDArray[numpy.complex64]): ...
@@ -1199,6 +1213,14 @@ else:
     uint32 = typeclass(numpy.uint32)
     uint64 = typeclass(numpy.uint64)
     float16 = typeclass(numpy.float16)
+    # Low-precision types backed by ml_dtypes scalars (numpy-registered), named
+    # verbatim as ml_dtypes names them. E4M3 is the finite ``fn`` variant
+    # (max +-448, no inf) -- the hardware E4M3 of NVIDIA __nv_fp8_e4m3 / AMD /
+    # OCP training. Backed by dace::bfloat16 / dace::float8_e4m3fn / dace::float8_e5m2 in
+    # runtime/include/dace/types.h -- bit-identical to the CUDA/HIP native types.
+    bfloat16 = typeclass(ml_dtypes.bfloat16)
+    float8_e4m3fn = typeclass(ml_dtypes.float8_e4m3fn)
+    float8_e5m2 = typeclass(ml_dtypes.float8_e5m2)
     float32 = typeclass(numpy.float32)
     float64 = typeclass(numpy.float64)
     complex64 = typeclass(numpy.complex64)
@@ -1227,6 +1249,9 @@ def dtype_to_typeclass(dtype=None):
         numpy.uint64: uint64,
         numpy.uintc: uint32,
         numpy.float16: float16,
+        ml_dtypes.bfloat16: bfloat16,
+        ml_dtypes.float8_e4m3fn: float8_e4m3fn,
+        ml_dtypes.float8_e5m2: float8_e5m2,
         numpy.float32: float32,
         numpy.float64: float64,
         numpy.complex64: complex64,
@@ -1239,6 +1264,10 @@ def dtype_to_typeclass(dtype=None):
         return DTYPE_TO_TYPECLASS
     return DTYPE_TO_TYPECLASS[dtype]
 
+
+FLOAT_TYPES = {float64, float32, float16, bfloat16, float8_e4m3fn, float8_e5m2}
+
+INT_TYPES = {int8, int16, int32, int64, uintp, uint8, uint16, uint32, uint64}
 
 # Since this overrides the builtin bool, this should be after the
 # DTYPE_TO_TYPECLASS dictionary
@@ -1256,6 +1285,9 @@ TYPECLASS_TO_STRING = {
     int32: "dace::int32",
     int64: "dace::int64",
     float16: "dace::float16",
+    bfloat16: "dace::bfloat16",
+    float8_e4m3fn: "dace::float8_e4m3fn",
+    float8_e5m2: "dace::float8_e5m2",
     float32: "dace::float32",
     float64: "dace::float64",
     complex64: "dace::complex64",
@@ -1272,6 +1304,9 @@ TYPECLASS_TO_LITERAL_SUFFIX = {
     uint32: 'u32',
     uint64: 'u64',
     float16: 'f16',
+    bfloat16: 'bf16',
+    float8_e4m3fn: 'e4m3fn',
+    float8_e5m2: 'e5m2',
     float32: 'f32',
     float64: 'f64',
 }
@@ -1294,7 +1329,7 @@ TYPECLASS_TO_CPP_LITERAL_SUFFIX = {
 
 TYPECLASS_STRINGS = [
     "int", "float", "complex", "bool", "bool_", "int8", "int16", "int32", "int64", "uint8", "uint16", "uint32",
-    "uint64", "float16", "float32", "float64", "complex64", "complex128"
+    "uint64", "float16", "bfloat16", "float8_e4m3fn", "float8_e5m2", "float32", "float64", "complex64", "complex128"
 ]
 
 INTEGER_TYPES = [bool, bool_, int8, int16, int32, int64, uint8, uint16, uint32, uint64]
@@ -1602,9 +1637,14 @@ def is_gpu_array(obj: Any) -> bool:
         # variables that require grad, or KeyError when a boolean array is used
         return False
 
-    if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
-        if hasattr(obj, 'device') and getattr(obj.device, 'id', -1) >= 0:
-            return True
+    try:
+        if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
+            if hasattr(obj, 'device') and getattr(obj.device, 'id', -1) >= 0:
+                return True
+    except (ValueError, TypeError):
+        # numpy arrays of extension dtypes (ml_dtypes bf16/fp8) raise when building a
+        # buffer for .data; they are host arrays, so fall through to the False below.
+        pass
 
     return False
 
