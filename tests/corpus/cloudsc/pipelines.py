@@ -139,6 +139,19 @@ OFFLOAD_VARIANTS: Tuple[str, ...] = VARIANTS
 #: build regimes; it does NOT relax anybody's tolerance -- the caller's ``numeric_check`` still decides.
 STRICT_FP_CUDA_ARGS: str = '-fmad=false --prec-div=true --prec-sqrt=true'
 
+#: Host FP rules shared by BOTH legs: no fast-math, no FMA contraction, so the SDFG matches
+#: strict-IEEE gfortran. Carries NO optimization level -- ``compiler.build_type`` is the single
+#: source of that, and an ``-O`` here does not work anyway: CMake emits
+#: ``<compiler.cpu.args> <CMAKE_CXX_FLAGS_$<CONFIG>>``, so the build type's level comes LAST and wins.
+#: Note what is absent: the shipped default adds ``-fno-signed-zeros -freciprocal-math``, which are
+#: fast-math components under another name. The perf leg does not get to be faster by being sloppier.
+STRICT_FP_CPU_ARGS: str = ('-fPIC -Wall -Wextra -fno-fast-math -ffp-contract=off '
+                           '-Wno-unused-parameter -Wno-unused-label')
+
+#: Perf leg: identical FP semantics, plus the ISA the host actually has. Pair with
+#: ``build_type='Release'``; the numeric leg pairs the same args with ``'Debug'``.
+PERF_CPU_ARGS: str = f'{STRICT_FP_CPU_ARGS} -march=native'
+
 
 def coalesce_stages() -> List[Stage]:
     """Inline the nested SDFGs, then fuse the maps they were walling off.
@@ -498,6 +511,47 @@ def run_candidate(sdfg: dace.SDFG, inputs: Dict, cpu_args: str, sequential: bool
         dace.Config.set('compiler', 'cpu', 'args', value=saved_args)
         sdfg.name = saved_name
     return args
+
+
+def benchmark_candidate(sdfg: dace.SDFG,
+                        call_kwargs: Dict,
+                        reps: int = 5,
+                        warmup: int = 1,
+                        tag: str = 'bench') -> Dict[str, float]:
+    """Wall-clock one call of a FINAL ``sdfg``; return ``{'median', 'min', 'max', 'reps'}`` in seconds.
+
+    Builds ONCE and then calls the compiled object ``warmup + reps`` times, so the number excludes
+    compilation. Each call gets a private deepcopy of ``call_kwargs``, made OUTSIDE the timed region:
+    a state-carrying variant (multistep's PT/PQ/PA/PCLV, gpu_scc's tendency_loc_*) otherwise
+    integrates its own output across reps and drifts, so rep 7 measures different arithmetic than
+    rep 1 -- and denormals alone can move the time by an order of magnitude.
+
+    Reports the MEDIAN, not the mean: on a shared box one leg getting descheduled produces an
+    outlier that a mean carries straight into the scoreboard.
+
+    Flags are the CALLER's -- pair with :data:`PERF_CPU_ARGS` and ``build_type='Release'``. This runs
+    the SAME GRAPH the numeric leg validated, recompiled at a different optimization level; the FP
+    semantics are identical between the legs, only ``-O`` differs.
+
+    An offloaded graph carries its own H2D/D2H copy states, so the number includes transfers -- the
+    honest end-to-end figure, and the one a user of the artifact actually waits for.
+    """
+    saved_name = sdfg.name
+    sdfg.name = f'cloudsc_bench_{tag}'
+    samples: List[float] = []
+    try:
+        compiled = sdfg.compile()
+        for rep in range(warmup + reps):
+            args = copy.deepcopy(call_kwargs)
+            t0 = time.perf_counter()
+            compiled(**args)
+            elapsed = time.perf_counter() - t0
+            if rep >= warmup:
+                samples.append(elapsed)
+    finally:
+        sdfg.name = saved_name
+    samples.sort()
+    return {'median': samples[len(samples) // 2], 'min': samples[0], 'max': samples[-1], 'reps': float(len(samples))}
 
 
 def build_reference_outputs(reference: dace.SDFG, regime: str = 'ieee', seed: int = 0) -> Tuple[Dict, Dict]:
