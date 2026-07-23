@@ -1930,6 +1930,23 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         if len(node.ops) > 1 or len(node.comparators) > 1:
             raise NotImplementedError
         op = node.ops[0]
+
+        # `X == True/False` and `X != True/False` against a boolean literal. SymPy folds such a
+        # comparison to a constant whenever the other operand is not a Symbol -- e.g. an array access
+        # `A[i] != True` collapses to `True` (relational.py: "only Booleans can equal Booleans"),
+        # silently dropping the guard on serialization/re-parse. Rewrite to pure boolean logic
+        # instead: the operand is boolean here (a comparison to a truth literal implies it), so
+        # `X == True`/`X != False` -> `X` and `X != True`/`X == False` -> `Not(X)`. This never folds
+        # and survives round-tripping. Only fires for a literal True/False operand; ordinary
+        # comparisons (`A[i] < rlmin`, `x == 1`) are untouched.
+        if isinstance(op, (ast.Eq, ast.NotEq)):
+            for literal, other in ((node.left, node.comparators[0]), (node.comparators[0], node.left)):
+                if isinstance(literal, ast.Constant) and isinstance(literal.value, bool):
+                    visited = self.visit(other)
+                    if isinstance(op, ast.NotEq) == bool(literal.value):  # X != True or X == False
+                        visited = ast.Call(func=ast.Name(id='Not', ctx=ast.Load()), args=[visited], keywords=[])
+                    return ast.copy_location(visited, node)
+
         arguments = [node.left, node.comparators[0]]
 
         # Ensure constant values in boolean comparisons are interpreted als booleans.
