@@ -3,6 +3,7 @@
 
 import collections
 import copy
+import traceback
 import warnings
 import networkx as nx
 import time
@@ -1681,20 +1682,32 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
+    :note: If rank 0's compilation raises, the error is broadcast and re-raised
+           on *every* rank, so a build failure fails the whole job fast instead
+           of deadlocking the other ranks at the build-folder broadcast below
+           (rank 0 would never reach the broadcast, leaving the rest blocked).
     :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
     rank = comm.Get_rank()
     func = None
     folder = None
+    error = None
 
     # Rank 0 compiles SDFG.
     if rank == 0:
-        func = sdfg.compile(validate=validate)
-        folder = sdfg.build_folder
+        try:
+            func = sdfg.compile(validate=validate)
+            folder = sdfg.build_folder
+        except BaseException as exc:  # re-raised on every rank below
+            error = f"{type(exc).__name__}: {exc}\n{traceback.format_exc()}"
 
-    # Broadcasts build folder.
-    folder = comm.bcast(folder, root=0)
+    # Broadcast the build folder (or rank 0's compile error).  Sending both in
+    # one bcast keeps the collective sequence identical on every rank.
+    error, folder = comm.bcast((error, folder), root=0)
+    if error is not None:
+        raise RuntimeError("distributed_compile: rank 0 compilation failed; all ranks abort "
+                           f"to avoid a collective deadlock. Rank 0 traceback:\n{error}")
 
     # Loads compiled SDFG.
     if rank > 0:

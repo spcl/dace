@@ -29,6 +29,16 @@ def expanded_input_connectors(node: nodes.Node, state: Any) -> Dict[str, Any]:
     return connectors
 
 
+def resolve_comm(node: nodes.Node, state: Any) -> str:
+    """Communicator token for an MPI node: a wired ``_comm`` connector, else a
+    wired ``_grid`` connector, else ``MPI_COMM_WORLD``."""
+    if input_descriptor_name(node, state, '_comm'):
+        return "_comm"
+    if input_descriptor_name(node, state, '_grid'):
+        return "_grid"
+    return "MPI_COMM_WORLD"
+
+
 def validate_integer_descriptor(desc: Any, name: str) -> None:
     if desc is None:
         raise ValueError(f"{name} connector is missing")

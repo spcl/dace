@@ -986,9 +986,31 @@ class CPPUnparser:
         "Or": ast.Or,
     }
 
+    # Sympy-side names that lower to a differently-named C++ call: numeric casts (kind coercions
+    # emitted by the Fortran frontend) and complex-component accessors.
+    _renamed_funcs = {
+        'int32': 'dace::int32',
+        'int64': 'dace::int64',
+        'float32': 'dace::float32',
+        'float64': 'dace::float64',
+        're': 'dace::math::re',
+        'im': 'dace::math::im',
+    }
+
     def _Call(self, t: ast.Call):
         # Special cases for sympy functions
         if isinstance(t.func, ast.Name):
+            if t.func.id in self._renamed_funcs:
+                self.write(self._renamed_funcs[t.func.id])
+                self.write("(")
+                comma = False
+                for e in t.args:
+                    if comma:
+                        self.write(", ")
+                    comma = True
+                    self.dispatch(e)
+                self.write(")")
+                return
             if t.func.id in self.callcmps:
                 op = self.callcmps[t.func.id]()
                 self.dispatch(

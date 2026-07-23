@@ -11,7 +11,7 @@ import torch
 import dace
 
 from dace.ml import DaceModule
-from tests.utils import torch_tensors_close, tensors_close
+from tests.utils import torch_tensors_close, tensors_close, expand_library_nodes_for_autodiff
 
 
 @pytest.mark.torch
@@ -64,7 +64,7 @@ def test_parse_backward_simple():
         return x.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     sdfg.validate()
 
     result = sdfg(x.clone(), dy.clone())
@@ -84,7 +84,7 @@ def test_parse_backward_scalar():
         return x.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     sdfg.validate()
 
     result = sdfg(x.clone())
@@ -117,7 +117,7 @@ def test_parse_backward_with_forwarding():
         return x.grad
 
     sdfg = train_step.to_sdfg()
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     sdfg.validate()
 
     result = sdfg(x.clone())
@@ -160,7 +160,7 @@ def test_two_backward_passes():
 
     sdfg = train_step.to_sdfg()
     sdfg.validate()
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     sdfg.validate()
 
     x1 = torch.randn(10, 5, dtype=torch.float64)
@@ -206,7 +206,7 @@ def test_two_backward_passes_accumulate():
 
     sdfg = train_step.to_sdfg()
     sdfg.validate()
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     sdfg.validate()
 
     x1 = torch.randn(10, 5, dtype=torch.float64)

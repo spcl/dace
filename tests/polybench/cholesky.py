@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
-import polybench
 import numpy as np
 
 N = dace.symbol('N')
@@ -72,4 +71,5 @@ def print_result(filename, *args, n=None, **kwargs):
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, print_result, init_array, cholesky)

@@ -940,9 +940,9 @@ class Range(Subset):
             array: array descriptor to check against
 
         Returns:
-            True if the subset is contiguous, False otherwise
-            Returns False on all arrays that are not have a packed layout,
-            meaning that the complete array is contiguously stored in 1D memory.
+            True if the subset is contiguous, False otherwise. Also true for a 1D slice
+            with stride 1 on a non-packed (padded) array, even though the array itself
+            isn't fully packed.
         """
         # Any step size != 1 -> not contiguous
         if any(s != 1 for (_, _, s) in self):

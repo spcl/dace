@@ -166,6 +166,13 @@ def test_lift_einsum_reduce():
     B = np.random.rand(1)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
+    # LiftEinsum recognises the map + WCR shape, so the reduce has to be expanded into that
+    # form.  Reduce's default dispatches on schedule and lands on the OpenMP expansion here,
+    # which emits a tasklet carrying a ``reduction()`` clause -- nothing to lift -- so ask for
+    # the pure lowering explicitly instead of depending on whichever is the default.
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, Reduce):
+            n.implementation = 'pure'
     sdfg.expand_library_nodes()
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():
@@ -194,6 +201,13 @@ def test_lift_einsum_reduce_partial():
     B = np.random.rand(10, 9)
 
     sdfg = tester.to_sdfg(A, B, simplify=True)
+    # LiftEinsum recognises the map + WCR shape, so the reduce has to be expanded into that
+    # form.  Reduce's default dispatches on schedule and lands on the OpenMP expansion here,
+    # which emits a tasklet carrying a ``reduction()`` clause -- nothing to lift -- so ask for
+    # the pure lowering explicitly instead of depending on whichever is the default.
+    for n, _ in sdfg.all_nodes_recursive():
+        if isinstance(n, Reduce):
+            n.implementation = 'pure'
     sdfg.expand_library_nodes()
     assert sdfg.apply_transformations(LiftEinsum) == 1
     for node, _ in sdfg.all_nodes_recursive():

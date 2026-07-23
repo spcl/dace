@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import polybench
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -68,4 +67,5 @@ def covariance(data: datatype[N, M], cov: datatype[M, M], mean: datatype[M]):
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, [(1, 'cov')], init_array, covariance)

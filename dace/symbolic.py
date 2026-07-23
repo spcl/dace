@@ -1,8 +1,9 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import ast
 import contextlib
 from collections import Counter
 from functools import lru_cache
+import math
 import sympy
 import threading
 import pickle
@@ -603,7 +604,12 @@ def _typed_constant_suffix(dtype: dtypes.typeclass) -> str:
 
 def _format_float(value: float) -> str:
     # Shortest round-trip form, keeping one fractional digit (5.0, not 5 or 5.000...).
-    s = f'{float(value):.15g}'
+    f = float(value)
+    s = f'{f:.15g}'
+    if float(s) != f:
+        # 15 significant figures did not round-trip (e.g. ``0.1 + 0.2`` or a near-max
+        # double that needs 16-17 digits); fall back to the shortest exact form.
+        s = repr(f)
     if 'e' in s or 'E' in s:
         return s
     if '.' not in s:
@@ -912,7 +918,7 @@ def swalk(expr, enter_functions=False):
 
 _builtin_userfunctions = {
     'int_floor', 'int_ceil', 'abs', 'Abs', 'min', 'Min', 'max', 'Max', 'not', 'Not', 'Eq', 'NotEq', 'Ne', 'AND', 'OR',
-    'pow', 'round'
+    'pow', 'round', 'int32', 'int64', 'float32', 'float64'
 }
 
 
@@ -1023,6 +1029,10 @@ def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
     if not isinstance(expr, sympy.Basic) or isinstance(expr, sympy.Number):
+        # An integer-valued float (e.g. 1.0) must stay a float below, not collapse to
+        # int (that mistypes e.g. min(x, 1.0) as a mixed double/int Min).
+        if isinstance(expr, (sympy.Float, float, numpy.floating)) and math.isfinite(float(expr)):
+            return expr if isinstance(expr, sympy.Float) else sympy.Float(expr)
         try:
             # NOTE: If expr is ~ 1.8e308, i.e. infinity, `numpy.int64(expr)`
             # will throw OverflowError (which we want).
@@ -1184,6 +1194,58 @@ class IfExpr(sympy.Function):
             return False
 
 
+class fortran_mod(sympy.Function):
+    """Floored modulus (Fortran ``MODULO``): sign of ``b``, unlike sympy's ``Mod``
+    which lowers to C's truncating ``%``. Kept distinct from ``Mod`` so it survives
+    simplification and prints as the self-contained floored form in C++."""
+
+    @classmethod
+    def eval(cls, x, y):
+        if x.is_Number and y.is_Number:
+            return x - y * sympy.floor(x / y)
+
+    def _eval_is_integer(self):
+        return self.args[0].is_integer and self.args[1].is_integer
+
+
+class int32(sympy.Function):
+    """Explicit ``INTEGER(4)`` typecast in a symbolic expression (interstate edge /
+    memlet subset), where ``dace.int32(x)`` is not sympy-parseable as an attribute
+    call. Prints as the truncating ``dace::int32(x)`` C++ cast."""
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class int64(sympy.Function):
+    """Explicit ``INTEGER(8)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_integer(self):
+        return True
+
+
+class float32(sympy.Function):
+    """Explicit ``REAL(4)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+class float64(sympy.Function):
+    """Explicit ``REAL(8)`` typecast -- see :class:`int32`."""
+    nargs = 1
+
+    def _eval_is_real(self):
+        return True
+
+
+# Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``.
+_TYPECAST_CPP = {'int32': 'dace::int32', 'int64': 'dace::int64', 'float32': 'dace::float32', 'float64': 'dace::float64'}
+
+
 class bitwise_and(sympy.Function):
     pass
 
@@ -1232,6 +1294,10 @@ class right_shift(sympy.Function):
         # than collapsing to ``int_floor(x, 2**y)``.
         if x.is_Number and y.is_Number:
             return x >> y
+
+
+class conj(sympy.Function):
+    pass
 
 
 # Internal variants for the Python operators: ``a | b`` parses to ``__bitwise_or``, etc.
@@ -1681,6 +1747,19 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
                             keywords=[])
         return ast.copy_location(new_node, node)
 
+    def visit_Call(self, node):
+        # Rewrite ``dace.int32(x)`` etc. to the bare typecast function ``int32(x)``:
+        # the default visit_Attribute would turn it into an uncallable ``Attr(dace, int32)``.
+        func = node.func
+        if (isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == 'dace'
+                and func.attr in _TYPECAST_CPP):
+            new_node = ast.Call(func=ast.Name(id=func.attr, ctx=ast.Load),
+                                args=[self.visit(a) for a in node.args],
+                                keywords=[])
+            return ast.copy_location(new_node, node)
+        self.generic_visit(node)
+        return node
+
     def visit_Attribute(self, node):
         new_node = ast.Call(func=ast.Name(id='Attr', ctx=ast.Load),
                             args=[self.visit(node.value), ast.Name(id=node.attr, ctx=ast.Load)],
@@ -1847,6 +1926,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         'int_ceil': int_ceil,
         'IfExpr': IfExpr,
         'Mod': sympy.Mod,
+        'fortran_mod': fortran_mod,
         'Attr': Attr,
         'BitwiseAnd': bitwise_and,
         'BitwiseOr': bitwise_or,
@@ -2042,7 +2122,13 @@ class DaceSympySerializer(sympy.printing.str.StrPrinter):
         return super()._print_Integer(expr)
 
     def _print_Float(self, expr):
-        return _format_float(float(sympy_numeric_fix(expr)))
+        nf = sympy_numeric_fix(expr)
+        if not math.isfinite(float(nf)):
+            # The value exceeds a C double (e.g. Fortran ``HUGE``, just over the max):
+            # let sympy print its own shortest decimal instead of overflowing through
+            # ``float()`` to a spurious ``inf`` (which would then render as ``inf.0``).
+            return super()._print_Float(nf)
+        return _format_float(float(nf))
 
     def _print_Add(self, expr):
         # Sort arguments deterministically using SymPy's default_sort_key
@@ -2220,7 +2306,13 @@ _PYSTR2SYM_locals = {
     'int_ceil': int_ceil,
     'IfExpr': IfExpr,
     'Mod': sympy.Mod,
+    'fortran_mod': fortran_mod,
+    'int32': int32,
+    'int64': int64,
+    'float32': float32,
+    'float64': float64,
     'Attr': Attr,
+    'conj': conj,
     'Subscript': Subscript,
     'id': sympy.Symbol('id'),
     'diag': sympy.Symbol('diag'),
@@ -2309,10 +2401,14 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         self._settings['full_prec'] = False
 
     def _print_Float(self, expr):
+        # Shortest round-tripping form, always keeping one fractional digit so an
+        # integer-valued float stays floating-point (``5.0``, not ``5``).
         nf = sympy_numeric_fix(expr)
-        if isinstance(nf, int) or nf != expr:
-            return self._print(nf)
-        return super()._print_Float(expr)
+        if not math.isfinite(float(nf)):
+            # Exceeds a C double (e.g. Fortran ``HUGE``): keep sympy's shortest
+            # decimal rather than overflowing to ``inf`` (rendered as ``inf.0``).
+            return super()._print_Float(nf)
+        return _format_float(float(nf))
 
     def _print_TypedConstant(self, expr):
         value = self._print(expr.value)
@@ -2327,6 +2423,18 @@ class DaceSympyPrinter(sympy.printing.str.StrPrinter):
         if str(expr.func) in self.arrays:
             indices = ", ".join(self._print(arg) for arg in expr.args)
             return f'{expr.func}[{indices}]'
+        if self.cpp_mode and str(expr.func) == 'int_floor':
+            return '((%s) / (%s))' % (self._print(expr.args[0]), self._print(expr.args[1]))
+        # Self-contained floored-modulus form (pure ``%`` operators, no qualified call:
+        # those don't resolve in the memlet-subset codegen context).
+        if self.cpp_mode and str(expr.func) == 'fortran_mod':
+            a = self._print(expr.args[0])
+            b = self._print(expr.args[1])
+            return '((((%s) %% (%s)) + (%s)) %% (%s))' % (a, b, b, b)
+        if self.cpp_mode and str(expr.func) in _TYPECAST_CPP:
+            return '%s(%s)' % (_TYPECAST_CPP[str(expr.func)], self._print(expr.args[0]))
+        if self.cpp_mode and str(expr.func) in ('conj', 'conjugate'):
+            return 'dace::math::conj(%s)' % self._print(expr.args[0])
         if str(expr.func) == 'AND':
             return f'(({self._print(expr.args[0])}) and ({self._print(expr.args[1])}))'
         if str(expr.func) == 'OR':

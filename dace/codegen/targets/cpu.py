@@ -1530,7 +1530,17 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = self.ptr(edge.data.data, desc, sdfg)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                # A shared transient is declared at SDFG scope (in
+                # ``declared_arrays``) but its ``define_var`` runs in the
+                # allocating state's scope, which is popped before a
+                # pointer-write in a later state / nested control-flow region.
+                # Resolve via ``declared_arrays`` first -- mirroring the normal
+                # write path in ``process_out_memlets`` -- and only fall back to
+                # ``defined_vars`` so the SDFG-scope pointer still resolves.
+                try:
+                    defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
+                except KeyError:
+                    defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
             else:

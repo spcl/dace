@@ -2,6 +2,8 @@
 #ifndef __DACE_INTEROP_H
 #define __DACE_INTEROP_H
 
+#include <type_traits>
+
 #include "types.h"
 
 // Various classes to simplify interoperability with python in code converted to C++
@@ -39,13 +41,28 @@ private:
 
 typedef void *pyobject;
 
+// True when every argument type is floating-point or all are integral. Min/Max reject the
+// mixed case below, since the integer argument would truncate the floating-point result.
+template <typename... Ts>
+struct dace_minmax_same_kind : std::true_type {};
+template <typename T0, typename T1, typename... Ts>
+struct dace_minmax_same_kind<T0, T1, Ts...>
+    : std::integral_constant<bool, (std::is_floating_point<T0>::value == std::is_floating_point<T1>::value) &&
+                                        dace_minmax_same_kind<T1, Ts...>::value> {};
+
+#define DACE_MINMAX_MIXED_MSG                                                                                        \
+    "DaCe Min/Max: mixing floating-point and integer arguments is not allowed -- the integer argument truncates "    \
+    "the floating-point result. Cast the operands to a common type (e.g. write min(x, 1.0) instead of min(x, 1))."
+
 // Sympy functions
 template <typename U, typename... T>
-static DACE_HDFI U Min(U val, T... vals) {
+static DACE_HDFI typename std::common_type<U, T...>::type Min(U val, T... vals) {
+    static_assert(dace_minmax_same_kind<U, T...>::value, DACE_MINMAX_MIXED_MSG);
     return min(val, vals...);
 }
 template <typename U, typename... T>
-static DACE_HDFI U Max(U val, T... vals) {
+static DACE_HDFI typename std::common_type<U, T...>::type Max(U val, T... vals) {
+    static_assert(dace_minmax_same_kind<U, T...>::value, DACE_MINMAX_MIXED_MSG);
     return max(val, vals...);
 }
 template <typename T>
