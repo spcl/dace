@@ -1,9 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the shared build caches: recorded build commands, CMake configure, precompiled header.
-
-All three are advisory, so the property worth asserting is not that they exist but that they ENGAGE:
-a header the compiler silently declines, a seed CMake rejects, or a recording that is never replayed
-is indistinguishable from a correct build except in wall-clock time.
+"""Shared build caches (recorded commands, CMake configure, precompiled header). All advisory, so
+each test asserts the cache ENGAGES -- a declined header or unreplayed recording looks like a
+correct build save for wall-clock time.
 """
 import contextlib
 import json
@@ -26,13 +24,8 @@ def scaled_add(x: dace.float64[N], y: dace.float64[N]):
 
 @pytest.fixture
 def private_cache(tmp_path, monkeypatch):
-    """Point the caches at this test, so what they hold is known rather than assumed.
-
-    The precompiled header is switched off rather than isolated with them: it is ~125 MB, the cache
-    directory here is per-test, and pytest's tmp directory is commonly a RAM disk -- building one per
-    test fills it, and a header that then fails to build changes the recording key and silently
-    defeats the very replay these tests assert. It is covered on its own below.
-    """
+    """Point the caches at this test. PCH off: it is ~125 MB, tmp is often a RAM disk, and a failed
+    per-test build would change the recording key and defeat the replay under test. Covered below."""
     monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
     with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
         yield
@@ -56,11 +49,8 @@ def make(name, gpu=False):
 
 @contextlib.contextmanager
 def own_build_folder(tmp_path, name):
-    """One build folder per program, wherever this runs.
-
-    ``cache`` is pinned as well as the folder: CI sets ``DACE_cache=single``, under which every SDFG
-    shares one directory, and these tests are about what a *fresh* build folder does.
-    """
+    """One fresh build folder per program. Pins ``cache=name`` too, since CI's ``DACE_cache=single``
+    shares one directory across SDFGs and these tests need a fresh folder."""
     with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
         with dace.config.set_temporary('cache', value='name'):
             yield
@@ -81,12 +71,8 @@ def ran_cmake(build_folder):
 
 
 def test_configure_cache_seeds_a_working_build(tmp_path, private_cache):
-    """A second program reuses the first one's configure and still builds correctly.
-
-    CMake refuses a cache file found in a directory other than the one it was created in, so a seed
-    that is not retargeted aborts the configure rather than speeding it up. The recorded-command
-    cache is off here, or the second program would replay and never reach the configure at all.
-    """
+    """A second program reuses the first's configure and still builds. Command cache off, or it would
+    replay and never reach the configure. (CMake aborts on a cache not retargeted to its folder.)"""
     with dace.config.set_temporary('compiler', 'command_cache', value=False):
         build_and_check(tmp_path, 'seedfirst')
         build_and_check(tmp_path, 'seedsecond')
@@ -101,11 +87,8 @@ def test_recorded_build_is_replayed(tmp_path, private_cache):
 
 @pytest.mark.skipif(os.name != 'posix', reason='recorded builds need the Ninja generator')
 def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
-    """A recording that does not describe the program must cost speed, never correctness.
-
-    Here it names a translation unit the program does not have, which is the shape of staleness that
-    a replay could otherwise act on: every path in it still substitutes to something plausible.
-    """
+    """A recording that misdescribes the program costs speed, not correctness. Here it names a TU the
+    program lacks -- staleness where every path still substitutes to something plausible."""
     build_and_check(tmp_path, 'staleprime')
     root = compiler.build_cache_root()
     key = os.path.splitext(os.listdir(os.path.join(root, 'commands'))[0])[0]
@@ -120,14 +103,9 @@ def test_unusable_recording_falls_back_to_cmake(tmp_path, private_cache):
 
 @pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
 def test_precompiled_header_is_actually_used(tmp_path):
-    """The generated translation unit must really consume the cached header.
-
-    A precompiled header is only honored when its flags are compatible with the translation unit's.
-    If they ever drift, the compiler ignores it silently -- same object, no speedup, no error.
-    Replaying the recorded command with ``-Werror=invalid-pch`` turns that into a failure. Uses the
-    machine-global header cache, and disables the recorded-command cache so CMake really runs and
-    exports the compile line to inspect.
-    """
+    """The generated TU must really consume the cached header. A PCH is honored only when its flags
+    match the TU's; on drift the compiler ignores it silently. ``-Werror=invalid-pch`` makes that a
+    failure. Command cache off so CMake runs and exports the compile line to inspect."""
     with dace.config.set_temporary('compiler', 'command_cache', value=False):
         build_folder = build_and_check(tmp_path, 'pchused')
     database = os.path.join(build_folder, 'build', 'compile_commands.json')
@@ -152,12 +130,9 @@ def test_caches_disabled_still_builds(tmp_path):
 
 @pytest.mark.gpu
 def test_many_sdfgs_in_one_process(tmp_path, private_cache):
-    """Five CPU programs then five CPU+GPU ones, built back to back the way a real session does.
-
-    The GPU half is a different shape -- it adds a ``.cu`` translation unit and the CUDA toolchain --
-    so it records separately rather than replaying the CPU recipe. Within each half only the first
-    program may run CMake, and every one of the ten must still compute the right answer.
-    """
+    """Five CPU then five CPU+GPU programs, back to back. The GPU half is a different shape (adds a
+    ``.cu``), so it records separately; within each half only the first runs CMake, all ten stay
+    correct."""
     for device in ('cpu', 'gpu'):
         folders = [build_and_check(tmp_path, f'seq{device}{i}', gpu=device == 'gpu') for i in range(5)]
         assert ran_cmake(folders[0])
@@ -167,13 +142,9 @@ def test_many_sdfgs_in_one_process(tmp_path, private_cache):
 @pytest.mark.mpi
 @pytest.mark.gpu
 def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
-    """Distributed and local builds must share one recording without tripping over each other.
-
-    ``distributed_compile`` builds on rank 0 only and every other rank loads the artifacts out of
-    its build folder, so a replay there is the one case where a build folder is read by processes
-    that did not write it. Interleaving a plain local build between the two distributed ones also
-    covers the reverse direction: the recipe rank 0 recorded is the one the local build replays.
-    """
+    """Distributed and local builds share one recording. ``distributed_compile`` builds on rank 0 and
+    other ranks load from its folder -- the one case a folder is read by processes that did not write
+    it. The interleaved local build covers the reverse: it replays rank 0's recipe."""
     from mpi4py import MPI
     from dace.sdfg import utils
 
