@@ -23,6 +23,7 @@ import numpy as np
 from dace import data as dt, dtypes, hooks, symbolic
 from dace.codegen import exceptions as cgx
 from dace.config import Config
+from dace.sdfg import nodes
 
 
 class ReloadableDLL(object):
@@ -291,7 +292,8 @@ class CtypesCompiledSDFG(object):
                 self.external_memory_types.add(aval.storage)
         if not self.has_gpu_code:
             for node, _ in self._sdfg.all_nodes_recursive():
-                if getattr(node, 'schedule', False) in dtypes.GPU_SCHEDULES:
+                if (isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode))
+                        and node.schedule in dtypes.GPU_SCHEDULES):
                     self.has_gpu_code = True
                     break
 
