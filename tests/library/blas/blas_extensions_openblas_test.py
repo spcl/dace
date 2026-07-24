@@ -75,7 +75,7 @@ def test_copy_openblas():
     sdfg.add_array('y', [n], dace.float64)
     s = sdfg.add_state()
     node = Copy('copy', n=n)
-    node.implementation = _IMPL
+    node.implementation = 'pure'  # Copy delegates to the standard CopyLibraryNode; no vendor BLAS impl
     s.add_node(node)
     s.add_memlet_path(s.add_read('x'), node, dst_conn='_x', memlet=Memlet(f'x[0:{n}]'))
     s.add_memlet_path(node, s.add_write('y'), src_conn='_y', memlet=Memlet(f'y[0:{n}]'))
