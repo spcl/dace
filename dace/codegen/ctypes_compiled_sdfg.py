@@ -282,20 +282,16 @@ class CtypesCompiledSDFG(object):
                 'You passed `None` as `argnames` to `CtypesCompiledSDFG`, but the SDFG you passed has positional'
                 ' arguments. This is allowed but deprecated.')
 
-        self.has_gpu_code = False
-        self.external_memory_types = set()
-        for _, _, aval in self._sdfg.arrays_recursive():
-            if aval.storage in dtypes.GPU_STORAGES:
-                self.has_gpu_code = True
-                break
-            if aval.lifetime == dtypes.AllocationLifetime.External:
-                self.external_memory_types.add(aval.storage)
-        if not self.has_gpu_code:
-            for node, _ in self._sdfg.all_nodes_recursive():
-                if (isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode))
-                        and node.schedule in dtypes.GPU_SCHEDULES):
-                    self.has_gpu_code = True
-                    break
+        self.has_gpu_code = any(aval.storage in dtypes.GPU_STORAGES
+                                for _, _, aval in self._sdfg.arrays_recursive()) or any(
+                                    (isinstance(node, (nodes.EntryNode, nodes.ExitNode,
+                                                       nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES)
+                                    for node, _ in self._sdfg.all_nodes_recursive())
+
+        self.external_memory_types = {
+            aval.storage
+            for _, _, aval in self._sdfg.arrays_recursive() if aval.lifetime == dtypes.AllocationLifetime.External
+        }
 
     def get_exported_function(self, name: str, restype=None) -> Optional[Callable[..., Any]]:
         """
