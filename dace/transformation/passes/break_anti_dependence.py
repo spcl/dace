@@ -128,6 +128,19 @@ def _provably_nonnegative_under_nonneg_symbols(expr) -> bool:
         return False
 
 
+def _provably_nonpositive_under_nonneg_symbols(expr) -> bool:
+    """``True`` iff ``expr <= 0`` for every nonnegative value of its free symbols.
+
+    Mirror of :func:`_provably_nonnegative_under_nonneg_symbols` (``expr <= 0`` iff
+    ``-expr >= 0``). Used to separate a *provable* read-behind offset (``a[i - K]``, a
+    true recurrence -- read-behind, sequential, and safe for a consumer to fuse) from an
+    offset whose sign is undecidable even under the assumption (``K - M``), which is
+    neither provably read-ahead nor provably read-behind and must not be mistaken for
+    either. Returns ``False`` on any sympy uncertainty.
+    """
+    return _provably_nonnegative_under_nonneg_symbols(-expr)
+
+
 @properties.make_properties
 class BreakAntiDependence(ppl.Pass):
     """Snapshot-rename loops with a pure WAR anti-dependence so they can map.
@@ -316,7 +329,15 @@ class BreakAntiDependence(ppl.Pass):
             # corrupts the result.
             if _provably_nonnegative_under_nonneg_symbols(carried_offset):
                 return ('WAR_symbolic', carried_offset)
-            return ('RAW', None)
+            if _provably_nonpositive_under_nonneg_symbols(carried_offset):
+                return ('RAW', None)  # provable read-behind (``a[i - K]``): a true recurrence
+            # Sign undecidable even under the nonneg-symbol assumption (``K - M``): keep
+            # sequential, but do NOT report 'RAW'. RAW means a *proven* read-behind, and a
+            # consumer that fuses on that (FuseLoops) would then wrongly permit fusing a possible
+            # read-ahead. 'complex' is the honest verdict -- every in-module consumer already
+            # treats it exactly like RAW (keep sequential), so this is a no-op for renaming and
+            # only tightens the fusion oracle.
+            return ('complex', None)
         if loop is not None and sdfg is not None:
             arr = self._try_recognize_indirected(carried_offset, isym, loop, sdfg)
             if arr is not None:
@@ -898,10 +919,14 @@ class BreakAntiDependence(ppl.Pass):
                         for ws in write_subsets
                     ]
                     kinds = {v[0] for v in verdicts}
-                    if kinds & {'RAW', 'complex'}:
-                        continue  # a RAW read must keep its live-array value -- never move it
-                    if not (kinds & {'WAR', 'WAR_symbolic'}):
-                        continue  # only read-ahead anti-dependences are renamable
+                    # Redirect ONLY when EVERY verdict is a read-ahead (WAR / WAR_symbolic). A
+                    # 'none' (offset-0, same-index producer THIS iteration) aliases a sibling's
+                    # just-written live value and must keep it -- moving it to the stale snapshot is
+                    # a silent miscompile. (The old gate skipped only RAW/complex and required
+                    # *some* WAR, so a read that was WAR vs one sibling write but 'none' vs another
+                    # slipped through. This mirrors the fix in the active split_statements path.)
+                    if not (kinds and kinds <= {'WAR', 'WAR_symbolic'}):
+                        continue
                     # A symbolic forward offset must be loop-invariant; a symbol shared
                     # with the iterator / a nested map varies the read position and may
                     # alias the write, so it is not a pure forward read.
@@ -922,7 +947,11 @@ class BreakAntiDependence(ppl.Pass):
             pre = loop.parent_graph.add_state_before(loop, label=f'{arr}_fwd_snapshot')
             pre.add_nedge(pre.add_read(arr), pre.add_write(snap), Memlet.from_array(arr, desc))
             for expr in sym_guards:
-                self._emit_positive_guard(pre, expr)  # trap unless sym >= 0 (rename soundness)
+                # STRICT (> 0): the MIXED shape has a sibling writing ``arr[i]`` earlier in the SAME
+                # iteration, so a symbolic offset of 0 aliases that just-written live value. For
+                # integer offsets ``expr - 1 >= 0`` is exactly ``expr > 0`` (mirrors the active
+                # split_statements._snapshot_forward_reads path).
+                self._emit_positive_guard(pre, expr - 1)
 
             for src, e in fwd_edges:
                 snap_node = state.add_access(snap)

@@ -1121,3 +1121,46 @@ def test_fuse_survives_first_id_shift_after_second_removed():
     sd(**got, N=n)
     for k in inputs:
         assert np.allclose(got[k], ref_bufs[k], equal_nan=True), f"{k!r} diverged after the shift-risk fuse"
+
+
+def test_unknown_sign_symbolic_read_ahead_is_not_fused():
+    """K0b: L1 writes ``a[i]``; L2 reads ``a[i + K - M]``. The carried offset ``K - M`` has an
+    undecidable sign even under the nonnegative-symbol assumption, so it is neither a proven
+    read-behind nor a proven read-ahead. Fusing it is illegal -- at runtime ``K > M`` makes it a
+    read-ahead whose fused read is the not-yet-produced (stale) value. Pre-fix ``_dep_class`` dumped
+    ``K - M`` into ``'RAW'`` (its "keep sequential" verdict) and ``FuseLoops`` read ``'RAW'`` as a
+    proven read-behind, wrongly judging the pair fusable."""
+    K, M = dace.symbol("K"), dace.symbol("M")
+
+    @dace.program
+    def prog(a: dace.float64[N + 2], b: dace.float64[N]):
+        for i in range(1, N):
+            a[i] = a[i - 1] * 0.5 + b[i]
+        for i in range(1, N):
+            b[i] = b[i - 1] * 0.5 + a[i + K - M]
+
+    sd = prog.to_sdfg(simplify=True)
+    pairs = adjacent_loop_pairs(sd)
+    assert pairs, "expected the two sequential loops as an adjacency"
+    assert not any(FuseLoops.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
+        "unknown-sign symbolic read-ahead a[i+K-M] must NOT be judged fusable"
+
+
+def test_provable_read_behind_symbolic_still_fuses():
+    """Positive control for K0b: the identical shape with ``a[i - K]`` -- a PROVABLE read-behind
+    (offset ``<= 0`` under nonnegative symbols), a true recurrence that fuses soundly. The 3-way
+    split must keep accepting it, proving the fix routes only undecidable-sign offsets to ``'complex'``
+    rather than over-refusing every symbolic offset."""
+    K = dace.symbol("K")
+
+    @dace.program
+    def prog(a: dace.float64[N + 2], b: dace.float64[N]):
+        for i in range(1, N):
+            a[i] = a[i - 1] * 0.5 + b[i]
+        for i in range(1, N):
+            b[i] = b[i - 1] * 0.5 + a[i - K]
+
+    sd = prog.to_sdfg(simplify=True)
+    pairs = adjacent_loop_pairs(sd)
+    assert any(FuseLoops.can_be_applied_to(sd, first=f, second=s) for f, s in pairs), \
+        "provable read-behind a[i-K] must remain fusable"
