@@ -53,9 +53,15 @@ class NanobindCompiledSDFG:
            explicitly to ``__call__()``.
     :note: Return values are arrays only; unlike the ctypes ``CompiledSDFG`` the
            nanobind interface returns neither Python scalars nor pyobjects.
-    :note: Some symbolic arguments are automatically inferred by the bindings, such
-           as symbols used as shape arguments. However, it is restricted to arrays
-           of fundamental types. And symbols needed for the return values have to be
+    :note: Symbolic arguments that are not listed in ``arg_names`` may be omitted
+           from a call: the bindings deduce their value from the shape or stride
+           expressions of the passed arrays, where only arrays of fundamental
+           types serve as sources. The deduction expression may itself reference
+           symbols that are listed in ``arg_names``, since those are always
+           passed explicitly - with ``A[a + b]`` and ``b`` in ``arg_names``, an
+           omitted ``a`` is computed as ``A.shape(0) - b``. An explicitly passed
+           value always takes precedence, a symbol that can not be deduced must
+           be passed, and symbols needed for the return values have to be
            provided explicitly.
     :note: Marshalling of Python callbacks is done in Python.
     :note: There is no caching of the "previous call arguments", i.e.
@@ -141,11 +147,17 @@ class NanobindCompiledSDFG:
         keyword arguments. If the SDFG is not initialized it will be initialized first.
 
         The interface is able to infer some symbolic arguments from other arguments.
-        The example is a symbol that is also used in the shape of an array. However,
-        this is only possible if it was not listed in ``arg_names`` and as sources
-        only arrays of fundamental types are considered, i.e. no arrays of structs
-        or ``ContainerArray``s. Furthermore, symbols that are needed to compute the
-        size of the return values, must be explicitly passed.
+        A symbol that is not listed in ``arg_names`` may be omitted; its value is
+        then deduced from the shape or strides of a passed array, where only arrays
+        of fundamental types are considered as sources, i.e. no arrays of structs
+        or ``ContainerArray``s. The deduction expression may reference symbols that
+        are listed in ``arg_names``, as these are always passed explicitly; for
+        example with ``A[a + b]`` and ``b`` in ``arg_names``, an omitted ``a`` is
+        computed as ``A.shape(0) - b``. An explicitly passed value always takes
+        precedence over the deduction, and a symbol that can not be deduced must be
+        passed - omitting it raises an error naming the symbol. Furthermore, symbols
+        that are needed to compute the size of the return values, must be explicitly
+        passed.
 
         Passing a ``__return*`` buffer explicitly is refused unless
         ``compiler.nanobind_allow_return_override`` is enabled.

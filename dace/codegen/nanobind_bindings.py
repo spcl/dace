@@ -14,7 +14,11 @@ extra keyword arguments, which the old ctypes interface allowed.
 
 from typing import Dict, List, Optional, Set, Tuple
 
-from dace import data as dt, dtypes
+import numpy
+import sympy
+
+from dace import data as dt, dtypes, symbolic
+from dace.codegen.common import sym2cpp
 from dace.config import Config
 
 # RAII wrapper around a Python buffer view; nested inside the generated handle,
@@ -55,10 +59,10 @@ template <> struct dtype_traits<dace::float16> {
 
 
 def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
-                      symbol_names: Set[str]) -> Tuple[Set[str], Dict[str, str]]:
+                      symbols: Dict[str, dtypes.typeclass]) -> Tuple[Set[str], Dict[str, str]]:
     """Determines the optional "artifact" symbols and their C++ shape-inference fallbacks.
 
-    Numeric scalar **SDFG symbols** (``symbol_names``) that are not in the
+    Numeric **SDFG symbols** (``symbols``) that are not in the
     user-facing ``arg_names`` (array sizes and the like) become optional
     parameters; when omitted, their value is derived from an array argument's
     shape or strides. Data scalars are never omittable. The expression is
@@ -72,32 +76,48 @@ def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
     descriptor shape). Nullability is opt-in, so every source binds as a
     plain ``nb::ndarray`` whose shape is always readable.
 
+    A dim expression may reference further symbols besides the target, as
+    long as each of them is itself listed in ``arg_names``: such a symbol is
+    explicitly passed (a plain required parameter, in scope at the setup
+    statement), so ``a`` in ``A[a + b]`` is inferable as ``A.shape(0) - b``
+    once ``b`` is promised in ``arg_names``. Inferred (omittable) symbols are
+    never expression terms - no ordering fixed-point is needed.
+
     :param arglist: The full ``sdfg.arglist()``, in C signature order.
     :param arg_names: The user-facing positional argument names.
-    :param symbol_names: The names of the SDFG's symbols (``sdfg.symbols``).
+    :param symbols: The SDFG's symbol registry (``sdfg.symbols``), mapping
+                    each symbol name to its typeclass.
     :return: A pair ``(optional_symbols, fallbacks)``: the names that bind as
              optional parameters, and the fallback C++ expression for those
              that have an inference source. An optional symbol absent from
              ``fallbacks`` has no source - omitting it raises at run time.
     """
-    import numpy
-    import sympy
-    from dace import symbolic
-    from dace.codegen.common import sym2cpp
 
-    def _omittable(name, desc) -> bool:
-        # Inclusive support test: an SDFG symbol bound as a scalar of a plain
-        # integer or floating typeclass. Data scalars and subclassed
+    def _plain_numeric_symbol(name) -> bool:
+        # An SDFG symbol of a plain integer or floating typeclass. Subclassed
         # typeclasses (strings, callbacks, pyobjects, vectors, ...) fall
-        # outside by construction.
-        return (name in symbol_names and isinstance(desc, dt.Scalar) and type(desc.dtype) is dtypes.typeclass and
-                (numpy.issubdtype(desc.dtype.type, numpy.integer) or numpy.issubdtype(desc.dtype.type, numpy.floating)))
+        # outside by construction, and so do data scalars (not in the symbol
+        # registry). The type comes from the registry - a symbol has no data
+        # descriptor of its own; its arglist entry is only a synthesized
+        # Scalar wrapper.
+        if name not in symbols:
+            return False
+        dtype = symbols[name]
+        return (type(dtype) is dtypes.typeclass
+                and (numpy.issubdtype(dtype.type, numpy.integer) or numpy.issubdtype(dtype.type, numpy.floating)))
 
     arg_names_set = set(arg_names)
-    candidates = {name for name, desc in arglist.items() if name not in arg_names_set and _omittable(name, desc)}
+    candidates = {name for name in arglist if name not in arg_names_set and _plain_numeric_symbol(name)}
     if not candidates:
         return set(), {}
 
+    # Symbols the caller promised to pass: every symbol listed in arg_names
+    # binds as a plain required parameter under its own name, so a dim
+    # expression referencing one stays evaluable in the generated fallback
+    # (arg_names arrives pre-filtered to arglist members).
+    explicit_symbols = {name for name in arg_names_set if _plain_numeric_symbol(name)}
+
+    # The shape and strides of these array arguments can be used to
     sources = [(name, desc) for name, desc in arglist.items()
                if name in arg_names_set and isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
                and not isinstance(desc.dtype, (dtypes.struct, dtypes.vector)) and desc.optional is not True
@@ -113,7 +133,11 @@ def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
             for accessor, dims in (('shape', desc.shape), ('stride', desc.strides)):
                 for i, dim in enumerate(dims):
                     dim_symbols = symbolic.symlist(dim)
-                    if set(dim_symbols.keys()) != {sym_name}:
+                    free = set(dim_symbols.keys())
+                    # Invertible when the target occurs in the dim and every
+                    # other free symbol is explicitly passed (in arg_names);
+                    # those render by name into the fallback expression.
+                    if sym_name not in free or (free - {sym_name}) - explicit_symbols:
                         continue
                     try:
                         solutions = sympy.solve(dim - placeholder, dim_symbols[sym_name])
@@ -476,7 +500,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # with the omittable symbols last, since defaulted parameters must follow
     # the required ones.
     arg_names = [n for n in (sdfg.arg_names or []) if n in arglist]
-    optional_symbols, symbol_fallbacks = _symbol_fallbacks(arglist, arg_names, set(sdfg.symbols.keys()))
+    optional_symbols, symbol_fallbacks = _symbol_fallbacks(arglist, arg_names, sdfg.symbols)
     rest = [n for n in arglist.keys() if n not in set(arg_names)]
     binding_order = (arg_names + [n for n in rest if n not in optional_symbols] +
                      [n for n in rest if n in optional_symbols])

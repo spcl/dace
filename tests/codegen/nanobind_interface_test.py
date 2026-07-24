@@ -638,6 +638,49 @@ def test_nanobind_interface_arg_names_symbol_not_inferred():
     assert 'A.shape(0)' not in code
 
 
+def test_nanobind_interface_symbol_inference_cross_symbol():
+    """``A[a + b]`` with ``b`` promised as an explicit parameter: ``a`` is
+    inferable as ``A.shape(0) - b``. A dim expression may reference further
+    symbols besides the target, as long as each is itself listed in
+    ``arg_names`` (a plain required parameter, in scope at the fallback).
+
+    Hand-built via the SDFG API: the Python frontend rejects a parameter named
+    like a symbol (``def testee(A: dace.float64[a + b], b: dace.int32)`` dies
+    with ``FileExistsError: Cannot create symbol "b"``), so the explicit-``b``
+    promise is expressed by listing it in ``arg_names``. The memlet must use
+    the symbols - a shape-only symbol does not enter ``arglist()``."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    def build():
+        a = dace.symbol('a')
+        b = dace.symbol('b')
+        sdfg = dace.SDFG('cross_sym_infer_probe')
+        sdfg.add_array('A', [a + b], dace.float64)
+        state = sdfg.add_state()
+        tasklet = state.add_tasklet('set_last', {}, {'o'}, 'o = 1.0')
+        state.add_edge(tasklet, 'o', state.add_write('A'), None, dace.Memlet('A[a + b - 1]'))
+        sdfg.arg_names = ['A', 'b']
+        return sdfg
+
+    # Binding: 'a' is optional with the cross-symbol fallback; 'b' is a plain
+    # required parameter the fallback references by name.
+    code = generate_bindings_code(build())
+    assert 'a__opt' in code
+    assert 'A.shape(0) - b' in code
+    assert "missing argument 'a'" not in code
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        csdfg = build().compile()
+        A = np.zeros(10)
+        csdfg(A=A, b=np.int32(4))  # no 'a': inferred as A.shape(0) - b = 6
+        assert A[9] == 1.0
+
+        # An explicit 'a' still wins over the inference.
+        A2 = np.zeros(10)
+        csdfg(A=A2, b=np.int32(4), a=np.int32(6))
+        assert A2[9] == 1.0
+
+
 def test_nanobind_interface_scalar_callback():
     """A scalar callback is invoked from the GIL-released kernel and its result lands in the output."""
     with set_temporary('compiler', 'interface', value='nanobind'):
