@@ -588,6 +588,72 @@ def test_pass_is_idempotent_case_a():
     assert not second, "second application must be a no-op"
 
 
+def _rmw_chain_in_map_sdfg(name: str, n: int, k: int) -> dace.SDFG:
+    """``A[i] = B[i] + 1`` then ``A[i] += C[i, j]`` for each ``j``, every hop bridging through a
+    fresh GLOBAL ``A`` access node inside one Map body (all at the same element).
+
+    Each hop is a stageable bridge, but only the last holds ``A[i]``'s final value; the pass must
+    drain that one alone. Draining every hop makes them unordered writers of one element, and
+    last-writer-wins silently truncates the accumulation.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array("A", (n, ), dace.float64)
+    sdfg.add_array("B", (n, ), dace.float64)
+    sdfg.add_array("C", (n, k), dace.float64)
+    state = sdfg.add_state("main", is_start_block=True)
+
+    entry, exit_node = state.add_map("m", {"i": f"0:{n}"})
+    for arr in ("B", "C"):
+        state.add_edge(state.add_access(arr), None, entry, f"IN_{arr}",
+                       dace.Memlet.from_array(arr, sdfg.arrays[arr]))
+        entry.add_in_connector(f"IN_{arr}")
+        entry.add_out_connector(f"OUT_{arr}", force=True)
+
+    seed = state.add_tasklet("seed", {"_in"}, {"_out"}, "_out = _in + 1.0")
+    state.add_edge(entry, "OUT_B", seed, "_in", dace.Memlet("B[i]"))
+    prev = state.add_access("A")
+    state.add_edge(seed, "_out", prev, None, dace.Memlet("A[i]"))
+
+    for j in range(k):
+        acc = state.add_tasklet(f"acc{j}", {"_in1", "_in2"}, {"_out"}, "_out = _in1 + _in2")
+        state.add_edge(prev, None, acc, "_in1", dace.Memlet("A[i]"))
+        state.add_edge(entry, "OUT_C", acc, "_in2", dace.Memlet(f"C[i, {j}]"))
+        nxt = state.add_access("A")
+        state.add_edge(acc, "_out", nxt, None, dace.Memlet("A[i]"))
+        prev = nxt
+
+    state.add_edge(prev, None, exit_node, "IN_A", dace.Memlet("A[i]"))
+    exit_node.add_in_connector("IN_A")
+    exit_node.add_out_connector("OUT_A", force=True)
+    state.add_edge(exit_node, "OUT_A", state.add_access("A"), None, dace.Memlet.from_array("A", sdfg.arrays["A"]))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("k", [1, 3])
+def test_rmw_chain_in_map_body_drains_only_the_final_hop(k: int):
+    """Staging an in-Map RMW chain keeps the whole accumulation (drain-path counterpart of the
+    cloudsc_four out-connector chain)."""
+    n = 16
+    rng = numpy.random.default_rng(3)
+    B = rng.random(n)
+    C = rng.random((n, k))
+    expected = B + 1.0 + C.sum(axis=1)
+
+    ref = _rmw_chain_in_map_sdfg(f"rmw_chain_ref_{k}", n, k)
+    a_ref = numpy.zeros(n)
+    ref.compile()(A=a_ref, B=B, C=C)
+    numpy.testing.assert_allclose(a_ref, expected, rtol=RTOL, atol=ATOL)
+
+    staged = _rmw_chain_in_map_sdfg(f"rmw_chain_staged_{k}", n, k)
+    assert StageGlobalArrayThroughScalars().apply_pass(staged, {}), "the chain hosts stageable hops"
+    staged.validate()
+    a_vec = numpy.zeros(n)
+    staged.compile()(A=a_vec, B=B, C=C)
+    numpy.testing.assert_allclose(a_vec, a_ref, rtol=RTOL, atol=ATOL,
+                                  err_msg="staging dropped part of the RMW chain")
+
+
 # The cloudsc-pattern (zqlhs / zsolqb reuse) tests live separately in
 # ``test_stage_global_array_cloudsc.py``.
 
