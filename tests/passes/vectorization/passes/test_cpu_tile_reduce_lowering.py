@@ -86,10 +86,15 @@ def test_reduce_cpu_falls_back_to_pure_for_masked_and_axis():
     assert "tile_reduce" not in ExpandTileReduceScalar.expansion(n, st, sdfg).code.as_string
 
 
-def _build_host_reduce_sdfg(W, op, dtype=dace.float64):
-    """SRC tile -> host-ISA TileReduce -> DST scalar; compiles + runs on this host."""
+def _build_host_reduce_sdfg(W, op, dtype=dace.float64, target_isa=None):
+    """SRC tile -> host-ISA TileReduce -> DST scalar; compiles + runs on this host.
+
+    ``target_isa`` pins a concrete backend (default: the host's widest via
+    ``detect_host_isa``). A pinned ISA must be one the host can execute -- callers guard
+    with ``host_supported_isas`` -- else ``select_tile_implementation`` refuses it."""
     op_tag = {"+": "add", "*": "mul", "min": "min", "max": "max"}[op]
-    sdfg = dace.SDFG(f"tile_reduce_hostisa_{W}_{op_tag}")
+    isa = target_isa if target_isa is not None else _dispatch.detect_host_isa()
+    sdfg = dace.SDFG(f"tile_reduce_hostisa_{W}_{op_tag}_{isa.lower()}")
     sdfg.add_array("SRC", (W, ), dtype, transient=False)
     sdfg.add_array("DST", (1, ), dtype, transient=False)
     state = sdfg.add_state("main")
@@ -98,7 +103,7 @@ def _build_host_reduce_sdfg(W, op, dtype=dace.float64):
     state.add_edge(state.add_access("SRC"), None, node, "_src", dace.Memlet(f"SRC[0:{W}]"))
     state.add_edge(node, "_dst", state.add_access("DST"), None, dace.Memlet("DST[0]"))
     # Force the concrete host ISA backend (not the default 'pure').
-    node.target_isa = _dispatch.detect_host_isa()
+    node.target_isa = isa
     node.implementation = _dispatch.select_tile_implementation(node)
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -119,6 +124,21 @@ def test_reduce_cpu_end_to_end_numeric(op, ref, W):
     sdfg = _build_host_reduce_sdfg(W, op)
     rng = np.random.default_rng(seed=W * 7 + ord(op[0]))
     SRC = (rng.random(W) + 0.5)  # all > 0 so prod stays well-conditioned
+    DST = np.zeros(1)
+    sdfg(SRC=SRC, DST=DST)
+    np.testing.assert_allclose(DST[0], ref(SRC), rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.skipif("AVX2" not in _dispatch.host_supported_isas(), reason="host cannot execute AVX2")
+@pytest.mark.parametrize("op,ref", [("+", np.sum), ("max", np.max)])
+@pytest.mark.parametrize("W", [8, 16, 17])
+def test_reduce_avx2_end_to_end_numeric(op, ref, W):
+    # Pin the AVX2 tile_reduce backend and run it. host_supported_isas is superset-closed, so
+    # an AVX-512 dev box runs this too (test_reduce_cpu_end_to_end_numeric only exercises the
+    # host's WIDEST ISA via detect_host_isa -- AVX2 goes unrun there on an AVX-512 host).
+    sdfg = _build_host_reduce_sdfg(W, op, target_isa="AVX2")
+    rng = np.random.default_rng(seed=W * 11 + ord(op[0]))
+    SRC = (rng.random(W) + 0.5)
     DST = np.zeros(1)
     sdfg(SRC=SRC, DST=DST)
     np.testing.assert_allclose(DST[0], ref(SRC), rtol=1e-12, atol=1e-12)
