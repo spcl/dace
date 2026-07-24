@@ -1,6 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import dtypes, registry
-from dace.sdfg.nodes import CodeNode
+from dace.sdfg.nodes import CodeNode, ConsumeEntry, ConsumeExit
 from dace.codegen.instrumentation.provider import InstrumentationProvider
 from dace.codegen.prettycode import CodeIOStream
 
@@ -55,10 +55,9 @@ __state->report.add_completion("{timer_name}", "Timer", __dace_ts_start_{id}, __
 
     def _get_sobj(self, node):
         # Get object behind scope
-        if hasattr(node, 'consume'):
+        if isinstance(node, (ConsumeEntry, ConsumeExit)):
             return node.consume
-        else:
-            return node.map
+        return node.map
 
     def on_scope_entry(self, sdfg, cfg, state, node, outer_stream, inner_stream, global_stream):
         s = self._get_sobj(node)

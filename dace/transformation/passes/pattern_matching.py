@@ -97,7 +97,7 @@ class PatternMatchAndApply(ppl.Pass):
         # For every transformation in the list, find first match and apply
         for xform in self.transformations:
             if sdfg.root_sdfg.using_explicit_control_flow:
-                if (not hasattr(xform, '__explicit_cf_compatible__') or xform.__explicit_cf_compatible__ == False):
+                if not xform.__explicit_cf_compatible__:
                     warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                   ' due to incompatibility with experimental control flow blocks. If the ' +
                                   'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
@@ -216,8 +216,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 applied_anything = False
                 for xform in xforms:
                     if sdfg.root_sdfg.using_explicit_control_flow:
-                        if (not hasattr(xform, '__explicit_cf_compatible__')
-                                or xform.__explicit_cf_compatible__ == False):
+                        if not xform.__explicit_cf_compatible__:
                             warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                           ' due to incompatibility with experimental control flow blocks. If the ' +
                                           'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
@@ -402,7 +401,7 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                     setattr(match, oname, oval)
 
         if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(match, '__explicit_cf_compatible__') or match.__explicit_cf_compatible__ == False):
+            if not match.__explicit_cf_compatible__:
                 warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
                               ' due to incompatibility with experimental control flow blocks. If the ' +
                               'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +

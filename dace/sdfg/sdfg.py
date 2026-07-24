@@ -73,7 +73,7 @@ class NestedDict(dict):
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
-            result = hasattr(desc, 'members') and token in desc.members
+            result = isinstance(desc, dt.Structure) and token in desc.members
         return result
 
     def keys(self):
@@ -487,6 +487,9 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
+    # Explicitly-set build folder, or None to derive it from the configuration
+    _build_folder = None
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -556,14 +559,11 @@ class SDFG(ControlFlowRegion):
         result._nodes = copy.deepcopy(self._nodes, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
-        for k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
+        result._parent = memo.get(id(self._parent))
+        result._parent_sdfg = memo.get(id(self._parent_sdfg))
+        result._parent_nsdfg_node = memo.get(id(self._parent_nsdfg_node))
         # Copy SDFG list and transformation history
-        if hasattr(self, '_transformation_hist'):
-            setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
+        result._transformation_hist = copy.deepcopy(self._transformation_hist, memo)
         result._cfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
@@ -1211,7 +1211,7 @@ class SDFG(ControlFlowRegion):
     @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
-        if hasattr(self, '_build_folder'):
+        if self._build_folder is not None:
             return self._build_folder
         cache_config = Config.get('cache')
         base_folder = Config.get('default_build_folder')

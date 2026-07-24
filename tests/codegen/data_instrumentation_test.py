@@ -68,6 +68,31 @@ def test_dump_gpu():
     assert np.allclose(dreport['__return'], A + 6)
 
 
+def test_dump_gpu_synchronizes():
+    """Every dump must wait for the device, or it reads a buffer a copy is still filling.
+
+    The generated streams are non-blocking, so neither a host read nor the device path's
+    default-stream memcpy is ordered against them.
+    """
+
+    @dace.program
+    def tester(A: dace.float64[20, 20]):
+        tmp = A + 1
+        return tmp + 5
+
+    sdfg = tester.to_sdfg(simplify=True)
+    sdfg.apply_gpu_transformations()
+    _instrument(sdfg, dace.DataInstrumentationType.Save)
+
+    # Pin the backend so the check needs no device present.
+    with dace.config.set_temporary('compiler', 'cuda', 'backend', value='cuda'):
+        code = next(c.clean_code for c in sdfg.generate_code() if 'serializer->save(' in c.clean_code)
+
+    before_each_save = code.split('serializer->save(')[:-1]
+    assert before_each_save
+    assert all('DeviceSynchronize' in chunk for chunk in before_each_save), code
+
+
 @pytest.mark.datainstrument
 def test_restore():
 
@@ -386,6 +411,7 @@ if __name__ == '__main__':
     test_symbol_dump()
     test_symbol_dump_conditional()
     test_dump_gpu()
+    test_dump_gpu_synchronizes()
     test_restore()
     test_symbol_restore()
     test_restore_gpu()

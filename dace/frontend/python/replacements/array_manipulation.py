@@ -335,9 +335,13 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
     # Also, keep in mind that `old_size * (orig_bytes // view_bytes)` is different.
     # E.g., if `orig_bytes == 1 and view_bytes == 2`: `old_size * (1 // 2) == old_size * 0`.
     newshape = list(desc.shape)
-    newstrides = [(s * orig_bytes) // view_bytes if i != contigdim else s for i, s in enumerate(desc.strides)]
+    # int_floor, never `//`: on a symbolic stride `//` builds sympy `floor(expr / d)`, whose argument
+    # sym2cpp prints WITHOUT the floor, leaving each term of the sum to truncate on its own.
+    newstrides = [
+        symbolic.int_floor(s * orig_bytes, view_bytes) if i != contigdim else s for i, s in enumerate(desc.strides)
+    ]
     # don't use `*=`, because it will break the bracket
-    newshape[contigdim] = (newshape[contigdim] * orig_bytes) // view_bytes
+    newshape[contigdim] = symbolic.int_floor(newshape[contigdim] * orig_bytes, view_bytes)
 
     newarr, _ = sdfg.add_view(arr,
                               newshape,
@@ -345,7 +349,7 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
                               storage=desc.storage,
                               strides=newstrides,
                               allow_conflicts=desc.allow_conflicts,
-                              total_size=(desc.total_size * orig_bytes) // view_bytes,
+                              total_size=symbolic.int_floor(desc.total_size * orig_bytes, view_bytes),
                               may_alias=desc.may_alias,
                               alignment=desc.alignment,
                               find_new_name=True)
