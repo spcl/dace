@@ -38,6 +38,11 @@ _ISA_TO_IMPL = {
     "SCALAR": "scalar",
 }
 
+# The host-executed CPU SIMD ISAs. A tile op forced to one of these must run on a host that
+# supports it (arch-native enforcement, see :func:`host_supported_isas`). SCALAR is always
+# runnable; CUDA / CUTILE are GPU device ISAs gated by the schedule, not host-CPU-executed.
+_CPU_SIMD_ISAS = frozenset({"AVX512", "AVX2", "ARM_SVE", "ARM_NEON"})
+
 # TileBinop / TileUnop ops that have NO per-ISA single-char lowering and must use the
 # ``pure`` loop expansion even at K=1 (a ``std::<fn>`` call the compiler's vector-math
 # library / libmvec captures). These are the elemental math functions the frontend
@@ -82,6 +87,46 @@ def detect_host_isa() -> str:
     return "SCALAR"
 
 
+@functools.lru_cache(maxsize=1)
+def host_supported_isas() -> frozenset:
+    """The set of K=1 tile-op ISAs the host can EXECUTE (cached).
+
+    Arch-native enforcement: a forced ``target_isa`` outside this set would emit instructions the
+    host cannot run (e.g. AVX-512 on an AVX2-only or ARM box) -- which still COMPILES under the
+    backend's explicit ``-mavx512f`` but faults (SIGILL) at runtime. :func:`select_tile_implementation`
+    refuses such an ISA early instead. Superset-closed: an AVX-512 host also runs AVX2 and SCALAR.
+    ``SCALAR`` is always runnable; ``CUDA`` / ``CUTILE`` are GPU device ISAs (gated by the schedule),
+    so they are absent here and the CPU-ISA guard skips them.
+
+    Same host-feature source as :func:`detect_host_isa` (``/proc/cpuinfo``); where flags are
+    unreadable (e.g. macOS has no ``/proc/cpuinfo``) it conservatively yields ``{SCALAR}``, matching
+    ``detect_host_isa``'s fallback.
+
+    :returns: Frozenset of :data:`_ISA_TO_IMPL` keys the host can execute (always includes ``SCALAR``).
+    """
+    machine = platform.machine().lower()
+    flags = set()
+    try:
+        with open("/proc/cpuinfo") as f:
+            for line in f:
+                if line.startswith(("flags", "Features")):
+                    flags = set(line.split(":", 1)[1].split())
+                    break
+    except OSError:
+        pass
+    if machine in ("x86_64", "amd64", "i386", "i686"):
+        if "avx512f" in flags:
+            return frozenset({"AVX512", "AVX2", "SCALAR"})
+        if "avx2" in flags:
+            return frozenset({"AVX2", "SCALAR"})
+        return frozenset({"SCALAR"})
+    if machine in ("aarch64", "arm64"):
+        if "sve" in flags:
+            return frozenset({"ARM_SVE", "ARM_NEON", "SCALAR"})
+        return frozenset({"ARM_NEON", "SCALAR"})
+    return frozenset({"SCALAR"})
+
+
 def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGState = None) -> str:
     """Resolve the concrete tile-node implementation for the current target.
 
@@ -109,6 +154,15 @@ def select_tile_implementation(node: nodes.LibraryNode, parent_state: dace.SDFGS
     target_isa = getattr(node, "target_isa", "SCALAR")
     if target_isa == "AUTO":
         target_isa = detect_host_isa()
+    # Enforce arch-native: a forced CPU SIMD ISA the host cannot execute would emit a binary that
+    # compiles (the backend adds its own ``-m`` flag) but SIGILLs at runtime -- the exact failure
+    # seen when a test pins AVX-512 on an AVX2-only or ARM host. Refuse it early with a clear error
+    # instead. ``AUTO`` already resolves to a host-supported ISA, so this only fires on an explicit
+    # over-request; CUDA / CUTILE are GPU device ISAs and are not in ``_CPU_SIMD_ISAS``.
+    if target_isa in _CPU_SIMD_ISAS and target_isa not in host_supported_isas():
+        raise ValueError(f"tile-op target_isa={target_isa!r} is not executable on this host "
+                         f"(supported: {sorted(host_supported_isas())}). Vectorization enforces "
+                         f"arch-native: use ISA.AUTO to target the host, or pick a supported ISA.")
     # Complex operands have no packed-SIMD lowering on the CPU ISAs (add/sub are a trivial
     # interleaved real add, but mul needs shuffle/FCMLA sequences and abs/div have no SIMD
     # form), so route a complex tile op to the scalar ``pure`` loop over ``std::complex`` --

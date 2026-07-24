@@ -23,6 +23,7 @@ untransformed baseline) differ.
 """
 from typing import Dict, Tuple
 
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
 from dace.transformation.interstate import LoopToMap
@@ -30,15 +31,19 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
-#: The 4 vectorize configs. All use ``remainder_strategy="scalar_postamble"``
-#: (scalar remainder loops) per the corpus spec; the cross product is over the
-#: two target ISAs and the two branch-lowering modes ("merge" = per-lane
-#: ``TileITE`` select / masked-if; "fp_factor" = ``c*x + (1-c)*y`` arithmetic).
+#: Vectorize configs = the cross product of {host-native ISA, SCALAR} x {merge, fp_factor} branch
+#: mode, all ``remainder_strategy="scalar_postamble"`` per the corpus spec ("merge" = per-lane
+#: ``TileITE`` select; "fp_factor" = ``c*x + (1-c)*y`` arithmetic). The SIMD ISA is the HOST's
+#: (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a hardcoded AVX-512:
+#: vectorization enforces arch-native (a forced non-host ISA would SIGILL at runtime -- see
+#: ``_dispatch.host_supported_isas``), so pinning AVX-512 made every avx512 phase fail on an
+#: AVX2-only or ARM box. Host-native keeps full SIMD-vs-scalar coverage on every machine with no
+#: skips. When the host is itself SCALAR the two blocks collapse (dict dedupes the equal keys).
+_HOST_ISA = detect_host_isa()
 CONFIGS: Dict[str, dict] = {
-    "avx512_merge": dict(target_isa="AVX512", branch_mode="merge"),
-    "scalar_merge": dict(target_isa="SCALAR", branch_mode="merge"),
-    "avx512_fpfac": dict(target_isa="AVX512", branch_mode="fp_factor"),
-    "scalar_fpfac": dict(target_isa="SCALAR", branch_mode="fp_factor"),
+    f"{isa.lower()}_{short}": dict(target_isa=isa, branch_mode=mode)
+    for isa in (_HOST_ISA, "SCALAR")
+    for short, mode in (("merge", "merge"), ("fpfac", "fp_factor"))
 }
 
 #: Parametrized phases: the base (no-vectorize) numerical check plus one per
