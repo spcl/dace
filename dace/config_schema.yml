@@ -149,13 +149,48 @@ required:
                 description: >
                     Number of spaces used when indenting generated code.
 
+            precompiled_header:
+                type: bool
+                default: true
+                title: Precompile the DaCe runtime header
+                description: >
+                    Precompile ``<dace/dace.h>`` once per compiler and flag set and force-include it
+                    into generated host sources. An optimization: a header that does not match the
+                    translation unit is ignored, producing the same object.
+
+            configure_cache:
+                type: bool
+                default: true
+                title: Reuse CMake configure results across builds
+                description: >
+                    Seed each build folder with the compiler and ``find_package`` results of an
+                    earlier build of the same shape. An optimization: without a usable entry CMake
+                    configures from scratch.
+
+            command_cache:
+                type: bool
+                default: true
+                title: Replay a recorded build instead of running CMake
+                description: >
+                    Record the first build of a shape (``ninja -t compdb``) and replay its commands
+                    for later SDFGs, skipping CMake. An optimization: a missing or mismatched entry
+                    falls back to a full build.
+
+            build_jobs:
+                type: int
+                default: 4
+                title: Parallel compile jobs
+                description: >
+                    Translation units compiled concurrently. Small by default: builds share
+                    machines, and each generated-source compile can use a lot of memory.
+
             build_type:
                 type: str
-                default: RelWithDebInfo
+                default: Release
                 title: Build configuration
                 description: >
-                    Configuration type for CMake build (can be Debug, Release,
-                    RelWithDebInfo, or MinSizeRel).
+                    CMake build type (Debug, Release, RelWithDebInfo, MinSizeRel). Sole source of
+                    the optimization level; ``args`` add to it.
 
             allow_shadowing:
                 type: bool
@@ -289,9 +324,13 @@ required:
                     args:
                         type: str
                         title: Arguments
-                        description: Compiler argument flags
-                        default: '-fPIC -Wall -Wextra -O3 -march=native -ffast-math -Wno-unused-parameter -Wno-unused-label'
-                        default_Windows: '/O2 /fp:fast /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
+                        description: >
+                            Flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``). ``default_<family>`` applies for that
+                            host compiler, since nvc++ rejects several switches below.
+                        default: '-fPIC -Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default_nvhpc: '-fPIC -Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
+                        default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
                         type: str
@@ -331,15 +370,19 @@ required:
                     args:
                         type: str
                         title: nvcc Arguments
-                        description: Compiler argument flags for CUDA
-                        default: '-Xcompiler -march=native --use_fast_math -Xcompiler -Wno-unused-parameter'
-                        default_Windows: '-O3 --use_fast_math'
+                        description: >
+                            nvcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``).
+                        default: '-lineinfo -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter'
+                        default_Windows: ''
 
                     hip_args:
                         type: str
                         title: hipcc Arguments
-                        description: Compiler argument flags for HIP
-                        default: '-fPIC -O3 -ffast-math -Wno-unused-parameter'
+                        description: >
+                            hipcc flags on top of the build type; no ``-O`` (that comes from
+                            ``compiler.build_type``).
+                        default: '-fPIC -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter'
 
                     cuda_arch:
                         type: str
@@ -558,7 +601,8 @@ required:
                         title: Enable vectorization check
                         default: false
                         description: >
-                            Enables analysis of gcc vectorization information. Only gcc/g++ is supported.
+                            Report which loops the compiler vectorized. Flag chosen per compiler in
+                            CMake; only GCC writes ``perf/vecreport.txt``, others use stderr.
 
     #############################################
     # Python frontend settings

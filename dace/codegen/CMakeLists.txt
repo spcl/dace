@@ -9,6 +9,7 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
+set(DACE_PCH_DIR "" CACHE STRING "Directory holding a precompiled <dace/dace.h>")
 
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
@@ -49,7 +50,18 @@ foreach(DACE_FILE ${DACE_FILES})
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
+  if(NOT DACE_FILE_EXT STREQUAL ".cu")
+    list(APPEND DACE_GENERATED_HOST_FILES ${DACE_FILE})
+  endif()
 endforeach()
+
+# Reuse the precompiled DaCe runtime header. Generated host sources only: force-including it into an
+# environment's aux .cpp or a .cu can break a file that never asked for it. Mismatched flags are
+# ignored by the compiler.
+if(DACE_PCH_DIR AND DACE_GENERATED_HOST_FILES)
+  set_source_files_properties(${DACE_GENERATED_HOST_FILES} PROPERTIES
+                              COMPILE_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")
+endif()
 
 # Internal dependencies
 set(DACE_RUNTIME_DIR ${CMAKE_SOURCE_DIR}/../runtime)
@@ -262,8 +274,10 @@ endforeach()
 add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
 target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 
-# Set C++ standard to C++20 (or the configured standard)
+# Standard C++, not the GNU dialect: CXX_STANDARD on its own emits -std=gnu++NN, which accepts
+# extensions that Clang then rejects.
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
