@@ -36,10 +36,13 @@ class NanobindCompiledSDFG:
     - Marshalling Python arguments into C arguments, such that it can be called.
         Most of the transformation happens in the bindings and it is thus faster.
 
-    Unlike ``CompiledSDFG`` there is only ``__call__()``, the advanced
-    three-step interface (``construct_arguments()`` / ``fast_call()`` /
-    ``convert_return_values()``) is not provided. Otherwise it implements the same
-    interface as ``CompiledSDFG``, with some deviations listed bellow.
+    Unlike ``CompiledSDFG`` the advanced three-step interface
+    (``construct_arguments()`` / ``fast_call()`` / ``convert_return_values()``)
+    is not provided; calling happens through ``__call__()`` or, when the SDFG
+    was compiled with a non-empty ``SDFG.user_args``, through the structured
+    fast-path :meth:`user_bind_call` (see the note below). Otherwise it
+    implements the same interface as ``CompiledSDFG``, with some deviations
+    listed bellow.
 
     :param sdfg: The ``SDFG`` this wrapper was compiled from; used to evaluate
                  return-array shapes and exposed via the ``sdfg`` property.
@@ -63,6 +66,17 @@ class NanobindCompiledSDFG:
            value always takes precedence, a symbol that can not be deduced must
            be passed, and symbols needed for the return values have to be
            provided explicitly.
+    :note: With a non-empty ``SDFG.user_args`` the module additionally exposes
+           :meth:`user_bind_call`, a structured fast-path entry point:
+           ``user_args`` promises where each argument arrives (names or nested
+           tuples of names, destructured in the compiled binding with
+           by-reference array semantics enforced per element). There are no
+           keyword arguments on that path - every argument is either listed or
+           inferred, verified at code generation - and it bypasses hooks,
+           ``do_not_execute``, callback wrapping and return handling
+           (return-value SDFGs are refused at code generation). The GPU
+           last-error check still runs and honors :attr:`gpu_error_check`.
+           ``__call__()`` never dispatches to it.
     :note: Marshalling of Python callbacks is done in Python.
     :note: There is no caching of the "previous call arguments", i.e.
            ``CompiledSDFG._lastargs``. This means that the symbolic sizes must be
@@ -101,6 +115,10 @@ class NanobindCompiledSDFG:
         # are registered, a call needs no Python-side processing at all.
         self._simple_call: bool = not (self._return_values or self._callback_args)
 
+        # Structured fast-path entry point; present only when the SDFG was
+        # compiled with a non-empty ``user_args`` (see user_bind_call).
+        self._user_call: Optional[Any] = getattr(self._handle, 'user_call', None)
+
         # Static per module; cached for the per-call GPU error check.
         self._has_gpu_code: bool = bool(self._handle.has_gpu_code)
         # See the ``gpu_error_check`` property. Read directly on the (GPU-only) call path.
@@ -138,6 +156,29 @@ class NanobindCompiledSDFG:
     @gpu_error_check.setter
     def gpu_error_check(self, value: bool) -> None:
         self._gpu_error_check = bool(value)
+
+    def user_bind_call(self, *args: Any) -> None:
+        """Execute the compiled SDFG through the structured ``SDFG.user_args`` signature.
+
+        This is the fast path: arguments arrive exactly as ``user_args``
+        promised (nested tuples are destructured in the compiled binding, with
+        by-reference array semantics enforced per element), every argument not
+        listed is inferred - completeness was checked at code generation, so
+        nothing is looked up at run time - and there are no keyword arguments.
+        It deliberately bypasses hooks, ``do_not_execute``, positional-name
+        mapping, callback wrapping and return handling; the GPU last-error
+        check still runs and honors :attr:`gpu_error_check`. ``__call__`` never
+        dispatches here.
+
+        Only available when the SDFG was compiled with a non-empty
+        ``user_args``; raises ``ValueError`` otherwise.
+        """
+        if self._user_call is None:
+            raise ValueError(f"SDFG '{self._sdfg.name}' was compiled without user_args; "
+                             "user_bind_call is unavailable (set SDFG.user_args and recompile).")
+        self._user_call(*args)
+        if self._has_gpu_code and self._gpu_error_check:
+            self._check_gpu_error()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the compiled SDFG.

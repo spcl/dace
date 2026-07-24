@@ -478,6 +478,164 @@ def _external_memory_storages(sdfg):
     return sorted(storages, key=lambda s: s.name)
 
 
+def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tuple[str, str]:
+    """Generates the ``user_call`` method and its ``.def`` line from ``sdfg.user_args``.
+
+    ``user_args`` is a structured promise: entries are argument names or
+    (nested) tuples of them. Tuple entries bind as ``nb::tuple`` parameters and
+    are destructured in the body with per-element ``nb::try_cast`` - arrays
+    with ``convert=false`` (by-reference, never a silent copy), scalars with
+    nanobind's regular conversion - since a parameter-level ``.noconvert()``
+    would propagate to every tuple element uniformly (probe result, see the
+    design doc). There is no kwargs absorber: every argument must be listed or
+    inferable from listed ones, which makes completeness checkable here, at
+    code-generation time.
+
+    :return: The pair ``(method_source, def_source)``, both empty when
+             ``user_args`` is empty.
+    """
+    user_args = getattr(sdfg, 'user_args', None) or []
+    if not user_args:
+        return '', ''
+    name = sdfg.name
+
+    flat: List[str] = []
+
+    def _flatten(entry):
+        if isinstance(entry, str):
+            flat.append(entry)
+        else:
+            if len(entry) == 0:
+                raise ValueError(f"SDFG '{name}': user_args contains an empty tuple.")
+            for sub in entry:
+                _flatten(sub)
+
+    for entry in user_args:
+        _flatten(entry)
+
+    listed = set()
+    for n in flat:
+        if n not in arglist:
+            raise ValueError(f"SDFG '{name}': user_args lists unknown argument '{n}'.")
+        if n in listed:
+            raise ValueError(f"SDFG '{name}': user_args lists argument '{n}' more than once.")
+        listed.add(n)
+
+    # Initial scope: primitive scalars and plain arrays only.
+    for n in flat:
+        desc = arglist[n]
+        if isinstance(desc, dt.ContainerArray) or isinstance(desc, dt.Structure):
+            supported = False
+        elif isinstance(desc, dt.Array):
+            supported = not isinstance(desc.dtype, dtypes.struct) and desc.optional is not True
+        elif isinstance(desc, dt.Scalar):
+            supported = (not isinstance(desc.dtype, (dtypes.callback, dtypes.pyobject, dtypes.vector))
+                         and desc.dtype != dtypes.string and desc.dtype.base_type != dtypes.float16)
+        else:
+            supported = False
+        if not supported:
+            raise ValueError(f"SDFG '{name}': user_args argument '{n}' is of a kind not supported by "
+                             f"user_call (initial scope: primitive scalars and plain non-nullable arrays).")
+
+    # The fast path allocates nothing, so return values are refused.
+    if any(n == '__return' or n.startswith('__return_') for n in sdfg.arrays):
+        raise ValueError(f"SDFG '{name}': user_call does not support SDFGs with return values.")
+
+    # Completeness: with no kwargs, every unlisted argument must be an
+    # inferable symbol - decidable here, so a violation never reaches run time.
+    _, fallbacks = _symbol_fallbacks(arglist, flat, sdfg.symbols)
+    for n in arglist:
+        if n not in listed and n not in fallbacks:
+            raise ValueError(f"SDFG '{name}': user_call missing argument '{n}': not listed in "
+                             f"user_args and not inferable from any listed argument.")
+
+    # Parameter declarations and call-argument expressions for every listed
+    # name come from the same generator call() uses, so the per-argument
+    # semantics (noconvert arrays, bool-as-uint8, strict scalars, vector base
+    # types, GPU devices) are identical by construction. For tuple-bound names
+    # only the *arrival* differs: the same typed declaration becomes a local
+    # filled by try_cast instead of a function parameter.
+    param_decl = {}
+    call_expr = {}
+    arg_annot = {}
+    for n in flat:
+        p, ca, na, setup = _argument_binding({n: arglist[n]}, [n], set(), {})
+        assert not setup  # the scope restriction excludes everything that needs setup
+        param_decl[n], call_expr[n], arg_annot[n] = p[0], ca[0], na[0]
+
+    def _convert_flag(desc) -> str:
+        # Arrays: never convert (a converted ndarray is a silent copy).
+        # Scalars: nanobind's regular conversion, matching the call() dispatcher.
+        return 'false' if isinstance(desc, dt.Array) else 'true'
+
+    params: List[str] = []
+    def_args: List[str] = []
+    extract: List[str] = []
+
+    def _emit_extractions(entry, tuple_expr: str, path: str):
+        extract.append(f'if (nb::len({tuple_expr}) != {len(entry)})\n'
+                       f'            throw std::invalid_argument("SDFG argument error: argument \'{path}\': '
+                       f'expected a tuple of length {len(entry)}.");')
+        for j, sub in enumerate(entry):
+            elem = f'{tuple_expr}[{j}]'
+            sub_path = f'{path}[{j}]'
+            if isinstance(sub, str):
+                decl_type = param_decl[sub].rsplit(' ', 1)[0]
+                extract.append(
+                    f'{param_decl[sub]};\n'
+                    f'        if (!nb::try_cast<{decl_type}>({elem}, {sub}, {_convert_flag(arglist[sub])}))\n'
+                    f'            throw std::invalid_argument("SDFG argument error: argument \'{sub}\' '
+                    f'(in {sub_path}): incompatible value.");')
+            else:
+                sub_tuple = f'{tuple_expr}_{j}'
+                extract.append(
+                    f'nb::tuple {sub_tuple};\n'
+                    f'        if (!nb::try_cast<nb::tuple>({elem}, {sub_tuple}, false))\n'
+                    f'            throw std::invalid_argument("SDFG argument error: argument \'{sub_path}\': '
+                    f'expected a tuple.");')
+                _emit_extractions(sub, sub_tuple, sub_path)
+
+    for i, entry in enumerate(user_args, start=1):
+        if isinstance(entry, str):
+            params.append(param_decl[entry])
+            def_args.append(arg_annot[entry])
+        else:
+            params.append(f'nb::tuple arg{i}')
+            def_args.append(f'nb::arg("arg{i}")')
+            _emit_extractions(entry, f'arg{i}', f'arg{i}')
+
+    # Unlisted inferable symbols: plain const locals - no optional machinery,
+    # since completeness is already guaranteed above.
+    for n in arglist:
+        if n not in listed:
+            extract.append(f'const {arglist[n].dtype.ctype} {n} = {fallbacks[n]};')
+
+    user_call_args = ', '.join(call_expr[n] if n in listed else n for n in arglist)
+    program_args = 'm_state' + (f', {user_call_args}' if user_call_args else '')
+
+    if extract:
+        extract_block = '\n        '.join(extract)
+        body = (f'{extract_block}\n'
+                f'        {{\n'
+                f'            nb::gil_scoped_release _nogil;\n'
+                f'            init_impl({init_call});\n'
+                f'            __program_{name}({program_args});\n'
+                f'        }}')
+    else:
+        body = (f'nb::gil_scoped_release _nogil;\n'
+                f'        init_impl({init_call});\n'
+                f'        __program_{name}({program_args});')
+
+    method = (f'\n    // Structured fast-path entry point (SDFG.user_args); see the Python\n'
+              f'    // wrapper\'s user_bind_call() for the contract.\n'
+              f'    void user_call({", ".join(params)}) {{\n'
+              f'        {body}\n'
+              f'    }}\n')
+    def_line = (f'\n        .def("user_call", &DaceHandle_{name}::user_call' + ''.join(f', {a}'
+                                                                                       for a in def_args) + ')')
+    return method, def_line
+
+
 def generate_bindings_code(sdfg, statestruct=None) -> str:
     """Returns the C++ source of the nanobind module for ``sdfg``.
 
@@ -516,6 +674,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
     call_param_list = ', '.join(params + ['nb::kwargs'])
     init_param_list = ', '.join(init_params + ['nb::kwargs'])
+    user_call_method, user_call_def = _user_call_binding(sdfg, arglist, init_call)
     # The trailing nb::kwargs absorber needs an annotation too.
     call_def_args = ''.join(f', {a}' for a in nb_args + ['nb::arg("_extra_kwargs")'])
     init_def_args = ''.join(f', {a}' for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
@@ -724,7 +883,7 @@ struct DaceHandle_{name} {{
     void call({call_param_list}) {{
         {call_body}
     }}
-}};
+{user_call_method}}};
 
 }} }} }} // namespace dace::generated::{name}
 
@@ -733,7 +892,7 @@ NB_MODULE({name}, m) {{
     nb::class_<DaceHandle_{name}>(m, "CompiledSDFGHandle")
         .def("initialize", &DaceHandle_{name}::initialize{init_def_args})
         .def("finalize", &DaceHandle_{name}::finalize)
-        .def("__call__", &DaceHandle_{name}::call{call_def_args})
+        .def("__call__", &DaceHandle_{name}::call{call_def_args}){user_call_def}
         .def("get_workspace_sizes", &DaceHandle_{name}::get_workspace_sizes{init_def_args})
         .def("set_workspace", &DaceHandle_{name}::set_workspace,
              nb::arg("storage"), nb::arg("buffer"){init_def_args})

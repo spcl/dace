@@ -1879,6 +1879,215 @@ def test_nanobind_interface_strict_scalar_cast_runtime():
             assert np.isclose(result[0], 3.0)
 
 
+def _uargs_axpy_sdfg(simplify=True):
+    """Shared probe for the user_args tests: arglist A, B, alpha + size symbol N."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def uargs_axpy(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+        B[:] = alpha * A + B
+
+    return uargs_axpy.to_sdfg(simplify=simplify)
+
+
+def test_nanobind_interface_user_args_binding():
+    """A non-empty ``user_args`` generates ``user_call``: tuple entries bind as
+    ``nb::tuple`` with per-element extraction, plain entries bind like call()'s
+    parameters, no kwargs absorber exists, and unlisted inferable symbols are
+    plain const locals (no optional machinery)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = _uargs_axpy_sdfg()
+    sdfg.user_args = [('A', 'B'), 'alpha']
+    code = generate_bindings_code(sdfg)
+
+    assert '.def("user_call"' in code
+    sig = code.split('void user_call(')[1].split(') {')[0]
+    body = code.split('void user_call(')[1]
+    assert 'nb::tuple arg1' in sig
+    assert 'double alpha' in sig
+    assert 'kwargs' not in sig  # no kwargs at all: everything listed or inferable
+    # Per-element extraction: length check + convert-controlled casts.
+    assert 'nb::len(arg1)' in body
+    assert 'try_cast' in body
+    # N is unlisted and inferable: a plain const local, no std::optional dance.
+    assert 'const int N = ' in body
+    assert 'A.shape(0)' in body
+    assert 'N__opt' not in body.split('void call(')[0]
+
+
+def test_nanobind_interface_user_args_not_generated_when_empty():
+    """Without user_args nothing is generated - the feature is fully opt-in."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    code = generate_bindings_code(_uargs_axpy_sdfg())
+    assert 'user_call' not in code
+
+
+def test_nanobind_interface_user_args_validation():
+    """user_args is validated at codegen time with clear errors."""
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    def probe(user_args):
+        sdfg = _uargs_axpy_sdfg()
+        sdfg.user_args = user_args
+        return generate_bindings_code(sdfg)
+
+    with pytest.raises(ValueError, match="unknown argument 'nope'"):
+        probe([('A', 'nope'), 'B', 'alpha'])
+    with pytest.raises(ValueError, match="'A'.*more than once"):
+        probe([('A', 'A'), 'B', 'alpha'])
+    with pytest.raises(ValueError, match='empty tuple'):
+        probe([('A', ()), 'B', 'alpha'])
+    with pytest.raises(ValueError, match="missing argument"):
+        probe([('A', 'B')])  # alpha unlisted and not inferable
+
+    # A string scalar is outside the initial primitive-only scope.
+    sdfg = dace.SDFG('uargs_string_probe')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.add_scalar('s', dtypes.string)
+    sdfg.user_args = ['A', 's']
+    with pytest.raises(ValueError, match="'s'.*not supported"):
+        generate_bindings_code(sdfg)
+
+    # A nullable array is outside the initial scope.
+    sdfg = dace.SDFG('uargs_nullable_probe')
+    sdfg.add_array('A', [1], dace.float64)
+    sdfg.arrays['A'].optional = True
+    sdfg.user_args = ['A']
+    with pytest.raises(ValueError, match="'A'.*not supported"):
+        generate_bindings_code(sdfg)
+
+    # Return-value SDFGs are refused (the fast path allocates nothing).
+    N = dace.symbol('N')
+
+    @dace.program
+    def uargs_ret(A: dace.float64[10]):
+        return A + 1.0
+
+    sdfg = uargs_ret.to_sdfg(simplify=True)
+    sdfg.user_args = ['A']
+    with pytest.raises(ValueError, match='return'):
+        generate_bindings_code(sdfg)
+
+
+def test_nanobind_interface_user_args_e2e():
+    """E2E: structured call through user_bind_call, by-reference semantics kept."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = _uargs_axpy_sdfg()
+        sdfg.user_args = [('A', 'B'), 'alpha']
+        csdfg = sdfg.compile()
+
+        n = 16
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 2.0 * a + b
+        csdfg.user_bind_call((a, b), 2.0)  # N inferred from A.shape(0)
+        assert np.allclose(b, expected)
+
+        # A float32 array element must be rejected, never silently copied.
+        with pytest.raises(Exception):
+            csdfg.user_bind_call((np.zeros(n, dtype=np.float32), b), 2.0)
+
+        # Wrong tuple length is a clear error.
+        with pytest.raises(Exception):
+            csdfg.user_bind_call((a, ), 2.0)
+
+
+def test_nanobind_interface_user_args_nested_e2e():
+    """E2E: nested tuples destructure (the idea.md example shape)."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = _uargs_axpy_sdfg()
+        sdfg.user_args = [('A', ('B', ), 'alpha')]
+        csdfg = sdfg.compile()
+
+        n = 8
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 3.0 * a + b
+        csdfg.user_bind_call((a, (b, ), 3.0))
+        assert np.allclose(b, expected)
+
+
+def test_nanobind_interface_user_args_cross_symbol_inference():
+    """A listed symbol is promised, so an unlisted one is inferable through a
+    multi-symbol shape: A[a + b] with 'b' listed infers a = A.shape(0) - b."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    a = dace.symbol('a')
+    b = dace.symbol('b')
+    sdfg = dace.SDFG('uargs_cross_sym_probe')
+    sdfg.add_array('A', [a + b], dace.float64)
+    state = sdfg.add_state()
+    tasklet = state.add_tasklet('set_last', {}, {'o'}, 'o = 1.0')
+    state.add_edge(tasklet, 'o', state.add_write('A'), None, dace.Memlet('A[a + b - 1]'))
+    sdfg.user_args = ['A', 'b']
+
+    code = generate_bindings_code(sdfg)
+    body = code.split('void user_call(')[1]
+    assert 'const int a = ' in body
+    assert 'A.shape(0) - b' in body
+
+
+def test_nanobind_interface_user_args_serialization_and_hash():
+    """user_args is a serialized SDFG property: it survives a JSON roundtrip
+    and changes the SDFG hash (so the build cache rebuilds on change)."""
+    sdfg = _uargs_axpy_sdfg()
+    hash_without = sdfg.hash_sdfg()
+
+    sdfg.user_args = [('A', 'B'), 'alpha']
+    restored = dace.SDFG.from_json(sdfg.to_json())
+    # JSON has no tuples; entries come back as sequences with the same nesting.
+    assert [list(e) if not isinstance(e, str) else e for e in restored.user_args] \
+        == [['A', 'B'], 'alpha']
+    assert sdfg.hash_sdfg() != hash_without
+
+
+def test_nanobind_interface_user_bind_call_requires_user_args():
+    """user_bind_call on a module compiled without user_args raises clearly."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        csdfg = _uargs_axpy_sdfg().compile()
+        with pytest.raises(ValueError, match='user_args'):
+            csdfg.user_bind_call((np.zeros(4), np.zeros(4)), 1.0)
+
+
+def test_nanobind_interface_user_bind_call_gpu_error_check(monkeypatch):
+    """user_bind_call keeps the GPU last-error check, gated by the
+    gpu_error_check property like every other call path."""
+    import types
+    from dace.codegen import common
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+
+    sdfg = dace.SDFG('uargs_gpu_error_probe')
+    sdfg.add_array('A', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+
+    class FakeHandle:
+        has_gpu_code = True
+        return_names = ()
+        is_single_value_ret = False
+        callback_names = ()
+
+        def user_call(self, *args):
+            pass
+
+    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: FakeHandle(), __file__='<stub>')
+
+    class FakeRuntime:
+
+        def get_last_error_string(self):
+            return 'illegal memory access'
+
+    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime())
+
+    csdfg = NanobindCompiledSDFG(sdfg, stub_module, ['A'])
+    with pytest.raises(RuntimeError, match='illegal memory access'):
+        csdfg.user_bind_call((object(), ))
+
+    csdfg.gpu_error_check = False
+    csdfg.user_bind_call((object(), ))  # does not raise
+
+
 if __name__ == '__main__':
     test_axpy_nanobind_interface()
     test_nanobind_interface_wrong_dtype_raises()

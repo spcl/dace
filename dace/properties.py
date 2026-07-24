@@ -546,6 +546,62 @@ class ListProperty(Property[List[T]]):
         return list(map(self.element_type, data))
 
 
+class NestedTupleListProperty(Property):
+    """ Property type for a list whose entries are strings or arbitrarily
+        nested tuples of strings (e.g., the structured call signature
+        ``SDFG.user_args``). Values are canonicalized on assignment: the outer
+        container becomes a list, every inner container a tuple. Serializes to
+        nested JSON lists (JSON has no tuples) and restores the canonical form
+        on deserialization.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs['dtype'] = list
+        super().__init__(*args, **kwargs)
+
+    @staticmethod
+    def _normalize(entry):
+        if isinstance(entry, str):
+            return entry
+        if isinstance(entry, (list, tuple)):
+            if len(entry) == 0:
+                raise ValueError('NestedTupleListProperty: empty tuple entries are not allowed')
+            return tuple(NestedTupleListProperty._normalize(e) for e in entry)
+        raise TypeError('NestedTupleListProperty entries must be strings or nested tuples of '
+                        f'strings, got {type(entry).__name__}')
+
+    def __set__(self, obj, val):
+        if val is not None:
+            if not isinstance(val, (list, tuple)):
+                raise TypeError(f'NestedTupleListProperty expects a list, got {type(val).__name__}')
+            val = [self._normalize(e) for e in val]
+        super().__set__(obj, val)
+
+    @staticmethod
+    def to_string(l):
+        return str(l)
+
+    def from_string(self, s):
+        import ast
+        return [self._normalize(e) for e in ast.literal_eval(s)]
+
+    def to_json(self, l):
+        if l is None:
+            return None
+
+        def conv(entry):
+            return entry if isinstance(entry, str) else [conv(e) for e in entry]
+
+        return [conv(e) for e in l]
+
+    def from_json(self, data, context=None):
+        if data is None:
+            return None
+        if not isinstance(data, list):
+            raise TypeError('NestedTupleListProperty expects a list input, got %s' % data)
+        return [self._normalize(e) for e in data]
+
+
 class TransformationHistProperty(Property):
     """ Property type for transformation histories.
     """

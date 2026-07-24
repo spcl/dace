@@ -27,8 +27,9 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, Contr
 from dace.sdfg.type_inference import infer_expr_type
 from dace.data.distributed import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, Property, CodeProperty,
-                             TransformationHistProperty, OptionalSDFGReferenceProperty, DictProperty, CodeBlock)
+from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, NestedTupleListProperty,
+                             Property, CodeProperty, TransformationHistProperty, OptionalSDFGReferenceProperty,
+                             DictProperty, CodeBlock)
 from typing import BinaryIO
 
 # NOTE: In shapes, we try to convert strings to integers. In ranks, a string should be interpreted as data (scalar).
@@ -448,6 +449,11 @@ class SDFG(ControlFlowRegion):
 
     name = Property(dtype=str, desc="Name of the SDFG")
     arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
+    user_args = NestedTupleListProperty(
+        desc='Optional structured signature for the nanobind interface\'s user_bind_call entry point: '
+        'entries are argument names or (nested) tuples of them, e.g. [("a", "b"), "c"]. Arguments not '
+        'listed must be inferable from listed ones. Empty disables generation of the entry point. '
+        'Serialized, so it participates in the SDFG hash (changing it triggers a rebuild).')
     constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
         dtype=dict,
         default={},
@@ -524,6 +530,7 @@ class SDFG(ControlFlowRegion):
         self._parent_nsdfg_node = None
         self._arrays = NestedDict()  # type: Dict[str, dt.Array]
         self.arg_names = []
+        self.user_args = []
         self._labels: Set[str] = set()
         self.global_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
         self.init_code = {'frame': CodeBlock("", dtypes.Language.CPP)}
