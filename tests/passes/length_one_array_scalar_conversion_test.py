@@ -6,8 +6,13 @@ true ``Scalar`` in place and strips the redundant ``[0]`` accessors; with
 ``stage_nontransients_arrays_into_scalars`` it additionally STAGES each non-transient length-1 array
 into a fresh transient scalar (copy-in in a new start state, copy-out in a new sink state), leaving the
 signature array untouched. ``ConvertScalarsToLengthOneArrays`` is the inverse. These are pure-SDFG (no
-Fortran) tests of the Pass classes, covering the staging, ``filter`` gating and ``opaque``/View
-exemptions.
+Fortran) tests of the Pass classes, covering the staging, ``filter`` gating, ``preserve_abi`` and the
+``opaque``/View exemptions.
+
+``preserve_abi`` (default) is the guarantee that a top-level non-transient descriptor is never
+rewritten, so staging is the only route by which the body reaches the other form; clearing it opts
+into an in-place rewrite that changes the SDFG's call signature and must therefore also cross every
+NestedSDFG connector bound to that descriptor.
 """
 import ctypes
 
@@ -223,15 +228,102 @@ def test_opaque_scalar_is_not_arrayized():
 
 def test_passes_expose_property_options():
     assert set(ConvertLengthOneArraysToScalars.__properties__) == {
-        "recursive", "stage_nontransients_arrays_into_scalars", "filter", "single_element"
+        "recursive", "stage_nontransients_arrays_into_scalars", "filter", "single_element", "preserve_abi"
     }
     assert set(ConvertScalarsToLengthOneArrays.__properties__) == {
-        "recursive", "stage_nontransients_arrays_into_scalars", "filter"
+        "recursive", "stage_nontransients_arrays_into_scalars", "filter", "preserve_abi"
     }
     for cls in (ConvertLengthOneArraysToScalars, ConvertScalarsToLengthOneArrays):
         inst = cls(recursive=False, stage_nontransients_arrays_into_scalars=True)
         assert inst.recursive is False
         assert inst.stage_nontransients_arrays_into_scalars is True
+        assert inst.preserve_abi is True, "the ABI-safe route must be the default"
+
+
+# --- preserve_abi -----------------------------------------------------------
+
+
+def test_preserve_abi_stages_instead_of_touching_the_signature():
+    """The guarantee: with ``preserve_abi`` the signature descriptors are byte-identical afterwards --
+    the conversion reaches the body only through the staged transients."""
+    sdfg = _io_sdfg()
+    before = {nm: (type(d), tuple(d.shape)) for nm, d in sdfg.arrays.items()}
+    ConvertLengthOneArraysToScalars(stage_nontransients_arrays_into_scalars=True).apply_pass(sdfg, {})
+    for nm, sig in before.items():
+        assert (type(sdfg.arrays[nm]), tuple(sdfg.arrays[nm].shape)) == sig, f"{nm} left the signature"
+    assert any(isinstance(d, dd.Scalar) and d.transient for d in sdfg.arrays.values())
+    assert _run(sdfg, 3.0) == 6.0
+
+
+def test_without_preserve_abi_the_signature_becomes_scalar():
+    """Cleared, the non-transient is rewritten IN PLACE -- no staging transient, no copy-in/out, and
+    the caller now binds a by-value scalar instead of a 1-element buffer."""
+    sdfg = _io_sdfg()
+    rewritten = ConvertLengthOneArraysToScalars(stage_nontransients_arrays_into_scalars=True,
+                                                preserve_abi=False).apply_pass(sdfg, {})
+    assert rewritten == {"alpha", "beta"}
+    assert isinstance(sdfg.arrays["alpha"], dd.Scalar) and not sdfg.arrays["alpha"].transient
+    assert isinstance(sdfg.arrays["beta"], dd.Scalar) and not sdfg.arrays["beta"].transient
+    assert not any(nm.startswith("scal_") for nm in sdfg.arrays)
+    sdfg.validate()
+
+
+def test_without_preserve_abi_inverse_restores_the_length_one_signature():
+    sdfg = _io_sdfg()
+    ConvertLengthOneArraysToScalars(stage_nontransients_arrays_into_scalars=True,
+                                    preserve_abi=False).apply_pass(sdfg, {})
+    ConvertScalarsToLengthOneArrays(stage_nontransients_arrays_into_scalars=True,
+                                    preserve_abi=False).apply_pass(sdfg, {})
+    for nm in ("alpha", "beta"):
+        assert isinstance(sdfg.arrays[nm], dd.Array) and tuple(sdfg.arrays[nm].shape) == (1, )
+        assert not sdfg.arrays[nm].transient
+    sdfg.validate()
+    assert _run(sdfg, 4.0) == 8.0
+
+
+def test_in_place_signature_rewrite_reaches_the_nested_connector():
+    """An in-place rewrite must cross the NestedSDFG connector: the inner descriptor is a SEPARATE
+    object, so rewriting only the parent would leave the two ends of the connector disagreeing on the
+    rank and validation would reject the SDFG."""
+    inner = dace.SDFG("inner")
+    inner.add_array("ia", [1], dace.float64, transient=False)
+    inner.add_array("ib", [1], dace.float64, transient=False)
+    ist = inner.add_state("is")
+    it = ist.add_tasklet("t", {"a"}, {"b"}, "b = a * 2.0")
+    ist.add_edge(ist.add_read("ia"), None, it, "a", dace.Memlet("ia[0]"))
+    ist.add_edge(it, "b", ist.add_write("ib"), None, dace.Memlet("ib[0]"))
+
+    sdfg = dace.SDFG("outer")
+    sdfg.add_array("alpha", [1], dace.float64, transient=False)
+    sdfg.add_array("beta", [1], dace.float64, transient=False)
+    st = sdfg.add_state("main")
+    nested = st.add_nested_sdfg(inner, {"ia"}, {"ib"})
+    st.add_edge(st.add_read("alpha"), None, nested, "ia", dace.Memlet("alpha[0]"))
+    st.add_edge(nested, "ib", st.add_write("beta"), None, dace.Memlet("beta[0]"))
+
+    ConvertLengthOneArraysToScalars(stage_nontransients_arrays_into_scalars=True,
+                                    preserve_abi=False).apply_pass(sdfg, {})
+    assert isinstance(inner.arrays["ia"], dd.Scalar), "connector image not rewritten"
+    assert isinstance(inner.arrays["ib"], dd.Scalar), "connector image not rewritten"
+    sdfg.validate()
+
+
+def test_preserve_abi_leaves_the_nested_connector_alone():
+    """The mirror: staging repoints the body, so no nested non-transient may change."""
+    inner = dace.SDFG("inner_keep")
+    inner.add_array("ia", [1], dace.float64, transient=False)
+    ist = inner.add_state("is")
+    ist.add_tasklet("t", {"a"}, {}, "pass")
+
+    sdfg = dace.SDFG("outer_keep")
+    sdfg.add_array("alpha", [1], dace.float64, transient=False)
+    st = sdfg.add_state("main")
+    nested = st.add_nested_sdfg(inner, {"ia"}, {})
+    st.add_edge(st.add_read("alpha"), None, nested, "ia", dace.Memlet("alpha[0]"))
+
+    ConvertLengthOneArraysToScalars(stage_nontransients_arrays_into_scalars=True).apply_pass(sdfg, {})
+    assert isinstance(inner.arrays["ia"], dd.Array) and tuple(inner.arrays["ia"].shape) == (1, )
+    assert isinstance(sdfg.arrays["alpha"], dd.Array)
 
 
 # --- filter knob ------------------------------------------------------------
