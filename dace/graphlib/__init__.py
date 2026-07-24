@@ -31,11 +31,11 @@ from dace.graphlib.algorithms.flow import edmondskarp
 from networkx.exception import NetworkXError, NetworkXNoCycle, NetworkXNoPath, NetworkXUnfeasible, NodeNotFound
 
 __all__ = [
-    'DiGraph', 'MultiDiGraph', 'has_path', 'immediate_dominators', 'weakly_connected_components',
-    'topological_sort', 'simple_cycles', 'find_cycle', 'descendants', 'ancestors', 'all_simple_paths',
+    'DiGraph', 'MultiDiGraph', 'has_path', 'immediate_dominators', 'weakly_connected_components', 'topological_sort',
+    'simple_cycles', 'find_cycle', 'is_directed_acyclic_graph', 'descendants', 'ancestors', 'all_simple_paths',
     'transitive_closure', 'transitive_closure_dag', 'dfs_edges', 'shortest_path_length', 'minimum_cut',
-    'get_node_attributes', 'isomorphism', 'NetworkXError', 'NetworkXNoCycle', 'NetworkXNoPath',
-    'NetworkXUnfeasible', 'NodeNotFound', 'set_default_backend', 'get_backend_name'
+    'get_node_attributes', 'isomorphism', 'NetworkXError', 'NetworkXNoCycle', 'NetworkXNoPath', 'NetworkXUnfeasible',
+    'NodeNotFound', 'set_default_backend', 'get_backend_name'
 ]
 
 
@@ -69,6 +69,10 @@ def simple_cycles(G):
 
 def find_cycle(G, source=None):
     return resolve.backend_for(G).find_cycle(G, source)
+
+
+def is_directed_acyclic_graph(G):
+    return resolve.backend_for(G).is_directed_acyclic_graph(G)
 
 
 def descendants(G, source):

@@ -38,6 +38,9 @@ class GraphBackend(Protocol):
     def find_cycle(self, G: Any, source: Any = None) -> List[Tuple[Any, Any]]:
         ...
 
+    def is_directed_acyclic_graph(self, G: Any) -> bool:
+        ...
+
     def descendants(self, G: Any, source: Any) -> Set[Any]:
         ...
 

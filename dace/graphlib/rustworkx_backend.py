@@ -512,6 +512,10 @@ class RustworkxBackend:
                 return [(G._index.node_at(u), G._index.node_at(v)) for u, v in edges]
         raise NetworkXNoCycle('No cycle found.')
 
+    def is_directed_acyclic_graph(self, G):
+        import rustworkx
+        return rustworkx.is_directed_acyclic_graph(_coerce(G)._rx)
+
     def descendants(self, G, source):
         import rustworkx
         G = _coerce(G)

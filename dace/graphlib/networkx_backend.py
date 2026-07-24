@@ -34,6 +34,9 @@ class NetworkxBackend:
     def find_cycle(self, G, source=None):
         return networkx.find_cycle(G, source)
 
+    def is_directed_acyclic_graph(self, G):
+        return networkx.is_directed_acyclic_graph(G)
+
     def descendants(self, G, source):
         return networkx.descendants(G, source)
 
