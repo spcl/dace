@@ -25,9 +25,9 @@ def descriptors(implementation, mode):
                                                                                ConvertScalarsToLengthOneArrays)
     sdfg = mixed.to_sdfg(simplify=True)
     if implementation == 'experimental_readable' and mode == 'scalar':
-        ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
+        ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
     elif implementation == 'experimental_readable' and mode == 'len1_array':
-        ConvertScalarsToLengthOneArrays(transient_only=True).apply_pass(sdfg, {})
+        ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
     return {name: (type(desc).__name__, desc.transient) for name, desc in sdfg.arrays.items()}
 
 
@@ -96,7 +96,7 @@ def test_scalar_keeps_gpu_kernel_output_as_length1_array():
                              schedule=dace.ScheduleType.GPU_Device,
                              external_edges=True)
 
-    ConvertLengthOneArraysToScalars(transient_only=True).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
     assert isinstance(sdfg.arrays['acc'], dace.data.Scalar), 'scalarization should first make it a Scalar'
     Pipeline([InferDefaultSchedulesAndStorages(), PromoteGPUScalarsToArrays()]).apply_pass(sdfg, {})
     assert isinstance(sdfg.arrays['acc'], dace.data.Array), 'GPU kernel output must be widened back to an Array'

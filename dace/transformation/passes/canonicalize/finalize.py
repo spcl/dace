@@ -227,8 +227,8 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     vectorized the SDFG) runs to allocate temporaries well. Three steps, mirroring
     ``auto_optimize``'s storage tail:
 
-    1. **Length-1 transient arrays -> scalars** (:class:`ConvertLengthOneArraysToScalars`,
-       ``transient_only=True``): a single internal value belongs in a scalar, not a heap array.
+    1. **Length-1 transient arrays -> scalars** (:class:`ConvertLengthOneArraysToScalars`, at its
+       default -- transient only): a single internal value belongs in a scalar, not a heap array.
        Non-transient length-1 arrays (SDFG-external returns / opaque handles) are left as arrays.
     2. **Small constant-size scratch -> registers** (:func:`move_small_arrays_to_stack`).
     3. **Independent top-level transients -> ``Persistent`` lifetime**
@@ -245,7 +245,7 @@ def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
     :param sdfg: SDFG whose transient storage is finalized in place.
     :param device: codegen device type (selects GPU WCR-reset / storage rules).
     """
-    ConvertLengthOneArraysToScalars(recursive=True, transient_only=True).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
     infer_types.set_default_schedule_and_storage_types(sdfg, None)
     move_small_arrays_to_stack(sdfg)
     made_persistent = make_transients_persistent(sdfg, device)

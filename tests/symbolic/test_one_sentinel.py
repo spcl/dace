@@ -62,7 +62,7 @@ def test_convert_length_one_arrays_skips_one_marked():
     sdfg.add_array("A", (ONE, ), dace.float64, transient=True)
     pre = type(sdfg.arrays["A"]).__name__
     assert pre == "Array"
-    ConvertLengthOneArraysToScalars(recursive=True, transient_only=False).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
     post = type(sdfg.arrays["A"]).__name__
     assert post == "Array", f"ONE-marked array got scalarised: post={post!r}"
 
@@ -73,7 +73,7 @@ def test_convert_length_one_arrays_scalarises_literal_one():
     sdfg = dace.SDFG("literal_one_fixture")
     sdfg.add_array("B", (1, ), dace.float64, transient=True)
     assert type(sdfg.arrays["B"]).__name__ == "Array"
-    ConvertLengthOneArraysToScalars(recursive=True, transient_only=False).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(recursive=True).apply_pass(sdfg, {})
     assert type(sdfg.arrays["B"]).__name__ == "Scalar", \
         "literal-1 array should still scalarise"
 

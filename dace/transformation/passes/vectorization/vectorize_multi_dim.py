@@ -687,7 +687,7 @@ class VectorizeMultiDim(ppl.Pipeline):
             # ``py_mod`` for Python/NumPy modulo semantics (C ``%`` miscompiles negative
             # operands and is ill-formed for floats).
             RewriteModuloToPyMod(),
-            ConvertLengthOneArraysToScalars(recursive=True, transient_only=True),
+            ConvertLengthOneArraysToScalars(recursive=True),
             NormalizeWCRSource(),
             BypassTrivialAssignTasklets(),
             # Strip any WCR the cleaning exposed or LoopToMap minted — the tile path must

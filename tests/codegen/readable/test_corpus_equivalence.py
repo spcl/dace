@@ -66,7 +66,7 @@ def apply_pipeline(sdfg, target):
     sdfg.simplify()
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.apply_transformations_repeated(MapFusion)
-    ConvertLengthOneArraysToScalars(single_element=True, transient_only=True).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
     sdfg.simplify()
     if target == "gpu":
         sdfg.apply_gpu_transformations()

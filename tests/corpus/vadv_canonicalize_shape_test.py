@@ -84,7 +84,7 @@ def test_scalarized_single_element_scratch_validates():
     (expected 1, got 2)`` on the ``(1, 1)`` MapFusion scratch.
     """
     sdfg = _canonicalized('single_element')
-    scalarized = ConvertLengthOneArraysToScalars(single_element=True, transient_only=True).apply_pass(sdfg, {})
+    scalarized = ConvertLengthOneArraysToScalars(single_element=True).apply_pass(sdfg, {})
     assert scalarized, 'expected canonicalize to leave single-element scratch for scalarization'
     sdfg.validate()
 
