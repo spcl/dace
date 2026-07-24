@@ -26,6 +26,7 @@ import copy
 
 import pytest
 
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
@@ -40,8 +41,6 @@ _PHASES = ("canon", "canon_vec")
 # Two classes: canon-phase = real canon/codegen bugs (dace lane); canon_vec-phase = multidim-vectorize gaps.
 _XFAIL: dict = {
     ("azimint_naive", "canon_vec"): "multidim-vectorize: output diverges from reference",
-    ("cavity_flow", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
-    ("lenet", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
     ("nbody", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
     ("mandelbrot1", "canon_vec"): "multidim-vectorize: KeyError __t0_split_0 (tile split)",
     ("mandelbrot2", "canon_vec"): "multidim-vectorize WidenAccesses invariant: lane-dep transients",
@@ -60,11 +59,15 @@ def _cases():
 
 
 # Round-robin multidim knob set (one config per kernel by index), mirroring the
-# TSVC / polybench corpus tests.
+# TSVC / polybench corpus tests. The SIMD ISA is the HOST's best runnable one
+# (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a
+# hardcoded AVX-512: vectorization enforces arch-native, so a forced non-host ISA
+# would SIGILL at runtime (see ``dace.libraries.tileops._dispatch.host_supported_isas``).
+_HOST_ISA = detect_host_isa()
 _MULTIDIM_KNOBS = [
-    dict(target_isa="AVX512", remainder_strategy="masked_tail", branch_mode="merge"),
+    dict(target_isa=_HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa="AVX512", remainder_strategy="full_mask", branch_mode="merge"),
+    dict(target_isa=_HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
