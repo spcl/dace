@@ -1281,10 +1281,22 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         bare single symbol (``N``) is skipped (``A_size(N){return N;}`` is no win). A constant folds to
         a nullary ``consteval`` helper; a compound symbolic size gets a ``constexpr`` helper over its
         sorted free symbols (``A_size(N, M)``).
+
+        A DATA-DEPENDENT size is never hoisted. The helper is a free-standing static function, so its
+        body may reference nothing but its parameters -- and those are the expression's free SYMBOLS.
+        A subscripted data access (spmv's CSR row length ``A_indptr[i + 1] - A_indptr[i]``) carries its
+        container as a ``Subscript`` head rather than a free symbol, so the container is never in the
+        parameter list while the body still names it: ``__tmp0_size(int64_t i) { return -A_indptr[i] +
+        A_indptr[i + 1]; }`` -> "``A_indptr`` was not declared in this scope". Fall back to the inline
+        ``sym2cpp(total_size)`` extent, which is emitted at the allocation site where the container's
+        pointer IS in scope.
         """
         total = symbolic.pystr_to_symbolic(str(desc.total_size))
         # A bare single symbol carries no readability benefit; keep the plain name.
         if total.is_Symbol:
+            return None
+        # Data-dependent extent: not expressible as a free-standing helper (see above).
+        if symbolic.arrays(total):
             return None
         free = sorted(total.free_symbols, key=lambda s: str(s))
         call_args = [str(s) for s in free]
