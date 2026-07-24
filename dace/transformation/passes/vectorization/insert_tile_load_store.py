@@ -132,6 +132,7 @@ def stage_constant_access(state: SDFGState,
         size 1). Copy moves only that element.
     :returns: Name of the staged transient (AccessNode + AN -> AN edge added).
     """
+    name_hint = _safe_bridge_hint(name_hint)
     sdfg = state.sdfg
     desc = sdfg.arrays[an.data]
     dtype = desc.dtype
@@ -162,6 +163,21 @@ def _shape_dim_is_one_symbol(s) -> bool:
     import sympy
     from dace.symbolic import ONE
     return isinstance(s, sympy.Basic) and ONE in s.free_symbols
+
+
+def _safe_bridge_hint(name_hint: str) -> str:
+    """Keep a staged-transient name out of the reserved ``__return`` namespace.
+
+    Bridge names derive from the staged AN (``f"{an.data}_tile_out"`` etc.), so staging a
+    directly-returned array ``__return`` mints ``__return_tile_out``. That is a plain transient,
+    but its name starts with ``__return`` -- the prefix :class:`~dace.codegen.compiled_sdfg.CompiledSDFG`
+    reserves for return values (``__return``, ``__return_0``, ...). It is harmless while nested, but
+    inlining the tiled body up to the top level promotes it alongside the real ``__return`` and trips
+    the ``if '__return' in arrays: assert no '__return_*'`` multi-return check at compile. Coerce the
+    hint to a non-reserved form; ``find_new_name`` still uniquifies it."""
+    if name_hint.startswith("__return"):
+        return "tile_" + name_hint.lstrip("_")
+    return name_hint
 
 
 def stage_tile_load(state: SDFGState,
@@ -209,6 +225,7 @@ def stage_tile_load(state: SDFGState,
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
         raise ValueError(f"stage_tile_access: gather_dims {gather_dims!r} must match the keys of "
                          f"idx_sources {sorted(idx_sources) if idx_sources else None}")
+    name_hint = _safe_bridge_hint(name_hint)
     sdfg = state.sdfg
     desc = sdfg.arrays[an.data]
     dtype = desc.dtype
@@ -292,6 +309,7 @@ def stage_tile_store(state: SDFGState,
     if gather_dims and (idx_sources is None or set(gather_dims) != set(idx_sources)):
         raise ValueError(f"stage_tile_store: gather_dims {gather_dims!r} must match the keys of "
                          f"idx_sources {sorted(idx_sources) if idx_sources else None}")
+    name_hint = _safe_bridge_hint(name_hint)
     sdfg = state.sdfg
     desc = sdfg.arrays[an.data]
     dtype = desc.dtype
