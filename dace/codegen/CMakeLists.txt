@@ -10,6 +10,11 @@ set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
 
+# Nanobind interface (compiler.interface=nanobind): build the program library
+# itself as a nanobind extension module (single artifact, no loader stub).
+option(DACE_ENABLE_NANOBIND "Build the DaCe program as a nanobind extension module" OFF)
+set(DACE_NANOBIND_CMAKE_DIR "" CACHE STRING "Path to nanobind's CMake package directory")
+
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
 
@@ -259,15 +264,30 @@ foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
 endforeach()
 
 # Create DaCe library file
-add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
-target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+if(DACE_ENABLE_NANOBIND)
+  find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+  find_package(nanobind CONFIG REQUIRED HINTS ${DACE_NANOBIND_CMAKE_DIR})
+  nanobind_add_module(${DACE_PROGRAM_NAME} NB_STATIC ${DACE_CPP_FILES} ${DACE_OBJECTS})
+  target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_LIBS})
+  # Keep the historical library file name; the import machinery resolves
+  # PyInit_<name> from the module name, not from the file name.
+  set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES
+                        OUTPUT_NAME ${DACE_PROGRAM_NAME}
+                        PREFIX "${CMAKE_SHARED_LIBRARY_PREFIX}"
+                        SUFFIX "${CMAKE_SHARED_LIBRARY_SUFFIX}")
+else()
+  add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
+  target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+endif()
 
 # Set C++ standard to C++20 (or the configured standard)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
 
-# Create DaCe loader stub
-add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
-target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+# Create DaCe loader stub (not needed on the nanobind path)
+if(NOT DACE_ENABLE_NANOBIND)
+  add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
+  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+endif()
 
 # Windows-specific fixes
 if (MSVC_IDE)

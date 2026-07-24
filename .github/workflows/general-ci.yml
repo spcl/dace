@@ -48,6 +48,8 @@ jobs:
 
     - name: Test with pytest
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -64,6 +66,8 @@ jobs:
 
     - name: Test OpenBLAS LAPACK
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -80,6 +84,8 @@ jobs:
 
     - name: Run sequential tests
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -96,6 +102,8 @@ jobs:
 
     - name: Run other tests
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1

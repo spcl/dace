@@ -47,6 +47,11 @@ def test():
 
 
 def test_bad_cast_csdfg():
+    # The `Casting` UserWarning + truncation is specific to the ctypes marshaller.
+    # The nanobind interface rejects a lossy scalar cast (0.1 -> int) outright
+    # (see `compiler.nanobind_strict_scalar_cast`), so this test is ctypes-only.
+    if dp.Config.get('compiler', 'interface') == 'nanobind':
+        pytest.skip('nanobind rejects a lossy scalar cast rather than warning (inherent divergence)')
 
     @dp.program
     def tester(a: int):

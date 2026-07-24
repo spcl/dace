@@ -115,6 +115,59 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
+            interface:
+                type: str
+                default: ctypes
+                title: Python interface for compiled SDFGs
+                description: >
+                    Selects how a compiled SDFG is loaded and called from Python.
+                    "ctypes" (default) uses the stub-library/ctypes path.
+                    "nanobind" builds the program as a nanobind extension module,
+                    loads it through the import machinery, and marshals arguments
+                    in C++. Requires the ``nanobind`` package.
+
+            nanobind_name_collision:
+                type: str
+                default: rename
+                title: Name-collision handling on the nanobind interface
+                description: >
+                    What to do when compiling an SDFG whose module name is already
+                    loaded in the process (extension modules cannot be reloaded).
+                    "rename" (default) silently increments the name (name_0, name_1,
+                    ...) and compiles into that name's own build folder, preserving
+                    the historical behavior. "error" refuses to compile under a
+                    taken name, for pipelines that consider a silent rename a bug.
+                    Only consulted when ``compiler.interface`` is "nanobind".
+
+            nanobind_strict_scalar_cast:
+                type: bool
+                default: false
+                title: Strict scalar-argument casts on the nanobind interface
+                description: >
+                    When true, scalar arguments on the nanobind interface reject
+                    all implicit conversions, including safe widening (e.g. a
+                    Python int for a double parameter), with an error. This also
+                    rejects all numpy scalars, even at the exact width (e.g. a
+                    ``numpy.int32`` for an int32 parameter): strict means built-in
+                    Python scalar types only. When false
+                    (default), nanobind's standard conversions apply: safe widening
+                    is accepted, but a lossy cast (e.g. a Python float for an int
+                    parameter) is still rejected by nanobind regardless of this
+                    option. Only consulted when ``compiler.interface`` is "nanobind".
+
+            nanobind_allow_return_override:
+                type: bool
+                default: false
+                title: Allow caller-provided return buffers on the nanobind interface
+                description: >
+                    When true, the caller may pass their own pre-allocated output
+                    buffer for an implicit return value (e.g. ``f(A, __return=out)``):
+                    the kernel writes into it in place and returns that same buffer,
+                    avoiding a per-call allocation. The buffer's shape and dtype must
+                    match the return array. When false (default), passing a
+                    ``__return*`` argument is rejected with an error. Only consulted
+                    when ``compiler.interface`` is "nanobind".
+
             build_folder_mode:
                 type: str
                 default: development

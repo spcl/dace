@@ -15,7 +15,9 @@
     #define DACE_PRAGMA(x) __pragma(x)
 #else
     #define DACE_ALIGN(N) __attribute__((aligned(N)))
-    #define DACE_EXPORTED extern "C"
+    // Explicit default visibility: the C ABI must stay exported also when the
+    // program is built as a nanobind module (compiled with -fvisibility=hidden).
+    #define DACE_EXPORTED extern "C" __attribute__((visibility("default")))
     #define DACE_PRAGMA(x) _Pragma(#x)
 #endif
 

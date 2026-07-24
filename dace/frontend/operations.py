@@ -17,7 +17,7 @@ from typing import Any, List, Tuple, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.sdfg import SDFG
-    from dace.codegen.compiled_sdfg import CompiledSDFG
+    from dace.codegen.compiled_sdfg import CompiledSDFGProtocol
 
 
 class CompiledSDFGProfiler:
@@ -52,7 +52,7 @@ class CompiledSDFGProfiler:
         self.report = report.InstrumentationReport(None)
 
     @contextmanager
-    def __call__(self, compiled_sdfg: 'CompiledSDFG', args: Tuple[Any, ...]):
+    def __call__(self, compiled_sdfg: 'CompiledSDFGProtocol', args: Tuple[Any, ...]):
         from dace.codegen.instrumentation import report  # Avoid import loop
 
         # zeros to overwrite start time, followed by indices for each repetition
@@ -84,11 +84,20 @@ class CompiledSDFGProfiler:
         times = np.ndarray(self.repetitions + 1, dtype=np.float64)
         times[0] = timer()
 
-        for i in iterator:
-            # Call function
-            compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
+        if hasattr(compiled_sdfg, '_handle'):
+            # Nanobind interface: hooks receive the processed keyword arguments
+            # as a 1-tuple, and the handle is the hook-bypassing entry point.
+            kw = args[0]
+            for i in iterator:
+                compiled_sdfg._handle(**kw)
 
-            times[i] = timer()
+                times[i] = timer()
+        else:
+            for i in iterator:
+                # Call function
+                compiled_sdfg._cfunc(compiled_sdfg._libhandle, *args)
+
+                times[i] = timer()
 
         # compute pairwise differences and convert to milliseconds
         diffs = np.diff(times) * 1e3

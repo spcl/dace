@@ -2519,7 +2519,14 @@ class SDFG(ControlFlowRegion):
         Returns `False` if the file does not exist.
         """
         # Avoid import loops
-        from dace.codegen import compiled_sdfg as cs, compiler
+        from dace.codegen import ctypes_compiled_sdfg as cs, compiler
+
+        # On the nanobind path, "loaded" means the module name is taken in
+        # sys.modules: extension modules cannot be unloaded or re-imported, so
+        # this is the collision check that drives the rename-and-recompile loop.
+        if Config.get('compiler', 'interface') == 'nanobind':
+            import sys
+            return f'{compiler.GENERATED_NAMESPACE}.{self.name}' in sys.modules
 
         build_folder = self.build_folder
         if folder_mode is None:
@@ -2586,13 +2593,23 @@ class SDFG(ControlFlowRegion):
                 pass
 
             # Rename SDFG to avoid runtime issues with clashing names
+            nanobind_interface = Config.get('compiler', 'interface') == 'nanobind'
+            if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode):
+                collision_mode = Config.get('compiler', 'nanobind_name_collision')
+                if collision_mode not in ('rename', 'error'):
+                    raise ValueError(f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision '
+                                     f'(expected "rename" or "error").')
+                if collision_mode == 'error':
+                    raise ValueError(f"SDFG name '{sdfg.name}' is already loaded in this process and "
+                                     "compiler.nanobind_name_collision is set to 'error'.")
             index = 0
             while sdfg.is_loaded(folder_mode=folder_mode):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
-            if self.name != sdfg.name and Config.get_bool('debugprint'):
-                print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
-                      f"name '{sdfg.name}'.")
+            if self.name != sdfg.name:
+                if Config.get_bool('debugprint'):
+                    print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
+                          f"name '{sdfg.name}'.")
 
             try:
                 # Fill in scope entry/exit connectors

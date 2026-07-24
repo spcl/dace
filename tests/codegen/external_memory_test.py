@@ -23,7 +23,9 @@ def test_external_mem(symbolic):
 
     # Test that there is no allocation
     code = sdfg.generate_code()[0].clean_code
+    # No heap allocation in either form (plain or C++ >= 17 aligned).
     assert 'new double' not in code
+    assert 'new (std::align_val_t(64)) double' not in code
     assert 'delete[]' not in code
     assert 'set_external_memory' in code
 
@@ -34,15 +36,20 @@ def test_external_mem(symbolic):
     else:
         extra_args = {}
 
+    # The nanobind interface stores no symbol values between calls (by
+    # design), so the workspace queries take them per call; ctypes reuses
+    # the values passed to initialize() and accepts no arguments here.
+    ws_args = extra_args if dace.Config.get('compiler', 'interface') == 'nanobind' else {}
+
     # Test workspace size
     csdfg = sdfg.compile()
     csdfg.initialize(a, **extra_args)
-    sizes = csdfg.get_workspace_sizes()
+    sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
 
     # Test setting the workspace
     wsp = np.random.rand(20)
-    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp)
+    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp, **ws_args)
 
     ref = a + 1
 
@@ -69,15 +76,18 @@ def test_external_twobuffers():
     sdfg = tester.to_sdfg()
     csdfg = sdfg.compile()
 
+    # See test_external_mem: nanobind takes the symbols per call.
+    ws_args = dict(N=20) if dace.Config.get('compiler', 'interface') == 'nanobind' else {}
+
     # Test workspace size
     a = np.random.rand(20)
     csdfg.initialize(a=a, N=20)
-    sizes = csdfg.get_workspace_sizes()
+    sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 22 * 8}
 
     # Test setting the workspace
     wsp = np.random.rand(22)
-    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp)
+    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp, **ws_args)
 
     ref = a + 1
     ref2 = np.copy(a)
