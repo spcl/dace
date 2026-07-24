@@ -750,6 +750,31 @@ def test_nanobind_interface_nullable_args_enable_none():
     assert 'nb::arg("req").noconvert().none()' not in code
 
 
+def test_nanobind_interface_must_pass_symbols_extracted_first():
+    """Symbols that must be passed explicitly (no inference source, so they are
+    never legitimately None) are extracted at the top of ``call()``, before the
+    inferable-symbol deductions. This fixes the evaluation order so a deduction
+    may later reference an explicitly-passed symbol (e.g. shape ``(a + b,)``
+    with ``a`` promised by the caller and ``b`` deduced from the shape)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    a = dace.symbol('a')  # inferable from A's shape
+    z = dace.symbol('z')  # appears in no shape/stride: must be passed
+
+    @dace.program
+    def must_pass_first_probe(A: dace.float64[a], B: dace.float64[10]):
+        B[0] = A[0] * a + z
+
+    code = generate_bindings_code(must_pass_first_probe.to_sdfg(simplify=True))
+    call_body = code.split('void call(')[1]
+    # 'z' (must-pass) is unwrapped before 'a' (deduced) - plain arglist order
+    # would put 'a' first.
+    assert "missing argument 'z'" in call_body
+    z_extract = call_body.index('const int z = *z__opt;')
+    a_deduce = call_body.index('const int a = a__opt.has_value()')
+    assert z_extract < a_deduce
+
+
 def test_nanobind_interface_load_reuses_same_artifact():
     """Loading the same artifact path again reuses the module (one module, many handles)."""
     from dace.codegen.compiler import load_nanobind_module

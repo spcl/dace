@@ -189,8 +189,11 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
              C signature order),
              the ``nb::arg`` annotations (in ``binding_order``), and
              the setup statements that must run under the GIL before the
-             kernel call (in ``arglist`` order; empty without struct/callback
-             arguments).
+             kernel call: first the must-pass symbol extractions (omittable-
+             bound symbols without an inference source - never legitimately
+             None), then the rest (inferable-symbol deductions, struct buffer
+             acquisition, callback pointer recovery) in ``arglist`` order.
+             Empty without struct/callback/omittable-symbol arguments.
     """
     # params and nb::args are keyed by name so they can be reordered to
     # binding_order at the end; call_args are collected directly in arglist
@@ -199,10 +202,15 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
     nb_args_by_name = {}
     call_args = []
 
-    # C++ statements (in arglist order) that must run under the GIL before the
-    # kernel call - used to extract raw pointers from `nb::object` struct
-    # arguments via the Python buffer protocol. Empty for SDFGs without structs.
+    # C++ statements that must run under the GIL before the kernel call - used
+    # to extract raw pointers from `nb::object` struct arguments via the Python
+    # buffer protocol, and to declare the typed locals of the omittable
+    # symbols. The must-pass symbols (omittable-bound but with no inference
+    # source, so never legitimately None) are collected separately and emitted
+    # FIRST: their values are then established at the top of call(), so a
+    # deduction statement may reference an explicitly-passed symbol.
     setup_stmts = []
+    must_pass_setup = []
 
     strict_scalar = Config.get_bool('compiler', 'nanobind_strict_scalar_cast')
 
@@ -319,10 +327,11 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
                 setup_stmts.append(
                     f'const {ctype} {name} = {name}__opt.has_value() ? *{name}__opt : {symbol_fallbacks[name]};')
             else:
-                setup_stmts.append(f'if (!{name}__opt.has_value())\n'
-                                   f'            throw std::invalid_argument("SDFG argument error: '
-                                   f'missing argument \'{name}\' (not inferable from any array argument).");\n'
-                                   f'        const {ctype} {name} = *{name}__opt;')
+                # Must-pass: goes into the leading setup group (see above).
+                must_pass_setup.append(f'if (!{name}__opt.has_value())\n'
+                                       f'            throw std::invalid_argument("SDFG argument error: '
+                                       f'missing argument \'{name}\' (not inferable from any array argument).");\n'
+                                       f'        const {ctype} {name} = *{name}__opt;')
             call_args.append(name)
             nb_args_by_name[name] = f'nb::arg("{name}") = nb::none()'
 
@@ -349,7 +358,7 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
                                       f'(argument "{name}") is not supported yet.')
     params = [params_by_name[n] for n in binding_order]
     nb_args = [nb_args_by_name[n] for n in binding_order]
-    return params, call_args, nb_args, setup_stmts
+    return params, call_args, nb_args, must_pass_setup + setup_stmts
 
 
 def _referenced_struct_name(desc):
@@ -555,14 +564,16 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # a float16 ndarray argument exists.
     float16_traits_block = _FLOAT16_TRAITS if _uses_half_ndarray(arglist) else ''
 
-    # setup_stmts (struct pointer extraction, callback pointer recovery) may
-    # need the Python API, so with them the GIL is released only around the
-    # kernel call - the RAII buffer guards outlive that nested scope and
-    # release with the GIL re-acquired. Without them, call() keeps the simpler
-    # whole-body release. initialize() gets the same treatment for its own
-    # (init-symbol) setup statements - callbacks are init symbols.
+    # setup_stmts (struct pointer extraction, callback pointer recovery,
+    # omittable-symbol locals) may need the Python API, so with them the GIL is
+    # released only around the kernel call - the RAII buffer guards outlive
+    # that nested scope and release with the GIL re-acquired. Without them,
+    # call() keeps the simpler whole-body release. initialize() gets the same
+    # treatment for its own (init-symbol) setup statements - callbacks are init
+    # symbols. The _DacePyBuffer helper is emitted only when a setup statement
+    # actually uses it (a symbol-only setup block does not).
+    pybuffer_helper = _PYBUFFER_HELPER if any('_DacePyBuffer' in s for s in setup_stmts + init_setup) else ''
     if setup_stmts:
-        pybuffer_helper = _PYBUFFER_HELPER
         setup_block = '\n        '.join(setup_stmts)
         call_body = (f'{setup_block}\n'
                      f'        {{\n'
@@ -571,7 +582,6 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
                      f'            __program_{name}({program_args});\n'
                      f'        }}')
     else:
-        pybuffer_helper = ''
         call_body = (f'// Reading ndarray fields (.data()) needs no Python API, so the whole\n'
                      f'        // init + program call runs with the GIL released, as ctypes did.\n'
                      f'        nb::gil_scoped_release _nogil;\n'
