@@ -56,6 +56,7 @@
 
 #include <arm_sve.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <type_traits>
@@ -66,6 +67,43 @@
 
 namespace dace {
 namespace tileops {
+
+// Per-lane binary op (scalar reference semantics; matches the sibling backend
+// headers). The vector path uses ``sve_tile_apply`` below; this scalar form is
+// the ``%`` fallback and the per-lane combine of the horizontal ``tile_reduce``.
+template <typename T, char Op>
+inline T tile_apply(T a, T b) {
+  if constexpr (Op == '+')
+    return a + b;
+  else if constexpr (Op == '-')
+    return a - b;
+  else if constexpr (Op == '*')
+    return a * b;
+  else if constexpr (Op == '/')
+    return a / b;
+  else if constexpr (Op == '%')
+    return py_mod(a, b);  // Python/NumPy modulo (not C's); via the scalar path
+  else if constexpr (Op == 'm')
+    return std::min(a, b);
+  else if constexpr (Op == 'M')
+    return std::max(a, b);
+  else if constexpr (Op == '<')
+    return (a < b) ? T(1) : T(0);
+  else if constexpr (Op == 'l')
+    return (a <= b) ? T(1) : T(0);
+  else if constexpr (Op == '>')
+    return (a > b) ? T(1) : T(0);
+  else if constexpr (Op == 'g')
+    return (a >= b) ? T(1) : T(0);
+  else if constexpr (Op == '=')
+    return (a == b) ? T(1) : T(0);
+  else if constexpr (Op == '!')
+    return (a != b) ? T(1) : T(0);
+  else if constexpr (Op == '&')
+    return (a && b) ? T(1) : T(0);
+  else /* Or */
+    return (a || b) ? T(1) : T(0);
+}
 
 // ===========================================================================
 // 32-bit-lane (f32 / s32) primitives
