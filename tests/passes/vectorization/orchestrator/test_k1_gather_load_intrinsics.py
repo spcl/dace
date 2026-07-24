@@ -42,6 +42,7 @@ _FLAGS = _host_flags()
 # was selected; the numpy comparison proves it computes correctly.
 _CASES = [
     ("scalar", None, "dace/tile_ops/scalar.h"),
+    ("avx2", "avx2", "dace/tile_ops/avx2.h"),
     ("avx512", "avx512f", "dace/tile_ops/avx512.h"),
 ]
 
