@@ -334,9 +334,14 @@ class Property(Generic[T]):
 
 
 def _property_generator(instance):
+    # Read the backing attribute (prop.private_name, precomputed) straight from __dict__ on the common
+    # path; only fall back to the descriptor (custom getter / default) when it is absent. Avoids the
+    # per-property hasattr try/except and the "_" + name string rebuild in this hot serialize loop.
+    idict = instance.__dict__
     for name, prop in type(instance).__properties__.items():
-        if hasattr(instance, "_" + name):
-            yield prop, getattr(instance, "_" + name)
+        pname = prop.private_name
+        if pname in idict:
+            yield prop, idict[pname]
         else:
             yield prop, getattr(instance, name)
 
