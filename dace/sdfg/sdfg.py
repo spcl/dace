@@ -2610,14 +2610,6 @@ class SDFG(ControlFlowRegion):
                 if Config.get_bool('debugprint'):
                     print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
                           f"name '{sdfg.name}'.")
-                if nanobind_interface:
-                    # The renamed program gets its own build folder, derived
-                    # from the new name - never an in-place recompile next to
-                    # the original artifact (which would leave the folder with
-                    # artifacts that no longer match its program.sdfgz).
-                    del sdfg._build_folder
-                    build_folder = sdfg.build_folder
-                    sdfg.build_folder = build_folder
 
             try:
                 # Fill in scope entry/exit connectors
