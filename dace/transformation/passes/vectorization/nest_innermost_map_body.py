@@ -148,16 +148,19 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         :param _: Unused pipeline results.
         :returns: Number of maps nested, or ``None`` if none.
         """
-        nested = 0
-        nested_bodies = []
-        # Only innermost maps mutated -> iteration safe under in-place nesting
-        # (``nest_state_subgraph`` leaves outer maps untouched).
+        # Phase 1 -- SELECT (read-only). Classify every innermost map against the UNMUTATED SDFG. A
+        # shared ``scan_cache`` memoizes ``build_symbol_definition_map``'s whole-SDFG symbol scan by
+        # SDFG identity, so classifying N innermost maps is O(N), not O(N^2) (each call would else
+        # re-scan the entire SDFG -- the quadratic that made this pass slow on wide SDFGs). The cache
+        # is sound ONLY because nothing is nested in this phase: the SDFG is constant throughout.
+        scan_cache: dict = {}
+        selected = []  # (state, map_entry, body_nodes) to nest in phase 2
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, dace.nodes.MapEntry):
                 continue
             if not isinstance(g, dace.SDFGState):
                 continue
-            if not is_vectorizable_map(g, n, self.tiled_dims):
+            if not is_vectorizable_map(g, n, self.tiled_dims, scan_cache=scan_cache):
                 continue
             # Provably-divisible -> no remainder, leave un-nested (matches old
             # behaviour). ``nest_provably_divisible`` overrides: masked-tail interior
@@ -183,6 +186,13 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             }
             if not body_nodes:
                 continue
+            selected.append((g, n, body_nodes))
+
+        # Phase 2 -- NEST (mutate). Each nesting is body-local, so nesting order is independent and
+        # the phase-1 node sets stay valid across the loop (``nest_state_subgraph`` leaves sibling
+        # maps untouched).
+        nested_bodies = []
+        for g, n, body_nodes in selected:
             subgraph = SubgraphView(g, body_nodes)
             nsdfg_node = nest_state_subgraph(g.sdfg, g, subgraph, name=f"{n.label}_body")
             self._strip_boundary_other_subsets(g, nsdfg_node)
@@ -192,7 +202,7 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
             # boundary WCR (no in-body TileReduce fold).
             is_tail = n.map.label.endswith(SCALAR_TAIL_MARKER) or n.map.label.endswith(TILE_K1_TAIL_MARKER)
             nested_bodies.append((nsdfg_node, is_tail))
-            nested += 1
+        nested = len(nested_bodies)
         if nested:
             # WCR sink that flowed from a tasklet now flows from the new NSDFG.
             # CPU codegen only emits WCR for AccessNode sources -> interpose a

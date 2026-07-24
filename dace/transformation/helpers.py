@@ -414,8 +414,9 @@ def nest_state_subgraph(sdfg: SDFG,
     # from under its other user -- e.g. the body copy ``SplitMapForTileRemainder`` leaves in a
     # remainder tail, whose own nesting then fails with a ``KeyError`` on the missing descriptor.
     subgraph_edge_ids = {id(e) for e in subgraph.edges()}
+    subgraph_node_set = set(subgraph.nodes())  # hoisted: membership below else rebuilt this per scanned node
     other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
-                      if isinstance(n, nodes.AccessNode) and n not in subgraph.nodes())
+                      if isinstance(n, nodes.AccessNode) and n not in subgraph_node_set)
     other_nodes |= set(e.data.data for s in sdfg.states() for e in s.edges()
                        if id(e) not in subgraph_edge_ids and e.data.data is not None
                        and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode))

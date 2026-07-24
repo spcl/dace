@@ -263,7 +263,11 @@ def _reaching_ise_assignment(state, symbol: str, inner_sdfg: Optional[SDFG] = No
     return None
 
 
-def build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict[str, sympy.Expr]:
+def build_symbol_definition_map(
+    inner_sdfg: Optional[SDFG],
+    state=None,
+    scan_cache: Optional[Dict[int, Tuple[Dict[str, Set[str]], Dict[str, Set[sympy.Expr]]]]] = None
+) -> Dict[str, sympy.Expr]:
     """Map ``symbol_name -> defining sympy expression`` for symbols resolvable within ``inner_sdfg``
     (optionally reaching-def-disambiguated at ``state``).
 
@@ -289,12 +293,66 @@ def build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict[
     if inner_sdfg is None:
         return {}
 
-    # --- source 1: interstate-edge symbol assignments ---
-    ise_rhs: Dict[str, Set[str]] = {}
-    for edge in inner_sdfg.all_interstate_edges():
-        assigns = edge.data.assignments if edge.data is not None else {}
-        for k, v in assigns.items():
-            ise_rhs.setdefault(k, set()).add(str(v))
+    # Both raw scans below (source 1 = interstate-edge assignments, source 2 = single-tasklet scalar
+    # writes) are a function of ``inner_sdfg`` ALONE, never of ``state``: ``state`` is consulted only
+    # afterwards, to disambiguate a multiply-assigned symbol. A candidate-selection loop calls this
+    # once per innermost map with the SAME ``inner_sdfg``, so re-scanning the whole SDFG per map is
+    # O(maps^2). When a caller passes ``scan_cache`` -- a dict it keeps for the span of an UNMUTATED
+    # scan -- the raw scans are memoized by SDFG identity. Omitting it reproduces the original scan
+    # exactly (default None -> every caller unchanged).
+    cache_key = id(inner_sdfg)
+    if scan_cache is not None and cache_key in scan_cache:
+        ise_rhs, scalar_defs = scan_cache[cache_key]
+    else:
+        # --- source 1: interstate-edge symbol assignments ---
+        ise_rhs: Dict[str, Set[str]] = {}
+        for edge in inner_sdfg.all_interstate_edges():
+            assigns = edge.data.assignments if edge.data is not None else {}
+            for k, v in assigns.items():
+                ise_rhs.setdefault(k, set()).add(str(v))
+
+        # --- source 2: scalars written by a single tasklet ``__out = <body>`` ---
+        # name -> set of resolved exprs; keep only unambiguous singletons. Keyed on the EXPRESSION,
+        # not its printed form: sympy expressions hash structurally, so they dedupe just as well, and
+        # printing one is expensive -- the round trip (print here, re-parse below, print again for
+        # the recurrence scan) made this the single most costly step of the tile pipeline on a large
+        # body. The loop state is ``scan_state`` (not ``state``): this scan must not touch the param.
+        scalar_defs: Dict[str, Set[sympy.Expr]] = {}
+        for sd in inner_sdfg.all_sdfgs_recursive():
+            for scan_state in sd.states():
+                for node in scan_state.nodes():
+                    if not isinstance(node, nodes.AccessNode):
+                        continue
+                    in_edges = scan_state.in_edges(node)
+                    if len(in_edges) != 1:
+                        continue
+                    producer = in_edges[0].src
+                    if not isinstance(producer, nodes.Tasklet) or len(producer.out_connectors) != 1:
+                        continue
+                    out_conn = next(iter(producer.out_connectors))
+                    body = producer.code.as_string if producer.code is not None else ""
+                    body = body.strip().rstrip(";").strip()
+                    prefix = f"{out_conn} = "
+                    if not body.startswith(prefix):
+                        continue
+                    rhs_expr = _sympify_tasklet_rhs(body[len(prefix):].strip())
+                    if rhs_expr is None:
+                        continue
+                    # Rewrite input connectors -> source data names
+                    rename = {}
+                    for ie in scan_state.in_edges(producer):
+                        if ie.dst_conn and ie.data is not None and ie.data.data is not None:
+                            rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(ie.data.data)
+                    if rename:
+                        # ``xreplace``, not ``subs``: every key is a plain symbol being renamed to
+                        # another plain symbol, which is exact structural replacement. ``subs`` sorts
+                        # the keys and re-sympifies them to handle expression patterns none of these
+                        # are.
+                        rhs_expr = rhs_expr.xreplace(rename)
+                    scalar_defs.setdefault(node.data, set()).add(rhs_expr)
+
+        if scan_cache is not None:
+            scan_cache[cache_key] = (ise_rhs, scalar_defs)
 
     defs: Dict[str, sympy.Expr] = {}
     for k, rhs_set in ise_rhs.items():
@@ -309,44 +367,6 @@ def build_symbol_definition_map(inner_sdfg: Optional[SDFG], state=None) -> Dict[
         expr = _safe_sympify(chosen)
         if expr is not None:
             defs[k] = expr
-
-    # --- source 2: scalars written by a single tasklet ``__out = <body>`` ---
-    # name -> set of resolved exprs; keep only unambiguous singletons. Keyed on the EXPRESSION, not
-    # on its printed form: sympy expressions hash structurally, so they dedupe just as well, and
-    # printing one is expensive -- the round trip (print here, re-parse below, print again for the
-    # recurrence scan) made this the single most costly step of the tile pipeline on a large body.
-    scalar_defs: Dict[str, Set[sympy.Expr]] = {}
-    for sd in inner_sdfg.all_sdfgs_recursive():
-        for state in sd.states():
-            for node in state.nodes():
-                if not isinstance(node, nodes.AccessNode):
-                    continue
-                in_edges = state.in_edges(node)
-                if len(in_edges) != 1:
-                    continue
-                producer = in_edges[0].src
-                if not isinstance(producer, nodes.Tasklet) or len(producer.out_connectors) != 1:
-                    continue
-                out_conn = next(iter(producer.out_connectors))
-                body = producer.code.as_string if producer.code is not None else ""
-                body = body.strip().rstrip(";").strip()
-                prefix = f"{out_conn} = "
-                if not body.startswith(prefix):
-                    continue
-                rhs_expr = _sympify_tasklet_rhs(body[len(prefix):].strip())
-                if rhs_expr is None:
-                    continue
-                # Rewrite input connectors -> source data names
-                rename = {}
-                for ie in state.in_edges(producer):
-                    if ie.dst_conn and ie.data is not None and ie.data.data is not None:
-                        rename[symbolic.pystr_to_symbolic(ie.dst_conn)] = symbolic.pystr_to_symbolic(ie.data.data)
-                if rename:
-                    # ``xreplace``, not ``subs``: every key is a plain symbol being renamed to
-                    # another plain symbol, which is exact structural replacement. ``subs`` sorts
-                    # the keys and re-sympifies them to handle expression patterns none of these are.
-                    rhs_expr = rhs_expr.xreplace(rename)
-                scalar_defs.setdefault(node.data, set()).add(rhs_expr)
 
     for name, rhs_set in scalar_defs.items():
         if name in defs or len(rhs_set) != 1:

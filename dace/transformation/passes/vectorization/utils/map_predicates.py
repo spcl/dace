@@ -4,6 +4,7 @@
 Policy (locked): ``assert_X`` siblings kept alongside their ``X`` counterparts; every
 loud-failure helper stays available. Removing them shifts silent corruption into the pipeline.
 """
+import ast
 from typing import Any, Dict, Optional, Tuple
 
 import sympy
@@ -338,7 +339,9 @@ def _map_body_per_lane_subsets(state: SDFGState, map_entry: dace.nodes.MapEntry)
                             yield e.data.subset, node.sdfg, ist, inner_iter
 
 
-def map_body_is_tile_lowerable(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+def map_body_is_tile_lowerable(state: SDFGState,
+                               map_entry: dace.nodes.MapEntry,
+                               scan_cache: Optional[Dict[int, Any]] = None) -> bool:
     """True unless the body has a per-lane WRITE the tile emitter cannot soundly lower.
 
     A tile iter-var nested inside a non-affine function -- ``a[i mod K]`` (a residue-scan seed),
@@ -369,7 +372,7 @@ def map_body_is_tile_lowerable(state: SDFGState, map_entry: dace.nodes.MapEntry)
     for subset, inner_sdfg, inner_state, iter_vars in _map_body_per_lane_subsets(state, map_entry):
         key = (id(inner_sdfg), id(inner_state))
         if key not in sym_defs_cache:
-            sym_defs_cache[key] = build_symbol_definition_map(inner_sdfg, inner_state)
+            sym_defs_cache[key] = build_symbol_definition_map(inner_sdfg, inner_state, scan_cache=scan_cache)
         try:
             rec = classify_tile_access(subset,
                                        iter_vars=iter_vars,
@@ -395,7 +398,44 @@ def map_body_is_tile_lowerable(state: SDFGState, map_entry: dace.nodes.MapEntry)
     return True
 
 
-def is_vectorizable_map(state: SDFGState, map_entry: dace.nodes.MapEntry, K: Optional[int] = None) -> bool:
+def _tasklet_mixes_statements_with_conditional(tasklet: dace.nodes.Tasklet) -> bool:
+    """A Python tasklet body that mixes straight-line statements with a control-flow STATEMENT.
+
+    ``SplitTasklets`` lowers only a ONE-statement body to single-op SSA and declines everything
+    else, and ``NormalizeMaskedWriteTasklets`` only rewrites a body that is a LONE bare ``if``.
+    A body like correlation's ``out = sqrt(inp / N)`` followed by ``if out <= 0.1: out = 1.0``
+    falls through both: it survives as a scalar Python statement whose connectors the widener then
+    swaps for tile pointers, emitting ``double* / int``. Neither pass owns it, so the map itself
+    must not be a tile candidate.
+    """
+    if tasklet.language is not dace.dtypes.Language.Python:
+        return False
+    try:
+        body = ast.parse(tasklet.code.as_string).body
+    except (SyntaxError, ValueError):
+        return False  # not the shape modelled here; other gates decide
+    return len(body) > 1 and any(isinstance(s, (ast.If, ast.For, ast.While)) for s in body)
+
+
+def map_body_has_mixed_conditional_tasklet(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
+    """True if the map body (including inside body NestedSDFGs) holds a tasklet neither
+    ``SplitTasklets`` nor ``NormalizeMaskedWriteTasklets`` can lower -- see
+    :func:`_tasklet_mixes_statements_with_conditional`."""
+    for node in state.all_nodes_between(map_entry, state.exit_node(map_entry)):
+        if isinstance(node, dace.nodes.Tasklet):
+            if _tasklet_mixes_statements_with_conditional(node):
+                return True
+        elif isinstance(node, dace.nodes.NestedSDFG):
+            for inner, _ in node.sdfg.all_nodes_recursive():
+                if isinstance(inner, dace.nodes.Tasklet) and _tasklet_mixes_statements_with_conditional(inner):
+                    return True
+    return False
+
+
+def is_vectorizable_map(state: SDFGState,
+                        map_entry: dace.nodes.MapEntry,
+                        K: Optional[int] = None,
+                        scan_cache: Optional[Dict[int, Any]] = None) -> bool:
     """Innermost AND tile-eligible AND no library node inside AND a loop-free body AND body
     tile-lowerable: the shared tile-candidate gate.
 
@@ -415,6 +455,10 @@ def is_vectorizable_map(state: SDFGState, map_entry: dace.nodes.MapEntry, K: Opt
         params get strided, so only a guard over those is per-lane; pass it and a guard over a
         non-tiled leading param stays tileable. ``None`` scopes to every param -- correct but
         conservative, for callers that do not tile.
+    :param scan_cache: optional dict memoizing the whole-SDFG symbol-definition scan by SDFG identity
+        across calls, so a per-map selection loop is not O(maps^2). The caller MUST keep it only for
+        a span during which the SDFG is NOT mutated (see :func:`build_symbol_definition_map`). Default
+        ``None`` disables the cache (identical behavior to before).
     :returns: ``True`` if every tile pass may treat this map as a candidate.
     """
     if not (is_innermost_map(state, map_entry) and is_tile_eligible(state, map_entry, K)):
@@ -423,7 +467,9 @@ def is_vectorizable_map(state: SDFGState, map_entry: dace.nodes.MapEntry, K: Opt
         return False
     if map_body_has_inner_loop(state, map_entry):
         return False
-    return map_body_is_tile_lowerable(state, map_entry)
+    if map_body_has_mixed_conditional_tasklet(state, map_entry):
+        return False
+    return map_body_is_tile_lowerable(state, map_entry, scan_cache=scan_cache)
 
 
 def is_gpu_resident_map(state: SDFGState, map_entry: dace.nodes.MapEntry) -> bool:
