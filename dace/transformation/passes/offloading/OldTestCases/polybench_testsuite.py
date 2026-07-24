@@ -176,8 +176,9 @@ def _run_generic_offloading_test(sdfg: dace.SDFG):
 ##                  Polybench Tests                  ###
 ########################################################
 
+
 # helpers
-def test_offload(short_name, submodule="", test_name="", program_name=""):
+def get_sdfg(short_name, submodule="", test_name="", program_name=""):
     if not test_name: test_name = short_name
 
     if not submodule:
@@ -192,8 +193,10 @@ def test_offload(short_name, submodule="", test_name="", program_name=""):
             sdfg = getattr(module, sdfg_name).to_sdfg()
     if not sdfg:
         assert False, "sdfg not found"
+    return sdfg
 
-    _run_generic_offloading_test(sdfg)
+def test_offload(short_name, submodule="", test_name="", program_name=""):
+    _run_generic_offloading_test(get_sdfg(short_name, submodule, test_name, program_name))
 
 def test_polybench_offload(short_name): test_offload(short_name, "polybench")
 
@@ -606,55 +609,9 @@ VIEW_MOD = False
 
 if __name__ == "__main__":
     # Run with: python npbench_testsuite.py
-    pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
+    #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "polybench"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "non_polybench"])
 
     #create_graph(gather_polybench_runtime_data(POLYBENCH_NAMES))
-
-# intrastate copies
-# optimization passes
-
-# optimize end of loop
-# optimize pull all first-copies to front
-
-"""
-I'm getting the following compiler failures:
-
-**1) scattering_self_energies:** seems wcr related
-
-error:
-E   /home/finn/Desktop/ETH/BachelorThesis/dace/dace/codegen/../runtime/include/dace/reduction.h(65): error: no instance of overloaded function "atomicCAS" matches the argument list
-E               argument types are: (dace::complex128 *, dace::complex128, dace::complex128)
-E             detected during:
-E               instantiation of "T dace::wcr_custom<T>::reduce_atomic(WCR, T *, const T &) [with T=dace::complex128, WCR=dace::_wcr_fixed<dace::ReductionType::Sum, dace::complex128>]" 
-E   (538): here
-E               instantiation of "T dace::wcr_fixed<REDTYPE, T, SFINAE>::reduce_atomic(T *, const T &) [with REDTYPE=dace::ReductionType::Sum, T=dace::complex128, SFINAE=void]" 
-E   /home/finn/Desktop/ETH/BachelorThesis/.dacecache/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies/src/cuda/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies_cuda.cu(166): here
-E   
-E   1 error detected in the compilation of "/home/finn/Desktop/ETH/BachelorThesis/.dacecache/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies/src/cuda/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies_cuda.cu".
-E   gmake[2]: *** [CMakeFiles/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies.dir/build.make:94: CMakeFiles/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies.dir/home/finn/Desktop/ETH/BachelorThesis/.dacecache/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies/src/cuda/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies_cuda.cu.o] Error 1
-E   gmake[1]: *** [CMakeFiles/Makefile2:90: CMakeFiles/npbench_benchmarks_scattering_self_energies_scattering_self_energies_dace_scattering_self_energies.dir/all] Error 2
-E   gmake: *** [Makefile:91: all] Error 2
-''' 
-
-additional warnings:
-'''
-E   /home/finn/Desktop/ETH/BachelorThesis/dace/dace/codegen/../runtime/include/dace/../../../external/moodycamel/concurrentqueue.h(3607): warning #68-D: integer conversion resulted in a change of sign
-E   
-/home/finn/Desktop/ETH/BachelorThesis/dace/dace/codegen/../runtime/include/dace/pi.h(58): warning #20208-D: 'long double' is treated as 'double' in device code
-E   /home/finn/Desktop/ETH/BachelorThesis/dace/dace/codegen/../runtime/include/dace/nan.h(31): warning #20013-D: calling a constexpr __host__ function("quiet_NaN") from a __host__ __device__ function("operator double") is not allowed. The experimental flag '--expt-relaxed-constexpr' can be used to allow this.
-'''
-
-"""
-
-
-"""
-4) stockham_fft
-
-5) test_scattering_self_energies    fails with wrc-related compiler error
--> check all lib nodes are set to GPU
--> --expt-relaxed-constexpr
-
-6) XXX vadv                             fails with data mismatch
-"""
+    pass

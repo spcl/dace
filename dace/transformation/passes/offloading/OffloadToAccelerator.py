@@ -1,16 +1,28 @@
 
+from copy import deepcopy
 from dace import dtypes, properties, data, Memlet, subsets
 from dace.sdfg import nodes, SDFG, InterstateEdge
-from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock, ControlFlowBlock
+from dace.sdfg.state import SDFGState, ConditionalBlock, ControlFlowRegion, LoopRegion, ReturnBlock, ContinueBlock, BreakBlock, ControlFlowBlock, AbstractControlFlowRegion
 from dace.sdfg.utils import get_last_view_node
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation.transformation import explicit_cf_compatible
+from dace.transformation.passes import FullMapFusion
 
 from warnings import warn
 from typing import Any, Dict, Tuple, List, Optional, Set, Type, Union
 
-VERBOSE = True
+VERBOSE = False
+TEST_SIZE1_MAPS = False
 PRINT_NAMES = 500
+SHOW_SDFGS = True
+
+# prepass: lenght one array to scalar for everything
+# postprocess: scalar to lngth one array but only the ones I collected as being GPU outputs
+# intermediate: ensure my pass respects scalars everywhere
+
+# scope dictionary: cache it
+# replace_dict: always bacth as much as possible
+# no has_attr, get_attr
 
 class OffloadingIRNode:
     # INVARIANT: IR-trees are always DAGs
@@ -161,32 +173,42 @@ class OffloadToAccelerator(ppl.Pass):
                                  pipeline, an empty dictionary is expected.
         :return: Some object if pass was applied, or None if nothing changed.
         """
+        if SHOW_SDFGS: sdfg.view(filename=f"input_sdfg")
         
-        # step 1: offload maps and library nodes -> heuristic only! document TODO
-        self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
-        self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
-        
-        """
-        library node -> GPU
-        map cpu
-            library node -> Seq
+        try:
+            # step 1: offload maps and library nodes -> heuristic only! document TODO
+            self.set_toplevel_to_GPU(sdfg, nodes.MapEntry)
+            self.set_toplevel_to_GPU(sdfg, nodes.LibraryNode)
+
+            """
+            library node -> GPU
             map cpu
                 library node -> Seq
-                map gpu
+                map cpu
                     library node -> Seq
+                    map gpu
+                        library node -> Seq
 
-        TODO: let user set the schedule to anything else than Device -> stays that way
-        if user set to GPU device, then map cannot be offloaded (known limitation)
-        """
-        
-        # step 2 & 3: copy analysis & create IR to store analysis results
-        if VERBOSE: print("--- Analysis---")
-        sdfgIR = self.sdfg_to_IR(sdfg)
+            TODO: let user set the schedule to anything else than Device -> stays that way
+            if user set to GPU device, then map cannot be offloaded (known limitation)
+            """
+            
+            # step 2 & 3: copy analysis & create IR to store analysis results
+            if VERBOSE: print("--- Analysis---")
+            sdfgIR = self.sdfg_to_IR(sdfg)
+            
+            # step 4: insert copies based on IR
+            if VERBOSE: print("--- Copies ---")
+            self.eval_IR(sdfg, sdfgIR)
+            if VERBOSE: print()
 
-        # step 4: insert copies based on IR
-        if VERBOSE: print("--- Copies ---")
-        self.eval_IR(sdfg, sdfgIR)
-        if VERBOSE: print()
+            sdfg.view(filename=f"output_sdfg")
+            
+
+        except Exception as e:
+            print(e)
+            sdfg.view(filename=f"output_sdfg")
+
 
     # helper for testing, usually internal details are not exposed
     def get_IR(self, sdfg):
@@ -218,7 +240,7 @@ class OffloadToAccelerator(ppl.Pass):
                         raise RuntimeError("Invalid SDFG for OffloadToAccelerator pass." \
                         "All maps must have default or CPU schedule before pass." \
                         f"Node {node} has schedule type {self.get_schedule(node)}" )
-
+                    node.schedule = dtypes.ScheduleType.Sequential # set specifically as Default can be lowered to Cuda in the wrong places
     
     ### generic HELPERS ###
 
@@ -240,6 +262,7 @@ class OffloadToAccelerator(ppl.Pass):
     
     def get_predecessors(self, state, node):
         return {e.src for e in state.in_edges(node)}
+
 
     
 
@@ -414,14 +437,10 @@ class OffloadToAccelerator(ppl.Pass):
                     else:
                         gpu_set |= g | c
 
-                elif isinstance(node, nodes.LibraryNode):
-                    # nothing to do but change the Library Schedule
-                    node.schedule = dtypes.ScheduleType.GPU_Device
-
                 elif isinstance(node, (nodes.NestedSDFG)):
                    pass # do not analyse the arrays within a nested sdfg
 
-                elif isinstance(node, nodes.MapExit):
+                elif isinstance(node, (nodes.MapExit, nodes.LibraryNode)):
                     pass # nothing to do
 
                 else:
@@ -435,7 +454,7 @@ class OffloadToAccelerator(ppl.Pass):
         return gpu_set, cpu_set
 
 
-    def get_data_locations_of_state(self, sdfg: SDFG, state: SDFGState) -> tuple[set[str], set[str]]:
+    def get_data_locations_of_state(self, sdfg: SDFG, state: SDFGState, recursive_call=False) -> tuple[set[str], set[str]]:
         # iterate through all toplevel nodes of this state
         #  - map entry -> give to get_data_locations_of_map, which handles all nodes inside scope
         #  - control flow (nested) -> recurse
@@ -481,8 +500,19 @@ class OffloadToAccelerator(ppl.Pass):
 
         # Check for invalid state configurations, where arrays are accessed on both CPU and GPU. 
         overlap = gpu_set & cpu_set
-        if overlap: 
+        if overlap and not recursive_call:
+            self.make_size1_map_wrappers(sdfg, state)
 
+            resolved = False
+            gpu_set, cpu_set = self.get_data_locations_of_state(sdfg, state, True)
+            if not (gpu_set & cpu_set):
+                resolved = True
+            
+            if not resolved:
+                sdfg.view()
+                raise NotImplementedError(f"Unable to resolve with size1 wrappers: This pass does not support copies within a single state. State {state} uses arrays {overlap} on both cpu and gpu.")
+                
+            """#OLD BEHAVIOUR
             def set_to_gpu(type, nodes):
                 has_gpu_node = False
                 for node in nodes:
@@ -517,7 +547,7 @@ class OffloadToAccelerator(ppl.Pass):
                 raise NotImplementedError(f"(This should never happen.) This pass does not support copies within a single state. State {state} uses arrays {overlap} on both cpu and gpu.")
             
             warn(f"{sdfg.label} has state {state} which accesses the arrays {overlap} on both GPU and CPU.\n", UserWarning)
-
+            """
 
         return gpu_set, cpu_set
     
@@ -652,6 +682,9 @@ class OffloadToAccelerator(ppl.Pass):
             in_edge_arrays = set()
             for edge in cfr.in_edges(block):
                 arrays = edge.data.used_arrays(sdfg.arrays)
+                if VERBOSE:
+                    if arrays:
+                        print(f"edge {edge} with arrays {arrays} found")
                 in_edge_arrays |= arrays
                 
             if in_edge_arrays:
@@ -854,8 +887,6 @@ class OffloadToAccelerator(ppl.Pass):
         def propagate(node):        
             for next in node.next:
                 next_arrays = next.cpu_set | next.gpu_set
-                print(f"1 propagating from \n{node.debug_name}: gpu = {node.gpu_set}, cpu = {node.cpu_set} to \n{next.debug_name}: gpu = {next.gpu_set}, cpu = {next.cpu_set}")
-                
                 
                 for array in node.cpu_set:
                     if not array in next_arrays:
@@ -864,16 +895,7 @@ class OffloadToAccelerator(ppl.Pass):
                     if not array in next_arrays:
                         next.gpu_set.add(array)
 
-                print(f"2 propagating from \n{node.debug_name}: gpu = {node.gpu_set}, cpu = {node.cpu_set} to \n{next.debug_name}: gpu = {next.gpu_set}, cpu = {next.cpu_set}")
-                print(f"1st node: gpu = {IR.gpu_set}, cpu = {IR.cpu_set}")
-                print()
-
-        
-        print(f"1st node {IR.debug_name}: gpu = {IR.gpu_set}, cpu = {IR.cpu_set}")
         self.__traverse_IR(IR, propagate)
-        print(f"1st node {IR.debug_name}: gpu = {IR.gpu_set}, cpu = {IR.cpu_set}")
-                
-
 
     """def _fill_in_successor_copies(self, IR):
         def fill_in_successor_copies(node):
@@ -883,12 +905,31 @@ class OffloadToAccelerator(ppl.Pass):
         self.__traverse_IR(IR, fill_in_successor_copies)
     """
     
-    def _correct_names_in_block(self, block:ControlFlowBlock, rename_dict:dict):
+    def _insert_copy_names_in_block(self, sdfg:SDFG, block:ControlFlowBlock, rename_dict:dict):
         if block is None:
             return
         
+        cfr = block.parent_graph
+        if cfr and isinstance(cfr, AbstractControlFlowRegion):
+            for edge in cfr.in_edges(block):
+                relevant_edge_arrays = edge.data.used_arrays(rename_dict)
+                """
+                A begins on CPU
+                edge accesses A, which is on CPU at that time -> don't copy, don't rename (A)
+                edge accesses A, which is on GPU at that time -> do    copy, don't rename (A)
+                
+                A begins on GPU
+                edge accesses A, which is on CPU at that time -> don't copy,    do rename (A_host)
+                edge accesses A, which is on GPU at that time -> do    copy,    do rename (A_host)
+                
+                -> copies are handled later, hence here the arrays are renamed iff they begin on GPU
+                """
+                for name in relevant_edge_arrays:
+                    if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global:
+                        edge.data.replace(name, self._get_host_name(name))
+        
         if isinstance(block, SDFGState):
-            self._correct_names_in_state(block, rename_dict)
+            self._insert_copy_names_in_state(block, rename_dict)
         
         elif isinstance(block, ControlFlowBlock):
             # rename meta accesses (control-flow metadata like loop bounds or conditions)
@@ -897,7 +938,7 @@ class OffloadToAccelerator(ppl.Pass):
         else:
             raise NotImplementedError(f"in _correct_names_in_block: IR.block unhandled type: {block} is {block.__class__.__name__}")
 
-    def _correct_names_in_state(self, state:SDFGState, rename_dict:dict):
+    def _insert_copy_names_in_state(self, state:SDFGState, rename_dict:dict):
         # rename access nodes
         for access in state.data_nodes():
             if access.data in rename_dict:
@@ -913,7 +954,7 @@ class OffloadToAccelerator(ppl.Pass):
 
     def _insert_copy_names(self, sdfg:SDFG, IR:OffloadingIRNode):
         # make a rename dict for each IR node, then rename all such arrays in the IR.block
-        def _correct_names_in_node(node:OffloadingIRNode):
+        def _insert_copy_names_in_node(node:OffloadingIRNode):
             rename_dict = {}
             for name in node.gpu_set:
                 assert name in sdfg.arrays
@@ -925,9 +966,9 @@ class OffloadToAccelerator(ppl.Pass):
                 if sdfg.arrays[name].storage == dtypes.StorageType.GPU_Global: # starts on GPU, but this access is on CPU
                     rename_dict[name] = self._get_host_name(name)
 
-            self._correct_names_in_block(node.block, rename_dict)
+            self._insert_copy_names_in_block(sdfg, node.block, rename_dict)
 
-        self.__traverse_IR(IR, _correct_names_in_node)
+        self.__traverse_IR(IR, _insert_copy_names_in_node)
 
 
     def _correct_transient_storage_locations(self, sdfg:SDFG, IR:OffloadingIRNode):
@@ -1104,10 +1145,300 @@ class OffloadToAccelerator(ppl.Pass):
 
     def _get_host_name(self, name:str) -> str:
         if name.startswith("__return"):
-            return f"_return{name[8:]}_host"
+            return f"buffer__return{name[8:]}_host"
         return f"{name}_host"
     
     def _get_gpu_name(self, name:str) -> str:
         if name == "__return":
-            return f"_return{name[8:]}_gpu"
+            return f"buffer__return{name[8:]}_gpu"
         return f"{name}_gpu"
+    
+
+##### OPTIMIZATION #####
+
+    # heuristic: size1 maps are faster than more CPU-GPU copies
+    from collections import deque
+
+    def _get_root_nodes(self, state:SDFGState, bounded_set:set):
+        return {node for node in bounded_set if state.in_degree(node) == 0}
+
+    def _get_leaf_nodes(self, state:SDFGState, bounded_set:set):
+        return {node for node in bounded_set if state.out_degree(node) == 0}
+
+    def _get_boundary_in_edges(self, state:SDFGState, node, bounded_set:set):
+        return {e for e in state.in_edges(node) if e.src not in bounded_set}
+
+    def _get_boundary_out_edges(self, state:SDFGState, node, bounded_set:set):
+        return {e for e in state.out_edges(node) if e.dst not in bounded_set}
+    """
+    def _get_entry_nodes(self, state:SDFGState, bounded_set:set):
+        return self._get_root_nodes(state, bounded_set) | {
+            node for node in bounded_set if self._get_boundary_in_edges(state, node, bounded_set)
+        }
+
+    def _get_exit_nodes(self, state:SDFGState, bounded_set:set):
+        return self._get_leaf_nodes(state, bounded_set) | {
+            node for node in bounded_set if self._get_boundary_out_edges(state, node, bounded_set)
+        }"""
+    
+    def _get_entry_nodes(self, state:SDFGState, bounded_set:set):
+        return {node for node in bounded_set
+        if all(e.src not in bounded_set for e in state.in_edges(node))
+    }
+
+    def _get_exit_nodes(self, state:SDFGState, bounded_set:set):
+        return {node for node in bounded_set
+        if all(e.dst not in bounded_set for e in state.out_edges(node))
+    }
+
+    def _wrap_region_in_size1_map(self, state:SDFGState, region_nodes:set) -> Tuple[nodes.MapEntry, nodes.MapExit]:
+        if not region_nodes: return
+        map_label, map_param = self._get_new_map_identifiers(state, "size1_wrap_region", "__wrap_i")
+        map_entry, map_exit = state.add_map(name=map_label, ndrange={map_param: '0:1'}, schedule = dtypes.ScheduleType.GPU_Device)
+
+        # MAP ENTRY
+        root_nodes = self._get_root_nodes(state, region_nodes)
+        assert not root_nodes
+        boundary_in_edges = set()
+        for node in region_nodes:
+            boundary_in_edges |= self._get_boundary_in_edges(state, node, region_nodes)
+        
+        # rewire inedges & non-root nodes
+        idx = 0
+        for idx, edge in enumerate(boundary_in_edges):
+            src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
+            ext_memlet = deepcopy(edge.data)
+            int_memlet = deepcopy(edge.data)
+            state.remove_edge(edge)
+
+            in_conn = f"IN_REGION_IN_{idx}"
+            out_conn = f"OUT_REGION_IN_{idx}"
+            map_entry.add_in_connector(in_conn)
+            map_entry.add_out_connector(out_conn)
+
+            state.add_edge(src, src_conn, map_entry, in_conn, ext_memlet)
+            state.add_edge(map_entry, out_conn, dst, dst_conn, int_memlet)
+
+        # MAP EXIT
+        leaf_nodes = self._get_leaf_nodes(state, region_nodes)
+        assert not leaf_nodes
+        boundary_out_edges = set()
+        for node in region_nodes:
+            boundary_out_edges |= self._get_boundary_out_edges(state, node, region_nodes)
+        
+        # rewire out edges & non-leaf nodes
+        for idx, edge in enumerate(boundary_out_edges):
+            src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
+            int_memlet = deepcopy(edge.data)
+            ext_memlet = deepcopy(edge.data)
+            state.remove_edge(edge)
+
+            in_conn = f"IN_REGION_OUT_{idx}"
+            out_conn = f"OUT_REGION_OUT_{idx}"
+            map_exit.add_in_connector(in_conn)
+            map_exit.add_out_connector(out_conn)
+
+            state.add_edge(src, src_conn, map_exit, in_conn, int_memlet)
+            state.add_edge(map_exit, out_conn, dst, dst_conn, ext_memlet)
+
+        return map_entry, map_exit
+    
+    def _get_new_map_identifiers(self, state: SDFGState, map_label: str, map_param: str):
+        existing_labels = {getattr(node, "label", None) for node in state.nodes()}
+        existing_params = set()
+        for node in state.nodes():
+            if isinstance(node, nodes.MapEntry):
+                existing_params |= set(node.map.params)
+        
+        suffix = 0
+        new_label = map_label
+        while new_label in existing_labels:
+            suffix += 1
+            new_label = f"{map_label}_{suffix}"
+
+        suffix = 0
+        new_param = map_param
+        while new_param in existing_params:
+            suffix += 1
+            new_param = f"{map_param}_{suffix}"
+
+        return new_label, new_param
+
+    def _subgraphs_after_removing_partition_nodes(self, state: SDFGState, partition_nodes: set) -> list[set[nodes.Node]]:
+        """
+        Returns connected components (as sets of nodes) after removing partition_nodes
+        from a SINGLE SDFG state graph.
+
+        Connectivity is treated as undirected (uses both in/out edges).
+        """
+        visited = set()
+        components = []
+        remaining_nodes = [n for n in state.scope_children()[None] if n not in partition_nodes] # top level nodes only
+
+        for start in remaining_nodes:
+            if start in visited:
+                continue
+
+            comp = set()
+            queue = self.deque([start])
+            visited.add(start)
+
+            while queue:
+                u = queue.popleft()
+                comp.add(u)
+
+                neighbors = {e.dst for e in state.out_edges(u)} | {e.src for e in state.in_edges(u)}
+                for v in neighbors:
+                    if v in partition_nodes or v in visited:
+                        continue
+                    visited.add(v)
+                    queue.append(v)
+
+            components.append(comp)
+
+        return components
+
+    def pretty_print(self, name, node_set):
+        print(f"{name}", "\n\t".join([f"{node.label}.{node.__class__.__name__}" for node in node_set]), "\n")
+
+    def _remove_all_outer_access_nodes_from_group(self, state:SDFGState, group:set):
+        outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
+        nodes_to_remove = {node for node in outer_nodes if isinstance(node, nodes.AccessNode)}
+
+        if TEST_SIZE1_MAPS:
+            self.pretty_print("entry", self._get_entry_nodes(state, group))
+            self.pretty_print("exit", self._get_exit_nodes(state, group))
+            self.pretty_print("outer", outer_nodes)
+            self.pretty_print("remov", nodes_to_remove)
+
+        while nodes_to_remove:
+            group -= nodes_to_remove
+            outer_nodes = self._get_entry_nodes(state, group) | self._get_exit_nodes(state, group)
+            nodes_to_remove = {node for node in outer_nodes if isinstance(node, nodes.AccessNode)}
+            if TEST_SIZE1_MAPS:
+                self.pretty_print("outer", outer_nodes)
+                self.pretty_print("remov", nodes_to_remove)
+
+        
+
+    def _insert_access_between_adjacent_maps(self, state: SDFGState, map_exit: nodes.MapExit) -> None:
+        # avoid illegal direct map-to-map connections by routing through an access node.
+        for edge in list(state.out_edges(map_exit)):
+            if not isinstance(edge.dst, nodes.MapEntry):
+                continue
+            if edge.data is None or edge.data.is_empty() or edge.data.data is None:
+                continue
+
+            src, src_conn, dst, dst_conn = edge.src, edge.src_conn, edge.dst, edge.dst_conn
+            access = state.add_access(edge.data.data)
+            out_memlet = deepcopy(edge.data)
+            in_memlet = deepcopy(edge.data)
+
+            state.remove_edge(edge)
+            state.add_edge(src, src_conn, access, None, out_memlet)
+            state.add_edge(access, None, dst, dst_conn, in_memlet)
+
+    def _find_last_access_nodes_in_map_bfs(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit, data_names: set[str]) -> dict[str, nodes.AccessNode]:
+        if not data_names: return {}
+        last_access: dict[str, nodes.AccessNode] = {}
+        queue = self.deque([map_entry])
+        visited = {map_entry}
+
+        while queue:
+            node = queue.popleft()
+
+            if isinstance(node, nodes.AccessNode) and node.data in data_names:
+                last_access[node.data] = node
+
+            if node is map_exit:
+                continue
+
+            for edge in state.out_edges(node):
+                child = edge.dst
+                if not child or child in visited:
+                    continue
+                visited.add(child)
+                queue.append(child)
+
+        return last_access
+
+    def _forward_input_only_map_data(self, state: SDFGState, map_entry: nodes.MapEntry, map_exit: nodes.MapExit) -> None:
+        # For map inputs that are not map outputs, route final in-map access through map_exit
+        # -> Ensure all map inputs are also outputs to avoid dace erroneusly labeling them as constants
+        
+        # get inputs & isolate those without corresponding outputs
+        input_memlets = [
+            edge.data for edge in state.in_edges(map_entry)
+            if edge.data is not None and not edge.data.is_empty() and edge.data.data is not None
+        ]
+        input_only_data = [memlet.data for memlet in input_memlets
+            if all(
+                edge.data is None or edge.data.is_empty() or edge.data.data != memlet.data
+                for edge in state.out_edges(map_exit)
+            )
+        ]
+        # find last accesses(ignore data without accesses)
+        # INV: dictionary holds ONLY data which goes into the map, is accessed within but does not exit -> if left unchanged this would be detected as a constant and lead to errors
+        last_accesses : Dict = self._find_last_access_nodes_in_map_bfs(state, map_entry, map_exit, input_only_data)
+
+        # wire the last access through map_exit to a new outside access node
+        for input_memlet in input_memlets:
+            data_name = input_memlet.data
+            if not data_name in last_accesses:
+                continue
+            last_access = last_accesses[data_name]
+            
+            # create unique connectors
+            connector_index = 0
+            while (f"IN_INPUT_ONLY_{connector_index}" in map_exit.in_connectors
+                   or f"OUT_INPUT_ONLY_{connector_index}" in map_exit.out_connectors):
+                connector_index += 1
+            in_conn = f"IN_INPUT_ONLY_{connector_index}"
+            out_conn = f"OUT_INPUT_ONLY_{connector_index}"
+
+            # add new external access node & edges to it
+            map_exit.add_in_connector(in_conn)
+            map_exit.add_out_connector(out_conn)
+            outside_access = state.add_access(data_name)
+            internal_memlet = deepcopy(input_memlet)
+            external_memlet = deepcopy(input_memlet)
+            state.add_edge(last_access, None, map_exit, in_conn, internal_memlet)
+            state.add_edge(map_exit, out_conn, outside_access, None, external_memlet)
+
+    def make_size1_map_wrappers(self, sdfg:SDFG, state:SDFGState):
+        # top level GPU nodes partition the graph
+
+        lib_nodes = { node for node in state.scope_children()[None] if isinstance(node, (nodes.LibraryNode)) and self.has_GPU_schedule(node)}
+        map_entries = { node for node in state.scope_children()[None] if isinstance(node, (nodes.MapEntry)) and self.has_GPU_schedule(node)}
+        map_exits = {state.exit_node(node) for node in map_entries}
+        partition_nodes = lib_nodes | map_entries | map_exits
+        if TEST_SIZE1_MAPS:self.pretty_print("partition nodes:", partition_nodes)
+        
+        partitions = self._subgraphs_after_removing_partition_nodes(state, partition_nodes)
+        
+        # each partition is wrapped into a map
+        ctr = 0
+        for partition in partitions:
+            if TEST_SIZE1_MAPS:self.pretty_print(f"partition {ctr} before:", partition)
+            self._remove_all_outer_access_nodes_from_group(state, partition)
+            if TEST_SIZE1_MAPS:self.pretty_print(f"partition {ctr} after :", partition)
+            ctr += 1
+            if partition:
+                if TEST_SIZE1_MAPS:print("it's a wrap!")
+                map_entry, map_exit = self._wrap_region_in_size1_map(state, partition)
+
+                # Avoid illegal direct map-to-map connections by routing through an access node.
+                self._insert_access_between_adjacent_maps(state, map_exit)
+
+                # Ensure all map inputs are also outputs to avoid dace erroneusly labeling them as constants
+                self._forward_input_only_map_data(state, map_entry, map_exit)
+                
+        # run mapfusion
+        """mapfusion_pass = FullMapFusion(
+            strict_dataflow=True,
+            perform_vertical_map_fusion=True,
+            perform_horizontal_map_fusion=True,
+        )
+        mapfusion_pipeline = ppl.Pipeline([mapfusion_pass])
+        mapfusion_pipeline.apply_pass(sdfg, {})"""
+# TODO: maintain list of output scalars to turn them into length-1 arrays later

@@ -14,6 +14,7 @@ import numpy as np
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.offloading.OffloadToAccelerator import OffloadToAccelerator as OtA
+from dace.transformation import pass_pipeline as ppl
 from copy import deepcopy
 
 # ============================================================================
@@ -628,7 +629,6 @@ def test_kernel_sdfg():
     )
 
 @pytest.mark.gpu_offload
-@pytest.mark.current
 def test_edge_assignment_sdfg():
     sdfg = edge_assignment_sdfg()
     orig_A = np.array([1.0, -2.0, 3.5, 0.25], dtype=np.float64)
@@ -642,6 +642,65 @@ def test_edge_assignment_sdfg():
         result_name="A",
     )
 
+def tasklet_map_wrapper_sdfg():
+    @dace.program
+    def tasklet_map_wrapper_program(A: dace.float64[4, 4], out: dace.float64[4, 4]):
+        out = A @ A
+        out[0, 0] += 1
+
+    sdfg = tasklet_map_wrapper_program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+@pytest.mark.gpu_offload
+def test_tasklet_map_wrapper():
+    sdfg = tasklet_map_wrapper_sdfg()
+
+    A = np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0
+    orig_out = np.zeros((4, 4), dtype=np.float64)
+    new_out = np.zeros((4, 4), dtype=np.float64)
+
+    run_numerical_offloading_test(
+        sdfg,
+        {"A": A},
+        orig_out,
+        new_out,
+    )
+
+def tasklet_map_wrapper_larger_sdfg():
+    @dace.program
+    def tasklet_map_wrapper_program(A: dace.float64[4, 4], B: dace.float64[4, 4], out: dace.float64[4, 4]):
+        B = A @ A # parallel
+
+        B[0,0] += A[0,0] # sequential region
+        A[1,0] += 5
+
+        B = B @ A # parallel
+
+        s = 5 # sequential region
+        B[0,3] += s
+        out[1,1] += s
+
+    sdfg = tasklet_map_wrapper_program.to_sdfg()
+    sdfg.validate()
+    return sdfg
+
+@pytest.mark.gpu_offload
+@pytest.mark.current
+def test_tasklet_map_wrapper_larger():
+    sdfg = tasklet_map_wrapper_larger_sdfg()
+
+    A = np.arange(16, dtype=np.float64).reshape(4, 4) / 10.0
+    B = np.zeros((4, 4), dtype=np.float64)
+    orig_out = np.zeros((4, 4), dtype=np.float64)
+    new_out = np.zeros((4, 4), dtype=np.float64)
+
+    run_numerical_offloading_test(
+        sdfg,
+        {"A": A, "B": B},
+        orig_out,
+        new_out,
+    )
 # ============================================================================
 # Fixtures and Helpers
 # ============================================================================
@@ -667,8 +726,27 @@ def pytest_configure(config):
 
 
 if __name__ == "__main__":
+    """sdfg = tasklet_map_wrapper_larger_sdfg()
+    sdfg.validate()
+    sdfg.view()"""
+    
     # Run with: python testsuite_offloading.py
     #pytest.main([__file__, "-s", "-v", "--tb=short", "-m", "current"])
     #pytest.main([__file__, "-v", "--tb=short", "-m", "gpu_offload"])
-    test_nested_IR()
- 
+
+    import importlib
+    import sys
+    from pathlib import Path
+
+    workspace_root = Path(__file__).resolve().parents[6]
+    npbench_repo_root = workspace_root / "npbench"
+    if str(npbench_repo_root) not in sys.path:
+        sys.path.insert(0, str(npbench_repo_root))
+
+    durbin_module = importlib.import_module("npbench.benchmarks.polybench.durbin.durbin_dace")
+    #durbin_module = importlib.import_module("npbench.benchmarks.polybench.trmm.trmm_dace")
+    durbin_sdfg = durbin_module.kernel.to_sdfg()
+    OtA().apply_pass(durbin_sdfg, {})
+    durbin_sdfg.validate()
+    
+    
