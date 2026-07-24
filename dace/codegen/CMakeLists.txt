@@ -301,6 +301,10 @@ target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 # Standard C++, not the GNU dialect: CXX_STANDARD on its own emits -std=gnu++NN, which accepts
 # extensions that Clang then rejects.
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+# CXX_STANDARD alone is a decay-permitted request: CMake may silently fall back to an older
+# standard (e.g. the compiler's default gnu++17) if it can't satisfy the requested one.
+# STANDARD_REQUIRED forbids that fallback outright.
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 
 # Create DaCe loader stub
