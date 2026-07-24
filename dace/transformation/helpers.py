@@ -4,7 +4,7 @@ import ast
 import copy
 import itertools
 import warnings
-from networkx import MultiDiGraph
+from dace.graphlib import MultiDiGraph
 from ordered_set import OrderedSet
 
 from dace.properties import CodeBlock

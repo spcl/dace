@@ -179,7 +179,6 @@ class LoopPeeling(LoopUnroll):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         stride = loop_analysis.get_loop_stride(self.loop)
-        is_symbolic = any([symbolic.issymbolic(r) for r in (start, end)])
 
         if self.begin:
             peeled_iterations: List[ControlFlowBlock] = []

@@ -4,7 +4,7 @@
 from dace import SDFG, SDFGState, nodes
 from collections import deque
 from typing import List, Dict, Set, Tuple, Optional, Union
-import networkx as nx
+from dace import graphlib as nx
 
 NodeT = str
 EdgeT = Tuple[NodeT, NodeT]
@@ -109,8 +109,7 @@ def get_backedges(graph: nx.DiGraph,
     # Gather all cycles in the graph. Cycles are represented as a sequence of
     # nodes.
     # O((|V|+|E|)*(C+1)), for C cycles.
-    all_cycles_nx: List[List[NodeT]] = nx.cycles.simple_cycles(graph)
-    #all_cycles_nx: List[List[NodeT]] = nx.simple_cycles(graph)
+    all_cycles_nx: List[List[NodeT]] = nx.simple_cycles(graph)
     all_cycles: Set[NodeCycle] = set()
     for cycle in all_cycles_nx:
         all_cycles.add(NodeCycle(cycle))

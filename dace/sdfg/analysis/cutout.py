@@ -3,8 +3,8 @@
 Functionality that allows users to "cut out" parts of an SDFG in a smart way (i.e., memory preserving) for localized
 testing or optimization.
 """
-import networkx as nx
-from networkx.algorithms.flow import edmondskarp
+from dace import graphlib as nx
+from dace.graphlib.algorithms.flow import edmondskarp
 import sympy as sp
 from collections import deque
 import copy
