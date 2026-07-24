@@ -604,6 +604,40 @@ def test_nanobind_interface_symbol_inference_missing():
         assert np.allclose(b, a * 3)
 
 
+def test_nanobind_interface_arg_names_symbol_not_inferred():
+    """A symbol listed in ``SDFG.arg_names`` is an explicit parameter of the
+    user-facing signature: it binds as a plain *required* scalar (no ``__opt``
+    optional, no ``nb::none()`` default, no shape-derived fallback). Only its
+    absence from ``arg_names`` makes a symbol an inference candidate -
+    membership alone drives the split."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    N = dace.symbol('N')
+
+    @dace.program
+    def argname_symbol_probe(A: dace.float64[N]):
+        A[:] = A + 1.0
+
+    # The frontend's arg_names is ['A']: N is an artifact symbol,
+    # optional + shape-inferred.
+    artifact = argname_symbol_probe.to_sdfg(simplify=True)
+    assert 'N' not in artifact.arg_names
+    code = generate_bindings_code(artifact)
+    assert 'N__opt' in code
+    assert 'nb::arg("N") = nb::none()' in code
+    assert 'A.shape(0)' in code
+
+    # The same program with N promoted into arg_names: a plain required
+    # scalar parameter, and no fallback is generated at all.
+    explicit = argname_symbol_probe.to_sdfg(simplify=True)
+    explicit.arg_names = explicit.arg_names + ['N']
+    code = generate_bindings_code(explicit)
+    assert 'N__opt' not in code
+    assert 'nb::arg("N") = nb::none()' not in code
+    assert 'nb::arg("N")' in code
+    assert 'A.shape(0)' not in code
+
+
 def test_nanobind_interface_scalar_callback():
     """A scalar callback is invoked from the GIL-released kernel and its result lands in the output."""
     with set_temporary('compiler', 'interface', value='nanobind'):
