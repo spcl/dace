@@ -58,6 +58,15 @@ def test_ctypes_compiled_sdfg_rename_and_deprecation():
                 deprecated = CompiledSDFG(csdfg.sdfg, csdfg._lib, csdfg.sdfg.arg_names)
             assert isinstance(deprecated, CtypesCompiledSDFG)
 
+            # Both wrappers share one ReloadableDLL and __del__ unloads it
+            # unconditionally, so if `deprecated` is destroyed first (Python
+            # 3.14's destruction order), csdfg's finalize-on-del calls
+            # __dace_exit through a dangling pointer and segfaults. Finalize
+            # now, while the library is still mapped: both destructors then
+            # reduce to plain unloads (first wins, the second is a guarded
+            # no-op) in any destruction order.
+            csdfg.finalize()
+
 
 def test_compiled_sdfg_protocol_nanobind():
     N = dace.symbol('N')
