@@ -277,6 +277,8 @@ target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 # Standard C++, not the GNU dialect: CXX_STANDARD on its own emits -std=gnu++NN, which accepts
 # extensions that Clang then rejects.
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+# Forbids silent decay below the required standard (e.g. falling back to an older compiler default).
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 
 # Create DaCe loader stub
