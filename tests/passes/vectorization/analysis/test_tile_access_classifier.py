@@ -219,14 +219,19 @@ def test_gather_with_structured_other_dim_stays_gather():
     assert ta.dim_strides[1] == 1
 
 
-def test_non_affine_iter_var_expression_degrades_to_affine_no_stride():
-    """A genuinely non-affine expression like ``i**2`` -> AFFINE with no
-    int stride (emitter degrades to GATHER). ``int_floor`` / ``int_ceil``
-    patterns are now recognised separately as REPLICATE."""
+def test_non_affine_iter_var_expression_is_gather():
+    """``a[i**2]`` with ``i`` a tile param is a GATHER: consecutive lanes read
+    ``a[i**2], a[(i+1)**2], ...`` -- non-uniform, non-contiguous lane offsets, so
+    the dim is not contiguously widenable. The emitter builds a per-lane index
+    tile by evaluating the begin expression and gathers; ``gather_index_per_dim``
+    stays ``None`` (index is COMPUTED, not read from a memory index array), which
+    is what distinguishes it from a data-dependent ``a[idx[i]]`` gather.
+    ``int_floor`` / ``int_ceil`` patterns are recognised separately as REPLICATE."""
     r = _R(("i ** 2", "i ** 2"))
     ta = classify_tile_access(r, iter_vars=("i", ))
-    assert ta.per_dim_kind[0] == PerDimKind.AFFINE
+    assert ta.per_dim_kind[0] == PerDimKind.GATHER
     assert ta.dim_strides[0] is None
+    assert ta.gather_index_per_dim[0] is None
 
 
 # ---- REPLICATE / replicate_factor spectrum --------------------------
