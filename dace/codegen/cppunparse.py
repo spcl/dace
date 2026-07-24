@@ -125,6 +125,29 @@ def interleave(inter, f, seq, **kwargs):
             f(x, **kwargs)
 
 
+def numeric_literal_value(node: ast.AST):
+    """The numeric value of a literal operand (``2``, ``2.5``, ``2.5j``) including a unary sign
+    (``-1.5``), or ``None`` if ``node`` is not one.
+
+    A negative literal reaches the unparser as ``UnaryOp(USub, Constant)`` rather than a signed
+    ``Constant``, so a caller inspecting ``ast.Constant`` alone misses exactly the negative half of
+    the cases. ``bool`` is excluded (an ``int`` subclass, but not a numeric literal here). Unlike
+    :func:`numeric_power_value` -- which serves the ``**`` lowering and is therefore real-only and
+    also folds ``abs`` / ``sqrt`` / dtype casts -- this recognizes COMPLEX literals and nothing but
+    literals.
+    """
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool):
+            return None
+        return node.value if isinstance(node.value, (int, float, complex)) else None
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
+        inner = numeric_literal_value(node.operand)
+        if inner is None:
+            return None
+        return -inner if isinstance(node.op, ast.USub) else inner
+    return None
+
+
 def numeric_power_value(node: ast.AST):
     """Constexpr-evaluate the ``**`` exponent to its numeric value, or ``None`` if it is not a
     compile-time constant.
@@ -984,7 +1007,50 @@ class CPPUnparser:
     }
     funcops = {"FloorDiv": (" /", "dace::math::ifloor"), "MatMult": (",", "dace::gemm")}
 
+    #: Arithmetic ops folded over two complex literal operands (see _BinOp).
+    binop_lambda = {
+        'Add': (lambda a, b: a + b),
+        'Sub': (lambda a, b: a - b),
+        'Mult': (lambda a, b: a * b),
+        'Div': (lambda a, b: a / b),
+    }
+
+    def _complex_literal_fold(self, t) -> bool:
+        """Folds ``<num literal> op <num literal>`` into ONE constant when the result is complex,
+        dispatches it, and returns True; returns False to leave ``t`` to the general path.
+
+        A complex value round-trips through :func:`~dace.symbolic.symstr` as PYTHON source
+        (``1.5-2.5j``, ``-0-6.283185307179586j``), which re-parses here as arithmetic between a real
+        and an imaginary literal. Python's numeric tower promotes the real operand implicitly;
+        ``std::complex<T>`` does NOT -- its operators take exactly ``T`` or ``complex<T>``, so an
+        integer-valued real part emits ``0 - dace::complex128(0.0, 6.28)`` and fails to compile with
+        "no match for 'operator-' (operand types are 'int' and 'dace::complex128')" (stockham_fft).
+        Folding the pair back into the single complex it came from emits one well-typed
+        ``dace::complex128(re, im)`` construction, so no mixed-type arithmetic is generated at all.
+
+        Restricted to a complex RESULT: real literal arithmetic keeps its existing spelling.
+        """
+        op = t.op.__class__.__name__
+        if op not in self.binop_lambda:
+            return False
+        lv = numeric_literal_value(t.left)
+        rv = numeric_literal_value(t.right)
+        if lv is None or rv is None:
+            return False
+        if not isinstance(lv, complex) and not isinstance(rv, complex):
+            return False
+        try:
+            folded = self.binop_lambda[op](lv, rv)
+        except (ArithmeticError, ValueError):  # e.g. division by zero -- leave it to the general path
+            return False
+        self.dispatch(ast.Constant(value=folded))
+        return True
+
     def _BinOp(self, t):
+        # Two numeric literals whose result is complex fold to one complex constant, so that no
+        # int/complex mixed arithmetic (illegal for std::complex) is emitted.
+        if self._complex_literal_fold(t):
+            return
         # Operations that require a function call
         if t.op.__class__.__name__ in self.funcops:
             separator, func = self.funcops[t.op.__class__.__name__]
