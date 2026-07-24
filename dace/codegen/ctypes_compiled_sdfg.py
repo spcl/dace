@@ -282,11 +282,15 @@ class CtypesCompiledSDFG(object):
                 'You passed `None` as `argnames` to `CtypesCompiledSDFG`, but the SDFG you passed has positional'
                 ' arguments. This is allowed but deprecated.')
 
-        self.has_gpu_code = any(aval.storage in dtypes.GPU_STORAGES
-                                for _, _, aval in self._sdfg.arrays_recursive()) or any(
-                                    (isinstance(node, (nodes.EntryNode, nodes.ExitNode,
-                                                       nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES)
-                                    for node, _ in self._sdfg.all_nodes_recursive())
+        if any(aval.storage in dtypes.GPU_STORAGES for _, _, aval in self._sdfg.arrays_recursive()):
+            self.has_gpu_code = True
+        elif any(
+                isinstance(node, (nodes.EntryNode, nodes.ExitNode,
+                                  nodes.LibraryNode)) and node.schedule in dtypes.GPU_SCHEDULES
+                for node, _ in self._sdfg.all_nodes_recursive()):
+            self.has_gpu_code = True
+        else:
+            self.has_gpu_code = False
 
         self.external_memory_types = {
             aval.storage
