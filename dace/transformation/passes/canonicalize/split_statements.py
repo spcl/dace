@@ -259,6 +259,24 @@ class SplitStatements(ppl.Pass):
                 out_names.append(e.data.data)
         if len(out_names) < 2:
             return False
+        # In-place read-modify-write: a GLOBAL array read into the scope is also written out of it
+        # (``t = A[i]; A[i] = t + B[i]; C[i] = t*2``). Cloning the scope per output would let one clone
+        # recompute ``t = A[i]`` AFTER another clone overwrote ``A[i]`` (the read/modify/write order is
+        # lost) and duplicate the write -- both silently wrong, and it still validates. Mirror the RMW
+        # guard SplitTasklets uses (split_tasklets.py) and leave such a map unsplit. Global
+        # (non-transient) arrays only: a shared local temp is meant to be recomputed per output.
+        read_arrays = {
+            e.data.data
+            for e in state.in_edges(entry)
+            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
+        }
+        write_arrays = {
+            e.data.data
+            for e in state.in_edges(xit)
+            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
+        }
+        if read_arrays & write_arrays:
+            return False
         scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
         inner = [n for n in scope.nodes() if n not in (entry, xit)]
         # A PLAIN dataflow NestedSDFG body (a dependent read-after-write the frontend wrapped, e.g.
@@ -322,10 +340,15 @@ class SplitStatements(ppl.Pass):
                         continue
                     verdicts = [oracle._dep_class(rs, ws, ivar, loop=loop, sdfg=sdfg) for ws in write_subsets]
                     kinds = {v[0] for v in verdicts}
-                    if kinds & {'RAW', 'complex'}:
-                        continue  # a RAW read must keep its live-array value -- never move it
-                    if not (kinds & {'WAR', 'WAR_symbolic'}):
-                        continue  # only read-ahead anti-dependences are renamable
+                    # Redirect to the pre-loop snapshot ONLY when EVERY verdict is a read-ahead
+                    # (WAR / WAR_symbolic). A RAW/complex producer, OR a 'none' (offset-0, same-index
+                    # producer THIS iteration), means the read consumes a value made within the sweep
+                    # and must keep its live-array value -- moving it to the stale snapshot is a silent
+                    # miscompile. (The old gate only skipped RAW/complex and required *some* WAR, so a
+                    # read that was WAR vs one sibling write but 'none' vs another --
+                    # ``A[i]=..; A[i+1]=..; d[i]=A[i+1]`` -- slipped through and read the stale value.)
+                    if not (kinds and kinds <= {'WAR', 'WAR_symbolic'}):
+                        continue
                     guards = {p for k, p in verdicts if k == 'WAR_symbolic'}
                     if any({str(s) for s in g.free_symbols} & internal_syms for g in guards):
                         continue

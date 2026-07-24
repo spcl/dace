@@ -104,5 +104,39 @@ def test_split_symbolic_forward_offset_zero_never_silently_miscompiles():
     assert code in (0, 5), f'unexpected child exit code {code}'
 
 
+@dace.program
+def _split_mixed_numeric_none(A: dace.float64[N], B: dace.float64[N], E: dace.float64[N], D: dace.float64[N]):
+    for i in range(1, N - 2):
+        A[i] = B[i]
+        A[i + 1] = E[i]
+        D[i] = A[i + 1] * 2.0  # reads the value the SIBLING ``A[i+1]=E[i]`` just wrote this iteration
+
+
+def test_split_mixed_read_kept_live_when_none_coexists_with_war():
+    """K0a (compile-time, no symbolic guard involved): the read ``A[i+1]`` is read-ahead (``WAR``,
+    offset +1) versus the write ``A[i]`` but offset-0 (``'none'``) versus the write ``A[i+1]=E[i]`` in
+    the SAME iteration. It must keep the just-written live value (``D == 2*E``), never be redirected to
+    the pre-loop snapshot. Pre-fix the gate skipped only on ``RAW``/``complex`` and fired on ANY
+    ``WAR``, so this ``{'WAR','none'}`` mix slipped through and D read the stale original A -- a silent
+    miscompile with a purely numeric offset (the strict symbolic guard cannot catch it)."""
+    n = 32
+    A0 = np.random.default_rng(1).random(n)
+    B0 = np.random.default_rng(2).random(n)
+    E0 = np.random.default_rng(3).random(n)
+
+    raw = _split_mixed_numeric_none.to_sdfg(simplify=True)
+    Ar, Br, Er, Dr = A0.copy(), B0.copy(), E0.copy(), np.zeros(n)
+    raw.compile()(A=Ar, B=Br, E=Er, D=Dr, N=n)
+
+    cand = _split_mixed_numeric_none.to_sdfg(simplify=True)
+    canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
+    Ac, Bc, Ec, Dc = A0.copy(), B0.copy(), E0.copy(), np.zeros(n)
+    cand.compile()(A=Ac, B=Bc, E=Ec, D=Dc, N=n)
+
+    assert np.allclose(Dr, Dc, equal_nan=True), ('the same-iteration read A[i+1] was redirected to the '
+                                                 'stale snapshot instead of the just-written live value')
+    assert np.allclose(Dc[1:n - 2], 2.0 * E0[1:n - 2]), 'D[i] must equal 2*E[i]'
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-q'])

@@ -57,6 +57,14 @@ def _dependent(x: dace.float64[N], A: dace.float64[N], B: dace.float64[N]):
         B[i] = A[i] * 2.0  # reads the just-written value -- the frontend wraps this in a NestedSDFG
 
 
+@dace.program
+def _rmw_in_place(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N]):
+    for i in dace.map[0:N]:
+        t = A[i]  # read A via a local ...
+        A[i] = t + B[i]  # ... and write it in place (read-modify-write)
+        C[i] = t * 2.0
+
+
 def _value_preserved(prog, arrays, n=16):
     raw = prog.to_sdfg(simplify=True)
     ref = {k: v.copy() for k, v in arrays.items()}
@@ -98,6 +106,16 @@ def test_a_dependent_read_after_write_splits_by_recomputing_the_local():
     assert not _materialized_buffers(cand)
 
 
+def test_in_place_read_modify_write_map_is_left_unsplit():
+    """A map that reads a global array via a local and writes it IN PLACE (``t=A[i]; A[i]=t+B[i]; C[i]=t*2``)
+    must NOT be split: cloning per output lets one clone recompute ``t=A[i]`` AFTER a sibling clone
+    overwrote ``A[i]`` (WAR unpreserved) and duplicates the A-write -- a silent miscompile that still
+    validates. The RMW guard (mirroring SplitTasklets) leaves it as one map, value preserved (A==A0+B0,
+    C==A0*2, checked inside ``_value_preserved`` against the untransformed run)."""
+    cand = _value_preserved(_rmw_in_place, {'A': _rand(seed=1), 'B': _rand(seed=2), 'C': np.zeros(16)})
+    assert _nmaps(cand) == 1  # left unsplit: read set intersects write set on the global A
+
+
 def test_a_single_output_map_is_left_alone():
     cand = _value_preserved(_single_out, {'x': _rand(), 'A': np.zeros(16)})
     assert _nmaps(cand) == 1
@@ -113,6 +131,7 @@ def test_off_by_default_leaves_the_map_unsplit():
 if __name__ == '__main__':
     test_two_global_outputs_split_into_one_map_each()
     test_three_global_outputs_split_into_three_maps()
+    test_in_place_read_modify_write_map_is_left_unsplit()
     test_a_single_output_map_is_left_alone()
     test_off_by_default_leaves_the_map_unsplit()
     print("ok")
