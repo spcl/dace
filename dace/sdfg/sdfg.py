@@ -2528,12 +2528,20 @@ class SDFG(ControlFlowRegion):
         # Avoid import loops
         from dace.codegen import ctypes_compiled_sdfg as cs, compiler
 
-        # On the nanobind path, "loaded" means the module name is taken in
-        # sys.modules: extension modules cannot be unloaded or re-imported, so
-        # this is the collision check that drives the rename-and-recompile loop.
+        # On the nanobind path, "loaded" means the module at THIS SDFG's
+        # artifact path is taken in sys.modules (the registry key carries a
+        # path magic): extension modules cannot be unloaded or re-imported, so
+        # a same-path recompile drives the rename-and-recompile loop - while a
+        # same-named SDFG building to a different path simply coexists.
         if Config.get('compiler', 'interface') == 'nanobind':
             import sys
-            return f'{compiler.GENERATED_NAMESPACE}.{self.name}' in sys.modules
+            build_folder = self.build_folder
+            if folder_mode is None:
+                folder_mode = compiler.get_folder_mode(build_folder, probe=True)
+            if folder_mode is None:
+                folder_mode = Config.get('compiler', 'build_folder_mode')
+            binary_filename = compiler.get_binary_name(build_folder, self.name, folder_mode=folder_mode)
+            return compiler.generated_module_qualname(binary_filename, self.name) in sys.modules
 
         build_folder = self.build_folder
         if folder_mode is None:

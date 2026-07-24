@@ -647,6 +647,16 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     name = sdfg.name
     state_t = mangle_dace_state_struct_name(name)
     arglist = sdfg.arglist()
+    # The C++ namespace of the generated types carries the SDFG's content hash:
+    # nanobind's process-wide type registry keys by type name, so same-named
+    # but different SDFGs (loadable side by side under distinct path-magic
+    # module keys) need distinct type identities to not dispatch into each
+    # other. Only disambiguation is needed, not stability: hash_sdfg() is not
+    # guaranteed stable across DaCe versions, and a regenerated artifact with
+    # a fresh namespace merely forgoes sharing a type identity with older
+    # loads (identical copies of one .so still share theirs - the namespace
+    # is baked into the file).
+    type_ns = f'{name}_{sdfg.hash_sdfg()[:12]}'
 
     # Extern declarations reuse the exact signature strings framecode emits.
     sig_decl = sdfg.signature(with_types=True, arglist=arglist)
@@ -806,9 +816,14 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
 namespace nb = nanobind;
 {float16_traits_block}
-// The generated types live in dace::generated::<name>, mirroring the Python-side
-// dace.generated.<name> module. The per-SDFG namespace also keeps the identically
-// structured handle types from different modules from colliding in-process.
+// The generated types live in dace::generated::<name>_<content hash>. nanobind
+// shares its type registry across all modules in-process and keys it by type
+// name, so the namespace must distinguish not only different SDFG names but
+// also same-named SDFGs with different content (which may be loaded side by
+// side, each under its own dace.generated.<path magic>.<name> module): without
+// the hash, a handle from one program could silently dispatch into the other's
+// methods. Identical content in two modules (a copied artifact) shares the
+// type identity - harmless, the code is identical.
 extern "C" {{
 struct {state_t};{struct_fwd_block}
 {state_t} *__dace_init_{name}({init_decl});
@@ -817,7 +832,7 @@ void __program_{name}({program_params});
 {ext_decls}
 }}
 
-namespace dace {{ namespace generated {{ namespace {name} {{
+namespace dace {{ namespace generated {{ namespace {type_ns} {{
 
 // Not thread-safe (accepted by design - a handle is not meant to be shared
 // across threads): the lazy init is an unsynchronized check-then-act on
@@ -885,10 +900,10 @@ struct DaceHandle_{name} {{
     }}
 {user_call_method}}};
 
-}} }} }} // namespace dace::generated::{name}
+}} }} }} // namespace dace::generated::{type_ns}
 
 NB_MODULE({name}, m) {{
-    using namespace dace::generated::{name};
+    using namespace dace::generated::{type_ns};
     nb::class_<DaceHandle_{name}>(m, "CompiledSDFGHandle")
         .def("initialize", &DaceHandle_{name}::initialize{init_def_args})
         .def("finalize", &DaceHandle_{name}::finalize)

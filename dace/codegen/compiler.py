@@ -196,6 +196,20 @@ def generate_program_folder(
 GENERATED_NAMESPACE = 'dace.generated'
 
 
+def generated_module_qualname(library_path, module_name: str) -> str:
+    """The ``sys.modules`` key for a generated nanobind module:
+    ``dace.generated.<magic>.<module_name>``, where ``<magic>`` is a hash of
+    the artifact's resolved path. Keying by path lets distinct artifacts that
+    share an SDFG name coexist in one process - only loading the exact same
+    file reuses a loaded module. A hash collision between different paths
+    maps them to the same key; :func:`load_nanobind_module` guards against
+    that by re-checking the loaded module's file before reusing it.
+    """
+    import hashlib
+    magic = hashlib.sha256(os.path.realpath(os.fspath(library_path)).encode('utf-8')).hexdigest()[:16]
+    return f'{GENERATED_NAMESPACE}.{magic}.{module_name}'
+
+
 def get_program_interface(program_folder) -> str:
     """Returns which Python interface ('ctypes' or 'nanobind') produced ``program_folder``.
 
@@ -219,35 +233,38 @@ def load_nanobind_module(library_path, module_name: str):
     """Loads the compiled nanobind module for one SDFG and returns it.
 
     The module is imported once per process and registered under
-    ``dace.generated.<module_name>``; loading the same artifact again returns
-    that one module, which may back any number of handles. A process cannot
-    hold two modules under the same generated name, so requesting a different
-    artifact under a name that is already taken raises instead of quietly
-    handing back the one already loaded.
+    ``dace.generated.<magic>.<module_name>`` with ``<magic>`` derived from the
+    artifact's resolved path (see :func:`generated_module_qualname`); loading
+    the same file again returns that one module, which may back any number of
+    handles. Distinct artifacts sharing an SDFG name load side by side under
+    their own magic - their generated C++ types cannot conflate either, since
+    the type namespace carries the SDFG's content hash (see
+    ``nanobind_bindings.generate_bindings_code``). Extension modules cannot be
+    re-imported or unloaded, so a *same-path* recompile still requires a
+    rename (``SDFG.is_loaded``).
 
     :param library_path: Path to the compiled shared library (the nanobind
                          extension module) to import.
-    :param module_name: The SDFG name; the module is registered under
-                        ``dace.generated.<module_name>``.
+    :param module_name: The SDFG name (the last component of the registered
+                        qualified name).
     :return: The imported module.
-    :raises ValueError: If a different artifact is already loaded under the
-                        same generated name.
+    :raises ValueError: If the registry key is taken by a module from a
+                        different file (a path-magic hash collision).
     """
-    qualified = f'{GENERATED_NAMESPACE}.{module_name}'
     library_path = os.fspath(library_path)
+    qualified = generated_module_qualname(library_path, module_name)
 
-    # Extension modules cannot be re-imported or unloaded, so at most one
-    # artifact can live under a given generated name per process. Reuse the
-    # module only when it came from the same file (compared by real path); a
-    # different file would otherwise be silently shadowed by the stale module.
     existing = sys.modules.get(qualified)
     if existing is not None:
+        # The key encodes a hash of the path, so a hit should mean the very
+        # same file - verify it, so a hash collision between two different
+        # paths fails loudly instead of silently aliasing the artifacts.
         existing_file = getattr(existing, '__file__', None)
-        if existing_file is None or os.path.realpath(existing_file) == os.path.realpath(library_path):
-            return existing
-        raise ValueError(f"Generated module '{qualified}' is already loaded in this process from a different "
-                         f"artifact ('{existing_file}'); a distinct artifact ('{library_path}') cannot be loaded "
-                         f"under the same name.")
+        if existing_file is not None and os.path.realpath(existing_file) != os.path.realpath(library_path):
+            raise ValueError(f"Generated-module registry collision: key '{qualified}' is taken by the module "
+                             f"loaded from '{existing_file}', but '{library_path}' hashes to the same key. "
+                             f"Rename the SDFG or move the artifact to resolve the path-hash collision.")
+        return existing
 
     # The unprefixed module_name makes the loader resolve the matching init
     # hook in the library; the shared library's file name itself is irrelevant.

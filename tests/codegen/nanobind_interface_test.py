@@ -29,8 +29,12 @@ def test_axpy_nanobind_interface():
         csdfg(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
 
         assert np.allclose(b, expected)
-        # The module is registered under the dace.generated.* namespace.
-        assert f'dace.generated.{sdfg.name}' in sys.modules
+        # The module is registered under dace.generated.<path magic>.<name>.
+        from dace.codegen.compiler import generated_module_qualname
+        qualname = generated_module_qualname(csdfg.filename, sdfg.name)
+        assert qualname.startswith('dace.generated.')
+        assert qualname.endswith(f'.{sdfg.name}')
+        assert qualname in sys.modules
         # The stub-based loader is not involved on this path.
         assert type(csdfg).__name__ == 'NanobindCompiledSDFG'
 
@@ -83,7 +87,9 @@ def test_nanobind_interface_same_name_recompile():
         expected = 3.0 * a + b
         csdfg2(A=a, B=b, alpha=np.float64(3.0), N=np.int32(n))
         assert np.allclose(b, expected)
-        assert f'dace.generated.{base_name}_0' in sys.modules
+        assert csdfg2.sdfg.name == f'{base_name}_0'
+        from dace.codegen.compiler import generated_module_qualname
+        assert generated_module_qualname(csdfg2.filename, f'{base_name}_0') in sys.modules
 
 
 def test_nanobind_interface_return_value():
@@ -868,20 +874,17 @@ def test_nanobind_interface_load_reuses_same_artifact():
         assert module is csdfg.module
 
 
-def test_nanobind_interface_load_distinct_artifact_raises():
-    """A distinct artifact under an already-loaded generated name is a hard error.
-
-    ``load_precompiled_sdfg`` loads a fixed prebuilt artifact and bypasses the
-    compile-time rename, so a second, different artifact under a name already
-    taken in ``sys.modules`` must fail loudly (extension modules cannot be
-    re-imported) instead of silently returning the stale module.
-    """
+def test_nanobind_interface_load_distinct_artifact_coexists():
+    """A distinct artifact under an already-loaded generated name loads as its
+    own module: registration is ``dace.generated.<magic>.<name>`` with
+    ``<magic>`` derived from the artifact's resolved path, so only the exact
+    same file reuses a loaded module - different files coexist."""
     import os
     import shutil
     import tempfile
 
-    import pytest
-    from dace.codegen.compiler import load_nanobind_module
+    from dace.codegen.compiler import generated_module_qualname, load_nanobind_module
+    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
     with set_temporary('compiler', 'interface', value='nanobind'):
         N = dace.symbol('N')
@@ -894,8 +897,110 @@ def test_nanobind_interface_load_distinct_artifact_raises():
         # A copy of the .so at a different path is a distinct artifact.
         copied = os.path.join(tempfile.mkdtemp(), os.path.basename(csdfg.module.__file__))
         shutil.copy(csdfg.module.__file__, copied)
-        with pytest.raises(ValueError, match='already loaded'):
-            load_nanobind_module(copied, csdfg.sdfg.name)
+        # Identical content means identical C++ type identity (same content
+        # hash in the type namespace), so nanobind warns about the duplicate
+        # registration - expected and harmless here, the code is the same.
+        import warnings as warnings_mod
+        with warnings_mod.catch_warnings():
+            warnings_mod.simplefilter('ignore', RuntimeWarning)
+            module = load_nanobind_module(copied, csdfg.sdfg.name)
+        assert module is not csdfg.module
+        assert generated_module_qualname(copied, csdfg.sdfg.name) in sys.modules
+        assert (generated_module_qualname(copied, csdfg.sdfg.name)
+                != generated_module_qualname(csdfg.module.__file__, csdfg.sdfg.name))
+
+        # A handle minted from the copy works (and the original still does).
+        n = 8
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 2.0 * a + b
+        csdfg2 = NanobindCompiledSDFG(csdfg.sdfg, module, csdfg.sdfg.arg_names)
+        csdfg2(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
+        assert np.allclose(b, expected)
+
+
+def test_nanobind_interface_load_magic_collision_detected():
+    """A path-magic hash collision (same registry key, different file) is a
+    hard error instead of silently aliasing two artifacts."""
+    import types
+
+    from dace.codegen.compiler import generated_module_qualname, load_nanobind_module
+
+    bogus = '/nonexistent/collision_probe/libcollision_probe.so'
+    key = generated_module_qualname(bogus, 'collision_probe')
+    # Plant a module under the key that claims to come from a different file,
+    # as a hash collision between two paths would produce.
+    sys.modules[key] = types.SimpleNamespace(__file__='/some/other/artifact.so')
+    try:
+        with pytest.raises(ValueError, match='collision'):
+            load_nanobind_module(bogus, 'collision_probe')
+    finally:
+        del sys.modules[key]
+
+
+def test_nanobind_interface_same_name_different_programs_coexist():
+    """Two different programs sharing an SDFG name load side by side and each
+    executes its own code: the sys.modules key carries the path magic, and the
+    generated C++ namespace carries a content hash, so nanobind's process-wide
+    type registry (keyed by type name) cannot conflate their handle types and
+    silently dispatch one program's handle into the other's methods."""
+
+    def make(addend):
+        sdfg = dace.SDFG('coexist_tester')
+        sdfg.add_array('A', [4], dace.float64)
+        state = sdfg.add_state()
+        tasklet = state.add_tasklet('t', {'i'}, {'o'}, f'o = i + {addend}')
+        state.add_edge(state.add_read('A'), None, tasklet, 'i', dace.Memlet('A[0]'))
+        state.add_edge(tasklet, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+        return sdfg
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        # Distinct build folders per content (the default 'name' cache would
+        # collide the folders and trigger the same-path rename instead).
+        with set_temporary('cache', value='hash'):
+            csdfg1 = make(1.0).compile()
+            csdfg2 = make(2.0).compile()
+
+        # Neither was renamed: same-name coexistence, not the rename loop.
+        assert csdfg1.sdfg.name == 'coexist_tester'
+        assert csdfg2.sdfg.name == 'coexist_tester'
+
+        a = np.zeros(4)
+        csdfg1(A=a)
+        assert a[0] == 1.0
+        b = np.zeros(4)
+        csdfg2(A=b)
+        assert b[0] == 2.0
+        # The first handle still dispatches into its own program.
+        c = np.zeros(4)
+        csdfg1(A=c)
+        assert c[0] == 1.0
+
+
+def test_nanobind_interface_type_namespace_carries_content_hash():
+    """The generated C++ namespace is <name>_<content hash>: same-named but
+    different SDFGs get distinct type identities (nanobind conflates
+    identically-named types across modules). Only disambiguation is required
+    of the hash - hash_sdfg() carries no cross-version stability promise."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    def make(addend):
+        sdfg = dace.SDFG('nshash_tester')
+        sdfg.add_array('A', [4], dace.float64)
+        state = sdfg.add_state()
+        tasklet = state.add_tasklet('t', {'i'}, {'o'}, f'o = i + {addend}')
+        state.add_edge(state.add_read('A'), None, tasklet, 'i', dace.Memlet('A[0]'))
+        state.add_edge(tasklet, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
+        return sdfg
+
+    def type_namespace(code):
+        marker = 'namespace dace { namespace generated { namespace '
+        return code.split(marker)[1].split(' ')[0]
+
+    ns_a = type_namespace(generate_bindings_code(make(1.0)))
+    ns_b = type_namespace(generate_bindings_code(make(2.0)))
+    assert ns_a.startswith('nshash_tester_')
+    assert ns_a != ns_b  # distinct per content - the property that matters
 
 
 def test_nanobind_interface_safe_call():
@@ -2101,7 +2206,7 @@ if __name__ == '__main__':
     test_nanobind_interface_optional_array()
     test_nanobind_interface_nullable_args_enable_none()
     test_nanobind_interface_load_reuses_same_artifact()
-    test_nanobind_interface_load_distinct_artifact_raises()
+    test_nanobind_interface_load_distinct_artifact_coexists()
     test_nanobind_interface_safe_call()
     test_nanobind_interface_safe_call_kwargs()
     test_nanobind_interface_safe_call_return_rejected()
