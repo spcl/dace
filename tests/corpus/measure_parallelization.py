@@ -89,13 +89,24 @@ def cpu_params(peel_limit: int = 4) -> Dict:
 # --------------------------------------------------------------------------- #
 # Structural counters.                                                         #
 # --------------------------------------------------------------------------- #
+#: Column names of :func:`count`, in order -- the single source of truth for the
+#: report width, so a new counter needs no second literal kept in sync.
+COUNTERS = ('loops', 'maps', 'reduce', 'scan', 'states')
+
+
 def count(sdfg) -> List[int]:
-    """``[loops, maps, reduces, scans]`` structural counts."""
+    """``[loops, maps, reduces, scans, states]`` structural counts.
+
+    ``states`` tracks the standing invariant that an SDFG carries as few states as
+    possible, so a fusion/coalesce regression is visible and not just inferred from
+    the map count. Counted over nested SDFGs, matching the node counters' scope.
+    """
     loops = sum(1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion))
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
     reduces = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
     scans = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
-    return [loops, maps, reduces, scans]
+    states = sum(1 for sd in sdfg.all_sdfgs_recursive() for _ in sd.all_states())
+    return [loops, maps, reduces, scans, states]
 
 
 def guarded_fallback_loops(sdfg) -> int:
@@ -318,13 +329,16 @@ def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool =
 
 
 def _agg(rows, key) -> List[int]:
-    tot = [0, 0, 0, 0]
+    tot = None
     for r in rows.values():
         c = r.get(key)
         if c:
-            for j in range(4):
-                tot[j] += c[j]
-    return tot
+            if tot is None:
+                tot = list(c)
+            else:
+                for j, v in enumerate(c):
+                    tot[j] += v
+    return tot if tot is not None else [0] * len(COUNTERS)
 
 
 def summarize(res: Dict) -> None:
@@ -345,10 +359,10 @@ def summarize(res: Dict) -> None:
             print(f"    WRONG: {', '.join(sorted(bad))}")
         for n in sorted(err):
             print(f"    ERROR {n}: {rows[n]['error']}")
-    print(f"  {'strategy':14s} {'loops':>6s} {'maps':>6s} {'reduce':>7s} {'scan':>5s}")
-    print(f"  {'baseline':14s} {b[0]:6d} {b[1]:6d} {b[2]:7d} {b[3]:5d}")
-    print(f"  {'LoopToMap':14s} {l[0]:6d} {l[1]:6d} {l[2]:7d} {l[3]:5d}")
-    print(f"  {res.get('config', 'canon'):14s} {c[0]:6d} {c[1]:6d} {c[2]:7d} {c[3]:5d}")
+    header = ''.join(f'{name:>8s}' for name in COUNTERS)
+    print(f"  {'strategy':14s}{header}")
+    for label, totals in (('baseline', b), ('LoopToMap', l), (res.get('config', 'canon'), c)):
+        print(f"  {label:14s}" + ''.join(f'{v:8d}' for v in totals))
     print(f"  residual sequential loops: baseline={b[0]}  L2M={l[0]}  canon={c[0]}")
     print(f"  guarded (if cond: map else: seq) fallbacks counted as parallel: {guarded}")
     print(f"  EFFECTIVE residual sequential (canon - guarded): {eff}  "
