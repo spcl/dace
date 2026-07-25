@@ -1664,8 +1664,7 @@ def test_symbolic_stride_scan_specializes_if_scan_else_seq():
     assert _num_scan_nodes(par_region) == 1, 'the K >= 1 branch must hold exactly one residue-class Scan libnode'
     assert _num_scan_nodes(seq_region) == 0, 'the else branch must keep the sequential loop (no Scan)'
     seq_loops = [
-        r for r in seq_region.all_control_flow_regions(recursive=True)
-        if isinstance(r, LoopRegion) and r.loop_variable
+        r for r in seq_region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
     ]
     assert seq_loops and all(l.pinned_sequential for l in seq_loops), \
         'the else-branch fallback loop must be pinned sequential'
