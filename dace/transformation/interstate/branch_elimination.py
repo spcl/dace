@@ -1015,7 +1015,7 @@ class BranchElimination(transformation.MultiStateTransformation):
                     code = sympy.nsimplify(rhs_expr)
                     # Use rational until the very end and then call evalf to get rational to flaot to avoid accumulating errors
                     code = sympy.nsimplify(code.subs(ie.dst_conn, rhs_str)).evalf()
-                    new_code_str = lhs + " = " + pycode(code)
+                    new_code_str = lhs + " = " + pycode(code, allow_unknown_functions=True)
                     node.code = CodeBlock(new_code_str)
 
                     state.remove_edge(ie)

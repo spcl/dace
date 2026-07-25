@@ -12,7 +12,6 @@ from dace.sdfg.sdfg import ConditionalBlock
 from dace.transformation.helpers import move_branch_cfg_up_discard_conditions
 from dace.transformation import pass_pipeline as ppl, transformation
 import sympy
-from sympy import pycode
 
 
 @lru_cache(maxsize=16384, typed=True)
@@ -43,7 +42,10 @@ def _trivial_cond_check_cached(code_string: str, val: bool) -> bool:
         replacements = {"True": "1", "False": "0", "and": "*", "or": "+"}
         rewritten = " ".join(replacements.get(t.strip(), t.strip()) for t in tokens).strip()
         simplified = dace.symbolic.SymExpr(rewritten).simplify()
-        result = symbolic.evaluate(dace.symbolic.SymExpr(pycode(simplified)), symbols={})
+        # symstr, not sympy's printer: this string is re-parsed by SymExpr, so it must stay in
+        # DaCe's own vocabulary -- and sympy raises outright on int_floor/int_ceil, which the
+        # bare ``except`` below would silently turn into "not a trivial condition".
+        result = symbolic.evaluate(dace.symbolic.SymExpr(symbolic.symstr(simplified)), symbols={})
         if isinstance(result, (bool, int, sympy.Integer)) or result in (sympy.true, sympy.false):
             return bool(result) is val
     except Exception:
