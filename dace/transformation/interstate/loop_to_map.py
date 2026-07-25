@@ -530,6 +530,24 @@ class LoopToMap(xf.MultiStateTransformation):
             in_order_loop_blocks = list(
                 cfg_analysis.blockorder_topological_sort(self.loop, recursive=True, ignore_nonstate_blocks=False))
             for block in in_order_loop_blocks:
+                # ``blockorder_topological_sort`` emits a ConditionalBlock BEFORE the blocks nested in
+                # its branches, yet the conditional's own out-edges execute AFTER those branches. A
+                # symbol assigned on EVERY branch of an exhaustive conditional (one with an else arm)
+                # is therefore already defined once the conditional exits, so count it as assigned
+                # before this block's reads/out-edges are examined. Without this, a loop-local scalar
+                # set in both arms of an if/else and read afterwards is misreported as a loop-carried
+                # dependency, which refuses embarrassingly-parallel loops (the CloudSC nblks loop).
+                if isinstance(block, ConditionalBlock) and any(c is None for c, _ in block.branches):
+                    per_branch = []
+                    for _cond, body in block.branches:
+                        assigned_in_branch = set()
+                        for inner in body.all_control_flow_blocks():
+                            for ie in inner.parent_graph.out_edges(inner):
+                                assigned_in_branch |= set(ie.data.assignments.keys())
+                        per_branch.append(assigned_in_branch)
+                    if per_branch:
+                        symbols_that_may_be_used |= set.intersection(*per_branch)
+
                 # A symbol read in the block's own dataflow (e.g. a memlet subset ``b[im]``) is read
                 # before any symbol the block assigns on its out-edges; if the loop later reassigns it,
                 # it is loop-carried. The per-edge ``read_symbols()`` below only sees interstate-edge

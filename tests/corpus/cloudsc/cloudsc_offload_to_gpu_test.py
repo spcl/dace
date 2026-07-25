@@ -251,12 +251,46 @@ def test_device_written_data_is_not_constant():
 
 
 def test_transients_promoted_and_scalars_registered():
+    """A transient the kernel uses goes to ``GPU_Global``; scalars go to ``Register``.
+
+    ``scratch`` is wired into the kernel body rather than merely declared: promotion is gated on real
+    device use, so a dangling descriptor would pin nothing and the assertion would pass vacuously.
+    """
     sdfg = blocked_sdfg()
-    sdfg.add_transient('scratch', [4], dace.float64)
+    sdfg.add_transient('scratch', [klev, klon, nblocks], dace.float64)
     sdfg.add_scalar('acc', dace.float64, transient=True)
+    state = sdfg.states()[0]
+    inner_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit) and n.map.label == 'work')
+    block_exit = next(n for n in state.nodes() if isinstance(n, nodes.MapExit) and n.map.label == 'blocks')
+    tasklet = next(n for n in state.nodes() if isinstance(n, nodes.Tasklet))
+    tasklet.add_out_connector('s')
+    tasklet.code.as_string = 'o = 2.0 * a\ns = a'
+    inner_exit.add_in_connector('IN_scratch')
+    inner_exit.add_out_connector('OUT_scratch')
+    block_exit.add_in_connector('IN_scratch')
+    block_exit.add_out_connector('OUT_scratch')
+    state.add_edge(tasklet, 's', inner_exit, 'IN_scratch', Memlet(data='scratch', subset='jk, jl, ibl'))
+    state.add_edge(inner_exit, 'OUT_scratch', block_exit, 'IN_scratch',
+                   Memlet(data='scratch', subset='0:klev, 0:klon, ibl'))
+    state.add_edge(block_exit, 'OUT_scratch', state.add_write('scratch'), None,
+                   Memlet.from_array('scratch', sdfg.arrays['scratch']))
+
     offload_cloudsc_to_gpu(sdfg)
     assert sdfg.arrays['scratch'].storage == dtypes.StorageType.GPU_Global
     assert sdfg.arrays['acc'].storage == dtypes.StorageType.Register
+
+
+def test_host_only_transient_stays_host():
+    """The other side of the gate: a transient no kernel touches must NOT be promoted, or its host
+    readers would dereference device memory."""
+    sdfg = blocked_sdfg()
+    sdfg.add_transient('host_scratch', [4], dace.float64)
+    state = sdfg.states()[0]
+    producer = state.add_tasklet('init', {}, {'o'}, 'o = 1.0')
+    state.add_edge(producer, 'o', state.add_write('host_scratch'), None, Memlet(data='host_scratch', subset='0'))
+    offload_cloudsc_to_gpu(sdfg)
+    assert sdfg.arrays['host_scratch'].storage in (dtypes.StorageType.Default, dtypes.StorageType.CPU_Heap)
+    assert 'gpu_host_scratch' not in sdfg.arrays
 
 
 def test_excluded_array_stays_host_side():
