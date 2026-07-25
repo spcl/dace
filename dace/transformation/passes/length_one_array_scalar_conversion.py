@@ -11,10 +11,13 @@ into the other form changes nothing a caller sees.
 
 A NON-transient descriptor is part of the SDFG signature -- rewriting it in place would change the
 caller's contract (the caller passes a 1-element numpy buffer for an ``Array`` but a by-value scalar
-for a ``Scalar``, and a by-value scalar cannot receive a written-back result). ``preserve_abi``
-(default ``True``) forbids that: under it no top-level non-transient descriptor is ever rewritten, so
-the signature is byte-identical after the pass. A non-transient is instead STAGED, only when
-``stage_nontransients_arrays_into_scalars`` is set:
+for a ``Scalar``, and a by-value scalar cannot receive a written-back result). ``preserve_abi`` is how
+such a descriptor is converted anyway WITHOUT touching that contract: it is never rewritten, only
+STAGED through copy states, so the SDFG signature is byte-identical after the pass while the body
+computes on the other form. Set ``preserve_abi`` to opt in; left clear, non-transients are skipped
+entirely and only transients convert.
+
+Staging one non-transient means:
 
 * the signature descriptor ``alpha`` (a length-1 ``Array``) is KEPT,
 * a fresh transient ``Scalar`` ``scal_alpha`` is introduced and every body reference to ``alpha`` is
@@ -27,15 +30,9 @@ pass stages a non-transient ``Scalar`` into a length-1 ``Array`` the same way. T
 always allocated with ``find_new_name`` so repeated forward/inverse application never collides on a
 name it created earlier.
 
-Clearing ``preserve_abi`` is the opt-in for the opposite intent: a top-level non-transient is then
-rewritten IN PLACE and the SDFG's call signature changes with it. That is what the HLFIR Fortran
-frontend wants from ``ConvertLengthOneArraysToScalars`` as a post-generation cleanup -- ``Scalar``
-data on the signature binds to a plain Python ``int`` / ``float`` whereas a length-1 ``Array`` needs
-a 1-element numpy buffer -- so the caller is rewritten to match. Because the descriptor a
-:class:`~dace.sdfg.nodes.NestedSDFG` sees through a connector is a separate descriptor of the nested
-SDFG, an in-place rewrite is propagated to it; otherwise the two sides of the connector would
-disagree on the rank. Nested non-transients are never converted on their own -- they are a nested
-SDFG's own signature, owned by the parent's memlets.
+The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-generation cleanup:
+``Scalar`` data on the SDFG signature binds to a plain Python ``int`` / ``float`` whereas a length-1
+``Array`` needs a 1-element numpy buffer.
 """
 import re
 from typing import Dict, List, Optional, Set, Tuple
@@ -86,28 +83,6 @@ def _descriptor_is_written(sdfg: SDFG, name: str) -> bool:
     return False
 
 
-def _connector_image(sdfg: SDFG, names: Set[str]) -> Dict[nodes.NestedSDFG, Set[str]]:
-    """Per :class:`~dace.sdfg.nodes.NestedSDFG` node, the names of ITS descriptors bound through a
-    connector to one of ``names`` in the parent.
-
-    A nested SDFG's connector descriptor is a separate descriptor object, so an in-place rank change
-    on the parent's side does not reach it. Rewriting only one side leaves the connector's two ends
-    disagreeing on the rank, which validation rejects."""
-    image: Dict[nodes.NestedSDFG, Set[str]] = {}
-    if not names:
-        return image
-    for state in sdfg.all_states():
-        for node in state.nodes():
-            if not isinstance(node, nodes.NestedSDFG):
-                continue
-            bound = [e.dst_conn for e in state.in_edges(node) if e.data is not None and e.data.data in names]
-            bound += [e.src_conn for e in state.out_edges(node) if e.data is not None and e.data.data in names]
-            for conn in bound:
-                if conn:
-                    image.setdefault(node, set()).add(conn)
-    return image
-
-
 def _copyin_state(sdfg: SDFG) -> SDFGState:
     """A new start state to hold copy-IN edges (prepended before the current start)."""
     return sdfg.add_state_before(sdfg.start_state, 'stage_copyin', is_start_block=True)
@@ -128,7 +103,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     """Rewrite every length-1 ``Array`` (shape ``(1,)``) to a true ``Scalar`` of the same dtype, and
     drop the ``[0]`` accessors that referenced it. Transient arrays are rewritten in place; a
     non-transient array is STAGED into a fresh transient scalar (with copy-in/out) only when
-    ``stage_nontransients_arrays_into_scalars`` is set -- see the module docstring.
+    ``preserve_abi`` is set -- see the module docstring.
 
     Length-1 arrays of an ``opaque`` dtype (an external handle such as ``MPI_Request`` / ``MPI_Comm``)
     are left untouched: a consumer that takes the handle through a pointer connector needs the source
@@ -138,13 +113,10 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
 
     :param recursive: Recurse into nested SDFGs (only their transient length-1 arrays are rewritten --
         a non-transient nested-SDFG arg is part of its parent's signature).
-    :param stage_nontransients_arrays_into_scalars: Also stage non-transient length-1 arrays into
-        fresh transient scalars with a copy-in (first state) and copy-out (last state), leaving the
-        signature array in place. Default ``False`` -- only transient arrays are scalarized.
-    :param preserve_abi: Never rewrite a top-level non-transient descriptor, so the SDFG's call
-        signature is byte-identical after the pass; a non-transient is converted only by STAGING
-        (above). Default ``True``. Clearing it rewrites the non-transient in place -- the signature
-        changes to a by-value scalar and every caller must be rewritten to match.
+    :param preserve_abi: Also convert non-transient (signature) length-1 arrays, keeping the ABI
+        intact: the array stays on the signature and is STAGED into a fresh transient scalar with a
+        copy-in (first state) and copy-out (last state), never rewritten. Default ``False`` -- only
+        transient arrays are scalarized.
     :param filter: Optional whitelist NARROWING which top-level descriptors are eligible. ``None``
         (default) -- no restriction. A set -- rewrite ONLY named descriptors that are ALSO eligible
         under the other gates; an empty set rewrites nothing. Gates the top-level rewrite only, not the
@@ -154,11 +126,12 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     """
 
     recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
-    stage_nontransients_arrays_into_scalars = properties.Property(
+    preserve_abi = properties.Property(
         dtype=bool,
         default=False,
-        desc="Stage non-transient length-1 arrays into fresh transient scalars (copy-in/out), keeping "
-        "the signature array. Default only scalarizes transients.")
+        desc="Convert non-transient length-1 arrays too, keeping the ABI intact by staging them into "
+        "fresh transient scalars (copy-in/out) instead of rewriting the signature array. Default only "
+        "scalarizes transients.")
     filter = properties.SetProperty(
         element_type=str,
         default=None,
@@ -171,25 +144,17 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         default=False,
         desc="Also rewrite a higher-rank single-element array (every dim == 1, e.g. a (1, 1) map-fusion "
         "scratch buffer), not just a rank-1 length-1 array.")
-    preserve_abi = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Never rewrite a top-level non-transient descriptor, keeping the SDFG signature "
-        "byte-identical; such a descriptor is converted only by staging. Clearing this rewrites it in "
-        "place and changes the call signature.")
 
     def __init__(self,
                  recursive: bool = True,
-                 stage_nontransients_arrays_into_scalars: bool = False,
+                 preserve_abi: bool = False,
                  filter: 'Optional[Set[str]]' = None,
-                 single_element: bool = False,
-                 preserve_abi: bool = True):
+                 single_element: bool = False):
         super().__init__()
         self.recursive = recursive
-        self.stage_nontransients_arrays_into_scalars = stage_nontransients_arrays_into_scalars
+        self.preserve_abi = preserve_abi
         self.filter = None if filter is None else frozenset(filter)
         self.single_element = single_element
-        self.preserve_abi = preserve_abi
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.Symbols | ppl.Modifies.States
@@ -237,48 +202,34 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
             return False
         return True
 
-    def _rewrite(self,
-                 sdfg: SDFG,
-                 apply_filter: bool,
-                 stage_nontransients: bool,
-                 force_names: 'Optional[Set[str]]' = None) -> Set[str]:
+    def _rewrite(self, sdfg: SDFG, apply_filter: bool, stage_nontransients: bool) -> Set[str]:
         """Scalarize length-1 arrays in ``sdfg`` (modified in place).
 
         Transient arrays are scalarized in place (same name). If ``stage_nontransients``, each
-        non-transient length-1 array is converted too -- by staging into a fresh transient scalar with
-        copy-in/out under ``preserve_abi``, or in place (changing the signature) without it.
+        non-transient length-1 array is staged into a fresh transient scalar with copy-in/out.
 
         :param sdfg: SDFG to rewrite.
         :param apply_filter: Whether the top-level ``filter`` set gates the rewrite here (``False`` in
             the nested-SDFG recursion: the filter names outer-level descriptors).
-        :param stage_nontransients: Whether to convert non-transient arrays (top level only).
-        :param force_names: Non-transient descriptors to rewrite in place regardless of
-            ``stage_nontransients``. Set only by the recursion, to carry a parent's in-place rewrite
-            through to the nested SDFG's side of the connector.
+        :param stage_nontransients: Whether to stage non-transient arrays (top level only).
         :returns: Names of the descriptors that are now scalar-referenced in the body.
         """
-        force_names = force_names or frozenset()
         blocked = self._blocked_sources(sdfg)
         # rename[old] = the name the body should reference after the rewrite (== old for a transient
         # scalarized in place; a fresh scalar name for a staged non-transient). staged carries the
         # kept signature array plus its read/write direction so copy-in/out can be wired afterwards.
         rename: Dict[str, str] = {}
         staged: List[Tuple[str, str, bool, bool]] = []  # (array_name, scalar_name, is_read, is_written)
-        # Non-transients rewritten in place here; their nested-SDFG connector image must follow.
-        signature_rewritten: Set[str] = set()
 
         for arr_name, arr in list(sdfg.arrays.items()):
             if not self._is_eligible(sdfg, arr_name, arr, blocked, apply_filter):
                 continue
-            in_place = arr.transient or arr_name in force_names or (stage_nontransients and not self.preserve_abi)
-            if in_place:
-                if not arr.transient:
-                    signature_rewritten.add(arr_name)
+            if arr.transient:
                 sdfg.remove_data(arr_name, validate=False)
                 sdfg.add_scalar(arr_name,
                                 dtype=arr.dtype,
                                 storage=arr.storage,
-                                transient=arr.transient,
+                                transient=True,
                                 lifetime=arr.lifetime,
                                 debuginfo=arr.debuginfo,
                                 find_new_name=False)
@@ -360,25 +311,18 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 sdfg.symbols.pop(nm, None)
 
         if self.recursive:
-            image = _connector_image(sdfg, signature_rewritten)
             for state in sdfg.all_states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
                         # Nested-SDFG recursion is transient-only (a non-transient inner arg belongs to
                         # the parent's signature) and the filter names outer descriptors, so neither
-                        # staging nor filtering applies inside. The one exception is the connector image
-                        # of a descriptor just rewritten in place here: both sides must change together.
-                        self._rewrite(node.sdfg,
-                                      apply_filter=False,
-                                      stage_nontransients=False,
-                                      force_names=image.get(node))
+                        # staging nor filtering applies inside.
+                        self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
 
         return set(rename)
 
     def apply_pass(self, sdfg: SDFG, _: dict) -> Optional[Set[str]]:
-        rewritten = self._rewrite(sdfg,
-                                  apply_filter=True,
-                                  stage_nontransients=self.stage_nontransients_arrays_into_scalars)
+        rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)
         return rewritten or None
 
 
@@ -387,54 +331,39 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
 class ConvertScalarsToLengthOneArrays(ppl.Pass):
     """Inverse of ``ConvertLengthOneArraysToScalars``: rewrite every ``Scalar`` to a length-1 ``Array``
     (shape ``(1,)``). Transient scalars are rewritten in place; a non-transient scalar is STAGED into a
-    fresh transient length-1 array (with copy-in/out) only when
-    ``stage_nontransients_arrays_into_scalars`` is set. Useful when a consumer requires a 1-element
-    buffer rather than a by-value scalar.
+    fresh transient length-1 array (with copy-in/out) only when ``preserve_abi`` is set. Useful when a
+    consumer requires a 1-element buffer rather than a by-value scalar.
 
     ``Scalar`` data of an ``opaque`` dtype (an external handle such as ``MPI_Request`` / ``MPI_Comm``)
     is left untouched, the symmetric counterpart of the ``opaque`` exemption in the forward pass.
 
     :param recursive: Recurse into nested SDFGs (transient-only there).
-    :param stage_nontransients_arrays_into_scalars: Also stage non-transient scalars into fresh
-        transient length-1 arrays with copy-in/out, leaving the signature scalar in place. Default
-        ``False`` -- only transient scalars are arrayized.
+    :param preserve_abi: Also convert non-transient (signature) scalars, keeping the ABI intact: the
+        scalar stays on the signature and is STAGED into a fresh transient length-1 array with
+        copy-in/out, never rewritten. Default ``False`` -- only transient scalars are arrayized.
     :param filter: Optional whitelist NARROWING which top-level descriptors are eligible (mirrors the
         forward pass). ``None`` (default) -- no restriction; an empty set rewrites nothing.
-    :param preserve_abi: Never rewrite a top-level non-transient descriptor, so the SDFG's call
-        signature is byte-identical after the pass; a non-transient is converted only by STAGING.
-        Default ``True``. Clearing it rewrites the non-transient in place -- the signature changes to
-        a 1-element buffer and every caller must be rewritten to match.
     """
 
     recursive = properties.Property(dtype=bool, default=True, desc="Recurse into nested SDFGs (transient-only there).")
-    stage_nontransients_arrays_into_scalars = properties.Property(
+    preserve_abi = properties.Property(
         dtype=bool,
         default=False,
-        desc="Stage non-transient scalars into fresh transient length-1 arrays (copy-in/out), keeping "
-        "the signature scalar. Default only arrayizes transients.")
+        desc="Convert non-transient scalars too, keeping the ABI intact by staging them into fresh "
+        "transient length-1 arrays (copy-in/out) instead of rewriting the signature scalar. Default "
+        "only arrayizes transients.")
     filter = properties.SetProperty(
         element_type=str,
         default=None,
         allow_none=True,
         desc="Optional whitelist restricting which top-level descriptors are eligible. ``None`` -- no "
         "restriction; an empty set rewrites nothing. Does not gate the nested-SDFG recursion.")
-    preserve_abi = properties.Property(
-        dtype=bool,
-        default=True,
-        desc="Never rewrite a top-level non-transient descriptor, keeping the SDFG signature "
-        "byte-identical; such a descriptor is converted only by staging. Clearing this rewrites it in "
-        "place and changes the call signature.")
 
-    def __init__(self,
-                 recursive: bool = True,
-                 stage_nontransients_arrays_into_scalars: bool = False,
-                 filter: 'Optional[Set[str]]' = None,
-                 preserve_abi: bool = True):
+    def __init__(self, recursive: bool = True, preserve_abi: bool = False, filter: 'Optional[Set[str]]' = None):
         super().__init__()
         self.recursive = recursive
-        self.stage_nontransients_arrays_into_scalars = stage_nontransients_arrays_into_scalars
-        self.filter = None if filter is None else frozenset(filter)
         self.preserve_abi = preserve_abi
+        self.filter = None if filter is None else frozenset(filter)
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Descriptors | ppl.Modifies.Memlets | ppl.Modifies.States
@@ -442,41 +371,29 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def _rewrite(self,
-                 sdfg: SDFG,
-                 apply_filter: bool,
-                 stage_nontransients: bool,
-                 force_names: 'Optional[Set[str]]' = None) -> Set[str]:
+    def _rewrite(self, sdfg: SDFG, apply_filter: bool, stage_nontransients: bool) -> Set[str]:
         """Arrayize scalars in ``sdfg`` (modified in place); mirror of the forward ``_rewrite``.
 
         :param sdfg: SDFG to rewrite.
         :param apply_filter: Whether the top-level ``filter`` set gates the rewrite here.
-        :param stage_nontransients: Whether to convert non-transient scalars (top level only).
-        :param force_names: Non-transient descriptors to rewrite in place regardless of
-            ``stage_nontransients``, carrying a parent's in-place rewrite through to the nested SDFG's
-            side of the connector.
+        :param stage_nontransients: Whether to stage non-transient scalars (top level only).
         :returns: Names of the descriptors that are now array-referenced in the body.
         """
-        force_names = force_names or frozenset()
         rename: Dict[str, str] = {}
         staged: List[Tuple[str, str, bool, bool]] = []  # (scalar_name, array_name, is_read, is_written)
-        signature_rewritten: Set[str] = set()
 
         for name, desc in list(sdfg.arrays.items()):
             if not isinstance(desc, dace.data.Scalar) or isinstance(desc.dtype, dace.dtypes.opaque):
                 continue
             if apply_filter and self.filter is not None and name not in self.filter:
                 continue
-            in_place = desc.transient or name in force_names or (stage_nontransients and not self.preserve_abi)
-            if in_place:
-                if not desc.transient:
-                    signature_rewritten.add(name)
+            if desc.transient:
                 sdfg.remove_data(name, validate=False)
                 sdfg.add_array(name,
                                shape=(1, ),
                                dtype=desc.dtype,
                                storage=desc.storage,
-                               transient=desc.transient,
+                               transient=True,
                                lifetime=desc.lifetime,
                                debuginfo=desc.debuginfo,
                                find_new_name=False)
@@ -484,14 +401,17 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
             elif stage_nontransients:
                 is_read = _descriptor_is_read(sdfg, name)
                 is_written = _descriptor_is_written(sdfg, name)
-                arr_name = sdfg.add_array(f'arr_{name}',
-                                          shape=(1, ),
-                                          dtype=desc.dtype,
-                                          storage=desc.storage,
-                                          transient=True,
-                                          lifetime=desc.lifetime,
-                                          debuginfo=desc.debuginfo,
-                                          find_new_name=True)
+                # ``find_new_name`` makes add_array return ``(name, desc)``; binding the tuple as the
+                # name leaves every rename target a tuple and the first Memlet built from it raises
+                # ``Invalid type "tuple" for property data``. The forward pass unpacks the same way.
+                arr_name, _ = sdfg.add_array(f'arr_{name}',
+                                             shape=(1, ),
+                                             dtype=desc.dtype,
+                                             storage=desc.storage,
+                                             transient=True,
+                                             lifetime=desc.lifetime,
+                                             debuginfo=desc.debuginfo,
+                                             find_new_name=True)
                 rename[name] = arr_name
                 staged.append((name, arr_name, is_read, is_written))
 
@@ -520,18 +440,12 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                     copyout.add_nedge(a, s, Memlet(data=arr_name, subset='0'))
 
         if self.recursive:
-            image = _connector_image(sdfg, signature_rewritten)
             for state in sdfg.all_states():
                 for node in state.nodes():
                     if isinstance(node, nodes.NestedSDFG):
-                        self._rewrite(node.sdfg,
-                                      apply_filter=False,
-                                      stage_nontransients=False,
-                                      force_names=image.get(node))
+                        self._rewrite(node.sdfg, apply_filter=False, stage_nontransients=False)
         return set(rename)
 
     def apply_pass(self, sdfg: SDFG, _: dict) -> Optional[Set[str]]:
-        rewritten = self._rewrite(sdfg,
-                                  apply_filter=True,
-                                  stage_nontransients=self.stage_nontransients_arrays_into_scalars)
+        rewritten = self._rewrite(sdfg, apply_filter=True, stage_nontransients=self.preserve_abi)
         return rewritten or None
