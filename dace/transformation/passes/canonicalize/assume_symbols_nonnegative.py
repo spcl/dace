@@ -249,6 +249,8 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
         # DeadDataflowElimination would otherwise prune this tasklet -- and with
         # it the guard -- as dead. Mark it side-effecting so simplify keeps it.
         guard.side_effects = True
+        # Predicate reads only free symbols (in scope everywhere), so its position can't change the outcome.
+        guard.ordered_side_effects = False
     sdfg.reset_cfg_list()
     return 1
 

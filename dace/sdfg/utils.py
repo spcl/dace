@@ -1486,7 +1486,7 @@ def trace_nested_access(node: nd.AccessNode, state: SDFGState,
 def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> int:
     """
     Fuses all possible states of an SDFG (and all sub-SDFGs) using an optimized
-    routine that uses the structure of the StateFusion transformation.
+    routine that uses the structure of the StateFusionExtended transformation.
 
     :param sdfg: The SDFG to transform.
     :param permissive: If True, operates in permissive mode, which ignores some
@@ -1497,7 +1497,7 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                      shows progress bar.
     :return: The total number of states fused.
     """
-    from dace.transformation.interstate import StateFusion, BlockFusion  # Avoid import loop
+    from dace.transformation.interstate import StateFusionExtended, BlockFusion  # Avoid import loop
 
     if progress is None and not config.Config.get_bool('progress'):
         progress = False
@@ -1534,8 +1534,8 @@ def fuse_states(sdfg: SDFG, permissive: bool = False, progress: bool = None) -> 
                         continue
 
                     if isinstance(u, SDFGState) and isinstance(v, SDFGState):
-                        candidate = {StateFusion.first_state: u, StateFusion.second_state: v}
-                        sf = StateFusion()
+                        candidate = {StateFusionExtended.first_state: u, StateFusionExtended.second_state: v}
+                        sf = StateFusionExtended()
                         sf.setup_match(cfg, cfg.cfg_id, -1, candidate, 0, override=True)
                         if sf.can_be_applied(cfg, 0, sd, permissive=permissive):
                             sf.apply(cfg, sd)

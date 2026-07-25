@@ -395,7 +395,16 @@ def test_inout_second_state_2():
 
     sdfg = func.to_sdfg(simplify=False)
     sdfg.simplify()
-    assert sdfg.number_of_nodes() == 2
+    # StateFusionExtended orders the copy before the in-place double with a happens-before
+    # edge, so the WAR survives a single state -- assert the values, not just the shape.
+    assert sdfg.number_of_nodes() == 1
+
+    A = np.random.rand(128, 128)
+    B = np.zeros((128, 128))
+    expected = A.copy()
+    sdfg(A=A, B=B)
+    assert np.array_equal(B, expected)
+    assert np.allclose(A, 2 * expected)
 
 
 def test_check_paths():

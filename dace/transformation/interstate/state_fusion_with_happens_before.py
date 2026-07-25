@@ -240,9 +240,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         with no data dependence tying it to its neighbours could execute in any order (or
         concurrently in a parallel scope), reordering or dropping the effect."""
         for node in state.nodes():
-            if isinstance(node, nodes.Tasklet) and node.has_side_effects(sdfg):
+            if isinstance(node, nodes.Tasklet) and node.has_ordered_side_effects(sdfg):
                 return True
-            if isinstance(node, nodes.LibraryNode) and node.has_side_effects(sdfg):
+            if isinstance(node, nodes.LibraryNode) and node.has_ordered_side_effects(sdfg):
                 return True
             if isinstance(node, nodes.NestedSDFG):
                 for nested_state in node.sdfg.states():
