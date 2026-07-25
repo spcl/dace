@@ -97,6 +97,27 @@ def _build_ptr_scalar(name):
     return sdfg
 
 
+def _build_offset_ptr(name):
+    """A CPP tasklet whose pointer connectors start at a NONZERO offset and are SUBSCRIPTED.
+
+    The inlined connector is a compound expression (``src + 1``), so the body's ``_src[_k]`` becomes
+    ``src + 1[_k]`` unless the base is parenthesized -- which C++ parses as ``src + (1[_k])`` and
+    rejects with ``invalid types 'int[int]' for array subscript``. The zero-offset ``_build_ptr_scalar``
+    case cannot catch this: its connectors inline to a bare name.
+    """
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('src', [5], dace.float64)
+    sdfg.add_array('dst', [5], dace.float64)
+    st = sdfg.add_state('main')
+    t = st.add_tasklet('shift', {'_src'}, {'_dst'},
+                       'for (int _k = 0; _k < 4; _k++) { _dst[_k] = _src[_k] * 2.0; }',
+                       language=dace.dtypes.Language.CPP)
+    st.add_edge(st.add_access('src'), None, t, '_src', dace.Memlet('src[1:5]'))
+    st.add_edge(t, '_dst', st.add_access('dst'), None, dace.Memlet('dst[1:5]'))
+    sdfg.validate()
+    return sdfg
+
+
 def _build_memset(name):
     """ A ``MemsetLibraryNode`` expanded to a CPP ``memset(...)`` tasklet. """
     sdfg = dace.SDFG(name)
@@ -229,6 +250,29 @@ def test_cpp_pointer_and_scalar_unit():
     exp_dst = np.zeros(4)
     _build_ptr_scalar('ptrscalar_experimental').compile()(src=copy.deepcopy(src), dst=exp_dst, s=copy.deepcopy(sc))
     assert np.array_equal(leg_dst, exp_dst)
+
+
+def test_offset_pointer_connector_is_parenthesized_before_subscript():
+    """An offset base pointer must reach the body parenthesized, so a body that subscripts the
+    connector still binds the base first."""
+    _set_impl(EXPERIMENTAL)
+    code = _build_offset_ptr('offsetptr_codegen').generate_code()[0].clean_code
+    subscripts = [l.strip() for l in code.splitlines() if '_k]' in l and '*' in l]
+    assert subscripts, 'no subscripted pointer-connector line emitted'
+    line = subscripts[0]
+    assert '_src' not in line and '_dst' not in line, 'pointer connector not inlined: %s' % line
+    assert '(src + 1)[' in line and '(dst + 1)[' in line, 'offset base not parenthesized: %s' % line
+
+    # Bit-exact legacy vs experimental -- and it has to COMPILE, which is the actual regression.
+    base = dict(src=np.arange(5, dtype=np.float64) + 1.0, dst=np.zeros(5, dtype=np.float64))
+    _set_impl(LEGACY)
+    leg = copy.deepcopy(base)
+    _build_offset_ptr('offsetptr_legacy').compile()(**leg)
+    _set_impl(EXPERIMENTAL)
+    exp = copy.deepcopy(base)
+    _build_offset_ptr('offsetptr_experimental').compile()(**exp)
+    assert np.array_equal(leg['dst'], exp['dst'])
+    assert np.array_equal(exp['dst'], np.array([0.0, 4.0, 6.0, 8.0, 10.0]))
 
 
 def test_memset_pointer_connector():

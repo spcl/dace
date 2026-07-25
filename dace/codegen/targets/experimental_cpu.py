@@ -114,6 +114,17 @@ def format_index_access(ptrname: str, fnname: str, indices: List[str], extra: Li
     return '%s[%s(%s)]' % (ptrname, fnname, ', '.join(call_args))
 
 
+def parenthesized_ptr(expr: str) -> str:
+    """A base-pointer expression safe to substitute for a connector name in a tasklet body.
+
+    The expression replaces the connector TEXTUALLY, so the body decides how it is used -- and a
+    library body such as ``Scan``'s writes ``<conn>[_i]``. An offset pointer ``a + 1`` then reads as
+    ``a + 1[_i]``, which C++ parses as ``a + (1[_i])`` and rejects with ``invalid types 'int[int]'
+    for array subscript``. Wrapping binds the base first; the same parentheses are equally correct
+    where the body dereferences it or passes it on. A bare name needs none."""
+    return expr if expr.isidentifier() else f'({expr})'
+
+
 def loop_access_form() -> str:
     """How arrays indexed at a sequential loop counter are accessed, per
     ``compiler.cpu.codegen_params.loop_access_form``: ``indexed`` (the default, recompute the flat
@@ -682,10 +693,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             except KeyError:
                 defined_type = None
             if defined_type is not None:
-                return cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self)
+                return parenthesized_ptr(cpp.cpp_ptr_expr(sdfg, memlet, defined_type, codegen=self))
             # Fallback: base pointer + offset to the subset start.
             offset = cpp.cpp_offset_expr(desc, subset)
-            return ptrname if offset == '0' else '%s + %s' % (ptrname, offset)
+            return ptrname if offset == '0' else parenthesized_ptr('%s + %s' % (ptrname, offset))
 
         # Scalar connector (single element): a direct indexed access through the
         # generated <array>_idx function -- mirrors ReadableKeywordRemover._bare_access.
