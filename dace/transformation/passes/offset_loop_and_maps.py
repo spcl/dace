@@ -66,11 +66,20 @@ class OffsetLoopsAndMaps(ppl.Pass):
             return None
         if edge_data.other_subset is not None:
             raise Exception("TODO: Other subset not supported")
+        # Pre-sympify both keys and values of ``repldict`` via dace's own parser: handing
+        # ``.subs`` a plain ``{str: str}`` dict makes sympy re-parse the VALUES with vanilla
+        # ``sympify``, which mis-resolves a bare symbol name colliding with a sympy builtin
+        # (``N`` is ``sympy.N``, the numeric-eval function) instead of treating it as a symbol.
+        sym_repldict = {
+            dace.symbolic.pystr_to_symbolic(k): dace.symbolic.pystr_to_symbolic(v)
+            for k, v in repldict.items()
+        }
+
         # Range bounds may be plain Python ints; sympify before substituting so
         # ``.subs`` is always available (using symbols directly risks distinct
         # symbol objects for the same name).
         def _subs(bound):
-            return dace.symbolic.pystr_to_symbolic(bound).subs(repldict)
+            return dace.symbolic.pystr_to_symbolic(bound).subs(sym_repldict)
 
         new_range_list = [(_subs(b), _subs(e), _subs(s)) for b, e, s in edge_data.subset]
         new_range_str = ", ".join(f"{b}:{e+1}:{s}" for b, e, s in new_range_list)
@@ -136,6 +145,12 @@ class OffsetLoopsAndMaps(ppl.Pass):
         return ''.join(tokens).strip()
 
     def _repl_tasklets_on_node_list(self, state: dace.SDFGState, nodes: List[dace.nodes.Node], repldict):
+        # Pre-sympify once (see ``_create_new_memlet`` for why): vanilla ``.subs`` on a plain
+        # ``{str: str}`` dict mis-resolves a symbol name colliding with a sympy builtin.
+        sym_repldict = {
+            dace.symbolic.pystr_to_symbolic(k): dace.symbolic.pystr_to_symbolic(v)
+            for k, v in repldict.items()
+        }
         for node in nodes:
             if isinstance(node, dace.nodes.Tasklet):
                 code = node.code
@@ -144,7 +159,7 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     # Can raise exceptions if you have stuff like AND in the expression
                     try:
                         symexpr = dace.symbolic.SymExpr(code_str.split(" = ")[-1].strip())
-                        symexpr = symexpr.subs(repldict)
+                        symexpr = symexpr.subs(sym_repldict)
                         code_str = code_str.split(" = ")[0].strip() + " = " + pycode(symexpr)
                     except Exception as e:
                         code_str = copy.deepcopy(node.code.as_string)
@@ -261,9 +276,11 @@ class OffsetLoopsAndMaps(ppl.Pass):
                     if self.normalize_loops:
                         node.normalize()
 
-                    v = f"({node.loop_variable} - {_get_expr_from_str(self.offset_expr)})"
-                    if "- -" in v:
-                        v = v.replace("- -", "+ ")
+                    # Parenthesize the offset before subtracting: a bare f-string interpolation of a
+                    # multi-term offset (e.g. ``2 - N``) would produce ``(j - 2 - N)``, which parses as
+                    # ``j - 2 - N`` instead of the intended ``j - (2 - N) = j - 2 + N`` -- silently wrong
+                    # for any compound (non-single-token) offset expression.
+                    v = f"({node.loop_variable} - ({_get_expr_from_str(self.offset_expr)}))"
                     repldict = {node.loop_variable: v}
 
                     self._repl_recursive(node, repldict)
@@ -299,11 +316,14 @@ class OffsetLoopsAndMaps(ppl.Pass):
 
                                 new_range_list.append((b_expr, e_expr, s_expr))
 
+                                # Parenthesize the offset before subtracting (see the matching fix in
+                                # the ``LoopRegion`` branch above): unparenthesized, a compound offset
+                                # (e.g. ``2 - N``) silently flips the sign of its trailing terms.
+                                offset_str = pycode(_get_expr_from_str(self.offset_expr))
                                 if self.squeeze:
-                                    repldict[
-                                        param] = f"(({param} * {prev_s_expr}) - {pycode(_get_expr_from_str(self.offset_expr))})"
+                                    repldict[param] = f"(({param} * {prev_s_expr}) - ({offset_str}))"
                                 else:
-                                    repldict[param] = f"({param} - {pycode(_get_expr_from_str(self.offset_expr))})"
+                                    repldict[param] = f"({param} - ({offset_str}))"
                             else:
                                 new_range_list.append((b, e, s))
 
