@@ -26,6 +26,7 @@ from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
@@ -1182,6 +1183,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # (the merge can expose fresh constant/symbol chains). BEFORE
     # AssumeSymbolConstraints, which must stay the terminal stage.
     s += [('end', SymbolDedup()), ('end', SymbolPropagation()), ('end', ConstantPropagation())]
+    # SymbolPropagation above folds symbols out of interstate edges but leaves the
+    # now-unreferenced entries in sdfg.symbols; the last SimplifyPass (which prunes
+    # them via SIMPLIFY_PASSES) already ran earlier, so prune again here.
+    s += [('end', RemoveUnusedSymbols())]
 
     # revert_nonreduction_wcr (terminal): the terminal ``LoopToMap`` + fusion above form fresh
     # ``map_exit -> output`` WCR edges that the earlier ``revert_nonreduction_wcr`` (which ran

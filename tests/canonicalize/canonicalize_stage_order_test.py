@@ -14,9 +14,12 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
 from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES, _build_stages
+from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
+from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
+from dace.transformation.passes.symbol_propagation import SymbolPropagation
 
 
 def _flat(target: str = 'cpu'):
@@ -32,6 +35,14 @@ def _flat(target: str = 'cpu'):
 
 def _first_index(flat, name: str) -> int:
     for i, (_lbl, cls, inner) in enumerate(flat):
+        if cls == name or name in inner:
+            return i
+    return -1
+
+
+def _last_index(flat, name: str) -> int:
+    for i in range(len(flat) - 1, -1, -1):
+        _lbl, cls, inner = flat[i]
         if cls == name or name in inner:
             return i
     return -1
@@ -114,6 +125,21 @@ def test_negative_stride_is_normalized_after_maps_become_loops(target):
     assert lower != -1
     after = [i for i, (_l, cls, inner) in enumerate(flat) if NormalizeNegativeStride.__name__ in (cls, *inner)]
     assert any(i > lower for i in after), 'no NormalizeNegativeStride after maps are lowered to loops'
+
+
+@pytest.mark.parametrize('target', ['cpu', 'gpu'])
+def test_unused_symbols_are_pruned_after_the_terminal_propagation(target):
+    """The terminal SymbolPropagation/ConstantPropagation strip symbols from
+    interstate edges but leave the stale entries in ``sdfg.symbols`` -- nothing
+    after them prunes ``sdfg.symbols`` unless RemoveUnusedSymbols runs last.
+    """
+    flat = _flat(target)
+    prune = _last_index(flat, RemoveUnusedSymbols.__name__)
+    symprop = _last_index(flat, SymbolPropagation.__name__)
+    constprop = _last_index(flat, ConstantPropagation.__name__)
+    assert prune != -1 and symprop != -1 and constprop != -1
+    assert prune > symprop, 'RemoveUnusedSymbols must run after the terminal SymbolPropagation'
+    assert prune > constprop, 'RemoveUnusedSymbols must run after the terminal ConstantPropagation'
 
 
 def test_stage_grouping_preserves_recipe_order():
