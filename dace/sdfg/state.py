@@ -2921,8 +2921,11 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
+        # Derived from the live nodes, never from the cached set: staleness cannot be inferred from the
+        # node COUNT, because inlining renames blocks in place (``node.label = self.label + '_' + ...``)
+        # and leaves the count untouched -- the cache then reports names that no block carries any more
+        # and withholds the ones they now carry, so a "unique" name can collide.
+        self._labels = set(s.label for s in self.nodes())
         return dt.find_new_name(proposed or 'block', self._labels)
 
     def add_node(self,

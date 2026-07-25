@@ -104,6 +104,31 @@ def test_trivial_loop_elimination_reparents_clone_bodies_uniquely():
     sdfg.validate()
 
 
+def test_unique_block_name_survives_an_in_place_rename():
+    """``_ensure_unique_block_name`` must derive its label set from the live blocks, not from a cache
+    it validates by node COUNT.
+
+    Inlining renames blocks in place (``node.label = self.label + '_' + node.label``), which leaves the
+    count untouched -- so a count-guarded cache stays "fresh" while holding names no block carries and
+    missing the ones they now do, and hands back a name that is already taken. Pre-fix this produced
+    ``['renamed', 's_0', 'renamed']`` and CloudSC's canon_cpu died at ``loop_to_x`` with
+    ``Found multiple blocks with the same name in for_447``.
+    """
+    sdfg = dace.SDFG('unique_block_name_after_rename')
+    first = sdfg.add_state('s', is_start_block=True)
+    second = sdfg.add_state('s')  # -> 's_0'; cache and node count agree from here on
+
+    first.label = 'renamed'  # what inline() does: rename in place, count unchanged
+    third = sdfg.add_state('renamed')
+    sdfg.add_edge(first, second, InterstateEdge())
+    sdfg.add_edge(second, third, InterstateEdge())
+
+    labels = [b.label for b in sdfg.nodes()]
+    assert len(labels) == len(set(labels)), f'stale label cache reissued a taken name: {labels}'
+    assert _duplicate_block_names(sdfg) == []
+    sdfg.validate()
+
+
 def test_s118_canonicalizes_to_a_valid_sdfg():
     """The reported failure: ``s118`` canonicalization raised ``Found multiple blocks with the same
     name in for_259_par``. Repeated in-process because the producing order is not deterministic."""
