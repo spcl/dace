@@ -6,6 +6,7 @@ import pytest
 import dace
 from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg.state import ConditionalBlock, LoopRegion
+from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
 N = dace.symbol('N')
@@ -1840,3 +1841,34 @@ def test_multi_slot_same_array_five_carries():
 if __name__ == '__main__':
     import sys
     sys.exit(pytest.main([__file__, '-v']))
+
+
+def test_scan_survives_two_sided_carry_copy_memlet():
+    """A cross-array copy folded by ``TrivialTaskletElimination`` names the DESTINATION in
+    ``Memlet.data`` and keeps the source position in ``other_subset``. Walking back to the
+    carrier must read that side; reading ``subset`` yields the destination's scalar index and
+    the carry read looks like a constant, so the update is refused as ambiguous."""
+
+    @dace.program
+    def carry(out: dace.float64[N], delta: dace.float64[N]):
+        for i in range(1, N):
+            out[i] = out[i - 1] + delta[i]
+
+    sdfg = carry.to_sdfg(simplify=True)
+    # Materialize every unit copy as an explicit tasklet; LoopToScan's own preprocessing
+    # folds them back into the two-sided memlet form this test pins.
+    InsertAssignTaskletsForUnitCopies().apply_pass(sdfg, {})
+
+    assert LoopToScan().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _num_scan_nodes(sdfg) == 1
+
+    rng = np.random.default_rng(0)
+    n = 64
+    delta = rng.random(n)
+    out = np.zeros(n)
+    expected = out.copy()
+    for i in range(1, n):
+        expected[i] = expected[i - 1] + delta[i]
+    sdfg(out=out, delta=delta, N=n)
+    assert np.allclose(out, expected)

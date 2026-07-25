@@ -2728,14 +2728,20 @@ def _resolve_input(state: SDFGState, edge):
         desc = state.sdfg.arrays.get(src.data)
         if desc is None:
             return None, None
-        if not getattr(desc, 'transient', False):
+        if not desc.transient:
             return src.data, real_subset
         if state.in_degree(src) != 1 or state.out_degree(src) != 1:
             return None, None
         pred = state.in_edges(src)[0]
         if pred.data is None or pred.data.subset is None:
             return None, None
-        real_subset = pred.data.subset
+        # A cross-array copy memlet names one side in ``data`` and holds the other in
+        # ``other_subset``; when it names this (destination) node, the source position --
+        # the one being walked back to -- is in ``other_subset``, not ``subset``.
+        if pred.data.data == src.data and pred.data.other_subset is not None:
+            real_subset = pred.data.other_subset
+        else:
+            real_subset = pred.data.subset
         cur = pred
 
 
