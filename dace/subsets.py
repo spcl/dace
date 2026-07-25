@@ -639,7 +639,7 @@ class Range(Subset):
                 if token[i] == ',' and count == 0:
                     # Split the token to token[:i] and token[i+1:]
                     # Append token[:i] to the current range dimension
-                    uni_dim_tokens.append(token[0:i])
+                    uni_dim_tokens.append(token[0:i].strip())
                     # Append current range dimension to the list of lists
                     multi_dim_tokens.append(uni_dim_tokens)
                     # Start a new range dimension
@@ -657,8 +657,10 @@ class Range(Subset):
                 # Move to the next character
                 i += 1
 
-            # Append token to the current range dimension
-            uni_dim_tokens.append(token)
+            # Strip here, once, rather than at each parse site below: splitting on ':' and ',' leaves
+            # the separator whitespace on the tokens, so "i, j-1" yields " j-1". A leading space is
+            # an indent to a real Python parser; sympy only tolerates it because it parses via eval().
+            uni_dim_tokens.append(token.strip())
 
         # Append current range dimension to the list of lists
         multi_dim_tokens.append(uni_dim_tokens)
@@ -668,7 +670,7 @@ class Range(Subset):
             # If dimension has only 1 token, then it is an index (not a range),
             # treat as range of size 1
             if len(uni_dim_tokens) < 2:
-                value = symbolic.pystr_to_symbolic(uni_dim_tokens[0].strip())
+                value = symbolic.pystr_to_symbolic(uni_dim_tokens[0])
                 ranges.append((value, value, 1))
                 continue
                 #return Range(ranges)
@@ -682,7 +684,7 @@ class Range(Subset):
                 if len(expr) == 1:
                     tokens.append(expr[0])
                 elif len(expr) == 2:
-                    tokens.append((expr[0], expr[1]))
+                    tokens.append((expr[0].strip(), expr[1].strip()))
                 else:
                     raise SyntaxError("Invalid range: {}".format(multi_dim_tokens))
             # Parse tokens

@@ -17,6 +17,7 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
+from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
@@ -293,9 +294,14 @@ def collapse_one_dims(shape, treat_one_symbol_as_one: bool = False):
     def _is_dropped(s):
         if s == 1:
             return True
-        if treat_one_symbol_as_one and isinstance(s, sympy.Basic) and ONE in s.free_symbols:
-            return True
-        return False
+        if not treat_one_symbol_as_one:
+            return False
+        # ONE is a genuine sympy/dace symbol; walk a real sympy tree to compare against it.
+        if to_sympy is not None:
+            converted = to_sympy(s)
+            if converted is not None:
+                s = converted
+        return isinstance(s, sympy.Basic) and ONE in s.free_symbols
 
     return tuple(s for s in shape if not _is_dropped(s))
 
@@ -739,10 +745,14 @@ def symlist(values):
     for expr in values:
         if isinstance(expr, SymExpr):
             true_expr = expr.expr
-        elif isinstance(expr, sympy.Basic):
-            true_expr = expr
         else:
-            continue
+            true_expr = expr
+            if to_sympy is not None:
+                converted = to_sympy(true_expr)
+                if converted is not None:
+                    true_expr = converted
+            if not isinstance(true_expr, sympy.Basic):
+                continue
         for atom in sympy.preorder_traversal(true_expr):
             if atom in skip:
                 continue
@@ -789,7 +799,10 @@ def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, s
         return expr.cast_value()
 
     # Evaluate all symbols
-    syms = {(sname if isinstance(sname, sympy.Symbol) else symbol(sname)): sval for sname, sval in symbols.items()}
+    # A str key NAMES a symbol; anything else already IS one. Testing for `sympy.Symbol` instead
+    # made every non-sympy symbol object -- an idxalg one, say -- fall into `symbol(sname)`, which
+    # then indexes it as a name string and raised `AttributeError: no attribute 'startswith'`.
+    syms = {(symbol(sname) if isinstance(sname, str) else sname): sval for sname, sval in symbols.items()}
 
     # Filter out `None` values, callables, and iterables but not strings (for SymPy 1.12)
     syms = {
@@ -810,6 +823,10 @@ def issymbolic(value, constants=None):
         return issymbolic(value.expr)
     if isinstance(value, UndefinedSymbol):
         return True
+    if to_sympy is not None:
+        converted = to_sympy(value)
+        if converted is not None:
+            value = converted
     if isinstance(value, (sympy.Symbol, symbol)) and value.name not in constants:
         return True
     if isinstance(value, sympy.Basic):
@@ -838,6 +855,10 @@ def _overapproximate(expr):
             return expr.approx
         else:
             return overapproximate(expr.expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
     if isinstance(expr, (sympy.Number, TypedConstant)):
@@ -933,6 +954,10 @@ def sympy_to_dace(exprs, symbol_map=None):
     exprs = list(exprs)
 
     for i, expr in enumerate(exprs):
+        if to_sympy is not None:
+            converted = to_sympy(expr)
+            if converted is not None:
+                expr = converted
         if isinstance(expr, sympy.Basic):
             for atom in expr.atoms():
                 if isinstance(atom, sympy.Symbol):
@@ -991,6 +1016,10 @@ def builtin_userfunctions() -> frozenset:
 
 def contains_sympy_functions(expr):
     """ Returns True if expression contains Sympy functions. """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if isinstance(expr, Subscript):
         # A subscript is a data-container access.
         return True
@@ -1021,6 +1050,10 @@ def free_symbols_and_functions(expr: Union[SymbolicType, str]) -> Set[str]:
         if dtypes.validate_name(expr):
             return {expr}
         expr = pystr_to_symbolic(expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return set()
 
@@ -1043,6 +1076,10 @@ def arrays(expr: Union[SymbolicType, str]) -> Set[str]:
     """
     if isinstance(expr, str):
         expr = pystr_to_symbolic(expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return set()
     return {str(node.args[0]) for node in expr.atoms(Subscript)}
@@ -1062,6 +1099,10 @@ def scalars(expr: Union[SymbolicType, str], descriptors: Dict[str, Any]) -> Set[
     """
     if isinstance(expr, str):
         expr = pystr_to_symbolic(expr)
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return set()
     from dace import data  # avoid import loop
@@ -1080,6 +1121,11 @@ def is_undefined(expr: Union[SymbolicType, str]) -> bool:
 
     if isinstance(expr, UndefinedSymbol):
         return True
+
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
 
     if not isinstance(expr, sympy.Basic):
         return False
@@ -1229,6 +1275,10 @@ def relax_ipow(expr: SymbolicType) -> SymbolicType:
     stride respelled ``ipow(N, 2)`` by canonicalization compares unequal to ``N**2`` and the array is
     misread as padded. Normalize both sides through this before comparing or solving.
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
     return expr.rewrite(sympy.Pow)
@@ -1633,6 +1683,10 @@ def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     nexpr = expr
     if not isinstance(expr, sympy.Basic):
         return expr
@@ -1718,6 +1772,10 @@ def sympy_divide_fix(expr):
     """ Fix SymPy printouts where integer division such as "tid/2" turns
         into ".5*tid".
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     nexpr = expr
     if not isinstance(expr, sympy.Basic):
         return expr
@@ -1751,6 +1809,10 @@ def simplify_ext(expr):
     :param expr: A sympy expression.
     :return: Simplified version of the expression.
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
     a = sympy.Wild('a')
@@ -1776,6 +1838,10 @@ def evaluate_optional_arrays(expr, sdfg):
     :param sdfg: SDFG that contains arrays.
     :return: A simplified version of the expression.
     """
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     if not isinstance(expr, sympy.Basic):
         return expr
 
@@ -2525,6 +2591,12 @@ def _serialize_symbolic_uncached(expr: Union[SymbolicType, int, float, numpy.num
 
 
 def serialize_symbolic(expr):
+    # A natively-parsed expression serializes through the sympy serializer for the same reason it
+    # prints through the sympy printer: one implementation of DaCe's wire spellings, never two.
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
     return _serialize_symbolic_uncached(expr)
 
 
@@ -2636,8 +2708,13 @@ def pystr_to_symbolic(expr, symbol_map=None, simplify=None) -> sympy.Basic:
     # Keep SymExpr intact even when simplify=True, as it carries exact and approximate forms.
     if isinstance(expr, SymExpr):
         return expr
-    if isinstance(expr, sympy.Basic):
-        return sympy.simplify(expr) if simplify is True else expr
+    # The umbrella also covers a genuine idxalg Expr; sympy.simplify(expr) on one would sympify it
+    # first via the `_sympy_()` protocol, silently downgrading an already-natively-parsed expression
+    # back to real sympy (the seam must never do that) -- use its own `.simplify()` instead.
+    if isinstance(expr, SymbolicBasic):
+        if simplify is not True:
+            return expr
+        return sympy.simplify(expr) if isinstance(expr, sympy.Basic) else expr.simplify()
     # Symbol maps may contain unhashable or mutable caller-specific replacements, so only cache plain parsing.
     if symbol_map is None:
         return _pystr_to_symbolic_cached(expr, simplify)
@@ -2675,6 +2752,14 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
         # Also replaces bitwise operations with user-functions since SymPy does not support bitwise operations.
         if _NEEDS_AST_REWRITE.search(expr):
             expr = unparse(PythonOpToSympyConverter().visit(ast.parse(expr).body[0]))
+
+    # Under the idxalg backend, parse natively instead of building sympy objects. Without this the
+    # backend never engages: `pystr_to_symbolic` is the entry point for essentially every symbolic
+    # string in DaCe, so if it hands back sympy the selected engine is decorative and an A/B measures
+    # sympy against sympy. Restricted to the no-`symbol_map` case (the cached path, and the one that
+    # runs ~104k times per CloudSC load) because a caller-supplied map may hold sympy replacements.
+    if native_parse is not None and not symbol_map and isinstance(expr, str):
+        return native_parse(expr)
 
     # TODO: support SymExpr over-approximated expressions
     result = sympy.sympify(expr, _PYSTR2SYM_locals, evaluate=simplify)
@@ -2920,6 +3005,13 @@ def symstr(sym, arrayexprs: Optional[FrozenSet[str]] = None, cpp_mode=False) -> 
     if isinstance(sym, SymExpr):
         return symstr(sym.expr, arrayexprs, cpp_mode=cpp_mode)
 
+    # A natively-parsed (idxalg) expression is rendered by converting back to sympy and reusing the
+    # printer below, rather than by a parallel printer that could drift from DaCe's spellings.
+    if to_sympy is not None:
+        converted = to_sympy(sym)
+        if converted is not None:
+            sym = converted
+
     # Infinity, NaN and booleans are atomic constants: ``sympy_numeric_fix`` rejects
     # the first two and booleans are not ``Number``s, so the generic path below would
     # wrap them in parentheses that no longer round-trip. Print them bare instead.
@@ -2983,6 +3075,12 @@ def replace_array_accesses_with_connectors(rhs: str, arr_to_connector: Dict[str,
     expr = SymExpr(rhs)
     # SymExpr may wrap; unwrap to the underlying sympy expression for traversal.
     base = expr.expr if isinstance(expr, SymExpr) else expr
+    # A natively-parsed (idxalg) root is not sympy.Basic, so sympy.preorder_traversal below
+    # would degenerate to yielding only the root -- convert first, same as symstr/serialize_symbolic.
+    if to_sympy is not None:
+        converted = to_sympy(base)
+        if converted is not None:
+            base = converted
     printer = DaceSympyPrinter(arrays)
     rewrites: Dict[sympy.Basic, sympy.Basic] = {}
     arr_subsets: Dict[str, str] = {}
@@ -3094,7 +3192,10 @@ class SympyAwarePickler(pickle.Pickler):
     """
 
     def persistent_id(self, obj):
-        if isinstance(obj, sympy.Basic):
+        # The umbrella also matches a natively-parsed (idxalg) expression -- its own `str()`/
+        # `pystr_to_symbolic()` round-trip (below, via `_spickle`/`_sunpickle`) stays within
+        # whichever backend produced it, so no sympy conversion is needed here.
+        if isinstance(obj, SymbolicBasic):
             # Save sympy expression as srepr
             return ("DaCeSympyExpression", _spickle(obj))
         else:
@@ -3150,6 +3251,13 @@ def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> boo
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
     """
+    if to_sympy is not None:
+        converted_a = to_sympy(a)
+        if converted_a is not None:
+            a = converted_a
+        converted_b = to_sympy(b)
+        if converted_b is not None:
+            b = converted_b
     # Check for UndefinedSymbol in either expression
     if isinstance(a, sympy.Basic):
         for atom in a.atoms():
@@ -3182,14 +3290,19 @@ def equal(a: SymbolicType, b: SymbolicType, is_length: bool = True) -> Union[boo
     """
 
     args = [arg.expr if isinstance(arg, SymExpr) else arg for arg in (a, b)]
+    if to_sympy is not None:
+        for i, arg in enumerate(args):
+            converted = to_sympy(arg)
+            if converted is not None:
+                args[i] = converted
 
     # Check for UndefinedSymbol in either expression
-    if isinstance(a, sympy.Basic):
-        for atom in a.atoms():
+    if isinstance(args[0], sympy.Basic):
+        for atom in args[0].atoms():
             if isinstance(atom, UndefinedSymbol):
                 return None
-    if isinstance(b, sympy.Basic):
-        for atom in b.atoms():
+    if isinstance(args[1], sympy.Basic):
+        for atom in args[1].atoms():
             if isinstance(atom, UndefinedSymbol):
                 return None
 

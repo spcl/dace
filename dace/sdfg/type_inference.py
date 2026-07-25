@@ -12,7 +12,7 @@ import ast
 from dace import data, dtypes
 from dace import symbolic
 from dace.symbolic import symbol, SymExpr, symstr
-import sympy
+from dace import symbolic_engine as sympy
 import sys
 import dace.frontend.python.astutils
 from typing import Callable, Union

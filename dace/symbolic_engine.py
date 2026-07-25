@@ -44,6 +44,7 @@ Keeping this a module-level ``__getattr__`` (PEP 562) means the seam covers the
 names that would drift out of date. Only the names idxalg overrides are listed;
 everything else forwards to sympy.
 """
+import functools
 import os
 
 import sympy as backend
@@ -107,6 +108,11 @@ if _BACKEND_NAME == "idxalg":
                           'not installed. Install it or unset the variable to use the default '
                           'sympy backend.') from ex
 
+    # NOT aligning idxalg's default width to DaCe's int32 here, though the wire format argues for it:
+    # doing so makes `int32(qm)` an identity cast, which the core correctly folds away and DaCe then
+    # loses a typecast it emits deliberately for codegen. The real fix is for a dtype call on a
+    # non-constant to stay structural rather than become a foldable Cast (see TASKS T18).
+
     # Bind real sympy so idxalg isinstance heads also accept genuine sympy objects during the
     # hybrid period, and rare heads fall back to real sympy constructors.
     _idx.bind_sympy(backend)
@@ -128,6 +134,11 @@ if _BACKEND_NAME == "idxalg":
             return _idx.Float(obj)
         if not isinstance(obj, backend.Basic):
             return None
+        if isinstance(obj, backend.Wild):
+            # Wild/.match stays on the retained-sympy island (module docstring): a Wild is a Symbol
+            # SUBCLASS, so `obj.is_Symbol` below would otherwise silently coerce it into a plain
+            # idxalg symbol and the pattern loses its wildcard semantics entirely.
+            return None
         if obj.is_Symbol:
             a = obj.assumptions0
             # Preserve the DaCe symbol's exact width/signedness across the boundary. A DaCe
@@ -139,12 +150,20 @@ if _BACKEND_NAME == "idxalg":
         if obj.is_Float:
             return _idx.Float(float(obj))
         if obj.is_Rational:  # non-integer rational: shouldn't occur in index math; keep the value
-            return _idx.Float(float(obj))
+            from fractions import Fraction
+            value = float(obj)
+            if Fraction(*value.as_integer_ratio()) != Fraction(int(obj.p), int(obj.q)):
+                raise ValueError(f"rational {obj} does not survive an exact float64 round-trip")
+            return _idx.Float(value)
         if obj is backend.true:
             return _idx.Integer(1)
         if obj is backend.false:
             return _idx.Integer(0)
         f = obj.func
+        if f is backend.Piecewise or f is backend.Sum:
+            # Stay on the retained sympy island (module docstring): opaque-swallowing either would
+            # silently discard branch selection (Piecewise) or bound-variable/limits semantics (Sum).
+            return None
         # floor/ceiling: recover the integer numerator/denominator BEFORE converting children, so
         # sympy's rationalized ``ceiling((N-1)/8) == ceiling(Mul(N-1, 1/8))`` becomes integer
         # ceildiv(N-1, 8) rather than ceildiv(Float, ...) — the whole point of idxalg over ℚ.
@@ -154,10 +173,12 @@ if _BACKEND_NAME == "idxalg":
             if ni is None or di is None:
                 return None
             return _idx.floor(ni, di) if f is backend.floor else _idx.ceiling(ni, di)
-        # A rational-coefficient product ``(p/q)*rest`` (sympy's spelling of ``rest/q`` when the
-        # numerator is unknown, e.g. a leaked ``N/8`` in a subset) is integer floor division in
-        # DaCe's index world — never real ``0.125*N``, which idxalg rightly rejects as a kind
-        # crossing. Recover the integer floordiv so the rational leak never reaches the core.
+        # A rational-coefficient product ``(p/q)*rest`` is sympy's spelling of ``rest/q``. Recovering
+        # it as integer floordiv is only correct when ``rest`` is PROVABLY an integer -- gated on
+        # sympy's own assumption system (``rest.is_integer``), never on the idxalg side's dtype: a
+        # bare unassumed Symbol defaults there to "int64", which is a guess, not evidence. On a real
+        # operand ``w/8`` is genuine real division (``work/depth`` in the cost models), and floordiv
+        # from that guessed default turned 0.9375 into 0.0 — a miscompile of our own making.
         if f is backend.Mul:
             coeff, rest = obj.as_coeff_Mul()
             if coeff.is_Rational and not coeff.is_Integer:
@@ -165,8 +186,19 @@ if _BACKEND_NAME == "idxalg":
                 if ri is None:
                     return None
                 num = ri if coeff.p == 1 else _idx.Mul(_idx.Integer(coeff.p), ri)
-                return _idx.floor(num, coeff.q)
-        kids = [_to_idx(x) for x in obj.args]
+                if rest.is_integer:
+                    return _idx.floor(num, coeff.q)
+                return num / _idx.Integer(coeff.q)
+        is_rel = f in _RELATIONAL_HEADS
+        kids = []
+        for x in obj.args:
+            if is_rel and (x is backend.true or x is backend.false):
+                # Do not pre-flatten a literal True/False that is a direct relational child: the
+                # facade's `_rel` bool-literal special case (which triggers `X != True -> Not(X)`)
+                # only fires on a raw Python bool, never on an already-converted `Integer(1/0)`.
+                kids.append(x is backend.true)
+            else:
+                kids.append(_to_idx(x))
         if any(k is None for k in kids):
             return None
         conv = _HEAD_CONV.get(f)
@@ -180,6 +212,18 @@ if _BACKEND_NAME == "idxalg":
         return _idx.Function(name)(*kids)
 
     # sympy head class -> a builder over already-converted idxalg children. Resolved once.
+    # The relational heads by identity. sympy 1.14 does not export `Relational` at top level, so an
+    # `issubclass(f, backend.Relational)` test raises `AttributeError` instead of classifying; these
+    # are exactly the heads `_HEAD_CONV` below knows how to convert anyway.
+    _RELATIONAL_HEADS = frozenset({
+        backend.Equality,
+        backend.Unequality,
+        backend.StrictLessThan,
+        backend.LessThan,
+        backend.StrictGreaterThan,
+        backend.GreaterThan,
+    })
+
     _HEAD_CONV = {
         backend.Add: lambda k: _idx.Add(*k),
         backend.Mul: lambda k: _idx.Mul(*k),
@@ -208,11 +252,18 @@ if _BACKEND_NAME == "idxalg":
         "Min": lambda a: backend.Min(*a),
         "Max": lambda a: backend.Max(*a),
         "Mod": lambda a: backend.Mod(a[0], a[1]),
-        "floor": lambda a: backend.floor(a[0] / a[1]) if len(a) == 2 else backend.floor(a[0]),
-        "ceiling": lambda a: backend.ceiling(a[0] / a[1]) if len(a) == 2 else backend.ceiling(a[0]),
+        "Abs": lambda a: backend.Abs(a[0]),
+        # A one-argument floor/ceil is the real-valued sympy function; the two-argument form is
+        # integer division and is spelled through `_SPELLED_CLASS` below. Rendering that as sympy's
+        # `floor(a/b)` would reintroduce the rational leak this engine exists to avoid.
+        "floor": lambda a: backend.floor(a[0]),
+        # `int_ceil` has NO `__` variant, because Python has no ceiling operator to print as -- so
+        # unlike `int_floor` it renders the same however it was written. Asking for `__int_ceil`
+        # here raised, since the parser table has no such class.
+        "ceiling": lambda a: _dace_op("int_ceil", a) if len(a) == 2 else backend.ceiling(a[0]),
+        # And/Or are handled ahead of this table (they need their operands' truthiness casts peeled),
+        # so only `Not` -- which sympy accepts on a non-Boolean -- is listed.
         "Not": lambda a: backend.Not(a[0]),
-        "And": lambda a: backend.And(*a),
-        "Or": lambda a: backend.Or(*a),
         "Eq": lambda a: backend.Eq(a[0], a[1]),
         "Ne": lambda a: backend.Ne(a[0], a[1]),
         "StrictLessThan": lambda a: backend.StrictLessThan(a[0], a[1]),
@@ -221,11 +272,28 @@ if _BACKEND_NAME == "idxalg":
         "GreaterThan": lambda a: backend.GreaterThan(a[0], a[1]),
     }
 
+    # The ops DaCe writes two ways: as an operator, and as a named call. DaCe models each spelling as
+    # its own Function class (the `__`-prefixed one prints as the operator), and so answers
+    # `a // b != int_floor(a, b)` -- two names for one value. idxalg interns both to ONE node, which
+    # compares equal as it should, and records the form the source used alongside the handle; the
+    # class is therefore chosen here, from that record, instead of being fixed per head.
+    #
+    # Only the MODELLED op needs a table. The bitwise and shift ops are opaque, so their head name
+    # already carries the form (idxalg reports `__bitwise_or` for the operator form, the bare name
+    # for the call form) and the generic lookup below resolves each to the right class unaided.
+    # `int_ceil` and the logical shifts appear nowhere here: none has a `__` variant, because none
+    # has an operator to print as.
+    _SPELLED_CLASS = {
+        ("floor", 2): ("int_floor", "__int_floor"),
+    }
+
     _IDX_DTYPE_MAP: dict = {}
 
     def _dtype_tc(dstr: str):
         """Map an idxalg dtype string (``int64``/``float64``/...) to a DaCe ``typeclass``. Built
-        once, lazily, to avoid importing ``dace.dtypes`` at seam-import time."""
+        once, lazily, to avoid importing ``dace.dtypes`` at seam-import time. Raises on an unknown
+        string rather than defaulting to int32 -- a silent default there previously mapped every
+        missing width (float16, complex128, ...) to a 32-bit integer typeclass."""
         if not _IDX_DTYPE_MAP:
             from dace import dtypes as dt
             _IDX_DTYPE_MAP.update({
@@ -237,22 +305,38 @@ if _BACKEND_NAME == "idxalg":
                 "uint16": dt.uint16,
                 "uint32": dt.uint32,
                 "uint64": dt.uint64,
+                "float16": dt.float16,
+                "bfloat16": dt.bfloat16,
+                "float8_e4m3fn": dt.float8_e4m3fn,
+                "float8_e5m2": dt.float8_e5m2,
                 "float32": dt.float32,
                 "float64": dt.float64,
+                "complex64": dt.complex64,
+                "complex128": dt.complex128,
                 "bool": dt.bool_,
             })
-        return _IDX_DTYPE_MAP.get(dstr, _IDX_DTYPE_MAP["int32"])
+        if dstr == "opaque":
+            # `Opaque` is idxalg's "no type known" marker (a black-box call, a container base), not a
+            # missing entry. DaCe has no opaque typeclass, and its own `symbol()` default is the
+            # honest rendering of an undeclared width.
+            return _IDX_DTYPE_MAP["int32"]
+        if dstr not in _IDX_DTYPE_MAP:
+            raise ValueError(f"unknown idxalg dtype string {dstr!r}")
+        return _IDX_DTYPE_MAP[dstr]
 
     _TC_TO_IDXSTR: dict = {}
 
     def _idxstr_of_tc(tc) -> str:
-        """DaCe ``typeclass`` -> idxalg dtype string (the reverse of ``_dtype_tc``). Unknown or
-        compound typeclasses (pointer/vector/...) fall back to the widest safe integer."""
+        """DaCe ``typeclass`` -> idxalg dtype string (the reverse of ``_dtype_tc``). Raises on an
+        unknown or compound typeclass (pointer/vector/...) rather than silently declaring it a
+        64-bit integer -- the same silent-default bug as ``_dtype_tc``, in reverse."""
         if not _TC_TO_IDXSTR:
             _dtype_tc("int32")  # ensure the forward map is built
             for k, v in _IDX_DTYPE_MAP.items():
                 _TC_TO_IDXSTR[v] = k
-        return _TC_TO_IDXSTR.get(tc, "int64")
+        if tc not in _TC_TO_IDXSTR:
+            raise ValueError(f"no idxalg dtype string for DaCe typeclass {tc!r}")
+        return _TC_TO_IDXSTR[tc]
 
     def _symbol_idxstr(obj) -> str:
         """The idxalg dtype string for a symbol crossing the boundary. A DaCe ``symbol`` yields its
@@ -283,10 +367,15 @@ if _BACKEND_NAME == "idxalg":
         return lo, hi
 
     def _idx_symbol(name: str, dstr: str, positive: bool, nonnegative: bool):
-        """Declare (or reference) an idxalg symbol with the exact width/signedness ``dstr``. Integer
-        types carry a sign-tightened range; on a no-shadow conflict (the name is already declared
-        with a different range) reference the existing symbol, matching DaCe's one-symbol-per-name
-        (``equalize_symbol``) contract."""
+        """Declare (or reference) an idxalg symbol with the exact width/signedness ``dstr``.
+
+        idxalg's no-shadow rule makes the declared dtype and range part of a symbol's identity. DaCe
+        has the opposite rule: a name IS the symbol, which is exactly what ``equalize_symbol`` exists
+        to enforce, so the same name legitimately arrives declared several ways (``nng()`` rebuilds
+        ``N`` as nonnegative; a map parameter is int32 in one region and int64 in another). Referencing
+        the existing symbol is therefore a faithful rendering of DaCe's contract, not a guess -- an
+        earlier revision raised here instead and broke six tests that re-declare a live symbol.
+        """
         try:
             if dstr[0] == "i" or dstr[0] == "u":
                 lo, hi = _int_bounds(dstr, positive, nonnegative)
@@ -305,38 +394,210 @@ if _BACKEND_NAME == "idxalg":
         if not isinstance(e, _idx.Expr):
             return e
         name = str(e.func)
-        if name == "Basic":
-            # Umbrella head over Cast/Undef/IfExpr. A width-promotion ``Cast`` (int32->int64, ...) is
-            # a value-preserving widening; sympy index math is untyped, so render it transparently as
-            # its operand rather than an opaque ``Basic(...)`` head that sympy cannot compare.
-            if _idx._CTX.kind(e._e) == "Cast":
+        if name == "Basic" and _idx._CTX.kind(e._e) == "Cast":
+            # A WIDENING cast is value-preserving, so render it transparently as its operand rather
+            # than an opaque head sympy cannot compare. A NARROWING one is not: dropping
+            # ``uint16(x)`` changes the value, and printed ``x`` no longer round-trips to a cast.
+            # Widening is only decidable WITHIN one dtype KIND (int-family / float / complex / bool):
+            # a float64->int32 Cast must never look like a widen just because ``outer`` is "wider" in
+            # bits alone -- that silently elided a genuine truncating cast (CRITICAL).
+            inner, outer = _idx._CTX.dtype(e.args[0]._e), _idx._CTX.dtype(e._e)
+            ow, iw = _int_width(outer), _int_width(inner)
+            if ow is not None and iw is not None and ow[0] == iw[0] and ow[1] >= iw[1]:
                 return _from_idx(e.args[0])
+            from dace.symbolic import _CAST_CLASSES
+            cast_cls = _CAST_CLASSES.get(outer)
+            arg = _from_idx(e.args[0])
+            return cast_cls(arg) if cast_cls is not None else backend.Function(outer)(arg)
         if name == "Mul" and _idx._CTX.kind(e._e) == "Div":
             # A real-division node shares the Mul head marker; render it as sympy division, not a
             # product (`work/depth` in the cost models must not become `work*depth`).
             num, den = (_from_idx(a) for a in e.args)
             return num / den
         if name == "Symbol":
-            # Preserve the covering-relevant assumptions (positive/nonnegative/integer) and the
+            # Preserve the covering-relevant assumptions (positive/nonnegative/integer/real) and the
             # dtype across the round trip. Without the assumptions, ``nng()`` — which rebuilds a
             # symbol as ``sp.Symbol(name, nonnegative=True)`` and subs it into a sympy expr — loses
             # positivity when sympy sympifies the idxalg replacement back, so ``N >= N-1`` no longer
-            # folds to True. Without the dtype, SDFG validation's ``sym.dtype`` read crashes.
-            from dace import symbolic as dsym
+            # folds to True. Without the dtype, SDFG validation's ``sym.dtype`` read crashes. Without
+            # ``real``, a float symbol round-trips with ``is_real is None``.
             a = e.assumptions0
-            kw = {k: True for k in ("positive", "nonnegative", "integer") if a.get(k)}
-            return dsym.symbol(e.name, dtype=_dtype_tc(_idx._CTX.dtype(e._e)), **kw)
-        if name == "Integer":
-            return backend.Integer(int(e))
-        if name == "Float":
-            return backend.Float(float(repr(e)))
+            flags = tuple(k for k in ("positive", "nonnegative", "integer", "real") if a.get(k))
+            return _rebuild_symbol(e.name, _idx._CTX.dtype(e._e), flags)
+        if name == "Boolean":
+            # Falls through to the generic Function arm otherwise, printing `Boolean()` -- a zero-arg
+            # call that has lost the value entirely.
+            return backend.true if bool(e) else backend.false
+        if name in ("Integer", "Float"):
+            from dace.symbolic import TypedConstant
+            value = int(e) if name == "Integer" else float(repr(e))
+            dstr = _idx._CTX.dtype(e._e)
+            # Only a NON-default width needs a TypedConstant; a default-width literal stays a plain
+            # sympy number so ordinary index arithmetic is not littered with typed wrappers.
+            if dstr not in _DEFAULT_CONST_DTYPES:
+                return TypedConstant(value, _dtype_tc(dstr))
+            return backend.Integer(value) if name == "Integer" else backend.Float(value)
+        if name == "Number":
+            # `Number` marks a Complex leaf here -- Integer/Float have their own dedicated heads
+            # above, so by elimination this is the constant the docstring warns falls through to an
+            # opaque, value-losing `Number()` otherwise. idxalg exposes no numeric accessor for a
+            # Complex leaf, so its real/imaginary parts are read off the printed "(re + imj)" form,
+            # whose separator is a fixed literal " + " regardless of either part's sign.
+            kind = _idx._CTX.kind(e._e)
+            if kind != "Complex":
+                raise ValueError(f"unexpected Number-headed idxalg node of kind {kind!r}")
+            from dace.symbolic import TypedConstant
+            re_part, im_part = str(e)[1:-1].split(" + ", 1)
+            value = complex(float(re_part), float(im_part[:-1]))  # im_part ends in the literal "j"
+            return TypedConstant(value, _dtype_tc(_idx._CTX.dtype(e._e)))
+        if name in ("[]", "Subscript"):
+            # Container access: idxalg's own parser always spells it "[]"; a still-sympy `Subscript`
+            # hybrid-converted through `_to_idx`'s generic fallback instead carries the class name
+            # literally -- both share the (base, *indices) shape. Without this, either spelling comes
+            # back as a bare `Function(...)` call, and `Subscript`'s overridden `.free_symbols`
+            # (which excludes the container) never runs.
+            from dace.symbolic import Subscript
+            b = e.args[0]
+            base = backend.Symbol(str(b.func)) if b.is_Function and not b.args else _from_idx(b)
+            return Subscript(base, *(_from_idx(a) for a in e.args[1:]))
+        if name == "Attr" or name.startswith("."):
+            # Field access: idxalg's own parser bakes the field name into the head ("." + field, one
+            # child); a hybrid-converted sympy `Attr` instead carries it as a second child. Same
+            # container-base rule as `Subscript` above.
+            from dace.symbolic import Attr
+            b = e.args[0]
+            base = backend.Symbol(str(b.func)) if b.is_Function and not b.args else _from_idx(b)
+            field = _from_idx(e.args[1]) if name == "Attr" else backend.Symbol(name[1:])
+            return Attr(base, field)
+        if name in ("And", "Or", "Not"):
+            return _from_idx_bool(name, e)
         args = [_from_idx(a) for a in e.args]
+        spelled = _SPELLED_CLASS.get((name, len(args)))
+        if spelled is not None:
+            return _dace_op(spelled[_idx._CTX.spelling(e._e) == "operator"], args)
         conv = _FROM_CONV.get(name)
         if conv is not None:
             return conv(args)
-        return backend.Function(name)(*args)
+        # A DEFINED sympy function (``sin``, ``sqrt``, a cast class) must come back as itself, not as
+        # ``Function(name)``: an undefined function is an *applied undef*, which every
+        # symbol-extraction helper then reports as a user function, so ``sin`` leaks out of
+        # ``free_symbols_and_functions``. Resolve through DaCe's own parser table rather than a second
+        # list of names here -- two lists would drift, and the drift is silent.
+        cls = _sympy_function_class(name)
+        return cls(*args) if cls is not None else backend.Function(name)(*args)
+
+    def _rebuild_symbol(name: str, dstr: str, flags: tuple):
+        """The DaCe ``symbol`` for a name/dtype/assumption triple.
+
+        Deliberately NOT memoized, though a profile puts sympy's fact-deduction engine at the top of
+        the conversion cost. `dace.symbolic.symbol.__new__` bypasses sympy's own symbol cache on
+        purpose -- it assigns `self.dtype` on the instance, so two references to one cached object
+        would modify each other -- and handing out a shared instance here would reintroduce exactly
+        that aliasing. The construction cost is sympy's to fix, or Phase C's to stop paying.
+        """
+        from dace import symbolic as dsym
+        return dsym.symbol(name, dtype=_dtype_tc(dstr), **{k: True for k in flags})
+
+    def _from_idx_bool(name: str, e):
+        """`And`/`Or`/`Not` rendered the way DaCe spells them.
+
+        Two things the generic path gets wrong here. First, DaCe's own converter builds ITS `AND`
+        and `OR` Function classes, not sympy's -- because a DaCe guard is routinely a bare array
+        read (``ldcum[i-1, j-1] and x > 0``) and sympy's ``And`` rejects a non-Boolean outright with
+        ``expecting bool or Boolean``. That killed deserialization of real CloudSC SDFGs under this
+        backend while the sympy backend loaded them.
+
+        Second, idxalg makes C truthiness explicit as ``Cast(x, Bool)``; rendered literally that is
+        ``bool(A[i])``, a spelling DaCe never writes. In a boolean context the raw value IS the
+        predicate -- codegen applies the truthiness -- so the cast is peeled here. Only here: in
+        ARITHMETIC a ``bool`` cast is a real 0/1 narrowing and must survive, or ``bool(x) + 1``
+        would silently become ``x + 1``.
+        """
+        args = [_from_idx(_peel_truthiness(a)) for a in e.args]
+        if name == "Not":
+            return backend.Not(args[0])
+        op = _dace_op_class("And" if name == "And" else "Or")
+        return functools.reduce(op, args)
+
+    def _peel_truthiness(a):
+        """An idxalg `Cast(x, Bool)` reduced to `x`; anything else unchanged."""
+        if _idx._CTX.kind(a._e) == "Cast" and _idx._CTX.dtype(a._e) == "bool":
+            return a.args[0]
+        return a
+
+    def _dace_op_class(name: str):
+        """The DaCe operator class named `name`; raises rather than letting a generic Function through."""
+        cls = _sympy_function_class(name)
+        if cls is None:
+            raise ValueError(f"DaCe operator class {name!r} is not bound in the parser table")
+        return cls
+
+    def _dace_op(name: str, args: list):
+        """Apply the DaCe operator Function class named ``name``; raise if the table lost it, since
+        falling back to a generic Function would silently print the call spelling instead."""
+        cls = _sympy_function_class(name)
+        if cls is None:
+            raise ValueError(f"DaCe operator class {name!r} is not bound in the parser table")
+        return cls(*args)
+
+    def _sympy_function_class(name: str):
+        """The real sympy ``Function`` subclass DaCe's parser binds to ``name``, else ``None``."""
+        from dace.symbolic import _PYSTR2SYM_locals
+        bound = _PYSTR2SYM_locals.get(name)
+        # The table also holds plain Symbols (sympy's ``_clash`` names); only a class is applicable.
+        if isinstance(bound, type) and issubclass(bound, backend.Function):
+            return bound
+        return None
 
     _idx.set_sympy_converter(_from_idx)
+
+    # Widths that need no `TypedConstant` wrapper: idxalg's own fallbacks plus DaCe's default symbol
+    # width, since a constant at any of these carries no information a bare sympy number loses.
+    _DEFAULT_CONST_DTYPES = frozenset(("int32", "int64", "float64"))
+
+    def _int_width(dstr: str) -> tuple[str, int] | None:
+        """`(kind, bit width)` for a recognized idxalg dtype string, else `None`. A Cast is only a
+        value-preserving widen WITHIN one kind (int-family / float / complex / bool); returning
+        `None` for an unrecognized string, rather than a numeric default, means the call site can
+        never mistake "unknown" for "trivially wide enough" (the CRITICAL bug this replaces)."""
+        if dstr.startswith("uint"):
+            return "int", int(dstr[4:])
+        if dstr.startswith("int"):
+            return "int", int(dstr[3:])
+        float_bits = {
+            "float8_e4m3fn": 8,
+            "float8_e5m2": 8,
+            "float16": 16,
+            "bfloat16": 16,
+            "float32": 32,
+            "float64": 64,
+        }
+        if dstr in float_bits:
+            return "float", float_bits[dstr]
+        if dstr in ("complex64", "complex128"):
+            return "complex", int(dstr[len("complex"):])
+        if dstr == "bool":
+            return "bool", 1
+        return None
+
+    def to_sympy(obj):
+        """An idxalg `Expr` rendered back as sympy, else `None`.
+
+        Lets the still-sympy island (printers, `solve`, `Poly`, `match`) work on a natively-parsed
+        expression. Reusing `DaceSympyPrinter` this way is deliberate: a second printer would be two
+        implementations of DaCe's spellings, free to drift, and spelling drift is a miscompile.
+        """
+        return _from_idx(obj) if isinstance(obj, _idx.Expr) else None
+
+    def native_parse(text: str):
+        """Parse an expression string with idxalg's own Rust parser, bypassing sympy entirely.
+
+        This is what makes the idxalg backend actually *engage*: without it `pystr_to_symbolic`
+        builds sympy objects no matter which backend is selected, so idxalg never runs and an A/B
+        measures sympy against sympy. Handles DaCe's typed wire spellings (`$name`, `2i16`,
+        `(1.0 + 2.0j)c128`) via the normalizer, so no pre-pass is needed at the call site.
+        """
+        return _idx.parse_str(text)
 
     def __getattr__(name: str):
         # PEP 562: only invoked for names not bound as module globals.
@@ -350,6 +611,9 @@ if _BACKEND_NAME == "idxalg":
         return sorted(set(dir(backend)) | _IDXALG_NAMES)
 
 else:
+    # Defined in both branches so a caller can test them without `getattr`.
+    native_parse = None
+    to_sympy = None
 
     def __getattr__(name: str):
         # PEP 562: forwards every symbolic name to sympy with no overhead on normal imports.
