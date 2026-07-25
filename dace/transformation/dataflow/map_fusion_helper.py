@@ -299,9 +299,7 @@ def relocate_nodes(
             dmr_symbol = edge_to_move.dst_conn
 
             if dmr_symbol in to_node.in_connectors:
-                # `can_topologically_be_fused` already proved the two bindings read the same
-                #  value, so the one being moved is a redundant redefinition -- drop it. A
-                #  disagreeing binding would need renaming, which is not implemented.
+                # Same symbol, same value: the moved binding is redundant, so drop it instead.
                 if not dynamic_map_range_binding_agrees(state, to_node, from_node, dmr_symbol):
                     raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
                                               f" to '{to_node}', but the symbol is already known there, but the"
@@ -696,8 +694,7 @@ def dynamic_map_range_binding_agrees(
         return False
     if edge.src is other_edge.src:
         return True
-    # Distinct sources read the same value only if nothing in this state writes that data: a
-    #  writer ordered before one source but not the other makes the two reads differ.
+    # Distinct sources agree only if nothing writes that data in this state.
     return not any(state.in_degree(dn) for dn in state.data_nodes() if dn.data == data)
 
 
@@ -706,14 +703,9 @@ def dynamic_map_ranges_agree(
     second_map_entry: nodes.MapEntry,
     state: dace.SDFGState,
 ) -> bool:
-    """`True` if every dynamic-map-range symbol both Maps bind is bound to the same value.
-
-    Relocation cannot rename a colliding symbol, so a collision is only fusable when the two
-    bindings provably read the same value -- then the second one is redundant and gets dropped.
-    """
-    return all(
-        dynamic_map_range_binding_agrees(state, first_map_entry, second_map_entry, symbol)
-        for symbol in first_map_entry.dynamic_input_connectors & second_map_entry.dynamic_input_connectors)
+    """`True` if every dynamic-map-range symbol both Maps bind is bound to the same value."""
+    shared = first_map_entry.dynamic_input_connectors & second_map_entry.dynamic_input_connectors
+    return all(dynamic_map_range_binding_agrees(state, first_map_entry, second_map_entry, symbol) for symbol in shared)
 
 
 def can_topologically_be_fused(
@@ -764,8 +756,7 @@ def can_topologically_be_fused(
         if scope[first_map_entry] is not None:
             return None
 
-    # A dynamic map range both Maps bind can only survive relocation if both bind it to the
-    #  same value; renaming one of them is not implemented.
+    # A colliding dynamic map range cannot be renamed, only dropped when both bind the same value.
     if not dynamic_map_ranges_agree(first_map_entry, second_map_entry, graph):
         return None
 
