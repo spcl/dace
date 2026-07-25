@@ -19,7 +19,7 @@ from dace.symbolic import symstr
 # ISA backends shared by every tile-op node: (implementation key, class-name
 # suffix, environment attribute on ``..environments``). Each backend exposes the
 # SAME ``dace::tileops::tile_<op>`` signature and differs ONLY in the header its
-# environment pulls in -- so a single factory builds all five expansion classes.
+# environment pulls in -- so a single factory builds every expansion class.
 _ISA_BACKENDS = (
     ("scalar", "Scalar", "TileOpsScalar"),
     ("avx512", "AVX512", "TileOpsAVX512"),
@@ -27,6 +27,7 @@ _ISA_BACKENDS = (
     ("neon", "Neon", "TileOpsNeon"),
     ("sve", "SVE", "TileOpsSVE"),
     ("cuda", "CUDA", "TileOpsCUDA"),
+    ("cuda_warp", "CUDAWarp", "TileOpsCUDAWarp"),
 )
 
 

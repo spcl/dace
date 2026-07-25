@@ -19,6 +19,7 @@ class ISA(str, enum.Enum):
     ARM_NEON = "ARM_NEON"
     SCALAR = "SCALAR"        #: portable scalar reference
     CUDA = "CUDA"           #: GPU half2 (implies device=GPU)
+    CUDA_WARP = "CUDA_WARP"  #: GPU warp-collective tile ops (implies device=GPU)
 
 
 class RemainderStrategy(str, enum.Enum):

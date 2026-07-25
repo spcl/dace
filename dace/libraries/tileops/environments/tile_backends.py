@@ -158,3 +158,34 @@ class TileOpsCUDA:
     init_code = ""
     finalize_code = ""
     dependencies = []
+
+
+@dace.library.environment
+class TileOpsCUDAWarp:
+    """NVIDIA CUDA warp-level (device) K=1 tile-op backend (``dace/tile_ops/cuda_warp.h``).
+
+    A warp collectively computes each tile op (as opposed to :class:`TileOpsCUDA`'s
+    per-thread lanes). The header is ``__CUDACC__``-guarded, so listing it in the
+    host frame is harmless -- the ``__device__`` bodies only materialise under nvcc.
+    Selected only when the tile map is GPU-scheduled.
+    """
+
+    cmake_minimum_version = None
+    cmake_packages = []
+    cmake_variables = {}
+    cmake_includes = []
+    cmake_libraries = []
+    cmake_compile_flags = []
+    cmake_link_flags = []
+    cmake_files = []
+
+    # The tile-op calls are emitted INSIDE the GPU kernel (device code), so the
+    # header must land in the CUDA (``.cu``) TU -- the ``'cuda'`` key. It is also
+    # kept in the ``'frame'`` (host ``.cpp``) TU: the K=1 VLEN=1 overloads are
+    # ``inline`` (not ``__device__``) so a host-side tile op still resolves, and
+    # the ``__CUDACC__`` guard makes the device bodies inert in the host frame.
+    headers = {'frame': ["dace/tile_ops/cuda_warp.h"], 'cuda': ["dace/tile_ops/cuda_warp.h"]}
+    state_fields = []
+    init_code = ""
+    finalize_code = ""
+    dependencies = []

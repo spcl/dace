@@ -379,10 +379,11 @@ DACE_DFI void tile_scatter(T* __restrict__ dst, const T* __restrict__ src, const
 }
 
 // ---------------------------- tile_mask_gen ----------------------------
+// ``stride`` mirrors tile_load's: 1 per thread, the lane count under CUDA_WARP.
 template <typename IdxT, int VLEN>
-DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
+DACE_DFI void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub, IdxT stride = 1) {
 #pragma unroll
-  for (int i = 0; i < VLEN; ++i) out[i] = (base + IdxT(i)) < ub;
+  for (int i = 0; i < VLEN; ++i) out[i] = (base + IdxT(i) * stride) < ub;
 }
 
 // ----------------------------- tile_reduce ----------------------------
