@@ -168,8 +168,8 @@ def test_refuses_non_associative_op():
             out[i + 1] = out[i] - delta[i]
 
     sdfg = sub.to_sdfg(simplify=True)
-    res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None
+    LoopToScan().apply_pass(sdfg, {})
+    assert _num_scan_nodes(sdfg) == 0
 
 
 def test_refuses_delta_reads_carry_array():
@@ -186,9 +186,9 @@ def test_refuses_delta_reads_carry_array():
                 aa[j, i] = (aa[j, i - 1] + aa[j - 1, i]) / 1.9
 
     sdfg = s2111.to_sdfg(simplify=True)
-    res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None, ('LoopToScan must refuse the s2111 shape because the '
-                         "'delta' aa[j-1, i] is another read of the carry array.")
+    LoopToScan().apply_pass(sdfg, {})
+    assert _num_scan_nodes(sdfg) == 0, ('LoopToScan must refuse the s2111 shape because the '
+                                        "'delta' aa[j-1, i] is another read of the carry array.")
 
 
 def test_refuses_extra_non_transient_write():
@@ -202,8 +202,8 @@ def test_refuses_extra_non_transient_write():
             aux[i] = delta[i] * 2.0
 
     sdfg = with_aux.to_sdfg(simplify=True)
-    res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None
+    LoopToScan().apply_pass(sdfg, {})
+    assert _num_scan_nodes(sdfg) == 0
 
 
 def test_refuses_double_buffer_ring_carry():
@@ -223,9 +223,8 @@ def test_refuses_double_buffer_ring_carry():
             OUT[i] = c
 
     sdfg = ring.to_sdfg(simplify=True)
-    res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None, f"double-buffer ring must not lift to Scan; got {res}"
-    assert _num_scan_nodes(sdfg) == 0
+    LoopToScan().apply_pass(sdfg, {})
+    assert _num_scan_nodes(sdfg) == 0, 'double-buffer ring must not lift to Scan'
 
 
 def test_tsvc_s111_inclusive_sum():
@@ -387,9 +386,10 @@ def test_tsvc_s222_self_referential_delta_refused():
             e[i] = e[i - 1] * e[i - 1]
 
     sdfg = s222.to_sdfg(simplify=True)
-    res = LoopToScan().apply_pass(sdfg, {})
-    # Both inputs resolve to ``e[i-1]`` -- ambiguous carry, no delta. Refused.
-    assert res is None
+    LoopToScan().apply_pass(sdfg, {})
+    # Both inputs resolve to ``e[i-1]`` -- ambiguous carry, no delta. Refused. Assert the
+    # refusal, not the return code: 0 is contractual when preprocessing normalized the body.
+    assert _num_scan_nodes(sdfg) == 0
 
 
 def test_v2_computed_delta_with_scale():
@@ -430,8 +430,10 @@ def test_refuses_when_delta_is_same_array():
             out[i + 1] = out[i] + out[i]
 
     sdfg = self_double.to_sdfg(simplify=True)
-    res = LoopToScan().apply_pass(sdfg, {})
-    assert res is None
+    LoopToScan().apply_pass(sdfg, {})
+    # Assert the refusal itself: apply_pass legitimately returns 0 rather than None when its
+    # preprocessing normalizes the body (here a frontend identity-copy tasklet) without lifting.
+    assert _num_scan_nodes(sdfg) == 0
 
 
 def test_multi_state_body_with_empty_wrappers():
