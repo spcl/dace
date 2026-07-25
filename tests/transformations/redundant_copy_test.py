@@ -127,6 +127,33 @@ def test_reshaping_with_redundant_arrays():
     assert np.all(ref == output_step2)
 
 
+def test_ordering_edge_is_not_a_redundant_copy():
+    """An empty memlet between two AccessNodes is happens-before ordering, not a copy.
+
+    ``_validate_subsets`` has no subsets to read on such an edge and raises; the transformations used to
+    reach it and swallow the raise behind a ``validate_subsets failed`` warning. CloudSC canon_cpu emitted
+    that warning on every ordering edge in the graph.
+    """
+    import warnings as _warnings
+
+    sdfg = dace.SDFG('ordering_edge_not_a_copy')
+    sdfg.add_array('a', [4], dace.float64)
+    sdfg.add_transient('t', [4], dace.float64)
+    state = sdfg.add_state('s', is_start_block=True)
+    tasklet = state.add_tasklet('w', {}, {'o'}, 'o = 1.0')
+    t_access, a_access = state.add_access('t'), state.add_access('a')
+    state.add_edge(tasklet, 'o', t_access, None, dace.Memlet('t[0]'))
+    state.add_edge(t_access, None, a_access, None, dace.Memlet())  # ordering only, no data
+
+    with _warnings.catch_warnings(record=True) as caught:
+        _warnings.simplefilter('always')
+        sdfg.apply_transformations_repeated([RedundantArray, RedundantSecondArray])
+        noisy = [str(w.message) for w in caught if 'validate_subsets failed' in str(w.message)]
+
+    assert not noisy, f'ordering edge treated as a copy candidate: {noisy}'
+    assert state.edges_between(t_access, a_access), 'the ordering edge must survive'
+
+
 def test_out():
     sdfg = dace.SDFG("test_redundant_copy_out")
     state = sdfg.add_state()

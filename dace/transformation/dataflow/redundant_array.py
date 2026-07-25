@@ -45,7 +45,8 @@ def _validate_subsets(edge: graph.MultiConnectorEdge,
     dst_subset = copy.deepcopy(edge.data.dst_subset)
 
     if not src_subset and not dst_subset:
-        # NOTE: This should never happen
+        # Reached only for an empty (happens-before ordering) memlet, which carries no data and is not a
+        # copy candidate -- callers must filter those out before asking for its subsets.
         raise NotImplementedError('Neither source nor destination subsets are defined')
     # NOTE: If any of the subsets is None, it means that we proceed in
     # experimental mode. The base case here is that we just copy the other
@@ -321,6 +322,10 @@ class RedundantArray(pm.SingleStateTransformation):
 
         # 1. Get edge e1 and extract subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
+        # An empty memlet is happens-before ordering, not a copy -- there is no redundancy to remove,
+        # and it carries no subsets for _validate_subsets to read.
+        if e1.data.is_empty():
+            return False
         try:
             a1_subset, b_subset = _validate_subsets(e1, sdfg.arrays)
         except (NotImplementedError, ValueError) as ex:
@@ -836,6 +841,10 @@ class RedundantSecondArray(pm.SingleStateTransformation):
 
         # 1. Get edge e1 and extract/validate subsets for arrays A and B
         e1 = graph.edges_between(in_array, out_array)[0]
+        # An empty memlet is happens-before ordering, not a copy -- there is no redundancy to remove,
+        # and it carries no subsets for _validate_subsets to read.
+        if e1.data.is_empty():
+            return False
         try:
             a_subset, b1_subset = _validate_subsets(e1, sdfg.arrays)
         except (NotImplementedError, ValueError) as ex:
