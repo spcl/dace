@@ -27,6 +27,15 @@ The backend is selected once, at import, by ``DACE_SYMBOLIC_BACKEND``:
   the retained sympy island. Real sympy is bound into the idxalg backend so
   isinstance still accepts genuine sympy objects during the hybrid period.
 
+**idxalg is an optional dependency.** DaCe's only hard symbolic requirement is
+sympy. ``idxalg`` is imported nowhere in the tree except inside the opt-in branch
+below, so with the default backend it never enters ``sys.modules`` and DaCe works
+normally whether or not it is installed (pinned by
+``tests/symbolic/optional_idxalg_backend_test.py``). Opting in without it
+installed raises with the variable and package named; it deliberately does *not*
+fall back to sympy, since an opt-in that silently ran the other engine would make
+a backend comparison meaningless.
+
 ``symbolic.py`` is the seam's *implementation* (it constructs the backend's
 objects), not a consumer, so it is allowed to touch the backend directly.
 
