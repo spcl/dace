@@ -554,10 +554,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                                                                                     second_cc_input, second_cc_output)
 
             if len(resulting_ccs) > 1:
-                # Declared side effects would race across parallel components.
+                # Declared side effects would race across parallel components. An effect
+                # that is order-insensitive cannot race: its outcome does not depend on
+                # the interleaving, so ask the ordering question, not mere liveness.
                 for state in (first_state, second_state):
                     for node in state.nodes():
-                        if isinstance(node, nodes.Tasklet) and node.side_effects:
+                        if isinstance(node, nodes.Tasklet) and node.has_ordered_side_effects(sdfg):
                             return False
 
             # Check for data races
