@@ -279,11 +279,18 @@ def relocate_nodes(
             #  inside the Map scope to define a variable. We handle it directly.
             dmr_symbol = edge_to_move.dst_conn
 
-            # TODO(phimuell): Check if the symbol is really unused in the target scope.
             if dmr_symbol in to_node.in_connectors:
-                raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                                          f" to '{to_node}', but the symbol is already known there, but the"
-                                          " renaming is not implemented.")
+                # Same symbol, same value: the moved binding is redundant, so drop it instead.
+                if not dynamic_map_range_binding_agrees(state, to_node, from_node, dmr_symbol):
+                    raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                                              f" to '{to_node}', but the symbol is already known there, but the"
+                                              " renaming is not implemented.")
+                source = edge_to_move.src
+                state.remove_edge(edge_to_move)
+                from_node.remove_in_connector(dmr_symbol)
+                if state.degree(source) == 0:
+                    state.remove_node(source)
+                continue
             if not to_node.add_in_connector(dmr_symbol, force=False):
                 raise RuntimeError(  # Might fail because of out connectors.
                     f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
@@ -404,6 +411,47 @@ def is_parallel(
     return True
 
 
+def dynamic_map_range_edge(
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    symbol: str,
+) -> graph.MultiConnectorEdge:
+    """The single edge that binds dynamic-map-range `symbol` on `map_entry`."""
+    return next(iter(state.in_edges_by_connector(map_entry, symbol)))
+
+
+def dynamic_map_range_binding_agrees(
+    state: dace.SDFGState,
+    map_entry: nodes.MapEntry,
+    other_map_entry: nodes.MapEntry,
+    symbol: str,
+) -> bool:
+    """`True` if both Maps bind dynamic-map-range `symbol` to provably the same value."""
+    edge = dynamic_map_range_edge(state, map_entry, symbol)
+    other_edge = dynamic_map_range_edge(state, other_map_entry, symbol)
+    data = edge.data.data
+    if (data != other_edge.data.data or edge.src_conn != other_edge.src_conn
+            or edge.data.subset != other_edge.data.subset):
+        return False
+    if edge.src is other_edge.src:
+        return True
+    # Distinct sources agree only if nothing writes that data in this state.
+    return not any(state.in_degree(dn) for dn in state.data_nodes() if dn.data == data)
+
+
+def dynamic_map_ranges_agree(
+    first_map_entry: nodes.MapEntry,
+    second_map_entry: nodes.MapEntry,
+    state: dace.SDFGState,
+) -> bool:
+    """`True` if every dynamic-map-range symbol both Maps bind is bound to the same value."""
+    shared = {c
+              for c in first_map_entry.in_connectors
+              if not c.startswith("IN_")} & {c
+                                             for c in second_map_entry.in_connectors if not c.startswith("IN_")}
+    return all(dynamic_map_range_binding_agrees(state, first_map_entry, second_map_entry, symbol) for symbol in shared)
+
+
 def can_topologically_be_fused(
     first_map_entry: nodes.MapEntry,
     second_map_entry: nodes.MapEntry,
@@ -451,6 +499,10 @@ def can_topologically_be_fused(
     elif only_toplevel_maps:
         if scope[first_map_entry] is not None:
             return None
+
+    # A colliding dynamic map range cannot be renamed, only dropped when both bind the same value.
+    if not dynamic_map_ranges_agree(first_map_entry, second_map_entry, graph):
+        return None
 
     # We will now check if we can rename the Map parameter of the second Map such that they
     #  match the one of the first Map.
