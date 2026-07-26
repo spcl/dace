@@ -185,14 +185,14 @@ def prepare_native_libs(corpus, experiment, args, rank):
     """Compile the experiment's native lanes once per rank. Returns (sigs, {lane:
     so_path}); ({}, {}) if the corpus has no native C source (npbench/polybench).
     Each lane finds its own vendor's compiler; a missing one is skipped."""
-    cpp_path, sigs = adapters.adapter(corpus)['native_info']()
-    if cpp_path is None:
+    sources, sigs = adapters.adapter(corpus)['native_info']()
+    if sources is None:
         return {}, {}
     build_dir = engine.native_build_dir(args.results_dir, rank, corpus)
     compiled = {}
     for lane in EXPERIMENTS[experiment]['native']:
         so_path = os.path.join(build_dir, f'lib_{lane}.so')
-        ok, err = nh.compile_lane(cpp_path, so_path, lane)
+        ok, err = nh.compile_lane(sources, so_path, lane)
         if ok:
             compiled[lane] = so_path
             print(f'compiled {lane}: {so_path}')

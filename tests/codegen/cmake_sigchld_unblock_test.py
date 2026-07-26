@@ -4,7 +4,7 @@
 every child inherits; CMake/KWSys reaps the helper processes it spawns during configure
 (``uname``, compiler-id / ABI test binaries) via SIGCHLD, so with SIGCHLD blocked it spins
 forever in ``select()`` leaving ``<defunct>`` children -- the daint configure hang.
-``_build_subprocess_sigmask`` unblocks SIGCHLD only for the duration of the fork and
+``build_subprocess_sigmask`` unblocks SIGCHLD only for the duration of the fork and
 restores the caller's mask afterwards."""
 import signal
 
@@ -23,7 +23,7 @@ def test_sigmask_unblocks_sigchld_when_blocked_and_restores():
         signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
         assert signal.SIGCHLD in signal.pthread_sigmask(signal.SIG_BLOCK, [])
 
-        with compiler._build_subprocess_sigmask():
+        with compiler.build_subprocess_sigmask():
             # Inside the context (i.e. across the fork) SIGCHLD must be deliverable.
             assert signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, [])
 
@@ -40,7 +40,7 @@ def test_sigmask_is_noop_when_sigchld_already_deliverable():
         signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
         assert signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, [])
 
-        with compiler._build_subprocess_sigmask():
+        with compiler.build_subprocess_sigmask():
             assert signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, [])
 
         # Still deliverable, and no spurious change to the rest of the mask.

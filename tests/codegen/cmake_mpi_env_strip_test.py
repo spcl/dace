@@ -2,7 +2,7 @@
 """The CMake configure/build subprocesses must not inherit this process's MPI-rank
 identity: when DaCe compiles from inside an srun/mpirun-launched process, a child that
 inherits PMI_RANK / PMIX_* / OMPI_COMM_WORLD_* and touches a PMI/PMIx client blocks
-forever in its init, hanging ``cmake`` with defunct children. ``_build_subprocess_env``
+forever in its init, hanging ``cmake`` with defunct children. ``build_subprocess_env``
 drops exactly those variables and preserves everything else."""
 import os
 
@@ -37,12 +37,18 @@ def test_build_subprocess_env_strips_mpi_rank_vars(monkeypatch):
     for k, v in {**stripped, **preserved}.items():
         monkeypatch.setenv(k, v)
 
-    env = compiler._build_subprocess_env()
+    env = compiler.build_subprocess_env()
 
     for k in stripped:
         assert k not in env, f'{k} must be stripped from the build environment'
     for k, v in preserved.items():
         assert env.get(k) == v, f'{k} must be preserved in the build environment'
+
+
+def test_build_subprocess_env_filters_an_explicit_base():
+    """``_run_liveoutput`` filters whatever env a caller hands it, not just ``os.environ``: a caller
+    that assembles its own build environment must not be able to smuggle the rank identity back in."""
+    assert compiler.build_subprocess_env({'PMI_RANK': '3', 'CXX': 'g++'}) == {'CXX': 'g++'}
 
 
 if __name__ == '__main__':

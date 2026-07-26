@@ -34,7 +34,6 @@ import native_harness as nh
 import tsvc_corpus as tsvc
 
 CORPUS = 'tsvc2'
-CPP_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tsvc2_core.cpp')
 DACE_LANES = [f'{p}-{v}' for p in engine.PIPELINES for v in ('par', 'seq')]
 ALL_LANES = DACE_LANES + list(nh.LANES)
 #: Speedups in speedup.md are reported vs. the single-core native C baseline
@@ -277,11 +276,6 @@ def save_sdfg_only(kernel_name, args):
         engine.save_sdfg(kdir, dace.SDFG.from_json(payload), f'{pipeline}-par')
 
 
-def cpp_base_name(kernel_name):
-    """tsvc2_core.cpp has no _d_single suffix (e.g. 's000_run_timed', not 's000_d_single_run_timed')."""
-    return kernel_name[:-len('_d_single')] if kernel_name.endswith('_d_single') else kernel_name
-
-
 def kernel_list(args):
     names = sorted(k.name for k in tsvc.collect())
     if args.only:
@@ -295,12 +289,13 @@ def prepare_native_libs(results_dir, rank):
     Each lane finds its own vendor's compiler independently (see
     native_harness.compile_lane) -- a vendor with no compiler installed is
     just skipped for that lane, not the whole corpus."""
-    sigs = nh.parse_signatures(CPP_FILE)
+    sources = nh.corpus_sources(CORPUS)
+    sigs = nh.parse_signatures(sources)
     build_dir = engine.native_build_dir(results_dir, rank)
     out = {}
     for lane in nh.LANES:
         so_path = os.path.join(build_dir, f'lib_{lane}.so')
-        ok, err = nh.compile_lane(CPP_FILE, so_path, lane)
+        ok, err = nh.compile_lane(sources, so_path, lane)
         if ok:
             out[lane] = so_path
             print(f'compiled {lane}: {so_path}')
@@ -343,9 +338,9 @@ def main():
             continue
         kernel = tsvc.collect(name=name)[0]
         l1, l2 = (args.len1d, args.len2d) if args.len1d and args.len2d else size_for_kernel(kernel)
-        base = cpp_base_name(name)
-        c_name = base + '_run_timed'
-        per_kernel_libs = {lane: (so_path, c_name, sigs.get(base, [])) for lane, so_path in compiled.items()}
+        # C symbol == kernel name directly: the split microkernel file stem already carries
+        # the '_d_single' suffix DaCe's kernel name has (no monolith bare-name stripping needed).
+        per_kernel_libs = {lane: (so_path, name, sigs.get(name, [])) for lane, so_path in compiled.items()}
         process_kernel(name, l1, l2, args, rank, per_kernel_libs)
 
     if not args.save_sdfg_only:

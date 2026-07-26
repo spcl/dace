@@ -99,13 +99,15 @@ def tsvc2_time_native(kernel_name, recipe, so_path, c_name, sig, reps, warmup=1)
 
 
 def tsvc2_native_info():
-    """(cpp_path, sigs) or (None, None) if this corpus has no native C source."""
-    return t2.CPP_FILE, nh.parse_signatures(t2.CPP_FILE)
+    """(sources, sigs) or (None, None) if this corpus has no native C source."""
+    sources = nh.corpus_sources('tsvc2')
+    return sources, nh.parse_signatures(sources)
 
 
 def tsvc2_native_call(kernel_name, sigs):
-    base = t2.cpp_base_name(kernel_name)
-    return base + '_run_timed', sigs.get(base, [])
+    # C symbol == kernel name directly: the split file stem already carries the '_d_single'
+    # suffix DaCe's kernel name has.
+    return kernel_name, sigs.get(kernel_name, [])
 
 
 # ==========================================================================
@@ -155,11 +157,15 @@ def tsvc2_5_time_native(kernel_name, recipe, so_path, c_name, sig, reps, warmup=
 
 
 def tsvc2_5_native_info():
-    return t25.CPP_FILE, nh.parse_signatures(t25.CPP_FILE)
+    sources = nh.corpus_sources('tsvc2_5')
+    return sources, nh.parse_signatures(sources)
 
 
 def tsvc2_5_native_call(kernel_name, sigs):
-    return kernel_name + '_run_timed', sigs.get(kernel_name, [])
+    # Split file stem is '<kernel>_d' (the plain-double variant); the bare DaCe kernel
+    # name has no data-type suffix, unlike tsvc2's '_d_single' names.
+    c_name = kernel_name + '_d'
+    return c_name, sigs.get(c_name, [])
 
 
 # ==========================================================================

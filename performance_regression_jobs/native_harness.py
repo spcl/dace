@@ -1,5 +1,6 @@
-"""Native C++ reference harness: compile tsvc{2,2_5}_core.cpp and call each
-kernel's ``<name>_run_timed`` function via ctypes -- it times itself
+"""Native C++ reference harness: compile the per-kernel .cpp microkernels from the
+sibling VectraArtifacts repo (see corpus_sources) into one .so per lane, and call
+each kernel's function (named after its file stem) via ctypes -- it times itself
 (std::chrono) and writes the elapsed nanoseconds to its trailing ``time_ns``
 output pointer.
 
@@ -128,6 +129,57 @@ def library_discovery_flags():
 
 
 _CTYPE = {'double': ctypes.c_double, 'float': ctypes.c_float, 'int': ctypes.c_int, 'int64': ctypes.c_int64}
+
+
+# --------------------------------------------------------------------------
+# Source discovery: the TSVC native baselines compile one .cpp per kernel
+# subfolder, out of the sibling VectraArtifacts repo (its microkernels
+# supersede the old tsvc2_core.cpp / tsvc_2_5_core.cpp monoliths).
+# --------------------------------------------------------------------------
+def _dace_repo_root() -> str:
+    """dace repo root -- two levels up from this file (performance_regression_jobs/native_harness.py)."""
+    return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def vectra_artifacts_root() -> str:
+    """VectraArtifacts checkout holding the split TSVC microkernel sources: $VECTRA_ARTIFACTS_ROOT
+    if set, else a sibling of the dace repo root (both repos checked out side by side)."""
+    env = os.environ.get('VECTRA_ARTIFACTS_ROOT')
+    if env:
+        return env
+    sibling = os.path.join(os.path.dirname(_dace_repo_root()), 'VectraArtifacts')
+    if os.path.isdir(sibling):
+        return sibling
+    raise RuntimeError(f'VectraArtifacts checkout not found: set VECTRA_ARTIFACTS_ROOT or '
+                        f'place it at {sibling!r} (sibling of the dace repo)')
+
+
+#: corpus (matching CORPUS in tsvc2_perf.py / tsvc2_5_perf.py) -> (microkernel root relative
+#: to VectraArtifacts, the file-stem suffix picked per kernel subfolder -- the ONE variant
+#: matching this corpus's existing DaCe kernel-name convention: tsvc2 kernel names already
+#: end '_d_single'; tsvc2_5 kernel names are bare, matching the plain double '_d' variant).
+_CORPUS_MICROKERNELS = {
+    'tsvc2': (os.path.join('tsvc_2', 'tsvc_cpp_microkernels'), '_d_single'),
+    'tsvc2_5': (os.path.join('tsvc_2_5', 'tsvc_2_5_cpp_microkernels'), '_d'),
+}
+
+
+def corpus_sources(corpus: str) -> list[str]:
+    """One .cpp per kernel subfolder for `corpus` ('tsvc2' | 'tsvc2_5'):
+    root/<kernel>/<kernel><suffix>.cpp. Sorted so link order (and therefore the
+    built .so) is deterministic."""
+    subdir, suffix = _CORPUS_MICROKERNELS[corpus]
+    root = os.path.join(vectra_artifacts_root(), subdir)
+    sources = []
+    for kernel_dir in sorted(os.listdir(root)):
+        kdir = os.path.join(root, kernel_dir)
+        if not os.path.isdir(kdir):
+            continue
+        src = os.path.join(kdir, kernel_dir + suffix + '.cpp')
+        if not os.path.isfile(src):
+            raise FileNotFoundError(f'{corpus}: expected {src!r}')
+        sources.append(src)
+    return sorted(sources)
 
 
 def find_compiler(name):
@@ -282,12 +334,15 @@ _IGNORED_FLAG_RE = re.compile(
     r'unrecognized option|ignoring unknown option|unsupported option', re.IGNORECASE)
 
 
-def compile_lane(cpp_path, so_path, lane, timeout=1200):
-    """Compile one lane's shared library. Returns (ok, error_message).
-    Every lane finds its own vendor's compiler (see _LANE_SPEC) -- no
-    cross-lane override, so a lane always measures its named vendor."""
+def compile_lane(cpp_paths, so_path, lane, timeout=1200):
+    """Compile one lane's shared library from one source or many (e.g. every kernel's
+    per-kernel .cpp, see corpus_sources) -- always ONE .so per lane, exactly as the old
+    single-TU monolith produced. Returns (ok, error_message). Every lane finds its own
+    vendor's compiler (see _LANE_SPEC) -- no cross-lane override, so a lane always
+    measures its named vendor."""
     if lane not in _LANE_SPEC:
         raise ValueError(lane)
+    sources = [cpp_paths] if isinstance(cpp_paths, str) else list(cpp_paths)
     os.makedirs(os.path.dirname(so_path), exist_ok=True)
     find_cc, extra_flags = _LANE_SPEC[lane]
     cc = find_cc()
@@ -295,7 +350,7 @@ def compile_lane(cpp_path, so_path, lane, timeout=1200):
         return False, f'{lane}: compiler not found'
 
     cmd = [cc, *OPT_FLAGS] + extra_flags(cc) + openmp_rpath_flags(cc) + library_discovery_flags() + [
-        '-shared', '-fPIC', cpp_path, '-o', so_path
+        '-shared', '-fPIC', *sources, '-o', so_path
     ]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
@@ -309,12 +364,10 @@ def compile_lane(cpp_path, so_path, lane, timeout=1200):
 
 
 # --------------------------------------------------------------------------
-# Signature parsing: one .cpp compiles ALL of a corpus's kernels into a single
-# translation unit, so this runs once per corpus, not per kernel.
+# Signature parsing: one .cpp per kernel (see corpus_sources), each defining
+# exactly one function whose name is the file stem -- so each file contributes
+# exactly one entry, keyed by that stem.
 # --------------------------------------------------------------------------
-_SIG_RE = re.compile(r'(\w+)_run_timed\s*\((.*?)\)\s*\{', re.DOTALL)
-
-
 def _parse_param(part):
     part = part.strip()
     is_pointer = '*' in part
@@ -332,13 +385,23 @@ def _parse_param(part):
     return dict(name=name, ctype=ctype, is_pointer=is_pointer)
 
 
-def parse_signatures(cpp_path):
-    """kernel_name -> [{'name', 'ctype', 'is_pointer'}, ...] in declaration order."""
-    text = open(cpp_path).read()
+def parse_signatures(cpp_paths):
+    """kernel_name -> [{'name', 'ctype', 'is_pointer'}, ...] in declaration order.
+
+    Accepts one file or many (see corpus_sources); each file's single function is
+    keyed by its own file stem -- the C symbol name -- and only ITS parameter
+    list is parsed (unlike the old monolith, no other kernel's signature is in
+    the same file to worry about)."""
+    paths = [cpp_paths] if isinstance(cpp_paths, str) else list(cpp_paths)
     out = {}
-    for m in _SIG_RE.finditer(text):
-        params_str = m.group(2).strip()
-        out[m.group(1)] = [_parse_param(p) for p in params_str.split(',')] if params_str else []
+    for path in paths:
+        name = os.path.splitext(os.path.basename(path))[0]
+        text = open(path).read()
+        m = re.search(re.escape(name) + r'\s*\((.*?)\)\s*\{', text, re.DOTALL)
+        if not m:
+            raise ValueError(f'{name!r} signature not found in {path!r}')
+        params_str = m.group(1).strip()
+        out[name] = [_parse_param(p) for p in params_str.split(',')] if params_str else []
     return out
 
 

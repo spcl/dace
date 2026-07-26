@@ -35,7 +35,6 @@ import native_harness as nh
 import tsvc_2_5_corpus as tsvc25
 
 CORPUS = 'tsvc2_5'
-CPP_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tsvc_2_5_core.cpp')
 DACE_LANES = [f'{p}-{v}' for p in engine.PIPELINES for v in ('par', 'seq')]
 ALL_LANES = DACE_LANES + list(nh.LANES)
 #: Speedups in speedup.md are reported vs. the single-core native C baseline
@@ -49,7 +48,7 @@ _MAX_SCALE, _MIN_SCALE, _MAX_ITERS = 4096.0, 1.0, 8
 
 def _program(name):
     # DaceProgram.name prefixes the enclosing module name (tsvc_2_5_corpus_...);
-    # .f.__name__ is the bare function name, matching tsvc_2_5_core.cpp's symbols.
+    # .f.__name__ is the bare function name, matching the split '_d.cpp' file stems (minus '_d').
     return next(p for p in tsvc25.collect() if p.f.__name__ == name)
 
 
@@ -283,12 +282,13 @@ def prepare_native_libs(results_dir, rank):
     """Each lane finds its own vendor's compiler independently (see
     native_harness.compile_lane) -- a vendor with no compiler installed is
     just skipped for that lane, not the whole corpus."""
-    sigs = nh.parse_signatures(CPP_FILE)
+    sources = nh.corpus_sources(CORPUS)
+    sigs = nh.parse_signatures(sources)
     build_dir = engine.native_build_dir(results_dir, rank)
     out = {}
     for lane in nh.LANES:
         so_path = os.path.join(build_dir, f'lib_{lane}.so')
-        ok, err = nh.compile_lane(CPP_FILE, so_path, lane)
+        ok, err = nh.compile_lane(sources, so_path, lane)
         if ok:
             out[lane] = so_path
             print(f'compiled {lane}: {so_path}')
@@ -337,8 +337,10 @@ def main():
             sizes = {**tsvc25.SIZES, **overrides}  # global override: skip the search, keep other stock defaults
         else:
             sizes = size_scale_for_kernel(program, target_bytes=args.target_bytes)
-        c_name = name + '_run_timed'
-        per_kernel_libs = {lane: (so_path, c_name, sigs.get(name, [])) for lane, so_path in compiled.items()}
+        # C symbol is the split file's stem: '<kernel>_d' (the plain-double variant; the
+        # bare DaCe kernel name has no data-type suffix, unlike tsvc2's '_d_single' names).
+        c_name = name + '_d'
+        per_kernel_libs = {lane: (so_path, c_name, sigs.get(c_name, [])) for lane, so_path in compiled.items()}
         process_kernel(name, sizes, args, rank, per_kernel_libs)
 
     if not args.save_sdfg_only:

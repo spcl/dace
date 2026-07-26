@@ -4,6 +4,7 @@
     returns the corresponding CompiledSDFG object. """
 
 import collections
+import contextlib
 import getpass
 import glob
 import hashlib
@@ -13,9 +14,10 @@ import pathlib
 import re
 import shutil
 import shlex
+import signal
 import subprocess
 import tempfile
-from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
+from typing import Callable, Dict, Iterator, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 
 import dace
@@ -838,8 +840,73 @@ def identical_file_exists(filename: str, file_contents: str):
     return True
 
 
+#: Environment-variable prefixes an MPI/PMI launcher (srun, mpirun) exports to mark a process as a
+#: rank of its job. A child that inherits these and links a PMI/PMIx client -- directly, or
+#: transitively through an MPI-wrapper compiler -- treats itself as that rank and blocks in
+#: MPI_Init/PMIx_Init awaiting a rendezvous that never comes.
+MPI_RANK_ENV_PREFIXES = (
+    'PMI_',  # MPICH / Cray / Slurm PMI: PMI_RANK, PMI_SIZE, PMI_FD, PMI_JOBID, ...
+    'PMIX_',  # PMIx (OpenMPI 4+): PMIX_RANK, PMIX_NAMESPACE, PMIX_SERVER_URI*, ...
+    'OMPI_COMM_WORLD_',  # OpenMPI: OMPI_COMM_WORLD_RANK/SIZE/LOCAL_RANK, ...
+    'OMPI_UNIVERSE_',
+    'MV2_COMM_WORLD_',  # MVAPICH2
+    'MPI_LOCALRANKID',
+    'MPI_LOCALNRANKS',
+    'SLURM_PROCID',  # Slurm's PMI plugins derive rank from these
+    'SLURM_LOCALID',
+)
+
+
+def build_subprocess_env(base: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """``base`` (default ``os.environ``) with this process's MPI-rank identity stripped.
+
+    CMake -- and the try_compile test binaries, make/ninja and the compiler driver it spawns --
+    otherwise inherit the launcher's rank-identity variables and hang forever in a PMI/PMIx init
+    call, which surfaces as a stuck ``cmake`` with defunct children. Compilation never needs an MPI
+    identity; everything else (PATH, compiler flags, MCA tuning, ...) is preserved."""
+    env = os.environ if base is None else base
+    return {k: v for k, v in env.items() if not k.startswith(MPI_RANK_ENV_PREFIXES)}
+
+
+@contextlib.contextmanager
+def build_subprocess_sigmask() -> Iterator[None]:
+    """Temporarily unblock ``SIGCHLD`` on the calling thread, so a subprocess forked inside this
+    context inherits an unblocked ``SIGCHLD``.
+
+    MPI/Slurm launchers (``srun``, ``mpirun``) start their tasks with ``SIGCHLD`` *blocked*, and
+    every child inherits that mask. CMake (KWSys) learns that the helpers it spawns during
+    *configure* -- ``uname``, the compiler-id / ABI test binaries, ``make``/``ninja`` -- have
+    finished by receiving ``SIGCHLD``; blocked, it is never woken to reap them and spins forever in
+    ``select()``. That is the daint compile hang: it looks like a stuck ``cmake`` even though
+    nothing is compiling. (Confirmed under srun: every task's ``/proc/self/status`` shows ``SigBlk``
+    with the ``SIGCHLD`` bit set, and a trivial ``project()`` configure hangs until the child mask
+    is cleared.)
+
+    A child inherits the *forking thread's* mask and ``Popen`` does not reset it, so unblocking
+    immediately around the fork is enough. ``pthread_sigmask`` is per-thread, so this never disturbs
+    another thread or the process's steady-state mask. No-op where ``pthread_sigmask``/``SIGCHLD``
+    are unavailable (Windows)."""
+    if not hasattr(signal, 'pthread_sigmask') or not hasattr(signal, 'SIGCHLD'):
+        yield
+        return
+    if signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, []):
+        yield  # already deliverable -- the common, non-launcher case
+        return
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
+
+
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
+    # Every build subprocess is forked here -- CMake configure/build and the native backend's
+    # compile/link lines alike -- so both launcher safeguards belong at this one point rather than
+    # at each call site, where a new caller silently reintroduces the hang. Only the fork itself has
+    # to happen inside the sigmask context.
+    kwargs['env'] = build_subprocess_env(kwargs.get('env'))
+    with build_subprocess_sigmask():
+        process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
     output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
