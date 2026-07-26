@@ -4,8 +4,9 @@
 
 ``MapFusionVertical`` / ``MapFusionHorizontal`` only ever fuse ``MapEntry`` nodes, so two consecutive
 sibling loops that ``LoopToMap`` refused (recurrences, Thomas sweeps, sequential scans) are never fused.
-This transformation fuses ONE such pair -- same iteration space, single-compute-state bodies -- into one
-loop whose body runs the first body then the second per iteration. The ``LoopFusion`` PASS is exactly this
+This transformation fuses ONE such pair -- same iteration space, straight-line bodies (a linear chain of
+blocks, ``ConditionalBlock``s included) -- into one loop whose body runs the first body then the second per
+iteration. The ``LoopFusion`` PASS is exactly this
 transformation applied to every legal pair until a fixpoint; the transformation is the source of truth for
 the legality kernel, so the pass and the transformation can never disagree.
 
@@ -41,7 +42,7 @@ from dace import symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import InterstateEdge
-from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState
+from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import transformation
 from dace.transformation.passes.analysis import loop_analysis
@@ -55,8 +56,12 @@ class FuseLoops(transformation.MultiStateTransformation):
     """Fuse one consecutive same-range sequential sibling loop pair into a single loop.
 
     Applicable only where the fusion is provably value-preserving, and never on a loop that is
-    independently parallel (left to ``LoopToMap``). ``first`` is the surviving loop; ``second``'s body is
-    appended to it per iteration and ``second`` is spliced out.
+    independently parallel (left to ``LoopToMap``) -- unless the caller passes
+    ``allow_doall_fuse=True`` to ``can_be_applied``, a narrow opt-in for
+    ``ReconstructWavefrontNest`` (reassembling a perfect nest for ``WavefrontSkew`` out of a
+    Map-derived DOALL sibling is exactly its job); every other caller keeps the default
+    refusal. ``first`` is the surviving loop; ``second``'s body is appended to it per
+    iteration and ``second`` is spliced out.
     """
 
     first = transformation.PatternNode(LoopRegion)
@@ -66,7 +71,13 @@ class FuseLoops(transformation.MultiStateTransformation):
     def expressions(cls):
         return [sdutil.node_path_graph(cls.first, cls.second)]
 
-    def can_be_applied(self, graph: ControlFlowRegion, expr_index: int, sdfg: SDFG, permissive: bool = False) -> bool:
+    def can_be_applied(self,
+                       graph: ControlFlowRegion,
+                       expr_index: int,
+                       sdfg: SDFG,
+                       permissive: bool = False,
+                       *,
+                       allow_doall_fuse: bool = False) -> bool:
         first, second = self.first, self.second
         if second is first:
             return False
@@ -86,15 +97,22 @@ class FuseLoops(transformation.MultiStateTransformation):
             return False
         if not self._same_iteration_space(first, second):
             return False
-        s1 = _single_compute_state(first)
-        s2 = _single_compute_state(second)
-        if s1 is None or s2 is None:
+        # Body SHAPE only gates here on "is this a body we know how to read/merge at all" -- a linear
+        # chain of blocks (states, ConditionalBlocks, ...) or the indirect-access bridge shape
+        # (``_body_chain``). Whether the pair may actually fuse is decided purely by ``_fusion_legal``
+        # below; a multi-block or conditional body is no longer refused here just for not being one
+        # plain state.
+        acc1 = self._body_accesses(first)
+        acc2 = self._body_accesses(second)
+        if acc1 is None or acc2 is None:
             return False
         # Never serialize a loop that could parallelize on its own -- leave it to LoopToMap. Post-LoopToMap
         # this is already true of every candidate; the guard keeps it correct if it runs earlier.
-        if self._is_doall(sdfg, first) or self._is_doall(sdfg, second):
+        # ``allow_doall_fuse`` is ReconstructWavefrontNest's opt-in: default False preserves this refusal
+        # for every other caller.
+        if not allow_doall_fuse and (self._is_doall(sdfg, first) or self._is_doall(sdfg, second)):
             return False
-        return self._fusion_legal(first, second, s1, s2)
+        return self._fusion_legal(first, second, acc1, acc2)
 
     def apply(self, graph: ControlFlowRegion, sdfg: SDFG):
         # Bind the loop OBJECT before _merge mutates the CFG. `self.first` is a PatternNode descriptor
@@ -144,31 +162,146 @@ class FuseLoops(transformation.MultiStateTransformation):
         return _symbolically_equal(i1, i2) and _symbolically_equal(e1, e2)
 
     @staticmethod
-    def _accesses(state: SDFGState) -> Tuple[Dict[str, List], Dict[str, List]]:
-        """``(reads, writes)`` -- per data container, the list of accessed subsets into that container.
-        In-edges of an AccessNode write it (its ``dst`` side), out-edges read it (its ``src`` side). A
-        subset that cannot be resolved is recorded as ``None`` so the legality check can refuse
-        conservatively rather than silently drop a dependence."""
+    def _accesses(block: ControlFlowBlock) -> Tuple[Dict[str, List], Dict[str, List]]:
+        """``(reads, writes)`` -- per data container, the list of accessed subsets into that container,
+        across every ``SDFGState`` of ``block`` (a plain state, or a region such as ``ConditionalBlock``
+        whose ``all_states()`` walks its nested states). In-edges of an AccessNode write it (its ``dst``
+        side), out-edges read it (its ``src`` side). A subset that cannot be resolved is recorded as
+        ``None`` so the legality check can refuse conservatively rather than silently drop a dependence.
+        """
         reads: Dict[str, List] = {}
         writes: Dict[str, List] = {}
-        for n in state.nodes():
-            if not isinstance(n, nodes.AccessNode):
-                continue
-            for e in state.in_edges(n):
-                sub = e.data.get_dst_subset(e, state) if e.data is not None else None
-                writes.setdefault(n.data, []).append(sub)
-            for e in state.out_edges(n):
-                sub = e.data.get_src_subset(e, state) if e.data is not None else None
-                reads.setdefault(n.data, []).append(sub)
+        states = [block] if isinstance(block, SDFGState) else list(block.all_states())
+        for state in states:
+            for n in state.nodes():
+                if not isinstance(n, nodes.AccessNode):
+                    continue
+                for e in state.in_edges(n):
+                    sub = e.data.get_dst_subset(e, state) if e.data is not None else None
+                    writes.setdefault(n.data, []).append(sub)
+                for e in state.out_edges(n):
+                    sub = e.data.get_src_subset(e, state) if e.data is not None else None
+                    reads.setdefault(n.data, []).append(sub)
         return reads, writes
 
-    def _fusion_legal(self, first: LoopRegion, second: LoopRegion, s1: SDFGState, s2: SDFGState) -> bool:
-        """Whether running ``s1`` then ``s2`` per iteration preserves the value of the two loops run in
-        sequence. See the module docstring for the rule."""
+    @staticmethod
+    def _indirect_body_chain(loop: LoopRegion) -> Optional[Tuple[List, List]]:
+        """The indirect-access body shape ``_single_compute_state`` recognizes -- every block an empty
+        ``SDFGState`` except exactly one (any block type; a ``ConditionalBlock`` whose OWN branch
+        condition reads a symbol a bridge edge just defined -- mandelbrot's per-pixel mask check -- is
+        included, not just a plain compute ``SDFGState``), in a straight line joined by unconditional
+        edges whose assignments are non-self-referencing (``idx_index := idx[i]``, never ``k := k + 1``,
+        exactly ``_single_compute_state``'s guard).
+
+        Unlike ``_single_compute_state``, which only returns the sole non-empty state and lets the
+        bridge (empty states, their index-defining edges) be discarded by the caller, this returns the
+        FULL chain plus the REAL edge data connecting it -- a bridge assignment must survive being
+        spliced into another loop, since the sole non-empty block may read the symbol it defines (as
+        mandelbrot's ``ConditionalBlock`` condition does).
+
+        :returns: ``(blocks, edges)`` in execution order, ``len(edges) == len(blocks) - 1``, or ``None``
+            if the body does not match this shape.
+        """
+        blocks = list(loop.nodes())
+        edges = list(loop.edges())
+        if len(edges) != len(blocks) - 1:
+            return None
+        nonempty = [b for b in blocks if not (isinstance(b, SDFGState) and not b.nodes())]
+        if len(nonempty) != 1:
+            return None
+        succ = {e.src: e for e in edges}
+        order = [loop.start_block]
+        while order[-1] in succ:
+            order.append(succ[order[-1]].dst)
+        if len(order) != len(blocks):
+            return None
+        ordered_edges = [succ[b] for b in order[:-1]]
+        for e in ordered_edges:
+            if e.data.condition.as_string not in ('1', 'True', '(1)'):
+                return None
+            for lhs, rhs in (e.data.assignments or {}).items():
+                try:
+                    rhs_free = {str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols}
+                except Exception:  # noqa: BLE001 -- unparsable RHS: assume self-reference, refuse
+                    rhs_free = {lhs}
+                if lhs in rhs_free:
+                    return None
+        return order, [copy.deepcopy(e.data) for e in ordered_edges]
+
+    @staticmethod
+    def _body_chain(loop: LoopRegion) -> Optional[Tuple[List, List]]:
+        """``(blocks, edges)`` in execution order for ``loop``'s body: ``_linear_blocks``'s plain chain
+        (fresh default edges reconstructed -- none of its edges carry an assignment or condition to
+        preserve) or ``_indirect_body_chain``'s bridge chain (its REAL edges, kept as-is). ``None`` if
+        the body matches neither shape."""
+        blocks = _linear_blocks(loop)
+        if blocks is not None:
+            return blocks, [InterstateEdge() for _ in blocks[1:]]
+        return FuseLoops._indirect_body_chain(loop)
+
+    @staticmethod
+    def _body_blocks(loop: LoopRegion) -> Optional[List]:
+        """``loop``'s body blocks in execution order (``_body_chain``), or ``None`` if the body matches
+        neither recognized shape."""
+        chain = FuseLoops._body_chain(loop)
+        return chain[0] if chain is not None else None
+
+    @staticmethod
+    def _body_accesses(loop: LoopRegion) -> Optional[Tuple[Dict[str, List], Dict[str, List]]]:
+        """``(reads, writes)`` unioned across every block of ``loop``'s body (``_body_blocks``), or
+        ``None`` if the body has neither recognized shape. A ``ConditionalBlock`` among the blocks has
+        both branches' accesses unioned together regardless of which one fires at runtime -- an
+        over-approximation, which is the conservative direction: it can only add refusals, never hide a
+        real dependence."""
+        blocks = FuseLoops._body_blocks(loop)
+        if blocks is None:
+            return None
+        reads: Dict[str, List] = {}
+        writes: Dict[str, List] = {}
+        for block in blocks:
+            br, bw = FuseLoops._accesses(block)
+            for arr, subs in br.items():
+                reads.setdefault(arr, []).extend(subs)
+            for arr, subs in bw.items():
+                writes.setdefault(arr, []).extend(subs)
+        return reads, writes
+
+    @staticmethod
+    def _rename_ivar(accesses: Dict[str, List], old: str, new: str) -> Dict[str, List]:
+        """``accesses`` with every subset rewritten from iterator ``old`` to ``new``, on COPIES --
+        the originals are the live memlet subsets and must not be touched by a legality query."""
+        repl = {old: symbolic.pystr_to_symbolic(new)}
+        renamed: Dict[str, List] = {}
+        for arr, subs in accesses.items():
+            out = []
+            for sub in subs:
+                if sub is None:
+                    out.append(None)
+                    continue
+                copied = copy.deepcopy(sub)
+                copied.replace(repl)
+                out.append(copied)
+            renamed[arr] = out
+        return renamed
+
+    def _fusion_legal(self, first: LoopRegion, second: LoopRegion, acc1: Tuple[Dict[str, List], Dict[str, List]],
+                      acc2: Tuple[Dict[str, List], Dict[str, List]]) -> bool:
+        """Whether running ``first``'s body then ``second``'s body per iteration preserves the value of
+        the two loops run in sequence, given each body's own ``(reads, writes)`` (``_body_accesses``).
+        See the module docstring for the rule."""
         ivar = first.loop_variable
         classifier = BreakAntiDependence()
-        r1, w1 = self._accesses(s1)
-        r2, w2 = self._accesses(s2)
+        r1, w1 = acc1
+        r2, w2 = acc2
+        # ``_merge`` unifies the two iterators (``_same_iteration_space`` only requires equal range and
+        # stride, explicitly "iterator names may differ"), so legality MUST be judged in the post-merge
+        # namespace. Comparing ``s2``'s raw subsets against ``s1``'s makes every cross-body pair name
+        # two different symbols, which ``_dep_class`` can only call 'complex' -> refuse: same-index
+        # ``t[j]`` vs ``t[j']`` read as unrelated, and seidel_2d's read-ahead ``A[i, j+2]`` vs
+        # ``A[i, j+1]`` never gets classified as the legal WAR it is.
+        if second.loop_variable and second.loop_variable != ivar:
+            r2 = self._rename_ivar(r2, second.loop_variable, ivar)
+            w2 = self._rename_ivar(w2, second.loop_variable, ivar)
         arrays = (set(r1) | set(w1)) & (set(r2) | set(w2))
         for arr in arrays:
             # A dependence whose subset could not be resolved (None) is refused rather than dropped --
@@ -216,23 +349,35 @@ class FuseLoops(transformation.MultiStateTransformation):
     def _merge(sdfg: SDFG, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion):
         """Append ``second``'s body to ``first``'s and splice ``second`` out.
 
-        ``first`` keeps its header and iterator; ``second``'s compute state is renamed to ``first``'s
-        iterator and appended after ``first``'s last body block. ``second``'s successors are re-homed onto
-        ``first``. The adjacent body states are merged by the ``StateFusionExtended`` in the next cleanup.
+        ``first`` keeps its header and iterator; ``second``'s body blocks (``_body_chain`` -- a linear
+        chain, one or more blocks) are renamed to ``first``'s iterator and appended, chained in their
+        original order and joined by their ORIGINAL connecting edges, after ``first``'s last body block.
+        Preserving those edges (rather than reconnecting with bare sequencing) matters for the indirect-
+        access shape: a bridge edge's index-defining assignment (``idx_index := idx[i]``) must survive
+        the splice, since the sole compute block downstream of it (or its ``ConditionalBlock`` condition)
+        may read that symbol. ``second``'s successors are re-homed onto ``first``. The adjacent body
+        states are merged by the ``StateFusionExtended`` in the next cleanup.
         """
         v1 = first.loop_variable
         v2 = second.loop_variable
-        s2 = _single_compute_state(second)
-        second.remove_node(s2)  # detach the state object from second (its dataflow survives)
+        body2, body2_edges = FuseLoops._body_chain(second)
+        for block in body2:
+            second.remove_node(block)  # detach from second (its dataflow survives)
+            if v2 != v1:
+                block.replace(v2, v1)  # unify the iterator so body2's memlets index first's variable
         if v2 != v1:
-            s2.replace(v2, v1)  # unify the iterator so s2's memlets index first's variable
-        order = _linear_blocks(first) or [_single_compute_state(first)]
+            for edata in body2_edges:
+                edata.replace(v2, v1)  # unify the iterator inside a preserved bridge assignment too
+        order = FuseLoops._body_blocks(first)
         last = order[-1]
-        # ensure_unique_name: ``s2`` (from ``second``) may share the frontend's auto-generated block name
-        # with one of ``first``'s blocks; without a rename the fused loop carries two identically-named
-        # states, which trips a later fission/clone ("multiple blocks with the same name").
-        first.add_node(s2, ensure_unique_name=True)
-        first.add_edge(last, s2, InterstateEdge())
+        for block in body2:
+            # ensure_unique_name: a block from ``second`` may share the frontend's auto-generated name
+            # with one of ``first``'s blocks; without a rename the fused loop carries two identically-named
+            # blocks, which trips a later fission/clone ("multiple blocks with the same name").
+            first.add_node(block, ensure_unique_name=True)
+        first.add_edge(last, body2[0], InterstateEdge())
+        for (a, b), edata in zip(zip(body2, body2[1:]), body2_edges):
+            first.add_edge(a, b, edata)
 
         out_edges = list(cfg.out_edges(second))
         cfg.remove_node(second)  # also drops the first -> second sequencing edge

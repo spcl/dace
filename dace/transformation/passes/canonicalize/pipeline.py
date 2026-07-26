@@ -14,6 +14,7 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
+from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
 from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
@@ -45,6 +46,7 @@ from dace.transformation.passes.assignment_and_copy_kernel_to_memset_and_memcpy 
     AssignmentAndCopyKernelToMemsetAndMemcpy)
 from dace.transformation.dataflow.map_for_loop import MapToForLoop
 from dace.transformation.dataflow.map_collapse import MapCollapse
+from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeTaskletIntoMap
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
@@ -76,6 +78,8 @@ from dace.transformation.passes.promote_constant_index_access import PromoteCons
 from dace.transformation.passes.buffer_expansion import BufferExpansion
 from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
 from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
+from dace.transformation.passes.canonicalize.sink_state_into_loop import SinkStateIntoLoop
+from dace.transformation.passes.canonicalize.reconstruct_wavefront_nest import ReconstructWavefrontNest
 from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
@@ -97,6 +101,7 @@ from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap
 from dace.transformation.interstate.move_loop_invariant_if_up import MoveLoopInvariantIfUp
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
 from dace.transformation.interstate.condition_fusion import ConditionFusion
+from dace.transformation.dataflow.prune_connectors import PruneConnectors
 from dace.transformation.interstate.sdfg_nesting import InlineSDFG
 from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
@@ -116,9 +121,10 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     (a NestedSDFG wrapping a ``LoopRegion``/``ConditionalBlock``); without
     the latter those nestings are permanent, burying loops so
     ``MoveIfIntoLoop`` and cross-nest fusion cannot see them.
-    ``EmptyStateElimination`` then removes the empty states fusion/inlining
-    leave behind. None of these changes the computation; they only normalize
-    structure.
+    ``SinkStateIntoLoop`` then moves a replicable state sitting between two loops into the
+    second loop, restoring the adjacency ``FuseLoops`` needs. ``EmptyStateElimination``
+    finally removes the empty states fusion/inlining leave behind. None of these changes
+    the computed values; sinking is the only one that changes how often a state runs.
 
     The non-extended ``StateFusion`` is intentionally NOT called here -- it
     only runs inside ``SimplifyPass`` (the end-of-canonicalize Simplify
@@ -131,6 +137,13 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     """
     # Order rationale:
     # * ``StateFusionExtended`` -- collapse adjacent states first.
+    # * ``PruneConnectors`` -- drop NestedSDFG in/out connectors nothing inside reads or writes,
+    #   FIRST in the inliner fixpoint: a dead connector is both a fake dependence for every
+    #   downstream analysis and a hard ``InlineSDFG`` refusal (its "every connector needs a valid
+    #   matching access node" gate). Pruning one can therefore unlock the inline in the same
+    #   fixpoint round. It never widens anything, so unlike ``ExpandNestedSDFGInputs`` (which
+    #   widens boundary memlets to full-array subsets and only pays that back if the multistate
+    #   inline then commits) it is safe to run unconditionally.
     # * ``InlineMultistateSDFG`` + ``InlineSDFG`` -- flatten NestedSDFG
     #   nestings so all subsequent cleanup passes can see across the
     #   boundary. Both run in ONE fixpoint, not two sequential ones: in a
@@ -160,9 +173,12 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     #   form.
     # * ``EmptyStateElimination`` -- drop empty states left behind.
     return [(label, PatternMatchAndApplyRepeated([StateFusionExtended()])),
-            (label, PatternMatchAndApplyRepeated([InlineMultistateSDFG(), InlineSDFG()])), (label, RemoveViews()),
+            (label, PatternMatchAndApplyRepeated([PruneConnectors(),
+                                                  InlineMultistateSDFG(),
+                                                  InlineSDFG()])), (label, RemoveViews()),
             (label, CleanAccessNodeToScalarSliceToTaskletPattern()),
-            (label, CleanTaskletToScalarSliceToAccessNodePattern()), (label, EmptyStateElimination())]
+            (label, CleanTaskletToScalarSliceToAccessNodePattern()), (label, SinkStateIntoLoop()),
+            (label, EmptyStateElimination())]
 
 
 def _coalesce() -> List[Tuple[str, ppl.Pass]]:
@@ -200,7 +216,8 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
        no longer matches a sibling 1-D map for horizontal fusion, so a parallel
        ``map[i, j]`` beside a carried ``map i: { loop j }`` survives instead of
        being re-merged into one mixed-parallelism map.
-    8. ``MapFusionVertical`` / ``MapFusionHorizontal`` -- the payoff.
+    8. ``DistributeTaskletIntoMap`` then ``MapFusionVertical`` / ``MapFusionHorizontal``
+       -- the payoff; the first clears a free tasklet that would block the pair.
     9. ``MapCollapse`` again -- fusion can leave a freshly-perfect nest; folding
        it to one N-dimensional map is the canonical fully-parallel form.
 
@@ -214,8 +231,18 @@ def _coalesce() -> List[Tuple[str, ppl.Pass]]:
     s += _structural_cleanup('coalesce')
     s += [('coalesce', MinimizeStridePermutation())]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
-    s += [('coalesce', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+    s += [('coalesce',
+           PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
+                                         MapFusionVertical(),
+                                         MapFusionHorizontal()]))]
     s += [('coalesce', PatternMatchAndApplyRepeated([MapCollapse()]))]
+    # 10. structural cleanup AGAIN -- map fusion rebuilds map bodies as fresh single-state
+    #     NestedSDFGs, and an un-inlined body hides its precise per-element memlets behind a
+    #     whole-array boundary memlet. Every downstream dependence test then reads the bounding
+    #     box instead of the real subset and refuses (polybench seidel_2d: FuseLoops saw
+    #     ``A[0:N, 0:N]`` where the body writes ``A[i, j+1]``). Leaving the phase tidy is this
+    #     helper's stated contract; the earlier call at step 6 predates the fusion that dirties it.
+    s += _structural_cleanup('coalesce')
     return s
 
 
@@ -238,7 +265,7 @@ class _PrivatizeScalarsStage(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def privatizer(self) -> ppl.Pipeline:
         """The privatization pipeline this stage adapts.
@@ -327,12 +354,31 @@ class _PrivatizeArraysStage(_PrivatizeScalarsStage):
 # (azimint_hist: ~200x -> ~1x vs numpy). CPU-only: the clause path is gated on
 # ``openmp_array_reductions`` (an OpenMP feature); on GPU a scatter accumulate stays
 # an ``atomicAdd`` and this privatisation does not apply, so the knob defaults off.
+# ``reconstruct_wavefront_nest`` (ReconstructWavefrontNest): rebuilds an imperfect
+# Map-plus-LoopRegion stencil body (polybench ``seidel_2d``'s slice-vectorized neighbor
+# sum beside its sequential in-row scan) into the single ``LoopRegion`` ``WavefrontSkew``
+# requires, committing only when a deepcopy trial proves it unlocks a skew. Off by default
+# on both targets: on the corpus kernel it targets, the Map's slice-normalized range and the
+# scan's direct-index range do not line up (a real offset, not just a DOALL refusal), so the
+# reconstruction never actually fires there yet -- ON is safe (mutate-on-provable-win only)
+# but unproven to help; flip once a corpus win is measured.
+# ``normalize_loop_and_map_origin`` (NormalizeLoopAndMapOrigin): rebase every Map range /
+# ``LoopRegion`` counter to a 0-based begin, KEEPING the stride (``b:e:s`` -> ``0:(e-b):s``,
+# ``p -> p + b``) -- unlike ``NormalizeLoopsAndMaps`` (dropped from this pipeline, see the
+# ``normalize`` comment below), which folds the stride into the index and cost a parallel map
+# on TSVC ``s172``. Two ranges of equal trip count but different origin (a slice-vectorized
+# Map ``0:N-3`` beside a sequential scan ``LoopRegion`` ``1:N-2``, polybench ``seidel_2d``)
+# become the identical ``0:N-3`` once both are rebased. Corpus verdict (transform-only,
+# ``tests/corpus/measure_parallelization.py``, 4 corpora): see the AB note on the knob's wiring
+# below for the measured totals and default.
 _CPU_DEFAULTS: Dict[str, Any] = {
     'interchange_carry_with_map': True,
     'peel_limit': 4,
     'break_anti_dependence': True,
     'scatter_to_guarded_maps': True,
     'privatize_scatter_reductions': True,
+    'reconstruct_wavefront_nest': False,
+    'normalize_loop_and_map_origin': False,
 }
 _GPU_DEFAULTS: Dict[str, Any] = {
     'interchange_carry_with_map': False,
@@ -340,6 +386,8 @@ _GPU_DEFAULTS: Dict[str, Any] = {
     'break_anti_dependence': True,
     'scatter_to_guarded_maps': True,
     'privatize_scatter_reductions': False,
+    'reconstruct_wavefront_nest': False,
+    'normalize_loop_and_map_origin': False,
 }
 _TARGET_DEFAULTS: Dict[str, Dict[str, Any]] = {'cpu': _CPU_DEFAULTS, 'gpu': _GPU_DEFAULTS}
 
@@ -358,6 +406,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                   interchange_carry_with_map: bool = True,
                   scatter_to_guarded_maps: bool = True,
                   privatize_scatter_reductions: bool = True,
+                  reconstruct_wavefront_nest: bool = False,
+                  normalize_loop_and_map_origin: bool = False,
                   assume_parallel_guards: bool = False,
                   target: str = 'cpu',
                   lift: bool = True,
@@ -383,6 +433,17 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
                                        INTO the per-column Map so the scan runs
                                        sequential-per-thread. On for CPU, off
                                        for GPU.
+    :param reconstruct_wavefront_nest: Rebuild an imperfect Map-plus-LoopRegion stencil
+                                       body into the single loop ``WavefrontSkew`` requires
+                                       (``ReconstructWavefrontNest``), right before it in the
+                                       ``loop_fuse`` stage; commits only on a proven skew.
+                                       Off by default on both targets (see ``_CPU_DEFAULTS``).
+    :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
+                                          0-based begin, keeping the stride
+                                          (``NormalizeLoopAndMapOrigin``), right before the
+                                          ``loop_to_x`` stage -- BEFORE every ``LoopTo*`` lift so
+                                          they see the normalized shape. Off by default on both
+                                          targets (see ``_CPU_DEFAULTS``).
 
     Every map is lowered to a ``LoopRegion`` up front so all canonicalization
     runs on a single representation (one fission/normalize/reduce path, no
@@ -811,6 +872,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         s += [('lift_copy_loops', AssignmentAndCopyKernelToMemsetAndMemcpy())]
         s += _structural_cleanup('lift_copy_loops')
 
+    # normalize_origin (optional knob, off by default): rebase every Map range / LoopRegion
+    # counter to a 0-based begin, keeping the stride -- the LAST point before every ``LoopTo*``
+    # lift (loop_to_x / loop_to_scan / parallelize), so those matchers see the normalized shape.
+    # No Map exists in the SDFG yet at this point ('lower', above, already turned every one into
+    # a LoopRegion, and no stage between there and here reintroduces one), so this only ever
+    # rebases LoopRegions here -- the Map-rebasing half of the pass matters for a caller that
+    # invokes it standalone, or once ``LoopToMap`` (below) creates fresh Maps.
+    if normalize_loop_and_map_origin:
+        s += [('normalize_origin', NormalizeLoopAndMapOrigin())]
+
     # loop_to_x (moved here from the 'reduce' stage so the order is
     # LoopFission -> LoopStridePermutation -> LoopToX -> LoopToMap): lift the
     # accumulator / scan / argmax / find-index / conditional-reduce shapes that
@@ -937,12 +1008,32 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # loop_fuse (post-parallelize recovery): every DOALL loop is now a Map, so the
     # remaining LoopRegions are exactly the sequential residue LoopToMap refused.
-    # ``LoopFusion`` fuses consecutive same-range sequential siblings (locality; it
-    # cannot touch the already-parallel Maps, which it never matches).
-    # ``WavefrontSkew`` then makes its final parallelization attempt on those
-    # residual 2-D nests (seidel / nussinov and any nest LoopFusion merged), and a
-    # second ``LoopToMap`` maps the inner axis it exposes. This is the single home
-    # of wavefront skewing: it only ever runs on what LoopToMap could not take.
+    # ``ReconstructWavefrontNest`` runs FIRST (gated, off by default): a stencil body
+    # whose slice-vectorized statement stayed a Map beside its sequential scan
+    # LoopRegion is an imperfect nest ``WavefrontSkew`` refuses outright, so this
+    # rebuilds the single-LoopRegion body it requires, committing only when a trial
+    # proves the rebuild unlocks a skew. ``LoopFusion`` fuses consecutive same-range
+    # sequential siblings (locality; it cannot touch the already-parallel Maps, which
+    # it never matches). ``WavefrontSkew`` then makes its final parallelization attempt
+    # on those residual 2-D nests (seidel / nussinov and any nest the two passes above
+    # merged), and a second ``LoopToMap`` maps the inner axis it exposes. This is the
+    # single home of wavefront skewing: it only ever runs on what LoopToMap could not take.
+    if reconstruct_wavefront_nest:
+        # Same WCRToAugAssign-before-MapToForLoop ordering the 'lower' stage above establishes:
+        # ReconstructWavefrontNest drives MapToForLoop, whose "a surviving WCR output is a genuine
+        # reduction" refusal is only true once the conflict-free ones are already reverted. The
+        # slice statement's ``A[i, 1:-1] += ...`` is a MULTI-element tasklet write at 'lower' time,
+        # which WCRToAugAssign must refuse (a scalar aug-assign tasklet over an array memlet would
+        # codegen ``double* + double*``); only after LoopToMap splits the slice into a per-element
+        # map body is the write scalar and the spurious WCR revertible (polybench seidel_2d).
+        s += [('loop_fuse', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+        # ...then tidy, because reverting the WCR is what makes the body inlinable at all: while the
+        # RMW lives in the WCR, the body NestedSDFG's in/out connector for the destination has NO
+        # read AccessNode inside, and ``InlineSDFG`` refuses a connector with no valid matching
+        # access node. Inlining is what replaces the whole-array boundary memlet with the body's
+        # real ``A[i, j+1]``, which every downstream dependence test needs.
+        s += _structural_cleanup('loop_fuse')
+        s += [('loop_fuse', ReconstructWavefrontNest())]
     s += [('loop_fuse', LoopFusion())]
     s += [('loop_fuse', WavefrontSkew())]
     s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -1031,7 +1122,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('fuse', PatternMatchAndApplyRepeated([ConditionFusion()]))]
     s += [('fuse', LiftTrivialIf())]
     s += _structural_cleanup('fuse')
-    s += [('fuse', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+    s += [('fuse',
+           PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
+                                         MapFusionVertical(),
+                                         MapFusionHorizontal()]))]
 
     # normalize_map_body (post-fuse): MapFusion co-locates independent guarded
     # computations under one map but leaves each as its own NestedSDFG
@@ -1173,7 +1267,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Re-run vertical+horizontal fusion in final map form so every fuseable pair is
     # fused; the seeded-reduction / dependency guards still refuse the unsafe ones. The
     # following SymbolDedup cleans up the duplicate index symbols fusion introduces.
-    s += [('end', PatternMatchAndApplyRepeated([MapFusionVertical(), MapFusionHorizontal()]))]
+    s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
+                                                MapFusionVertical(),
+                                                MapFusionHorizontal()]))]
 
     # Terminal symbol cleanup: after fusion, a fused gather-map body carries
     # duplicate index symbols that map fusion introduced -- ``idx_index`` and
@@ -1322,6 +1418,13 @@ class CanonicalizationPipeline(ppl.Pass):
                                        ``LoopRegion`` INTO the per-column Map so
                                        the scan runs sequential-per-thread.
                                        ``None`` (default) -> per-target preset.
+    :param reconstruct_wavefront_nest: Run ``ReconstructWavefrontNest`` right before
+                                       ``WavefrontSkew`` in the ``loop_fuse`` stage.
+                                       ``None`` (default) -> per-target preset (off on
+                                       both targets; see ``_CPU_DEFAULTS``).
+    :param normalize_loop_and_map_origin: Run ``NormalizeLoopAndMapOrigin`` right before the
+                                          ``loop_to_x`` stage. ``None`` (default) -> per-target
+                                          preset (off on both targets; see ``_CPU_DEFAULTS``).
     :param specialize_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
                              ``{'nclv': 5}``, or a kernel's shape symbols like
                              ``{'Norb': 3}``) baked into the SDFG via
@@ -1370,6 +1473,18 @@ class CanonicalizationPipeline(ppl.Pass):
         default=True,
         desc='Run PrivatizeScatterReduction to surface a data-dependent scatter reduction '
         '(azimint histogram) to an OpenMP array-section reduction clause (CPU-only; off for GPU).')
+    reconstruct_wavefront_nest = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Run ReconstructWavefrontNest right before WavefrontSkew in the loop_fuse stage, rebuilding '
+        'an imperfect Map-plus-LoopRegion stencil body into the single loop WavefrontSkew requires. '
+        'Off by default on both targets (unproven corpus benefit; see _CPU_DEFAULTS).')
+    normalize_loop_and_map_origin = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Run NormalizeLoopAndMapOrigin right before the loop_to_x stage, rebasing every Map range / '
+        'LoopRegion counter to a 0-based begin while keeping the stride. Off by default on both targets '
+        '(see _CPU_DEFAULTS).')
     assume_parallel_guards = properties.Property(
         dtype=bool,
         default=False,
@@ -1400,6 +1515,8 @@ class CanonicalizationPipeline(ppl.Pass):
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
                  privatize_scatter_reductions: Optional[bool] = None,
+                 reconstruct_wavefront_nest: Optional[bool] = None,
+                 normalize_loop_and_map_origin: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
@@ -1429,6 +1546,14 @@ class CanonicalizationPipeline(ppl.Pass):
                                                                     'privatize_scatter_reductions',
                                                                     privatize_scatter_reductions,
                                                                     fallback=(target == 'cpu'))
+        self.reconstruct_wavefront_nest = _resolve_target_default(target,
+                                                                  'reconstruct_wavefront_nest',
+                                                                  reconstruct_wavefront_nest,
+                                                                  fallback=False)
+        self.normalize_loop_and_map_origin = _resolve_target_default(target,
+                                                                     'normalize_loop_and_map_origin',
+                                                                     normalize_loop_and_map_origin,
+                                                                     fallback=False)
         self.assume_parallel_guards = assume_parallel_guards
         self.lift = lift
         self.lift_copy = lift_copy
@@ -1442,7 +1567,7 @@ class CanonicalizationPipeline(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Canonicalize ``sdfg`` in place.
@@ -1465,6 +1590,8 @@ class CanonicalizationPipeline(ppl.Pass):
                                interchange_carry_with_map=self.interchange_carry_with_map,
                                scatter_to_guarded_maps=self.scatter_to_guarded_maps,
                                privatize_scatter_reductions=self.privatize_scatter_reductions,
+                               reconstruct_wavefront_nest=self.reconstruct_wavefront_nest,
+                               normalize_loop_and_map_origin=self.normalize_loop_and_map_origin,
                                assume_parallel_guards=self.assume_parallel_guards,
                                target=self.target,
                                lift=self.lift,
@@ -1497,6 +1624,8 @@ def canonicalize(sdfg: SDFG,
                  interchange_carry_with_map: Optional[bool] = None,
                  scatter_to_guarded_maps: Optional[bool] = None,
                  privatize_scatter_reductions: Optional[bool] = None,
+                 reconstruct_wavefront_nest: Optional[bool] = None,
+                 normalize_loop_and_map_origin: Optional[bool] = None,
                  assume_parallel_guards: bool = False,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
@@ -1530,6 +1659,16 @@ def canonicalize(sdfg: SDFG,
                                    clause so the accumulator is thread-privatised instead
                                    of hammered with a contended atomic; ``None`` (default)
                                    -> per-target preset (CPU=True, GPU=False).
+    :param reconstruct_wavefront_nest: Rebuild an imperfect Map-plus-LoopRegion stencil
+                                   body (``ReconstructWavefrontNest``) into the single
+                                   loop ``WavefrontSkew`` requires, right before it in the
+                                   ``loop_fuse`` stage; commits only on a proven skew.
+                                   ``None`` (default) -> per-target preset (off on both
+                                   targets -- unproven corpus benefit).
+    :param normalize_loop_and_map_origin: Rebase every Map range / ``LoopRegion`` counter to a
+                                   0-based begin, keeping the stride (``NormalizeLoopAndMapOrigin``),
+                                   right before the ``loop_to_x`` stage. ``None`` (default) ->
+                                   per-target preset (off on both targets).
     :param assume_parallel_guards: Assume every parallel-guard condition holds --
                                    ``ParallelizeUnderConstraint`` and
                                    ``ScatterToGuardedMaps`` emit only the parallel
@@ -1564,6 +1703,8 @@ def canonicalize(sdfg: SDFG,
                              interchange_carry_with_map=interchange_carry_with_map,
                              scatter_to_guarded_maps=scatter_to_guarded_maps,
                              privatize_scatter_reductions=privatize_scatter_reductions,
+                             reconstruct_wavefront_nest=reconstruct_wavefront_nest,
+                             normalize_loop_and_map_origin=normalize_loop_and_map_origin,
                              assume_parallel_guards=assume_parallel_guards,
                              specialize_constants=specialize_constants,
                              lift=lift,
