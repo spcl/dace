@@ -120,6 +120,66 @@ def test_parallelize_unrolls_short_constant_loop():
     assert np.allclose(B[0], A.sum())
 
 
+def test_short_loop_unroll_refuses_unfusable_branchy_body() -> None:
+    """The unroll is declined exactly when it can neither specialize an index nor decide a guard.
+
+    Unrolling substitutes the loop variable, so a body that never names it clones verbatim; if that
+    body is also branchy, the clones are separated by conditionals and the pass's local state fusion
+    re-merges none of them (npbench ``crc16``: 11 states -> 46, no map gained). Both halves of the
+    conjunction are load-bearing, so both are probed from the other side as well.
+    """
+
+    @dace.program
+    def bit_mix(seed: dace.int64[1], out: dace.int64[1]):
+        c = seed[0]
+        for _ in range(4):
+            if c & 1:
+                c = (c >> 1) ^ 7
+            else:
+                c = c >> 1
+        out[0] = c
+
+    @dace.program
+    def branchy_indexed(A: dace.float64[4], B: dace.float64[1]):
+        for m in range(4):
+            if A[m] > 0.0:
+                B[0] = B[0] + A[m]
+            else:
+                B[0] = B[0] - A[m]
+
+    @dace.program
+    def straight_line(x: dace.float64[1]):
+        for _ in range(4):
+            x[0] = x[0] * 0.5
+
+    # Branchy AND the iterate is unused -> refused, and the refusal leaves the SDFG untouched.
+    refused = bit_mix.to_sdfg(simplify=True)
+    states_before = sum(1 for sd in refused.all_sdfgs_recursive() for _ in sd.all_states())
+    ShortLoopUnroll(unroll_limit=8).apply_pass(refused, {})
+    assert _num_loops(refused) == 1
+    assert sum(1 for sd in refused.all_sdfgs_recursive() for _ in sd.all_states()) == states_before
+
+    # Branchy but the iterate INDEXES the body: unrolling pins it, which is what folds the guards
+    # and the constant subsets downstream (the CloudSC species loop). Still unrolled.
+    indexed = branchy_indexed.to_sdfg(simplify=True)
+    ShortLoopUnroll(unroll_limit=8).apply_pass(indexed, {})
+    assert _num_loops(indexed) == 0
+
+    # Unused iterate but straight-line: the clones fuse back down, which is the pass's whole point.
+    flat = straight_line.to_sdfg(simplify=True)
+    ShortLoopUnroll(unroll_limit=8).apply_pass(flat, {})
+    assert _num_loops(flat) == 0
+
+    # Value-preserving: the refused loop still computes the reference recurrence.
+    seed = np.array([12345], dtype=np.int64)
+    out = np.zeros(1, dtype=np.int64)
+    refused(seed=seed, out=out)
+    expected = 12345
+    for _ in range(4):
+        expected = ((expected >> 1) ^ 7) if expected & 1 else expected >> 1
+    assert out[0] == expected
+
+
 def test_parallelize_peel_mechanism_value_preserving():
     """``BestEffortLoopPeeling._peel_loops`` peels boundary iterations off a loop
     (front / back / both) and stays value-preserving, even for symbolic bounds."""
@@ -180,6 +240,7 @@ if __name__ == '__main__':
     test_parallelize_rowsum_reduction_value_preserving()
     test_parallelize_runs_once_idempotent()
     test_parallelize_unrolls_short_constant_loop()
+    test_short_loop_unroll_refuses_unfusable_branchy_body()
     test_parallelize_peel_mechanism_value_preserving()
     test_parallelize_peeling_reverts_on_recurrence()
     test_parallelize_peel_limit_zero_disables()

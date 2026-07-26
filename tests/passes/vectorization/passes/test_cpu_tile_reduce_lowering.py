@@ -24,13 +24,21 @@ _CPU_ISAS = ["SCALAR", "AVX512", "AVX2", "ARM_NEON", "ARM_SVE"]
 
 
 @pytest.mark.parametrize("isa", _CPU_ISAS)
-def test_reduce_selects_isa_for_full_k1(isa):
+def test_reduce_selects_isa_for_full_k1(isa: str) -> None:
     # A full (axis=None), unmasked, K=1 TileReduce lowers to the CPU ISA
-    # ``tile_reduce`` intrinsic (the CPU ISA headers now ship it).
+    # ``tile_reduce`` intrinsic (the CPU ISA headers now ship it) -- but only
+    # when the host can actually execute that ISA. Vectorization enforces
+    # arch-native (``host_supported_isas``), so an ISA foreign to this host
+    # (e.g. ARM_NEON on an x86 box) must be REFUSED with a ValueError, not
+    # silently mismapped -- both branches are the contract here.
     n = TileReduce("t", op="+", widths=(8, ))
     n.target_isa = isa
     impl = _dispatch._ISA_TO_IMPL[isa]
     assert impl in n.implementations
+    if isa != "SCALAR" and isa not in _dispatch.host_supported_isas():
+        with pytest.raises(ValueError, match="not executable on this host"):
+            _dispatch.select_tile_implementation(n)
+        return
     assert _dispatch.select_tile_implementation(n) == impl
 
 

@@ -38,7 +38,8 @@ from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.vectorization.propagate_index_subsets import PropagateIndexSubsets
 from dace.transformation.passes.vectorization.bypass_trivial_assign_tasklets import BypassTrivialAssignTasklets
 from dace.transformation.passes.vectorization.utils.pass_invariants import (no_wcr_in_map_body,
-                                                                            no_wcr_inside_nested_sdfgs)
+                                                                            no_wcr_inside_nested_sdfgs,
+                                                                            no_widened_scalar_tasklets)
 from dace.transformation.passes.vectorization.remove_unused_per_lane_symbols import RemoveUnusedPerLaneSymbols
 from dace.transformation.passes.vectorization.convert_tasklets_to_tile_ops import ConvertTaskletsToTileOps
 from dace.transformation.passes.vectorization.generate_tile_iteration_mask import (
@@ -98,28 +99,10 @@ from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileLoad, TileMask
                                           TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
+from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
 _TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
-
-
-class VectorizeUnsupported(Exception):
-    """A kernel the K-dim tile pipeline cannot soundly vectorize.
-
-    Raised by the pre-tiling soundness gates when the kernel carries a shape the tile widener would
-    mis-lower -- a loop-carried / nested-reduction body WCR that would race the lanes (the
-    ``no_wcr_in_map_body`` / ``no_wcr_inside_nested_sdfgs`` invariants), or a prep pass that could
-    not lower the kernel to a valid tileable form. :meth:`VectorizeMultiDim.apply_pass` catches it,
-    restores the pre-vectorization SDFG, and returns without tiling, leaving the kernel as its
-    correct, un-tiled input dataflow.
-
-    This turns a genuine capability limit into a clean *refusal to vectorize* rather than a hard
-    crash (or a silently mis-tiled, wrong-numeric result). The underlying invariant CHECK is kept
-    intact -- it is the detector -- per the maintainer direction: keep the soundness guard, but let
-    it decline the kernel instead of aborting the whole run. Only the safe (e.g. perfectly-nested,
-    lane-disjoint) reductions the widener DOES lower pass the guard and tile; every unsound shape is
-    declined here.
-    """
 
 
 def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
@@ -255,7 +238,7 @@ class _MultiOutputReductionMapFission(MapFission):
 
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
-_VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA")
+_VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA", "CUDA_WARP")
 _VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_tail")
 _VALID_BRANCH = ("merge", "fp_factor")
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
@@ -418,6 +401,39 @@ class _AssertNoBodyWCR(ppl.Pass):
         for violation in (no_wcr_in_map_body(sdfg), no_wcr_inside_nested_sdfgs(sdfg)):
             if violation is not None:
                 raise VectorizeUnsupported(f"loose WCR in the region to be tiled: {violation}")
+        return None
+
+
+class _AssertTileOpsLowered(ppl.Pass):
+    """Vectorizer EXIT precondition: every widened body tasklet became a tile lib node.
+
+    ``ConvertTaskletsToTileOps`` leaves a tasklet it cannot classify alone -- correct on its own
+    terms, since it is a converter, not a gate. But by then ``WidenAccesses`` has already swapped
+    that tasklet's connectors for ``(W,)`` buffers, so its scalar Python body would be emitted
+    verbatim against a pointer. Nothing downstream repairs that, so the kernel is un-tileable in
+    practice: raise :class:`VectorizeUnsupported` and let the orchestrator hand back the correct,
+    scalar input. Read-only (the CHECK is the detector, as with :class:`_AssertNoBodyWCR`).
+    """
+
+    CATEGORY: str = "Vectorization"
+
+    def __init__(self, widths):
+        super().__init__()
+        self._widths = tuple(widths)
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Nothing
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: dace.SDFG, pipeline_results) -> Optional[int]:
+        violation = no_widened_scalar_tasklets(sdfg, len(self._widths), self._widths)
+        if violation is not None:
+            raise VectorizeUnsupported(f"tasklet not lowered to a tile op: {violation}")
         return None
 
 
@@ -902,6 +918,10 @@ class VectorizeMultiDim(ppl.Pipeline):
             # Converter sees the walker's lib nodes + the mask in scope; sets has_mask=True +
             # wires _mask onto Tile{Binop, Unop, ITE, Reduce}.
             ConvertTaskletsToTileOps(widths=widths_t),
+            # Exit gate: a body tasklet the converter could not classify now carries tile-shaped
+            # connectors, so the kernel cannot be emitted -- refuse it instead of shipping a body
+            # that would compile against a pointer (or not compile at all).
+            _AssertTileOpsLowered(widths=widths_t),
         ]
         # ``branched_tail`` (GPU-only) post-transform: after the tile emitters vectorized the
         # ``__tile_main`` interior and left the ``__scalar_tail`` scalar, fuse each pair into ONE

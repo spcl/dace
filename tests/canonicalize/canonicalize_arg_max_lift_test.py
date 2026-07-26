@@ -11,6 +11,12 @@ import dace
 from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.libraries.standard.nodes import Reduce
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
+from dace.libraries.standard.nodes.scan import Scan
+
+
+def _num_scan_nodes(sdfg) -> int:
+    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
+
 
 N = dace.symbol('N')
 
@@ -412,8 +418,13 @@ def test_loop_to_scan_doesnt_lift_an_argmax_loop():
                 x = a[i]
         result[0] = x
 
-    res = LoopToScan().apply_pass(s314.to_sdfg(simplify=True), {})
-    assert res is None, "LoopToScan must not lift conditional argmax loops"
+    sdfg = s314.to_sdfg(simplify=True)
+    LoopToScan().apply_pass(sdfg, {})
+    # The refusal is "no Scan was emitted", not the return value: ``apply_pass``
+    # reports whether the SDFG was MODIFIED, and its normalization preprocess
+    # (WCR -> augassign, trivial-tasklet strip, negative-stride flip) edits the
+    # graph unconditionally, so a refusing run still legitimately returns 0.
+    assert _num_scan_nodes(sdfg) == 0, "LoopToScan must not lift conditional argmax loops"
 
 
 def test_loop_to_reduce_doesnt_lift_a_scan_loop():
@@ -441,8 +452,9 @@ def test_loop_to_scan_doesnt_lift_a_reduction_loop():
             s = s + a[i]
         result[0] = s
 
-    res = LoopToScan().apply_pass(reduce_loop.to_sdfg(simplify=True), {})
-    assert res is None, "LoopToScan must not lift plain reductions"
+    sdfg = reduce_loop.to_sdfg(simplify=True)
+    LoopToScan().apply_pass(sdfg, {})
+    assert _num_scan_nodes(sdfg) == 0, "LoopToScan must not lift plain reductions"
 
 
 # -----------------------------------------------------------------------------
@@ -988,6 +1000,140 @@ def test_2d_argmax_refuses_non_contiguous_partial_rows():
     xi, yi = flat // (m - 1), flat % (m - 1)
     assert np.isclose(out[0], ref[xi, yi])
     assert int(out[1]) == xi and int(out[2]) == yi
+
+
+# -----------------------------------------------------------------------------
+# Shifted gather: ``a[i + b]`` over a 0-based loop. Same reduced element set as
+# the unshifted ``a[i]`` over ``b:N``, which is exactly what rebasing a loop's
+# origin to 0 (``NormalizeLoopAndMapOrigin``) leaves behind.
+# -----------------------------------------------------------------------------
+
+
+def test_shifted_gather_max_value_only_lifts():
+    """``x = a[0]; for i in range(0, N - 1): if a[i + 1] > x: x = a[i + 1]``
+    gathers ``a[1:N]`` -- exactly what ``range(1, N)`` / ``a[i]`` gathers -- so
+    it lifts to the same value-only ``Reduce(Max)``. The base is folded into the
+    emitted slice; the seed sits at position 0, one gather-step below the loop's
+    first."""
+
+    @dace.program
+    def shifted_max(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(0, N - 1):
+            if a[i + 1] > x:
+                x = a[i + 1]
+        result[0] = x
+
+    sdfg = shifted_max.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 1
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1, 'shifted gather must lift'
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    assert _num_reduces(sdfg) == 1
+
+    n = 16
+    rng = np.random.default_rng(3141)
+    a = rng.standard_normal(n)
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=n)
+    assert np.isclose(out[0], np.max(a)), f'got {out[0]}, expected {np.max(a)}'
+
+
+def test_shifted_gather_min_value_only_lifts():
+    """``<`` sibling of :func:`test_shifted_gather_max_value_only_lifts` --
+    ``Reduce(Min)`` over the same shifted slice."""
+
+    @dace.program
+    def shifted_min(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(0, N - 1):
+            if a[i + 1] < x:
+                x = a[i + 1]
+        result[0] = x
+
+    sdfg = shifted_min.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    assert _num_reduces(sdfg) == 1
+
+    n = 16
+    rng = np.random.default_rng(3161)
+    a = rng.standard_normal(n)
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=n)
+    assert np.isclose(out[0], np.min(a)), f'got {out[0]}, expected {np.min(a)}'
+
+
+def test_shifted_gather_seed_element_is_the_extreme():
+    """The dropped pre-loop seed ``x = a[0]`` must stay inside the shifted
+    slice: with ``a[0]`` the maximum, a slice starting one element too high
+    would return the wrong value."""
+
+    @dace.program
+    def shifted_seed(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(0, N - 1):
+            if a[i + 1] > x:
+                x = a[i + 1]
+        result[0] = x
+
+    sdfg = shifted_seed.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    a = np.array([100.0, 1.0, 2.0, 3.0, 4.0, 5.0])
+    out = np.zeros(1)
+    sdfg(a=a, result=out, N=6)
+    assert np.isclose(out[0], 100.0)
+
+
+def test_shifted_gather_refuses_mismatched_value_write():
+    """``if a[i] > x: x = a[i + 1]`` compares one element and stores ANOTHER --
+    not a reduction. The carrier write is matched by its affine index against
+    the compared gather's, so the mismatch is refused."""
+
+    @dace.program
+    def mismatched(a: dace.float64[N], result: dace.float64[1]):
+        x = a[0]
+        for i in range(0, N - 1):
+            if a[i] > x:
+                x = a[i + 1]
+        result[0] = x
+
+    assert ArgMaxLift().apply_pass(mismatched.to_sdfg(simplify=True), {}) is None
+
+
+def test_shifted_gather_with_index_refused():
+    """The index-tracking variant of the shifted gather is NOT lifted: the
+    tracked position would have to be recovered in the gather's shifted space,
+    which neither the true-branch matcher (it accepts only ``idx := i``) nor the
+    ``ArgReduce`` index recovery (it equates position with iteration) does. It
+    must stay a loop rather than lift with a wrong index."""
+    from dace.libraries.standard.nodes import ArgReduce
+
+    @dace.program
+    def shifted_idx(a: dace.float64[N], result: dace.float64[1], idx_result: dace.int64[1]):
+        x = a[0]
+        idx = 0
+        for i in range(0, N - 1):
+            if a[i + 1] > x:
+                x = a[i + 1]
+                idx = i + 1
+        result[0] = x
+        idx_result[0] = idx
+
+    sdfg = shifted_idx.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None, 'shifted gather with index must be refused'
+    assert sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, ArgReduce)) == 0
+
+    n = 12
+    rng = np.random.default_rng(3152)
+    a = rng.standard_normal(n)
+    out = np.zeros(1)
+    out_idx = np.zeros(1, dtype=np.int64)
+    sdfg(a=a, result=out, idx_result=out_idx, N=n)
+    assert np.isclose(out[0], np.max(a))
+    assert int(out_idx[0]) == int(np.argmax(a))
 
 
 if __name__ == '__main__':

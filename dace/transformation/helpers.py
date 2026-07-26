@@ -407,39 +407,45 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Collect transients not used outside of subgraph (will be removed of
     # top-level graph)
-    data_in_subgraph = set(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
+    # NOTE: the name collections below are ORDERED (``dict`` used as an ordered set), not
+    # ``set``. They are iterated to insert descriptors into the nested SDFG, and a ``set`` of
+    # strings iterates in an order that depends on PYTHONHASHSEED -- so the nested SDFG's
+    # descriptor/connector order, and with it the generated code, changed from run to run.
+    # That is the durbin miscompile: same structure, different wiring, correct on some seeds.
+    data_in_subgraph = dict.fromkeys(n.data for n in subgraph.nodes() if isinstance(n, nodes.AccessNode))
     # Find other occurrences in SDFG. A transient is named by an access node OR, when it is only
     # a scalar bridging two code nodes, by nothing but the memlet on the edge between them.
     # Counting access nodes alone would call such a transient subgraph-local and delete it out
     # from under its other user -- e.g. the body copy ``SplitMapForTileRemainder`` leaves in a
     # remainder tail, whose own nesting then fails with a ``KeyError`` on the missing descriptor.
     subgraph_edge_ids = {id(e) for e in subgraph.edges()}
-    subgraph_node_set = set(subgraph.nodes())  # hoisted: membership below else rebuilt this per scanned node
-    other_nodes = set(n.data for s in sdfg.states() for n in s.nodes()
-                      if isinstance(n, nodes.AccessNode) and n not in subgraph_node_set)
-    other_nodes |= set(e.data.data for s in sdfg.states() for e in s.edges()
-                       if id(e) not in subgraph_edge_ids and e.data.data is not None
-                       and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode))
-    subgraph_transients = set()
+    subgraph_node_set = dict.fromkeys(subgraph.nodes())  # hoisted: membership below else rebuilt per scanned node
+    other_nodes = dict.fromkeys(n.data for s in sdfg.states() for n in s.nodes()
+                                if isinstance(n, nodes.AccessNode) and n not in subgraph_node_set)
+    other_nodes.update(
+        dict.fromkeys(e.data.data for s in sdfg.states() for e in s.edges()
+                      if id(e) not in subgraph_edge_ids and e.data.data is not None
+                      and isinstance(e.src, nodes.CodeNode) and isinstance(e.dst, nodes.CodeNode)))
+    subgraph_transients = {}
     for data in data_in_subgraph:
         datadesc = sdfg.arrays[data]
         if datadesc.transient and data not in other_nodes:
-            subgraph_transients.add(data)
+            subgraph_transients[data] = None
 
     # All transients of edges between code nodes are also added to nested graph
     for edge in subgraph.edges():
         if (isinstance(edge.src, nodes.CodeNode) and isinstance(edge.dst, nodes.CodeNode)):
             if edge.data.data is not None:
-                subgraph_transients.add(edge.data.data)
+                subgraph_transients[edge.data.data] = None
 
     # Collect data used in access nodes within subgraph (will be referenced in
     # full upon nesting)
-    input_arrays = set()
+    input_arrays = {}
     output_arrays = {}
     for node in subgraph.nodes():
         if (isinstance(node, nodes.AccessNode) and node.data not in subgraph_transients):
             if node.has_reads(state):
-                input_arrays.add(node.data)
+                input_arrays[node.data] = None
             if node.has_writes(state):
                 output_arrays[node.data] = state.in_edges(node)[0].data.wcr
 
@@ -454,7 +460,9 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Input/output data that are not source/sink nodes are added to the graph
     # as non-transients
-    for name in (input_arrays | output_arrays.keys()):
+    # ``input_arrays.keys() | output_arrays.keys()`` would be a plain ``set`` again --
+    # union the ordered way.
+    for name in dict.fromkeys([*input_arrays, *output_arrays]):
         datadesc = copy.deepcopy(sdfg.arrays[name])
         datadesc.transient = False
         nsdfg.add_datadesc(name, datadesc)
@@ -508,9 +516,9 @@ def nest_state_subgraph(sdfg: SDFG,
 
     # Add scope symbols to the nested SDFG
     symbols_at_top = state.symbols_defined_at(top_scopenode)
-    defined_vars = set(
-        symbolic.pystr_to_symbolic(s) for s in (state.symbols_defined_at(top_scopenode).keys()
-                                                | sdfg.symbols))
+    # Ordered: this drives ``add_symbol`` order, which is the nested SDFG's symbol order.
+    defined_vars = dict.fromkeys(
+        symbolic.pystr_to_symbolic(s) for s in [*symbols_at_top, *sdfg.symbols])
     for v in defined_vars:
         if v in sdfg.symbols:
             sym = sdfg.symbols[v]
@@ -562,19 +570,23 @@ def nest_state_subgraph(sdfg: SDFG,
                 edge.data.subset.offset(global_subsets[original_edge.data.data][1], True)
                 edge.data.subset.offset(nsdfg.arrays[edge.data.data].offset, True)
 
-    # Add nested SDFG node to the input state
-    nested_sdfg = state.add_nested_sdfg(nsdfg,
-                                        set(input_names.values()) | input_arrays,
-                                        set(output_names.values()) | output_arrays.keys())
+    # Add nested SDFG node to the input state. Ordered: these become the node's in/out
+    # CONNECTORS, so a hash-ordered set here reorders the nested SDFG's interface.
+    nested_sdfg = state.add_nested_sdfg(nsdfg, dict.fromkeys([*input_names.values(), *input_arrays]),
+                                        dict.fromkeys([*output_names.values(), *output_arrays]))
 
     # Reconnect memlets to nested SDFG
-    reconnected_in = set()
-    reconnected_out = set()
-    empty_input = None
-    empty_output = None
+    reconnected_in = {}
+    reconnected_out = {}
+    # An edge carrying an EMPTY memlet is a happens-before constraint, not a data
+    # transfer: it is how a state orders two accesses that dataflow alone would leave
+    # concurrent. Every one of them must survive the nesting, so collect them all --
+    # a single slot silently kept only the last.
+    empty_inputs = []
+    empty_outputs = []
     for edge in inputs:
         if edge.data.data is None:
-            empty_input = edge
+            empty_inputs.append(edge)
             continue
 
         name = input_names[edge]
@@ -586,11 +598,11 @@ def nest_state_subgraph(sdfg: SDFG,
             data = copy.deepcopy(edge.data)
             data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         state.add_edge(edge.src, edge.src_conn, nested_sdfg, name, data)
-        reconnected_in.add(name)
+        reconnected_in[name] = None
 
     for edge in outputs:
         if edge.data.data is None:
-            empty_output = edge
+            empty_outputs.append(edge)
             continue
 
         name = output_names[edge]
@@ -603,7 +615,7 @@ def nest_state_subgraph(sdfg: SDFG,
             data.subset = copy.deepcopy(global_subsets[edge.data.data][1])
         data.wcr = edge.data.wcr
         state.add_edge(nested_sdfg, name, edge.dst, edge.dst_conn, data)
-        reconnected_out.add(name)
+        reconnected_out[name] = None
 
     # Connect access nodes to internal input/output data as necessary
     entry = scope.entry
@@ -619,11 +631,16 @@ def nest_state_subgraph(sdfg: SDFG,
             state.add_nedge(node, exit, Memlet())
         state.add_edge(nested_sdfg, name, node, None, Memlet(data=name, wcr=wcr))
 
-    # Graph was not reconnected, but needs to be
-    if state.in_degree(nested_sdfg) == 0 and empty_input is not None:
-        state.add_edge(empty_input.src, empty_input.src_conn, nested_sdfg, None, empty_input.data)
-    if state.out_degree(nested_sdfg) == 0 and empty_output is not None:
-        state.add_edge(nested_sdfg, None, empty_output.dst, empty_output.dst_conn, empty_output.data)
+    # Restore the ordering edges. This used to fire only when the nested SDFG ended up
+    # with degree 0 -- treating an empty memlet as a mere connectivity fallback. It is a
+    # DEPENDENCE: dropping it leaves the two endpoints concurrent, and the state's meaning
+    # then depends on node order (polybench durbin lost the edge ordering ``alpha``'s write
+    # against the ``y[k] = alpha`` read, and answered differently per PYTHONHASHSEED).
+    # A fresh Memlet per edge -- never reuse the object the old edge carried.
+    for edge in empty_inputs:
+        state.add_edge(edge.src, edge.src_conn, nested_sdfg, None, Memlet())
+    for edge in empty_outputs:
+        state.add_edge(nested_sdfg, None, edge.dst, edge.dst_conn, Memlet())
 
     # Remove subgraph nodes from graph
     state.remove_nodes_from(subgraph.nodes())
@@ -631,7 +648,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # Remove subgraph transients from top-level graph -- only the ones that really were
     # subgraph-local. A code-node bridge transient some other part of the SDFG still names stays
     # put; the nested SDFG was given its own copy of the descriptor above.
-    for transient in subgraph_transients - other_nodes:
+    for transient in (t for t in subgraph_transients if t not in other_nodes):
         del sdfg.arrays[transient]
 
     # Remove newly isolated nodes due to memlet consolidation

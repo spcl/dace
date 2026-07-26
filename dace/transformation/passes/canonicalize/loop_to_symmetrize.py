@@ -118,7 +118,7 @@ def _point_indices(subset, outer: str, inner: str) -> Optional[list]:
             order.append(inner)
         else:
             return None
-    return order if set(order) == {outer, inner} else None
+    return order if dict.fromkeys(order) == dict.fromkeys([outer, inner]) else None
 
 
 @explicit_cf_compatible

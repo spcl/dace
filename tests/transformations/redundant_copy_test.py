@@ -154,6 +154,42 @@ def test_ordering_edge_is_not_a_redundant_copy():
     assert state.edges_between(t_access, a_access), 'the ordering edge must survive'
 
 
+@pytest.mark.parametrize('shape', [[1], [1, 1]])
+def test_redundant_scalar_copy_is_removed(shape):
+    """An all-size-1 buffer copied into another must still be recognized as redundant.
+
+    Both transformations compare a ``squeeze``d subset against a hand-squeezed shape. ``Range.squeeze``
+    keeps one dimension rather than going to zero, so dropping every size-1 entry from the shape made
+    the two disagree and the copy that scalar fission emits was never removed.
+    """
+    for trafo, survivor in ((RedundantArray, 's'), (RedundantSecondArray, 'q')):
+        sdfg = dace.SDFG(f'redundant_scalar_{trafo.__name__}_{len(shape)}')
+        sdfg.add_array('a', [4], dace.float64)
+        sdfg.add_array('b', [4], dace.float64)
+        sdfg.add_transient('q', shape, dace.float64)
+        sdfg.add_transient('s', shape, dace.float64)
+        state = sdfg.add_state('s', is_start_block=True)
+
+        index = ', '.join('0' for _ in shape)
+        producer = state.add_tasklet('w', {'i'}, {'o'}, 'o = i * 2.0')
+        q_access, s_access = state.add_access('q'), state.add_access('s')
+        state.add_edge(state.add_access('a'), None, producer, 'i', dace.Memlet('a[0]'))
+        state.add_edge(producer, 'o', q_access, None, dace.Memlet(f'q[{index}]'))
+        state.add_edge(q_access, None, s_access, None, dace.Memlet(f'q[{index}] -> [{index}]'))
+        consumer = state.add_tasklet('r', {'i'}, {'o'}, 'o = i + 1.0')
+        state.add_edge(s_access, None, consumer, 'i', dace.Memlet(f's[{index}]'))
+        state.add_edge(consumer, 'o', state.add_access('b'), None, dace.Memlet('b[0]'))
+        sdfg.validate()
+
+        assert sdfg.apply_transformations_repeated(trafo, validate_all=True) == 1, trafo.__name__
+        assert sorted({n.data for n in state.data_nodes()}) == ['a', 'b', survivor]
+
+        a = np.arange(1, 5, dtype=np.float64)
+        b = np.zeros(4, dtype=np.float64)
+        sdfg(a=a, b=b)
+        assert b[0] == 3.0, f'{trafo.__name__} changed the result: {b[0]}'
+
+
 def test_out():
     sdfg = dace.SDFG("test_redundant_copy_out")
     state = sdfg.add_state()

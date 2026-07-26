@@ -13,7 +13,7 @@ to a WCR reduction (a ``-> map_exit`` WCR). The vectorizer normalizes that WCR
   the ``azimint_naive`` shape. The conditional is lowered to a per-lane select
   whose result is folded into the accumulator.
 
-Both are run at K=1 SCALAR and AVX512 against the numpy reference.
+Both are run at K=1 SCALAR and the host's native SIMD ISA against the numpy reference.
 """
 import os
 
@@ -26,11 +26,15 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 N = dace.symbol('N')
+#: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
+#: would SIGILL-refuse on an AVX2-only or ARM host.
+_HOST_ISA = detect_host_isa()
 
 
 @dace.program
@@ -70,7 +74,7 @@ def _run(prog, kwargs, ref, isa):
     assert np.allclose(work['res'][0], ref, rtol=1e-9, atol=1e-12), f"{prog.name}/{isa}: {work['res'][0]} != {ref}"
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", "AVX512"])
+@pytest.mark.parametrize("isa", ["SCALAR", _HOST_ISA])
 def test_scalar_reduce_via_map(isa):
     """Unmasked WCR sum over a ``dace.map`` -> lifted to Reduce, vectorized."""
     rng = np.random.default_rng(0)
@@ -79,7 +83,7 @@ def test_scalar_reduce_via_map(isa):
     _run(scalar_reduce, dict(data=data, res=np.zeros(1), N=n), data.sum(), isa)
 
 
-@pytest.mark.parametrize("isa", ["SCALAR", "AVX512"])
+@pytest.mark.parametrize("isa", ["SCALAR", _HOST_ISA])
 def test_masked_reduce_via_map(isa):
     """Masked WCR sum + count (``azimint_naive`` shape): conditional accumulation
     inside a ``dace.map``.
@@ -88,7 +92,7 @@ def test_masked_reduce_via_map(isa):
     ``NormalizeWCR`` turns into a seeded body-local accumulator + a plain copyback into a
     scalar sink. ``WidenAccesses`` (Step 0) rewrites that copyback into a ``reduce_accum`` fold
     -- read off the boundary WCR op -- so it lowers to a horizontal ``TileReduce`` and the scalar
-    sink is NOT over-widened. Bit-exact at K=1 SCALAR and AVX512."""
+    sink is NOT over-widened. Bit-exact at K=1 SCALAR and the host's native SIMD ISA."""
     rng = np.random.default_rng(1)
     n = 20
     data = rng.random(n)

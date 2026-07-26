@@ -1,6 +1,5 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
-import copy
 from dataclasses import dataclass
 from dace.sdfg.state import (
     ControlFlowBlock,
@@ -336,7 +335,7 @@ class SymbolPropagation(ppl.Pass):
         # Combine the outgoing symbols of all incoming edges with their assignments to the cfg_blk
         new_in_syms = {}
         for i, edge in enumerate(parent.in_edges(cfg_blk)):
-            sym_table = copy.deepcopy(out_syms[edge.src])
+            sym_table = dict(out_syms[edge.src])
             # Resolve this edge's RHSes against the PRE-edge table (simultaneous
             # assignment semantics), then apply -- collapsing symbol chains and
             # breaking cyclic dependencies instead of storing raw chained strings.
@@ -425,7 +424,7 @@ class SymbolPropagation(ppl.Pass):
 
             # For LoopRegions, remove loop carried variables from the incoming symbols
             if isinstance(parent, LoopRegion):
-                new_in_syms = copy.deepcopy(new_in_syms)
+                new_in_syms = dict(new_in_syms)
                 all_syms = set([s for e in parent.all_interstate_edges() for s in e.data.assignments.keys()])
                 for sym in all_syms:
                     if sym in new_in_syms:
@@ -443,7 +442,7 @@ class SymbolPropagation(ppl.Pass):
     ) -> Dict[str, Any]:
         if isinstance(cfg_blk, LoopRegion):
             # Any symbol that is assigned in the loop region is not propagated out
-            new_out_syms = copy.deepcopy(in_syms[cfg_blk])
+            new_out_syms = dict(in_syms[cfg_blk])
             for edge in cfg_blk.all_interstate_edges():
                 for sym in edge.data.assignments.keys():
                     if sym in new_out_syms:
@@ -452,7 +451,7 @@ class SymbolPropagation(ppl.Pass):
 
         elif isinstance(cfg_blk, ConditionalBlock):
             # Combine all outgoing symbols of the branches
-            new_out_syms = copy.deepcopy(out_syms[cfg_blk.sub_regions()[0]])
+            new_out_syms = dict(out_syms[cfg_blk.sub_regions()[0]])
             for b in cfg_blk.sub_regions():
                 self._combine_syms(new_out_syms, out_syms[b])
 
@@ -473,7 +472,7 @@ class SymbolPropagation(ppl.Pass):
             if len(sink_nodes) == 0:
                 return in_syms[cfg_blk]
 
-            new_out_syms = copy.deepcopy(out_syms[sink_nodes[0]])
+            new_out_syms = dict(out_syms[sink_nodes[0]])
             for n in sink_nodes:
                 self._combine_syms(new_out_syms, out_syms[n])
             return new_out_syms
@@ -497,8 +496,8 @@ class SymbolPropagation(ppl.Pass):
         in_syms: Dict[ControlFlowBlock, Dict[str, Any]],
         out_syms: Dict[ControlFlowBlock, Dict[str, Any]],
     ) -> Set[str]:
-        new_in_syms = copy.deepcopy(in_syms[cfg_blk])
-        new_out_syms = copy.deepcopy(out_syms[cfg_blk])
+        new_in_syms = dict(in_syms[cfg_blk])
+        new_out_syms = dict(out_syms[cfg_blk])
 
         # Remove all symbols that are None
         new_in_syms = {sym: val for sym, val in new_in_syms.items() if val is not None}

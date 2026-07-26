@@ -29,11 +29,11 @@ The actual distribution + parallelization is done by the passes that follow
 whatever should recombine.
 """
 import copy
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional
 
 from dace import SDFG, Memlet, properties, symbolic
 from dace.sdfg import nodes
-from dace.sdfg.state import ConditionalBlock, LoopRegion, SDFGState
+from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.loop_fission import _single_compute_state
@@ -55,22 +55,22 @@ def _has_interstate_assignments(sdfg: SDFG) -> bool:
     return any(e.data.assignments for e in sdfg.all_interstate_edges())
 
 
-def _output_dependency(sdfg: SDFG, out_name: str, input_names: Set[str]) -> Set[str]:
+def _output_dependency(sdfg: SDFG, out_name: str, input_names: Dict[str, None]) -> Dict[str, None]:
     """Inner array names that feed ``out_name``, excluding pure shared inputs."""
-    deps: Set[str] = set()
+    deps: Dict[str, None] = {}
     for state in sdfg.all_states():
         writers = [n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == out_name]
-        seen = set()
+        seen: Dict = {}
         stack = list(writers)
         while stack:
             node = stack.pop()
             if node in seen:
                 continue
-            seen.add(node)
+            seen[node] = None
             if isinstance(node, nodes.AccessNode):
                 if node.data in input_names:
                     continue
-                deps.add(node.data)
+                deps[node.data] = None
             for e in state.in_edges(node):
                 stack.append(e.src)
     return deps
@@ -107,7 +107,7 @@ class SplitStatements(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         count = 0
@@ -156,7 +156,7 @@ class SplitStatements(ppl.Pass):
         for e in state.out_edges(node):
             if e.data is None or e.data.wcr is not None:
                 return None
-        in_names = set(node.in_connectors)
+        in_names = dict.fromkeys(node.in_connectors)
         dep = {oc: _output_dependency(node.sdfg, oc, in_names) for oc in out_conns}
         parent = {oc: oc for oc in out_conns}
 
@@ -168,11 +168,11 @@ class SplitStatements(ppl.Pass):
 
         for i, a in enumerate(out_conns):
             for b in out_conns[i + 1:]:
-                if dep[a] & dep[b]:
+                if any(s in dep[b] for s in dep[a]):
                     parent[find(a)] = find(b)
-        groups: Dict[str, Set[str]] = {}
+        groups: Dict[str, Dict[str, None]] = {}
         for oc in out_conns:
-            groups.setdefault(find(oc), set()).add(oc)
+            groups.setdefault(find(oc), {})[oc] = None
         return list(groups.values())
 
     @staticmethod
@@ -265,17 +265,13 @@ class SplitStatements(ppl.Pass):
         # lost) and duplicate the write -- both silently wrong, and it still validates. Mirror the RMW
         # guard SplitTasklets uses (split_tasklets.py) and leave such a map unsplit. Global
         # (non-transient) arrays only: a shared local temp is meant to be recomputed per output.
-        read_arrays = {
-            e.data.data
-            for e in state.in_edges(entry)
-            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
-        }
-        write_arrays = {
-            e.data.data
-            for e in state.in_edges(xit)
-            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient
-        }
-        if read_arrays & write_arrays:
+        read_arrays = dict.fromkeys(
+            e.data.data for e in state.in_edges(entry)
+            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient)
+        write_arrays = dict.fromkeys(
+            e.data.data for e in state.in_edges(xit)
+            if e.data is not None and e.data.data is not None and not cfg.arrays[e.data.data].transient)
+        if any(a in write_arrays for a in read_arrays):
             return False
         scope = state.scope_subgraph(entry, include_entry=True, include_exit=True)
         inner = [n for n in scope.nodes() if n not in (entry, xit)]
@@ -291,9 +287,9 @@ class SplitStatements(ppl.Pass):
         # PLAIN leaf map only: no nested map / NestedSDFG in the body (those go to _replicate_components).
         if not inner or any(isinstance(n, (nodes.NestedSDFG, nodes.MapEntry, nodes.MapExit)) for n in inner):
             return False
-        before = {n for n in state.nodes() if isinstance(n, nodes.NestedSDFG)}
+        before = dict.fromkeys(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
         nsdfg_node = helpers.nest_state_subgraph(cfg, state, subgraph_cls(state, list(scope.nodes())))
-        groups = [{o} for o in nsdfg_node.out_connectors if o in out_names]
+        groups = [dict.fromkeys([o]) for o in nsdfg_node.out_connectors if o in out_names]
         if len(groups) < 2:  # nesting coalesced the outputs onto one connector -- nothing to split
             return False
         SplitStatements._split(cfg, state, nsdfg_node, groups, simplify_cls)
@@ -315,8 +311,8 @@ class SplitStatements(ppl.Pass):
         applied = 0
 
         written = sorted(
-            {n.data
-             for n in state.data_nodes() if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient})
+            dict.fromkeys(n.data for n in state.data_nodes()
+                          if state.in_degree(n) > 0 and not sdfg.arrays[n.data].transient))
         for arr in written:
             write_subsets = []
             for n in state.data_nodes():
@@ -339,7 +335,7 @@ class SplitStatements(ppl.Pass):
                     if rs is None:
                         continue
                     verdicts = [oracle._dep_class(rs, ws, ivar, loop=loop, sdfg=sdfg) for ws in write_subsets]
-                    kinds = {v[0] for v in verdicts}
+                    kinds = dict.fromkeys(v[0] for v in verdicts)
                     # Redirect to the pre-loop snapshot ONLY when EVERY verdict is a read-ahead
                     # (WAR / WAR_symbolic). A RAW/complex producer, OR a 'none' (offset-0, same-index
                     # producer THIS iteration), means the read consumes a value made within the sweep
@@ -347,10 +343,10 @@ class SplitStatements(ppl.Pass):
                     # miscompile. (The old gate only skipped RAW/complex and required *some* WAR, so a
                     # read that was WAR vs one sibling write but 'none' vs another --
                     # ``A[i]=..; A[i+1]=..; d[i]=A[i+1]`` -- slipped through and read the stale value.)
-                    if not (kinds and kinds <= {'WAR', 'WAR_symbolic'}):
+                    if not (kinds and all(k in ('WAR', 'WAR_symbolic') for k in kinds)):
                         continue
                     guards = {p for k, p in verdicts if k == 'WAR_symbolic'}
-                    if any({str(s) for s in g.free_symbols} & internal_syms for g in guards):
+                    if any(str(s) in internal_syms for g in guards for s in g.free_symbols):
                         continue
                     sym_guards |= guards
                     fwd_edges.append((n, e))

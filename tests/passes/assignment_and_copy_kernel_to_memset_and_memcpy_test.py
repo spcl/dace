@@ -1041,5 +1041,36 @@ def test_lifting_a_copy_keeps_a_connector_its_other_edge_still_uses():
     assert numpy.allclose(C_OUT, 2.0 * A_IN)
 
 
+def test_dynamic_range_connector_shadowing_a_data_descriptor():
+    """A dynamic map range may be named after the scalar it reads; that name cannot become a symbol.
+
+    The Fortran frontend emits exactly this for CLOUDSC's ``DO JL=KIDIA,KFDIA``: a Scalar descriptor
+    ``kfdia`` feeding a dynamic-range connector also called ``kfdia``. Hoisting it to an SDFG symbol
+    raised ``FileExistsError: Cannot create symbol "kfdia", the name is used by a data descriptor``,
+    because the guard only consulted ``sdfg.symbols``. The pass must nest instead of hoisting.
+    """
+    sdfg = dace.SDFG("dynamic_range_connector_shadows_data")
+    sdfg.add_scalar("kfdia", dace.int64, transient=False)
+    sdfg.add_array("A_OUT", [DIM_SIZE], dace.float64, transient=False)
+    state = sdfg.add_state(is_start_block=True)
+
+    map_entry, map_exit = state.add_map("memset_map", {"i": "0:kfdia"})
+    map_entry.add_in_connector("kfdia")
+    state.add_edge(state.add_access("kfdia"), None, map_entry, "kfdia", dace.memlet.Memlet("kfdia[0]"))
+
+    tasklet = state.add_tasklet("memset", set(), {"_out"}, "_out = 0.0")
+    state.add_edge(map_entry, None, tasklet, None, dace.memlet.Memlet(None))
+    state.add_edge(tasklet, "_out", map_exit, "IN_A_OUT", dace.memlet.Memlet("A_OUT[i]"))
+    map_exit.add_in_connector("IN_A_OUT")
+    map_exit.add_out_connector("OUT_A_OUT")
+    state.add_edge(map_exit, "OUT_A_OUT", state.add_access("A_OUT"), None, dace.memlet.Memlet(f"A_OUT[0:{DIM_SIZE}]"))
+    sdfg.validate()
+
+    AssignmentAndCopyKernelToMemsetAndMemcpy().apply_pass(sdfg, {})
+
+    assert "kfdia" not in sdfg.symbols, "the shadowing dynamic range must not be hoisted to a symbol"
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

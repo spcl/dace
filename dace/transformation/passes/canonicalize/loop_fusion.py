@@ -5,7 +5,7 @@ sequential loops left after ``LoopToMap``.
 ``MapFusionVertical`` / ``MapFusionHorizontal`` only ever fuse ``MapEntry``
 nodes, so two consecutive sibling loops that ``LoopToMap`` refused (recurrences,
 Thomas sweeps, sequential scans) are never fused. This pass fuses such a pair --
-same iteration space, single-compute-state bodies -- into one loop whose body
+same iteration space, straight-line bodies -- into one loop whose body
 runs the first body then the second per iteration. It is the exact inverse of
 ``LoopFission`` and shares its soundness kernel (``break_anti_dependence``'s
 ``_dep_class`` and ``loop_fission``'s per-iteration-subset reasoning), so a pair
@@ -38,7 +38,7 @@ class LoopFusion(ppl.Pass):
 
     The deterministic, fuse-everything-legal form of the ``FuseLoops`` transformation: it applies
     ``FuseLoops`` to every qualifying consecutive-loop pair until a fixpoint. All the legality (same
-    iteration space, single-compute-state bodies, not independently DOALL, value-preserving dependence
+    iteration space, straight-line bodies, not independently DOALL, value-preserving dependence
     classes) and the merge itself live on ``FuseLoops`` -- this pass owns only the traversal, so the pass
     and the transformation can never disagree.
     """
@@ -51,7 +51,7 @@ class LoopFusion(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Fuse every qualifying consecutive-loop pair in ``sdfg`` and its nested

@@ -23,15 +23,19 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
 
 M = dace.symbol('M')
 N = dace.symbol('N')
 W = 8
+#: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
+#: would SIGILL-refuse on an AVX2-only or ARM host.
+_HOST_ISA = detect_host_isa()
 
 
 @dace.program
@@ -97,7 +101,7 @@ def vectorized(prog, tag):
     VectorizeCPUMultiDim(
         VectorizeConfig(widths=(W, ),
                         validate_all=True,
-                        target_isa=ISA.AVX512,
+                        target_isa=_HOST_ISA,
                         remainder_strategy=RemainderStrategy.FULL_MASK,
                         branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     sdfg.validate()

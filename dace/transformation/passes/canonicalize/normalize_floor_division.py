@@ -21,7 +21,7 @@ Call sites use ``int_floor`` directly; this pass is the net that keeps one misse
 reaching codegen as a wrong index. Recovery is exact: ``together`` puts the distributed argument
 back over a common denominator before it is split into numerator and denominator.
 """
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 import sympy
 
@@ -98,8 +98,8 @@ class NormalizeFloorDivision(ppl.Pass):
         # A new floor can only arrive with new memlets, descriptors or nodes.
         return bool(modified & (ppl.Modifies.Memlets | ppl.Modifies.Descriptors | ppl.Modifies.Nodes))
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> Dict:
+        return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Normalize descriptors, map ranges and memlet subsets, recursively.

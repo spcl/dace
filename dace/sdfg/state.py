@@ -3649,6 +3649,15 @@ class LoopRegion(ControlFlowRegion):
             read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays, include_scalars=include_scalars))
         return read_memlets
 
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        read_set, write_set = super().read_and_write_sets()
+        if self.sdfg is not None:
+            # Init / condition / update are the loop's own reads, invisible to nodes()/edges() below.
+            arrays = self.sdfg.arrays.keys()
+            for code in self.get_meta_codeblocks():
+                read_set |= code.get_free_symbols() & arrays
+        return read_set, write_set
+
     def replace_meta_accesses(self, replacements):
         if self.loop_variable in replacements:
             self.loop_variable = replacements[self.loop_variable]
@@ -3924,6 +3933,15 @@ class ConditionalBlock(AbstractControlFlowRegion):
             if c is not None:
                 read_memlets.extend(memlets_in_ast(c.code[0], arrays, include_scalars=include_scalars))
         return read_memlets
+
+    def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
+        read_set, write_set = super().read_and_write_sets()
+        if self.sdfg is not None:
+            # Branch conditions are the block's own reads, invisible to nodes()/edges() below (empty for branches).
+            arrays = self.sdfg.arrays.keys()
+            for code in self.get_meta_codeblocks():
+                read_set |= code.get_free_symbols() & arrays
+        return read_set, write_set
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
         """

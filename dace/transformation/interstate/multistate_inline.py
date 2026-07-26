@@ -240,12 +240,23 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
         allnames = set(outer_symbols.keys()) | set(sdfg.arrays.keys())
         assignments_to_replace = inner_assignments & (outer_assignments | allnames)
+        # Inner symbols that received their value from an IDENTITY symbol-mapping entry
+        # (outer ``K`` -> inner ``K``, lowered above via ``safe_replace`` as a no-op rename).
+        # Renaming such a symbol on collision (below) severs that implicit outer->inner link.
+        identity_names = {str(k) for k in identity_mapping}
         sym_replacements: Dict[str, str] = {}
         for assign in assignments_to_replace:
             newname = data.find_new_name(assign, allnames)
             allnames.add(newname)
             outer_symbols[newname] = nsdfg.symbols.get(assign, None)
             sym_replacements[assign] = newname
+            # ``assign`` was inner == outer (identity map) but is now renamed to ``newname``; the
+            # outer value no longer reaches the inlined region. Re-establish it as a non-identity
+            # assignment ``newname = assign`` (planted on the entry edge below) so the inlined
+            # region is initialized from the outer symbol -- otherwise ``newname`` is undefined
+            # (e.g. an external loop-init symbol whose inner name collides with the outer one).
+            if assign in identity_names:
+                non_identity_mapping[assign] = assign
         nsdfg.replace_dict(sym_replacements)
 
         #######################################################

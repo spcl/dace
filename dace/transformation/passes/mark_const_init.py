@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 
-from dace import SDFG, SDFGState, data as dt, dtypes, properties, subsets, symbolic
+from dace import SDFG, SDFGState, Memlet, data as dt, dtypes, properties, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import nodes as nd, utils as sdutil
 from dace.transformation import pass_pipeline as ppl, transformation
@@ -515,7 +515,12 @@ class MarkConstInit(ppl.Pass):
         return tuple(index)
 
     def _remove_write(self, sdfg: SDFG, name: str) -> None:
-        """Removes the (now dead) runtime write of ``name`` and any producer/access nodes it orphans."""
+        """Removes the (now dead) runtime write of ``name`` and any producer/access nodes it orphans.
+
+        A removed producer may be a scope-interior source anchored to its map entry by an empty
+        dependency edge. If the descriptor's access node survives (still consumed), it inherits that
+        source role and is re-anchored to the same entry -- otherwise its whole downstream chain leaks
+        out of the map scope and the code generator misorders it against the map body (see s242)."""
         for state in sdfg.states():
             for node in list(state.data_nodes()):
                 if node.data != name or state.in_degree(node) == 0:
@@ -524,14 +529,22 @@ class MarkConstInit(ppl.Pass):
                 for edge in list(state.in_edges(node)):
                     srcs.append((edge.src, edge.src_conn))
                     state.remove_edge(edge)
+                scope_anchors: Set[nd.EntryNode] = set()
                 for src, conn in srcs:
                     if src not in state.nodes():
                         continue
+                    scope_anchors.update(ie.src for ie in state.in_edges(src)
+                                         if ie.data.is_empty() and isinstance(ie.src, nd.EntryNode))
                     if isinstance(src, nd.Tasklet) and conn is not None:
                         if not any(oe.src_conn == conn for oe in state.out_edges(src)):
                             src.remove_out_connector(conn)
                     self._prune_dead(state, src)
-                if node in state.nodes() and (state.in_degree(node) + state.out_degree(node)) == 0:
+                if node not in state.nodes():
+                    continue
+                if state.out_degree(node) > 0:
+                    for entry in scope_anchors:
+                        state.add_nedge(entry, node, Memlet())
+                elif state.in_degree(node) == 0:
                     state.remove_node(node)
 
     def _prune_dead(self, state: SDFGState, node: nd.Node) -> None:

@@ -1025,9 +1025,14 @@ class UnderapproximateWrites(ppl.Pass):
         # subset corresponding to the outside memlet attached to that connector.
         # This is passed out via `border_memlets` and propagated along from there.
         states = _find_unconditionally_executed_states(nsdfg_node.sdfg)
+        # Connectors whose writes across states have inconsistent dimensionality cannot be combined into
+        # a single under-approximation. They are propagated out as unknown (None) so the datum
+        # round-trips -- the safe, under-approximate direction (never over-claim a write). Merging must
+        # never raise: the pass contract is that an unprovable write just under-approximates to less.
+        poisoned = set()
         for state in states:
             for node in state.data_nodes():
-                if node.label not in border_memlets:
+                if node.label not in border_memlets or node.label in poisoned:
                     continue
                 # Get the edges to this access node
                 edges = state.in_edges(node)
@@ -1048,19 +1053,29 @@ class UnderapproximateWrites(ppl.Pass):
                     for memlet in memlets:
                         subset = subsets.list_union(subset, memlet.subset)
                     # compute the union of the ranges to merge the subsets.
-                    border_memlet.subset = _merge_subsets(border_memlet.subset, subset)
+                    try:
+                        border_memlet.subset = _merge_subsets(border_memlet.subset, subset)
+                    except ValueError:
+                        poisoned.add(node.label)
 
             # collect the memlets for each loop in the NSDFG
             if state in self.loop_write_dict:
                 for node_label, loop_memlet in self.loop_write_dict[state].items():
-                    if node_label not in border_memlets:
+                    if node_label not in border_memlets or node_label in poisoned:
                         continue
                     border_memlet = border_memlets[node_label]
                     # initialize border memlet if it does not exist already
                     if border_memlet is None:
                         border_memlet = _init_border_memlet(loop_memlet, node_label)
                     # compute the union of the ranges to merge the subsets.
-                    border_memlet.subset = _merge_subsets(border_memlet.subset, loop_memlet.subset)
+                    try:
+                        border_memlet.subset = _merge_subsets(border_memlet.subset, loop_memlet.subset)
+                    except ValueError:
+                        poisoned.add(node_label)
+
+        # Unmergeable writes -> unknown: drop the border memlet so it propagates out as None (round-trip).
+        for connector in poisoned:
+            border_memlets[connector] = None
 
         # Make sure any potential NSDFG symbol mapping is correctly reversed
         # when propagating out.

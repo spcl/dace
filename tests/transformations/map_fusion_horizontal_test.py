@@ -8,6 +8,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.transformation import dataflow as dftrans
+from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
 from .map_fusion_vertical_test import count_nodes, unique_name
 
@@ -527,6 +528,42 @@ def test_horizontal_fusion_rejects_a_disagreeing_dynamic_map_range(binding: str)
     sdfg.validate()
 
 
+def test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets():
+    """Two Maps whose ranges are bound by DIFFERENT tasklets must not be treated as agreeing.
+
+    The agreement proof for distinct sources is "nothing in this state writes that data", which is
+    vacuously true when the binding does not come from an AccessNode at all -- no AccessNode of that
+    data exists, so the scan finds no writer and declares the two bounds equal. Fusing then keeps one
+    binding and silently gives the other Map the wrong trip count.
+    """
+    sdfg = dace.SDFG(unique_name("dmr_bound_by_tasklets"))
+    sdfg.add_scalar("bound", dace.int64, transient=True)
+    for name in ("A", "B"):
+        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+    state = sdfg.add_state(is_start_block=True)
+
+    for name, value in (("A", 3), ("B", 5)):
+        _, map_entry, _ = state.add_mapped_tasklet(
+            f"comp_{name}",
+            map_ranges={"__i": "0:lim"},
+            inputs={},
+            code=f"__out = {float(value)}",
+            outputs={"__out": dace.Memlet(f"{name}[__i]")},
+            output_nodes={name: state.add_access(name)},
+            external_edges=True,
+        )
+        bound = state.add_tasklet(f"bound_{name}", set(), {"__out"}, f"__out = {value}")
+        map_entry.add_in_connector("lim")
+        state.add_edge(bound, "__out", map_entry, "lim", dace.Memlet("bound[0]"))
+    sdfg.validate()
+
+    entries = count_nodes(state, nodes.MapEntry, return_nodes=True)
+    assert not mfhelper.dynamic_map_ranges_agree(entries[0], entries[1], state), \
+        "two different tasklet-produced bounds were declared equal"
+    assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True) == 0
+    assert count_nodes(state, nodes.MapEntry) == 2
+
+
 if __name__ == '__main__':
     test_horizontal_fusion_relocates_a_multi_edge_connector_once()
     test_horizontal_fusion_preserves_distinct_ordering_in_edges()
@@ -542,3 +579,4 @@ if __name__ == '__main__':
     test_horizontal_fusion_keeps_the_dynamic_map_range_bound()
     test_horizontal_fusion_rejects_a_disagreeing_dynamic_map_range("other_data")
     test_horizontal_fusion_rejects_a_disagreeing_dynamic_map_range("written_data")
+    test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets()

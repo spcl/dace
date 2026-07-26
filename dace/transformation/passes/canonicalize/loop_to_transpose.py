@@ -222,7 +222,7 @@ def _classify_side(subset, loop_var_syms, ndims: int):
         axis_of_var[v] = axis
         coeff_of_var[v] = coeff
         off_of_var[v] = off
-    if set(axis_of_var.keys()) != set(loop_var_syms):
+    if dict.fromkeys(axis_of_var) != dict.fromkeys(loop_var_syms):
         return None
     return axis_of_var, coeff_of_var, off_of_var
 

@@ -6,7 +6,7 @@ import sympy
 
 import dace
 from dace import subsets, symbolic
-from dace.sdfg import graph, nodes as nodes, validation
+from dace.sdfg import graph, nodes as nodes, utils as sdutils, validation
 from dace.transformation import helpers
 
 
@@ -548,14 +548,61 @@ def _scope_boundary_accesses(
         for edge in edges:
             if edge.data is None or edge.data.is_empty() or edge.data.data is None:
                 continue
-            subset = edge.data.subset
-            if subset is None:
-                return {}, {}
+            data, subset = _boundary_access(state, edge)
+            if data is None or subset is None:
+                return None, None
             subset = copy.deepcopy(subset)
             if param_repl:
                 symbolic.safe_replace(param_repl, subset.replace)
-            target.setdefault(edge.data.data, []).append((node_of(edge), subset))
+            target.setdefault(data, []).append((node_of(edge), subset))
     return reads, writes
+
+
+def _boundary_access(
+    state: dace.SDFGState,
+    edge: graph.MultiConnectorEdge[dace.Memlet],
+) -> Tuple[Optional[str], Optional[subsets.Subset]]:
+    """What a boundary edge really touches, or `(None, None)` if that cannot be determined.
+
+    A copy-Memlet names one END of the edge and carries the other in `other_subset`, so `data`
+    alone can name an inner buffer. Views resolve to what they view.
+    """
+    outer = _outer_data_of_boundary_edge(state, edge)
+    if outer is None:
+        return None, None
+    if edge.data.data == outer:
+        return outer, edge.data.subset
+    # The Memlet names the other end, so only `other_subset` describes the outer access.
+    return outer, edge.data.other_subset
+
+
+def _outer_data_of_boundary_edge(
+    state: dace.SDFGState,
+    edge: graph.MultiConnectorEdge[dace.Memlet],
+) -> Optional[str]:
+    """The de-aliased array reached by following `edge` out through its scope node."""
+    connector = edge.dst_conn if isinstance(edge.dst, nodes.MapExit) else edge.src_conn
+    if connector is None or not connector.startswith(("IN_", "OUT_")):
+        return None
+    scope_node = edge.dst if isinstance(edge.dst, nodes.MapExit) else edge.src
+    if isinstance(scope_node, nodes.MapExit):
+        outer_edges = list(state.out_edges_by_connector(scope_node, "OUT_" + connector[3:]))
+        endpoints = [e.dst for e in outer_edges]
+    else:
+        outer_edges = list(state.in_edges_by_connector(scope_node, "IN_" + connector[4:]))
+        endpoints = [e.src for e in outer_edges]
+    if len(endpoints) != 1 or not isinstance(endpoints[0], nodes.AccessNode):
+        return None
+    return _dealias(state, endpoints[0])
+
+
+def _dealias(state: dace.SDFGState, node: nodes.AccessNode) -> Optional[str]:
+    """The name of the array `node` ultimately refers to, resolving Views."""
+    desc = node.desc(state.sdfg)
+    if not isinstance(desc, dace.data.View):
+        return node.data
+    viewed = sdutils.get_last_view_node(state, node)
+    return None if viewed is None else viewed.data
 
 
 def _is_iteration_private(
@@ -646,6 +693,9 @@ def analyze_happens_before_fusion(
 
     first_reads, first_writes = _scope_boundary_accesses(state, first_map_entry, None)
     second_reads, second_writes = _scope_boundary_accesses(state, second_map_entry, param_repl)
+    # An access the scan could not read hides every hazard it takes part in.
+    if first_reads is None or second_reads is None:
+        return None
     params = [symbolic.pystr_to_symbolic(param) for param in first_map_entry.map.params]
 
     # An ordering edge must end up in front of the second Map's access, and a nested scope
@@ -694,6 +744,9 @@ def dynamic_map_range_binding_agrees(
         return False
     if edge.src is other_edge.src:
         return True
+    # Any other producer computes a value this scan cannot see, making the test below vacuous.
+    if not isinstance(edge.src, nodes.AccessNode) or not isinstance(other_edge.src, nodes.AccessNode):
+        return False
     # Distinct sources agree only if nothing writes that data in this state.
     return not any(state.in_degree(dn) for dn in state.data_nodes() if dn.data == data)
 

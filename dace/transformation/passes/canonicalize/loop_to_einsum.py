@@ -119,25 +119,25 @@ def _is_single_element(desc) -> bool:
     return isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and all(str(s) == '1' for s in desc.shape))
 
 
-def _referenced_arrays(loop: LoopRegion) -> Set[str]:
+def _referenced_arrays(loop: LoopRegion) -> Dict[str, None]:
     """Every array name read or written anywhere inside ``loop``."""
-    referenced: Set[str] = set()
+    referenced: Dict[str, None] = {}
     for state in loop.all_states():
         for dn in state.data_nodes():
-            referenced.add(dn.data)
+            referenced[dn.data] = None
         for e in state.edges():
             if e.data is not None and e.data.data is not None:
-                referenced.add(e.data.data)
+                referenced[e.data.data] = None
     return referenced
 
 
-def _written_arrays(loop: LoopRegion) -> Set[str]:
+def _written_arrays(loop: LoopRegion) -> Dict[str, None]:
     """Array names written (have an in-edge to an AccessNode) inside ``loop``."""
-    written: Set[str] = set()
+    written: Dict[str, None] = {}
     for state in loop.all_states():
         for dn in state.data_nodes():
             if state.in_degree(dn) > 0:
-                written.add(dn.data)
+                written[dn.data] = None
     return written
 
 
@@ -145,12 +145,12 @@ def _data_state_counts(cfg) -> Dict[str, int]:
     """Array name -> number of states in ``cfg`` holding an AccessNode for it."""
     counts: Dict[str, int] = {}
     for state in cfg.all_states():
-        for name in set(dn.data for dn in state.data_nodes()):
+        for name in dict.fromkeys(dn.data for dn in state.data_nodes()):
             counts[name] = counts.get(name, 0) + 1
     return counts
 
 
-def _live_outside(loop: LoopRegion, root_counts: Dict[str, int], referenced: Set[str]) -> Set[str]:
+def _live_outside(loop: LoopRegion, root_counts: Dict[str, int], referenced: Dict[str, None]) -> Dict[str, None]:
     """Referenced arrays that are also touched by data nodes OUTSIDE ``loop`` --
     i.e. cross the loop boundary and so must stay visible (non-transient) in the
     probe, unlike the loop's purely-internal staging scratch. ``root_counts`` is the
@@ -158,7 +158,7 @@ def _live_outside(loop: LoopRegion, root_counts: Dict[str, int], referenced: Set
     inside states are a subset of the root's, so "touched outside" is a subtraction
     rather than a fresh whole-SDFG walk per candidate."""
     inside = _data_state_counts(loop)
-    return set(name for name in referenced if root_counts.get(name, 0) > inside.get(name, 0))
+    return dict.fromkeys(name for name in referenced if root_counts.get(name, 0) > inside.get(name, 0))
 
 
 def _has_loop_ancestor(loop: LoopRegion) -> bool:
@@ -210,7 +210,7 @@ def _nest_shape(loop: LoopRegion) -> _NestShape:
     return _NestShape(n_dims, has_mul, all_copy, has_nested)
 
 
-def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Set[str], live: Set[str]) -> bool:
+def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Dict[str, None], live: Dict[str, None]) -> bool:
     """Cheap NECESSARY conditions for the probe to collapse to one ``Einsum`` /
     ``Transpose``. The probe pipeline (two ``SimplifyPass`` runs, ``LoopToMap``,
     inlining, ...) costs seconds on a large nest and is pure waste on a nest that
@@ -231,11 +231,11 @@ def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Set[str], live
 
     (2) and (3) read only this nest's own states, so a nest holding a ``NestedSDFG``
     -- whose body the probe inlines and this summary cannot see -- skips them."""
-    boundary: Set[str] = set()
+    boundary: Dict[str, None] = {}
     for name in written:
         desc = root.arrays.get(name)
         if desc is None or name in live or not desc.transient:
-            boundary.add(name)
+            boundary[name] = None
     if len(boundary) != 1:
         return False
     shape = _nest_shape(loop)
@@ -244,7 +244,7 @@ def _plausible_contraction(loop: LoopRegion, root: SDFG, written: Set[str], live
     return shape.n_dims >= 2 and (shape.has_mul or shape.all_copy_tasklets)
 
 
-def _build_probe(loop: LoopRegion, root: SDFG, referenced: Set[str], live: Set[str]) -> Optional[SDFG]:
+def _build_probe(loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live: Dict[str, None]) -> Optional[SDFG]:
     """A throwaway SDFG wrapping a deep copy of ``loop``. Boundary arrays (live-out
     or non-transient in the original) become full-size non-transient descriptors;
     purely-internal staging scratch keeps its transient flag so simplification /
@@ -372,7 +372,7 @@ def _probe_compute_nodes(probe: SDFG):
     return einsums, tasklets, maps, others, nested, loops
 
 
-def _extract_einsum(probe: SDFG, written: Set[str]) -> Optional[EinsumSpec]:
+def _extract_einsum(probe: SDFG, written: Dict[str, None]) -> Optional[EinsumSpec]:
     """If the probe collapsed to exactly one ``Einsum`` producing one of the loop's
     output arrays (and no other compute), return its rebuildable spec."""
     einsums, tasklets, maps, others, nested, loops = _probe_compute_nodes(probe)
@@ -421,7 +421,7 @@ def _axis_order(subset: subsets.Subset) -> Optional[List[str]]:
     return order
 
 
-def _extract_transpose(probe: SDFG, written: Set[str]) -> Optional[TransposeSpec]:
+def _extract_transpose(probe: SDFG, written: Dict[str, None]) -> Optional[TransposeSpec]:
     """If the probe collapsed to exactly one 2-D full-range map that is a pure
     cross-array transposed copy ``dst[p,q] = src[q,p]``, return its spec. Pure
     copy = the map scope has no arithmetic (only transient staging AccessNodes
@@ -462,8 +462,8 @@ def _extract_transpose(probe: SDFG, written: Set[str]) -> Optional[TransposeSpec
     dst, write_order, dst_subset = write
     if src == dst:
         return None  # in-place symmetrization is LoopToSymmetrize's domain
-    params = set(map_entry.map.params)
-    if set(read_order) != params or set(write_order) != params:
+    params = dict.fromkeys(map_entry.map.params)
+    if dict.fromkeys(read_order) != params or dict.fromkeys(write_order) != params:
         return None
     if read_order != list(reversed(write_order)):
         return None
@@ -715,7 +715,7 @@ def _is_sum_tasklet(tasklet: nodes.Tasklet) -> bool:
         return False
 
 
-def _resolve(state: SDFGState, sdfg: SDFG, edge, visited: Set) -> Optional[Union[_Leaf, _Product]]:
+def _resolve(state: SDFGState, sdfg: SDFG, edge, visited: Dict) -> Optional[Union[_Leaf, _Product]]:
     """The value flowing along ``edge``, chasing back through single-element transient
     staging scalars and product tasklets to the leaf array reads. ``visited`` collects
     every node consumed, so the caller can verify the body holds nothing else."""
@@ -733,11 +733,11 @@ def _resolve(state: SDFGState, sdfg: SDFG, edge, visited: Set) -> Optional[Union
         if desc.transient and _is_single_element(desc):  # staging scalar: look through it
             if state.in_degree(src) != 1 or state.out_degree(src) != 1:
                 return None
-            visited.add(src)
+            visited[src] = None
             return _resolve(state, sdfg, state.in_edges(src)[0], visited)
         if state.in_degree(src) != 0:
             return None  # not a pure input to this nest
-        visited.add(src)
+        visited[src] = None
         got = _point_index(edge.data, src.data)
         return None if got is None else _Leaf(*got)
     if isinstance(src, nodes.Tasklet):
@@ -745,7 +745,7 @@ def _resolve(state: SDFGState, sdfg: SDFG, edge, visited: Set) -> Optional[Union
     return None
 
 
-def _resolve_tasklet(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: Set) -> Optional[_Product]:
+def _resolve_tasklet(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visited: Dict) -> Optional[_Product]:
     """``tasklet`` as a product of its resolved inputs, or ``None``. Single-consumer
     only: a re-used intermediate is not a tree and would be counted twice."""
     if tasklet in visited or state.out_degree(tasklet) != 1:
@@ -753,7 +753,7 @@ def _resolve_tasklet(state: SDFGState, sdfg: SDFG, tasklet: nodes.Tasklet, visit
     scale = _product_scale(tasklet)
     if scale is None:
         return None
-    visited.add(tasklet)
+    visited[tasklet] = None
     terms: List[Union[_Leaf, _Product]] = []
     for e in state.in_edges(tasklet):
         if e.data is None or e.data.is_empty():
@@ -816,7 +816,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
         return None
     out_array, out_idx = got
 
-    visited: Set = set()
+    visited: Dict = {}
     if out_edge.data.wcr is not None:
         # WCR encoding: the producing tasklet IS the product, the sum lives on the edge.
         if detect_reduction_type(out_edge.data.wcr) != dtypes.ReductionType.Sum:
@@ -830,7 +830,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
         in_edges = [e for e in state.in_edges(adder) if e.data is not None and not e.data.is_empty()]
         if _is_sum_tasklet(adder) and len(in_edges) == 2:
             # Aug-assign encoding: one input re-reads the output slot, the other is the product.
-            visited.add(adder)
+            visited[adder] = None
             resolved = [_resolve(state, sdfg, e, visited) for e in in_edges]
             if any(r is None for r in resolved):
                 return None
@@ -845,8 +845,7 @@ def _body_value(nest: _Nest, sdfg: SDFG) -> Optional[_BodyValue]:
                 return None
             accumulates = False
 
-    leftover = set(body) - visited - ({write_node} if entry is None else set())
-    if leftover:
+    if any(n not in visited and not (entry is None and n is write_node) for n in body):
         return None  # the body computes something the lifted node would drop
     coeff, leaves = _flatten(term)
     return _BodyValue(out_array, out_idx, coeff, leaves, accumulates, write_node)
@@ -870,14 +869,14 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
     # Rectangular iteration space: a parameter-dependent bound (a triangular syrk-style
     # nest) contracts over less than the full product the einsum expansion assumes.
     for axis in nest.axes:
-        if set(map(str, pystr_to_symbolic(axis.end).free_symbols)) & set(axes):
+        if any(s in axes for s in map(str, pystr_to_symbolic(axis.end).free_symbols)):
             return None
 
     tensors, coeffs = [], []
     for leaf in value.leaves:
         if any(i != '0' and i not in axes for i in leaf.idx):
             return None  # an index that is not an axis parameter
-        (tensors if set(leaf.idx) - {'0'} else coeffs).append(leaf)
+        (tensors if any(i != '0' for i in leaf.idx) else coeffs).append(leaf)
     # >=2 tensor operands: a single one is a copy / transpose / reduction, not a matmul.
     # At most one runtime scalar: the node wires exactly one ``_alpha`` connector.
     if len(tensors) < 2 or len(coeffs) > 1:
@@ -886,15 +885,15 @@ def _direct_einsum(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Einsu
         return None
     if any(t.array == value.array for t in tensors):
         return None  # the output feeds its own contraction -- a real loop-carried dependence
-    out_chars = set(value.idx) - {'0'}
-    in_chars = set().union(*[set(t.idx) - {'0'} for t in tensors])
+    out_chars = dict.fromkeys(i for i in value.idx if i != '0')
+    in_chars = dict.fromkeys(i for t in tensors for i in t.idx if i != '0')
     if not out_chars:
         return None  # scalar output: a dot / full reduction, LoopToReduce's domain
-    if not out_chars <= in_chars:
+    if not all(c in in_chars for c in out_chars):
         return None  # an output index no operand carries -- a broadcast, not a contraction
-    if not in_chars - out_chars:
+    if all(c in out_chars for c in in_chars):
         return None  # no contracted axis: elementwise or an outer product
-    if in_chars != set(axes):
+    if in_chars != dict.fromkeys(axes):
         return None  # an axis indexes nothing -- lifting would silently drop its repetition
 
     # Canonical operand order. Any order is CORRECT (the einsum terms are emitted in the
@@ -955,9 +954,9 @@ def _direct_transpose(nest: _Nest, sdfg: SDFG, value: _BodyValue) -> Optional[Tr
     """The ``Transpose`` spec for a pure 2-D cross-array transposed copy, or ``None``."""
     if value.accumulates or len(nest.axes) != 2 or len(value.leaves) != 1 or value.coeff != 1:
         return None
-    params = set(a.param for a in nest.axes)
+    params = dict.fromkeys(a.param for a in nest.axes)
     read = value.leaves[0]
-    if set(read.idx) != params or set(value.idx) != params:
+    if dict.fromkeys(read.idx) != params or dict.fromkeys(value.idx) != params:
         return None
     if read.idx != list(reversed(value.idx)):
         return None
@@ -1099,7 +1098,8 @@ class LoopToEinsum(ppl.Pass):
             LoopToEinsum.FALLBACK_LIFTS += 1
         return spec
 
-    def _probe(self, loop: LoopRegion, root: SDFG, referenced: Set[str], live: Set[str], written: Set[str]):
+    def _probe(self, loop: LoopRegion, root: SDFG, referenced: Dict[str, None], live: Dict[str, None],
+               written: Dict[str, None]):
         """Copy the loop, run the lift pipeline on the copy, and return an
         ``EinsumSpec`` / ``TransposeSpec`` if it cleanly collapsed, else ``None``.
         Any probe failure is swallowed -- the lift is strictly opt-in."""

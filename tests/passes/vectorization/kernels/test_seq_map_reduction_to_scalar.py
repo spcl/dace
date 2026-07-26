@@ -16,9 +16,14 @@ import numpy
 import pytest
 
 import dace
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.transformation.passes.vectorization.config import VectorizeConfig
-from dace.transformation.passes.vectorization.enums import ISA, RemainderStrategy, BranchMode
+from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 from tests.passes.vectorization.helpers.harness import N, X, Y, run_vectorization_test
+
+#: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
+#: would SIGILL-refuse on an AVX2-only or ARM host.
+_HOST_ISA = detect_host_isa()
 
 pytestmark = pytest.mark.tile_nodes
 
@@ -87,7 +92,7 @@ def _vectorize_and_check_2d_reduction(widths):
     sdfg = sum_2d.to_sdfg(simplify=True)
     sdfg.name = f"sum2d_k{len(widths)}"
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=widths, target_isa=ISA.AVX512, remainder_strategy=RemainderStrategy.MASKED_TAIL,
+        VectorizeConfig(widths=widths, target_isa=_HOST_ISA, remainder_strategy=RemainderStrategy.MASKED_TAIL,
                         branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     sdfg.validate()
     for s in {str(x) for x in sdfg.free_symbols}:

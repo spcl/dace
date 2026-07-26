@@ -46,7 +46,7 @@ block of the inner body, and the interstate-edge data (conditions **and** assign
 fed the moved blocks is re-emitted inside the guarded region so nothing is silently dropped.
 """
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from dace import SDFG, properties, symbolic
 from dace.properties import CodeBlock
@@ -159,11 +159,11 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFG
     iv = str(outer.loop_variable)
     states: List[SDFGState] = list(pre) + list(post) + list(inner.all_states())
 
-    written: Set[str] = set()
+    written: Dict[str, None] = {}
     for st in states:
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                written.add(n.data)
+                written[n.data] = None
 
     for st in states:
         for e in st.edges():
@@ -174,15 +174,15 @@ def _outer_axis_independent(outer: LoopRegion, inner: LoopRegion, pre: List[SDFG
     return True
 
 
-def _body_written_names(inner: LoopRegion) -> Set[str]:
+def _body_written_names(inner: LoopRegion) -> Dict[str, None]:
     """Symbols (interstate-edge LHS) and data containers written inside ``inner``'s body."""
-    names: Set[str] = set()
+    names: Dict[str, None] = {}
     for e in inner.all_interstate_edges(recursive=True):
-        names |= set(e.data.assignments.keys())
+        names.update(dict.fromkeys(e.data.assignments.keys()))
     for st in inner.all_states():
         for n in st.nodes():
             if isinstance(n, nodes.AccessNode) and st.in_degree(n) > 0:
-                names.add(n.data)
+                names[n.data] = None
     return names
 
 
@@ -220,14 +220,14 @@ def _match(sdfg: SDFG) -> Optional[Tuple[LoopRegion, LoopRegion, List[SDFGState]
         if not _outer_axis_independent(outer, inner, pre, post):  # S7
             continue
         # Refuse a sifted interstate assignment whose LHS the body reassigns.
-        sifted_lhs: Set[str] = set()
+        sifted_lhs: Dict[str, None] = {}
         edge_of = {(e.src, e.dst): e for e in outer.edges()}
         chain = pre + [inner] + post
         for a, b in zip(chain, chain[1:]):
             e = edge_of.get((a, b))
             if e is not None:
-                sifted_lhs |= set(e.data.assignments.keys())
-        if sifted_lhs & _body_written_names(inner):
+                sifted_lhs.update(dict.fromkeys(e.data.assignments.keys()))
+        if any(s in sifted_lhs for s in _body_written_names(inner)):
             continue
         return outer, inner, pre, post
     return None
@@ -342,7 +342,7 @@ class SiftStatementsIntoPerfectNest(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Sift every qualifying imperfect nest in ``sdfg``.

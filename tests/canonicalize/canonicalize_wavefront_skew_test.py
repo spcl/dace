@@ -297,12 +297,12 @@ def test_dependence_kind_classifies_backward_flow_forward_anti():
     from dace import symbolic
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
     p = symbolic.pystr_to_symbolic
-    assert dependence_kind(p('0'), p('-1')) == 'flow'   # aa[i, j-1]
-    assert dependence_kind(p('-1'), p('0')) == 'flow'   # aa[i-1, j]
-    assert dependence_kind(p('-1'), p('1')) == 'flow'   # aa[i-1, j+1] (du<0 dominates)
-    assert dependence_kind(p('0'), p('1')) == 'anti'    # aa[i, j+1] (old)
-    assert dependence_kind(p('1'), p('0')) == 'anti'    # aa[i+1, j] (old)
-    assert dependence_kind(p('1'), p('-1')) == 'anti'   # aa[i+1, j-1] (du>0 dominates)
+    assert dependence_kind(p('0'), p('-1')) == 'flow'  # aa[i, j-1]
+    assert dependence_kind(p('-1'), p('0')) == 'flow'  # aa[i-1, j]
+    assert dependence_kind(p('-1'), p('1')) == 'flow'  # aa[i-1, j+1] (du<0 dominates)
+    assert dependence_kind(p('0'), p('1')) == 'anti'  # aa[i, j+1] (old)
+    assert dependence_kind(p('1'), p('0')) == 'anti'  # aa[i+1, j] (old)
+    assert dependence_kind(p('1'), p('-1')) == 'anti'  # aa[i+1, j-1] (du>0 dominates)
     assert dependence_kind(p('0'), p('-sym1')) == 'flow'  # symbolic -> conservative flow
 
 
@@ -458,8 +458,9 @@ def test_wavefront_skew_five_point_absorbs_split_snapshot_through_full_pipeline(
         f"expected a parallel wavefront p-Map; got maps={[m.map.params for m in maps]}"
     # The absorbed snapshot must be gone -- no ``_split_snap`` access node, copy,
     # nor descriptor survives (the terminal SimplifyPass runs ArrayElimination).
-    snap_nodes = [n for n, _ in sdfg.all_nodes_recursive()
-                  if isinstance(n, nodes.AccessNode) and n.data.endswith('_split_snap')]
+    snap_nodes = [
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.AccessNode) and n.data.endswith('_split_snap')
+    ]
     assert not snap_nodes, f"snapshot copy not eliminated: {[n.data for n in snap_nodes]}"
     assert not any(name.endswith('_split_snap') for name in sdfg.arrays), \
         f"snapshot descriptor not eliminated: {[n for n in sdfg.arrays if n.endswith('_split_snap')]}"
@@ -499,8 +500,8 @@ def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset()
     inverted, a silent miscompile. This pins the iteration-space classification."""
     from dace.transformation.passes.canonicalize.wavefront_skew import (WriteMap, snapshot_reads_forward)
 
-    # Reflected row map: row = (N-1) - i  (c1 = -1), col = j.
-    reflected = ('a', WriteMap('i', 'j', c0=_p('N - 1'), c1=-1, d0=_p('0'), d2=1, transposed=False), [])
+    # Reflected row map: row = -i + (N-1), col = j.
+    reflected = ('a', WriteMap('i', 'j', m=(-1, 0, 0, 1), c=(_p('N - 1'), _p('0'))), [])
     # Array cell [N-i, j] is written by iteration (i-1, j) -> BACKWARD (flow). Its raw
     # array offset vs the write [N-1-i, j] is [+1, 0] (would look "forward"); iteration
     # space says backward -> MUST refuse.
@@ -512,7 +513,7 @@ def test_snapshot_reads_forward_classifies_in_iteration_space_not_array_offset()
     assert snapshot_reads_forward(forward, reflected, 'i', 'j') is True
 
     # Identity map sanity: a[i, j+1] forward (anti), a[i, j-1] backward (flow).
-    identity = ('a', WriteMap('i', 'j', c0=_p('0'), c1=1, d0=_p('0'), d2=1, transposed=False), [])
+    identity = ('a', WriteMap('i', 'j', m=(1, 0, 0, 1), c=(_p('0'), _p('0'))), [])
     assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j + 1')], 'a')], identity, 'i', 'j') is True
     assert snapshot_reads_forward([(None, None, None, [_p('i'), _p('j - 1')], 'a')], identity, 'i', 'j') is False
     # A snapshot on a non-carrier array can never be reasoned about -> refuse.
@@ -573,7 +574,6 @@ def test_plan_split_snapshots_refuses_external_snapshot_reader():
 def test_plan_split_snapshots_is_non_mutating_then_commit_applies():
     """Planning must not touch the SDFG (so a later skew refusal is a no-op);
     committing then redirects the read onto the live array and empties the copy."""
-    from dace.sdfg import nodes
     from dace.transformation.passes.canonicalize.wavefront_skew import (plan_split_snapshots, commit_split_snapshots)
 
     sdfg, outer, inner = _snapshot_nest(external_reader=False)
@@ -609,10 +609,10 @@ def test_dependence_kind_symbolic_forward_positive_is_anti():
     from dace.transformation.passes.canonicalize.wavefront_skew import dependence_kind
     p = symbolic.pystr_to_symbolic
     S = dace.symbol('S', positive=True)
-    assert dependence_kind(p('0'), S) == 'anti'          # aa[i, j+S], S>0 -> forward anti
-    assert dependence_kind(S, p('0')) == 'anti'          # aa[i+S, j], S>0 -> forward anti
-    assert dependence_kind(p('0'), -S) == 'flow'         # aa[i, j-S] -> backward flow
-    assert dependence_kind(p('-1'), S) == 'flow'         # du=-1 backward dominates lexicographically
+    assert dependence_kind(p('0'), S) == 'anti'  # aa[i, j+S], S>0 -> forward anti
+    assert dependence_kind(S, p('0')) == 'anti'  # aa[i+S, j], S>0 -> forward anti
+    assert dependence_kind(p('0'), -S) == 'flow'  # aa[i, j-S] -> backward flow
+    assert dependence_kind(p('-1'), S) == 'flow'  # du=-1 backward dominates lexicographically
     assert dependence_kind(p('0'), p('-sym1')) == 'flow'  # unprovable sign -> conservative flow
 
 
@@ -708,6 +708,7 @@ def test_wavefront_skew_non_2d_carried_dependence_value_preserving():
     every non-2-D array, so the skew is decided from the 2-D ``aa`` alone and the
     forced inner->Map lift races ``bb``. The result must match the sequential
     reference bit-for-bit."""
+
     @dace.program
     def prog(aa: dace.int64[N, N], bb: dace.int64[N, N, 1]):
         for i in range(1, N - 1):
@@ -732,6 +733,138 @@ def test_wavefront_skew_non_2d_carried_dependence_value_preserving():
     sdfg(aa=agot, bb=bgot, N=n)
     assert np.array_equal(agot, aref) and np.array_equal(bgot, bref), \
         f"bb mismatch: got\n{bgot[..., 0]}\nref\n{bref[..., 0]}"
+
+
+def _canon_structure(prog):
+    """``(sequential LoopRegions, MapEntries)`` of ``prog`` after full canonicalization."""
+    from dace.sdfg import nodes
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = prog.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True, validate_all=False)
+    maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
+    return sdfg, _loops(sdfg), maps
+
+
+@dace.program
+def row_stencil_forward_read(a: dace.float64[N, N]):
+    """tsvc_2_5 ``wf_diff_skew``: ``a[i, j] = a[i, j] + a[i-1, j] + a[i-1, j+1]``."""
+    for i in range(1, N):
+        for j in range(0, N - 1):
+            a[i, j] = a[i, j] + a[i - 1, j] + a[i - 1, j + 1]
+
+
+@dace.program
+def row_stencil_diagonal_read(aa: dace.float64[N, N], bb: dace.float64[N, N]):
+    """TSVC ``s119``: ``aa[i, j] = aa[i-1, j-1] + bb[i, j]``."""
+    for i in range(1, N):
+        for j in range(1, N):
+            aa[i, j] = aa[i - 1, j - 1] + bb[i, j]
+
+
+@pytest.mark.parametrize('prog', [row_stencil_forward_read, row_stencil_diagonal_read])
+def test_sequential_outer_parallel_inner_row_stencil_lifts_inner_to_map(prog):
+    """Counter-cases of the wavefront family: an in-place stencil that writes row ``i`` and
+    reads only row ``i-1`` carries on the OUTER axis alone, so the inner ``j`` is DOALL and an
+    axis-aligned schedule already extracts all the parallelism -- ``WavefrontSkew`` correctly
+    refuses (``tau = (1, 0)`` is legal). The pipeline must then actually deliver that Map: the
+    per-dimension disjointness proof has to see that read row ``i-1`` can never be write row
+    ``i``, which needs the enclosing iterator to count as FIXED while the inner loop runs.
+    Both shapes previously canonicalized to two fully sequential loops and ZERO maps.
+    """
+    sdfg, loops, maps = _canon_structure(prog)
+    assert len(maps) >= 1, f"inner j must lift to a parallel Map; got maps={len(maps)} loops={len(loops)}"
+    assert len(loops) == 1, f"only the carried outer i may stay sequential; got {[l.loop_variable for l in loops]}"
+
+
+def test_row_stencil_forward_read_value_preserving():
+    """The lane-crossing read ``a[i-1, j+1]`` must keep its sequential outer axis: hoisting the
+    ``j`` Map OUT of the ``i`` loop would let lane ``j`` read what lane ``j+1`` writes one
+    iteration earlier."""
+    n = 12
+    rng = np.random.default_rng(1719)
+    a0 = rng.standard_normal((n, n))
+    ref = a0.copy()
+    for i in range(1, n):
+        for j in range(0, n - 1):
+            ref[i, j] = ref[i, j] + ref[i - 1, j] + ref[i - 1, j + 1]
+
+    sdfg, _loops_, maps = _canon_structure(row_stencil_forward_read)
+    assert len(maps) >= 1
+    got = a0.copy()
+    sdfg(a=got, N=n)
+    assert np.allclose(got, ref)
+
+
+def test_row_stencil_diagonal_read_value_preserving():
+    n = 12
+    rng = np.random.default_rng(119)
+    aa0 = rng.standard_normal((n, n))
+    bb0 = rng.standard_normal((n, n))
+    ref = aa0.copy()
+    for i in range(1, n):
+        for j in range(1, n):
+            ref[i, j] = ref[i - 1, j - 1] + bb0[i, j]
+
+    sdfg, _loops_, maps = _canon_structure(row_stencil_diagonal_read)
+    assert len(maps) >= 1
+    got = aa0.copy()
+    sdfg(aa=got, bb=bb0.copy(), N=n)
+    assert np.allclose(got, ref)
+
+
+@dace.program
+def same_lane_carry(a: dace.float64[N, N]):
+    """s231/s233 recurrence sweep: the carry stays inside column ``j``."""
+    for i in range(1, N - 1):
+        for j in range(1, N - 1):
+            a[i, j] = a[i, j] + a[i - 1, j]
+
+
+@dace.program
+def lane_crossing_carry(a: dace.float64[N, N]):
+    """The carry moves one column: lane ``j`` reads what lane ``j+1`` wrote."""
+    for i in range(1, N - 1):
+        for j in range(1, N - 1):
+            a[i, j] = a[i, j] + a[i - 1, j + 1]
+
+
+def _loop_over_map(prog):
+    """``prog`` with only its INNER loop lifted, so an ``i`` LoopRegion wraps one ``j`` Map."""
+    from dace.transformation.interstate.loop_to_map import LoopToMap
+
+    sdfg = prog.to_sdfg(simplify=True)
+    for cfg in list(sdfg.all_control_flow_regions()):
+        if not isinstance(cfg, LoopRegion) or not cfg.loop_variable:
+            continue
+        if any(isinstance(c, LoopRegion) and c is not cfg for c in cfg.all_control_flow_regions()):
+            continue  # not the innermost loop
+        xform = LoopToMap()
+        xform.loop = cfg
+        assert xform.can_be_applied(cfg.parent_graph, 0, sdfg), "inner j must be DOALL"
+        xform.apply(cfg.parent_graph, sdfg)
+        break
+    return sdfg
+
+
+@pytest.mark.parametrize('prog, interchangeable', [(same_lane_carry, True), (lane_crossing_carry, False)])
+def test_move_loop_into_map_refuses_lane_crossing_carry(prog, interchangeable):
+    """``MoveLoopIntoMap`` makes the Map the OUTER parallel axis, which is only value-preserving
+    when every loop-carried dependence stays inside ONE map lane. ``a[i-1, j]`` does (same
+    column, the s231/s233 recurrence-sweep shape this interchange exists for); ``a[i-1, j+1]``
+    does not -- lane ``j`` would read what lane ``j+1`` writes on the previous iteration.
+    """
+    from dace.sdfg import nodes
+    from dace.transformation.interstate.move_loop_into_map import MoveLoopIntoMap
+
+    sdfg = _loop_over_map(prog)
+    outer = [l for l in _loops(sdfg)]
+    assert len(outer) == 1, "fixture must leave exactly the outer i-loop"
+    assert any(isinstance(n, nodes.MapEntry) for n, _ in sdfg.all_nodes_recursive()), \
+        "fixture must leave the inner j as a Map"
+    xform = MoveLoopIntoMap()
+    xform.loop = outer[0]
+    assert xform.can_be_applied(outer[0].parent_graph, 0, sdfg) is interchangeable
 
 
 if __name__ == '__main__':

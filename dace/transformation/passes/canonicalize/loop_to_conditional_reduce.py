@@ -152,7 +152,7 @@ class LoopToConditionalReduce(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         rewritten = 0
@@ -290,7 +290,7 @@ class LoopToConditionalReduce(ppl.Pass):
         if acc_in_conn is None or addend_in_conn is None or acc_in_conn == addend_in_conn:
             return None
         # The connector names in the tasklet body must match.
-        if {acc_in_conn, addend_in_conn} != {lhs_name, rhs_name}:
+        if dict.fromkeys([acc_in_conn, addend_in_conn]) != dict.fromkeys([lhs_name, rhs_name]):
             return None
 
         # ``-``: the accumulator must be on the LEFT for associativity
@@ -655,10 +655,10 @@ class LoopToConditionalReduce(ppl.Pass):
                 return False  # data-dependent (indirect) index -- not a static memlet subset
             if isinstance(sub, ast.Name) and sub.id not in available:
                 return False  # not a symbol we can put in a subset
-        written = {n.data for n in m.true_state.data_nodes() if m.true_state.in_degree(n) > 0}
+        written = (n.data for n in m.true_state.data_nodes() if m.true_state.in_degree(n) > 0)
         return arr_name not in written
 
-    def _available_symbols(self, m: _Match, sdfg: SDFG) -> set:
+    def _available_symbols(self, m: _Match, sdfg: SDFG) -> dict:
         """Names usable in a memlet subset at the update tasklet, taken from the
         DEFINED-symbol API rather than ``sdfg.symbols`` membership. ``sdfg.symbols``
         holds only the SDFG's GLOBAL symbols, so it sees none of the three binders a
@@ -673,8 +673,8 @@ class LoopToConditionalReduce(ppl.Pass):
         :meth:`~dace.sdfg.state.SDFGState.defined_symbols` contributes the symbols bound
         by interstate-edge assignments, which the former does not walk. Constants are
         usable in a subset too but are not symbols, so they are added explicitly."""
-        return (set(m.true_state.symbols_defined_at(m.upd_tasklet)) | set(m.true_state.defined_symbols())
-                | set(sdfg.constants))
+        return dict.fromkeys(
+            [*m.true_state.symbols_defined_at(m.upd_tasklet), *m.true_state.defined_symbols(), *sdfg.constants])
 
     def _collapse_empty_wrappers(self, loop: LoopRegion):
         """Eliminate empty SDFGState blocks in the loop body whose only role

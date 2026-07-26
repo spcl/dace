@@ -50,7 +50,7 @@ from dace.sdfg.state import BreakBlock, ConditionalBlock, ContinueBlock, Control
 
 #: Builtin names the closed-form expression may mention; it is spliced verbatim into a tasklet
 #: body. Probing ``builtins`` instead would admit ``open``, ``id``, ``sum``, ... as valid operands.
-SPLICEABLE_BUILTINS = frozenset({'True', 'False', 'None', 'abs', 'min', 'max', 'int', 'float'})
+SPLICEABLE_BUILTINS = dict.fromkeys(['True', 'False', 'None', 'abs', 'min', 'max', 'int', 'float'])
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -71,7 +71,7 @@ class _UnwrapTypecasts(ast.NodeTransformer):
     body, only this pass's analysis treats it as a no-op.
     """
     from dace import dtypes as _dtypes
-    _TYPECAST_NAMES = set(_dtypes.TYPECLASS_STRINGS)
+    _TYPECAST_NAMES = dict.fromkeys(_dtypes.TYPECLASS_STRINGS)
 
     def visit_Call(self, node):
         self.generic_visit(node)
@@ -254,7 +254,7 @@ def _extract_iv(loop: LoopRegion, sdfg: SDFG,
     # as it is loop-invariant). The classic shape is ``__in1 + 2.5`` (Constant on
     # the other side); the symbolic-frontend shape is ``__in1 + step`` with
     # ``step`` a SDFG symbol, which lifts the same way.
-    in_connector_names = set(tasklet.in_connectors.keys())
+    in_connector_names = dict.fromkeys(tasklet.in_connectors.keys())
 
     def _is_carrier(node):
         return isinstance(node, ast.Name) and node.id in in_connector_names
@@ -355,7 +355,11 @@ def _replace_loop_with_closed_form(parent: ControlFlowRegion, loop: LoopRegion, 
     new_state = parent.add_state(loop.label + "_iv_closed", is_start_block=was_start)
     accum_r = new_state.add_read(accum_name)
     accum_w = new_state.add_write(accum_name)
-    tasklet = new_state.add_tasklet(loop.label + "_iv_closed_tlt", {"__in"}, {"__out"}, f"__out = {closed_form}")
+    # add_tasklet turns a connector set into the in/out-connector dict verbatim -- a plain set
+    # literal's hash order would become the emitted connector declaration order. Single-element
+    # here so it can't actually reorder, but dict.fromkeys matches the pattern used elsewhere.
+    tasklet = new_state.add_tasklet(loop.label + "_iv_closed_tlt", dict.fromkeys(['__in']), dict.fromkeys(['__out']),
+                                    f"__out = {closed_form}")
     new_state.add_edge(accum_r, None, tasklet, "__in", mm.Memlet(data=accum_name, subset=accum_subset))
     new_state.add_edge(tasklet, "__out", accum_w, None, mm.Memlet(data=accum_name, subset=accum_subset))
 
@@ -437,11 +441,11 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
                 continue
             if any(len(p[sym]) != 1 for p in per):
                 continue  # a branch increments sym more than once
-            steps = {p[sym][0][1] for p in per}
+            steps = dict.fromkeys(p[sym][0][1] for p in per)
             if len(steps) != 1:
                 continue  # branches disagree on the step
             step = next(iter(steps))
-            branch_edges = {id(p[sym][0][0]) for p in per}
+            branch_edges = dict.fromkeys(id(p[sym][0][0]) for p in per)
             if any(sym in (e2.data.assignments or {}) and id(e2) not in branch_edges
                    for e2 in loop.all_interstate_edges()):
                 continue  # sym also written outside the per-branch increments (incl. nested) -> not clean
@@ -468,10 +472,11 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
             #
             # Only genuine ambiguity refuses: branches disagreeing on the side, or a
             # branch straddling its own increment (``None``).
-            sides = {_consistent_use_side(br, p[sym][0][0], sym) for br, p in zip(branches, per)} - {'unused'}
+            sides = dict.fromkeys(_consistent_use_side(br, p[sym][0][0], sym) for br, p in zip(branches, per))
+            sides.pop('unused', None)
             if not sides:
                 side = 'after'
-            elif sides in ({'after'}, {'before'}):
+            elif len(sides) == 1 and next(iter(sides)) in ('after', 'before'):
                 (side, ) = sides
             else:
                 continue
@@ -522,17 +527,17 @@ def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[s
     the loop body is a DAG (the back-edge is the region boundary, not a body
     edge), so reachability is exact.
     """
-    before = set(sdutil.dfs_conditional(loop, sources=[iv_edge.src], reverse=True))
-    before.add(iv_edge.src)
-    after = set(sdutil.dfs_conditional(loop, sources=[iv_edge.dst]))
-    after.add(iv_edge.dst)
+    before = dict.fromkeys(sdutil.dfs_conditional(loop, sources=[iv_edge.src], reverse=True))
+    before[iv_edge.src] = None
+    after = dict.fromkeys(sdutil.dfs_conditional(loop, sources=[iv_edge.dst]))
+    after[iv_edge.dst] = None
 
     saw_before = saw_after = False
     # Block uses: any body block that reads ``sym`` -- a state (memlet / tasklet)
     # OR a nested region (a ConditionalBlock whose branches read ``sym``, e.g. the
     # ``a[j]`` writes in s124). ``free_symbols`` is defined for every block type.
     for b in loop.nodes():
-        if sym_name in {str(s) for s in b.free_symbols}:
+        if sym_name in (str(s) for s in b.free_symbols):
             if b in before:
                 saw_before = True
             elif b in after:
@@ -541,7 +546,7 @@ def _consistent_use_side(loop: LoopRegion, iv_edge, sym_name: str) -> Optional[s
                 return None  # neither strictly before nor after the increment
     # Interstate-edge uses (RHS assignments / condition), excluding the IV edge.
     for e in loop.edges():
-        if e is iv_edge or sym_name not in {str(s) for s in e.data.free_symbols}:
+        if e is iv_edge or sym_name not in (str(s) for s in e.data.free_symbols):
             continue
         if e.dst in before:  # the edge completes at-or-before the increment's source
             saw_before = True
@@ -571,19 +576,19 @@ def _preloop_symbol_value(parent: ControlFlowRegion, loop: LoopRegion, sym_name:
     in_edges = list(parent.in_edges(loop))
     if not in_edges:
         return None
-    vals = set()
+    vals: dict = {}
     for e in in_edges:
         rhs = (e.data.assignments or {}).get(sym_name)
         if rhs is None:
             return None
         try:
-            vals.add(symbolic.pystr_to_symbolic(rhs))
+            vals[symbolic.pystr_to_symbolic(rhs)] = None
         except Exception:
             return None
     if len(vals) != 1:
         return None
     (val, ) = vals
-    if loop.loop_variable in {str(s) for s in val.free_symbols}:
+    if loop.loop_variable in (str(s) for s in val.free_symbols):
         return None  # references the loop variable, which is undefined before the loop
     return val
 
@@ -641,7 +646,7 @@ def _try_substitute_derived_symbol(parent: ControlFlowRegion, loop: LoopRegion, 
         # ``iorder_at = IORDER(JL,JM)`` load); leave it a symbol, don't dissolve it.
         if symbolic.arrays(rhs):
             continue
-        free = {str(s) for s in rhs_expr.free_symbols}
+        free = dict.fromkeys(str(s) for s in rhs_expr.free_symbols)
         if sym in free:
             continue  # self-reference -> a recurrence, not a derived symbol
         if not all(s == loop_var or _is_loop_invariant_symbol(s, loop, sdfg, sdfg_free_symbols) for s in free):

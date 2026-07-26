@@ -5,6 +5,7 @@ import dace
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import SDFG, InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+from dace.transformation.dataflow import PruneConnectors
 import dace.serialize
 
 
@@ -92,7 +93,49 @@ def test_if_else():
     assert A[0] == 200
 
 
+def test_conditional_block_read_and_write_sets_branch_condition():
+    """A ConditionalBlock's own branch conditions live in ``_branches``, invisible to
+    ``nodes()``/``edges()``, which only see the branch bodies -- they must still show up in
+    read_and_write_sets().
+    """
+    nsdfg = dace.SDFG('nested')
+    nsdfg.add_array('cond', [1], dace.bool_)
+    nsdfg.add_array('a', [1], dace.float64)
+
+    if_region = ConditionalBlock('if')
+    nsdfg.add_node(if_region, is_start_block=True)
+
+    then_body = ControlFlowRegion('then', sdfg=nsdfg)
+    if_region.add_branch(CodeBlock('cond[0]'), then_body)
+    s1 = then_body.add_state('s1', is_start_block=True)
+    s1.add_edge(s1.add_tasklet('t1', {}, {'o'}, 'o = 1'), 'o', s1.add_write('a'), None, dace.Memlet('a[0]'))
+
+    else_body = ControlFlowRegion('else', sdfg=nsdfg)
+    if_region.add_branch(CodeBlock('not (cond[0])'), else_body)
+    s2 = else_body.add_state('s2', is_start_block=True)
+    s2.add_edge(s2.add_tasklet('t2', {}, {'o'}, 'o = 2'), 'o', s2.add_write('a'), None, dace.Memlet('a[0]'))
+
+    nsdfg.validate()
+
+    read_set, _ = if_region.read_and_write_sets()
+    assert 'cond' in read_set
+
+    sdfg = dace.SDFG('outer')
+    sdfg.add_array('COND_arr', [1], dace.bool_)
+    sdfg.add_array('A', [1], dace.float64)
+    state = sdfg.add_state(is_start_block=True)
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={'cond'}, outputs={'a'})
+    state.add_edge(state.add_read('COND_arr'), None, nsdfg_node, 'cond', dace.Memlet('COND_arr[0]'))
+    state.add_edge(nsdfg_node, 'a', state.add_write('A'), None, dace.Memlet('A[0]'))
+    sdfg.validate()
+
+    # Non-regression guard: PruneConnectors reads via SDFG.read_and_write_sets(), which already
+    # special-cases control-flow regions on its own; this just locks in that it stays sound.
+    assert not PruneConnectors.can_be_applied_to(sdfg=sdfg, nsdfg=nsdfg_node, expr_index=0, permissive=False)
+
+
 if __name__ == '__main__':
     test_cond_region_if()
     test_serialization()
     test_if_else()
+    test_conditional_block_read_and_write_sets_branch_condition()

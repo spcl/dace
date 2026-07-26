@@ -261,14 +261,14 @@ def beta_and_inner_loop(outer: LoopRegion) -> Optional[Tuple[SDFGState, LoopRegi
 
 def reaches(region: ControlFlowRegion, src, dst) -> bool:
     """Whether ``dst`` is reachable from ``src`` along ``region``'s control flow."""
-    seen, stack = {id(src)}, [src]
+    seen, stack = dict.fromkeys([id(src)]), [src]
     while stack:
         node = stack.pop()
         for edge in region.out_edges(node):
             if edge.dst is dst:
                 return True
             if id(edge.dst) not in seen:
-                seen.add(id(edge.dst))
+                seen[id(edge.dst)] = None
                 stack.append(edge.dst)
     return False
 
@@ -286,12 +286,12 @@ def sink_node(state: SDFGState) -> Optional[nodes.AccessNode]:
     return sinks[0]
 
 
-def written_arrays(state: SDFGState) -> set:
+def written_arrays(state: SDFGState) -> dict:
     """Names of arrays the state writes."""
-    return {n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0}
+    return dict.fromkeys(n.data for n in state.nodes() if isinstance(n, nodes.AccessNode) and state.in_degree(n) > 0)
 
 
-def nontransient_written(state: SDFGState, sdfg: SDFG) -> set:
+def nontransient_written(state: SDFGState, sdfg: SDFG) -> dict:
     """Names of NON-transient arrays the state writes.
 
     The frontend stages every indexed read through a transient scalar
@@ -300,7 +300,7 @@ def nontransient_written(state: SDFGState, sdfg: SDFG) -> set:
     describe what the state means; the transients are checked separately, at the loop
     level, by :func:`internal_writes_contained`.
     """
-    return {name for name in written_arrays(state) if not is_transient(sdfg, name)}
+    return dict.fromkeys(name for name in written_arrays(state) if not is_transient(sdfg, name))
 
 
 def is_transient(sdfg: SDFG, name: str) -> bool:
@@ -317,9 +317,9 @@ def internal_writes_contained(loop: LoopRegion, root: SDFG, c_array: str) -> boo
     or a transient read later) means the loop does more than the rank-k update and the
     lift would silently drop it. Mirrors ``LoopToEinsum._live_outside``.
     """
-    inside = {id(state) for state in loop.all_states()}
-    written = {name for state in loop.all_states() for name in written_arrays(state)}
-    written.discard(c_array)
+    inside = dict.fromkeys(id(state) for state in loop.all_states())
+    written = dict.fromkeys(name for state in loop.all_states() for name in written_arrays(state))
+    written.pop(c_array, None)
     if not written:
         return True
     if any(not is_transient(root, name) for name in written):
@@ -422,7 +422,7 @@ def match_beta_state(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: symp
 
     :returns: ``(beta_array, uplo)``, or ``None``.
     """
-    if nontransient_written(state, sdfg) != {c_array}:
+    if nontransient_written(state, sdfg) != dict.fromkeys([c_array]):
         return None
     sink = sink_node(state)
     if sink is None or sink.data != c_array:
@@ -452,7 +452,7 @@ def resolve_accumulate(state: SDFGState, sdfg: SDFG, c_array: str, i: str, j: sy
     :returns: ``(value_expression, leaf_roles, uplo)``, or ``None`` if the state is not
               a triangular in-place update of ``C`` alone.
     """
-    if nontransient_written(state, sdfg) != {c_array}:
+    if nontransient_written(state, sdfg) != dict.fromkeys([c_array]):
         return None
     sink = sink_node(state)
     if sink is None or sink.data != c_array:
@@ -481,8 +481,8 @@ def loop_invariant(loop: LoopRegion, names) -> bool:
     say) would be classified as an operand while its producer -- the nest -- is spliced
     away, leaving the node reading uninitialised memory.
     """
-    written = {name for state in loop.all_states() for name in written_arrays(state)}
-    return not (set(names) & written)
+    written = dict.fromkeys(name for state in loop.all_states() for name in written_arrays(state))
+    return not any(n in written for n in names)
 
 
 def operand_shape_ok(sdfg: SDFG, array: str, trans: str, n, k) -> bool:

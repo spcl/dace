@@ -89,13 +89,13 @@ def _normalize(text: str, loop_var: str) -> str:
     return re.sub(r'\b%s\b' % re.escape(loop_var), _ITER_PLACEHOLDER, text)
 
 
-def _canon_data(name: str, local_scratch: set) -> str:
+def _canon_data(name: str, local_scratch: dict) -> str:
     """Map a body-local scratch transient to the canonical placeholder; leave
     carried / external names (accumulator, arrays) untouched."""
     return _SCRATCH_PLACEHOLDER if name in local_scratch else name
 
 
-def _node_key(node, loop_var: str, local_scratch: set) -> Tuple:
+def _node_key(node, loop_var: str, local_scratch: dict) -> Tuple:
     """A structural key for a body node, iterator- and scratch-name-independent."""
     if isinstance(node, nodes.AccessNode):
         return ('access', _canon_data(node.data, local_scratch))
@@ -211,7 +211,7 @@ class FuseConsecutiveLoops(ppl.Pass):
         sig2 = self._state_signature(s2, second.loop_variable, self._local_scratch(second, s2))
         return sig1 == sig2
 
-    def _local_scratch(self, loop: LoopRegion, body_state: SDFGState) -> set:
+    def _local_scratch(self, loop: LoopRegion, body_state: SDFGState) -> dict:
         """Transient data names used ONLY inside ``body_state`` -- i.e. not
         referenced by any other block of the owning SDFG (not carried across
         iterations, not read/written outside the loop). These are frontend
@@ -220,22 +220,22 @@ class FuseConsecutiveLoops(ppl.Pass):
         root = loop
         while root.parent_graph is not None:
             root = root.parent_graph
-        external = set()
+        external: dict = {}
         for st in root.all_states():
             if st is body_state:
                 continue
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode):
-                    external.add(n.data)
-        local = set()
+                    external[n.data] = None
+        local: dict = {}
         for n in body_state.nodes():
             if isinstance(n, nodes.AccessNode) and n.data not in external:
                 desc = root.arrays.get(n.data)
                 if desc is not None and desc.transient:
-                    local.add(n.data)
+                    local[n.data] = None
         return local
 
-    def _state_signature(self, state: SDFGState, loop_var: str, local_scratch: set) -> Tuple:
+    def _state_signature(self, state: SDFGState, loop_var: str, local_scratch: dict) -> Tuple:
         """An iterator- and scratch-name-independent structural signature of a
         body state: its sorted node keys and its sorted edge descriptors
         (endpoints, connectors, memlet data/subset/wcr)."""

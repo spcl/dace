@@ -114,11 +114,13 @@ def _forward_flow_groups(loop: LoopRegion) -> Optional[List[List]]:
 
     for i, bi in enumerate(order):
         writes_i, reads_i = rw[bi]
-        touched_i = set(writes_i) | set(reads_i)
+        # writes_i/reads_i are already ordered dicts; dict.fromkeys unions them without
+        # dropping into a hash-order set (the old `set(a) | set(b)` did).
+        touched_i = dict.fromkeys([*writes_i, *reads_i])
         for bj in order[i + 1:]:
             writes_j, reads_j = rw[bj]
             merge = False
-            for x in touched_i & (set(writes_j) | set(reads_j)):
+            for x in dict.fromkeys(k for k in touched_i if k in writes_j or k in reads_j):
                 if x in writes_j:
                     merge = True  # backward WAR / WAW / flow-back
                     break
@@ -158,7 +160,7 @@ class DistributeProducerConsumerLoop(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         count = 0

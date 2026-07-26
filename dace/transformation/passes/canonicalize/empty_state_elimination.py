@@ -18,10 +18,9 @@ fusion -- so merging rather than refusing is what makes this a fusion-prep
 pass. The merge is only performed when it is provably value-preserving (see
 ``_merge_assignments``); anything else is left untouched.
 """
-from typing import Any, Dict, Optional, Set
+from typing import Any, Dict, Optional
 
 from dace import SDFG, symbolic
-from dace.sdfg.graph import Edge
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.transformation import pass_pipeline as ppl
@@ -48,10 +47,9 @@ def _merge_assignments(first: Dict[str, str], second: Dict[str, str]) -> Optiona
     """
     if not second:
         return dict(first)
-    written = set(first.keys())
-    if written:
+    if first:  # membership-only: no need to copy the keys into a set first
         for rhs in second.values():
-            if written & {str(s) for s in symbolic.pystr_to_symbolic(rhs).free_symbols}:
+            if any(str(s) in first for s in symbolic.pystr_to_symbolic(rhs).free_symbols):
                 return None
     merged = dict(first)
     merged.update(second)
@@ -117,8 +115,8 @@ class EmptyStateElimination(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> Dict:
+        return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Splice out empty boundary states until none remain.

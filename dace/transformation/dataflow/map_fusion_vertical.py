@@ -238,12 +238,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         assert isinstance(second_map_entry, nodes.MapEntry)
         assert isinstance(self.array, nodes.AccessNode)
 
-        # Refuse fusing a producer INTO a seeded-reduction consumer map: memlet
-        # re-propagation in ``apply`` would corrupt the reduction's ``wcr=None``
-        # copy-out (see ``_second_map_is_seeded_reduction``).
-        if self._second_map_is_seeded_reduction(graph, second_map_exit):
-            return False
-
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
         #  or `None` if the maps can not be structurally fused.
@@ -351,6 +345,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         inner_sdfg = nsdfg.sdfg
         if inner_sdfg is None:
             return False
+        reading_states, writing_states = OrderedSet(), OrderedSet()
         for state in inner_sdfg.all_states():
             for n in state.nodes():
                 if not isinstance(n, nodes.AccessNode) or n.data != name:
@@ -358,7 +353,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 in_d, out_d = state.in_degree(n), state.out_degree(n)
                 if not ((in_d == 0 and out_d > 0) or (in_d > 0 and out_d == 0)):
                     return False
-        return True
+                (writing_states if in_d else reading_states).add(state)
+        # A read outside the writing state consumes the value just written, not the incoming one.
+        return not (writing_states and (reading_states - writing_states))
 
     @staticmethod
     def _split_inout_for_intermediate(graph: dace.SDFGState, sdfg: dace.SDFG, first_map_entry: nodes.MapEntry,
@@ -540,7 +537,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  in case we never consolidated, i.e., all edges were preserved, then we
         #  can skip that step.
         if not self.never_consolidate_edges:
+            # Propagation re-derives a copy-out edge's WCR from its IN edge, which would turn a
+            #  seeded reduction's completed result into a live accumulate. Keep those edges plain.
+            plain_copy_outs = [e for e in graph.out_edges(second_map_exit) if e.data is not None and e.data.wcr is None]
             propagation.propagate_memlets_map_scope(sdfg, graph, first_map_entry)
+            for edge in plain_copy_outs:
+                edge.data.wcr = None
 
     def partition_first_outputs(
         self,
@@ -752,6 +754,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                                        end=second_map_entry):
                         return None
                     continue
+
+                # Ordering edge: no connector, and the data edge beside it already sequences the Maps.
+                if intermediate_consumer_edge.data.is_empty():
+                    continue
                 found_second_map = True
 
                 # The output of the top Map can not define a dynamic Map range in the
@@ -809,7 +815,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 return None
 
                     has_found_a_consumer = True
-            assert found_second_map, (f"Found '{intermediate_node}' which looked like a pure node, but is not one.")
+            # Only ordering edges reach the second Map, so `has_found_a_consumer` is never bound.
+            if not found_second_map:
+                return None
             assert has_found_a_consumer
 
             # After we have ensured coverage, we have to decide if the intermediate
@@ -1017,8 +1025,12 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  have to reroute inside the Map.
             # NOTE: Assumes that Map (if connected is the direct neighbour).
             conn_names: OrderedSet[str] = OrderedSet()
-            for inter_node_out_edge in state.out_edges(inter_node):
+            for inter_node_out_edge in list(state.out_edges(inter_node)):
                 if inter_node_out_edge.dst == second_map_entry:
+                    # Redundant beside the data edge, and fusing would turn it into a self loop.
+                    if inter_node_out_edge.data.is_empty():
+                        state.remove_edge(inter_node_out_edge)
+                        continue
                     assert inter_node_out_edge.dst_conn.startswith("IN_")
                     conn_names.add(inter_node_out_edge.dst_conn)
                 else:

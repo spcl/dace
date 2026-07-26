@@ -44,6 +44,18 @@ from dace.transformation.passes.vectorization.utils.subsets import an_side_subse
 from dace.transformation.passes.vectorization.utils.tile_access import PerDimKind, classify_tile_access
 
 
+def _is_single_element(size) -> bool:
+    """``size`` (a descriptor ``total_size`` / memlet element count) is PROVABLY one element.
+
+    A symbolic size (``M`` for a per-row accumulator connector) is not provably one, and ``int()``
+    on it raises -- so decide it here rather than letting the raise escape the pass.
+    """
+    try:
+        return int(size) == 1
+    except (TypeError, ValueError):
+        return False
+
+
 def _find_iedge_defining_symbol(inner_sdfg: SDFG, sym_name: str):
     """``(iedge, rhs_str)`` for the iedge defining ``sym_name``, else
     ``(None, None)``. Detects Bypass form ``__sym = idx[i]`` for per-lane fanout."""
@@ -713,7 +725,11 @@ class WidenAccesses(ppl.Pass):
             except Exception:  # noqa: BLE001 -- non-augmentable WCR: leave the copyback untouched
                 continue
             oc_desc = inner_sdfg.arrays.get(oc)
-            if oc_desc is None or int(oc_desc.total_size) != 1:
+            # A per-row reduction (``mean[j] (+)= data[i, j]``) keeps the FULL accumulator array on
+            # the connector, so ``total_size`` is symbolic -- ``int()`` on it raises. Only a
+            # provably single-element accumulator has a copyback to fold; anything else (symbolic
+            # or genuinely larger) is left alone.
+            if oc_desc is None or not _is_single_element(oc_desc.total_size):
                 continue
             for ist in inner_sdfg.states():
                 for edge in list(ist.edges()):
@@ -727,7 +743,7 @@ class WidenAccesses(ppl.Pass):
                     src_desc = inner_sdfg.arrays.get(edge.src.data)
                     if src_desc is None or not src_desc.transient:
                         continue
-                    if int(m.subset.num_elements()) != 1:  # single-element accumulator copy only
+                    if not _is_single_element(m.subset.num_elements()):  # single-element copy only
                         continue
                     self._rewrite_copyback_to_fold(ist, edge, oc, body_expr)
                     rewritten += 1

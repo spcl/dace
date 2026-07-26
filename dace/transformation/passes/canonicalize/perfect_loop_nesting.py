@@ -59,7 +59,7 @@ class PerfectLoopNesting(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         uniq = UniqueLoopIterators(assign_loop_iterator_post_value=False)

@@ -8,9 +8,11 @@ writeback, so the tile/SIMD widener folds it to per-lane partial sums + one hori
 
 Coverage:
 
-* POSITIVE e2e: a dot product / a sum whose accumulator is a genuine array slot -- BAILS through the
-  vectorize pipeline with the prep disabled (proven via a no-op patch), widens + is numerically
-  correct with the prep on.
+* POSITIVE e2e: a dot product / a sum whose accumulator is a genuine array slot widens + is
+  numerically correct. Since the vectorizer's "no loose WCR" precondition learned to recognise a
+  lifted array-slot boundary reduction on its own, the un-prepped form (proven via a no-op patch)
+  now tiles too -- the prep is an optimisation (a private scalar for the OpenMP ``reduction``
+  clause), not the gate that decides whether the kernel vectorizes.
 * POSITIVE structural: the array-slot WCR target becomes a transient ``Scalar`` after the pass.
 * NEGATIVE: a plain scalar / length-1 accumulator (already widenable), a ``min`` RMW (not a WCR),
   and a cross-iteration recurrence are all left untouched -- value-preserving.
@@ -172,7 +174,7 @@ def test_recurrence_is_left_alone():
 
 
 # ---------------------------------------------------------------------------
-# e2e: through the multi-dim tile vectorizer -- bails without prep, correct with it.
+# e2e: through the multi-dim tile vectorizer -- tiled and correct with or without the prep.
 # ---------------------------------------------------------------------------
 
 
@@ -180,7 +182,9 @@ def _vectorize(prog, name):
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.name = name
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.MASKED_TAIL,
+        VectorizeConfig(widths=(8, ),
+                        target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
                         branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     sdfg.validate()
     for sym in {str(x) for x in sdfg.free_symbols}:
@@ -189,37 +193,36 @@ def _vectorize(prog, name):
     return sdfg
 
 
-def test_array_slot_dot_bails_without_prep_and_widens_with_it():
-    """The dot-into-slot reduction GRACEFULLY REFUSES through the vectorizer with the prep disabled
-    -- left correct + un-tiled with a warning, never a crash -- and widens to a correct result with
-    the prep on: the "no-widen before, correct after" case.
+def test_array_slot_dot_widens_with_or_without_the_prep():
+    """The dot-into-slot reduction widens to a correct result BOTH ways: the prep scalar-localizes
+    the accumulator, and -- since the "no loose WCR" precondition learned to recognise a lifted
+    array-slot boundary reduction directly -- the un-prepped form now tiles as well.
 
-    The vectorizer must NEVER assert-crash on an un-tileable body (maintainer direction): a loose
-    in-body WCR it cannot soundly lower raises ``VectorizeUnsupported`` from the ``_AssertNoBodyWCR``
-    precondition, which the orchestrator catches, restoring the pristine SDFG and returning un-tiled.
+    The slot ``s[3]`` does not vary with the map's innermost (widened) parameter, so within one
+    tile there is exactly one accumulator: the body folds the lanes to a single partial and the
+    boundary resolves one accumulation per tile. The prep is therefore an optimisation (a private
+    scalar the backend can put in an OpenMP ``reduction`` clause), no longer the thing that decides
+    whether the kernel vectorizes at all.
     """
-    # BEFORE: with the prep patched to a no-op, the array-slot WCR ``s[3] += a[i]*b[i]`` reaches the
-    # tiler as a loose in-body WCR the widener cannot lower without racing the lanes. Rather than
-    # crash, the pipeline refuses THIS kernel: it warns "refusing to vectorize", restores the
-    # pristine SDFG, and leaves it un-tiled. Assert the refusal is clean AND real -- it warns, the
-    # original array-slot WCR reduction survives un-privatized, and no map was strided to a tile
-    # width (nothing was tiled).
-    with mock.patch.object(PrepareReductionForWidening, "apply_pass", lambda self, sdfg, res: None):
-        with pytest.warns(UserWarning, match="refusing to vectorize"):
-            refused = _vectorize(dot_into_slot, "dot_into_slot_noprep")
-    assert _wcr_targets(refused) == (1, 0), "a refusal must leave the original array-slot WCR reduction in place"
-    assert not _tiled_map_steps(refused), "a refused kernel must stay un-tiled (every map still unit-step)"
-
-    # AFTER: the wired-in prep scalar-localizes it, the widener strides the map to the tile width
-    # and folds the reduction (the array-slot WCR becomes a scalar-accumulator ``TileReduce``), and
-    # the widened result matches numpy. The structural checks make "widens" non-vacuous: without
-    # real widening the array-slot WCR would survive and no map would be strided to width 8.
     n = 60
     a = np.random.random(n)
     b = np.random.random(n)
-    s = np.zeros(8)
     ref = np.zeros(8)
     ref[3] = float((a * b).sum())
+
+    # WITHOUT the prep: the array-slot WCR reaches the tiler intact and is still tiled + correct.
+    with mock.patch.object(PrepareReductionForWidening, "apply_pass", lambda self, sdfg, res: None):
+        noprep = _vectorize(dot_into_slot, "dot_into_slot_noprep")
+    assert "8" in _tiled_map_steps(noprep), "the array-slot reduction must stride the tiled map to width 8"
+    s_noprep = np.zeros(8)
+    noprep.compile()(a=a.copy(), b=b.copy(), s=s_noprep, N=n)
+    assert np.allclose(s_noprep, ref, rtol=1e-9, atol=1e-12), f"got {s_noprep}, ref {ref}"
+
+    # WITH the prep: it scalar-localizes the accumulator, the widener strides the map to the tile
+    # width and folds the reduction (the array-slot WCR becomes a scalar-accumulator
+    # ``TileReduce``), and the widened result matches numpy. The structural checks make "widens"
+    # non-vacuous: without real widening the array-slot WCR would survive un-folded.
+    s = np.zeros(8)
     sdfg = _vectorize(dot_into_slot, "dot_into_slot_prep")
     assert _wcr_targets(sdfg)[0] == 0, "prep+widen must fold the array-slot WCR -- none may survive"
     assert "8" in _tiled_map_steps(sdfg), "prep+widen must stride the tiled map to width 8 (real widening)"

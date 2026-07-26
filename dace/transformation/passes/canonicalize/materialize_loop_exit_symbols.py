@@ -52,7 +52,7 @@ from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion, SDF
 
 #: Python literal names an expression may mention besides SDFG symbols. Modern ``ast`` renders
 #: these as ``Constant`` rather than ``Name``, so this is a belt-and-braces allowance.
-LITERAL_NAMES = frozenset({'True', 'False', 'None'})
+LITERAL_NAMES = dict.fromkeys(['True', 'False', 'None'])
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
@@ -107,7 +107,7 @@ def _is_loop_invariant_symbol(name: str, loop: LoopRegion, sdfg: SDFG, sdfg_free
     return True
 
 
-def _expr_is_loop_invariant(expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore: Set[str],
+def _expr_is_loop_invariant(expr_str: str, loop: LoopRegion, sdfg: SDFG, ignore: Dict[str, None],
                             sdfg_free_symbols: Set[str]) -> bool:
     """Every ``ast.Name`` in ``expr_str`` is loop-invariant in ``loop`` (or in ``ignore``)."""
     try:
@@ -136,7 +136,7 @@ def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
     :returns: ``{sym_name: (ast_op_class, c_expr_string)}``.
     """
     found: Dict[str, Tuple[type, str]] = {}
-    seen_lhs: Set[str] = set()
+    seen_lhs: Dict[str, None] = {}
     for e in loop.edges():
         if not e.data.assignments:
             continue
@@ -145,7 +145,7 @@ def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
                 # Multiple update sites for the same symbol -- not a clean affine IV.
                 found.pop(lhs, None)
                 continue
-            seen_lhs.add(lhs)
+            seen_lhs[lhs] = None
             parsed = _parse_affine_update(str(rhs), lhs)
             if parsed is None:
                 continue
@@ -153,7 +153,7 @@ def _detect_iv_symbols(loop: LoopRegion, sdfg: SDFG, sdfg_free_symbols: Set[str]
             # The seed value (pre-loop) must already be in scope.
             if lhs not in sdfg.symbols and lhs not in sdfg_free_symbols and lhs not in sdfg.constants:
                 continue
-            if not _expr_is_loop_invariant(c_expr, loop, sdfg, set(), sdfg_free_symbols):
+            if not _expr_is_loop_invariant(c_expr, loop, sdfg, {}, sdfg_free_symbols):
                 continue
             found[lhs] = (op_type, c_expr)
     return found
@@ -186,35 +186,35 @@ def _closed_form(op_type: type, init: str, c: str, n: str) -> Optional[str]:
 
 def _next_post_id(sdfg: SDFG, sdfg_free_symbols: Set[str]) -> int:
     """Lowest ``<N>`` not in use among existing ``_loop_exit_*_<N>`` symbols."""
-    used: Set[int] = set()
+    used: Dict[int, None] = {}
     for s in list(sdfg.symbols.keys()) + list(sdfg_free_symbols):
         if s.startswith(_POST_PREFIX):
             tail = s.rsplit('_', 1)[-1]
             if tail.isdigit():
-                used.add(int(tail))
+                used[int(tail)] = None
     n = 0
     while n in used:
         n += 1
     return n
 
 
-def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> Set[ControlFlowBlock]:
+def _post_loop_blocks(parent: ControlFlowRegion, loop: LoopRegion) -> Dict[ControlFlowBlock, None]:
     """BFS from each out-edge destination of ``loop`` collecting every block in
     the post-loop region (within ``parent``)."""
-    visited: Set[ControlFlowBlock] = set()
+    visited: Dict[ControlFlowBlock, None] = {}
     frontier: List[ControlFlowBlock] = [e.dst for e in parent.out_edges(loop)]
     while frontier:
         b = frontier.pop()
         if b in visited or b is loop:
             continue
-        visited.add(b)
+        visited[b] = None
         for e in parent.out_edges(b):
             if e.dst not in visited:
                 frontier.append(e.dst)
     return visited
 
 
-def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Set[ControlFlowBlock], old_name: str,
+def _rewrite_post_loop_readers(parent: ControlFlowRegion, post_blocks: Dict[ControlFlowBlock, None], old_name: str,
                                new_name: str, sdfg: SDFG):
     """Replace every reference to ``old_name`` with ``new_name`` in the
     post-loop blocks: interstate edges into / between them (when both endpoints
@@ -351,11 +351,12 @@ class MaterializeLoopExitSymbols(ppl.Pass):
                 if e.src is loop:
                     e.data.assignments[new_name] = closed
                     break
-            _rewrite_post_loop_readers(parent, post_blocks - {anchor}, sym_name, new_name, sdfg)
+            _rewrite_post_loop_readers(parent, dict.fromkeys(b for b in post_blocks if b is not anchor), sym_name,
+                                       new_name, sdfg)
             count += 1
         return count
 
-    def _is_read_in(self, blocks: Set[ControlFlowBlock], sym_name: str, parent: ControlFlowRegion) -> bool:
+    def _is_read_in(self, blocks: Dict[ControlFlowBlock, None], sym_name: str, parent: ControlFlowRegion) -> bool:
         """Whether any block in ``blocks`` (or their downstream interstate
         edges that stay within ``blocks``) references ``sym_name`` in its data
         flow / assignments / conditions."""

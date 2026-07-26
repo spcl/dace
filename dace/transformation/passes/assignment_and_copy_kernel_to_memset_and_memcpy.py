@@ -171,6 +171,14 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                 ie = next(state.in_edges_by_connector(entry_edge.src, entry_edge.src_conn.replace("OUT_", "IN_")))
                 if not isinstance(ie.src, dace.nodes.AccessNode):
                     continue
+                # A same-array copy is a shift / carried dependence, not a pure copy (the same guard
+                # _detect_loop_transfer applies to loops). The map reads and writes the one array
+                # through a merged passthrough, so propagation over-approximates the map's outer
+                # footprint (e.g. read ``[.,0,.]`` + write ``[.,1,.]`` collapse into a single
+                # ``[.,0:2,.]`` exit memlet). A Copy libnode carries only the precise per-side
+                # subset, so lifting silently shrinks the state's declared write-set and miscompiles.
+                if ie.src.data == oe.dst.data:
+                    continue
                 in_conn = next(iter(tasklet.in_connectors))
                 if tasklet.code.as_string != f"{out_conn} = {in_conn}{suffix}":
                     continue
@@ -402,11 +410,15 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         if not dynamic_edges:
             return True
 
+        sdfg = state.sdfg
         written = state.read_and_write_sets()[1]
         if any(not isinstance(e.src, dace.nodes.AccessNode) or e.src.data in written for e in dynamic_edges):
             return False
 
-        sdfg = state.sdfg
+        # A connector shadowing a data descriptor cannot become an SDFG symbol -- nest instead.
+        if any(e.dst_conn in sdfg.arrays for e in dynamic_edges):
+            return False
+
         assignments = {}
         for e in dynamic_edges:
             desc = sdfg.arrays[e.src.data]
@@ -519,8 +531,9 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         if not self._hoist_dynamic_inputs_to_symbols(state, map_entry, self._subset_symbols(begin_subset, exit_subset)):
             if verbose:
                 warnings.warn(
-                    f"Skipping {kind} lift in map {map_entry.map.label}: a dynamic-range source scalar is "
-                    f"written in the same state; nesting fallback required.", UserWarning)
+                    f"Skipping {kind} lift in map {map_entry.map.label}: a dynamic range cannot be hoisted "
+                    f"to a symbol (source scalar written in this state, or connector shadows a data "
+                    f"descriptor); nesting fallback required.", UserWarning)
             return False
 
         return True
@@ -656,6 +669,11 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
                                dace.memlet.Memlet(subset=dace.subsets.Range(begin_subset), data=src_access_node.data))
                 state.add_edge(libnode, libnode_cls.OUTPUT_CONNECTOR_NAME, dst_access_node, None,
                                dace.memlet.Memlet(subset=dace.subsets.Range(exit_subset), data=dst_access_node.data))
+            # The map entry/exit are about to be torn down: their data preds/succs are the reused
+            # src/dst access nodes (which keep their dependencies), but any pure happens-before
+            # (empty-memlet) edges those scope nodes carried are ordering that would otherwise be
+            # lost. Re-attach them to the free-floating libnode so it keeps the map's ordering.
+            self.carry_ordering_edges(state, node, map_exit, libnode)
             self.rmid += 1
             rmed_count += 1
             joined_edges.update(path)
@@ -676,6 +694,28 @@ class AssignmentAndCopyKernelToMemsetAndMemcpy(ppl.Pass):
         has_passtrough |= any({c.startswith("OUT_") for c in out_conns})
 
         return has_passtrough
+
+    @staticmethod
+    def carry_ordering_edges(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, map_exit: dace.nodes.MapExit,
+                             libnode: dace.nodes.Node):
+        """Re-attach the map's pure happens-before (empty-memlet) ordering to the lifted libnode.
+
+        The lift reuses the src/dst access nodes, so data dependencies survive teardown. Any
+        empty-memlet dep edges the map entry/exit carried to/from other nodes are ordering with no
+        data path, so they must be carried explicitly: a predecessor sequenced before the map
+        becomes ``pred -> libnode``, a successor sequenced after it ``libnode -> succ``.
+
+        :param state: State containing the map and the new libnode.
+        :param map_entry: The map entry whose empty-memlet predecessors are carried.
+        :param map_exit: The map exit whose empty-memlet successors are carried.
+        :param libnode: The lifted library node to re-attach the ordering to.
+        """
+        for e in state.in_edges(map_entry):
+            if e.data.is_empty() and e.src is not libnode:
+                state.add_edge(e.src, None, libnode, None, Memlet())
+        for e in state.out_edges(map_exit):
+            if e.data.is_empty() and e.dst is not libnode:
+                state.add_edge(libnode, None, e.dst, None, Memlet())
 
     def rm_edges(self, state: dace.SDFGState, edges: Iterable[graph.Edge[Memlet]]):
         nodes_to_check = set()

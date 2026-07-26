@@ -3317,6 +3317,103 @@ def test_map_fusion_inout_connector_intermediate_rename_consistency():
     assert np.allclose(ref['b'], res['b']), 'b-array semantics broken by fusion'
 
 
+def _make_ordering_edge_beside_intermediate_sdfg(shared: bool) -> SDFG:
+    """`a -> map1 -> t -> map2 -> b`, plus the redundant ordering edge `t -> map2entry`.
+
+    That extra empty Memlet is what `StateFusionExtended` leaves behind next to the RAW edge.
+    With `shared` the intermediate is non-transient, so the AccessNode survives the fusion.
+    """
+    sdfg = SDFG(unique_name("ordering_edge_beside_intermediate"))
+    for name in ("a", "b"):
+        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("t", shape=(10, ), dtype=dace.float64, transient=not shared)
+    state = sdfg.add_state(is_start_block=True)
+
+    t = state.add_access("t")
+    state.add_mapped_tasklet("produce",
+                             map_ranges={"__i": "0:10"},
+                             inputs={"__in": dace.Memlet("a[__i]")},
+                             code="__out = __in + 10.0",
+                             outputs={"__out": dace.Memlet("t[__i]")},
+                             output_nodes={t},
+                             external_edges=True)
+    _, second_entry, _ = state.add_mapped_tasklet("consume",
+                                                  map_ranges={"__i": "0:10"},
+                                                  inputs={"__in": dace.Memlet("t[__i]")},
+                                                  code="__out = __in * 2.0",
+                                                  outputs={"__out": dace.Memlet("b[__i]")},
+                                                  input_nodes={t},
+                                                  external_edges=True)
+    state.add_nedge(t, second_entry, dace.Memlet())
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("shared", [False, True])
+def test_fusion_with_an_ordering_edge_beside_the_intermediate(shared: bool):
+    """An ordering edge next to the data edge must not block fusion, nor survive it as a self loop.
+
+    The empty Memlet has no `dst_conn`, so `partition_first_outputs` raised `AttributeError` on
+    `dst_conn.startswith("IN_")`; the matcher swallowed that as "cannot apply" and the pair silently
+    never fused. `handle_intermediate_set` tripped the same assumption once matching got past it.
+    """
+    sdfg = _make_ordering_edge_beside_intermediate_sdfg(shared)
+    a = np.random.rand(10)
+    ref = (a + 10.0) * 2.0
+
+    apply_fusion(sdfg, removed_maps=1)
+
+    state = sdfg.start_block
+    fused_entry = count_nodes(state, nodes.MapEntry, return_nodes=True)
+    assert len(fused_entry) == 1
+    assert not [e for e in state.in_edges(fused_entry[0]) if e.data.is_empty()], "ordering edge became a self loop"
+
+    res = {"a": a.copy(), "b": np.zeros(10)}
+    if shared:
+        res["t"] = np.zeros(10)
+    sdfg(**res)
+    assert np.allclose(res["b"], ref), "fusing across the ordering edge changed the result"
+
+
+def test_intermediate_reaching_the_second_map_only_by_an_ordering_edge(capsys):
+    """An intermediate that reaches the second Map only through an ordering edge must be refused.
+
+    Skipping the empty edge leaves ``found_second_map`` False and ``has_found_a_consumer`` unbound,
+    so the invariant assert fired from inside ``can_be_applied``. The matcher swallows that as a
+    warning, but under ``python -O`` both asserts vanish and the intermediate would be rewired
+    without the producer-covers-consumer check ever having run.
+    """
+    sdfg = SDFG(unique_name("ordering_edge_only_intermediate"))
+    for name in ("a", "b"):
+        sdfg.add_array(name, shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("t", shape=(10, ), dtype=dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+
+    t = state.add_access("t")
+    state.add_mapped_tasklet("produce",
+                             map_ranges={"__i": "0:10"},
+                             inputs={"__in": dace.Memlet("a[__i]")},
+                             code="__out = __in + 10.0",
+                             outputs={"__out": dace.Memlet("t[__i]")},
+                             output_nodes={t},
+                             external_edges=True)
+    _, second_entry, _ = state.add_mapped_tasklet("consume",
+                                                  map_ranges={"__i": "0:10"},
+                                                  inputs={"__in": dace.Memlet("a[__i]")},
+                                                  code="__out = __in * 2.0",
+                                                  outputs={"__out": dace.Memlet("b[__i]")},
+                                                  external_edges=True)
+    # `t` never feeds the second Map with data -- only this ordering edge reaches it.
+    state.add_nedge(t, second_entry, dace.Memlet())
+    sdfg.validate()
+
+    sdfg.apply_transformations_repeated(MapFusionVertical, validate_all=True)
+
+    # `PatternMatchAndApply` reports a raising `can_be_applied` by printing, then carries on.
+    reported = [line for line in capsys.readouterr().out.splitlines() if "triggered a" in line]
+    assert not reported, f"can_be_applied raised instead of refusing: {reported}"
+
+
 def test_map_fusion_is_deprecated() -> None:
     with pytest.deprecated_call(match="MapFusion is deprecated"):
         MapFusion()

@@ -48,7 +48,7 @@ from dace.transformation import transformation as xf
 from dace.transformation.passes.canonicalize.tracked_assumptions import tracked_assumptions
 
 
-def _names_already_nonnegative(sdfg: SDFG) -> set:
+def _names_already_nonnegative(sdfg: SDFG) -> dict:
     """Names whose symbol instances inside ``sdfg`` already carry ``nonnegative=True``.
 
     ``symbolic.symbol(name, dtype=dtype)`` builds a FRESH symbol and does not recall assumptions
@@ -58,13 +58,13 @@ def _names_already_nonnegative(sdfg: SDFG) -> set:
     so a fixed-point pipeline containing it cannot converge.
 
     :param sdfg: The SDFG to inspect (one level; callers iterate nested SDFGs themselves).
-    :returns: The set of symbol names already assumed nonnegative.
+    :returns: The (ordered-set) symbol names already assumed nonnegative, membership-checked only.
     """
-    assumed = set()
+    assumed: dict = {}
     for desc in sdfg.arrays.values():
         for expr in (*desc.shape, *desc.strides, desc.total_size):
             if isinstance(expr, sympy.Basic):
-                assumed |= {str(s) for s in expr.free_symbols if s.is_nonnegative}
+                assumed.update(dict.fromkeys(str(s) for s in expr.free_symbols if s.is_nonnegative))
     return assumed
 
 
@@ -131,7 +131,7 @@ _GUARD_STATE_LABEL = '_assume_nonneg_syms'
 #: Symbols with these dtypes can be negative and so are worth guarding. Unsigned
 #: integer symbols are nonnegative by construction; float symbols are not part
 #: of the offset/size nonnegativity contract.
-_SIGNED_INTEGER_DTYPES = {dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64}
+_SIGNED_INTEGER_DTYPES = dict.fromkeys([dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64])
 
 
 @xf.explicit_cf_compatible
@@ -204,10 +204,10 @@ def collect_assumptions(sdfg: SDFG) -> List:
       ``if (cond) parallel else sequential`` branch instead of recording an
       assumption here, so only genuine no-fallback preconditions reach the trap.
     """
-    free = set(sdfg.free_symbols)
+    free = dict.fromkeys(sdfg.free_symbols)
     assumptions: List = [symbolic.pystr_to_symbolic(s) >= 0 for s in _signed_integer_free_symbols(sdfg)]
     for relation in tracked_assumptions(sdfg):
-        if {s.name for s in relation.free_symbols} <= free and relation not in assumptions:
+        if all(s.name in free for s in relation.free_symbols) and relation not in assumptions:
             assumptions.append(relation)
     return assumptions
 

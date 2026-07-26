@@ -170,7 +170,7 @@ class LiftInv(ppl.Pass):
 
         a_name, b_name, out_name = ain_node.data, b_node.data, out_node.data
         # A, out, and the identity must be three DISTINCT arrays.
-        if len({a_name, b_name, out_name}) != 3:
+        if len(dict.fromkeys([a_name, b_name, out_name])) != 3:
             return False
         a_desc = sdfg.arrays.get(a_name)
         b_desc = sdfg.arrays.get(b_name)

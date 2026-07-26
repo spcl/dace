@@ -32,7 +32,7 @@ The shifting mechanics (subset / tasklet / interstate substitution) are
 ``OffsetLoopsAndMaps``' module-level helpers, driven here per scope rather than
 over the whole SDFG.
 """
-from typing import Any, Dict, Iterable, List, Optional, Set
+from typing import Any, Dict, Iterable, List, Optional
 
 import dace
 from dace import SDFG, properties, subsets
@@ -47,7 +47,7 @@ from dace.transformation.passes.offset_loop_and_maps import (add_to_rhs, process
                                                              repl_tasklets_on_node_list)
 
 
-def rebinds_params(node_list: Iterable[nodes.Node], params: Set[str]) -> bool:
+def rebinds_params(node_list: Iterable[nodes.Node], params: Dict[str, None]) -> bool:
     """Whether a NestedSDFG under ``node_list`` binds one of ``params`` to a differently named
     inner symbol.
 
@@ -67,8 +67,8 @@ def rebinds_params(node_list: Iterable[nodes.Node], params: Set[str]) -> bool:
         for inner, outer in node.symbol_mapping.items():
             if str(inner) == str(outer):
                 continue
-            outer_symbols = {str(s) for s in pystr_to_symbolic(str(outer)).free_symbols}
-            if str(inner) in params or (params & outer_symbols):
+            outer_symbols = (str(s) for s in pystr_to_symbolic(str(outer)).free_symbols)
+            if str(inner) in params or any(s in params for s in outer_symbols):
                 return True
         # Every binding is the identity, so the same names carry through -- keep checking down.
         if rebinds_params([n for state in node.sdfg.all_states() for n in state.nodes()], params):
@@ -92,8 +92,8 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> Dict:
+        return {}
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Rebase every Map/LoopRegion begin to 0 (recursively), keeping stride.
@@ -187,7 +187,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
             return 0
 
         scope_nodes = list(state.all_nodes_between(entry, state.exit_node(entry)))
-        if rebinds_params(scope_nodes, set(repldict)):
+        if rebinds_params(scope_nodes, repldict):
             return 0  # refuse before touching anything
 
         entry.map.range = subsets.Range(new_ranges)
@@ -224,7 +224,7 @@ class NormalizeLoopAndMapOrigin(ppl.Pass):
 
         repldict = {str(var): f"({var} + ({symstr(start)}))"}
         body_nodes = [n for state in loop.all_states() for n in state.nodes()]
-        if rebinds_params(body_nodes, {str(var)}):
+        if rebinds_params(body_nodes, dict.fromkeys([str(var)])):
             return 0  # refuse before touching anything
 
         loop.init_statement = CodeBlock(f"{var} = 0")

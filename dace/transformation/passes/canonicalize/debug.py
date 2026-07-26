@@ -132,7 +132,7 @@ def _build_random_inputs(sdfg: SDFG, symbol_value: int,
     :param rng: Random generator drawn from for the data.
     :returns: ``(symbols, arrays)`` -- two dicts keyed by argument name.
     """
-    free_syms = {str(s) for s in sdfg.free_symbols}
+    free_syms = dict.fromkeys(str(s) for s in sdfg.free_symbols)
     symbols: Dict[str, int] = {s: symbol_value for s in free_syms}
 
     arrays: Dict[str, Any] = {}

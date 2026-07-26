@@ -10,7 +10,7 @@ same way. The substitution is value-preserving, so the SDFG result is
 unchanged. It reuses ``OffsetLoopsAndMaps``' tasklet token-replacement helpers.
 """
 import copy
-from typing import Dict, Optional, Set
+from typing import Dict, Optional
 
 import dace
 import sympy
@@ -48,8 +48,8 @@ class NormalizeLoopsAndMaps(OffsetLoopsAndMaps):
     def should_reapply(self, modified: ppl.Modifies) -> bool:
         return False
 
-    def depends_on(self) -> Set:
-        return set()
+    def depends_on(self) -> Dict:
+        return {}
 
     def _create_new_memlet(self, edge_data: dace.memlet.Memlet, repldict: Dict[str,
                                                                                str]) -> Optional[dace.memlet.Memlet]:

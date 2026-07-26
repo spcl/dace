@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.symbolic import fma, pystr_to_symbolic
 from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.vectorization.fuse_multiply_add import FuseMultiplyAdd
@@ -30,6 +31,9 @@ from dace.libraries.tileops import TileFMA, TileBinop
 _HAS_NVCC = shutil.which("nvcc") is not None
 N = dace.symbol("N")
 M = dace.symbol("M")
+#: The host's best runnable SIMD ISA; vectorization enforces arch-native, so a hardcoded AVX-512
+#: would SIGILL-refuse on an AVX2-only or ARM host.
+_HOST_ISA = detect_host_isa()
 
 
 def _axpy(dt):
@@ -100,7 +104,7 @@ def test_tile_fma_registered():
     assert node.default_implementation == "pure"
 
 
-@pytest.mark.parametrize("isa,dt", [("SCALAR", dace.float32), ("AVX512", dace.float32), ("AVX512", dace.float64)])
+@pytest.mark.parametrize("isa,dt", [("SCALAR", dace.float32), (_HOST_ISA, dace.float32), (_HOST_ISA, dace.float64)])
 def test_cpu_fma_lowers_and_runs(isa, dt):
     """``fuse_multiply_add`` -> the CPU vectorizer emits ``TileFMA`` (no ``TileBinop``) and runs
     within FMA rounding of ``a*b + c``."""
@@ -124,7 +128,7 @@ def test_cpu_fma_off_by_default():
     sdfg = _axpy(dace.float32).to_sdfg(simplify=True)
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.simplify()
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa="AVX512")).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=_HOST_ISA)).apply_pass(sdfg, {})
     assert _count(sdfg, TileFMA) == 0
 
 
@@ -184,7 +188,7 @@ if __name__ == "__main__":
     test_fuse_pass_refuses_reused_intermediate()
     test_tile_fma_registered()
     test_cpu_fma_off_by_default()
-    for _isa, _dt in [("SCALAR", dace.float32), ("AVX512", dace.float32), ("AVX512", dace.float64)]:
+    for _isa, _dt in [("SCALAR", dace.float32), (_HOST_ISA, dace.float32), (_HOST_ISA, dace.float64)]:
         test_cpu_fma_lowers_and_runs(_isa, _dt)
     if _HAS_NVCC:
         test_gpu_fma_lowers_to_native_hfma2()

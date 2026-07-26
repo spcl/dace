@@ -69,7 +69,7 @@ still be referenced by interstate-edge assignments that the cascade-up pass
 hoisted; those are left alone.)
 """
 import copy
-from typing import List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import sympy
 
@@ -99,18 +99,18 @@ def count_applied(result) -> int:
 
 
 def _next_id(sdfg: SDFG) -> int:
-    used: Set[int] = set()
+    used: Dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for s in list(sd.symbols.keys()):
             if s.startswith(_UNTILE_PREFIX):
                 tail = s[len(_UNTILE_PREFIX):]
                 if tail.isdigit():
-                    used.add(int(tail))
+                    used[int(tail)] = None
         for cfg in sd.all_control_flow_regions():
             if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(_UNTILE_PREFIX):
                 tail = cfg.loop_variable[len(_UNTILE_PREFIX):]
                 if tail.isdigit():
-                    used.add(int(tail))
+                    used[int(tail)] = None
     n = 0
     while n in used:
         n += 1
@@ -162,13 +162,13 @@ def _iter_candidate_inners(outer: LoopRegion):
     (a non-empty plain state, a sibling CFR, etc.), so non-perfect-nest
     cases are still refused.
     """
-    seen: Set[int] = set()
+    seen: Dict[int, None] = {}
     current: ControlFlowRegion = outer
     while True:
         nxt = _try_extract_perfect_one_child(current)
         if nxt is None or id(nxt) in seen:
             return
-        seen.add(id(nxt))
+        seen[id(nxt)] = None
         if isinstance(nxt, LoopRegion):
             yield nxt
         current = nxt
@@ -194,7 +194,7 @@ def _intermediate_chain_clean(outer: LoopRegion, inner: LoopRegion, outer_var: s
                 try:
                     free = symbolic.pystr_to_symbolic(code.as_string).free_symbols
                 except Exception:
-                    free = set()
+                    free = {}
                 if outer_sym in free:
                     return False
         current = current.parent_graph
@@ -395,7 +395,7 @@ def _all_memlet_uses_only(inner: LoopRegion, allowed_atoms: Set[str], forbidden_
     symbols; the structural ``i + ii`` vs ``ii``-only requirement is enforced
     by the caller (it sets ``allowed_atoms`` appropriately).
     """
-    forbidden = {symbolic.pystr_to_symbolic(a) for a in forbidden_atoms}
+    forbidden = dict.fromkeys(symbolic.pystr_to_symbolic(a) for a in forbidden_atoms)
     for ex in _collect_body_subset_exprs(inner):
         free = ex.free_symbols
         if any(f in forbidden for f in free):

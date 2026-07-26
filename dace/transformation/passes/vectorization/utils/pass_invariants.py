@@ -21,8 +21,19 @@ Each pass calls checkers directly from ``apply_pass``:
 from typing import Optional, Tuple
 
 import dace
+from dace.dtypes import ReductionType
+from dace.frontend.operations import detect_reduction_type
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.nodes import AccessNode, MapEntry, MapExit, NestedSDFG
+from dace.sdfg.state import LoopRegion
+from dace.transformation.dataflow.wcr_conversion import nested_connector_subset
+
+#: Reduction ops a lifted array-slot boundary WCR may carry. The tile path folds the lanes with a
+#: horizontal ``TileReduce`` and the boundary then combines one partial per tile, so the op must be
+#: associative; a ``Custom`` (non-reassociable) WCR keeps the strict "no loose WCR" refusal.
+_ASSOCIATIVE_REDUCTIONS = (ReductionType.Sum, ReductionType.Product, ReductionType.Min, ReductionType.Max,
+                           ReductionType.Bitwise_And, ReductionType.Bitwise_Or, ReductionType.Bitwise_Xor,
+                           ReductionType.Logical_And, ReductionType.Logical_Or)
 
 
 def assert_invariant(violation: Optional[str], pass_name: str, description: str) -> None:
@@ -265,11 +276,11 @@ def no_wcr_in_map_body(scope) -> Optional[str]:
             for edge in state.all_edges(*body):
                 if edge.data is None or edge.data.wcr is None:
                     continue
-                # Allowed: scalar/len-1 reduction-boundary WCR (``scalar/len1 -wcr-> MapExit -wcr->
-                # AN``, e.g. ``acc = sum(A)``); resolved at boundary, no lane race. Per-element
-                # scatter (``a[idx[i]] (op)= ...``, full-array sink) stays flagged. See
-                # _is_reduction_boundary_wcr.
-                if _is_reduction_boundary_wcr(sd, state, node, edge):
+                # Allowed: a LIFTED reduction boundary (``partial -wcr-> MapExit -> AN``, e.g.
+                # ``acc = sum(A)`` or the per-row ``mean[j] = sum_i data[i, j]``); resolved at the
+                # boundary, no lane race. A per-element scatter (``a[idx[i]] (op)= ...``) stays
+                # flagged. See _is_lifted_reduction_wcr.
+                if _is_lifted_reduction_wcr(sd, state, edge):
                     continue
                 return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                         f"``{edge.data.wcr}`` inside a map body (convert it to an explicit "
@@ -277,34 +288,136 @@ def no_wcr_in_map_body(scope) -> Optional[str]:
     return None
 
 
-def _is_reduction_boundary_wcr(sdfg, state, map_entry, edge) -> bool:
-    """True iff ``edge`` is the allowed reduction-boundary WCR of ``map_entry``.
+def _reduction_chain_origin(state, edge):
+    """The innermost ``body -> MapExit`` edge of the boundary chain ``edge`` sits on.
 
-    Shape ``scalar / length-1 AN -wcr-> MapExit -wcr-> AccessNode``: WCR edge terminates at this
-    map's exit and the reduction sink is a scalar / length-1 array. Resolved at the boundary by
-    codegen (OpenMP ``reduction(op:var)`` / GPU block-reduce + atomic), never in the widened body
-    → not a loop-carried in-body reduction the tiler would race.
+    A lifted reduction leaves its map scope as ``partial -[wcr]-> MapExit -> AccessNode``, and
+    memlet propagation stamps the same WCR on every link (and on any further enclosing exit), so a
+    checker may meet the chain at any of them. Walk back through the scope plumbing (``OUT_x`` on an
+    exit ⟵ its single ``IN_x`` in-edge) to the ONE edge that carries the precise per-iteration write
+    subset -- the only one a slot / lane analysis can be run on.
 
-    Rejects a per-element scatter (``a[idx[i]] (op)= ...``): its MapExit sink is a full array, not a
-    scalar / length-1 accumulator.
+    :returns: The originating ``body -> MapExit`` edge, or ``None`` if ``edge`` is not on such a chain.
     """
-    map_exit = state.exit_node(map_entry)
-    if edge.dst is not map_exit:
-        return False
-    conn = edge.dst_conn
-    if not conn or not conn.startswith("IN_"):
-        return False
-    out_conn = "OUT_" + conn[len("IN_"):]
-    outs = [e for e in state.out_edges(map_exit) if e.src_conn == out_conn]
+    cur = edge
+    while isinstance(cur.src, MapExit):
+        conn = cur.src_conn
+        if not conn or not conn.startswith("OUT_"):
+            return None
+        ins = [e for e in state.in_edges(cur.src) if e.dst_conn == "IN_" + conn[len("OUT_"):]]
+        if len(ins) != 1:
+            return None
+        cur = ins[0]
+    if not isinstance(cur.dst, MapExit) or not cur.dst_conn or not cur.dst_conn.startswith("IN_"):
+        return None
+    return cur
+
+
+def _boundary_sink(state, origin):
+    """The :class:`AccessNode` the lifted reduction at ``origin`` drains into, ONE map scope out.
+
+    The reduction must resolve at the exit of its OWN map. A WCR that keeps escaping through a
+    second, enclosing MapExit (correlation's ``corr[i, j] (+)= ...`` under ``comp_corr_row[i]``) is
+    a reduction the tile path lowers WRONG today -- the partial leaves the tiled scope before the
+    fold is resolved -- so it stays refused until that path exists.
+
+    :returns: The sink AccessNode, or ``None`` if the chain forks or leaves through another scope.
+    """
+    outs = [e for e in state.out_edges(origin.dst) if e.src_conn == "OUT_" + origin.dst_conn[len("IN_"):]]
     if len(outs) != 1 or not isinstance(outs[0].dst, AccessNode):
+        return None
+    return outs[0].dst
+
+
+def _iteration_symbols_in_scope(sdfg, state) -> set:
+    """Symbol names bound by an ITERATION construct visible from ``state``: every map parameter in
+    the state, every enclosing loop variable, plus the SDFG's own free symbols (sizes, and outer
+    iterators arriving through a nested-SDFG symbol mapping).
+
+    An index built only from these is affine in the loop nest, so it is a fixed accumulator slot per
+    iteration point. Anything else is DATA-dependent -- a scatter ``a[idx[i]] (op)= ...`` promotes
+    ``idx[i]`` to an interstate-assigned symbol, which is NOT in this set -- and must never be
+    mistaken for a reduction slot (its target varies per lane, which the tile fold cannot express).
+    """
+    names = {str(s) for s in sdfg.free_symbols}
+    for node in state.nodes():
+        if isinstance(node, MapEntry):
+            names |= set(node.map.params)
+    region = state.parent_graph
+    while region is not None and region is not sdfg:
+        if isinstance(region, LoopRegion) and region.loop_variable:
+            names.add(region.loop_variable)
+        region = region.parent_graph
+    return names
+
+
+def _precise_write_subset(origin):
+    """The per-iteration write subset of the ``body -> MapExit`` edge ``origin``.
+
+    A body NestedSDFG that both reads and writes the accumulator array through ONE connector has its
+    boundary memlet over-approximated to the bounding box of both (lu: ``A[i, j] (+)= -A[i, k] *
+    A[k, j]`` widens to ``A[Min(i,k):Max(i,k)+1, Min(j,k):Max(j,k)+1]``), which hides the fixed
+    single-element accumulator slot. Recover it from the inner writes.
+    """
+    if isinstance(origin.src, NestedSDFG) and origin.src_conn is not None:
+        precise = nested_connector_subset(origin.src, origin.src_conn, writes=True, boundary_subset=origin.data.subset)
+        if precise is not None:
+            return precise
+    return origin.data.subset
+
+
+def _is_lifted_reduction_wcr(sdfg, state, edge) -> bool:
+    """True iff ``edge`` belongs to an allowed LIFTED reduction boundary chain.
+
+    Shape ``partial -wcr-> MapExit -> AccessNode``, accepted when the accumulator is either
+
+    * a scalar / length-1 array (``acc = sum(A)``) -- codegen lowers it directly (OpenMP
+      ``reduction(op:var)`` / GPU block-reduce + atomic); or
+    * ONE element of a larger array whose index does not vary with the map's INNERMOST parameter
+      -- the dim the tiler widens into lanes. ``mean[j] (+)= data[i, j]`` over a collapsed
+      ``[j, i]`` map, trmm's ``tmp (+)= A[k, i] * B[k, j]``: within one tile the slot is fixed, so
+      the body folds to a single ``TileReduce`` partial and the boundary resolves one accumulation
+      per tile. Only a recognised associative op qualifies -- a ``Custom`` WCR is not reassociable
+      across lanes.
+
+    Rejects a per-lane scatter: a slot varying with the innermost param (``B[i] (+)= ...``) or
+    addressed by a data-dependent symbol (``a[idx[i]] (op)= ...``) has no single accumulator per
+    tile, so the widener would race the lanes. Also rejects an accumulator the map READS (lu) and a
+    fold that escapes through a second enclosing scope (see :func:`_boundary_sink`).
+    """
+    origin = _reduction_chain_origin(state, edge)
+    if origin is None:
         return False
-    desc = sdfg.arrays.get(outs[0].dst.data)
+    sink = _boundary_sink(state, origin)
+    if sink is None:
+        return False
+    desc = sdfg.arrays.get(sink.data)
     if desc is None:
         return False
-    # Scalar / length-1 array accumulator (genuine reduction target, not scatter into one element)
+    # Scalar / length-1 array accumulator: the classic lifted scalar reduction.
     if isinstance(desc, dace.data.Scalar):
         return True
-    return isinstance(desc, dace.data.Array) and (desc.total_size == 1) == True
+    if isinstance(desc, dace.data.Array) and (desc.total_size == 1) == True:  # noqa: E712 -- sympy
+        return True
+    subset = _precise_write_subset(origin)
+    if subset is None or subset.num_elements() != 1:
+        return False
+    if detect_reduction_type(origin.data.wcr) not in _ASSOCIATIVE_REDUCTIONS:
+        return False
+    map_entry = state.entry_node(origin.dst)
+    if map_entry is None or not map_entry.map.params:
+        return False
+    # The accumulator array must not also be READ inside the map: lu's ``A[i, j] (+)= -A[i, k] *
+    # A[k, j]`` routes reads and the reduction write through ONE connector, so the body is a
+    # recurrence over the same array rather than a fold of independent addends -- the tile
+    # staging cannot separate the accumulator from its operands. Mirrors the same guard in
+    # ``PrepareReductionForWidening``.
+    if any(e.data is not None and e.data.data == sink.data for e in state.out_edges(map_entry)):
+        return False
+    syms = {str(s) for s in subset.free_symbols}
+    if map_entry.map.params[-1] in syms:
+        return False
+    return syms <= _iteration_symbols_in_scope(sdfg, state)
 
 
 def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
@@ -318,12 +431,20 @@ def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
     ALLOWED scalar-reduction-out form (NSDFG writes a scalar exiting via a WCR reduction on the
     ``NestedSDFG -> MapExit`` edge in the PARENT state) not flagged: that edge lives in the parent
     SDFG, skipped by the ``parent_nsdfg_node`` guard.
+
+    A reduction whose OWN map lives inside the nested SDFG (trmm's ``tmp (+)= A[k, i] * B[k, j]``
+    under a nested ``computecol`` scope) leaves through a MapExit of that inner SDFG, so the same
+    lifted-boundary chain :func:`_is_lifted_reduction_wcr` accepts at top level is accepted here --
+    nesting does not change how the tiler folds it, and forbidding it merely refuses kernels the
+    top-level form vectorizes.
     """
     for sd, state in _iter_states(scope):
         if sd.parent_nsdfg_node is None:
             continue
         for edge in state.edges():
             if edge.data is None or edge.data.wcr is None:
+                continue
+            if _is_lifted_reduction_wcr(sd, state, edge):
                 continue
             return (f"{sd.name}.{state.label}: edge {edge.src} -> {edge.dst} carries WCR "
                     f"``{edge.data.wcr}`` inside a nested SDFG (lift genuine reductions to the "
@@ -334,6 +455,40 @@ def no_wcr_inside_nested_sdfgs(scope) -> Optional[str]:
 # ---------------------------------------------------------------------------
 # K-dim pipeline invariants (require widths / K context).
 # ---------------------------------------------------------------------------
+
+
+def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> Optional[str]:
+    """No plain Python :class:`~dace.sdfg.nodes.Tasklet` inside a tile-tagged body may still read or
+    write a TILE.
+
+    Every tile-shaped operand belongs to a tile lib node after ``ConvertTaskletsToTileOps``. A
+    tasklet the converter could not classify keeps its scalar Python body while the widener has
+    already swapped its connectors for ``(W,)`` buffers, so codegen emits the body verbatim against
+    a pointer (``out = sqrt(inp / N)`` with ``inp`` a ``double*``): a compile error at best, a
+    silently wrong per-lane value at worst. Neither is a result the vectorizer may hand back, so the
+    orchestrator refuses the kernel and leaves it correct + scalar instead.
+    """
+    import dace.data as _dd
+    for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
+        inner_sdfg = nsdfg_node.sdfg
+        for state in inner_sdfg.states():
+            for node in state.nodes():
+                # Only PYTHON tasklets: a hand-written per-lane C++ body (the lane-id materialiser's
+                # ``DACE_UNROLL for (__l0 ...)``) is already tile-aware by construction and is never
+                # meant to become a lib node.
+                if not isinstance(node, dace.nodes.Tasklet) or node.language is not dace.dtypes.Language.Python:
+                    continue
+                for edge in (*state.in_edges(node), *state.out_edges(node)):
+                    if edge.data is None or edge.data.data is None:
+                        continue
+                    desc = inner_sdfg.arrays.get(edge.data.data)
+                    if not isinstance(desc, _dd.Array) or tuple(desc.shape) != tuple(widths):
+                        continue
+                    return (f"{inner_sdfg.name}.{state.label}: tasklet ``{node.label}`` still holds "
+                            f"the scalar body ``{node.code.as_string.strip()!r}`` while its operand "
+                            f"``{edge.data.data}`` was widened to a {tuple(widths)} tile "
+                            f"(ConvertTaskletsToTileOps could not classify it)")
+    return None
 
 
 def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> Optional[str]:

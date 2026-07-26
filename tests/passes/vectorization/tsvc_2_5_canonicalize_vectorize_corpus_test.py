@@ -39,6 +39,7 @@ import numpy as np
 import pytest
 
 import dace
+from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -55,11 +56,16 @@ _CORPUS = tsvc_2_5.collect()
 
 # Round-robin knob set for the multidim tile-op vectorizer (valid combinations
 # only; see the VectorizeCPUMultiDim constructor). The legacy 1-D VectorizeCPU
-# arm was dropped -- this corpus only exercises the multidim path.
+# arm was dropped -- this corpus only exercises the multidim path. The SIMD ISA
+# is the HOST's best runnable one (``detect_host_isa`` -> AVX512 / AVX2 /
+# ARM_SVE / ARM_NEON / SCALAR), NOT a hardcoded AVX-512: vectorization enforces
+# arch-native, so a forced non-host ISA would SIGILL at runtime (see
+# ``dace.libraries.tileops._dispatch.host_supported_isas``).
+_HOST_ISA = detect_host_isa()
 _MULTIDIM_KNOBS = [
-    dict(target_isa="AVX512", remainder_strategy="masked_tail", branch_mode="merge"),
+    dict(target_isa=_HOST_ISA, remainder_strategy="masked_tail", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="scalar_postamble", branch_mode="merge"),
-    dict(target_isa="AVX512", remainder_strategy="full_mask", branch_mode="merge"),
+    dict(target_isa=_HOST_ISA, remainder_strategy="full_mask", branch_mode="merge"),
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 

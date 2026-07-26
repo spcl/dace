@@ -100,11 +100,11 @@ needs concrete extents: with a SYMBOLIC size (the common case) the decision is u
 substituted) with a small inner map is the case that still lifts.
 """
 import ast
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import sympy
 
-from dace import SDFG, nodes, properties, symbolic
+from dace import SDFG, nodes, properties
 from dace.sdfg import SDFGState
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -252,8 +252,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
         reads_by_array = self._accumulator_reads(body_states)
         lifted = 0
         for cand in candidates:
-            allowed = {cand.read_edge}
-            if reads_by_array.get(cand.array, set()) - allowed:
+            if any(e != cand.read_edge for e in reads_by_array.get(cand.array, {})):
                 continue  # array read elsewhere in the loop -> not a pure accumulator
             if not self._sizes_are_concrete(loop, cand):
                 continue  # symbolic extents -> cost undecidable, refuse (see module docstring)
@@ -272,12 +271,12 @@ class LiftLoopCarriedReduction(ppl.Pass):
         for a SYMBOLIC extent -- the common case in real kernels (``N``, ``KLEV``) -- so lifting
         there is a blind gamble that usually loses. Refuse unless every relevant extent is
         concrete; a specialized program (constants substituted in) is still eligible."""
-        syms: Set = set(cand.map_entry.map.range.free_symbols)
+        syms: Dict = dict.fromkeys(cand.map_entry.map.range.free_symbols)
         for bound in (loop_analysis.get_init_assignment(loop), loop_analysis.get_loop_end(loop),
                       loop_analysis.get_loop_stride(loop)):
             if bound is None:
                 return False  # an unanalyzable loop bound is not a proven constant either
-            syms |= set(sympy.sympify(bound).free_symbols)
+            syms.update(dict.fromkeys(sympy.sympify(bound).free_symbols))
         return not syms
 
     def _collect_candidates(self, body_states: List[SDFGState], itervar: str) -> List[_AccumulatorCandidate]:
@@ -291,7 +290,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
                     array = exit_out.dst.data
                     if exit_out.data.wcr is not None or exit_out.data.data != array:
                         continue
-                    if itervar in {str(s) for s in exit_out.data.subset.free_symbols}:
+                    if itervar in (str(s) for s in exit_out.data.subset.free_symbols):
                         continue  # write subset must be invariant over the loop variable
                     cand = self._match_reduction(st, me, mx, exit_out, array)
                     if cand is not None:
@@ -315,14 +314,15 @@ class LiftLoopCarriedReduction(ppl.Pass):
         if tasklet is None:
             return None
         op, operands = _reduction_operands(tasklet)
-        operand_conns = {o.id for o in operands if isinstance(o, ast.Name) and o.id in tasklet.in_connectors}
+        operand_conns = dict.fromkeys(o.id for o in operands
+                                      if isinstance(o, ast.Name) and o.id in tasklet.in_connectors)
         # Accumulator read-back: map_entry -> tasklet, reading A at the write subset, into a
         # bare-Name reduction operand. Identify the accumulator by dataflow (which operand
         # reads exactly the written element), so the increment stays whatever the other
         # operand is -- and refuse ``out = out + out`` (both operands read A) as ambiguous.
         acc_edges = [
-            e for e in st.in_edges(tasklet) if e.src is me and e.dst_conn in operand_conns
-            and e.data.data == array and e.data.subset == write_subset
+            e for e in st.in_edges(tasklet)
+            if e.src is me and e.dst_conn in operand_conns and e.data.data == array and e.data.subset == write_subset
         ]
         if len(acc_edges) != 1:
             return None
@@ -336,21 +336,23 @@ class LiftLoopCarriedReduction(ppl.Pass):
             return None
         # the array read into the map entry feeding that accumulator connector
         me_in_conn = 'IN' + entry_out.src_conn[3:]
-        read_edges = [e for e in st.in_edges(me) if e.dst_conn == me_in_conn and isinstance(e.src, nodes.AccessNode)
-                      and e.src.data == array]
+        read_edges = [
+            e for e in st.in_edges(me)
+            if e.dst_conn == me_in_conn and isinstance(e.src, nodes.AccessNode) and e.src.data == array
+        ]
         if len(read_edges) != 1:
             return None
         return _AccumulatorCandidate(st, me, mx, tasklet, array, op, acc_conn, read_edges[0], entry_out, mx_in,
                                      exit_out)
 
-    def _accumulator_reads(self, body_states: List[SDFGState]) -> Dict[str, Set]:
+    def _accumulator_reads(self, body_states: List[SDFGState]) -> Dict[str, Dict]:
         """Every ``AccessNode(A) -> *`` read edge of each array A across the loop body."""
-        reads: Dict[str, Set] = {}
+        reads: Dict[str, Dict] = {}
         for st in body_states:
             for n in st.nodes():
                 if isinstance(n, nodes.AccessNode):
                     for e in st.out_edges(n):
-                        reads.setdefault(n.data, set()).add(e)
+                        reads.setdefault(n.data, {})[e] = None
         return reads
 
     def _apply_lift(self, c: _AccumulatorCandidate) -> None:

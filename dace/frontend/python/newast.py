@@ -4027,7 +4027,9 @@ class ProgramVisitor(ExtNodeVisitor):
                 if isinstance(node, nodes.AccessNode):
                     if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
                         visited_state_data.add(node.data)
-                        if (node.data not in visited_data and state.in_degree(node) == 0):
+                        # State-fusion ordering edges carry empty memlets, not actual writes.
+                        real_in_edges = [e for e in state.in_edges(node) if not e.data.is_empty()]
+                        if (node.data not in visited_data and not real_in_edges):
                             return True
             visited_data = visited_data.union(visited_state_data)
 
@@ -4036,7 +4038,9 @@ class ProgramVisitor(ExtNodeVisitor):
             for node in state.nodes():
                 if isinstance(node, nodes.AccessNode):
                     if node.data == name or ('.' in node.data and node.data.split('.')[0] == name):
-                        if state.in_degree(node) > 0:
+                        # State-fusion ordering edges carry empty memlets, not actual writes.
+                        real_in_edges = [e for e in state.in_edges(node) if not e.data.is_empty()]
+                        if real_in_edges:
                             return True
 
     def _get_sdfg(self, value: Any, args: Tuple[Any], kwargs: Dict[str, Any]) -> SDFG:

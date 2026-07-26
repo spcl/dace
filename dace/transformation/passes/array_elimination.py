@@ -1,4 +1,5 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 from collections import defaultdict
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -247,7 +248,12 @@ class ArrayElimination(ppl.Pass):
                                     # The memlets do not match, skip the node.
                                     continue
                             else:
-                                state.add_edge(edge.src, edge.src_conn, first_node, edge.dst_conn, edge.data)
+                                # Fresh Memlet per edge: re-attaching the object leaves one Memlet on
+                                # two edges, and a later subset write through one of them turns the
+                                # other (an empty ordering edge with dst_conn=None) into an invalid
+                                # non-empty edge.
+                                state.add_edge(edge.src, edge.src_conn, first_node, edge.dst_conn,
+                                               copy.deepcopy(edge.data))
                         else:
                             if edge.src_conn == 'views':
                                 other_edges = list(state.out_edges_by_connector(first_node, 'views'))
@@ -259,7 +265,8 @@ class ArrayElimination(ppl.Pass):
                                     # The memlets do not match, skip the node.
                                     continue
                             else:
-                                state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn, edge.data)
+                                state.add_edge(first_node, edge.src_conn, edge.dst, edge.dst_conn,
+                                               copy.deepcopy(edge.data))
                     # Remove merged node and associated edges
                     state.remove_node(node)
                     removed_nodes.add(node)

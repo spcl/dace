@@ -108,7 +108,7 @@ class LoopToSyr2k(ppl.Pass):
         # A[i,k]*B[j,k] + B[i,k]*A[j,k] is what makes the update symmetric.
         if len(roles["row"]) != 2 or len(roles["col"]) != 2:
             return None
-        if set(roles["row"]) != set(roles["col"]):
+        if dict.fromkeys(roles["row"]) != dict.fromkeys(roles["col"]):
             return None
         a_array, b_array = sorted(roles["row"])
         if c_array in (a_array, b_array):

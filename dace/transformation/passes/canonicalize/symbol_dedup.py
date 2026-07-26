@@ -22,7 +22,7 @@ uses of the dropped symbol are rewritten to the surviving keeper via DaCe's
 symbol-replacement machinery, keeping the transform value-preserving (bit-exact).
 """
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Set, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from dace import SDFG, properties
 from dace.sdfg.state import LoopRegion
@@ -84,17 +84,17 @@ class SymbolDedup(ppl.Pass):
         except Exception:
             return text.strip()
 
-    def _protected_symbols(self, sdfg: SDFG) -> Set[str]:
+    def _protected_symbols(self, sdfg: SDFG) -> Dict[str, None]:
         """Symbols that must never be dropped: externally-required free symbols,
         parameters bound by the parent nested-SDFG mapping, and loop variables
         (whose updates live in loop metadata, not interstate edges)."""
-        protected: Set[str] = set(map(str, sdfg.free_symbols))
+        protected: Dict[str, None] = dict.fromkeys(map(str, sdfg.free_symbols))
         nsdfg = sdfg.parent_nsdfg_node
         if nsdfg is not None:
-            protected |= set(nsdfg.symbol_mapping.keys())
+            protected.update(dict.fromkeys(nsdfg.symbol_mapping.keys()))
         for cfg in sdfg.all_control_flow_regions(recursive=False):
             if isinstance(cfg, LoopRegion) and cfg.loop_variable:
-                protected.add(str(cfg.loop_variable))
+                protected[str(cfg.loop_variable)] = None
         return protected
 
     def _dedup_sdfg(self, sdfg: SDFG) -> int:
@@ -142,7 +142,7 @@ class SymbolDedup(ppl.Pass):
 
         # 5. Drop each redundant assignment (the keeper is assigned identically on
         #    the same edge) and remove the now-dead symbols from the SDFG.
-        dropped = set(repl.keys())
+        dropped = dict.fromkeys(repl.keys())
         for edge in sdfg.all_interstate_edges():
             for sym in [s for s in edge.data.assignments if s in dropped]:
                 del edge.data.assignments[sym]

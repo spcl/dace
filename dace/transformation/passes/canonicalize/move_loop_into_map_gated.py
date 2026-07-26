@@ -133,7 +133,7 @@ class MoveLoopIntoMapGated(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
         """Interchange every approved loop<->map pair in ``sdfg``.

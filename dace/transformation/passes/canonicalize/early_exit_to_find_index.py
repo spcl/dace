@@ -73,7 +73,7 @@ Targets TSVC ``s481``, ``s482``, ``s332``. Refusals (with explicit messages):
 import ast
 import re
 import copy as _copy
-from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import dace
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
@@ -145,7 +145,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         return False
 
     def depends_on(self):
-        return set()
+        return {}
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         rewritten = 0
@@ -317,7 +317,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         isn't a clean linear chain."""
         # Topological order via BFS from start_block.
         ordered = []
-        visited = set()
+        visited: Dict[int, None] = {}
         if loop.start_block is None:
             return None, None
         queue = [loop.start_block]
@@ -325,7 +325,7 @@ class EarlyExitToFindIndex(ppl.Pass):
             b = queue.pop(0)
             if id(b) in visited:
                 continue
-            visited.add(id(b))
+            visited[id(b)] = None
             ordered.append(b)
             for e in loop.out_edges(b):
                 if id(e.dst) not in visited:
@@ -340,7 +340,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         BEFORE the BreakBlock plus the BreakBlock itself. Anything else is
         refused. Returns the list of pre-break content states."""
         ordered = []
-        visited = set()
+        visited: Dict[int, None] = {}
         if branch.start_block is None:
             return None
         queue = [branch.start_block]
@@ -348,7 +348,7 @@ class EarlyExitToFindIndex(ppl.Pass):
             b = queue.pop(0)
             if id(b) in visited:
                 continue
-            visited.add(id(b))
+            visited[id(b)] = None
             ordered.append(b)
             for e in branch.out_edges(b):
                 if id(e.dst) not in visited:
@@ -439,7 +439,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         not be characterised) is treated as ambiguous and dropped, so the
         predicate stays unresolved and the refuse-lift guard fires."""
         defs: Dict[str, str] = {}
-        ambiguous: Set[str] = set()
+        ambiguous: Dict[str, None] = {}
         for state in self._all_states_in_blocks(body_blocks):
             for dn in state.data_nodes():
                 if state.in_degree(dn) == 0:
@@ -449,9 +449,9 @@ class EarlyExitToFindIndex(ppl.Pass):
                     continue
                 rhs = self._scalar_definition_expr(state, dn, loop_var, sdfg)
                 if rhs is None:
-                    ambiguous.add(dn.data)
+                    ambiguous[dn.data] = None
                 elif dn.data in defs and defs[dn.data] != rhs:
-                    ambiguous.add(dn.data)
+                    ambiguous[dn.data] = None
                 else:
                     defs[dn.data] = rhs
         for name in ambiguous:
@@ -543,10 +543,8 @@ class EarlyExitToFindIndex(ppl.Pass):
             tree = ast.parse(cond_expr_str, mode='eval').body
         except SyntaxError:
             return False
-        subscript_bases = {
-            id(n.value)
-            for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
-        }
+        subscript_bases = dict.fromkeys(
+            id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name))
         for node in ast.walk(tree):
             if not isinstance(node, ast.Name) or id(node) in subscript_bases:
                 continue
@@ -658,8 +656,8 @@ class EarlyExitToFindIndex(ppl.Pass):
         * a dropped nested region writes a transient a kept top-level state reads
           (the clone keeps the consumer but drops the producer -> a dangling read).
         """
-        top_level = {id(b) for b in body_blocks if isinstance(b, SDFGState)}
-        block_ids = {id(b) for b in body_blocks}
+        top_level = dict.fromkeys(id(b) for b in body_blocks if isinstance(b, SDFGState))
+        block_ids = dict.fromkeys(id(b) for b in body_blocks)
         dropped_blocks = [b for b in body_blocks if id(b) not in top_level]
 
         # A dropped state must not write a live (non-transient) array.
@@ -688,23 +686,23 @@ class EarlyExitToFindIndex(ppl.Pass):
 
         # A dropped nested region must not produce a transient a kept top-level
         # state consumes.
-        dropped_transients: Set[str] = set()
+        dropped_transients: Dict[str, None] = {}
         for state in self._all_states_in_blocks(dropped_blocks):
             for n in state.data_nodes():
                 if state.in_degree(n) == 0:
                     continue
                 desc = sdfg.arrays.get(n.data)
                 if desc is not None and desc.transient:
-                    dropped_transients.add(n.data)
+                    dropped_transients[n.data] = None
         if dropped_transients:
-            kept_reads: Set[str] = set()
+            kept_reads: Dict[str, None] = {}
             for b in body_blocks:
                 if not isinstance(b, SDFGState):
                     continue
                 for n in b.data_nodes():
                     if b.out_degree(n) > 0:
-                        kept_reads.add(n.data)
-            if dropped_transients & kept_reads:
+                        kept_reads[n.data] = None
+            if any(name in kept_reads for name in dropped_transients):
                 return False
         return True
 
@@ -731,18 +729,18 @@ class EarlyExitToFindIndex(ppl.Pass):
             if desc is None:
                 continue
             if desc.transient:
-                cond_reads |= self._trace_transient_to_source_arrays(name, body_pre_blocks, sdfg)
+                cond_reads.update(self._trace_transient_to_source_arrays(name, body_pre_blocks, sdfg))
             elif isinstance(desc, data.Scalar):
                 # A bare loop-invariant scalar the cond reads (wired as a phi-Map
                 # ``[0]`` connector): count it as a read so a body write to the
                 # same scalar trips the disjointness gate below.
-                cond_reads.add(name)
+                cond_reads[name] = None
         # 2) Body write-sets.
         pre_writes = self._collect_array_writes(body_pre_blocks, sdfg)
         post_writes = self._collect_array_writes(body_post_blocks, sdfg)
         tb_writes = self._collect_array_writes(true_pre_break_states, sdfg)
         # 3) Tier-Cheap whole-array disjointness.
-        if cond_reads & (pre_writes | post_writes | tb_writes):
+        if any(a in pre_writes or a in post_writes or a in tb_writes for a in cond_reads):
             return False
         # 4) True-branch writes must be scalars / length-1 arrays.
         for arr_name in tb_writes:
@@ -759,31 +757,31 @@ class EarlyExitToFindIndex(ppl.Pass):
             return False
         return True
 
-    def _read_arrays_from_expr(self, expr_str: str, sdfg: SDFG) -> Set[str]:
+    def _read_arrays_from_expr(self, expr_str: str, sdfg: SDFG) -> Dict[str, None]:
         """Return the set of array names read by the expression string.
         Recognises ``arr[i_expr]`` subscripts."""
         try:
             tree = ast.parse(expr_str, mode='eval').body
         except SyntaxError:
-            return set()
-        out: Set[str] = set()
+            return {}
+        out: Dict[str, None] = {}
         for node in ast.walk(tree):
             if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
                 if node.value.id in sdfg.arrays:
-                    out.add(node.value.id)
+                    out[node.value.id] = None
         return out
 
-    def _expr_names(self, expr_str: str) -> Set[str]:
+    def _expr_names(self, expr_str: str) -> Dict[str, None]:
         """Return the set of bare ``ast.Name`` identifiers referenced by
         ``expr_str``. Used to discover transient scalars the cond reads
         through gather chains the AST inliner did not flatten."""
         try:
             tree = ast.parse(expr_str, mode='eval').body
         except SyntaxError:
-            return set()
-        return {n.id for n in ast.walk(tree) if isinstance(n, ast.Name)}
+            return {}
+        return dict.fromkeys(n.id for n in ast.walk(tree) if isinstance(n, ast.Name))
 
-    def _trace_transient_to_source_arrays(self, name: str, blocks, sdfg: SDFG) -> Set[str]:
+    def _trace_transient_to_source_arrays(self, name: str, blocks, sdfg: SDFG) -> Dict[str, None]:
         """Trace a transient ``name`` written inside any state in
         ``blocks`` back to the non-transient arrays that gather feed
         it. Used by :meth:`_check_soundness` to widen ``cond_reads``
@@ -795,14 +793,14 @@ class EarlyExitToFindIndex(ppl.Pass):
         a visited set on transient names.
         """
         if name not in sdfg.arrays:
-            return set()
+            return {}
         desc = sdfg.arrays[name]
         if not desc.transient:
             # ``name`` is already a non-transient array; the caller
             # path treats it directly.
-            return {name}
-        out: Set[str] = set()
-        visited: Set[str] = {name}
+            return {name: None}
+        out: Dict[str, None] = {}
+        visited: Dict[str, None] = {name: None}
         pending = [name]
         while pending:
             target = pending.pop()
@@ -826,16 +824,16 @@ class EarlyExitToFindIndex(ppl.Pass):
                         src_desc = sdfg.arrays[src_name]
                         if src_desc.transient:
                             if src_name not in visited:
-                                visited.add(src_name)
+                                visited[src_name] = None
                                 pending.append(src_name)
                         else:
-                            out.add(src_name)
+                            out[src_name] = None
         return out
 
-    def _collect_array_writes(self, blocks, sdfg: SDFG) -> Set[str]:
+    def _collect_array_writes(self, blocks, sdfg: SDFG) -> Dict[str, None]:
         """Collect every non-transient array name written by any state in
         ``blocks``."""
-        out: Set[str] = set()
+        out: Dict[str, None] = {}
         for b in blocks:
             if not isinstance(b, SDFGState):
                 continue
@@ -847,7 +845,7 @@ class EarlyExitToFindIndex(ppl.Pass):
                     continue
                 if desc.transient:
                     continue
-                out.add(n.data)
+                out[n.data] = None
         return out
 
     def _body_parallelizable_modulo_break(self, loop, cond_block, sdfg) -> bool:
@@ -1009,7 +1007,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         # to ``c * t + (1 - c) * e`` at canonicalize time, so codegen
         # never emits ``c ? t : e``.
         tasklet_code = f'__out = ITE(({new_expr}), {loop_var}, ({N_expr}))'
-        self._assert_explicit_dataflow(tasklet_code, set(inputs_map), sdfg)
+        self._assert_explicit_dataflow(tasklet_code, inputs_map, sdfg)
 
         outputs_map = {
             '__out':
@@ -1059,7 +1057,7 @@ class EarlyExitToFindIndex(ppl.Pass):
             new_expr = re.sub(rf'\b{re.escape(name)}\b', in_conn, new_expr)
         return inputs, new_expr
 
-    def _assert_explicit_dataflow(self, code_str: str, in_connectors: Set[str], sdfg: SDFG):
+    def _assert_explicit_dataflow(self, code_str: str, in_connectors: Dict, sdfg: SDFG):
         """HARD INVARIANT: a tasklet may only read a data container through an
         in-connector. Raise if any bare name in ``code_str`` names an
         sdfg.arrays container that is not one of ``in_connectors`` -- exactly the
@@ -1068,15 +1066,12 @@ class EarlyExitToFindIndex(ppl.Pass):
             tree = ast.parse(code_str)
         except SyntaxError:
             return
-        subscript_bases = {
-            id(n.value)
-            for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
-        }
-        offenders = sorted({
-            node.id
-            for node in ast.walk(tree) if isinstance(node, ast.Name) and id(node) not in subscript_bases
-            and node.id not in in_connectors and node.id in sdfg.arrays
-        })
+        subscript_bases = dict.fromkeys(
+            id(n.value) for n in ast.walk(tree) if isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name))
+        offenders = sorted(
+            dict.fromkeys(node.id for node in ast.walk(tree)
+                          if isinstance(node, ast.Name) and id(node) not in subscript_bases
+                          and node.id not in in_connectors and node.id in sdfg.arrays))
         if offenders:
             raise RuntimeError(f'EarlyExitToFindIndex: tasklet reads data container(s) {offenders} by bare name '
                                f'without an in-connector -- explicit-dataflow invariant violated: {code_str!r}')
@@ -1256,13 +1251,13 @@ class EarlyExitToFindIndex(ppl.Pass):
         except StopIteration:
             return
         # BFS from the break block; mark every reachable node for removal.
-        to_remove = set()
+        to_remove: Dict[int, None] = {}
         queue = [break_block]
         while queue:
             b = queue.pop(0)
             if id(b) in to_remove:
                 continue
-            to_remove.add(id(b))
+            to_remove[id(b)] = None
             for e in branch.out_edges(b):
                 queue.append(e.dst)
         # Remove the marked nodes (and their incident edges).
@@ -1280,14 +1275,14 @@ class EarlyExitToFindIndex(ppl.Pass):
 
 def _next_id(sdfg: SDFG) -> int:
     """Pick a fresh integer suffix unused by any current find-first symbol."""
-    used: Set[int] = set()
+    used: Dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for nm in sd.symbols.keys():
             for prefix in (_PHI_PREFIX, _EXIT_BUF_PREFIX, _EXIT_SYM_PREFIX):
                 if nm.startswith(prefix):
                     tail = nm[len(prefix):]
                     if tail.isdigit():
-                        used.add(int(tail))
+                        used[int(tail)] = None
     n = 0
     while n in used:
         n += 1

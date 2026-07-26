@@ -41,7 +41,7 @@ Out of scope (potential follow-ups):
 """
 import ast
 import copy
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Tuple
 
 import dace
 from dace import SDFG, dtypes, nodes, properties, symbolic
@@ -109,20 +109,20 @@ def _is_iv_eligible_tasklet(tasklet: nodes.Tasklet, state: SDFGState, loop: Loop
     return True
 
 
-def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> Set:
+def _tasklet_component(state: SDFGState, tasklet: nodes.Tasklet) -> Dict:
     """BFS from ``tasklet`` through every connected node in ``state``.
 
     Walks both in- and out-edges, into AccessNodes and through them; the returned
-    set is the connected component of ``tasklet`` in the state's data-flow graph.
+    (ordered-set) dict is the connected component of ``tasklet`` in the state's data-flow graph.
     """
-    seen: Set = {tasklet}
+    seen: Dict = {tasklet: None}
     frontier = [tasklet]
     while frontier:
         n = frontier.pop()
         for e in list(state.in_edges(n)) + list(state.out_edges(n)):
             for nb in (e.src, e.dst):
                 if nb not in seen:
-                    seen.add(nb)
+                    seen[nb] = None
                     frontier.append(nb)
     return seen
 
@@ -138,7 +138,7 @@ def _is_copy_tasklet(t: nodes.Tasklet) -> bool:
     return code in ('__out = __inp', '__out = (__inp)')
 
 
-def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optional[Set]:
+def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optional[Dict]:
     """Return the IV tasklet's component if every tasklet in it is either the
     IV tasklet itself or a pure copy (``__out = __inp``) -- otherwise ``None``.
 
@@ -154,7 +154,7 @@ def _is_isolated_iv_component(state: SDFGState, tasklet: nodes.Tasklet) -> Optio
     return component
 
 
-def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, component: Set, sdfg: SDFG,
+def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, component: Dict, sdfg: SDFG,
                                         parent: ControlFlowRegion) -> None:
     """Move the IV component into a fresh sibling loop *before* ``loop``.
 
@@ -188,7 +188,7 @@ def _split_iv_component_to_sibling_loop(loop: LoopRegion, state: SDFGState, comp
     # the original side strip the IV component out so the residual body still
     # contains the other statements.
     iv_state = list(iv_loop.nodes())[0]
-    component_labels = {id_for(n) for n in component}
+    component_labels = dict.fromkeys(id_for(n) for n in component)
     for n in list(iv_state.nodes()):
         if id_for(n) not in component_labels:
             iv_state.remove_node(n)

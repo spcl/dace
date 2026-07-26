@@ -44,6 +44,7 @@ from .prune_connectors import PruneConnectors, PruneSymbols
 from .wcr_conversion import AugAssignToWCR, WCRToAugAssign
 from .tasklet_fusion import TaskletFusion
 from .trivial_tasklet_elimination import TrivialTaskletElimination
+from .distribute_tasklet_into_map import DistributeTaskletIntoMap
 
 # Device-related
 from .copy_to_device import CopyToDevice

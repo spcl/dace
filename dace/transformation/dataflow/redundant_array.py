@@ -26,6 +26,16 @@ def _subset_has_shape(subset: subsets.Range, shape: Sequence[symbolic.SymbolicTy
                                                for m, a in zip(subset.size(), shape))
 
 
+def squeezed_shape(shape: Sequence[symbolic.SymbolicType]) -> List[symbolic.SymbolicType]:
+    """`shape` without its size-1 dimensions, to compare against a squeezed subset.
+
+    `Range.squeeze` keeps one dimension rather than producing a zero-dimensional subset, so an
+    all-size-1 shape (a Scalar, or an array of shape `(1, 1)`) must keep one too.
+    """
+    squeezed = [size for size in shape if size != 1]
+    return squeezed or [1]
+
+
 def _validate_subsets(edge: graph.MultiConnectorEdge,
                       arrays: Dict[str, data.Data],
                       src_name: str = None,
@@ -360,7 +370,7 @@ class RedundantArray(pm.SingleStateTransformation):
             # Make sure the memlet covers the removed array
             subset = copy.deepcopy(a1_subset)
             subset.squeeze()
-            shape = [sz for sz in in_desc.shape if sz != 1]
+            shape = squeezed_shape(in_desc.shape)
             if not _subset_has_shape(subset, shape):
                 return False
 
@@ -891,7 +901,7 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                 return False
             subset = copy.deepcopy(b1_subset)
             subset.squeeze()
-            shape = [sz for sz in out_desc.shape if sz != 1]
+            shape = squeezed_shape(out_desc.shape)
             if not _subset_has_shape(subset, shape):
                 return False
 
@@ -1494,7 +1504,7 @@ class RedundantReadSlice(pm.SingleStateTransformation):
         # a_subset.size() == v_subset.size() == out_desc.shape
         if not (a_subset and v_subset):
             return False
-        out_shape = [s for s in out_desc.shape if s != 1]
+        out_shape = squeezed_shape(out_desc.shape)
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
@@ -1645,7 +1655,7 @@ class RedundantWriteSlice(pm.SingleStateTransformation):
         # a_subset.size() == v_subset.size() == in_desc.shape
         if not (a_subset and v_subset):
             return False
-        in_shape = [s for s in in_desc.shape if s != 1]
+        in_shape = squeezed_shape(in_desc.shape)
         for subset in (a_subset, v_subset):
             tmp = copy.deepcopy(subset)
             tmp.squeeze()
@@ -1833,6 +1843,12 @@ class RemoveSliceView(pm.SingleStateTransformation):
         for edge in non_view_edges:
             # Update all memlets in tree
             for e in state.memlet_tree(edge):
+                if e.data.is_empty():
+                    # Empty memlets carry no data -- they exist only for node/scope
+                    # ordering. Filling in a subset here would turn a legal empty
+                    # ordering edge into a malformed one (subset stays None while
+                    # other_subset gets set).
+                    continue
                 if e.data.data == self.view.data:
                     e.data.data = viewed.data
 

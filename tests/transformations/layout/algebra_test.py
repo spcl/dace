@@ -2,7 +2,7 @@
 """Unit tests for the layout algebra (dace.libraries.layout.algebra)."""
 import sympy
 
-from dace.symbolic import int_ceil
+from dace.symbolic import int_ceil, symstr
 from dace.libraries.layout.algebra import (Digit, Permute, Block, Unblock, Pad, Shuffle, Zip, Unzip, identity_map,
                                            compose_ops, simplify_ops, is_identity)
 
@@ -84,6 +84,17 @@ def test_block_block_kept():
     # Two distinct blockings of the same dim do not cancel; both survive.
     out = simplify_ops([Block(0, 16), Block(0, 4)])
     assert out == [Block(0, 16), Block(0, 4)]
+
+
+# ------------------------- emission (rounding kept) ------------------------- #
+def test_block_extent_divides_the_whole_numerator():
+    # `sympy.ceiling(e / b)` distributes the division over a sum numerator, and sym2cpp prints the
+    # argument without the ceiling -- so each term truncates alone and the `1/16` term emits as C
+    # integer 0. int_ceil keeps the numerator whole. Substitution hides this (sympy's ceiling is
+    # exact either way), so assert on the emitted code.
+    extent = compose_ops([Block(0, 16)], shape=[N + 1]).digits[0].extent
+    assert extent == int_ceil(N + 1, 16)
+    assert symstr(extent, cpp_mode=True) == '(int_ceil(N + 1, 16))'
 
 
 if __name__ == '__main__':

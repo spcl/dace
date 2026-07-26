@@ -31,7 +31,7 @@ Out of scope:
   through the new positive-iterator form.
 * While loops (no ``loop_variable``).
 """
-from typing import Optional, Set
+from typing import Dict, Optional
 
 import dace
 from dace import SDFG, properties, symbolic
@@ -55,18 +55,18 @@ def _is_negative(value) -> bool:
 
 def _next_id(sdfg: SDFG) -> int:
     """Lowest ``<N>`` no existing ``_loop_pos_<N>`` symbol uses anywhere in the SDFG tree."""
-    used: Set[int] = set()
+    used: Dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for s in list(sd.symbols.keys()) + list(sd.free_symbols):
             if s.startswith(_POS_ITER_PREFIX):
                 tail = s[len(_POS_ITER_PREFIX):]
                 if tail.isdigit():
-                    used.add(int(tail))
+                    used[int(tail)] = None
         for cfg in sd.all_control_flow_regions():
             if isinstance(cfg, LoopRegion) and cfg.loop_variable and cfg.loop_variable.startswith(_POS_ITER_PREFIX):
                 tail = cfg.loop_variable[len(_POS_ITER_PREFIX):]
                 if tail.isdigit():
-                    used.add(int(tail))
+                    used[int(tail)] = None
     n = 0
     while n in used:
         n += 1
