@@ -40,6 +40,8 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
 import argparse
 import copy
+import csv
+import functools
 import inspect
 import time
 from typing import Callable, Dict, List, Tuple
@@ -50,6 +52,7 @@ import dace
 # ``dace.transformation.interstate`` before canonicalize can trip a circular
 # import through the vectorization pipeline's top-level interstate import.
 from dace.transformation.passes.canonicalize import canonicalize
+from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import is_assumption_guard_block
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
@@ -68,6 +71,10 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
 from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 
+from hpcagent_bench.frameworks import Benchmark, DaceFramework, TimedCompiledSDFG
+from hpcagent_bench.spec import KERNELS, BenchSpec
+from hpcagent_bench import paths as hpcagent_paths
+
 #: The correct CPU canonicalize parameters (the numerical gate's ``_CPU`` set).
 #: ``peel_limit`` is overridable for the peel study; the rest are the CPU defaults.
 
@@ -78,12 +85,13 @@ from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 # argmax and early-exit kernels exist to test index capture, and their index went unchecked.
 
 
-def cpu_params(peel_limit: int = 4) -> Dict:
+def cpu_params(peel_limit: int = 4, reconstruct_wavefront_nest: bool = False) -> Dict:
     return dict(target='cpu',
                 peel_limit=peel_limit,
                 break_anti_dependence=True,
                 interchange_carry_with_map=True,
-                scatter_to_guarded_maps=True)
+                scatter_to_guarded_maps=True,
+                reconstruct_wavefront_nest=reconstruct_wavefront_nest)
 
 
 # --------------------------------------------------------------------------- #
@@ -91,22 +99,41 @@ def cpu_params(peel_limit: int = 4) -> Dict:
 # --------------------------------------------------------------------------- #
 #: Column names of :func:`count`, in order -- the single source of truth for the
 #: report width, so a new counter needs no second literal kept in sync.
-COUNTERS = ('loops', 'maps', 'reduce', 'scan', 'states')
+COUNTERS = ('loops', 'maps', 'reduce', 'scan', 'libnode', 'states', 'guards')
 
 
 def count(sdfg) -> List[int]:
-    """``[loops, maps, reduces, scans, states]`` structural counts.
+    """``[loops, maps, reduces, scans, libnodes, states, guards]`` structural counts.
 
     ``states`` tracks the standing invariant that an SDFG carries as few states as
     possible, so a fusion/coalesce regression is visible and not just inferred from
     the map count. Counted over nested SDFGs, matching the node counters' scope.
+
+    ``guards`` counts the assumption-guard states canonicalization appends last. They
+    are infrastructure, not payload, and every kernel gains one, so a raw ``states``
+    delta reads as fusion regression when it is only the guard: ``states - guards`` is
+    the number to compare against the baseline.
     """
-    loops = sum(1 for cfr in sdfg.all_control_flow_regions() if isinstance(cfr, LoopRegion))
+    # Count loops at the SAME scope as the node counters below: ``all_control_flow_regions``
+    # defaults to ``recursive=False``, which crosses nested REGIONS but not nested SDFGs, while
+    # ``all_nodes_recursive`` does cross them. Left asymmetric, a sequential loop that ended up
+    # inside a nested SDFG vanished from the metric while its Maps still counted -- polybench
+    # ``deriche`` reported 0 residual sequential loops when it actually has 4.
+    loops = sum(1 for sd in sdfg.all_sdfgs_recursive() for cfr in sd.all_control_flow_regions()
+                if isinstance(cfr, LoopRegion))
     maps = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
     reduces = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
     scans = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
-    states = sum(1 for sd in sdfg.all_sdfgs_recursive() for _ in sd.all_states())
-    return [loops, maps, reduces, scans, states]
+    # Work lifted into a LibraryNode (a MatMul, a BLAS call) is neither a loop nor a Map, so
+    # without this column a fully-lifted kernel reads as "0 maps" -- i.e. as a parallelization
+    # failure -- when the work simply moved somewhere the other counters do not look. polybench
+    # ``trisolv`` is the case: its inner product is a MatMul libnode. Reduce/Scan are
+    # LibraryNodes too and already have their own columns, so they are excluded here.
+    libnodes = sum(1 for n, _ in sdfg.all_nodes_recursive()
+                   if isinstance(n, nd.LibraryNode) and not isinstance(n, (Reduce, Scan)))
+    all_states = [st for sd in sdfg.all_sdfgs_recursive() for st in sd.all_states()]
+    guards = sum(1 for st in all_states if is_assumption_guard_block(st))
+    return [loops, maps, reduces, scans, libnodes, len(all_states), guards]
 
 
 def guarded_fallback_loops(sdfg) -> int:
@@ -234,11 +261,68 @@ def _tsvc25_case(name):
     return base, check
 
 
+#: One shared DaceFramework('dace_cpu'), pinned to fp64/complex128 BEFORE any kernel's first
+#: import: a kernel's ``<module>_dace.py`` does ``from ...dace_framework import dc_float`` at
+#: import time -- a plain attribute copy, not a live reference -- so ``set_datatype`` must run
+#: before this corpus's first kernel import, once, for the whole process.
+@functools.lru_cache(maxsize=1, typed=True)
+def _hpcagent_framework() -> DaceFramework:
+    dfw = DaceFramework('dace_cpu')
+    dfw.set_datatype(None)  # fp64 / complex128, matching the corpus's numpy references
+    return dfw
+
+
+def _hpcagent_names() -> List[str]:
+    """Path-keys of the hpcagent_bench kernels this sweep measures: every ``foundation`` /
+    ``hpc`` / ``ml`` track kernel EXCEPT the ones the ``np`` / ``poly`` corpora above already
+    run (``subtrack == 'polybench'`` or tagged ``'npbench'`` -- the identical kernel, ported
+    into hpcagent_bench) and any kernel with no DaCe implementation at all. Skips are counted
+    and named below, never silent.
+    """
+    covered: List[str] = []
+    no_dace: List[str] = []
+    names: List[str] = []
+    for key in KERNELS.select_keys('all'):
+        spec = BenchSpec.load(key)
+        if spec.subtrack == 'polybench' or 'npbench' in spec.tags:
+            covered.append(key)
+            continue
+        kdir = hpcagent_paths.BENCHMARKS / spec.relative_path
+        if not (kdir / f'{spec.module_name}_dace.py').exists():
+            no_dace.append(key)
+            continue
+        names.append(key)
+    print(
+        f"[hpcagent] {len(names)} kernels selected; skipped {len(covered)} "
+        f"(np/poly duplicates already covered above), {len(no_dace)} (no DaCe impl): "
+        f"{sorted(no_dace)}",
+        flush=True)
+    return sorted(names)
+
+
+def _hpcagent_case(name):
+    dfw = _hpcagent_framework()
+    bench = Benchmark(name)
+    program = dfw.implementations(bench)[0][0]
+    base = program.to_sdfg(simplify=True)
+
+    def check(fin):
+        bdata = bench.get_data(preset='S', datatype=None)
+        reference = dfw.reference_outputs(bench, bdata)
+        if reference is None:  # no numpy reference available -- nothing to check against
+            return True
+        variant = TimedCompiledSDFG(fin.compile(), fin, 'canon')
+        return dfw.verify(variant, reference, bench, bdata)
+
+    return base, check
+
+
 CORPORA: Dict[str, Tuple[Callable, Callable]] = {
     'poly': (_poly_names, _poly_case),
     'np': (_np_names, _np_case),
     'tsvc': (_tsvc_names, _tsvc_case),
     'tsvc25': (_tsvc25_names, _tsvc25_case),
+    'hpcagent': (_hpcagent_names, _hpcagent_case),
 }
 
 #: Pipeline configurations under measurement. Each maps an SDFG in place.
@@ -280,10 +364,22 @@ def apply_config(sdfg, config: str, params: Dict):
     return sdfg
 
 
-def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool = True, config: str = 'canon') -> Dict:
-    """Measure one corpus. :returns: a result dict with per-kernel rows."""
+def sweep(corpus: str,
+          peel_limit: int = 4,
+          check: bool = False,
+          verbose: bool = True,
+          config: str = 'canon',
+          shard: Tuple[int, int] = (0, 1)) -> Dict:
+    """Measure one corpus. :returns: a result dict with per-kernel rows.
+
+    ``shard=(index, count)`` keeps only every ``count``-th kernel starting at ``index``,
+    so a batch job can fan the corpus out over ranks without any rank-to-kernel table.
+    Round-robin rather than contiguous blocks: kernel cost varies by an order of
+    magnitude and neighbours in the (sorted) name list tend to be similar sizes.
+    """
     names_fn, case_fn = CORPORA[corpus]
-    names = names_fn()
+    index, total = shard
+    names = names_fn()[index::total]
     params = cpu_params(peel_limit)
     rows: Dict[str, Dict] = {}
     t0 = time.perf_counter()
@@ -326,6 +422,72 @@ def sweep(corpus: str, peel_limit: int = 4, check: bool = False, verbose: bool =
                 peel_limit=peel_limit,
                 seconds=round(time.perf_counter() - t0, 1),
                 rows=rows)
+
+
+#: Per-kernel CSV header: the three measured phases crossed with COUNTERS, plus the verdicts.
+CSV_FIELDS = (('config', 'corpus', 'kernel') + tuple(f'{phase}_{c}' for phase in ('base', 'l2m', 'canon')
+                                                     for c in COUNTERS) + ('guarded', 'correct', 'error'))
+
+
+def write_csv(res: Dict, path: str) -> None:
+    """Append ``res``'s per-kernel rows to ``path`` (writing the header if new)."""
+    fresh = not os.path.exists(path) or os.path.getsize(path) == 0
+    with open(path, 'a', newline='') as fh:
+        writer = csv.DictWriter(fh, CSV_FIELDS)
+        if fresh:
+            writer.writeheader()
+        for name, row in res['rows'].items():
+            flat = dict(config=res['config'], corpus=res['corpus'], kernel=name)
+            for phase in ('base', 'l2m', 'canon'):
+                counts = row.get(phase) or [''] * len(COUNTERS)
+                flat.update({f'{phase}_{c}': v for c, v in zip(COUNTERS, counts)})
+            flat.update(guarded=row['guarded'], correct=row['correct'], error=row['error'] or '')
+            writer.writerow(flat)
+
+
+def summarize_csv(paths: List[str]) -> int:
+    """Print per-(config, corpus) totals and every recorded error from sharded CSVs.
+
+    :returns: the number of kernels that errored OR answered wrong -- the batch job's exit
+              status, so a corpus that stops canonicalizing (or silently miscompiles) fails
+              the job instead of scrolling past.
+    """
+    rows: List[Dict[str, str]] = []
+    for path in paths:
+        with open(path, newline='') as fh:
+            rows.extend(csv.DictReader(fh))
+
+    groups: Dict[Tuple[str, str], List[Dict[str, str]]] = {}
+    for row in rows:
+        groups.setdefault((row['config'], row['corpus']), []).append(row)
+
+    def is_wrong(row: Dict[str, str]) -> bool:
+        # Only ``--check`` runs fill this in; an unchecked run leaves it empty, which is
+        # "not measured", not "correct".
+        return row['correct'] == 'False'
+
+    print(f"\n{'config':16s} {'corpus':10s} {'n':>4s}  " + '  '.join(f'{c:>7s}' for c in COUNTERS) + '   err  wrong')
+    for (config, corpus), grp in sorted(groups.items()):
+        totals = [sum(int(r[f'canon_{c}']) for r in grp if r[f'canon_{c}']) for c in COUNTERS]
+        errs = sum(1 for r in grp if r['error'])
+        wrong = sum(1 for r in grp if is_wrong(r))
+        print(f"{config:16s} {corpus:10s} {len(grp):4d}  " + '  '.join(f'{t:7d}'
+                                                                       for t in totals) + f"   {errs:3d}  {wrong:5d}")
+
+    errored = [r for r in rows if r['error']]
+    if errored:
+        print(f"\n=== {len(errored)} ERRORS ===")
+        for r in sorted(errored, key=lambda r: (r['corpus'], r['kernel'])):
+            print(f"  {r['corpus']:10s} {r['kernel']:28s} {r['error']}")
+
+    # A kernel that canonicalizes cleanly and answers wrong is the worse failure of the two:
+    # nothing in the structural counts reveals it. Report it last so it is what you see.
+    wrong = [r for r in rows if is_wrong(r)]
+    if wrong:
+        print(f"\n=== {len(wrong)} MISCOMPILES (canonicalize is value-preserving; these are bugs) ===")
+        for r in sorted(wrong, key=lambda r: (r['corpus'], r['kernel'])):
+            print(f"  {r['corpus']:10s} {r['kernel']}")
+    return len(errored) + len(wrong)
 
 
 def _agg(rows, key) -> List[int]:
@@ -388,12 +550,21 @@ def main() -> None:
                     default='canon',
                     choices=list(CONFIGS) + ['all'],
                     help='pipeline configuration to measure (default canon)')
+    ap.add_argument('--shard', default='0/1', help='"i/n": measure only every n-th kernel starting at i')
+    ap.add_argument('--csv', default=None, help='append per-kernel rows to this CSV')
+    ap.add_argument('--summarize', nargs='+', default=None, help='report on existing CSVs instead of measuring')
     args = ap.parse_args()
+    if args.summarize:
+        raise SystemExit(1 if summarize_csv(args.summarize) else 0)
+    index, total = (int(p) for p in args.shard.split('/'))
     targets = list(CORPORA) if args.corpus == 'all' else [args.corpus]
     configs = list(CONFIGS) if args.config == 'all' else [args.config]
     for config in configs:
         for corpus in targets:
-            summarize(sweep(corpus, peel_limit=args.peel, check=args.check, config=config))
+            res = sweep(corpus, peel_limit=args.peel, check=args.check, config=config, shard=(index, total))
+            if args.csv:
+                write_csv(res, args.csv)
+            summarize(res)
 
 
 if __name__ == '__main__':
