@@ -464,6 +464,73 @@ def test_prune_connectors_with_conditional_block():
     assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
 
 
+def test_prune_connectors_keeps_inner_wcr_accumulator():
+    """An in/out connector whose read is materialised by a WCR INSIDE the nested SDFG must survive.
+
+    ``a (CR: Sum)= b`` reads ``a``, but ``read_and_write_sets`` is pure dataflow and reports ``a``
+    write-only, so the accumulator lands in the prune set. The pre-existing WCR exemption only
+    inspects the OUTER boundary edge, which carries no WCR here. Pruning ``a`` silently turns
+    ``a[i] += b[i]`` into ``a[i] = b[i]`` (tsvc ``vpv`` miscompiled exactly this way).
+    """
+    sdfg = dace.SDFG('inner_wcr_tester')
+    A, A_desc = sdfg.add_array('A', [4], dace.float64)
+    B, B_desc = sdfg.add_array('B', [4], dace.float64)
+
+    nsdfg = dace.SDFG('nested')
+    a, _ = nsdfg.add_scalar('a', A_desc.dtype)
+    b, _ = nsdfg.add_scalar('b', B_desc.dtype)
+    nstate = nsdfg.add_state('body', is_start_block=True)
+    tasklet = nstate.add_tasklet('copy', {'__in'}, {'__out'}, '__out = __in')
+    nstate.add_edge(nstate.add_access(b), None, tasklet, '__in', dace.Memlet('b[0]'))
+    # The WCR lives on this INNER edge; nothing on the outer boundary carries it.
+    nstate.add_edge(tasklet, '__out', nstate.add_access(a), None, dace.Memlet('a[0]', wcr='lambda x, y: x + y'))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a, b}, outputs={a})
+    me, mx = state.add_map('map', dict(i="0:4"))
+    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
+    state.add_memlet_path(nsdfg_node, mx, state.add_access(A), src_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert a in nsdfg_node.in_connectors
+
+
+def test_prune_connectors_keeps_memlet_subset_index():
+    """A connector used ONLY as an index inside a memlet subset must survive.
+
+    ``src[idx]`` never names ``idx`` as the memlet's data, so ``read_and_write_sets`` cannot see
+    it. ``SDFG.free_symbols`` does not catch it either: while the connector exists the name is a
+    DESCRIPTOR, not a symbol -- it only becomes a free symbol once the data is removed, which is
+    when ``NestedSDFG.validate`` raises "Missing symbols on nested SDFG" (tsvc_2_5 gather kernels).
+    """
+    sdfg = dace.SDFG('subset_index_tester')
+    SRC, SRC_desc = sdfg.add_array('SRC', [4], dace.float64)
+    IDX, IDX_desc = sdfg.add_array('IDX', [4], dace.int64)
+    OUT, OUT_desc = sdfg.add_array('OUT', [4], dace.float64)
+
+    nsdfg = dace.SDFG('nested')
+    src, _ = nsdfg.add_array('src', [4], SRC_desc.dtype)
+    idx, _ = nsdfg.add_scalar('idx', IDX_desc.dtype)
+    out, _ = nsdfg.add_scalar('out', OUT_desc.dtype)
+    nstate = nsdfg.add_state('body', is_start_block=True)
+    tasklet = nstate.add_tasklet('gather', {'__in'}, {'__out'}, '__out = __in')
+    # ``idx`` appears only here, inside the SUBSET -- never as the memlet's data.
+    nstate.add_edge(nstate.add_access(src), None, tasklet, '__in', dace.Memlet(f'{src}[{idx}]'))
+    nstate.add_edge(tasklet, '__out', nstate.add_access(out), None, dace.Memlet('out[0]'))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={src, idx}, outputs={out})
+    me, mx = state.add_map('map', dict(i="0:4"))
+    state.add_memlet_path(state.add_access(SRC), me, nsdfg_node, dst_conn=src, memlet=dace.Memlet(f"{SRC}[0:4]"))
+    state.add_memlet_path(state.add_access(IDX), me, nsdfg_node, dst_conn=idx, memlet=dace.Memlet(f"{IDX}[i]"))
+    state.add_memlet_path(nsdfg_node, mx, state.add_access(OUT), src_conn=out, memlet=dace.Memlet(f"{OUT}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert idx in nsdfg_node.in_connectors
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -479,3 +546,5 @@ if __name__ == "__main__":
     test_read_write_1()
     test_read_write_2()
     test_prune_connectors_with_conditional_block()
+    test_prune_connectors_keeps_inner_wcr_accumulator()
+    test_prune_connectors_keeps_memlet_subset_index()
