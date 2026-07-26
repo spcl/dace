@@ -24,6 +24,70 @@ def offset(memlet_subset_ranges, value):
     return (memlet_subset_ranges[0] + value, memlet_subset_ranges[1] + value, memlet_subset_ranges[2])
 
 
+def _collect_nested_lane_accesses(body: SDFGState, nsdfg: nodes.NestedSDFG, reads: List, writes: List) -> None:
+    """Append the per-lane accesses hidden inside ``nsdfg`` to ``reads`` / ``writes``.
+
+    ``LoopToMap`` nests the map body, leaving WHOLE-ARRAY memlets on the NestedSDFG's connectors
+    -- the per-lane indices that decide whether a carry crosses map lanes only exist inside. The
+    inner subsets are rewritten into the outer symbol space through ``symbol_mapping``; an inner
+    symbol with no mapping (a nested loop's own iterator) is left alone, which can only make two
+    subsets look MORE different, i.e. can only lead to a refusal.
+    """
+    outer_data = {}
+    for e in body.in_edges(nsdfg):
+        if e.dst_conn and e.data is not None and e.data.data is not None:
+            outer_data[e.dst_conn] = e.data.data
+    for e in body.out_edges(nsdfg):
+        if e.src_conn and e.data is not None and e.data.data is not None:
+            outer_data[e.src_conn] = e.data.data
+    subs = {symbol(k): symbolic.pystr_to_symbolic(v) for k, v in nsdfg.symbol_mapping.items()}
+    for state in nsdfg.sdfg.all_states():
+        for node in state.data_nodes():
+            name = outer_data.get(node.data)
+            if name is None:
+                continue
+            for edge, bucket, incoming in ([(ie, writes, True)
+                                            for ie in state.in_edges(node)] + [(oe, reads, False)
+                                                                               for oe in state.out_edges(node)]):
+                if edge.data is None:
+                    continue
+                # ``get_*_subset`` resolves which side of the memlet indexes ``node`` even when the
+                # memlet's ``data`` names the OTHER endpoint (a copy edge), where ``.subset`` would
+                # be the other container's range.
+                sub = (edge.data.get_dst_subset(edge, state) if incoming else edge.data.get_src_subset(edge, state))
+                sub = sub if sub is not None else edge.data.subset
+                if sub is None:
+                    continue
+                rewritten = [tuple(symbolic.pystr_to_symbolic(t).subs(subs) for t in dim) for dim in sub.ndrange()]
+                bucket.append((name, sbs.Range(rewritten)))
+
+
+def _differs_on_map_axis(read: sbs.Subset, write: sbs.Subset, mparams: Set[str]) -> bool:
+    """True if ``read`` and ``write`` address a different position on some dimension indexed by
+    a map parameter.
+
+    That is a dependence that crosses map LANES. Before the interchange the map is re-entered
+    once per loop iteration, so the loop's sequential order separates lane ``p``'s read from
+    lane ``q``'s write; afterwards the map is the outer parallel axis and both run
+    concurrently, so the interchange would introduce a race. The classic distance-vector
+    statement: swapping the two axes turns a dependence ``(d_loop, d_map)`` into
+    ``(d_map, d_loop)``, which stays a legal *parallel* outer map only when ``d_map == 0``.
+    """
+    rnd, wnd = list(read.ndrange()), list(write.ndrange())
+    if len(rnd) != len(wnd):
+        return True  # shape mismatch -> cannot pair the axes up; stay safe
+    for r, w in zip(rnd, wnd):
+        names = set()
+        for token in (*r, *w):
+            if symbolic.issymbolic(token):
+                names |= {str(s) for s in token.free_symbols}
+        if not (names & mparams):
+            continue
+        if any(symbolic.simplify(rt - wt) != 0 for rt, wt in zip(r, w)):
+            return True
+    return False
+
+
 @transformation.explicit_cf_compatible
 class MoveLoopIntoMap(transformation.MultiStateTransformation):
     """
@@ -122,7 +186,21 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                             # Only indices allowed
                             if len(r) > 1 and r[0] != r[1]:
                                 return (False, [])
-                            derivative = diff(r[0])
+                            # Injective IN THE LOOP ITERATOR, so differentiate by it explicitly.
+                            # Omitting the variable only works while the index happens to hold a
+                            # single free symbol; a two-symbol index (``_loop_it_0 + _loop_it_2``,
+                            # which polybench ``lu`` produces once loop origins are rebased) makes
+                            # sympy refuse to guess and raise instead of answering the question.
+                            # Injective IN THE LOOP ITERATOR, so differentiate by it explicitly.
+                            # Letting sympy infer the variable only works while the index holds a
+                            # single free symbol; a two-symbol index (``_loop_it_0 + _loop_it_2``,
+                            # which polybench ``lu`` produces once loop origins are rebased) makes
+                            # it refuse to guess and raise instead of answering the question.
+                            # Take the symbol INSTANCE out of the expression rather than building a
+                            # fresh one -- a reconstructed symbol carries different assumptions, so
+                            # ``diff`` would not match it and would answer 0 for every index.
+                            ivsym = next((s for s in r[0].free_symbols if str(s) == str(itervar)), None)
+                            derivative = diff(r[0], ivsym) if ivsym is not None else 0
                             # Index function must be injective
                             if not (((derivative > 0) == True) or ((derivative < 0) == True)):
                                 return (False, [])
@@ -153,6 +231,41 @@ class MoveLoopIntoMap(transformation.MultiStateTransformation):
                                         return False
                                 else:
                                     data_dependency[access.data] = dims
+
+        # A container both read and written INSIDE the map may carry a dependence from one loop
+        # iteration to the next. The interchange only preserves it while that dependence stays
+        # inside a single map lane; a read/write pair that lands on different positions of a
+        # map-parameter axis (``a[i-1, j+1]`` read vs ``a[i, j]`` write) crosses lanes, and after
+        # the swap the lanes run concurrently -- a race. Refuse. The ``for(seq) { map }``
+        # recurrence sweeps this pass exists for (TSVC s231 / s233 / s235,
+        # ``aa[j, i] = aa[j-1, i] + ...``) carry only on the loop axis and read the map axis at the
+        # same position, so they still interchange.
+        lane_reads: List[Tuple[str, sbs.Subset]] = []
+        lane_writes: List[Tuple[str, sbs.Subset]] = []
+        for e in body.edges():
+            if e.src not in subgraph.nodes() or e.dst not in subgraph.nodes():
+                continue
+            if e.data is None or e.data.data is None:
+                continue
+            if isinstance(e.src, nodes.NestedSDFG) or isinstance(e.dst, nodes.NestedSDFG):
+                continue  # coarse connector memlet; the descent below reads the precise indices
+            path = body.memlet_path(e)
+            src, dst = path[0].src, path[-1].dst
+            if isinstance(src, nodes.AccessNode) and src.data == e.data.data:
+                sub = e.data.get_src_subset(e, body) or e.data.subset
+                if sub is not None:
+                    lane_reads.append((src.data, sub))
+            if isinstance(dst, nodes.AccessNode) and dst.data == e.data.data:
+                sub = e.data.get_dst_subset(e, body) or e.data.subset
+                if sub is not None:
+                    lane_writes.append((dst.data, sub))
+        for node in subgraph.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                _collect_nested_lane_accesses(body, node, lane_reads, lane_writes)
+        for wdata, wsub in lane_writes:
+            for rdata, rsub in lane_reads:
+                if rdata == wdata and _differs_on_map_axis(rsub, wsub, mparams):
+                    return False
 
         return True
 
