@@ -1040,8 +1040,15 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # per iteration; AbsorbState recovers the disjoint case instead, reordering the state to after the
     # second loop. GPU-gated because there fusing is worth more than the tidier block order -- one
     # kernel launch instead of two -- while on CPU the two loops cost about the same either way.
+    # Measured over all four corpora at both targets: it fires ZERO times, so un-gating it to CPU
+    # was not justified. The 14 loop-state-loop chains that exist all die on a RAW, a NestedSDFG in
+    # the second loop, or an interstate assignment -- and tsvc produces no chain at all, because
+    # LoopToMap has consumed the loops before this stage runs.
     if target == 'gpu':
-        s += [('loop_fuse', AbsorbState())]
+        # Wrapped because it declares ``depends_on([AccessSets])``: stages are applied with an empty
+        # results dict, so a bare dependency-bearing pass trips ``_assert_self_contained`` -- which
+        # is why the original bare wiring made ``canonicalize(target='gpu')`` raise outright.
+        s += [('loop_fuse', ppl.Pipeline([AbsorbState()]))]
     s += [('loop_fuse', LoopFusion())]
     s += [('loop_fuse', WavefrontSkew())]
     s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]

@@ -13,7 +13,7 @@ from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizont
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
-from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES, _build_stages
+from dace.transformation.passes.canonicalize.pipeline import CANONICALIZE_STAGES, _assert_self_contained, _build_stages
 from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.loop_stride_permutation import LoopStridePermutation
 from dace.transformation.passes.minimize_stride_permutation import MinimizeStridePermutation
@@ -170,6 +170,27 @@ def test_guard_hoists_are_target_gated():
         flags = [p.require_full_hoist for p in hoists if hasattr(p, 'require_full_hoist')]
         assert flags, 'no hoist exposes require_full_hoist'
         assert all(f is expected for f in flags), f'{target} hoists should use require_full_hoist={expected}'
+
+
+_KNOBS = ('break_anti_dependence', 'interchange_carry_with_map', 'scatter_to_guarded_maps',
+          'privatize_scatter_reductions', 'reconstruct_wavefront_nest', 'normalize_loop_and_map_origin',
+          'assume_parallel_guards', 'lift', 'lift_copy', 'semantic_lifting')
+
+
+@pytest.mark.parametrize('target', ('cpu', 'gpu'))
+@pytest.mark.parametrize('knob', _KNOBS)
+def test_every_stage_unit_is_self_contained(target: str, knob: str):
+    """Every unit the recipe emits satisfies the invariant ``apply_pass`` enforces on it.
+
+    Stages are applied with an EMPTY ``pipeline_results`` dict, so a bare dependency-bearing pass
+    would silently lose its inputs; :func:`_assert_self_contained` turns that into an error at
+    apply time. Checking it here instead means a mis-wired stage is caught by building the recipe,
+    not by a corpus kernel getting far enough into ``canonicalize`` to reach the offending unit --
+    which is what happened to ``AbsorbState``: it was wired bare, and only a corpus run found it.
+    """
+    for flipped in (False, True):
+        for _label, unit in _build_stages(target=target, **{knob: flipped}):
+            _assert_self_contained(unit)
 
 
 if __name__ == '__main__':
