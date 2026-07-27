@@ -809,7 +809,8 @@ class BranchNormalization(ppl.Pass):
             # from its own in-edge memlet.
             writes = [n for n in state.nodes() if isinstance(n, dace.nodes.AccessNode) and n.data == arr_name]
             for write_an in writes:
-                in_edges = list(state.in_edges(write_an))
+                # An empty in-edge only sequences a second read; it is not a write.
+                in_edges = [e for e in state.in_edges(write_an) if not e.data.is_empty()]
                 if not in_edges:
                     continue
                 if len(in_edges) != 1:
