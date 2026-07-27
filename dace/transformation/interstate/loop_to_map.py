@@ -340,29 +340,32 @@ def _read_write_same_iteration(read: subsets.Subset, write: subsets.Subset, iter
     return False
 
 
-def _collision_forces_same_iteration(m1: memlet.Memlet, m2: memlet.Memlet, itersym) -> bool:
-    """ Prove that two point-subset writes ``m1``, ``m2`` to the same container can only address
+def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset, itersym, varying: Set[str]) -> bool:
+    """ Prove that two point subsets ``sub1``, ``sub2`` of the same container can only address
         the same element when their loop iterations coincide.
 
-        Substitute the iteration variable by a fresh symbol ``p`` in ``m1`` and ``q`` in ``m2`` and
-        build the collision system ``{m1[d]|i=p == m2[d]|i=q  for every dim d}`` (all other symbols
-        are free parameters). If this affine system linearly implies ``p == q`` -- i.e. a rational
-        combination ``sum_d lam_d * (m1[d]|p - m2[d]|q)`` equals ``p - q`` identically -- then a
-        cross-iteration collision is impossible: any overlap between the two writes happens only
-        within a single iteration, where program order in the map body is preserved.
+        Substitute the iteration variable by a fresh symbol ``p`` in ``sub1`` and ``q`` in ``sub2``
+        and build the collision system ``{sub1[d]|i=p == sub2[d]|i=q  for every dim d}`` (all other
+        symbols are free parameters). If this affine system linearly implies ``p == q`` -- i.e. a
+        rational combination ``sum_d lam_d * (sub1[d]|p - sub2[d]|q)`` equals ``p - q`` identically
+        -- then a cross-iteration collision is impossible: any overlap between the two accesses
+        happens only within a single iteration, where program order in the map body is preserved.
 
-        Whenever such a certificate exists, ``m1@p == m2@q`` forces ``p == q``, so the equality
+        Whenever such a certificate exists, ``sub1@p == sub2@q`` forces ``p == q``, so the equality
         holds on the whole (affine) solution set and the proof is sound for every parameter value.
         Conservative: returns ``False`` on any non-point subset, any non-affine index, or when no
-        certificate is found, so the caller keeps its safe ``may-overlap`` answer.
+        certificate is found, so the caller keeps its safe ``may-alias`` answer.
 
-        This handles transpose/permutation-symmetric writes such as covariance's ``cov[i,j]`` and
-        ``cov[j,i]``, where the iteration variable lands in *different* dimensions of the two writes
-        so no single dimension is provably disjoint, yet a collision forces ``i == j`` (the diagonal
-        of one iteration).
+        This handles transpose/permutation-symmetric accesses such as covariance's ``cov[i,j]`` and
+        ``cov[j,i]``, where the iteration variable lands in *different* dimensions of the two
+        accesses so no single dimension is provably disjoint, yet a collision forces ``i == j`` (the
+        diagonal of one iteration). Used for write/write pairs (:func:`_writes_may_overlap`) and for
+        read/write pairs (:meth:`LoopToMap.test_read_memlet`).
+
+        ``varying`` is :func:`loop_varying_symbols` for the loop being lifted.
     """
-    nd1 = list(m1.subset.ndrange())
-    nd2 = list(m2.subset.ndrange())
+    nd1 = list(sub1.ndrange())
+    nd2 = list(sub2.ndrange())
     if len(nd1) != len(nd2) or len(nd1) == 0:
         return False
     p, q = sp.Dummy('p'), sp.Dummy('q')
@@ -373,6 +376,15 @@ def _collision_forces_same_iteration(m1: memlet.Memlet, m2: memlet.Memlet, iters
             return False
         x1 = symbolic.pystr_to_symbolic(b1)
         x2 = symbolic.pystr_to_symbolic(b2)
+        # SOUNDNESS: every symbol but ``itersym`` becomes ONE parameter shared by both accesses,
+        # which describes the loop only while that symbol holds a single value for the loop's whole
+        # execution. A symbol that varies INSIDE the body (an inner loop/map iterator, an interstate
+        # assignment) takes independent values in the two iterations, and sharing it manufactures a
+        # bogus certificate: read ``aa[j,i]`` vs write ``aa[i,j]`` seen from the ``i`` loop "proves"
+        # p == q, yet p really reads ``aa[j_p, p]`` and q writes ``aa[q, j_q]``, which alias for
+        # p != q -- TSVC s114's OUTER transpose anti-dependence, a genuine carried dependence.
+        if any(str(s) in varying for s in x1.free_symbols) or any(str(s) in varying for s in x2.free_symbols):
+            return False
         eqs.append(sp.expand(x1.subs(itersym, p) - x2.subs(itersym, q)))
         params |= {s for s in (set(x1.free_symbols) | set(x2.free_symbols)) if str(s) != str(itersym)}
     monomials = [p, q] + sorted(params, key=str)
@@ -397,7 +409,7 @@ def _collision_forces_same_iteration(m1: memlet.Memlet, m2: memlet.Memlet, iters
     return len(sp.linsolve(lin_eqs, lambdas)) > 0
 
 
-def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step=1, start=0) -> bool:
+def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step, start, varying: Set[str]) -> bool:
     """ Conservatively decide whether two write memlets to the same container
         can address the same element on different loop iterations. Returns
         ``False`` only if some subset dimension is provably disjoint (the
@@ -409,6 +421,8 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step=1, s
         threaded into the per-dimension disjointness test, so a step-4 unrolled
         body's writes ``a[i], a[i+1], a[i+2], a[i+3]`` (all distinct modulo 4)
         are recognised as disjoint.
+
+        ``varying`` is :func:`loop_varying_symbols` for the loop being lifted.
     """
     nd1 = list(m1.subset.ndrange())
     nd2 = list(m2.subset.ndrange())
@@ -427,7 +441,7 @@ def _writes_may_overlap(m1: memlet.Memlet, m2: memlet.Memlet, itersym, step=1, s
     # No single dimension settled it. Fall back to the whole-subset collision system: the iter var
     # may appear in different dimensions of the two writes (a transpose), yet a collision can still
     # force the two iterations to coincide.
-    if _collision_forces_same_iteration(m1, m2, itersym):
+    if _collision_forces_same_iteration(m1.subset, m2.subset, itersym, varying):
         return False
     return True
 
@@ -689,6 +703,9 @@ class LoopToMap(xf.MultiStateTransformation):
                         return refuse(f"read of {data} at {src_subset} is iter-indexed but does not match the "
                                       f"write pattern a*i+b -- loop-carried forward/backward dependency")
 
+        # Fixed for the whole loop, so compute once and share with every dependence test below.
+        varying = loop_varying_symbols(self.loop)
+
         # Two distinct-affine writes to the same container can hit the same element on different
         # iterations even when each is individually injective (``A[5*i]`` and ``A[3*i]`` collide
         # at ``A[15]``); parallelizing reorders them. Allow only if some dim is provably disjoint
@@ -701,12 +718,9 @@ class LoopToMap(xf.MultiStateTransformation):
             reps = list(distinct.values())
             for x in range(len(reps)):
                 for y in range(x + 1, len(reps)):
-                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start) and not permissive:
+                    if _writes_may_overlap(reps[x], reps[y], itersym, step, start, varying) and not permissive:
                         return refuse(f"writes {reps[x].subset} and {reps[y].subset} to {data} "
                                       "may overlap across iterations")
-
-        # Fixed for the whole loop, so compute once and share with every read test below.
-        varying = loop_varying_symbols(self.loop)
 
         # After looping over relevant writes, consider reads that may overlap
         for state in loop_states:
@@ -846,6 +860,18 @@ class LoopToMap(xf.MultiStateTransformation):
             # body preserves it) and is never a cross-iteration RAW. Mirrors the write/write
             # injective-index rule in :func:`_writes_may_overlap`.
             if _read_write_same_iteration(read, write, itersym):
+                continue
+            # Same-iteration collision across SEVERAL dimensions at once: the iteration variable can
+            # land in DIFFERENT dimensions of the read and the write (a transpose), so no single
+            # dimension is disjoint and none carries the same injective index, yet the whole-subset
+            # collision system still certifies that any alias forces the reading and the writing
+            # iteration to coincide. Such a dependence has distance 0 in THIS loop's dimension, i.e.
+            # it is loop-INDEPENDENT: it lives inside one iteration, whose body ``apply`` transplants
+            # verbatim into the map, so it never becomes a cross-iteration dependency and does not
+            # block a DOALL lift. TSVC s114's inner loop ``aa[i,j] = aa[j,i] + bb[i,j]`` (for a fixed
+            # ``i``, read and write alias only at ``j == i``) is exactly this case; the ``varying``
+            # guard inside the certificate is what keeps its OUTER ``i`` loop sequential.
+            if _collision_forces_same_iteration(read, write, itersym, varying):
                 continue
             ridx = _dependent_indices(itervar, read)
             widx = _dependent_indices(itervar, write)
