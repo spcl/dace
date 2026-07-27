@@ -94,7 +94,8 @@ from dace.transformation.interstate import (InlineMultistateSDFG, InlineSDFG, Lo
 from dace.transformation.interstate.expand_nested_sdfg_inputs import ExpandNestedSDFGInputs
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.vectorization.split_multi_output_tasklets import SplitMultiOutputTasklets
-from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import NormalizeMaskedWriteTasklets
+from dace.transformation.passes.vectorization.normalize_masked_write_tasklets import (NormalizeMaskedWriteTasklets,
+                                                                                      NormalizeTernaryTasklets)
 from dace.libraries.tileops.nodes import (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore,
                                           TileUnop)
 from dace.libraries.tileops._dispatch import select_tile_implementation
@@ -838,6 +839,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # tiled bodies; scalar-tail scopes stay step-1 loops keeping the valid bare-if. So it
         # MUST run AFTER the remainder split.
         passes.append(NormalizeMaskedWriteTasklets())
+        # A ternary that IS the whole body collapses to one SSA line, so SplitTasklets declines it
+        # and the raw ternary survives -- only the ITE() spelling reaches _detect_ite for a Symbol
+        # or literal arm.
+        passes.append(NormalizeTernaryTasklets())
         if fuse_multiply_add:
             # ``a*b + c`` -> ``fma(a, b, c)`` on the split single-op tasklets, BEFORE the body is
             # nested + tiled, so the converter later lowers it to a single ``TileFMA`` (a native

@@ -202,3 +202,81 @@ class NormalizeMaskedWriteTasklets(ppl.Pass):
                 new_lines.append("%s = %s" % (lhs, rhs))
         tasklet.code = CodeBlock("\n".join(new_lines), language=dace.dtypes.Language.Python)
         return True
+
+
+class IfExpToITE(ast.NodeTransformer):
+    """Rewrite every ``ast.IfExp`` (``t if cond else e``) to an ``ITE(cond, t, e)`` call,
+    innermost first, so a nested ternary composes into a nested ``ITE`` call."""
+
+    def visit_IfExp(self, node: ast.IfExp) -> ast.Call:
+        self.generic_visit(node)  # nested IfExp arms first -- ITE(c, ITE(...), ...) composes
+        return ast.Call(func=ast.Name(id="ITE", ctx=ast.Load()), args=[node.test, node.body, node.orelse], keywords=[])
+
+
+class NormalizeTernaryTasklets(ppl.Pass):
+    """Rewrite a tasklet-body Python ternary (``out = t if cond else e``) into the first-class
+    ``out = ITE(cond, t, e)`` function form.
+
+    ``SplitTasklets`` (:mod:`dace.transformation.passes.split_tasklets`, ``ASTSplitter``) already
+    knows how to lower a ternary to ``ITE`` -- but only as a BY-PRODUCT of splitting a
+    multi-operation body into single-op SSA statements. When the ternary IS the whole body,
+    ``to_ssa`` collapses it to exactly one SSA line, and ``SplitTasklets`` treats that as
+    "already split" (its ``len(ssa_statements) > 1`` gate) and leaves the ORIGINAL raw ternary in
+    place. A flat ``_o = _t if _cond else 0.0`` (or a Symbol arm, or any parenthesisation /
+    whitespace variant) therefore reaches ``ConvertTaskletsToTileOps`` unrewritten, where
+    ``_detect_ite``'s raw-ternary branch only fires for an EXACT permutation of three
+    IN-CONNECTOR names -- a literal or Symbol arm (n_in in (1, 2)) is missed entirely, even
+    though the equivalent ``ITE(...)`` call spelling is already handled for those arities.
+
+    This pass closes the gap at the body-text level: the tasklet's sole assignment is parsed,
+    and if its RHS is a top-level ``ast.IfExp`` (nested arms rewritten too, innermost first), it is
+    rewritten to the composed ``ITE(cond, t, e)`` call. Purely a text rewrite -- each arm
+    (in-connector, free symbol, or literal/constant expression) passes through ``ast.unparse``
+    verbatim, so no connector is invented, renamed, or dropped, and no symbol is touched. Runs in
+    vectorize prep alongside :class:`NormalizeMaskedWriteTasklets` (same IT/ITE family, same
+    prep slot) -- but unlike ``IT``, ``ITE`` always writes one of its two arms (no masking
+    semantics), so this pass needs no tiled-vs-scalar-tail distinction.
+    """
+
+    CATEGORY: str = "Vectorization Preparation"
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.Tasklets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def depends_on(self):
+        return set()
+
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        count = 0
+        for state in sdfg.all_states():
+            for tasklet in list(state.nodes()):
+                if not isinstance(tasklet, nd.Tasklet):
+                    continue
+                if tasklet.code.language != dace.dtypes.Language.Python:
+                    continue
+                if self._normalize_ternary(tasklet):
+                    count += 1
+        return count or None
+
+    def _normalize_ternary(self, tasklet: nd.Tasklet) -> bool:
+        """Rewrite one tasklet's sole assignment in place if its RHS is a ternary.
+        Returns True if changed."""
+        try:
+            body = ast.parse(tasklet.code.as_string).body
+        except (SyntaxError, ValueError):
+            return False
+        if len(body) != 1 or not isinstance(body[0], ast.Assign):
+            return False
+        assign = body[0]
+        if len(assign.targets) != 1 or not isinstance(assign.targets[0], ast.Name):
+            return False
+        if assign.targets[0].id not in tasklet.out_connectors:
+            return False
+        if not isinstance(assign.value, ast.IfExp):
+            return False
+        assign.value = IfExpToITE().visit(assign.value)
+        tasklet.code = CodeBlock(ast.unparse(assign), language=dace.dtypes.Language.Python)
+        return True
