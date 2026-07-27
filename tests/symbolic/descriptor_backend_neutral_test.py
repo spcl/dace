@@ -27,11 +27,20 @@ def test_neutral_heads_agree_with_sympy_on_sympy_values():
 
 
 def test_descriptor_accepts_and_reports_native_symbols():
-    """A shape/stride term the active engine built natively is accepted, and its symbols reported."""
+    """A shape/stride term the active engine built natively is accepted, and its symbols reported.
+
+    Under the sympy backend no foreign value can exist -- the seam's own head IS the sympy class --
+    so the assertion there is the complementary one: the capability reports itself absent rather
+    than answering by accident, and the descriptor still classifies the values that DO exist.
+    """
     if symbolic_engine.native_parse is None:
-        pytest.skip("no native engine bound: the sympy backend has no foreign value to construct")
-    term = symbolic_engine.native_parse("N * 2 + M")
-    assert not isinstance(term, symbolic.sympy.Basic), "test is vacuous unless the value is foreign"
+        assert symbolic_engine.NATIVE_EXPR is None, "no parser, so no native type either"
+        assert not symbolic_engine.is_native_symbol(sympy.Symbol("N")), "a sympy value is not native here"
+        term = symbolic.pystr_to_symbolic("N * 2 + M")
+        assert isinstance(term, symbolic.SymbolicBasic), "the seam head must accept the backend's own value"
+    else:
+        term = symbolic_engine.native_parse("N * 2 + M")
+        assert not isinstance(term, symbolic.sympy.Basic), "the cross-engine case needs a foreign value"
 
     arr = data.Array(dace.float64, (term, 8), transient=True)
     arr.validate()

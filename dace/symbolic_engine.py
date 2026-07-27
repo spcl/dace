@@ -505,6 +505,12 @@ if _BACKEND_NAME == "idxalg":
             cond, then, els = e.args
             head = "ITE" if _idx._CTX.spelling(e._e) == "alternate" else "IfExpr"
             return _dace_op(head, [_from_idx(_peel_truthiness(cond)), _from_idx(then), _from_idx(els)])
+        if name == "Pow" and _idx._CTX.spelling(e._e) == "alternate":
+            # `ipow` is the integer power, and DaCe lowers it apart from the real one on purpose:
+            # `dace::math::pow` returns a double and will not compile where an array size is wanted.
+            # One node here, so the recorded FORM is what tells the two apart -- without it a
+            # round-trip through this converter downgraded every `ipow` to `pow`.
+            return _dace_op("ipow", [_from_idx(a) for a in e.args])
         args = [_from_idx(a) for a in e.args]
         spelled = _SPELLED_CLASS.get((name, len(args)))
         if spelled is not None:
