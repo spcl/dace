@@ -90,7 +90,8 @@ def create_datadescriptor(obj, no_custom_desc=False):
                     raise TypeError(f'Cannot infer data type of array interface object "{interface}"')
             else:
                 dtype = dtypes.typeclass(np.dtype(interface['typestr']).type)
-        itemsize = obj.itemsize
+        # ml_dtypes fp8 reports an unparseable '<f1' typestr; trust the array's own itemsize.
+        itemsize = obj.itemsize if hasattr(obj, 'itemsize') else np.dtype(interface['typestr']).itemsize
         if len(interface['shape']) == 0:
             return Scalar(dtype, storage=storage)
         return Array(dtype=dtype,
