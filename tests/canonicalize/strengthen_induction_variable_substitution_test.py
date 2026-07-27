@@ -23,6 +23,11 @@ two legal answers about where an IV's value comes from, and refuse otherwise.
    because the first iteration has no previous iteration to read from. Both the lift and
    its guard are tested: a mismatching seed must still refuse.
 
+4. A STRIDE other than 1 does not remove the closed form, it only changes what the counter
+   counts: iteration ``i`` is trip ``int_floor(i - start, stride)``, not ``i - start``. The
+   pass used to refuse every non-unit stride outright. Its guard is the companion test that a
+   CONDITIONAL update -- which genuinely has no closed form in the loop variable -- still refuses.
+
 All shapes must lose the loop-carried symbol and stay bit-exact.
 """
 
@@ -51,8 +56,7 @@ def _build_use_before_increment_sdfg(n: int) -> dace.SDFG:
 
     init = sdfg.add_state('init', is_start_block=True)
 
-    loop = LoopRegion('loop', condition_expr=f'i < {n}', loop_var='i', initialize_expr='i = 0',
-                      update_expr='i = i + 1')
+    loop = LoopRegion('loop', condition_expr=f'i < {n}', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
     sdfg.add_node(loop)
     # Seed the IV symbol ``j`` before the loop.
     sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'j': '0'}))
@@ -65,8 +69,7 @@ def _build_use_before_increment_sdfg(n: int) -> dace.SDFG:
         s2 = br.add_state(name + '_end')
         rd = s1.add_read(src_array)
         wr = s1.add_write('a')
-        tlt = s1.add_tasklet(name + '_t', {'__in'}, {'__out'}, '__out = __in',
-                             language=dace.dtypes.Language.Python)
+        tlt = s1.add_tasklet(name + '_t', {'__in'}, {'__out'}, '__out = __in', language=dace.dtypes.Language.Python)
         s1.add_edge(rd, None, tlt, '__in', dace.Memlet(data=src_array, subset='i'))
         s1.add_edge(tlt, '__out', wr, None, dace.Memlet(data='a', subset='j'))
         # Increment AFTER the use.
@@ -98,8 +101,8 @@ def _reference(n: int, b: np.ndarray, c: np.ndarray) -> np.ndarray:
 def _carries_symbol(sdfg: dace.SDFG, sym: str) -> bool:
     """Whether any loop body still assigns ``sym`` -- i.e. the loop-carried dependency
     on the IV survived (the loop cannot parallelize)."""
-    return any(sym in (e.data.assignments or {}) for r in sdfg.all_control_flow_regions()
-               if isinstance(r, LoopRegion) for e in r.all_interstate_edges())
+    return any(sym in (e.data.assignments or {}) for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion)
+               for e in r.all_interstate_edges())
 
 
 def test_branch_uniform_hoist_use_before_increment():
@@ -271,6 +274,170 @@ def test_derived_iv_use_before_definition_disagreeing_seed_refuses():
     sdfg.compile()(a=got, b=b.copy(), N=n)
     ref = _use_before_def_reference(n, b, 3)
     assert np.array_equal(ref, got), f"refusal must preserve semantics:\nref={ref}\ngot={got}"
+
+
+def _build_symbolic_stride_counter_sdfg() -> dace.SDFG:
+    """``k = 0; for i in range(START, N, STRIDE): k += 1; a[i] = b[N - k]``.
+
+    TSVC ``s122``'s shape, with BOTH the start and the stride left symbolic. The increment sits
+    on the TOP iedge (out of the empty loop start block), so the gather reads the POST-increment
+    counter. Counting in loop-variable units (``i - START``) instead of TRIPS
+    (``int_floor(i - START, STRIDE)``) would scale the gather index by the stride -- reading a
+    wholly different element of ``b`` on every iteration but the first.
+    """
+    sdfg = dace.SDFG('symbolic_stride_counter')
+    n = dace.symbol('N', dace.int64)
+    for name in ('N', 'START', 'STRIDE', 'k'):
+        sdfg.add_symbol(name, dace.int64)
+    sdfg.add_array('a', [n], dace.float64)
+    sdfg.add_array('b', [n], dace.float64)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('loop',
+                      condition_expr='i < N',
+                      loop_var='i',
+                      initialize_expr='i = START',
+                      update_expr='i = i + STRIDE')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'k': '0'}))
+
+    head = loop.add_state('head', is_start_block=True)
+    body = loop.add_state('body')
+    loop.add_edge(head, body, dace.InterstateEdge(assignments={'k': 'k + 1'}))
+
+    rd = body.add_read('b')
+    wr = body.add_write('a')
+    tlt = body.add_tasklet('g_t', {'__in'}, {'__out'}, '__out = __in', language=dace.dtypes.Language.Python)
+    body.add_edge(rd, None, tlt, '__in', dace.Memlet(data='b', subset='N - k'))
+    body.add_edge(tlt, '__out', wr, None, dace.Memlet(data='a', subset='i'))
+
+    sdfg.validate()
+    return sdfg
+
+
+def _symbolic_stride_reference(n: int, start: int, stride: int, b: np.ndarray) -> np.ndarray:
+    a = np.zeros(n, dtype=np.float64)
+    k = 0
+    for i in range(start, n, stride):
+        k = k + 1
+        a[i] = b[n - k]
+    return a
+
+
+def test_symbolic_start_and_stride_counter_lifts():
+    """A counter IV in a loop with a symbolic start AND a symbolic stride: iteration ``i`` is
+    trip ``int_floor(i - start, stride)``, so the closed form exists and must be substituted."""
+    n, start, stride = 12, 1, 3
+    b = np.random.default_rng(4).random(n)
+
+    sdfg = _build_symbolic_stride_counter_sdfg()
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+        "a symbolic stride does not stop the counter having a closed form -- it must lift"
+    sdfg.validate()
+    assert not _carries_symbol(sdfg, 'k'), "loop-carried ``k`` survived -> loop still sequential"
+
+    got = np.zeros(n)
+    sdfg.compile()(a=got, b=b.copy(), N=n, START=start, STRIDE=stride)
+    ref = _symbolic_stride_reference(n, start, stride, b)
+    assert np.array_equal(ref, got), f"value mismatch:\nref={ref}\ngot={got}"
+
+
+def _build_guarded_data_iv_sdfg(n: int, guarded: bool) -> dace.SDFG:
+    """``for i in range(n): b[i] = b[i] * a[0]; [if i % 2 == 0:] a[0] = a[0] * 0.5``.
+
+    The accumulator ``a[0]`` is a DATA recurrence read by the sibling statement -- exactly the
+    use-site expansion's shape. With ``guarded=True`` the update runs only on even iterations, so
+    it has NO closed form in ``i`` and the pass must refuse; expanding ``a_entry * 0.5**i`` anyway
+    would halve twice as fast as the loop does. ``guarded=False`` builds the otherwise-identical
+    unconditional twin, which MUST lift -- that is what makes the refusal attributable to the
+    guard rather than to some incidental mismatch in the fixture.
+    """
+    sdfg = dace.SDFG('guarded_data_iv' if guarded else 'plain_data_iv')
+    sdfg.add_array('a', [1], dace.float64)
+    sdfg.add_array('b', [n], dace.float64)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    loop = LoopRegion('loop', condition_expr=f'i < {n}', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(init, loop, dace.InterstateEdge())
+
+    use = loop.add_state('use', is_start_block=True)
+    rb = use.add_read('b')
+    ra = use.add_read('a')
+    wb = use.add_write('b')
+    scale = use.add_tasklet('scale', {'__in1', '__in2'}, {'__out'},
+                            '__out = (__in1 * __in2)',
+                            language=dace.dtypes.Language.Python)
+    use.add_edge(rb, None, scale, '__in1', dace.Memlet(data='b', subset='i'))
+    use.add_edge(ra, None, scale, '__in2', dace.Memlet(data='a', subset='0'))
+    use.add_edge(scale, '__out', wb, None, dace.Memlet(data='b', subset='i'))
+
+    def _populate_update(state):
+        ra2 = state.add_read('a')
+        wa = state.add_write('a')
+        half = state.add_tasklet('half', {'__in'}, {'__out'},
+                                 '__out = (__in * 0.5)',
+                                 language=dace.dtypes.Language.Python)
+        state.add_edge(ra2, None, half, '__in', dace.Memlet(data='a', subset='0'))
+        state.add_edge(half, '__out', wa, None, dace.Memlet(data='a', subset='0'))
+
+    if guarded:
+        cb = ConditionalBlock('cb')
+        loop.add_node(cb)
+        loop.add_edge(use, cb, dace.InterstateEdge())
+        then_br = ControlFlowRegion('then')
+        cb.add_branch(CodeBlock('(i % 2) == 0'), then_br)
+        _populate_update(then_br.add_state('upd', is_start_block=True))
+    else:
+        _populate_update(use)  # same state as the read: the use-site expansion's single-state shape
+
+    sdfg.validate()
+    return sdfg
+
+
+def _guarded_data_iv_reference(n: int, b: np.ndarray, guarded: bool):
+    a, out = 1.0, b.copy()
+    for i in range(n):
+        out[i] = out[i] * a
+        if not guarded or i % 2 == 0:
+            a = a * 0.5
+    return a, out
+
+
+def test_unconditional_data_iv_twin_lifts():
+    """The control for the refusal below: identical body, update NOT guarded -> must lift, and
+    the pre-update read must see ``0.5 ** i``."""
+    n = 8
+    b = np.random.default_rng(6).random(n)
+
+    sdfg = _build_guarded_data_iv_sdfg(n, guarded=False)
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+        "the unconditional twin is the use-site expansion's shape and must lift"
+    sdfg.validate()
+
+    got_a, got_b = np.array([1.0]), b.copy()
+    sdfg.compile()(a=got_a, b=got_b)
+    ref_a, ref_b = _guarded_data_iv_reference(n, b, guarded=False)
+    assert np.array_equal(ref_b, got_b), f"value mismatch:\nref={ref_b}\ngot={got_b}"
+    assert got_a[0] == ref_a, f"post-loop accumulator wrong: {got_a[0]} != {ref_a}"
+
+
+def test_conditional_data_iv_update_refuses():
+    """An IV whose update is guarded has no per-iteration closed form -- the pass must refuse,
+    and the refusal must leave the SDFG computing exactly what it did before."""
+    n = 8
+    b = np.random.default_rng(5).random(n)
+
+    sdfg = _build_guarded_data_iv_sdfg(n, guarded=True)
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is None, \
+        "a conditionally-updated accumulator has no closed form in the loop variable -- must refuse"
+    sdfg.validate()
+
+    got_a, got_b = np.array([1.0]), b.copy()
+    sdfg.compile()(a=got_a, b=got_b)
+    ref_a, ref_b = _guarded_data_iv_reference(n, b, guarded=True)
+    assert np.array_equal(ref_b, got_b), f"refusal must preserve semantics:\nref={ref_b}\ngot={got_b}"
+    assert got_a[0] == ref_a, f"refusal must preserve the accumulator: {got_a[0]} != {ref_a}"
 
 
 if __name__ == '__main__':

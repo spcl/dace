@@ -4,6 +4,11 @@
 The pass fissions IV-eligible updates out of compound loop bodies so the
 downstream :class:`InductionVariableSubstitution` matcher (which requires a
 single-tasklet body) catches them and collapses to ``O(1)``.
+
+Fission needs the IV component to be INDEPENDENT of the rest of the body. When the
+body READS the accumulator the two are coupled and this pass must refuse -- that
+shape is handled instead by ``InductionVariableSubstitution``'s use-site expansion,
+which is covered here alongside the refusal so the hand-off stays honest.
 """
 import numpy as np
 import pytest
@@ -114,6 +119,87 @@ def test_hoist_refuses_when_iv_slot_is_loop_dependency():
     sdfg.validate()
     assert res is None, ("hoist must refuse when the IV-eligible slot is also read elsewhere in the body; "
                          f"got result {res}")
+
+
+def _iv_slot_written_in_loop(sdfg, name: str) -> bool:
+    """Whether any loop body still WRITES ``name`` -- i.e. the loop-carried recurrence survived."""
+    for r in sdfg.all_control_flow_regions():
+        if not (isinstance(r, LoopRegion) and r.loop_variable):
+            continue
+        for blk in r.nodes():
+            if not isinstance(blk, dace.SDFGState):
+                continue
+            for n in blk.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data == name and blk.in_degree(n) > 0:
+                    return True
+    return False
+
+
+@dace.program
+def use_after_update(a: dace.float64[N], b: dace.float64[N]):
+    """TSVC ``s453``'s shape: the accumulator is updated, then READ by the per-element statement,
+    so the read must see this iteration's update (``2.0 * (i + 1)``, not ``2.0 * i``)."""
+    s = 0.0
+    for i in range(N):
+        s = s + 2.0
+        a[i] = s * b[i]
+
+
+@dace.program
+def use_before_update(a: dace.float64[N], b: dace.float64[N]):
+    """The mirror image: the per-element statement reads the accumulator BEFORE the update, so it
+    must see the PREVIOUS iterations' value only (``0.5 ** i``, not ``0.5 ** (i + 1)``)."""
+    s = 1.0
+    for i in range(N):
+        a[i] = s * b[i]
+        s = s * 0.5
+
+
+def test_use_site_substitution_post_update_read():
+    """The shape ``HoistInductionVariableUpdates`` cannot fission (the accumulator is READ by the
+    statement beside it) and ``_try_substitute`` cannot collapse (the body has two statements):
+    the closed form is expanded at the read instead."""
+    n = 16
+    b0 = np.random.default_rng(1).standard_normal(n)
+
+    sdfg = _setup(use_after_update)
+    assert HoistInductionVariableUpdates().apply_pass(sdfg, {}) is None, \
+        "the IV component is not independent here, so fission must refuse"
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+        "s453's read-after-update data IV must be expanded at its use site"
+    sdfg.validate()
+    assert not _iv_slot_written_in_loop(sdfg, 's'), "the loop still writes s -> recurrence survived"
+
+    a = np.zeros(n)
+    sdfg(a=a, b=b0.copy(), N=n)
+    a_ref, s_ref = np.zeros(n), 0.0
+    for i in range(n):
+        s_ref = s_ref + 2.0
+        a_ref[i] = s_ref * b0[i]
+    # 2.0*(i+1) is exact in binary at these lengths, so an off-by-one step cannot hide in rounding.
+    assert np.array_equal(a, a_ref), f"post-update read got the wrong step:\nref={a_ref}\ngot={a}"
+
+
+def test_use_site_substitution_pre_update_read():
+    """Same body, opposite order: the offset is ``t``, not ``t + 1``. Reading the source order
+    instead of the dataflow would give every element one extra halving."""
+    n = 16
+    b0 = np.random.default_rng(2).standard_normal(n)
+
+    sdfg = _setup(use_before_update)
+    assert InductionVariableSubstitution().apply_pass(sdfg, {}) is not None, \
+        "a read BEFORE the update has a closed form too (one step behind) -- it must lift"
+    sdfg.validate()
+    assert not _iv_slot_written_in_loop(sdfg, 's'), "the loop still writes s -> recurrence survived"
+
+    a = np.zeros(n)
+    sdfg(a=a, b=b0.copy(), N=n)
+    a_ref, s_ref = np.zeros(n), 1.0
+    for i in range(n):
+        a_ref[i] = s_ref * b0[i]
+        s_ref = s_ref * 0.5
+    # Halving is exact in binary, so demand bit-equality: an off-by-one step doubles every element.
+    assert np.array_equal(a, a_ref), f"pre-update read got the wrong step:\nref={a_ref}\ngot={a}"
 
 
 if __name__ == '__main__':

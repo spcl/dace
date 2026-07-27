@@ -8,6 +8,11 @@ feeds the array gathers ``b[k]`` / ``c[k]``. Substituting the between-blocks
 propagation folds into the gathers, so ``LoopToMap`` parallelizes the whole loop.
 The kernel is run to a numpy reference to confirm the substitution is correct,
 not just that it parallelizes.
+
+``s453`` and ``s122`` are the two shapes that need the closed form expanded at the
+IV's USE SITES rather than the loop eliminated: ``s453``'s accumulator is READ by
+the statement next to it (so it is neither eliminable nor fissionable), and
+``s122``'s counter lives in a loop whose start AND stride are symbolic.
 """
 
 import numpy as np
@@ -56,6 +61,25 @@ def test_s124_branch_uniform_iv_parallelizes():
     nloops, nmaps = _canonicalize_counts('s124_d_single')
     assert nloops == 0 and nmaps >= 1, \
         f"s124 (branch-uniform IV) should fully parallelize, got loops={nloops} maps={nmaps}"
+
+
+def test_s453_use_site_iv_parallelizes():
+    """s453: ``s = s + 2.0; a[i] = s * b[i]`` -- the IV is a DATA accumulator that the other
+    statement READS, so it is neither eliminable nor fissionable. Expanding its closed form at
+    the use site (``s == s_entry + 2.0*(i+1)`` after this iteration's update) leaves a pure
+    per-element body."""
+    nloops, nmaps = _canonicalize_counts('s453_d_single')
+    assert nloops == 0 and nmaps >= 1, \
+        f"s453 (use-site data IV) should fully parallelize, got loops={nloops} maps={nmaps}"
+
+
+def test_s122_symbolic_start_and_stride_iv_parallelizes():
+    """s122: ``for i in range(n1-1, LEN_1D, n3): k = k + j; a[i] = a[i] + b[LEN_1D-k]`` -- BOTH
+    the start and the stride are symbolic, so the counter's closed form needs the trip index
+    ``t = int_floor(i - start, stride)`` rather than ``i - start``."""
+    nloops, nmaps = _canonicalize_counts('s122_d_single')
+    assert nloops == 0 and nmaps >= 1, \
+        f"s122 (symbolic start/stride IV) should fully parallelize, got loops={nloops} maps={nmaps}"
 
 
 if __name__ == '__main__':
