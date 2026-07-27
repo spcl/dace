@@ -3,7 +3,7 @@
 
 import ast
 import abc
-import collections
+import collections.abc
 import copy
 import inspect
 import itertools
@@ -1995,9 +1995,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         tinputs = {k: None for k, v in inputs.items()}
         toutputs = {k: None for k, v in outputs.items()}
 
-        if isinstance(input_nodes, (list, set)):
+        if isinstance(input_nodes, (list, collections.abc.Set)):
             input_nodes = {input_node.data: input_node for input_node in input_nodes}
-        if isinstance(output_nodes, (list, set)):
+        if isinstance(output_nodes, (list, collections.abc.Set)):
             output_nodes = {output_node.data: output_node for output_node in output_nodes}
 
         tasklet = nd.Tasklet(
@@ -3899,6 +3899,11 @@ class ConditionalBlock(AbstractControlFlowRegion):
     def add_branch(self, condition: Optional[Union[CodeBlock, str]], branch: ControlFlowRegion):
         if condition is not None and not isinstance(condition, CodeBlock):
             condition = CodeBlock(condition)
+        # Same check ``add_node`` makes, for the same reason: a branch reached only through this list
+        # is never type-checked anywhere else, so a wrong object here would surface as a failure in
+        # some later pass instead of at the point that accepted it.
+        if not isinstance(branch, ControlFlowRegion):
+            raise TypeError('Expected ControlFlowRegion, got ' + str(type(branch)))
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
