@@ -29,9 +29,9 @@ def test_axpy_nanobind_interface():
         csdfg(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
 
         assert np.allclose(b, expected)
-        # The module is registered under dace.generated.<path magic>.<name>.
-        from dace.codegen.compiler import generated_module_qualname
-        qualname = generated_module_qualname(csdfg.filename, sdfg.name)
+        # The module is registered under dace.generated.<folder magic>.<name>.
+        from dace.codegen.compiler import nanobind_qualified_module_name
+        qualname = nanobind_qualified_module_name(csdfg.sdfg.build_folder, sdfg.name)
         assert qualname.startswith('dace.generated.')
         assert qualname.endswith(f'.{sdfg.name}')
         assert qualname in sys.modules
@@ -88,8 +88,8 @@ def test_nanobind_interface_same_name_recompile():
         csdfg2(A=a, B=b, alpha=np.float64(3.0), N=np.int32(n))
         assert np.allclose(b, expected)
         assert csdfg2.sdfg.name == f'{base_name}_0'
-        from dace.codegen.compiler import generated_module_qualname
-        assert generated_module_qualname(csdfg2.filename, f'{base_name}_0') in sys.modules
+        from dace.codegen.compiler import nanobind_qualified_module_name
+        assert nanobind_qualified_module_name(csdfg2.sdfg.build_folder, f'{base_name}_0') in sys.modules
 
 
 def test_nanobind_interface_return_value():
@@ -278,6 +278,77 @@ def test_nanobind_interface_rename_own_build_folder():
         assert os.path.basename(renamed_folder).startswith(renamed)
         assert os.path.isfile(os.path.join(renamed_folder, 'INTERFACE'))
         assert not os.path.isfile(os.path.join(original_folder, 'build', f'lib{renamed}.so'))
+
+
+def test_nanobind_interface_rename_explicit_folder_stays(tmp_path):
+    """An explicitly-set build folder is the user's contract: a collision-renamed
+    program builds in place inside it (the fixed-folder regime, same behaviour
+    as cache mode 'single') instead of re-deriving its own folder."""
+    import os
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_explfolder(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        folder = str(tmp_path / 'pinned')
+
+        sdfg1 = axpy_nanobind_explfolder.to_sdfg()
+        base_name = sdfg1.name
+        sdfg1.build_folder = folder
+        csdfg1 = sdfg1.compile()
+
+        sdfg2 = axpy_nanobind_explfolder.to_sdfg()
+        sdfg2.build_folder = folder
+        csdfg2 = sdfg2.compile()
+
+        # Renamed, but still in the pinned folder - never relocated.
+        assert csdfg2.sdfg.name == f'{base_name}_0'
+        assert os.path.realpath(csdfg2.sdfg.build_folder) == os.path.realpath(folder)
+        assert os.path.realpath(os.path.dirname(csdfg2.filename)).startswith(os.path.realpath(folder))
+
+        n = 16
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 3.0 * a + b
+        csdfg2(A=a, B=b, alpha=np.float64(3.0), N=np.int32(n))
+        assert np.allclose(b, expected)
+        b2 = np.random.rand(n)
+        expected2 = 2.0 * a + b2
+        csdfg1(A=a, B=b2, alpha=np.float64(2.0), N=np.int32(n))
+        assert np.allclose(b2, expected2)
+
+
+def test_nanobind_interface_rename_third_compile_consistent():
+    """Three same-named compiles yield base, _0, _1 - the collision probe must
+    track the folder each candidate actually builds into, or the third compile
+    would silently reuse the stale _0 module."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_thrice(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        sdfg1 = axpy_nanobind_thrice.to_sdfg()
+        base_name = sdfg1.name
+        csdfg1 = sdfg1.compile()
+        csdfg2 = axpy_nanobind_thrice.to_sdfg().compile()
+        csdfg3 = axpy_nanobind_thrice.to_sdfg().compile()
+
+        assert csdfg2.sdfg.name == f'{base_name}_0'
+        assert csdfg3.sdfg.name == f'{base_name}_1'
+
+        # All three dispatch into live, correct code.
+        n = 16
+        a = np.random.rand(n)
+        for csdfg, alpha in ((csdfg1, 2.0), (csdfg2, 3.0), (csdfg3, 4.0)):
+            b = np.random.rand(n)
+            expected = alpha * a + b
+            csdfg(A=a, B=b, alpha=np.float64(alpha), N=np.int32(n))
+            assert np.allclose(b, expected)
 
 
 def test_nanobind_interface_name_collision_error():
@@ -870,20 +941,21 @@ def test_nanobind_interface_load_reuses_same_artifact():
             B[:] = alpha * A + B
 
         csdfg = load_reuse_nanobind.to_sdfg().compile()
-        module = load_nanobind_module(csdfg.module.__file__, csdfg.sdfg.name)
+        module = load_nanobind_module(csdfg.module.__file__, csdfg.sdfg.name, csdfg.sdfg.build_folder)
         assert module is csdfg.module
 
 
 def test_nanobind_interface_load_distinct_artifact_coexists():
     """A distinct artifact under an already-loaded generated name loads as its
     own module: registration is ``dace.generated.<magic>.<name>`` with
-    ``<magic>`` derived from the artifact's resolved path, so only the exact
-    same file reuses a loaded module - different files coexist."""
+    ``<magic>`` derived from the SDFG's resolved build folder, so only the
+    same (folder, name) pair reuses a loaded module - artifacts in different
+    folders coexist."""
     import os
     import shutil
     import tempfile
 
-    from dace.codegen.compiler import generated_module_qualname, load_nanobind_module
+    from dace.codegen.compiler import nanobind_qualified_module_name, load_nanobind_module
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
     with set_temporary('compiler', 'interface', value='nanobind'):
@@ -894,8 +966,9 @@ def test_nanobind_interface_load_distinct_artifact_coexists():
             B[:] = alpha * A + B
 
         csdfg = load_distinct_nanobind.to_sdfg().compile()
-        # A copy of the .so at a different path is a distinct artifact.
-        copied = os.path.join(tempfile.mkdtemp(), os.path.basename(csdfg.module.__file__))
+        # A copy of the .so in a different folder is a distinct artifact.
+        copied_folder = tempfile.mkdtemp()
+        copied = os.path.join(copied_folder, os.path.basename(csdfg.module.__file__))
         shutil.copy(csdfg.module.__file__, copied)
         # Identical content means identical C++ type identity (same content
         # hash in the type namespace), so nanobind warns about the duplicate
@@ -903,11 +976,11 @@ def test_nanobind_interface_load_distinct_artifact_coexists():
         import warnings as warnings_mod
         with warnings_mod.catch_warnings():
             warnings_mod.simplefilter('ignore', RuntimeWarning)
-            module = load_nanobind_module(copied, csdfg.sdfg.name)
+            module = load_nanobind_module(copied, csdfg.sdfg.name, copied_folder)
         assert module is not csdfg.module
-        assert generated_module_qualname(copied, csdfg.sdfg.name) in sys.modules
-        assert (generated_module_qualname(copied, csdfg.sdfg.name)
-                != generated_module_qualname(csdfg.module.__file__, csdfg.sdfg.name))
+        assert nanobind_qualified_module_name(copied_folder, csdfg.sdfg.name) in sys.modules
+        assert (nanobind_qualified_module_name(copied_folder, csdfg.sdfg.name)
+                != nanobind_qualified_module_name(csdfg.sdfg.build_folder, csdfg.sdfg.name))
 
         # A handle minted from the copy works (and the original still does).
         n = 8
@@ -920,27 +993,46 @@ def test_nanobind_interface_load_distinct_artifact_coexists():
 
 
 def test_nanobind_interface_load_magic_collision_detected():
-    """A path-magic hash collision (same registry key, different file) is a
+    """A folder-magic hash collision (same registry key, different file) is a
     hard error instead of silently aliasing two artifacts."""
     import types
 
-    from dace.codegen.compiler import generated_module_qualname, load_nanobind_module
+    from dace.codegen.compiler import nanobind_qualified_module_name, load_nanobind_module
 
-    bogus = '/nonexistent/collision_probe/libcollision_probe.so'
-    key = generated_module_qualname(bogus, 'collision_probe')
+    bogus_folder = '/nonexistent/collision_probe'
+    bogus = f'{bogus_folder}/libcollision_probe.so'
+    key = nanobind_qualified_module_name(bogus_folder, 'collision_probe')
     # Plant a module under the key that claims to come from a different file,
-    # as a hash collision between two paths would produce.
+    # as a hash collision between two folders would produce.
     sys.modules[key] = types.SimpleNamespace(__file__='/some/other/artifact.so')
     try:
         with pytest.raises(ValueError, match='collision'):
-            load_nanobind_module(bogus, 'collision_probe')
+            load_nanobind_module(bogus, 'collision_probe', bogus_folder)
+    finally:
+        del sys.modules[key]
+
+
+def test_nanobind_interface_load_unverifiable_module_rejected():
+    """A registry hit whose module has no ``__file__`` cannot be verified as
+    ours, so it must not be reused silently - it is rejected like a mismatch."""
+    import types
+
+    from dace.codegen.compiler import nanobind_qualified_module_name, load_nanobind_module
+
+    folder = '/nonexistent/unverifiable_probe'
+    library = f'{folder}/libunverifiable_probe.so'
+    key = nanobind_qualified_module_name(folder, 'unverifiable_probe')
+    sys.modules[key] = types.SimpleNamespace()
+    try:
+        with pytest.raises(ValueError, match='collision'):
+            load_nanobind_module(library, 'unverifiable_probe', folder)
     finally:
         del sys.modules[key]
 
 
 def test_nanobind_interface_same_name_different_programs_coexist():
     """Two different programs sharing an SDFG name load side by side and each
-    executes its own code: the sys.modules key carries the path magic, and the
+    executes its own code: the sys.modules key carries the build-folder magic, and the
     generated C++ namespace carries a content hash, so nanobind's process-wide
     type registry (keyed by type name) cannot conflate their handle types and
     silently dispatch one program's handle into the other's methods."""

@@ -3,7 +3,11 @@
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
 
+from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
+from types import ModuleType
+
 import collections
+import hashlib
 import importlib.util
 import io
 import os
@@ -15,7 +19,6 @@ import shlex
 import subprocess
 import sys
 import tempfile
-from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 
 import dace
@@ -196,17 +199,16 @@ def generate_program_folder(
 GENERATED_NAMESPACE = 'dace.generated'
 
 
-def generated_module_qualname(library_path, module_name: str) -> str:
-    """The ``sys.modules`` key for a generated nanobind module:
-    ``dace.generated.<magic>.<module_name>``, where ``<magic>`` is a hash of
-    the artifact's resolved path. Keying by path lets distinct artifacts that
-    share an SDFG name coexist in one process - only loading the exact same
-    file reuses a loaded module. A hash collision between different paths
-    maps them to the same key; :func:`load_nanobind_module` guards against
-    that by re-checking the loaded module's file before reusing it.
+def nanobind_qualified_module_name(build_folder, module_name: str) -> str:
+    """Generate the qualified name used for importing the ``nanobind`` extension module.
+
+    The module will be imported under ``dace.generated.<magic>.<module_name>``.
+    ``<module_name>`` is the name of the module and must match the ``SDFG.name`` property.
+    The intermediate level ``<magic>`` is unspecific but derived from ``build_folder``.
+    This means that (in general) SDFGs with the same name, but different build folders,
+    can be imported without issues.
     """
-    import hashlib
-    magic = hashlib.sha256(os.path.realpath(os.fspath(library_path)).encode('utf-8')).hexdigest()[:16]
+    magic = hashlib.sha256(os.path.realpath(os.fspath(build_folder)).encode('utf-8')).hexdigest()[:16]
     return f'{GENERATED_NAMESPACE}.{magic}.{module_name}'
 
 
@@ -229,41 +231,50 @@ def get_program_interface(program_folder) -> str:
     return 'ctypes'
 
 
-def load_nanobind_module(library_path, module_name: str):
-    """Loads the compiled nanobind module for one SDFG and returns it.
+def load_nanobind_module(library_path: Union[str, pathlib.Path], module_name: str,
+                         build_folder: Union[str, pathlib.Path]) -> ModuleType:
+    """Loads the compiled nanobind module of an SDFG and returns it.
 
-    The module is imported once per process and registered under
-    ``dace.generated.<magic>.<module_name>`` with ``<magic>`` derived from the
-    artifact's resolved path (see :func:`generated_module_qualname`); loading
-    the same file again returns that one module, which may back any number of
-    handles. Distinct artifacts sharing an SDFG name load side by side under
-    their own magic - their generated C++ types cannot conflate either, since
-    the type namespace carries the SDFG's content hash (see
-    ``nanobind_bindings.generate_bindings_code``). Extension modules cannot be
-    re-imported or unloaded, so a *same-path* recompile still requires a
-    rename (``SDFG.is_loaded``).
+    The module is imported once per process, the qualified module path is obtained
+    from :func:`nanobind_qualified_module_name`.
+
+    In case the module is already loaded, i.e. the module's qualified name is already
+    present in ``sys.modules``, the function will check if they refer to the same _path_.
+    This is done by comparing the already loaded modules ``__file__`` attribute with
+    ``library_path``. In case they differ an error is generated.
 
     :param library_path: Path to the compiled shared library (the nanobind
                          extension module) to import.
     :param module_name: The SDFG name (the last component of the registered
                         qualified name).
+    :param build_folder: The SDFG's build folder, hashed into the registry
+                         key's magic component.
     :return: The imported module.
     :raises ValueError: If the registry key is taken by a module from a
-                        different file (a path-magic hash collision).
+                        different file (a folder-magic hash collision, or the
+                        folder's artifact changed path under a loaded module).
+
+    :note: In case the compiled extension was regenerated between the first and second
+        time this function was called the function will return the same module the
+        first call has returned.
     """
     library_path = os.fspath(library_path)
-    qualified = generated_module_qualname(library_path, module_name)
+    qualified = nanobind_qualified_module_name(build_folder, module_name)
 
     existing = sys.modules.get(qualified)
     if existing is not None:
-        # The key encodes a hash of the path, so a hit should mean the very
-        # same file - verify it, so a hash collision between two different
-        # paths fails loudly instead of silently aliasing the artifacts.
+        # A hit should mean the very same artifact - verify it, so a hash
+        # collision between two different folders fails loudly instead of
+        # silently aliasing the artifacts.
         existing_file = getattr(existing, '__file__', None)
-        if existing_file is not None and os.path.realpath(existing_file) != os.path.realpath(library_path):
+        # A module without `__file__` under our key is something we did not load,
+        #  treat it as a mismatch too. The `realpath()` comparison (rather than plain
+        #  string equality) keeps relative vs. absolute spellings and symlinked cache
+        #  folders of the same file from being flagged as collisions.
+        if existing_file is None or os.path.realpath(existing_file) != os.path.realpath(library_path):
             raise ValueError(f"Generated-module registry collision: key '{qualified}' is taken by the module "
                              f"loaded from '{existing_file}', but '{library_path}' hashes to the same key. "
-                             f"Rename the SDFG or move the artifact to resolve the path-hash collision.")
+                             f"Rename the SDFG or move the build folder to resolve the folder-hash collision.")
         return existing
 
     # The unprefixed module_name makes the loader resolve the matching init
@@ -277,12 +288,13 @@ def load_nanobind_module(library_path, module_name: str):
     return module
 
 
-def load_nanobind_compiled_sdfg(library_path: pathlib.Path, sdfg: "dace.SDFG") -> NanobindCompiledSDFG:
+def load_nanobind_compiled_sdfg(library_path: pathlib.Path, sdfg: "dace.SDFG",
+                                build_folder: Union[str, pathlib.Path]) -> NanobindCompiledSDFG:
     """Loads the compiled nanobind module for ``sdfg`` and mints a fresh handle.
 
     The nanobind counterpart of ``load_ctypes_compiled_sdfg()``.
     """
-    module = load_nanobind_module(library_path, sdfg.name)
+    module = load_nanobind_module(library_path, sdfg.name, build_folder)
     return NanobindCompiledSDFG(sdfg, module, sdfg.arg_names)
 
 
@@ -674,7 +686,7 @@ def load_precompiled_sdfg(
 
     # Dispatch on the interface that produced the folder (INTERFACE marker).
     if get_program_interface(folder) == 'nanobind':
-        return load_nanobind_compiled_sdfg(library_path=library_path, sdfg=sdfg)
+        return load_nanobind_compiled_sdfg(library_path=library_path, sdfg=sdfg, build_folder=folder)
     return load_ctypes_compiled_sdfg(library_path=library_path, sdfg=sdfg)
 
 

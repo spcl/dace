@@ -649,7 +649,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     arglist = sdfg.arglist()
     # The C++ namespace of the generated types carries the SDFG's content hash:
     # nanobind's process-wide type registry keys by type name, so same-named
-    # but different SDFGs (loadable side by side under distinct path-magic
+    # but different SDFGs (loadable side by side under distinct folder-magic
     # module keys) need distinct type identities to not dispatch into each
     # other. Only disambiguation is needed, not stability: hash_sdfg() is not
     # guaranteed stable across DaCe versions, and a regenerated artifact with
@@ -820,7 +820,7 @@ namespace nb = nanobind;
 // shares its type registry across all modules in-process and keys it by type
 // name, so the namespace must distinguish not only different SDFG names but
 // also same-named SDFGs with different content (which may be loaded side by
-// side, each under its own dace.generated.<path magic>.<name> module): without
+// side, each under its own dace.generated.<folder magic>.<name> module): without
 // the hash, a handle from one program could silently dispatch into the other's
 // methods. Identical content in two modules (a copied artifact) shares the
 // type identity - harmless, the code is identical.

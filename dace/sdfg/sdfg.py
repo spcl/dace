@@ -2523,25 +2523,26 @@ class SDFG(ControlFlowRegion):
     def is_loaded(self, folder_mode: Optional[str] = None) -> bool:
         """
         Returns True if the SDFG binary is already loaded in the current process.
-        Returns `False` if the file does not exist.
+
+        :note: What "loaded" means depends on ``compiler.interface``. For ``nanobind``
+            this means a ``sys.modules`` registry lookup, the key is constructed using
+            :func:`nanobind_qualified_module_name`, see there for more information.
+            This means no file system access is performed.
+            For ``ctypes`` The full path of the compiled extension is constructed, if
+            the extension exists it is tested if that particular file was loaded into
+            the process or not.
+            Neither check inspects (explicitly) the content of the library, so an SDFG
+            modified after compilation may still report loaded. The only exception is
+            the case where ``self.build_folder`` is not explicitly set and ``cache``
+            is set to `hash`, but this might have side effects as it is unstable.
         """
         # Avoid import loops
         from dace.codegen import ctypes_compiled_sdfg as cs, compiler
 
-        # On the nanobind path, "loaded" means the module at THIS SDFG's
-        # artifact path is taken in sys.modules (the registry key carries a
-        # path magic): extension modules cannot be unloaded or re-imported, so
-        # a same-path recompile drives the rename-and-recompile loop - while a
-        # same-named SDFG building to a different path simply coexists.
+        # For `nanobind` check if the module this SDFG corresponds to is loaded, i.e.
+        #  its (build folder, name) identity is inside `sys.modules`.
         if Config.get('compiler', 'interface') == 'nanobind':
-            import sys
-            build_folder = self.build_folder
-            if folder_mode is None:
-                folder_mode = compiler.get_folder_mode(build_folder, probe=True)
-            if folder_mode is None:
-                folder_mode = Config.get('compiler', 'build_folder_mode')
-            binary_filename = compiler.get_binary_name(build_folder, self.name, folder_mode=folder_mode)
-            return compiler.generated_module_qualname(binary_filename, self.name) in sys.modules
+            return compiler.nanobind_qualified_module_name(self.build_folder, self.name) in sys.modules
 
         build_folder = self.build_folder
         if folder_mode is None:
@@ -2599,8 +2600,16 @@ class SDFG(ControlFlowRegion):
         if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
-            # Fix the build folder name on the copied SDFG to avoid it changing
-            # if the codegen modifies the SDFG (thereby changing its hash)
+
+            # Fix the build folder name on the copied SDFG to avoid it changing if the
+            #  codegen modifies the SDFG (thereby changing its hash). This must happen
+            #  HERE, not after the rename loop: `build_folder` was derived from `self`
+            #  and already used by the cached-binary check above, and `to_json()` is
+            #  NOT fully deterministic, so re-deriving it from the copy could split
+            #  the cache probe from the compile destination under `cache=hash`; and
+            #  the loop's first collision probe must check this original folder. The loop then un-freezes it per rename
+            #  candidate - that is not undoing this line, it changes WHICH folder each
+            #  candidate probes - and the result is frozen again after the loop.
             sdfg.build_folder = build_folder
 
             # Ensure external nested SDFGs are loaded.
@@ -2611,17 +2620,47 @@ class SDFG(ControlFlowRegion):
             nanobind_interface = Config.get('compiler', 'interface') == 'nanobind'
             if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode):
                 collision_mode = Config.get('compiler', 'nanobind_name_collision')
-                if collision_mode not in ('rename', 'error'):
-                    raise ValueError(f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision '
-                                     f'(expected "rename" or "error").')
+                assert collision_mode in ('rename', 'error'), \
+                    f'Invalid value "{collision_mode}" for compiler.nanobind_name_collision (expected "rename" or "error").'
                 if collision_mode == 'error':
                     raise ValueError(f"SDFG name '{sdfg.name}' is already loaded in this process and "
                                      "compiler.nanobind_name_collision is set to 'error'.")
+
+            # An explicitly set build folder behaves like `cache` set to `single`,
+            #  pinned to a path: a collision-renamed program builds in place inside it.
+            #  The rename keeps the name-carrying files apart (the sources and the
+            #  compiled extension), but the folder-level metadata - `program.sdfgz`,
+            #  `include/hash.h`, the `dace_files.csv`/`dace_environments.csv` lists
+            #  and the CMake state - is overwritten by the renamed program.
+
+            folder_was_explicit = self._build_folder is not None
             index = 0
             while sdfg.is_loaded(folder_mode=folder_mode):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
+                if nanobind_interface and not folder_was_explicit:
+                    # Re-derive the folder from the candidate name and freeze it
+                    #  immediately, so the probe checks the folder this candidate
+                    #  would actually build into (probe == destination; a probe of
+                    #  the original folder could exit the loop at a name whose own
+                    #  folder holds a loaded, now-stale module). Deriving exactly
+                    #  ONCE per candidate matters: `to_json()` is not fully
+                    #  deterministic, so under `cache=hash` repeated derivation
+                    #  could probe one folder and later build into another. The
+                    #  ctypes path keeps the upstream in-place semantics, hence
+                    #  the interface guard.
+                    sdfg._build_folder = None
+                    sdfg.build_folder = sdfg.build_folder
+
             if self.name != sdfg.name:
+                # Rebase the rest of the compilation on the renamed program's folder
+                #  (frozen in the loop; for folders that stayed frozen through the
+                #  loop - ctypes, explicitly set - every statement here is a no-op,
+                #  so no guard is needed).
+                build_folder = sdfg.build_folder
+                folder_mode = compiler.get_folder_mode(build_folder, probe=True)
+                if folder_mode is None:
+                    folder_mode = Config.get('compiler', 'build_folder_mode')
                 if Config.get_bool('debugprint'):
                     print(f"SDFG '{self.name}' is already loaded by another object, recompiling under a different "
                           f"name '{sdfg.name}'.")
