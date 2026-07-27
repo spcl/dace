@@ -16,6 +16,7 @@ from .mpi import *
 from .operators import *
 from .pymath import *
 from .reduction import *
+from .streams import *
 from .ufunc import *
 
 # Lightweight descriptor-inference registrations for the schedule-tree frontend.

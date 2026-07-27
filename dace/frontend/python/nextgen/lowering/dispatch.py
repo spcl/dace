@@ -55,7 +55,7 @@ from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_
 from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
-from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values
+from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values, streams
 
 #: Full-reduction calls by registry-qualified name, mapped to their WCR ufunc.
 _REDUCTION_CALLS = {
@@ -644,6 +644,11 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
             target_access = _call_target_access(target, inferred, statement, state)
             reduction.emit_reduction(target_access, reduction_ufunc, source, statement, state, axis=axis)
             return True
+
+    # Stream pushes inside a dataflow scope, which the deferred replacement
+    # expansion below cannot reach (it adds state machinery).
+    if streams.lower_stream_push(call, statement, state):
+        return True
 
     # Deferred replacement expansion: the descriptor inference typed the call,
     # so vetted registry functions emit a ReplacementCallNode that

@@ -124,7 +124,7 @@ def test_stream_push():
                 a << A[i]
                 b >> S_out(-1)
                 b = a
-        S_out >> B
+        B[:] = S_out.pop()
 
     sdfg = program.to_sdfg(simplify=True)
     # Stream push is possible
@@ -136,7 +136,7 @@ def test_stream_pop():
     @dace.program
     def program(A: dace.float32[N], B: dace.float32[N]):
         S_in = dace.define_stream(dace.float32, N)
-        S_in << A
+        S_in.push(A)
         for i in dace.map[0:N]:
             with dace.tasklet:
                 a << S_in(-1)

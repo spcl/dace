@@ -1103,6 +1103,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._dataflow_stack:
             raise NotImplementedError("Replacement calls inside dataflow scopes are not supported.")
 
+        # The expansion adds its own access nodes for the call's data
+        # arguments. Those must not land in a state that already writes them
+        # (the two subgraphs would be unordered, so the replacement would read
+        # an uninitialized container), so start a fresh state first -- the
+        # classic frontend's Call visitor does the same before invoking a
+        # replacement.
+        self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
+                                                     self._pending_interstate_assignments())
         shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
         if node.receiver is not None:
             # METHOD-family replacement (e.g. ``A.copy()``, see
