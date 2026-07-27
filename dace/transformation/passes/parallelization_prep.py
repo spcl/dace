@@ -418,6 +418,110 @@ class BestEffortLoopPeeling(ppl.Pass):
                     values.append(x)
         return values
 
+    @staticmethod
+    def point_accesses(loop: LoopRegion):
+        """``(reads, writes)`` over ``loop``'s whole body, each ``{array: {ndrange: subset}}``.
+
+        Keyed by the subset's own ranges, so the same access repeated across the body (and across
+        the states an ENCLOSING loop re-scans) is solved once instead of once per occurrence -- a
+        dropped duplicate can only re-derive a split point a caller already holds. Insertion order
+        is kept, so the candidate order callers tie-break on is deterministic.
+
+        An EMPTY memlet is a happens-before edge, not an access, and carries no subset to solve
+        against; it is skipped first so its absent data/subset is never taken for a whole-array
+        access."""
+        reads: Dict[Any, dict] = {}
+        writes: Dict[Any, dict] = {}
+        for state in loop.all_states():
+            if not isinstance(state, SDFGState):
+                continue
+            for node in state.data_nodes():
+                for e in state.in_edges(node):
+                    m = e.data
+                    if m is not None and not m.is_empty() and m.data is not None and m.subset is not None:
+                        writes.setdefault(m.data, {}).setdefault(tuple(m.subset.ndrange()), m.subset)
+                for e in state.out_edges(node):
+                    m = e.data
+                    if m is not None and not m.is_empty() and m.data is not None and m.subset is not None:
+                        reads.setdefault(m.data, {}).setdefault(tuple(m.subset.ndrange()), m.subset)
+        return reads, writes
+
+    def direction_flip_split_points(self, loop: LoopRegion):
+        """Iteration values ``x`` where a per-iteration READ and a per-iteration WRITE to the same
+        array swap dependence direction -- the crossover solved by :meth:`solve_index_crossover`.
+
+        The sibling of :meth:`_broadcast_conflict_split_points`, which handles a loop-INVARIANT
+        read index; here BOTH indices move with the loop variable, so what the body nominates is a
+        crossover rather than a single colliding iteration (TSVC s281, ``a[i] = a[N-1-i] + ...``:
+        the write is later than the aliasing read below ``(N-1)/2`` and earlier above it, so the
+        loop is neither a pure anti-dependence nor a pure true dependence and no single-direction
+        rewrite fixes it -- but each side of the crossover has read and write sets that no longer
+        meet).
+
+        Liberal by design: :meth:`_best_split_for` probes every candidate on an isolated copy and
+        keeps only one that raises the count of loops ``LoopToMap`` can prove parallel, so a
+        candidate that unblocks nothing is discarded rather than trusted.
+        """
+        ivar = symbolic.pystr_to_symbolic(loop.loop_variable)
+        reads, writes = self.point_accesses(loop)
+        values = []
+        for data in [d for d in writes if d in reads]:
+            wsubs = [w for w in writes[data].values() if self._varies_with(w, ivar)]
+            rsubs = [r for r in reads[data].values() if self._varies_with(r, ivar)]
+            for wsub in wsubs:
+                for rsub in rsubs:
+                    if len(wsub) != len(rsub):
+                        continue
+                    for x in self.solve_index_crossover(wsub, rsub, ivar):
+                        if ivar not in x.free_symbols and x not in values:
+                            values.append(x)
+        return values
+
+    def solve_index_crossover(self, wsub, rsub, ivar):
+        """The iterations bracketing the crossover of a moving write index and a moving read index
+        -- ``floor`` and ``ceil`` of the ``x`` solving ``write(x) == read(x)`` -- or ``()`` when
+        there is no such point.
+
+        Every non-loop-var dimension must MATCH (else the two accesses never alias at all) and the
+        moving dimension must be affine in the loop variable on both sides. Only the DIFFERENCE of
+        the two slopes has to be a concrete integer: it is the crossover's denominator, and a
+        symbolic offset in either index is fine. Equal slopes give no crossover -- the dependence
+        keeps one direction for the whole run and there is nothing to carve -- so they return ``()``
+        and a plain carried recurrence (``a[i] = a[i-1]``) is correctly declined here.
+
+        BOTH the floor and the ceil are returned because which of the two leaves both sides
+        provably disjoint depends on the parity of the trip count, and the caller MEASURES rather
+        than guesses. Both are spelled ``int_floor`` (``ceil(a, b) == int_floor(a + b - 1, b)``) so
+        no bare rational reaches the C printer, which distributes such an ``Add`` and truncates each
+        term on its own -- a split point that would then disagree with the one just proven safe.
+        """
+        sol = None
+        for (wb, we, _ws), (rb, re_, _rs) in zip(wsub.ndrange(), rsub.ndrange()):
+            w = _as_symbolic(wb)
+            r = _as_symbolic(rb)
+            if not _is_zero(_as_symbolic(we) - w) or not _is_zero(_as_symbolic(re_) - r):
+                return ()  # a multi-element range in this dim is not a clean point access
+            if ivar not in w.free_symbols and ivar not in r.free_symbols:
+                if not _is_zero(w - r):
+                    return ()  # loop-invariant dimension that does not match -> never aliases
+                continue
+            aw, ar = w.coeff(ivar, 1), r.coeff(ivar, 1)
+            bw, br = symbolic.simplify(w - aw * ivar), symbolic.simplify(r - ar * ivar)
+            if any(ivar in t.free_symbols for t in (aw, ar, bw, br)):
+                return ()  # not affine in the loop variable
+            den, num = symbolic.simplify(aw - ar), br - bw
+            if not den.is_Integer or den == 0:
+                return ()  # equal (or non-integer) slopes -> no integer crossover to split at
+            if den < 0:
+                den, num = -den, -num
+            if sol is not None and not _is_zero(num * sol[1] - sol[0] * den):
+                return ()  # dimensions disagree on where the crossover is
+            sol = (num, int(den))
+        if sol is None:
+            return ()
+        num, den = sol
+        return (symbolic.int_floor(num, den), symbolic.int_floor(num + den - 1, den))
+
     def _broadcast_conflict_split_points(self, loop: LoopRegion):
         """Iteration values ``x`` where a loop-invariant *broadcast read* collides
         with a per-iteration *write* to the same array.
@@ -438,26 +542,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         is harmless.
         """
         ivar = symbolic.pystr_to_symbolic(loop.loop_variable)
-        # Keyed by the subset's own ranges, so the same access repeated across the body (and across
-        # the states an ENCLOSING loop re-scans) is solved once instead of once per occurrence --
-        # a dropped duplicate can only re-derive a split point already in ``values``. Insertion
-        # order is kept, so the candidate order the caller tie-breaks on is unchanged.
-        reads: Dict[Any, dict] = {}  # array -> loop-invariant single-point read subsets
-        writes: Dict[Any, dict] = {}  # array -> loop-var-dependent single-point write subsets
-        for state in loop.all_states():
-            if not isinstance(state, SDFGState):
-                continue
-            for node in state.data_nodes():
-                for e in state.in_edges(node):
-                    m = e.data
-                    if m is not None and m.data is not None and m.subset is not None:
-                        writes.setdefault(m.data, {}).setdefault(tuple(m.subset.ndrange()), m.subset)
-                for e in state.out_edges(node):
-                    m = e.data
-                    if m is not None and m.data is not None and m.subset is not None:
-                        reads.setdefault(m.data, {}).setdefault(tuple(m.subset.ndrange()), m.subset)
+        reads, writes = self.point_accesses(loop)
         values = []
-        for data in set(reads) & set(writes):
+        for data in [d for d in writes if d in reads]:
             # Only a write whose index VARIES with the loop variable can collide: the solve below
             # never assigns a solution off a loop-invariant write dimension, so such a write can
             # only return ``None`` -- filter it out here instead of paying a solve per read.
@@ -721,6 +808,9 @@ class BestEffortLoopPeeling(ppl.Pass):
         for x in self._broadcast_conflict_split_points(loop):
             if x not in candidates:
                 candidates.append(x)
+        for x in self.direction_flip_split_points(loop):
+            if x not in candidates:
+                candidates.append(x)
         # A split point is baked into ``loop``'s segment bounds (see :meth:`_split_loop_at`), so it
         # must be in scope at ``loop``'s own level. Drop any candidate naming an iterator an INNER
         # loop binds -- a value that varies per inner iteration is undefined where the outer segments
@@ -821,39 +911,11 @@ class BestEffortLoopPeeling(ppl.Pass):
         (``0 <= int_floor(N, 2)`` and ``int_floor(N, 2) <= N``) hold for all ``N >= 0``, so the
         guard is redundant and the split applies unconditionally.
 
-        Sound because every step only ever REPLACES a subterm by a valid bound that makes the whole
-        smaller, then asks sympy whether the weakened expression is still nonnegative:
-
-        - Free symbols are re-asserted nonnegative (the canonicalization contract, already runtime
-          guarded), and ``int_floor``/``int_ceil`` are rewritten to sympy's ``floor``/``ceiling``
-          so its own sign reasoning applies. If that alone proves it, done.
-        - Otherwise relax each rounding atom to the extreme that MINIMIZES the (affine) expression:
-          ``floor(t) in [t - 1, t]`` and ``ceiling(t) in [t, t + 1]``, so a term with a negative
-          coefficient takes the upper bound and one with a nonnegative coefficient the lower. If the
-          resulting bound is nonnegative, so is ``x``. A non-numeric coefficient (nonlinear in the
-          atom) is unprovable here -> ``False`` (conservative: the guard stays)."""
-        import sympy
-        s = symbolic.simplify(x)
-        if s.is_number:
-            return bool(s >= 0)
-        nonneg = {sym: sympy.Symbol(sym.name, nonnegative=True, integer=bool(sym.is_integer)) for sym in s.free_symbols}
-        e = s.replace(lambda t: isinstance(t, symbolic.int_floor), lambda t: sympy.floor(t.args[0] / t.args[1]))
-        e = e.replace(lambda t: isinstance(t, symbolic.int_ceil), lambda t: sympy.ceiling(t.args[0] / t.args[1]))
-        e = e.subs(nonneg)
-        if e.is_nonnegative is True:
-            return True
-        bounds = {sympy.floor: (lambda a: a - 1, lambda a: a), sympy.ceiling: (lambda a: a, lambda a: a + 1)}
-        atoms = list(e.atoms(sympy.floor, sympy.ceiling))
-        if not atoms:
-            return False
-        relaxed = {}
-        for a in atoms:
-            c = e.coeff(a, 1)
-            if not c.is_number:
-                return False  # nonlinear in the rounding atom -> cannot bound
-            low, high = bounds[a.func]
-            relaxed[a] = high(a.args[0]) if c < 0 else low(a.args[0])
-        return symbolic.simplify(e.subs(relaxed)).is_nonnegative is True
+        The rounding relaxation itself lives in :func:`dace.symbolic.provably_nonnegative`, which
+        ``subsets.Range.intersects`` also uses to decide whether a split's two halves overlap. Only
+        the nonnegative-symbol assumption is added here: it is canonicalization's contract, not a
+        property of SDFGs in general, so the shared helper leaves it off by default."""
+        return symbolic.provably_nonnegative(x, assume_symbols_nonnegative=True)
 
     def _nonneg_assuming_large_modulus(self, x, m, offsets=frozenset()):
         """Prove ``x >= 0`` given the modulus ``m`` is at least ``peel_limit + 1`` and
@@ -1231,20 +1293,39 @@ class BestEffortLoopPeeling(ppl.Pass):
 
     def _mappable_loop_count(self, candidate: SDFG) -> int:
         """Cheap proxy for "does the peel unblock parallelization?": run scalar
-        fission -> symbol propagation -> constant propagation (no reduction passes),
-        then COUNT the loops ``LoopToMap`` *could* parallelize -- via
+        fission -> symbol propagation -> constant propagation -> iterator SSA (no reduction
+        passes), then COUNT the loops ``LoopToMap`` *could* parallelize -- via
         ``can_be_applied_to``, WITHOUT applying it. Peeling is a preparation pass;
         the actual ``LoopToMap`` is the pipeline's ``parallelize`` stage, so the
-        search only probes ``can_be_applied``. Mutates ``candidate`` (the prep)."""
+        search only probes ``can_be_applied``. Mutates ``candidate`` (the prep).
+
+        This is the whole soundness argument for the derived split points: a candidate is KEPT
+        only when this count rises, so it must count what the pipeline will actually achieve and
+        nothing else. Two things it must therefore do:
+
+        - Run ``UniqueLoopIterators`` first, as the pipeline does before ``parallelize``. Fresh
+          split segments all share the original iterator name, and ``LoopToMap`` refuses a segment
+          whose name is read by a LATER block ("loop-defined symbol used after the loop") -- which
+          is every segment but the last. Without the SSA rename the count misses exactly the
+          segments a split exists to unblock.
+        - Skip a loop accepted only because it provably runs at most once. Such a segment is DOALL
+          by construction, with no dependence proven about it, so counting it scores every split
+          that merely carves out a singleton as a win -- and a split that adds a residual sequential
+          loop while parallelizing nothing would then be accepted."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
+        from dace.transformation.passes.analysis import loop_analysis
         from dace.transformation.passes.constant_propagation import ConstantPropagation
         from dace.transformation.passes.scalar_fission import PrivatizeScalars
         from dace.transformation.passes.symbol_propagation import SymbolPropagation
+        from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
         PrivatizeScalars().apply_pass(candidate, {})
         SymbolPropagation().apply_pass(candidate, {})
         ConstantPropagation().apply_pass(candidate, {})
+        UniqueLoopIterators(assign_loop_iterator_post_value=False).apply_pass(candidate, {})
         count = 0
         for loop in _loops(candidate):
+            if loop_analysis.loop_provably_at_most_one_iteration(loop):
+                continue
             try:
                 if LoopToMap.can_be_applied_to(candidate, loop=loop):
                     count += 1

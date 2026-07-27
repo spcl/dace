@@ -923,6 +923,15 @@ class Range(Subset):
                 if not (cond1 and cond2):
                     return False
             except TypeError:  # cannot determine truth value of Relational
+                # Sympy gives up on a bound holding a floor/ceiling it cannot evaluate, so an
+                # index-set split at ``int_floor(N, 2)`` reads as "may overlap" though its halves
+                # provably cannot. Retry both separation directions under the rounding relaxation
+                # -- proving ``a - b - 1 >= 0`` proves ``a > b`` for any reals, so this only turns
+                # a previous "undecided" into "disjoint" and never overrides a decided answer.
+                if ((symbolic.has_rounding(rng[0] - orng[1]) or symbolic.has_rounding(orng[0] - rng[1]))
+                        and (symbolic.provably_nonnegative(rng[0] - orng[1] - 1)
+                             or symbolic.provably_nonnegative(orng[0] - rng[1] - 1))):
+                    return False
                 type_error = True
 
         if type_error:
