@@ -982,7 +982,6 @@ def test_complex_expression_with_scalars():
     # Vectorized SDFG
     copy_sdfg = copy.deepcopy(sdfg)
     SplitTasklets().apply_pass(copy_sdfg, {})
-    copy_sdfg.save("x.sdfg")
     _assert_no_math_dot_call_in_tasklets(copy_sdfg)
     c_copy_sdfg = copy_sdfg.compile()
     copy_sdfg.validate()

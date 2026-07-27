@@ -20,7 +20,6 @@ def test_nested_sdfg():
     sdfg.validate()
     copy_sdfg = copy.deepcopy(sdfg)
     copy_sdfg.validate()
-    copy_sdfg.save("s0.sdfg")
     # Specialize the scalar 'scale' in the copy
     specialize_scalar(copy_sdfg, "scale", 2.0)
 

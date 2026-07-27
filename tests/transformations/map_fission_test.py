@@ -619,11 +619,9 @@ def test_strided_fission_step2():
     strided_two_ops(A=A, B=B_ref)
 
     sdfg = strided_two_ops.to_sdfg()
-    sdfg.save("before.sdfg")
     assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
 
     sdfg(A=A, B=B_test)
-    sdfg.save("after.sdfg")
     assert np.allclose(B_test, B_ref)
 
 

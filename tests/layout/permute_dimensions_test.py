@@ -121,8 +121,6 @@ def test_permute_on_safe_indices(input_data):
     sdfg = indirect_stencil.to_sdfg()
     sdfg.validate()
 
-    sdfg.save("before_permute.sdfgz", compress=True)
-
     sdfg2 = copy.deepcopy(sdfg)
 
     PermuteDimensions(permute_map={
@@ -134,7 +132,6 @@ def test_permute_on_safe_indices(input_data):
     },
                       add_permute_maps=True).apply_pass(sdfg2, {})
 
-    sdfg2.save("after_permute.sdfgz", compress=True)
     sdfg2.validate()
 
     sdfg2(A, B, e_bln_c_s, ieidx, ieblk, nblks_c=N_BLKS, nlev=N_LEV, nproma=N_PROMA)
@@ -180,7 +177,6 @@ def test_interp_ekinh(seed):
     )
 
     sdfg = copy.deepcopy(interp_ekinh.to_sdfg())
-    sdfg.save("before_permute_interp_ekinh.sdfgz", compress=True)
     PermuteDimensions(permute_map={
         "z_kin_hor_e": [0, 2, 1],
         "e_bln_c_s": [0, 2, 1],
@@ -189,7 +185,6 @@ def test_interp_ekinh(seed):
         "z_ekinh": [0, 2, 1],
     },
                       add_permute_maps=True).apply_pass(sdfg, {})
-    sdfg.save("after_permute_interp_ekinh.sdfgz", compress=True)
 
     sdfg(
         z_kin_hor_e=z_kin_hor_e,

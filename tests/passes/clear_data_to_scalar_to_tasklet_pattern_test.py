@@ -27,13 +27,11 @@ def t2(A: dace.float64[N], B: dace.float64[N]):
 def test_t1():
     sdfg = t1.to_sdfg()
     sdfg.validate()
-    sdfg.save("s1.sdfg")
 
 
 def test_t2():
     sdfg = t2.to_sdfg()
     sdfg.validate()
-    sdfg.save("s2.sdfg")
 
 
 if __name__ == "__main__":

@@ -86,10 +86,8 @@ def test_single_edge(input: Tuple[int, str, str, int]):
     sdfgA = make_sdfg(input[1], input[2])
     sdfgB = make_sdfg(input[1], input[2])
     sdfgA.name = f"pattern_{input[0]}_original"
-    sdfgA.save(f"pattern_{input[0]}_original.sdfgz", compress=True)
     sdutil.demote_symbol_to_scalar(sdfgB, "_if_cond_44", dace.float64)
     sdfgB.name = f"pattern_{input[0]}_demoted"
-    sdfgB.save(f"pattern_{input[0]}_demoted.sdfgz", compress=True)
 
     tasklets = set()
     for state in sdfgB.all_states():
@@ -120,7 +118,6 @@ def test_complex_expr_and_connector_names():
     sdfgA = make_type2_sdfg()
     sdfgB = make_type2_sdfg()
     sdfgA.name = f"pattern_type2_original"
-    sdfgA.save(f"pattern_type2_original.sdfgz", compress=True)
     sdutil.demote_symbol_to_scalar(sdfgB, "_if_cond_1", dace.float64)
     sdfgB.name = f"pattern_type2_demoted"
 
@@ -130,8 +127,6 @@ def test_complex_expr_and_connector_names():
             if isinstance(node, dace.nodes.Tasklet):
                 tasklets.add((node, state))
     assert len(tasklets) == 1
-
-    sdfgB.save(f"pattern_type2_demoted.sdfgz", compress=True)
 
     tasklet, state = tasklets.pop()
 

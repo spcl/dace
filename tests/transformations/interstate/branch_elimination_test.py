@@ -376,7 +376,6 @@ def run_and_compare(
     else:
         apply_branch_elimination(copy_sdfg, 2)
 
-    copy_sdfg.save(f"{copy_sdfg.name}.sdfgz", compress=True)
     c_sdfg(**out_no_fuse)
     c_copy_sdfg(**out_fused)
 
@@ -2305,7 +2304,6 @@ def test_can_be_applied_on_wcr_edge():
     from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
     sdfg.apply_transformations_repeated(WCRToAugAssign)
     sdfg.validate()
-    sdfg.save("x0.sdfg")
     sdfg.compile()
 
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
@@ -2318,7 +2316,6 @@ def test_can_be_applied_on_wcr_edge():
         assert xform.can_be_applied(cblock.parent_graph, 0, cblock.sdfg, True) is True
 
     A = np.random.choice([0.001, 5.0], size=(N, N))
-    sdfg.save("x1.sdfg")
 
     run_and_compare_sdfg(sdfg, False, "can_be_applied_wcr", A=A)
 
@@ -2343,12 +2340,10 @@ def test_interstate_boolean():
     last_last_state = inner_sdfg.add_state_after(last_state, "ssss", assignments={"symsym": "__tmp0 or __tmp1"})
     inner_sdfg.add_symbol("symsym", dace.int64)
     sdfg.validate()
-    sdfg.save("interstate_boolean_op.sdfg")
     eb = EliminateBranches()
     eb.apply_to_top_level_ifs = True
     eb.apply_pass(sdfg, {})
     sdfg.validate()
-    sdfg.save("interstate_boolean_op_transformed.sdfg")
     sdfg.compile()
 
 
@@ -2406,7 +2401,6 @@ def test_s441():
     EliminateBranches().apply_pass(sdfg, {})
     branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     if len(branches) > 0:
-        sdfg.save("branch_elimination_failed_s441.sdfg")
         assert False
 
     run_and_compare_sdfg(sdfg, False, "branch_elimination_failed_s441", a=a, b=b, c=c, d=d)
@@ -2432,14 +2426,11 @@ def test_interstate_boolean_op_two():
     c0 = np.int64(0)
 
     sdfg = interstate_boolean_op_two.to_sdfg()
-    sdfg.save("interstate_boolean_op_two.sdfg")
 
     EliminateBranches().apply_pass(sdfg, {})
     branches = {n for (n, g) in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     if len(branches) > 0:
-        sdfg.save("interstate_boolean_op_two.sdfg")
         assert False
-    sdfg.save("interstate_boolean_op_two_transformed.sdfg")
     run_and_compare_sdfg(sdfg, False, "interstate_boolean_op_two", A=A, B=B, c0=c0)
 
 
@@ -2460,10 +2451,8 @@ def dace_s1161(a: dace.float64[LEN_1D], b: dace.float64[LEN_1D], c: dace.float64
 
 def test_s1161():
     sdfg = dace_s1161.to_sdfg()
-    sdfg.save("s1161.sdfg")
     from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import CleanAccessNodeToScalarSliceToTaskletPattern
     CleanAccessNodeToScalarSliceToTaskletPattern().apply_pass(sdfg, {})
-    sdfg.save("s1161_v2.sdfg")
     be = branch_elimination.BranchElimination()
     cblocks = {n for n, g in sdfg.all_nodes_recursive() if isinstance(n, ConditionalBlock)}
     for cblock in cblocks:

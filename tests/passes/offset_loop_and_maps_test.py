@@ -187,7 +187,6 @@ def test_loop_offsetting(normalize_loops):
     # Begin expressions should be:
     # 0 and kidia + 1
     regions = _for_regions_and_beings(copy_sdfg)
-    copy_sdfg.save("tmp1.sdfg")
     assert regions["i"] == "0", f"Expected 0 but got {regions['i']}"
     if not normalize_loops:
         assert regions["j"] == "kidia", f"Expected kidia but got {regions['j']}"
@@ -300,7 +299,6 @@ def test_with_conditional():
     OffsetLoopsAndMaps(begin_expr="1", offset_expr="-1", convert_leq_to_lt=False,
                        normalize_loops=False).apply_pass(copy_sdfg, {})
     regions = _for_regions_and_beings(copy_sdfg)
-    copy_sdfg.save("tmp1.sdfg")
     assert regions["i"] == "0", f"Expected 0 but got {regions['i']}"
     assert regions["j"] == "(kidia + 1)", f"Expected kidia + 1 but got {regions['j']}"
     _run_and_compare(sdfg, copy_sdfg, ["za", "zliqfrac", "zicefrac", "zx"])

@@ -29,9 +29,7 @@ def test_expand_nested_sdfg_inputs():
                               f"found {len(nsdfgs)}.")
     nsdfg, parent_state = nsdfgs[0]
 
-    sdfg.save("before.sdfg")
     ExpandNestedSDFGInputs().apply_to(sdfg=parent_state.sdfg, nested_sdfg=nsdfg)
-    sdfg.save("after.sdfg")
     print("here")
 
     sdfg.validate()
@@ -133,12 +131,10 @@ def test_expand_nested_sdfg_inputs_column_scalar_uncollapse_e2e():
     # -------------------------
     # Apply transformation
     # -------------------------
-    sdfg.save("before_column_scalar_uncollapse.sdfg")
     ExpandNestedSDFGInputs().apply_to(
         sdfg=parent_state.sdfg,
         nested_sdfg=nsdfg,
     )
-    sdfg.save("after_column_scalar_uncollapse.sdfg")
 
     sdfg.validate()
 
