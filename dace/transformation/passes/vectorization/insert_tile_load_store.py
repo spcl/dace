@@ -458,6 +458,11 @@ class InsertTileLoadStore(ppl.Pass):
             pre_stage_out_edges = list(inner_state.out_edges(an))
             if not pre_stage_out_edges:
                 continue  # No reads -- sink AN handled by phase 2.
+            # An empty out-edge carries no subset, so as representative it reports the full array
+            # and a per-element GATHER read is misclassified CONSTANT. Ordering only -- skip it.
+            pre_stage_out_edges = [e for e in pre_stage_out_edges if not e.data.is_empty()]
+            if not pre_stage_out_edges:
+                continue
             try:
                 src_data, src_subset, _dst_data, _dst_subset = infer_edge_endpoints(pre_stage_out_edges[0], inner_sdfg,
                                                                                     inner_state)
