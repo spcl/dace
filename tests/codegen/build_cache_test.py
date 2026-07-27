@@ -6,6 +6,7 @@ correct build save for wall-clock time.
 import contextlib
 import json
 import os
+import shutil
 import subprocess
 
 import numpy as np
@@ -118,6 +119,28 @@ def test_precompiled_header_is_actually_used(tmp_path):
     checked = command.replace(' -c ', ' -Winvalid-pch -Werror=invalid-pch -c ')
     result = subprocess.run(checked, shell=True, cwd=generated[0]['directory'], capture_output=True, text=True)
     assert result.returncode == 0, f'the compiler refused the precompiled header:\n{result.stderr}'
+
+
+@pytest.mark.skipif(os.name != 'posix', reason='precompiled headers are only wired up for GCC/Clang')
+def test_precompiled_header_separates_source_trees(tmp_path, monkeypatch):
+    """Two checkouts sharing a compiler must not share one .gch. The mtime guard cannot catch it: it
+    walks THIS tree's runtime and compares against a header built from the other's, so a stale header
+    passes while the TU compiles against foreign declarations."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    mine = compiler.prepare_precompiled_header({'cpu'})
+    assert mine, 'no precompiled header was produced'
+
+    clone = tmp_path / 'clone' / 'dace'
+    real = os.path.dirname(os.path.dirname(os.path.abspath(compiler.__file__)))
+    shutil.copytree(os.path.join(real, 'runtime', 'include'), clone / 'runtime' / 'include')
+    shutil.copytree(os.path.join(real, 'external'), clone / 'external')  # stream.h reaches into it
+    # The runtime path is derived from this module's location, so relocating it is what a second
+    # checkout looks like.
+    monkeypatch.setattr(compiler, '__file__', str(clone / 'codegen' / 'compiler.py'))
+    theirs = compiler.prepare_precompiled_header({'cpu'})
+
+    assert theirs, 'no precompiled header was produced for the second tree'
+    assert mine != theirs, 'both trees were handed the same precompiled header'
 
 
 def test_caches_disabled_still_builds(tmp_path):
