@@ -72,9 +72,10 @@ def create_datadescriptor(obj, no_custom_desc=False):
             interface = obj.__array_interface__
             storage = dtypes.StorageType.Default
 
-        if hasattr(obj, 'dtype') and obj.dtype.fields is not None:  # Struct
+        has_dtype: bool = hasattr(obj, 'dtype')
+        if has_dtype and obj.dtype.fields is not None:  # Struct
             dtype = dtypes.struct('unnamed', **{k: dtypes.typeclass(v[0].type) for k, v in obj.dtype.fields.items()})
-        elif obj.dtype.type in dtypes.dtype_to_typeclass():
+        elif has_dtype and obj.dtype.type in dtypes.dtype_to_typeclass():
             # ml_dtypes bf16/fp8 present as opaque 'V2'/'V1' in __array_interface__; resolve from the
             # registered scalar type instead of the void heuristic below.
             dtype = dtypes.dtype_to_typeclass(obj.dtype.type)
