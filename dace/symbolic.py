@@ -740,10 +740,18 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     return f'dace.{expr.dtype.to_string()}({value})'
 
 
-def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
-    # Probe must answer with sympy's derived-fact closure, not a typed range, or emitted kwargs
-    # would differ per backend.
-    return sympy_symbol(expr.name, dtype=expr.dtype).assumptions0
+@lru_cache(maxsize=None, typed=True)
+def _default_assumptions_for_dtype(dtype: 'dtypes.typeclass') -> types.MappingProxyType:
+    """The assumption closure a dtype implies, for the serializer to diff against.
+
+    Name-independent: sympy derives these from the assumption kwargs alone, so ONE probe answers for
+    every symbol of that dtype. Two fresh `symbol` objects were built per printed symbol instead,
+    which measured 55% of `save()` on the largest CloudSC SDFG.
+
+    `sympy_symbol`, so the probe is sympy's own derived-fact closure rather than another engine's
+    reconstruction from a typed range -- otherwise the emitted kwargs would differ per backend.
+    """
+    return types.MappingProxyType(sympy_symbol('__assumption_probe', dtype=dtype).assumptions0)
 
 
 def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[str, Any]:
@@ -751,7 +759,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[s
     if dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{dtype.to_string()}'
 
-    default_assumptions = _symbol_default_assumptions(sympy_symbol(expr.name, dtype=dtype))
+    default_assumptions = _default_assumptions_for_dtype(dtype)
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue

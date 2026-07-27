@@ -7,9 +7,10 @@ import inspect
 import numpy
 import ml_dtypes
 import re
+import types
 from sympy import Float, Integer
 from collections import OrderedDict
-from functools import wraps
+from functools import lru_cache, wraps
 from typing import Any, Dict, TYPE_CHECKING
 
 from dace.config import Config
@@ -1287,8 +1288,13 @@ else:
 _bool = bool
 
 
-def dtype_to_typeclass(dtype=None):
-    DTYPE_TO_TYPECLASS = {
+@lru_cache(maxsize=1, typed=True)
+def _dtype_to_typeclass_map() -> types.MappingProxyType:
+    """Built once. It was rebuilt -- 24 entries, 4 fresh `typeclass` objects -- on every call, which
+    measured 35.5k calls / 1.17s in one CloudSC load and 41% of every `symbol()` construction.
+    Handed out read-only, so the shared instance cannot be poisoned by a caller.
+    """
+    return types.MappingProxyType({
         _bool: typeclass(_bool),
         int: typeclass(int),
         float: typeclass(float),
@@ -1315,10 +1321,14 @@ def dtype_to_typeclass(dtype=None):
         # FIXME
         numpy.longlong: int64,
         numpy.ulonglong: uint64
-    }
+    })
+
+
+def dtype_to_typeclass(dtype=None):
+    mapping = _dtype_to_typeclass_map()
     if dtype is None:
-        return DTYPE_TO_TYPECLASS
-    return DTYPE_TO_TYPECLASS[dtype]
+        return mapping
+    return mapping[dtype]
 
 
 FLOAT_TYPES = {float64, float32, float16, bfloat16, float8_e4m3fn, float8_e5m2}
