@@ -2748,6 +2748,16 @@ class CPUCodeGen(TargetCodeGenerator):
 
                 nested_stream.write(local_code)
 
+                if inline:
+                    # `global_code` -- helpers/globals emitted while generating the inlined nest's OWN
+                    # states (e.g. a readable ``<array>_idx``/``_size`` helper first referenced inside
+                    # it, registered against the shared per-build registry but flushed into THIS call's
+                    # own throwaway global stream) -- is only written out by the ``if not inline:``
+                    # block below. An inlined nest never reaches that block, so without this write the
+                    # helper text is silently dropped while the shared registry still marks it emitted,
+                    # leaving `local_code` (just written above) referencing an undeclared name.
+                    nested_global_stream.write(global_code)
+
                 # Process outgoing memlets with the internal SDFG
                 codegen.process_out_memlets(sdfg,
                                             cfg,
