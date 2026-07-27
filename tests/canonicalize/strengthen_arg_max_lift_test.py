@@ -474,6 +474,83 @@ def test_break_with_index_loop_is_refused_under_every_tie_break(op, knob):
     assert ArgMaxLift(tie_break=knob)._match(loop, sdfg) is None, 'a break-derived loop must never reach a tie rule'
 
 
+# -----------------------------------------------------------------------------
+# The same s318 tie question, but on FRONTEND-built programs.
+#
+# Every tie test above hands the pass a hand-built SDFG carrying the gather in
+# its already-closed form ``a[inc*i]``. That is the shape ArgMaxLift sees only
+# AFTER induction-variable closure, so a fixture cannot tell whether the tie rule
+# survives the frontend's own lowering of ``abs`` and the guard. These build the
+# loop with ``@dace.program`` instead: strict ``>`` must keep the FIRST occurrence
+# of the extreme, non-strict ``>=`` the LAST, and the lifted answer must equal the
+# sequential one for BOTH value and index.
+# -----------------------------------------------------------------------------
+
+NA = dace.symbol('NA')
+NI = dace.symbol('NI')
+INC = dace.symbol('INC')
+
+
+@dace.program
+def _s318_strict(a: dace.float64[NA], result: dace.float64[1], idx_result: dace.int64[1]):
+    index = 0
+    maxv = abs(a[0])
+    for i in range(1, NI):
+        v = abs(a[INC * i])
+        if v > maxv:
+            index = i
+            maxv = v
+    result[0] = maxv
+    idx_result[0] = index
+
+
+@dace.program
+def _s318_non_strict(a: dace.float64[NA], result: dace.float64[1], idx_result: dace.int64[1]):
+    index = 0
+    maxv = abs(a[0])
+    for i in range(1, NI):
+        v = abs(a[INC * i])
+        if v >= maxv:
+            index = i
+            maxv = v
+    result[0] = maxv
+    idx_result[0] = index
+
+
+def _check_s318_frontend_tie(prog, op: str, expected_idx: int):
+    from dace.libraries.standard.nodes import ArgReduce
+    inc, n_iter = 2, 6
+    # |a[inc*j]| for j in 0..5 == [3, 1, 3, 1, 3, 1]: the max repeats at j=0,2,4,
+    # so strict keeps 0 and non-strict keeps 4 -- the tie choice is observable.
+    a = np.zeros(inc * n_iter)
+    for j, v in enumerate([3.0, -1.0, 3.0, 1.0, -3.0, 1.0]):
+        a[inc * j] = v
+
+    exp_val, exp_idx = _sequential_argextreme(np.abs(a[[inc * j for j in range(n_iter)]]), op)
+    assert exp_idx == expected_idx  # sanity: the reference itself picks the tie we expect
+
+    sdfg = prog.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 1
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1, f'frontend s318 under {op!r} must lift'
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    assert sum(1 for nd, _ in sdfg.all_nodes_recursive() if isinstance(nd, ArgReduce)) == 1
+
+    val = np.zeros(1)
+    idx = np.zeros(1, dtype=np.int64)
+    sdfg(a=a.copy(), result=val, idx_result=idx, NA=a.size, NI=n_iter, INC=inc)
+    assert val[0] == exp_val, f'value: got {val[0]}, expected {exp_val}'
+    assert int(idx[0]) == exp_idx, f'index: got {int(idx[0])}, expected {exp_idx} (guard {op!r})'
+
+
+def test_s318_frontend_strict_guard_keeps_the_first_extreme():
+    _check_s318_frontend_tie(_s318_strict, '>', 0)
+
+
+def test_s318_frontend_non_strict_guard_keeps_the_last_extreme():
+    _check_s318_frontend_tie(_s318_non_strict, '>=', 4)
+
+
 if __name__ == '__main__':
     for _op, _idx in (('>', 0), ('>=', 2), ('<', 1), ('<=', 3)):
         test_index_tie_breaking_matches_sequential(_op, _idx)

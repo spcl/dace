@@ -1416,5 +1416,197 @@ def test_predicate_index_does_not_mutate_on_refusal():
     assert sdfg.to_json() == before
 
 
+# -----------------------------------------------------------------------------
+# FRONTEND-shaped argmax coverage (TSVC s318) and the value+index / index-only
+# contrast.
+#
+# The s318 fixtures above are hand-built and hand ``a[inc*i]`` to the pass --
+# i.e. the gather ALREADY closed. The kernel as the frontend actually lowers it
+# still carries the secondary induction variable ``k += inc`` as a dataflow
+# tasklet (``inc`` is a scalar CONTAINER, so the step is not symbolic), which
+# ``InductionVariableSubstitution`` cannot close. These tests pin both ends: the
+# closed-form gather lifts, the un-closed frontend shape does not, and the
+# un-lifted loop still computes the right answer.
+# -----------------------------------------------------------------------------
+
+NA = dace.symbol('NA')
+NI = dace.symbol('NI')
+INC = dace.symbol('INC')
+
+
+def _abs_argmax_reference(a, inc, n_iter):
+    """The sequential kernel's answer: (max |a[inc*i]|, first argmax i) over i in 0:n_iter."""
+    vals = np.abs(a[[inc * i for i in range(n_iter)]])
+    return float(vals.max()), int(vals.argmax())
+
+
+def test_tsvc_s318_closed_form_gather_lifts_with_value_and_index():
+    """s318's argmax -- max VALUE and its INDEX over a strided, abs-transformed
+    gather -- lifts once the gather is a closed affine form ``a[INC*i]``. Both
+    outputs are checked, since an index-only or value-only lowering would still
+    match the value."""
+
+    @dace.program
+    def s318_closed(a: dace.float64[NA], result: dace.float64[1], idx_result: dace.int64[1]):
+        index = 0
+        maxv = abs(a[0])
+        for i in range(1, NI):
+            v = abs(a[INC * i])
+            if v > maxv:
+                index = i
+                maxv = v
+        result[0] = maxv
+        idx_result[0] = index
+
+    sdfg = s318_closed.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 1
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1, 'closed-form strided abs-argmax with index must lift'
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+
+    inc, n_iter = 3, 9
+    rng = np.random.default_rng(318)
+    a = rng.standard_normal(inc * n_iter)
+    out_v = np.zeros(1)
+    out_i = np.zeros(1, dtype=np.int64)
+    sdfg(a=a.copy(), result=out_v, idx_result=out_i, NA=a.size, NI=n_iter, INC=inc)
+    ref_v, ref_i = _abs_argmax_reference(a, inc, n_iter)
+    assert out_v[0] == ref_v, f'value {out_v[0]} != {ref_v}'
+    assert int(out_i[0]) == ref_i, f'index {int(out_i[0])} != {ref_i}'
+
+
+def test_tsvc_s318_frontend_shape_is_refused_pending_iv_closure():
+    """TSVC s318 EXACTLY as written: the stride comes in as a scalar container, so
+    the secondary IV update ``k = k + inc`` lowers to a dataflow tasklet in a body
+    state rather than a symbolic interstate assignment.
+    ``InductionVariableSubstitution`` cannot close ``k`` into ``a[inc*i]``, and
+    :meth:`ArgMaxLift.guarded_loop_skeleton` then refuses the loop because its body
+    holds a non-empty state. The argmax analysis itself is NOT the gap -- the
+    closed-form test above lifts the same reduction -- so this pins the cause, and
+    the un-lifted loop must still be numerically right.
+    """
+
+    @dace.program
+    def s318(a: dace.float64[NA], result: dace.float64[1], idx_result: dace.int64[1], inc: dace.int32):
+        k = 0
+        index = 0
+        maxv = abs(a[0])
+        k = k + inc
+        for i in range(1, NI):
+            v = abs(a[k])
+            if v > maxv:
+                index = i
+                maxv = v
+            k = k + inc
+        result[0] = maxv
+        idx_result[0] = index
+
+    sdfg = s318.to_sdfg(simplify=True)
+    loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+    assert len(loops) == 1
+    # The cause, asserted rather than described: a non-empty state in the body.
+    assert any(isinstance(b, dace.SDFGState) and len(b.nodes()) > 0 for b in loops[0].nodes())
+    assert ArgMaxLift().guarded_loop_skeleton(loops[0]) is None
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 1
+
+    inc, n_iter = 2, 11
+    rng = np.random.default_rng(3181)
+    a = rng.standard_normal(inc * n_iter)
+    out_v = np.zeros(1)
+    out_i = np.zeros(1, dtype=np.int64)
+    sdfg(a=a.copy(), result=out_v, idx_result=out_i, inc=inc, NA=a.size, NI=n_iter)
+    ref_v, ref_i = _abs_argmax_reference(a, inc, n_iter)
+    assert out_v[0] == ref_v and int(out_i[0]) == ref_i
+
+
+def test_argmax_no_match_keeps_the_seed_value_and_index():
+    """The guard never fires (the seed element IS the strict maximum), so the lifted
+    form must return the seed's value and its index 0 -- the value-carrier analogue
+    of the predicate-index empty-set case."""
+
+    @dace.program
+    def s318_closed(a: dace.float64[NA], result: dace.float64[1], idx_result: dace.int64[1]):
+        index = 0
+        maxv = abs(a[0])
+        for i in range(1, NI):
+            v = abs(a[INC * i])
+            if v > maxv:
+                index = i
+                maxv = v
+        result[0] = maxv
+        idx_result[0] = index
+
+    sdfg = s318_closed.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    inc, n_iter = 2, 8
+    a = np.linspace(0.1, 0.8, inc * n_iter)
+    a[0] = 99.0  # seed dominates -> no iteration updates the carriers
+    out_v = np.zeros(1)
+    out_i = np.zeros(1, dtype=np.int64)
+    sdfg(a=a.copy(), result=out_v, idx_result=out_i, NA=a.size, NI=n_iter, INC=inc)
+    assert out_v[0] == 99.0 and int(out_i[0]) == 0
+
+
+def test_value_and_index_versus_index_only_lift_to_different_reductions():
+    """The two shapes this pass carries, on the same data.
+
+    ``if a[i] > maxv: index = i; maxv = a[i]`` tracks a VALUE and its position and
+    lowers to an ``ArgReduce``; ``if a[i] < 0: j = i`` has no value carrier at all
+    and lowers to a WCR-max map over the masked index. Both must lift, and each
+    must agree with its own sequential reference -- the argmax is FIRST-wins under
+    the strict guard, the predicate index is LAST-wins by construction.
+
+    Driven through the full pipeline rather than ``apply_pass`` alone: the frontend
+    seeds ``maxv`` from ``a[0]``, which leaves it a data SCALAR, and the
+    data-carrier path refuses a true-branch ``index = i``. An earlier canonicalize
+    stage promotes the carrier to a symbol first -- which is how TSVC s315 reaches
+    this pass -- so a bare ``apply_pass`` would be testing a shape the corpus never
+    presents.
+    """
+    from dace.libraries.standard.nodes import ArgReduce
+    from dace.transformation.passes.canonicalize import canonicalize
+
+    @dace.program
+    def value_and_index(a: dace.float64[N], result: dace.float64[1], idx_result: dace.int64[1]):
+        index = 0
+        maxv = a[0]
+        for i in range(1, N):
+            if a[i] > maxv:
+                index = i
+                maxv = a[i]
+        result[0] = maxv
+        idx_result[0] = index
+
+    @dace.program
+    def index_only(a: dace.float64[N], b: dace.float64[2]):
+        j = -1
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+        b[0] = j
+
+    n = 32
+    rng = np.random.default_rng(31831)
+    a = rng.standard_normal(n)
+
+    sdfg_vi = value_and_index.to_sdfg(simplify=True)
+    canonicalize(sdfg_vi, validate=True)
+    assert _num_loops(sdfg_vi) == 0
+    assert sum(1 for nd, _ in sdfg_vi.all_nodes_recursive() if isinstance(nd, ArgReduce)) == 1
+    out_v = np.zeros(1)
+    out_i = np.zeros(1, dtype=np.int64)
+    sdfg_vi(a=a.copy(), result=out_v, idx_result=out_i, N=n)
+    assert out_v[0] == a.max() and int(out_i[0]) == int(a.argmax())
+
+    sdfg_io = index_only.to_sdfg(simplify=True)
+    canonicalize(sdfg_io, validate=True)
+    assert _num_loops(sdfg_io) == 0
+    assert sum(1 for nd, _ in sdfg_io.all_nodes_recursive() if isinstance(nd, ArgReduce)) == 0
+    assert _run_s331(sdfg_io, a, n) == _reference_last_index(a)
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

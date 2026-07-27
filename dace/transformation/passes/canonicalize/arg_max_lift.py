@@ -485,7 +485,35 @@ class ArgMaxLift(ppl.Pass):
                     rewritten += 1
         return rewritten or None
 
-    def _match(self, loop: LoopRegion, sdfg: SDFG) -> Optional[_Match]:
+    def guarded_loop_skeleton(self, loop: LoopRegion):
+        """The gate every payload analysis in this pass shares.
+
+        Both the value-carrier argmax (:meth:`_match`, TSVC s314 / s315 / s318) and
+        the predicate index (:meth:`match_predicate_index`, TSVC s331) require the
+        SAME loop skeleton -- a unit-stride, break-free loop whose body is exactly
+        one :class:`ConditionalBlock` (plus empty wrapper states) with a single
+        non-else branch and no else content. Only what the branch WRITES tells the
+        two apart, so the skeleton is decided once here and each analysis then reads
+        the guard and the branch its own way.
+
+        A break makes the loop a find-FIRST search, not a reduction: the carrier
+        holds the value at the EXIT iteration, while any arg-reduce this pass emits
+        scans the whole range (``x = a[0]; for i: if a[i] > x: x = a[i]; break``
+        would lift to ``max(a)`` -- a value miscompile, not merely a tie mismatch).
+        ``EarlyExitToFindIndex`` is the pass that parallelises that shape. The
+        data-carrier path's true-branch check counts only non-empty SDFGStates, so
+        it would otherwise let a BreakBlock through.
+
+        A non-empty plain state in the body is refused: it is per-iteration work the
+        rewrites drop. TSVC ``s318`` lands here -- its secondary induction variable
+        ``k += inc`` survives as a dataflow tasklet because ``inc`` is a scalar
+        CONTAINER, so ``InductionVariableSubstitution`` cannot close ``k`` into
+        ``a[inc*i]``. The argmax analysis below would otherwise handle s318 (the
+        closed-form gather lifts today); the gap is IV closure, not arg-reduction.
+
+        :returns: ``(iter_start, iter_end, cond_block, guard_codeblock, true_branch)``
+            or ``None``.
+        """
         start = loop_analysis.get_init_assignment(loop)
         end = loop_analysis.get_loop_end(loop)
         stride = loop_analysis.get_loop_stride(loop)
@@ -496,18 +524,9 @@ class ArgMaxLift(ppl.Pass):
                 return None
         except (TypeError, ValueError):
             return None
-
-        # A break makes this a find-FIRST search, not a reduction: the carrier
-        # holds the value at the EXIT iteration, while any arg-reduce this pass
-        # emits scans the whole range (e.g. ``x = a[0]; for i: if a[i] > x: x =
-        # a[i]; break`` lifts to ``max(a)`` -- a value miscompile, not merely a
-        # tie mismatch). The data-carrier path's true-branch check counts only
-        # non-empty SDFGStates, so it would otherwise let the BreakBlock through.
-        # ``EarlyExitToFindIndex`` is the pass that parallelises this shape.
         if self._contains_break(loop):
             return None
 
-        # Body must hold exactly one ConditionalBlock (with optional empty wrapper states).
         cond_block = None
         for b in loop.nodes():
             if isinstance(b, ConditionalBlock):
@@ -516,20 +535,25 @@ class ArgMaxLift(ppl.Pass):
                 cond_block = b
             elif isinstance(b, SDFGState):
                 if len(b.nodes()) > 0:
-                    return None  # any non-empty plain state in the body is unsupported in v1
+                    return None
             else:
                 return None
         if cond_block is None:
             return None
 
-        # The conditional must have exactly one (non-else) branch; no else / empty else.
         non_else = [(c, br) for c, br in cond_block.branches if c is not None]
-        else_branches = [(c, br) for c, br in cond_block.branches if c is None]
         if len(non_else) != 1:
             return None
-        cond_codeblock, true_branch = non_else[0]
-        if any(self._branch_has_content(br) for _, br in else_branches):
+        if any(self._branch_has_content(br) for c, br in cond_block.branches if c is None):
             return None
+        guard, true_branch = non_else[0]
+        return start, end, cond_block, guard, true_branch
+
+    def _match(self, loop: LoopRegion, sdfg: SDFG) -> Optional[_Match]:
+        skeleton = self.guarded_loop_skeleton(loop)
+        if skeleton is None:
+            return None
+        start, end, cond_block, cond_codeblock, true_branch = skeleton
 
         cond_expr_str = cond_codeblock.as_string.strip()
         # The comparison ``gather OP carrier`` reaches the ConditionalBlock in
@@ -1943,43 +1967,15 @@ class ArgMaxLift(ppl.Pass):
         carrier, i.e. ``j = max{i : pred}`` seeded from the pre-loop value of ``j``.
 
         Runs only after :meth:`_match` / :meth:`_match_2d` have refused, so a loop
-        that carries a comparison against a value carrier never reaches here.
+        that carries a comparison against a value carrier never reaches here. The
+        loop skeleton is the SAME gate the value-carrier path uses
+        (:meth:`guarded_loop_skeleton`); only the branch payload differs -- an index
+        write with no value carrier, against a guard that names no carrier at all.
         """
-        start = loop_analysis.get_init_assignment(loop)
-        end = loop_analysis.get_loop_end(loop)
-        stride = loop_analysis.get_loop_stride(loop)
-        if start is None or end is None or stride is None:
+        skeleton = self.guarded_loop_skeleton(loop)
+        if skeleton is None:
             return None
-        try:
-            if int(symbolic.simplify(stride)) != 1:
-                return None
-        except (TypeError, ValueError):
-            return None
-        # A break makes the loop a find-FIRST search -- the position is the exit
-        # iteration, not the last match -- so the max-fold would overshoot it.
-        if self._contains_break(loop):
-            return None
-
-        # Body must hold exactly one ConditionalBlock (with optional empty wrappers).
-        cond_block = None
-        for b in loop.nodes():
-            if isinstance(b, ConditionalBlock):
-                if cond_block is not None:
-                    return None
-                cond_block = b
-            elif isinstance(b, SDFGState):
-                if len(b.nodes()) > 0:
-                    return None
-            else:
-                return None
-        if cond_block is None:
-            return None
-        non_else = [(c, br) for c, br in cond_block.branches if c is not None]
-        if len(non_else) != 1:
-            return None
-        cond_codeblock, true_branch = non_else[0]
-        if any(self._branch_has_content(br) for c, br in cond_block.branches if c is None):
-            return None
+        start, end, _cond_block, cond_codeblock, true_branch = skeleton
 
         idx_carrier = self.true_branch_writes_index_only(true_branch, loop.loop_variable)
         if idx_carrier is None or idx_carrier not in sdfg.symbols:
