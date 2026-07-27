@@ -7,6 +7,7 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
+from ordered_set import OrderedSet
 
 from dace import SDFG, SDFGState, Memlet, data as dt, dtypes, properties, subsets, symbolic
 from dace.frontend.python import astutils
@@ -517,10 +518,12 @@ class MarkConstInit(ppl.Pass):
     def _remove_write(self, sdfg: SDFG, name: str) -> None:
         """Removes the (now dead) runtime write of ``name`` and any producer/access nodes it orphans.
 
-        A removed producer may be a scope-interior source anchored to its map entry by an empty
-        dependency edge. If the descriptor's access node survives (still consumed), it inherits that
-        source role and is re-anchored to the same entry -- otherwise its whole downstream chain leaks
-        out of the map scope and the code generator misorders it against the map body (see s242)."""
+        A removed producer may be a scope-interior source anchored by an empty ordering edge --
+        typically from its map entry, but a producer needing no data input at all (a bare constant
+        assign) may instead hang off a sibling access node already inside the scope. If the
+        descriptor's access node survives (still consumed), it inherits that anchor -- whatever
+        node it is -- otherwise its whole downstream chain leaks out of the scope and the code
+        generator misorders it against the map body (see s242)."""
         for state in sdfg.states():
             for node in list(state.data_nodes()):
                 if node.data != name or state.in_degree(node) == 0:
@@ -529,12 +532,12 @@ class MarkConstInit(ppl.Pass):
                 for edge in list(state.in_edges(node)):
                     srcs.append((edge.src, edge.src_conn))
                     state.remove_edge(edge)
-                scope_anchors: Set[nd.EntryNode] = set()
+                scope_anchors: OrderedSet[nd.Node] = OrderedSet()
                 for src, conn in srcs:
                     if src not in state.nodes():
                         continue
                     scope_anchors.update(ie.src for ie in state.in_edges(src)
-                                         if ie.data.is_empty() and isinstance(ie.src, nd.EntryNode))
+                                         if ie.data.is_empty() and ie.src is not node)
                     if isinstance(src, nd.Tasklet) and conn is not None:
                         if not any(oe.src_conn == conn for oe in state.out_edges(src)):
                             src.remove_out_connector(conn)
@@ -543,7 +546,8 @@ class MarkConstInit(ppl.Pass):
                     continue
                 if state.out_degree(node) > 0:
                     for entry in scope_anchors:
-                        state.add_nedge(entry, node, Memlet())
+                        if entry in state.nodes():
+                            state.add_nedge(entry, node, Memlet())
                 elif state.in_degree(node) == 0:
                     state.remove_node(node)
 

@@ -680,6 +680,64 @@ def test_gpu_rejected_fill_map_stays_valid():
     sdfg.validate()
 
 
+def test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope():
+    """A zero-input constant-assign tasklet needs no data, so its only in-edge may be an empty
+    ordering edge from a SIBLING access node already inside the map, not the map entry itself
+    (the ITE/s242 shape: a bare ``out = 3.0`` scheduled next to a real per-lane read). Folding its
+    write must re-anchor the surviving, still-consumed descriptor onto that SAME sibling -- the
+    old code only recognised a ``MapEntry`` anchor and silently dropped this one, leaking the
+    consumer out of the map scope (``scope_dict()`` -> ``None``) even though the edge itself stays
+    syntactically valid."""
+    sdfg = dace.SDFG('sibling_anchor')
+    sdfg.add_array('src', [10], dace.float64)
+    sdfg.add_scalar('elem', dace.float64, transient=True)
+    sdfg.add_scalar('cond', dace.float64, transient=True)
+    sdfg.add_scalar('mid', dace.float64, transient=True)
+    sdfg.add_array('B', [10], dace.float64)
+
+    s = sdfg.add_state('main')
+    me, mx = s.add_map('m', dict(i='0:10'))
+
+    src_r = s.add_read('src')
+    stage_t = s.add_tasklet('stage', {'inp'}, {'out'}, 'out = inp')
+    elem_n = s.add_access('elem')
+    s.add_memlet_path(src_r, me, stage_t, memlet=dace.Memlet('src[i]'), dst_conn='inp')
+    s.add_edge(stage_t, 'out', elem_n, None, dace.Memlet('elem[0]'))
+
+    # A properly-scoped sibling computation, analogous to a lifted branch condition.
+    cond_t = s.add_tasklet('cond_calc', {'e'}, {'o'}, 'o = e')
+    cond_n = s.add_access('cond')
+    s.add_edge(elem_n, None, cond_t, 'e', dace.Memlet('elem[0]'))
+    s.add_edge(cond_t, 'o', cond_n, None, dace.Memlet('cond[0]'))
+
+    # Zero-input constant tasklet, anchored via the SIBLING access node 'elem' (not the map entry).
+    const_t = s.add_tasklet('const_assign', {}, {'out'}, 'out = 3.0')
+    mid_n = s.add_access('mid')
+    s.add_nedge(elem_n, const_t, dace.Memlet())
+    s.add_edge(const_t, 'out', mid_n, None, dace.Memlet('mid[0]'))
+
+    # Consumer combining both -- analogous to the ITE tasklet reading cond AND the fold target.
+    combine_t = s.add_tasklet('combine', {'c', 'm'}, {'out'}, 'out = c + m')
+    b_w = s.add_access('B')
+    s.add_edge(cond_n, None, combine_t, 'c', dace.Memlet('cond[0]'))
+    s.add_edge(mid_n, None, combine_t, 'm', dace.Memlet('mid[0]'))
+    s.add_memlet_path(combine_t, mx, b_w, memlet=dace.Memlet('B[i]'), src_conn='out')
+
+    sdfg.validate()
+
+    res = _run(sdfg)
+    kinds = (res or {}).get(sdfg.cfg_id, {})
+    assert kinds.get('mid') == 'constexpr_static', kinds
+    assert 'mid' in sdfg.constants and float(sdfg.constants['mid']) == 3.0
+    assert mid_n in s.nodes(), 'mid access node must survive -- combine_t still reads it'
+
+    scope = s.scope_dict()
+    assert scope.get(mid_n) is me, (
+        f'mid access node leaked out of the map scope (scope={scope.get(mid_n)!r}, expected {me!r})')
+
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_scalar_constant_single_write()
     test_array_full_constant_write()
@@ -701,3 +759,4 @@ if __name__ == '__main__':
     test_symbolic_fill_map_never_becomes_const_runtime()
     test_gpu_constant_fill_map_keeps_its_schedule()
     test_gpu_rejected_fill_map_stays_valid()
+    test_zero_input_const_tasklet_anchored_via_sibling_access_node_stays_in_map_scope()
