@@ -1,8 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``DistributedDescriptor`` is the one ``Data`` subtree with neither ``strides`` nor ``total_size``.
+"""``DistributedDescriptor`` is the one ``Data`` subtree that allocates nothing.
 
 It is stored in ``sdfg.arrays`` as a transient, so the transient-allocation checks in
-``validate_sdfg`` reach it and must skip the checks that do not apply to a communicator.
+``validate_sdfg`` reach it and must skip the checks that do not apply to a communicator. It declares
+that by defining ``strides`` and ``total_size`` as constant stubs (``[]`` and ``0``) rather than by
+lacking them.
 """
 
 import inspect
@@ -37,9 +39,22 @@ def test_subarray_descriptor_validates():
 
 def test_allocated_kinds_are_exactly_the_ones_with_strides():
     """validate_sdfg checks strides/total_size for (Array, Scalar, Stream, Structure). If a new
-    Data subclass gains strides, it must join that tuple or its allocation goes unchecked."""
+    Data subclass gains strides, it must join that tuple or its allocation goes unchecked.
+
+    The ``DistributedDescriptor`` subtree is the one exemption, and having the two attributes is not
+    what exempts it -- it is that both are CONSTANT stubs saying there is no allocation to check. A
+    subclass that overrides either one is a real buffer and must join the allowlist, so the stub
+    values and the fact that nobody overrides them are pinned here too.
+    """
+    assert dt.DistributedDescriptor.strides.fget(None) == []
+    assert dt.DistributedDescriptor.total_size.fget(None) == 0
+
     allocated = (dt.Array, dt.Scalar, dt.Stream, dt.Structure)
     for cls in {c for c in vars(dt).values() if inspect.isclass(c) and issubclass(c, dt.Data)}:
+        if issubclass(cls, dt.DistributedDescriptor):
+            assert cls.strides is dt.DistributedDescriptor.strides, f'{cls.__name__} overrides the strides stub'
+            assert cls.total_size is dt.DistributedDescriptor.total_size, f'{cls.__name__} overrides total_size'
+            continue
         has_strides = 'strides' in dir(cls) and 'total_size' in dir(cls)
         assert has_strides == issubclass(
             cls, allocated), (f'{cls.__name__}: strides/total_size={has_strides} but covered-by-allowlist='
