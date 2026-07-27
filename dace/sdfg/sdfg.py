@@ -27,7 +27,7 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, SDFGState, Contr
 from dace.sdfg.type_inference import infer_expr_type
 from dace.data.distributed import ProcessGrid, SubArray, RedistrArray
 from dace.dtypes import validate_name
-from dace.properties import (DebugInfoProperty, EnumProperty, ListProperty, make_properties, NestedTupleListProperty,
+from dace.properties import (ArgumentSignatureProperty, DebugInfoProperty, EnumProperty, ListProperty, make_properties,
                              Property, CodeProperty, TransformationHistProperty, OptionalSDFGReferenceProperty,
                              DictProperty, CodeBlock)
 from typing import BinaryIO
@@ -448,12 +448,13 @@ class SDFG(ControlFlowRegion):
     """
 
     name = Property(dtype=str, desc="Name of the SDFG")
-    arg_names = ListProperty(element_type=str, desc='Ordered argument names (used for calling conventions).')
-    user_args = NestedTupleListProperty(
+    arg_names = ArgumentSignatureProperty(allow_nested=False,
+                                          desc='Ordered argument names (used for calling conventions).')
+    user_args = ArgumentSignatureProperty(
+        allow_nested=True,
         desc='Optional structured signature for the nanobind interface\'s user_bind_call entry point: '
         'entries are argument names or (nested) tuples of them, e.g. [("a", "b"), "c"]. Arguments not '
-        'listed must be inferable from listed ones. Empty disables generation of the entry point. '
-        'Serialized, so it participates in the SDFG hash (changing it triggers a rebuild).')
+        'listed must be inferable from listed ones. Empty disables generation of the entry point.')
     constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
         dtype=dict,
         default={},

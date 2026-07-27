@@ -17,7 +17,7 @@ from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
 from dace.dtypes import DebugInfo, typeclass
 from numbers import Number
-from typing import List, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
+from typing import List, Optional, Set, Type, Union, TypeVar, Generic, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.data import Data as dData
@@ -546,34 +546,46 @@ class ListProperty(Property[List[T]]):
         return list(map(self.element_type, data))
 
 
-class NestedTupleListProperty(Property):
-    """ Property type for a list whose entries are strings or arbitrarily
-        nested tuples of strings (e.g., the structured call signature
-        ``SDFG.user_args``). Values are canonicalized on assignment: the outer
-        container becomes a list, every inner container a tuple. Serializes to
-        nested JSON lists (JSON has no tuples) and restores the canonical form
-        on deserialization.
+class ArgumentSignatureProperty(Property):
+    """ Property type for an ordered argument signature, such as ``SDFG.arg_names``
+        or ``SDFG.user_args``.
+
+        Entries are argument names (strings). With ``allow_nested=True``, entries
+        may also be arbitrarily nested non-empty tuples of names. Values are
+        canonicalized on assignment: the outer container becomes a list, every
+        inner container a tuple.
+
+        Serialization always writes the self-describing format
+        ``{'type': 'ArgumentSignature', 'allow_nested': ..., 'args': [...]}``
+        with nested entries as JSON lists (JSON has no tuples). Reading also
+        accepts the legacy plain-list format that ``ListProperty`` produced and
+        interprets it as a flat signature; the legacy format is never written.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, allow_nested: bool = False, **kwargs):
         kwargs['dtype'] = list
         super().__init__(*args, **kwargs)
+        self.allow_nested = allow_nested
 
-    @staticmethod
-    def _normalize(entry):
+    def _normalize(self, entry, allow_nested: Optional[bool] = None):
+        if allow_nested is None:
+            allow_nested = self.allow_nested
         if isinstance(entry, str):
             return entry
         if isinstance(entry, (list, tuple)):
+            if not allow_nested:
+                raise TypeError('ArgumentSignatureProperty(allow_nested=False) entries must be '
+                                f'strings, got a nested {type(entry).__name__}')
             if len(entry) == 0:
-                raise ValueError('NestedTupleListProperty: empty tuple entries are not allowed')
-            return tuple(NestedTupleListProperty._normalize(e) for e in entry)
-        raise TypeError('NestedTupleListProperty entries must be strings or nested tuples of '
-                        f'strings, got {type(entry).__name__}')
+                raise ValueError('ArgumentSignatureProperty: empty tuple entries are not allowed')
+            return tuple(self._normalize(e, allow_nested) for e in entry)
+        raise TypeError('ArgumentSignatureProperty entries must be strings' +
+                        (' or nested tuples of strings' if allow_nested else '') + f', got {type(entry).__name__}')
 
     def __set__(self, obj, val):
         if val is not None:
             if not isinstance(val, (list, tuple)):
-                raise TypeError(f'NestedTupleListProperty expects a list, got {type(val).__name__}')
+                raise TypeError(f'ArgumentSignatureProperty expects a list, got {type(val).__name__}')
             val = [self._normalize(e) for e in val]
         super().__set__(obj, val)
 
@@ -582,7 +594,6 @@ class NestedTupleListProperty(Property):
         return str(l)
 
     def from_string(self, s):
-        import ast
         return [self._normalize(e) for e in ast.literal_eval(s)]
 
     def to_json(self, l):
@@ -592,14 +603,30 @@ class NestedTupleListProperty(Property):
         def conv(entry):
             return entry if isinstance(entry, str) else [conv(e) for e in entry]
 
-        return [conv(e) for e in l]
+        return {'type': 'ArgumentSignature', 'allow_nested': self.allow_nested, 'args': [conv(e) for e in l]}
 
     def from_json(self, data, context=None):
         if data is None:
             return None
-        if not isinstance(data, list):
-            raise TypeError('NestedTupleListProperty expects a list input, got %s' % data)
-        return [self._normalize(e) for e in data]
+        if isinstance(data, dict):
+            if data.get('type', 'ArgumentSignature') != 'ArgumentSignature':
+                raise TypeError(f"ArgumentSignatureProperty can not read data of type '{data.get('type')}'")
+            # The stored flag is a contract, not just a hint: data written as
+            #  nested is refused by a flat-mode property even if its entries
+            #  happen to be flat (we are the only writer, strictness is cheap).
+            if bool(data.get('allow_nested', False)) and not self.allow_nested:
+                raise TypeError('ArgumentSignatureProperty(allow_nested=False) can not load data '
+                                'that was stored with allow_nested=True')
+            args = data.get('args')
+            if not isinstance(args, list):
+                raise TypeError(f"ArgumentSignatureProperty expects 'args' to be a list, got {args}")
+            return [self._normalize(e) for e in args]
+        if isinstance(data, list):
+            # Legacy `ListProperty` format: a plain list, assumed to be a flat
+            #  signature in either mode (nested entries never existed in
+            #  production files, so they are rejected here).
+            return [self._normalize(e, allow_nested=False) for e in data]
+        raise TypeError(f'ArgumentSignatureProperty expects a list or an ArgumentSignature dict, got {data}')
 
 
 class TransformationHistProperty(Property):
