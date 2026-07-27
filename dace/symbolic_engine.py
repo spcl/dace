@@ -619,6 +619,58 @@ if _BACKEND_NAME == "idxalg":
         """
         return _idx.parse_str(text)
 
+    # The concrete expression type this backend builds, so a caller can recognize a value from a
+    # NON-sympy backend without importing idxalg (the seam is the only place allowed to) and without
+    # a `getattr` probe. `None` under the sympy backend, where no such value can exist.
+    NATIVE_EXPR = _idx.Expr
+
+    # Kinds that can never carry a DaCe head class. Stated as a DENY list, not an allow list: a
+    # missing allow-list entry would silently answer "not an instance" -- the exact wrong-branch
+    # failure this protocol exists to remove -- whereas a missing deny entry only costs a lookup.
+    _NO_DACE_HEAD = frozenset(
+        {"Symbol", "Integer", "Float", "Number", "Boolean", "Undef", "Add", "Mul", "Min", "Max", "Cmp"})
+
+    _DACE_HEAD_MEMO: dict = {}
+
+    def dace_head_name(obj):
+        """The name of the DaCe head class this backend's value would convert to, else ``None``.
+
+        Some heads this backend names as DaCe does (an opaque call; the operator spellings, which
+        carry their ``__`` prefix). Others it holds STRUCTURALLY -- ``int_floor(a, b)`` is a division
+        node named ``floor`` -- and only the converter knows their DaCe spelling. So the answer comes
+        FROM the converter rather than from a second name table that would be free to drift.
+
+        Memoized on (head, arity, spelling), which is everything the converter's choice of head
+        depends on, so the conversion runs once per shape instead of once per query. Without it an
+        `isinstance` MISS converted a whole expression tree just to reject it.
+        """
+        if not isinstance(obj, _idx.Expr):
+            return None
+        # Keyed on the ENGINE's own identifiers, not on `.func`/`.args`: those build a head object
+        # and wrap every child in a fresh handle, which cost more than the conversion they were
+        # meant to avoid (2.5us per query, on hits as well as misses). `kind` already encodes both
+        # the structure and an opaque head's name, `dtype` distinguishes the cast targets, and
+        # `spelling` picks between an operator head and its function twin.
+        e = obj._e
+        kind = _idx._CTX.kind(e)
+        if kind in _NO_DACE_HEAD:
+            # One engine read settles the common query. These kinds are plain algebra and leaves:
+            # sympy owns their heads and DaCe defines no class for any of them, so no conversion can
+            # produce one and the remaining reads would be pure cost on the path taken most.
+            return None
+        # The other two reads only ever change the answer for the kinds that need them: a cast's
+        # target type names its class, and only a head with a `__` twin cares which spelling it was
+        # written in.
+        dtype = _idx._CTX.dtype(e) if kind == "Cast" else None
+        spelling = _idx._CTX.spelling(e) if kind == "FloorDiv" or kind.startswith("Opaque") else None
+        key = (kind, dtype, spelling)
+        if key in _DACE_HEAD_MEMO:
+            return _DACE_HEAD_MEMO[key]
+        converted = _from_idx(obj)
+        name = None if converted is None else str(converted.func)
+        _DACE_HEAD_MEMO[key] = name
+        return name
+
     def __getattr__(name: str):
         # PEP 562: only invoked for names not bound as module globals.
         if name in _IDXALG_NAMES:
@@ -634,6 +686,8 @@ else:
     # Defined in both branches so a caller can test them without `getattr`.
     native_parse = None
     to_sympy = None
+    NATIVE_EXPR = None
+    dace_head_name = None
 
     def __getattr__(name: str):
         # PEP 562: forwards every symbolic name to sympy with no overhead on normal imports.

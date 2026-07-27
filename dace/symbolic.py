@@ -17,6 +17,7 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
+from dace import symbolic_engine
 from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
@@ -1168,7 +1169,43 @@ def sympy_numeric_fix(expr):
     return expr
 
 
-class int_floor(sympy.Function):
+class DaceFunctionMeta(sympy.core.function.FunctionClass):
+    """Metaclass making a DaCe symbolic head an isinstance target for ANY backend's values.
+
+    These classes state a DaCe contract -- "this expression is an ``ITE``", "this one is the operator
+    spelling of ``bitwise_or``" -- rather than a sympy implementation detail. So the contract has to
+    hold whichever engine represents the value, and a value from a non-sympy backend can never be an
+    instance of a sympy class by type. Membership is decided from the head NAME through the existing
+    class hierarchy, so ``__bitwise_or`` still tests as a ``bitwise_or`` (it subclasses it) while
+    ``bitwise_or`` does NOT test as the ``__`` variant, and no second table can drift.
+
+    Without this, a pass asking ``isinstance(x, Subscript)`` silently took its NOT-a-subscript branch
+    for every value the other backend built -- a wrong answer, not an error (the map-range array
+    bound went un-hoisted; the vectorizer could not classify a gather index).
+    """
+
+    def __instancecheck__(cls, obj) -> bool:
+        if super().__instancecheck__(obj):
+            return True
+        head = symbolic_engine.dace_head_name(obj)
+        if head is None:
+            return False
+        bound = _PYSTR2SYM_locals.get(head)
+        return isinstance(bound, type) and issubclass(bound, cls)
+
+
+# Only installed when a foreign backend can actually produce values. Under the default backend the
+# override could never fire, and paying a Python `__instancecheck__` frame per `isinstance` to learn
+# that measured 288ns against 34ns for the plain check -- so the default path keeps sympy's own
+# metaclass and is bit-identical to having none of this.
+_HEAD_META = DaceFunctionMeta if symbolic_engine.NATIVE_EXPR is not None else sympy.core.function.FunctionClass
+
+
+class DaceFunction(sympy.Function, metaclass=_HEAD_META):
+    """Base for DaCe's own symbolic heads; carries only the backend-neutral isinstance protocol."""
+
+
+class int_floor(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1201,7 +1238,7 @@ class __int_floor(int_floor):
     pass
 
 
-class int_ceil(sympy.Function):
+class int_ceil(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1228,7 +1265,7 @@ class int_ceil(sympy.Function):
         return True
 
 
-class ipow(sympy.Function):
+class ipow(DaceFunction):
     """Integer power ``base ** exp`` with a non-negative integer exponent, lowered
     to ``dace::math::ipow`` (repeated multiply, exact integer) -- valid where
     ``dace::math::pow`` (libm ``double``) is not: an array size, subscript or loop
@@ -1284,7 +1321,7 @@ def relax_ipow(expr: SymbolicType) -> SymbolicType:
     return expr.rewrite(sympy.Pow)
 
 
-class fma(sympy.Function):
+class fma(DaceFunction):
     """Fused multiply-add ``a * b + c``.
 
     Minted by the vectorizer's FMA-fusion pass from an ``a * b + c`` chain so the tile-op
@@ -1310,7 +1347,7 @@ class fma(sympy.Function):
         return a * b + c
 
 
-class OR(sympy.Function):
+class OR(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1328,7 +1365,7 @@ class OR(sympy.Function):
         return True
 
 
-class AND(sympy.Function):
+class AND(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1346,7 +1383,7 @@ class AND(sympy.Function):
         return True
 
 
-class IfExpr(sympy.Function):
+class IfExpr(DaceFunction):
 
     @classmethod
     def eval(cls, x, y, z):
@@ -1386,7 +1423,7 @@ class IfExpr(sympy.Function):
             return False
 
 
-class ITE(sympy.Function):
+class ITE(DaceFunction):
     """Ternary blend: ``ITE(c, a, b)`` returns ``a`` when ``c`` is truthy,
     ``b`` otherwise. Lowered to a one-line C++ helper in
     ``dace/runtime/include/dace/ITE.h`` and recognized by the vectorizer's
@@ -1418,7 +1455,7 @@ class ITE(sympy.Function):
 merge = ITE
 
 
-class mod(sympy.Function):
+class mod(DaceFunction):
     """Floored modulus (Fortran ``MODULO`` / Python ``%`` on negatives).
 
     Two-arg ``mod(a, b)`` — distinct from sympy's built-in ``Mod`` (which
@@ -1436,7 +1473,7 @@ class mod(sympy.Function):
         return self.args[0].is_integer and self.args[1].is_integer
 
 
-class fortran_mod(sympy.Function):
+class fortran_mod(DaceFunction):
     """Floored modulus for use in symbolic expressions / memlet subsets.
 
     Two-arg ``fortran_mod(a, b)`` -- the Fortran ``MODULO`` semantics:
@@ -1498,23 +1535,23 @@ globals().update(_CAST_CLASSES)
 _builtin_userfunctions.update(_CAST_CLASSES)
 
 
-class bitwise_and(sympy.Function):
+class bitwise_and(DaceFunction):
     pass
 
 
-class bitwise_or(sympy.Function):
+class bitwise_or(DaceFunction):
     pass
 
 
-class bitwise_xor(sympy.Function):
+class bitwise_xor(DaceFunction):
     pass
 
 
-class bitwise_invert(sympy.Function):
+class bitwise_invert(DaceFunction):
     pass
 
 
-class left_shift(sympy.Function):
+class left_shift(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1531,7 +1568,7 @@ class left_shift(sympy.Function):
             return x << y
 
 
-class right_shift(sympy.Function):
+class right_shift(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1548,7 +1585,7 @@ class right_shift(sympy.Function):
             return x >> y
 
 
-class logical_left_shift(sympy.Function):
+class logical_left_shift(DaceFunction):
     """Logical (zero-fill) left shift -- the Fortran ``ISHFT`` lowering.
 
     Distinct from :class:`left_shift`: it shifts the unsigned bit pattern (no
@@ -1565,7 +1602,7 @@ class logical_left_shift(sympy.Function):
             return x << y
 
 
-class logical_right_shift(sympy.Function):
+class logical_right_shift(DaceFunction):
     """Logical (zero-fill) right shift -- the Fortran ``ISHFT`` (negative count)
     lowering.
 
@@ -1581,7 +1618,7 @@ class logical_right_shift(sympy.Function):
             return x >> y
 
 
-class conj(sympy.Function):
+class conj(DaceFunction):
     pass
 
 
@@ -1613,7 +1650,7 @@ class __right_shift(right_shift):
     pass
 
 
-class ROUND(sympy.Function):
+class ROUND(DaceFunction):
 
     @classmethod
     def eval(cls, x):
@@ -1630,15 +1667,15 @@ class ROUND(sympy.Function):
         return True
 
 
-class Is(sympy.Function):
+class Is(DaceFunction):
     pass
 
 
-class IsNot(sympy.Function):
+class IsNot(DaceFunction):
     pass
 
 
-class Attr(sympy.Function):
+class Attr(DaceFunction):
     """
     Represents a get-attribute call on a function, equivalent to ``a.b`` in Python.
     """
@@ -1657,7 +1694,7 @@ class Attr(sympy.Function):
         return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
-class Subscript(sympy.Function):
+class Subscript(DaceFunction):
     """
     Represents a subscript expression, equivalent to ``a[i, j, ...]`` in Python.
 
