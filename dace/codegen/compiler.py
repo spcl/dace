@@ -304,11 +304,16 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
 
 
 def prepare_precompiled_header(targets) -> Optional[str]:
-    """Precompile ``<dace/dace.h>`` once per (compiler, flags), returning its directory or ``None``.
+    """Precompile ``<dace/dace.h>`` once per (runtime, compiler, flags), returning its dir or ``None``.
 
     The runtime umbrella header is most of the compile time of a small kernel; caching it across
     SDFGs is what makes precompiling pay. Should the flags drift from CMake's line, the compiler
     silently declines the header and produces the same object.
+
+    The include path is part of the key, not just the flags: the cache is machine-global, so two
+    DaCe checkouts sharing a compiler would otherwise share one ``.gch`` and the second would compile
+    against the first one's headers. The mtime guard below cannot catch that -- it walks THIS tree's
+    runtime and compares against a header built from another's, so it passes while being wrong.
     """
     if not (CACHES_SUPPORTED and Config.get_bool('compiler', 'precompiled_header')):
         return None
@@ -318,7 +323,7 @@ def prepare_precompiled_header(targets) -> Optional[str]:
              shlex.split(compiler_family.cpu_args() or '') + build_type_flags())
     if any(t in ('cuda', 'experimental_cuda') for t in targets):
         flags.append('-DWITH_CUDA')
-    pch = os.path.join(build_cache_root(), 'pch', cache_key(cxx, *flags))
+    pch = os.path.join(build_cache_root(), 'pch', cache_key(runtime, cxx, *flags))
     header = os.path.join(pch, 'dace_prewarm.h')
     newest = max((os.path.getmtime(os.path.join(r, f)) for r, _, fs in os.walk(runtime) for f in fs), default=0.0)
     try:
