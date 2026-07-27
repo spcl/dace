@@ -683,7 +683,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             # ``TileLoad(src_kind='Symbol')`` broadcast fill below (which splats the identity
             # across every lane).
             out_is_tile = (isinstance(const_desc, dace.data.Array) and tuple(const_desc.shape) == tuple(self.widths))
-            consumers = [e.dst for e in inner_state.out_edges(const_dst)]
+            # An ordering edge's dst is not a consumer; counting it only ever loses the shortcut.
+            consumers = [e.dst for e in data_out_edges(inner_state, const_dst)]
             if (const_desc is not None and not out_is_tile and is_same_domain_constant(str(expr), const_desc.dtype)
                     and consumers and all(self._reads_scalar_operand_inline(c) for c in consumers)):
                 return False  # same-domain constant -> stays a scalar broadcast operand
