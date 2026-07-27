@@ -119,6 +119,17 @@ _NEEDS_AST_REWRITE = re.compile(
     r'\bnot\b|\band\b|\bor\b|\bNone\b|==|!=|\bis\b|\bif\b|[&]|[|]|[\^]|[~]|[<<]|[>>]|[//]|\.(?![0-9])|[\[]|[\]]')
 
 
+def has_serialized_symbol_escape(expr) -> bool:
+    """True if `expr` carries the `$name` wire escape (see `DaceSympySerializer._print_Symbol`).
+
+    A DaCe symbol name is a valid Python identifier, so no writer predating the escape could ever have
+    emitted a `$`: its presence in a file stamped below the escape's wire version means the stamp is
+    wrong, not that the content is old. Takes any value because a symbolic property deserializes ints
+    and floats through the same path, and only a string can carry the escape.
+    """
+    return isinstance(expr, str) and bool(_SERIALIZED_SYMBOL.search(expr))
+
+
 def _is_sympy_number(expr) -> bool:
     return bool(getattr(expr, 'is_Number', False) or getattr(expr, 'is_number', False))
 
@@ -1909,6 +1920,26 @@ class Subscript(DaceFunction):
         return Subscript(*(a.subs(*args, **kwargs) for a in self.args))
 
 
+def recombined_fraction(arg):
+    """``arg`` as ``(numerator, integer denominator)`` when it is a sum of fractions sharing a
+    denominator, else ``None``.
+
+    sympy's ``//`` on symbolic integers builds ``floor(N/8 - 1/8)``, distributing the division over
+    the ``Add``. Matching that against ``floor(a/b)`` binds ``b = 1`` and leaves the ``Rational``s in
+    the numerator, where C++ truncates each term on its own (``1 / 8 -> 0``) and the bound silently
+    becomes ``N / 8`` instead of ``(N - 1) / 8``. Recombining first recovers the real denominator.
+    """
+    try:
+        num, den = arg.together().as_numer_denom()
+        den_int = int(den)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    # 1 means nothing was recombined; 0 would be a division by zero downstream.
+    if den_int in (0, 1):
+        return None
+    return num, den_int
+
+
 def sympy_intdiv_fix(expr):
     """ Fix for SymPy printing out reciprocal values when they should be
         integral in "ceiling/floor" sympy functions.
@@ -1935,6 +1966,13 @@ def sympy_intdiv_fix(expr):
     while processed > 0:
         processed = 0
         for ceil in nexpr.find(sympy.ceiling):
+            # Before matching: a distributed rational sum would otherwise match ``a / b`` with
+            # ``b = 1`` and keep its Rationals, which C++ truncates term by term.
+            frac = recombined_fraction(ceil.args[0])
+            if frac is not None:
+                nexpr = nexpr.subs(ceil, int_ceil(frac[0], frac[1]))
+                processed += 1
+                continue
             # Simple ceiling
             m = ceil.match(sympy.ceiling(a / b))
             if m is not None:
@@ -1971,6 +2009,13 @@ def sympy_intdiv_fix(expr):
                 processed += 1
                 continue
         for floor in nexpr.find(sympy.floor):
+            # See the ceiling branch: recombine before matching, or the Rationals survive into the
+            # numerator and each truncates on its own in C++.
+            frac = recombined_fraction(floor.args[0])
+            if frac is not None:
+                nexpr = nexpr.subs(floor, int_floor(frac[0], frac[1]))
+                processed += 1
+                continue
             # Simple floor
             m = floor.match(sympy.floor(a / b))
             if m is not None:
@@ -3007,6 +3052,80 @@ def _pystr_to_symbolic_uncached(expr, symbol_map=None, simplify=None) -> sympy.B
 @lru_cache(maxsize=2048, typed=True)
 def simplify(expr: SymbolicType) -> SymbolicType:
     return sympy.simplify(expr)
+
+
+#: Rounding nodes a bound proof can relax: DaCe's integer division / ceiling division, and sympy's
+#: own ``floor`` / ``ceiling`` (what the two rewrite to so sympy's sign engine can see them).
+ROUNDING_FUNCTIONS = (int_floor, int_ceil, sympy.floor, sympy.ceiling)
+
+
+def has_rounding(expr) -> bool:
+    """Whether ``expr`` holds a rounding node (see :data:`ROUNDING_FUNCTIONS`).
+
+    The cheap pre-filter for :func:`provably_nonnegative`: an expression with no rounding node is
+    already decided by sympy's own assumption engine or not at all, so the relaxation cannot add an
+    answer there and a caller on a hot path should not pay to find that out.
+    """
+    if not isinstance(expr, sympy.Basic) or not expr.args:
+        return False
+    return bool(expr.atoms(*ROUNDING_FUNCTIONS))
+
+
+def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool:
+    """Whether ``expr >= 0`` for EVERY value of its free symbols. ``False`` means NOT PROVEN, never
+    "negative" -- an undecided expression is reported unproven, so a caller can only ever lose
+    precision by trusting it, not correctness.
+
+    Sympy gives up on a floor/ceiling it cannot evaluate, leaving a bound as ordinary as
+    ``N - 2*int_floor(N, 2) >= 0`` undecided though it holds for every integer ``N``. This closes
+    that gap by REPLACING each rounding node with a valid bound that makes the whole expression
+    smaller, then asking sympy whether the weakened expression is still nonnegative:
+    ``floor(t) in (t - 1, t]`` and ``ceiling(t) in [t, t + 1)``, so a rounding node with a negative
+    coefficient takes its upper bound and one with a nonnegative coefficient its lower.
+
+    Sound because every step only weakens: a nonnegative lower bound proves the original
+    nonnegative. Conservative in every other direction -- a rounding node the expression is not
+    AFFINE in (squared, multiplied by another, or nested inside another's argument) has no such
+    one-sided substitution and is refused outright.
+
+    ``assume_symbols_nonnegative`` additionally asserts every free symbol is ``>= 0``. That is the
+    CANONICALIZATION contract (runtime-guarded there), not a property of SDFGs at large, so it is
+    off by default: a caller that has not established it must not be handed an answer leaning on it.
+    """
+    s = simplify(expr)
+    if not isinstance(s, sympy.Basic):
+        return s >= 0
+    if s.is_number:
+        return bool(s >= 0)
+    e = s.replace(lambda t: isinstance(t, int_floor), lambda t: sympy.floor(t.args[0] / t.args[1]))
+    e = e.replace(lambda t: isinstance(t, int_ceil), lambda t: sympy.ceiling(t.args[0] / t.args[1]))
+    if assume_symbols_nonnegative:
+        e = e.subs({sym: sympy.Symbol(sym.name, nonnegative=True, integer=bool(sym.is_integer))
+                    for sym in e.free_symbols})
+    if e.is_nonnegative is True:
+        return True
+    atoms = list(e.atoms(sympy.floor, sympy.ceiling))
+    if not atoms:
+        return False
+    # A rounding inside another's argument has no independent extreme: moving the inner one moves
+    # the outer one's own bound, so the substitution below would not weaken in a known direction.
+    if any(a.args[0].atoms(sympy.floor, sympy.ceiling) for a in atoms):
+        return False
+    bounds = {sympy.floor: (lambda a: a - 1, lambda a: a), sympy.ceiling: (lambda a: a, lambda a: a + 1)}
+    relaxed = {}
+    affine_part = sympy.Integer(0)
+    for a in atoms:
+        c = e.coeff(a, 1)
+        if not c.is_number:
+            return False  # nonlinear in the rounding node -> cannot bound
+        low, high = bounds[a.func]
+        relaxed[a] = high(a.args[0]) if c < 0 else low(a.args[0])
+        affine_part += c * a
+    # Every rounding node must be accounted for by that affine decomposition; one surviving in the
+    # remainder is squared or multiplied by another, where a one-sided bound proves nothing.
+    if (e - affine_part).atoms(sympy.floor, sympy.ceiling):
+        return False
+    return simplify(e.subs(relaxed)).is_nonnegative is True
 
 
 class DaceSympyPrinter(sympy.printing.str.StrPrinter):
