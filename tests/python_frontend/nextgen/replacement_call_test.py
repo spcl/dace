@@ -336,6 +336,66 @@ def test_call_with_target_still_requires_target():
     assert _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
+# --- Expansion inside a dataflow scope (a map body becomes a nested SDFG)
+
+
+def _build(program, *arguments):
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import from_schedule_tree
+    tree = nextgen.parse_program(program, *arguments)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    sdfg = from_schedule_tree(tree)
+    sdfg.validate()
+    return sdfg
+
+
+def test_replacement_in_map_execution():
+    """A registry call inside a map expands in the nested SDFG the map body
+    becomes, instead of falling back to the interpreter."""
+
+    @dace.program
+    def prog(A: dace.float64[4, 8], out: dace.float64[4]):
+        for i in dace.map[0:4]:
+            out[i] = np.mean(A[i])
+
+    A = np.random.rand(4, 8)
+    out = np.zeros(4)
+    _build(prog, A, out)(A=A, out=out)
+    assert np.allclose(out, A.mean(axis=1))
+
+
+def test_reduce_in_map_execution():
+
+    @dace.program
+    def prog(A: dace.float64[4, 8], out: dace.float64[4]):
+        for i in dace.map[0:4]:
+            out[i] = dace.reduce(lambda a, b: a + b, A[i], identity=0)
+
+    A = np.random.rand(4, 8)
+    out = np.zeros(4)
+    _build(prog, A, out)(A=A, out=out)
+    assert np.allclose(out, A.sum(axis=1))
+
+
+def test_reduce_with_output_argument_in_map_execution():
+    """The replacement writes an ARGUMENT rather than its result, so the
+    nested SDFG's output connectors cannot be read off the call node."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def summed(X_in: dace.float32[N], X_out: dace.float32[1]):
+        dace.reduce(lambda a, b: a + b, X_in, X_out, identity=0)
+
+    @dace.program
+    def prog(A: dace.float32[4, 8], out: dace.float32[4, 1]):
+        for i in dace.map[0:4]:
+            summed(A[i], out[i])
+
+    A = np.random.rand(4, 8).astype(np.float32)
+    out = np.zeros((4, 1), np.float32)
+    _build(prog, A, out)(A=A, out=out)
+    assert np.allclose(out.squeeze(), A.sum(axis=1), rtol=1e-5)
+
+
 if __name__ == '__main__':
     test_sum_tuple_axis_structure()
     test_sum_tuple_axis_execution()
@@ -356,3 +416,6 @@ if __name__ == '__main__':
     test_reshape_view_execution()
     test_fill_bare_statement_execution()
     test_call_with_target_still_requires_target()
+    test_replacement_in_map_execution()
+    test_reduce_in_map_execution()
+    test_reduce_with_output_argument_in_map_execution()

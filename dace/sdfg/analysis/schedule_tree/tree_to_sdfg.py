@@ -417,6 +417,25 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         _, connectors = self._dataflow_stack.pop()
         assert len(self._dataflow_stack) == dataflow_stack_size
 
+        # Views bound inside this body are resolved here, while the body is
+        # still the SDFG holding them: the top-level pass at the end of
+        # conversion only walks the outermost SDFG's own states.
+        _connect_view_edges(inner_sdfg, self._view_bindings)
+
+        # Every non-transient the body actually touches must be a connector.
+        # Deriving that from the emitted access nodes covers containers the
+        # per-node visitors could not have registered themselves: the source of
+        # a view resolved just above, and whatever a replacement expansion
+        # wrote (``dace.reduce(f, X_in, X_out)`` writes an ARGUMENT).
+        for state in inner_sdfg.all_states():
+            for access in state.data_nodes():
+                if inner_sdfg.arrays[access.data].transient:
+                    continue
+                if state.in_degree(access) > 0:
+                    connectors["outputs"].add(access.data)
+                if state.out_degree(access) > 0:
+                    connectors["inputs"].add(access.data)
+
         # insert nested SDFG
         nsdfg = self._current_state.add_nested_sdfg(
             sdfg=inner_sdfg,
@@ -904,6 +923,10 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         # assumption source access may or may not yet exist (in this state)
         src_name = node.memlet.data
+        # Inside a nested SDFG (a map body) both containers may live in an
+        # enclosing SDFG; an access node needs the descriptor to be present here.
+        self._ensure_nested_container(src_name, sdfg)
+        self._ensure_nested_container(node.target, sdfg)
         source = access_cache[src_name] if src_name in access_cache else self._current_state.add_read(src_name)
 
         # Reuse a cached write-only access node for the target, the same
@@ -1100,8 +1123,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         from dace.frontend.common import op_repository as oprepo  # Deferred: frontend import from IR module
         import dace.frontend.python.replacements  # noqa: F401 -- importing populates the registry
 
-        if self._dataflow_stack:
-            raise NotImplementedError("Replacement calls inside dataflow scopes are not supported.")
+        # An expansion builds states, so it can only run where states exist: at
+        # the top level, or inside a map body that was emitted as a nested SDFG
+        # (``insert_state_boundaries`` forces the boundary that makes that
+        # happen). Directly under a map entry there is no state machine at all.
+        if self._dataflow_stack and not isinstance(self._dataflow_stack[-1][0], SDFG):
+            raise NotImplementedError("Replacement calls directly inside a dataflow scope are not supported.")
+        self._import_replacement_data(node, sdfg)
 
         # The expansion adds its own access nodes for the call's data
         # arguments. Those must not land in a state that already writes them
@@ -1205,6 +1233,56 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
                                                      self._pending_interstate_assignments())
+
+    def _import_replacement_data(self, node: tn.ReplacementCallNode, sdfg: SDFG) -> None:
+        """
+        Make a replacement call's containers resolvable in the SDFG it expands
+        into: the replacement looks every argument up in ``sdfg.arrays``.
+        """
+        names = set(node.data_arguments) | {node.target}
+        if node.receiver is not None:
+            names.add(node.receiver)
+        for name in sorted(names):
+            self._ensure_nested_container(name, sdfg)
+
+    def _ensure_nested_container(self, name: str, sdfg: SDFG) -> None:
+        """
+        Make a container resolvable inside a nested SDFG (a map body), cloning
+        it in from the enclosing SDFG that owns it.
+
+        Connectors are NOT registered here — the nested-SDFG builder derives
+        them from the access nodes the body ends up with, which is the only way
+        to know which containers it actually reads and writes. A no-op at the
+        top level, where the containers already exist.
+        """
+        if not self._dataflow_stack or not isinstance(self._dataflow_stack[-1][0], SDFG):
+            return
+        if name in sdfg.arrays or self._apply_nview_array_override(name, sdfg):
+            return
+        binding = self._view_bindings.get(name)
+        if binding is not None:
+            # A view binding is a relationship between two containers, and its
+            # subset generally depends on the enclosing map parameters
+            # (``__anf0 = view A[i, 0:8]``). Passing the VIEW in would put its
+            # viewing edge outside the map, where ``i`` does not exist, so
+            # import the viewed SOURCE and rebuild the view inside, where the
+            # map parameters are in scope (``_connect_view_edges`` attaches the
+            # edge per state).
+            self._import_nested_datadesc(binding.source, sdfg)
+            sdfg.add_datadesc(name, binding.view_desc.clone())
+            sdfg.arrays[name].transient = True
+            return
+        self._import_nested_datadesc(name, sdfg)
+
+    def _import_nested_datadesc(self, name: str, sdfg: SDFG) -> None:
+        """Clone a container from the closest enclosing SDFG that has it into
+        ``sdfg``, as the non-transient a nested-SDFG connector requires."""
+        if name in sdfg.arrays:
+            return
+        parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
+        descriptor = parent_sdfg.arrays[name].clone()
+        descriptor.transient = False
+        sdfg.add_datadesc(name, descriptor)
 
     def visit_SDFGCallNode(self, node: tn.SDFGCallNode, sdfg: SDFG) -> None:
         """
@@ -1399,6 +1477,23 @@ def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleT
             return [self.generic_visit(node), tn.StateBoundaryNode()]
 
     stree = SymbolAssignmentBoundaryInserter().visit(stree)
+
+    # A replacement expansion builds its own states, which a map body cannot
+    # hold directly -- but a map body containing a state boundary is emitted as
+    # a NESTED SDFG (see ``_insert_nestedSDFG_in_MapScope``), which can. Forcing
+    # the boundary here is what lets registry calls (``dace.reduce``,
+    # ``numpy.mean``, ...) lower inside a map instead of falling back to the
+    # interpreter.
+    class ReplacementCallBoundaryInserter(tn.ScheduleNodeTransformer):
+
+        def visit_ReplacementCallNode(self, node: tn.ReplacementCallNode):
+            assert node.parent is not None, 'Expected replacement calls to live in a parent scope.'
+            node_index = _list_index(node.parent.children, node)
+            if node_index > 0 and isinstance(node.parent.children[node_index - 1], tn.StateBoundaryNode):
+                return self.generic_visit(node)
+            return [tn.StateBoundaryNode(), self.generic_visit(node)]
+
+    stree = ReplacementCallBoundaryInserter().visit(stree)
 
     # Hack: "backprop-insert" state boundaries from nested SDFGs
     class NestedSDFGStateBoundaryInserter(tn.ScheduleNodeTransformer):

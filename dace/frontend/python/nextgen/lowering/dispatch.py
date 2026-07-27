@@ -927,8 +927,11 @@ def _lower_replacement_call(target: Optional[ast.expr],
                 name = call.func.attr
             if name is None:
                 return False
-    if state.emitter.in_dataflow_scope:
-        return False  # Expansion adds state machinery; no CFG inside dataflow scopes
+    # NOTE: expansion inside a dataflow scope is allowed. The expansion adds
+    # state machinery, which a map body cannot hold directly -- but
+    # ``tree_to_sdfg`` emits a map body containing a state boundary as a NESTED
+    # SDFG, which can, and ``insert_state_boundaries`` forces that boundary
+    # wherever a ReplacementCallNode sits inside a scope.
 
     converted = _replacement_arguments(call, state)
     if converted is None:
@@ -944,9 +947,8 @@ def _lower_replacement_call(target: Optional[ast.expr],
         return True
     if not _expansion_viable(name, arguments, keywords, data_arguments, state, receiver=receiver):
         return False
-    if target_access is not None:
-        target_container = target_access.container
-    elif target is None:
+    written: Optional[DataAccess] = target_access
+    if target_access is None and target is None:
         # No frontend-declared target container to write into (a bare
         # statement): the schedule tree still requires a registered
         # container reference, so use the call's own data operand (the
@@ -960,7 +962,9 @@ def _lower_replacement_call(target: Optional[ast.expr],
         if target_container is None:
             return False
     else:
-        target_container = _call_target_access(target, inferred, statement, state).container
+        if written is None:
+            written = _call_target_access(target, inferred, statement, state)
+        target_container, copy_out = _replacement_write_target(written, inferred, state)
     state.emitter.emit(
         tn.ReplacementCallNode(qualname=name,
                                target=target_container,
@@ -968,7 +972,39 @@ def _lower_replacement_call(target: Optional[ast.expr],
                                keyword_arguments=keywords,
                                data_arguments=data_arguments,
                                receiver=receiver))
+    if written is not None and copy_out:
+        _emit_replacement_copy_out(target_container, written, state)
     return True
+
+
+def _replacement_write_target(access: DataAccess, inferred, state: LoweringState) -> Tuple[str, bool]:
+    """
+    The container a deferred replacement expansion should write into.
+
+    ``ReplacementCallNode.target`` names a whole container — it carries no
+    subset — so a write into part of one (``out[i] = numpy.mean(...)`` inside a
+    map) has to go through a temporary that is copied into the target subset
+    afterwards. Without this the expansion writes the container's element 0 and
+    every map iteration silently overwrites the same element.
+
+    :return: (container to expand into, whether a copy-out is needed).
+    """
+    descriptor = state.context.containers.get(access.container)
+    if descriptor is not None and str(access.subset) == str(subsets.Range.from_array(descriptor)):
+        return access.container, False
+    result_descriptor = copy.deepcopy(inferred.descriptor)
+    result_descriptor.transient = True
+    return state.context.add_container('__replacement', result_descriptor), True
+
+
+def _emit_replacement_copy_out(source: str, target: DataAccess, state: LoweringState) -> None:
+    """Copy a replacement's whole-container result into the target subset it
+    was declared to write (see :func:`_replacement_write_target`)."""
+    descriptor = state.context.containers[source]
+    state.emitter.emit(
+        tn.CopyNode(target=target.container,
+                    memlet=Memlet(data=source, subset=subsets.Range.from_array(descriptor),
+                                  other_subset=target.subset)))
 
 
 def _bind_compile_time_result(target: Optional[ast.expr], name: str, arguments: List, keywords: dict,
@@ -1120,8 +1156,11 @@ def _lower_ufunc_replacement_call(target: Optional[ast.expr],
     unsupported = {keyword.arg for keyword in call.keywords} - _SUPPORTED_UFUNC_KEYWORDS
     if unsupported:
         return False  # Keywords the registry ufunc implementation does not accept
-    if state.emitter.in_dataflow_scope:
-        return False  # Expansion adds state machinery; no CFG inside dataflow scopes
+    # NOTE: expansion inside a dataflow scope is allowed. The expansion adds
+    # state machinery, which a map body cannot hold directly -- but
+    # ``tree_to_sdfg`` emits a map body containing a state boundary as a NESTED
+    # SDFG, which can, and ``insert_state_boundaries`` forces that boundary
+    # wherever a ReplacementCallNode sits inside a scope.
 
     converted = _replacement_arguments(call, state)
     if converted is None:
