@@ -1638,9 +1638,9 @@ def is_gpu_array(obj: Any) -> bool:
         return False
 
     try:
-        if hasattr(obj, 'data') and hasattr(obj.data, 'ptr'):  # CuPy special case with HIP
-            if hasattr(obj, 'device') and getattr(obj.device, 'id', -1) >= 0:
-                return True
+        if hasattr(obj, 'data') and hasattr(obj.data, 'ptr') and hasattr(obj, 'device') and getattr(
+                obj.device, 'id', -1) >= 0:  # CuPy special case with HIP
+            return True
     except (ValueError, TypeError):
         # numpy arrays of extension dtypes (ml_dtypes bf16/fp8) raise when building a
         # buffer for .data; they are host arrays, so fall through to the False below.
