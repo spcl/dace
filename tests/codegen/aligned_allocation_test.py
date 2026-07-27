@@ -7,6 +7,7 @@ bounds, so heap arrays are allocated with C++17 aligned ``operator new`` (when
 ``compiler.cpp_standard`` >= 17) or with no annotation at all (below 17).
 """
 import numpy as np
+import re
 
 import dace
 from dace.config import set_temporary
@@ -25,10 +26,34 @@ def _heap_transient_sdfg(name: str) -> dace.SDFG:
     return sdfg
 
 
+def test_aligned_allocation_property():
+    """Checks if the `.alignment` property is honored."""
+    new_code = r'new\s*\(std::align_val_t\({alignment}\)\)\s*double\s*\[2\]\s*;'
+    del_code = r'::operator\s+delete\[\]\(tmp,\s*std::align_val_t\({alignment}\)\)\s*;'
+    for alignment in [-1, 0, 64, 128]:
+        name_suffix = str(alignment) if alignment >= 0 else f"m{str(abs(alignment))}"
+        sdfg = _heap_transient_sdfg(f"sdfg_allocation_{name_suffix}")
+        array_desc = sdfg.arrays["tmp"]
+        array_desc.alignment = alignment
+        code = sdfg.generate_code()[0].clean_code
+
+        if alignment < 0:
+            assert re.search(r'tmp\s+=\s*new\s+double\s*\[2\]\s*;', code)
+            assert re.search(r'delete\[\]\s+tmp\s*;', code)
+
+        elif alignment == 0:
+            assert re.search(new_code.format(alignment=64), code)
+            assert re.search(del_code.format(alignment=64), code)
+
+        else:
+            assert re.search(new_code.format(alignment=alignment), code)
+            assert re.search(del_code.format(alignment=alignment), code)
+
+
 def test_heap_allocation_aligned_new_cpp17():
     """With cpp_standard >= 17 (the default), heap arrays use aligned operator new/delete."""
     code = _heap_transient_sdfg('aligned_new_probe').generate_code()[0].clean_code
-    assert 'new (std::align_val_t(64)) double[2]' in code
+    assert re.search(r'new\s*\(std::align_val_t\(64\)\)\s*double\s*\[2\]', code)
     assert '::operator delete[](tmp, std::align_val_t(64));' in code
     assert 'DACE_ALIGN(64)[' not in code  # the attribute is invalid in a new expression
     assert 'delete[] tmp' not in code  # would pair the unaligned deallocation function
@@ -41,7 +66,7 @@ def test_heap_allocation_plain_new_below_cpp17():
     """Below C++17 there is no aligned operator new; emit no annotation at all."""
     with set_temporary('compiler', 'cpp_standard', value='14'):
         code = _heap_transient_sdfg('plain_new_probe').generate_code()[0].clean_code
-    assert 'new double[2]' in code
+    assert re.search(r'new\s+double\s*\[2\]', code)
     assert 'delete[] tmp' in code
     assert 'align_val_t' not in code
     assert 'DACE_ALIGN(64)[' not in code

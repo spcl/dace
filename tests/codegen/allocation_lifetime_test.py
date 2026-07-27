@@ -1,5 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests different allocation lifetimes. """
+import re
+
 import pytest
 
 import dace
@@ -10,11 +12,14 @@ import numpy as np
 
 
 def _count_heap_allocs(code: str, ctype: str) -> int:
-    # Consult the active cpp_standard: C++ >= 17 emits the aligned form
+    # The transients in these tests use the default alignment; consult the active
+    # cpp_standard: C++ >= 17 emits the aligned form
     # ``new (std::align_val_t(64)) <type>``, earlier standards the plain form.
-    if _use_aligned_operator_new():
-        return code.count(f'new (std::align_val_t(64)) {ctype}')
-    return code.count(f'new {ctype}')
+    # (Match whitespace loosely: the generator emits ``new  <type> [n]``.)
+    probe = dace.data.Array(dace.float64, [1])
+    if _use_aligned_operator_new(probe):
+        return len(re.findall(rf'new\s*\(std::align_val_t\(64\)\)\s*{ctype}\b', code))
+    return len(re.findall(rf'new\s+{ctype}\b', code))
 
 
 N = dace.symbol('N')
