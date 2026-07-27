@@ -430,7 +430,7 @@ if _BACKEND_NAME == "idxalg":
         if name == "Mul" and _idx._CTX.kind(e._e) == "Div":
             # A real-division node shares the Mul head marker; render it as sympy division, not a
             # product (`work/depth` in the cost models must not become `work*depth`).
-            num, den = (_from_idx(a) for a in e.args)
+            num, den = (_from_idx(_peel_promotion(e, a)) for a in e.args)
             return num / den
         if name == "Symbol":
             # Preserve the covering-relevant assumptions (positive/nonnegative/integer/real) and the
@@ -511,7 +511,10 @@ if _BACKEND_NAME == "idxalg":
             # One node here, so the recorded FORM is what tells the two apart -- without it a
             # round-trip through this converter downgraded every `ipow` to `pow`.
             return _dace_op("ipow", [_from_idx(a) for a in e.args])
-        args = [_from_idx(a) for a in e.args]
+        # `+ - *` convert their operands to the type the operation evaluates in, in Python and in C
+        # alike, so a promotion cast to exactly that type spells a conversion both perform anyway.
+        peel = _peel_promotion if name in ("Add", "Mul") else lambda _parent, child: child
+        args = [_from_idx(peel(e, a)) for a in e.args]
         spelled = _SPELLED_CLASS.get((name, len(args)))
         if spelled is not None:
             return _dace_op(spelled[_idx._CTX.spelling(e._e) == "operator"], args)
@@ -560,6 +563,28 @@ if _BACKEND_NAME == "idxalg":
             return backend.Not(args[0])
         op = _dace_op_class("And" if name == "And" else "Or")
         return functools.reduce(op, args)
+
+    def _peel_promotion(parent, child):
+        """A cast the promotion rules INSERTED, dropped where the enclosing operation converts anyway.
+
+        Only int -> float, and only under `+ - * /`. The in-kind widening case (`int32` -> `int64`)
+        is already dropped in the `Cast` arm, value-preservingly and without needing a parent. A KIND
+        crossing is not value-preserving -- above 2^53 an int64 rounds, which is exactly why the
+        engine records it -- but C performs the identical conversion at this position, so spelling it
+        changes nothing about the result and diverges from every untyped producer of the same
+        expression.
+
+        Under a CALL it must stay. `Min`/`Max`/`pow` lower to `dace::math::min(x, j)` and friends,
+        whose argument types C++ deduces rather than converts, so an operand short of its cast is not
+        merely noisy but uncompilable.
+        """
+        if _idx._CTX.kind(child._e) != "Cast":
+            return child
+        outer = _idx._CTX.dtype(child._e)
+        if outer != _idx._CTX.dtype(parent._e):
+            return child
+        ow, iw = _int_width(outer), _int_width(_idx._CTX.dtype(child.args[0]._e))
+        return child.args[0] if ow is not None and iw is not None and (iw[0], ow[0]) == ("int", "float") else child
 
     def _peel_truthiness(a):
         """The truthiness of `x` reduced back to `x`; anything else unchanged.

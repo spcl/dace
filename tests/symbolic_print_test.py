@@ -181,3 +181,27 @@ def test_floordiv_does_not_survive_codegen():
     n = pystr_to_symbolic("N")
     assert "/ 8)" not in sym2cpp((n + 1) * 4 // 8)
     assert "/ 8)" in sym2cpp(int_floor((n + 1) * 4, 8))
+
+
+def test_arithmetic_promotion_is_not_spelled_but_a_call_argument_keeps_it():
+    """Where the target converts on its own, a promotion cast is not written; where it DEDUCES, it is.
+
+    A typed backend records the int->float promotion as a node. C applies the usual arithmetic
+    conversions to `+ - * /` itself, so writing the cast there says nothing the target was not going
+    to do, and diverges from the untyped spelling of the same expression for no difference in result.
+    Under `Min`/`Max`/`pow` it must stay: those lower to `dace::math::min(x, j)` and friends, whose
+    argument types C++ deduces rather than converts, and a double against an int64 fails to deduce.
+    """
+    import dace
+    from dace import symbolic, symbolic_engine
+
+    x = symbolic.symbol('x', dtype=dace.float64)
+    j = symbolic.symbol('j', dtype=dace.int64)
+
+    for expr in (x * j, x + j, x / j):
+        assert 'float64' not in symstr(expr, cpp_mode=True), f'promotion spelled in {symstr(expr)}'
+
+    both_ways = (symstr(symbolic_engine.Min(x, j), cpp_mode=True), symstr(symbolic_engine.Min(j, x), cpp_mode=True))
+    for rendered in both_ways:
+        assert 'j' in rendered and 'x' in rendered, rendered
+    assert both_ways[0] == both_ways[1], f'Min must not depend on operand order: {both_ways}'

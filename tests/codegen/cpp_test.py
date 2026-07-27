@@ -2,7 +2,6 @@
 
 from functools import reduce
 from operator import mul
-import re
 import warnings
 
 from dace import SDFG, Memlet, config, dtypes, symbol
@@ -226,10 +225,7 @@ def test_pointer_argument_keeps_a_decimal_literal():
     # argument carry the index. experimental_readable inlines it and indexes through A_idx.
     with config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
         code = codegen.generate_code(sdfg)[0].clean_code
-    # A typed symbolic backend makes the int->float promotion explicit (`dace::float64(j)`), an
-    # untyped one leaves the bare symbol. Same index either way; what must survive verbatim is the
-    # decimal literal, which is the whole subject of the test.
-    assert re.search(r'&A\[\(0\.5 ?\* ?(dace::\w+\()?j\)?\)\]', code), code
+    assert '&A[(0.5 * j)]' in code
     assert '0->5' not in code
 
     # The rewrite must leave the literal alone on the default path too, wherever it lands.
