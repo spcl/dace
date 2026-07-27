@@ -45,6 +45,7 @@ names that would drift out of date. Only the names idxalg overrides are listed;
 everything else forwards to sympy.
 """
 import functools
+import math
 import os
 
 import sympy as backend
@@ -145,6 +146,11 @@ if _BACKEND_NAME == "idxalg":
             # ``symbol`` carries an authoritative ``.dtype`` typeclass; map it to the idxalg dtype
             # string so int16/int32/uint32/float stay themselves rather than collapsing to int64.
             return _idx_symbol(obj.name, _symbol_idxstr(obj), bool(a.get("positive")), bool(a.get("nonnegative")))
+        if obj is backend.oo or obj is -backend.oo:
+            # ±oo is a sympy singleton, not a `Float`, so `is_Float` below never catches it and it
+            # used to arrive as an opaque `Infinity()` call -- which then matched nothing, so
+            # `has(oo)` on a converted expression read False.
+            return _idx.Float(math.inf if obj is backend.oo else -math.inf)
         if obj.is_Integer:
             return _idx.Integer(int(obj))
         if obj.is_Float:
@@ -431,6 +437,10 @@ if _BACKEND_NAME == "idxalg":
         if name in ("Integer", "Float"):
             from dace.symbolic import TypedConstant
             value = int(e) if name == "Integer" else float(repr(e))
+            if name == "Float" and (value == math.inf or value == -math.inf):
+                # sympy has no infinite `Float`; ±oo is a distinct singleton, and the retained sympy
+                # island is where DaCe's own `inf` spelling already lands.
+                return backend.oo if value > 0 else -backend.oo
             dstr = _idx._CTX.dtype(e._e)
             # Only a NON-default width needs a TypedConstant; a default-width literal stays a plain
             # sympy number so ordinary index arithmetic is not littered with typed wrappers.
