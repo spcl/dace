@@ -544,12 +544,15 @@ class DetectAccumulations(_BodyTransformer):
       chained ``b = x + y + b``, which parses as ``(x + y) + b`` so the grouping
       of ``x + y`` survives the swap intact). Lowering reads the *other* operand
       as the accumulated value.
+    - ``accumulation_call`` — the same thing for an order-independent COMBINER
+      CALL: ``b = max(b, x)`` / ``b = min(x, b)``. Paired with
+      ``accumulator_side`` like the operator form.
     - ``conflict_hazard`` — a self-referential write with no accumulation form
       at all: ``b = b + x + y`` (would need inexact re-association), ``b = x - b``
       (accumulator in a non-fold position of a non-commutative operator),
-      ``b = max(b, x)`` (a call, pending unified registry dispatch). These still
-      lower as races, but ``lowering/mechanisms/conflict.py`` reports them
-      instead of letting them pass silently.
+      ``b = f(b, x)`` for any other call. These still lower as races, but
+      ``lowering/mechanisms/conflict.py`` reports them instead of letting them
+      pass silently.
 
     Known blind spot: a conditional update (``if x > b: b = x``) is a race with
     no self-reference in any single expression, so it is neither detected nor
@@ -582,8 +585,42 @@ class DetectAccumulations(_BodyTransformer):
                 statement.accumulator_side = 'right'
                 return statement
 
+        combiner = _accumulating_call(value, key)
+        if combiner is not None:
+            statement.accumulation_call, statement.accumulator_side = combiner
+            return statement
+
         statement.conflict_hazard = _hazard_reason(value, key)
         return statement
+
+
+#: Two-argument functions that fold their accumulator order-independently —
+#: ``f(f(x, a), b) == f(f(x, b), a)`` — and so may become a conflict-resolution
+#: lambda, exactly like :data:`~...mechanisms.conflict.WCR_OPERATORS` does for
+#: binary operators. Recognized by NAME here because this pass runs before any
+#: name resolution; the lowering stage confirms the callee really is the
+#: builtin before acting on the marker.
+_WCR_CALL_COMBINERS = ('min', 'max')
+
+
+def _accumulating_call(value: ast.expr, key: str) -> Optional[Tuple[str, str]]:
+    """
+    Recognize ``b = max(b, x)`` / ``b = min(x, b)``: a two-argument call to an
+    order-independent combiner with the write target as exactly one argument.
+
+    :return: (combiner name, side of the accumulator), or None if the value is
+             not that form.
+    """
+    if not isinstance(value, ast.Call) or value.keywords or len(value.args) != 2:
+        return None
+    if not isinstance(value.func, ast.Name) or value.func.id not in _WCR_CALL_COMBINERS:
+        return None
+    left, right = value.args
+    if _reference_key(left) == key and not _reads_reference(right, key):
+        return value.func.id, 'left'
+    if _reference_key(right) == key and not _reads_reference(left, key):
+        return value.func.id, 'right'
+    return None
 
 
 def _hazard_reason(value: ast.expr, key: str) -> str:

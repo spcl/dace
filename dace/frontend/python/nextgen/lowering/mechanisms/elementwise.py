@@ -12,7 +12,7 @@ import ast
 import re
 from typing import List, Optional, Tuple
 
-from dace import subsets, symbolic
+from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -119,6 +119,37 @@ def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], s
                                           category='ufunc')
         expression = re.sub(rf'\b{connector}\b', f'({inferred.value})', expression)
     emit_elementwise(target, expression, operands, statement, state)
+
+
+def emit_cast(target: DataAccess, dtype: dtypes.typeclass, argument: ast.expr, statement: ast.stmt,
+              state: LoweringState) -> None:
+    """
+    Emit a datatype conversion (``dace.int64(x)``) as a single-operand
+    elementwise computation.
+
+    This mirrors the tasklet the registry converter builds
+    (``replacements/array_manipulation.py::_datatype_converter``) — including
+    its exception for booleans, whose typeclass string is already the callable
+    name — but without the surrounding state machinery, so a cast can also be
+    emitted inside a dataflow scope, where deferred replacement expansion
+    cannot run.
+
+    :raises UnsupportedFeatureError: If the argument is neither data nor a
+                                     compile-time constant/symbolic value.
+    """
+    name = dtype.to_string()
+    function = name if dtype in (dtypes.bool, dtypes.bool_) else f'dace.{name}'
+    access = resolve_access(argument, state)
+    if access is not None:
+        emit_elementwise(target, f'{function}(__inp)', [('__inp', access)], statement, state)
+        return
+    inferred = state.inference.infer(argument)
+    if inferred.kind not in ('constant', 'symbolic'):
+        raise UnsupportedFeatureError(f'Unsupported operand for the "{name}" conversion',
+                                      state.context.filename,
+                                      statement,
+                                      category='type-inference')
+    emit_elementwise(target, f'{function}({inferred.value})', [], statement, state)
 
 
 def emit_elementwise(target: DataAccess,

@@ -76,6 +76,11 @@ _REDUCTION_METHODS = {
     'min': 'minimum',
 }
 
+#: Builtin functions over SCALAR operands that are elementwise ufuncs, mapped
+#: to the ufunc implementing them, with the argument count that form takes.
+_BUILTIN_ELEMENTWISE = {'min': 'minimum', 'max': 'maximum', 'abs': 'absolute'}
+_BUILTIN_ELEMENTWISE_ARITY = {'min': 2, 'max': 2, 'abs': 1}
+
 
 def _replacement_registered(name: str) -> bool:
     """
@@ -667,6 +672,34 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
         if out_access is None:
             return False
 
+    # Python's builtin min/max/abs over scalar operands. These ARE elementwise
+    # ufuncs: the classic replacements implement min/max as a pairwise chain of
+    # two-scalar comparisons (never an iterable reduction -- see
+    # ``reduction.py::_pymin``) and abs as a single-operand call, and their
+    # descriptor inference only types scalar operands, so an array operand
+    # never reaches here. Routing them through the elementwise mechanism rather
+    # than deferred expansion is what makes them work INSIDE dataflow scopes,
+    # where expansion cannot run at all (it needs state machinery).
+    if target is not None and not call.keywords:
+        builtin_ufunc = _BUILTIN_ELEMENTWISE.get(qualname)
+        if builtin_ufunc is not None and len(call.args) == _BUILTIN_ELEMENTWISE_ARITY[qualname]:
+            if _lower_combiner_accumulation(target, call, qualname, inferred, statement, state):
+                return True
+            target_access = _call_target_access(target, inferred, statement, state)
+            elementwise.emit_ufunc(target_access, builtin_ufunc, call.args, statement, state)
+            return True
+
+        # Datatype conversions INSIDE a dataflow scope. Outside one the
+        # deferred expansion runs the registry converter itself (and keeps
+        # classic's exact behavior); inside, expansion is unavailable, and a
+        # cast is just a single-operand tasklet.
+        if len(call.args) == 1 and state.emitter.in_dataflow_scope:
+            cast_dtype = _converter_dtype(qualname)
+            if cast_dtype is not None:
+                target_access = _call_target_access(target, inferred, statement, state)
+                elementwise.emit_cast(target_access, cast_dtype, call.args[0], statement, state)
+                return True
+
     # NumPy universal functions, direct (numpy.add(...)) or through one of
     # their reduce/accumulate/outer methods (numpy.add.reduce(...)). A plain
     # elementwise call with no keywords lowers through the lightweight
@@ -740,6 +773,51 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
         return True
 
     return False
+
+
+def _converter_dtype(qualname: str) -> Optional[dtypes.typeclass]:
+    """
+    The target dtype of a datatype-conversion call (``dace.int64``,
+    ``numpy.float32``, the builtin ``int``/``float``/``bool``), or None when
+    the call is not one.
+    """
+    from dace.frontend.python.replacements.array_manipulation import _resolve_converter_dtype
+    name = qualname.rsplit('.', 1)[-1]
+    if name not in dtypes.TYPECLASS_STRINGS:
+        return None
+    try:
+        return _resolve_converter_dtype(name)
+    except Exception:
+        return None
+
+
+def _lower_combiner_accumulation(target: ast.expr, call: ast.Call, qualname: str, inferred, statement: ast.stmt,
+                                 state: LoweringState) -> bool:
+    """
+    Lower ``b[i] = max(b[i], x)`` inside a dataflow scope as a conflict-resolved
+    write: the accumulator operand is dropped and the write carries a ``max``/
+    ``min`` WCR, exactly as ``b[i] += x`` becomes a ``Sum`` WCR.
+
+    Without this, the statement lowers as an unsynchronized read-modify-write —
+    a silent data race — because concurrent map iterations write the same
+    element. The self-reference is only visible in the marker canonicalization
+    attaches (``accumulation_call``): by lowering time ANF has hoisted both
+    operands into temporaries, so the statement no longer mentions the target.
+    That hoisted read of the target becomes dead and is eliminated.
+
+    :return: True when the accumulation was emitted (the caller is done).
+    """
+    from dace.frontend.python.nextgen.lowering.mechanisms import conflict
+    wcr = conflict.call_accumulation_wcr(statement, qualname, target, state)
+    if wcr is None:
+        return False
+    side = getattr(statement, 'accumulator_side', None)
+    if side not in ('left', 'right'):
+        return False
+    contribution = call.args[1] if side == 'left' else call.args[0]
+    target_access = _call_target_access(target, inferred, statement, state)
+    elementwise.emit_computation(target_access, contribution, statement, state, wcr=wcr)
+    return True
 
 
 def _out_keyword_access(call: ast.Call, state: LoweringState) -> Optional[DataAccess]:

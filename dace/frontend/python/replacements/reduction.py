@@ -425,18 +425,33 @@ def _infer_builtin_sum(input_descs, arr, **_kw):
     return _reduction_descriptor(input_descs, arr, axis=0)
 
 
+def _holds_single_element(desc: data.Data) -> bool:
+    """Whether a descriptor holds exactly one element: a Scalar, or a
+    degenerate array such as the shape-``(1,)`` container a returning callee's
+    result materializes into."""
+    if isinstance(desc, data.Scalar):
+        return True
+    shape = getattr(desc, 'shape', None)
+    return bool(shape) and all(str(dimension) == '1' for dimension in shape)
+
+
 def _infer_builtin_minmax(input_descs, first_arg, *args, **_kw):
     from dace.frontend.python.replacements.operators import result_type
 
     operands = []
     for arg in (first_arg, ) + args:
         desc = _get_desc(input_descs, arg)
-        if isinstance(desc, data.Data) and not isinstance(desc, data.Scalar):
+        if isinstance(desc, data.Data) and not _holds_single_element(desc):
+            # Python's builtin min/max take scalar arguments only (an iterable
+            # argument is NumPy's job); the implementation is a chain of
+            # two-scalar comparisons.
             return None
         if desc is not None:
             operands.append(desc)
             continue
-        if isinstance(arg, (Number, symbolic.symbol)):
+        if isinstance(arg, Number) or symbolic.issymbolic(arg):
+            # Any symbolic EXPRESSION, not just a bare symbol: ``min(x, bins - 1)``
+            # is as compile-time-typed as ``min(x, bins)``.
             operands.append(arg)
             continue
         return None

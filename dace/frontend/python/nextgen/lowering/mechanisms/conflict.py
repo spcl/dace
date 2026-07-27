@@ -12,9 +12,10 @@ race class that :func:`accumulation_wcr` closes.
 
 The decision has two inputs, produced by two different stages:
 
-- the *accumulation marker* (``augmented_op``), attached during
-  canonicalization by ``canonical/passes.py`` to statements that are
-  read-modify-writes of their own target, and
+- the *accumulation marker* (``augmented_op`` for an operator fold,
+  ``accumulation_call`` for an order-independent combiner call like
+  ``b = max(b, x)``), attached during canonicalization by ``canonical/passes.py``
+  to statements that are read-modify-writes of their own target, and
 - the *collision test*, which needs the emission scope stack and therefore only
   exists here.
 
@@ -58,6 +59,33 @@ WCR_OPERATORS = {
     ast.BitXor: '^',
     ast.BitAnd: '&',
 }
+
+#: Combiner CALLS that are order-independent in the same sense
+#: :data:`WCR_OPERATORS` requires, and so may become a conflict-resolution
+#: lambda. Marked during canonicalization as ``accumulation_call`` (see
+#: ``canonical/passes.py::_accumulating_call``).
+WCR_CALL_COMBINERS = ('min', 'max')
+
+
+def call_accumulation_wcr(statement: ast.stmt, combiner: str, target: ast.expr, state: LoweringState) -> Optional[str]:
+    """
+    The conflict-resolution lambda for a self-referential write whose combiner
+    is an order-independent CALL (``b = max(b, x)`` inside a map), or None when
+    the write needs none.
+
+    Same policy as :func:`accumulation_wcr`, for the marker
+    canonicalization attaches to the call form. The caller must have confirmed
+    that ``combiner`` names the builtin the marker assumed.
+
+    :param statement: A canonical assignment carrying ``accumulation_call``.
+    """
+    if getattr(statement, 'accumulation_call', None) != combiner:
+        return None
+    if combiner not in WCR_CALL_COMBINERS or not state.emitter.in_dataflow_scope:
+        return None
+    if Config.get_bool('frontend', 'avoid_wcr') and not writes_collide(target, state):
+        return None
+    return f'lambda x, y: {combiner}(x, y)'
 
 
 def accumulation_wcr(statement: ast.stmt, state: LoweringState) -> Optional[str]:

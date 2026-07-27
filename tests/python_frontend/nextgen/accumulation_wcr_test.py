@@ -104,6 +104,22 @@ def _accumulate_commuted(A: dace.float64[N]):
 
 
 @dace.program
+def _accumulate_maximum(A: dace.float64[N]):
+    b = np.full([1], -1e30, dtype=np.float64)
+    for i in dace.map[0:N]:
+        b[0] = max(b[0], A[i])
+    return b
+
+
+@dace.program
+def _accumulate_minimum(A: dace.float64[N]):
+    b = np.full([1], 1e30, dtype=np.float64)
+    for i in dace.map[0:N]:
+        b[0] = min(A[i], b[0])
+    return b
+
+
+@dace.program
 def _accumulate_commuted_chain(A: dace.float64[N], B: dace.float64[N]):
     b = np.zeros([1], dtype=np.float64)
     for i in dace.map[0:N]:
@@ -207,6 +223,30 @@ def test_normalized_accumulation_uses_wcr(program, arguments):
     assert 'lambda x, y: x + y' in wcrs
 
 
+@pytest.mark.parametrize('program, combiner, reference', [
+    (_accumulate_maximum, 'max', np.max),
+    (_accumulate_minimum, 'min', np.min),
+])
+def test_combiner_call_accumulation_uses_wcr(program, combiner, reference):
+    """``b = max(b, x)`` inside a map is a reduction like ``b += x``: the write
+    must carry a ``max`` WCR instead of lowering as a racing read-modify-write.
+
+    Checked structurally AND numerically, per the standing lesson that a race
+    is only probabilistically observable, so a numerical check alone proves
+    nothing about synchronization.
+    """
+    rng = np.random.default_rng(0)
+    data = rng.random(64)
+
+    wcrs = _write_wcrs(nextgen.parse_program(program, data))
+    assert f'lambda x, y: {combiner}(x, y)' in wcrs
+
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import from_schedule_tree
+    sdfg = from_schedule_tree(nextgen.parse_program(program, data))
+    sdfg.validate()
+    assert np.allclose(np.asarray(sdfg(A=data, N=data.size)), reference(data))
+
+
 def _conflict_warnings(program, *arguments):
     """The race reports raised while lowering a program."""
     with warnings.catch_warnings(record=True) as caught:
@@ -277,16 +317,33 @@ def test_pass_marks_accumulations(source, operator, side):
     assert result.accumulator_side == side
 
 
+@pytest.mark.parametrize('source, combiner, side', [
+    ('b = max(b, x)', 'max', 'left'),
+    ('b = max(x, b)', 'max', 'right'),
+    ('b = min(b, x)', 'min', 'left'),
+    ('b[i] = min(x, b[i])', 'min', 'right'),
+])
+def test_pass_marks_combiner_call_accumulations(source, combiner, side):
+    """``max``/``min`` fold order-independently, so a self-referential call to
+    one is an accumulation like ``b = b + x`` — not a hazard."""
+    result = _detect(source)
+    assert result.accumulation_call == combiner
+    assert result.accumulator_side == side
+    assert getattr(result, 'conflict_hazard', None) is None
+
+
 @pytest.mark.parametrize(
     'source, hazard',
     [
         ('b = x - b', True),  # Accumulator in a non-fold position of a non-commutative op
         ('b = x / b', True),
         ('b = b + x + y', True),  # Would need re-association, which is inexact for floats
-        ('b = max(b, x)', True),  # A call: pending unified registry dispatch
+        ('b = f(b, x)', True),  # A call to something with no order-independence guarantee
+        ('b = max(b, x, y)', True),  # Not the two-argument fold form
         ('b = b', False),  # Self-copy: no conflict
         ('b = x + y', False),  # Not self-referential at all
         ('b = b + x', False),  # Detected as an accumulation instead
+        ('b = max(b, x)', False),  # Detected as a combiner-call accumulation instead
     ])
 def test_pass_marks_undetectable_self_reference(source, hazard):
     assert (getattr(_detect(source), 'conflict_hazard', None) is not None) == hazard
@@ -305,6 +362,8 @@ if __name__ == '__main__':
     test_normalized_accumulation_uses_wcr(_accumulate_spelled_out, (np.zeros(8), ))
     test_normalized_accumulation_uses_wcr(_accumulate_commuted, (np.zeros(8), ))
     test_normalized_accumulation_uses_wcr(_accumulate_commuted_chain, (np.zeros(8), np.zeros(8)))
+    test_combiner_call_accumulation_uses_wcr(_accumulate_maximum, 'max', np.max)
+    test_combiner_call_accumulation_uses_wcr(_accumulate_minimum, 'min', np.min)
     test_unresolvable_conflict_is_reported(_accumulate_wrong_operand_position, (np.zeros(8), ))
     test_unresolvable_conflict_is_reported(_accumulate_needs_reassociation, (np.zeros(8), np.zeros(8)))
     test_no_conflict_report_without_a_race(_self_referential_outside_map, (np.zeros(8), ))
@@ -319,6 +378,10 @@ if __name__ == '__main__':
                                       ('b = x + y + b', ast.Add, 'right'), ('b[i] = b[i] * x', ast.Mult, 'left'),
                                       ('b.f = b.f | x', ast.BitOr, 'left'), ('b = b - x', ast.Sub, 'left')]:
         test_pass_marks_accumulations(_source, _operator, _side)
-    for _source, _hazard in [('b = x - b', True), ('b = x / b', True), ('b = b + x + y', True), ('b = max(b, x)', True),
-                             ('b = b', False), ('b = x + y', False), ('b = b + x', False)]:
+    for _source, _combiner, _side in [('b = max(b, x)', 'max', 'left'), ('b = max(x, b)', 'max', 'right'),
+                                      ('b = min(b, x)', 'min', 'left'), ('b[i] = min(x, b[i])', 'min', 'right')]:
+        test_pass_marks_combiner_call_accumulations(_source, _combiner, _side)
+    for _source, _hazard in [('b = x - b', True), ('b = x / b', True), ('b = b + x + y', True), ('b = f(b, x)', True),
+                             ('b = max(b, x, y)', True), ('b = b', False), ('b = x + y', False), ('b = b + x', False),
+                             ('b = max(b, x)', False)]:
         test_pass_marks_undetectable_self_reference(_source, _hazard)
