@@ -481,6 +481,18 @@ if _BACKEND_NAME == "idxalg":
             return Attr(base, field)
         if name in ("And", "Or", "Not"):
             return _from_idx_bool(name, e)
+        if _idx._CTX.kind(e._e) == "IfExpr":
+            # A select is a structural node here, so it carries no head NAME to resolve -- `.func`
+            # reports the umbrella `Basic` and the generic arm below rendered `Basic(c, t, f)`, losing
+            # the select entirely. Its condition gets the same truthiness peel as `And`/`Or`.
+            #
+            # DaCe spells a select two ways and lowers them differently: `ITE` is the branchless blend
+            # its vectorizer recognizes, `IfExpr` the branching conditional. One node either way, so
+            # the recorded FORM chooses the class -- which is also what keeps `isinstance(x, ITE)`
+            # answering for a value this backend built.
+            cond, then, els = e.args
+            head = "ITE" if _idx._CTX.spelling(e._e) == "alternate" else "IfExpr"
+            return _dace_op(head, [_from_idx(_peel_truthiness(cond)), _from_idx(then), _from_idx(els)])
         args = [_from_idx(a) for a in e.args]
         spelled = _SPELLED_CLASS.get((name, len(args)))
         if spelled is not None:
@@ -530,9 +542,21 @@ if _BACKEND_NAME == "idxalg":
         return functools.reduce(op, args)
 
     def _peel_truthiness(a):
-        """An idxalg `Cast(x, Bool)` reduced to `x`; anything else unchanged."""
-        if _idx._CTX.kind(a._e) == "Cast" and _idx._CTX.dtype(a._e) == "bool":
+        """The truthiness of `x` reduced back to `x`; anything else unchanged.
+
+        C truthiness enters as `cast(x, Bool)`, but the engine FOLDS that to `x != 0` -- the same
+        value, and the form a bit-vector solver can reason about. Either shape peels here: in a
+        boolean position `x != 0` and `x` are interchangeable (C applies the test itself), and DaCe
+        writes the bare value. Only in a boolean position: in ARITHMETIC a bool cast is a real 0/1
+        narrowing, and peeling there would turn `bool(x) + 1` into `x + 1`.
+        """
+        kind = _idx._CTX.kind(a._e)
+        if kind == "Cast" and _idx._CTX.dtype(a._e) == "bool":
             return a.args[0]
+        if kind == "Ne":
+            lhs, rhs = a.args
+            if _idx._CTX.kind(rhs._e) == "Integer" and int(rhs) == 0:
+                return lhs
         return a
 
     def _dace_op_class(name: str):
@@ -658,12 +682,13 @@ if _BACKEND_NAME == "idxalg":
             # sympy owns their heads and DaCe defines no class for any of them, so no conversion can
             # produce one and the remaining reads would be pure cost on the path taken most.
             return None
-        # The other two reads only ever change the answer for the kinds that need them: a cast's
-        # target type names its class, and only a head with a `__` twin cares which spelling it was
-        # written in.
+        # `dtype` only ever names a class for a cast, and that is keyed on the kind being exactly
+        # `Cast`, so skipping it elsewhere cannot mislead. The SPELLING is always read: restricting it
+        # to the kinds known to have a second form put `b if c else d` and `ITE(c, t, f)` under one key,
+        # and the conditional then inherited the blend's cached answer. A memo key that omits
+        # something the answer depends on is the same silent-wrong-branch bug this protocol removes.
         dtype = _idx._CTX.dtype(e) if kind == "Cast" else None
-        spelling = _idx._CTX.spelling(e) if kind == "FloorDiv" or kind.startswith("Opaque") else None
-        key = (kind, dtype, spelling)
+        key = (kind, dtype, _idx._CTX.spelling(e))
         if key in _DACE_HEAD_MEMO:
             return _DACE_HEAD_MEMO[key]
         converted = _from_idx(obj)
