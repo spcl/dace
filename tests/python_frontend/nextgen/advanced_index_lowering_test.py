@@ -69,7 +69,7 @@ def test_index_by_two_arrays_broadcasts():
     def program(A: dace.float64[4, 3], rows: dace.int64[2, 2], columns: dace.int64[2, 2]):
         return A[rows, columns]
 
-    A = np.arange(12, dtype=np.float64).reshape(4, 3)
+    A = np.arange(12, dtype=np.float64).reshape(4, 3).copy()
     rows = np.array([[0, 0], [3, 3]], dtype=np.int64)
     columns = np.array([[0, 2], [0, 2]], dtype=np.int64)
     result = np.asarray(_run(program, A=A, rows=rows, columns=columns))
@@ -175,7 +175,7 @@ def test_masked_write():
     def program(A: dace.float64[20, 30], mask: dace.bool[20, 30]):
         A[mask] = 2
 
-    A = np.tile(np.arange(30, dtype=np.float64), (20, 1))
+    A = np.tile(np.arange(30, dtype=np.float64), (20, 1)).copy()
     mask = A > 15
     expected = A.copy()
     expected[mask] = 2
@@ -189,7 +189,7 @@ def test_masked_accumulation():
     def program(A: dace.float64[20, 30], mask: dace.bool[20, 30]):
         A[mask] += 5
 
-    A = np.tile(np.arange(30, dtype=np.float64), (20, 1))
+    A = np.tile(np.arange(30, dtype=np.float64), (20, 1)).copy()
     mask = A > 15
     expected = A.copy()
     expected[mask] += 5

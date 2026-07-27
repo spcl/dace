@@ -477,7 +477,9 @@ def lower_indirect_write(target: ast.Subscript,
         in_memlets[connector] = Memlet(data=access.container, subset=access.subset)
         index_names[astutils.unparse(read)] = connector
 
-    index_code = astutils.unparse(substitute_index_reads(target.slice, index_names))
+    substituted_index = substitute_index_reads(target.slice, index_names)
+    index_code = astutils.unparse(
+        ast.Subscript(value=ast.Name(id='__arr', ctx=ast.Load()), slice=substituted_index, ctx=ast.Load()))
 
     code, operands = substitute_data_operands(value, state, connector_prefix='__val')
     for connector, operand in operands:
@@ -485,7 +487,7 @@ def lower_indirect_write(target: ast.Subscript,
 
     out_memlets = {'__arr': Memlet(data=base_access.container, subset=base_access.subset, wcr=wcr)}
     line = getattr(statement, 'lineno', 0)
-    tasklet = nodes.Tasklet(f'indirect_write_{line}', set(in_memlets), {'__arr'}, f'__arr[{index_code}] = {code}')
+    tasklet = nodes.Tasklet(f'indirect_write_{line}', set(in_memlets), {'__arr'}, f'{index_code} = {code}')
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
     return True
 
