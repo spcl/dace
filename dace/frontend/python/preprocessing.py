@@ -1519,6 +1519,8 @@ def mpi4py_is_usable() -> bool:
     A caller that only guards for ``ImportError`` then lets that escape, and every ``@dace.program``
     fails to parse on a machine that merely has a stray ``pip install mpi4py``. Both cases mean the
     same thing to DaCe -- there is no MPI -- so both answer False here.
+
+    Importing the submodule does not initialize MPI, so this stays side-effect-free on the parse path.
     """
     try:
         from mpi4py import MPI  # noqa: F401
