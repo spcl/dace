@@ -281,6 +281,53 @@ def test_interstate_edge_assignment_roundtrip():
     assert assigns['s'] == '1.79769313486232e+308'  # finite, full precision
 
 
+def test_symbolic_expression_serialization_preserves_integerness():
+    sdfg = dace.SDFG("roundtrip")
+
+    sdfg.add_symbol("__out_IDim_range_0", dace.int32)
+    sdfg.add_symbol("__out_IDim_range_1", dace.int32)
+
+    expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
+
+    sdfg.add_array(
+        "A",
+        shape=[expr],
+        dtype=dace.float64,
+    )
+
+    reloaded = dace.SDFG.from_json(sdfg.to_json())
+
+    original = sdfg.arrays["A"].shape[0]
+    restored = reloaded.arrays["A"].shape[0]
+
+    assert sympy.srepr(original) == sympy.srepr(restored)
+    assert original == restored
+    assert original.is_integer == restored.is_integer
+
+
+def test_symbolic_roundtrip_preserves_integerness():
+    expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
+
+    rt = symbolic.pystr_to_symbolic(symbolic.symstr(expr))
+
+    assert expr.is_integer == rt.is_integer
+
+    for s1, s2 in zip(
+            sorted(expr.free_symbols, key=str),
+            sorted(rt.free_symbols, key=str),
+    ):
+        assert s1.is_integer == s2.is_integer
+
+
+def test_max_roundtrip_keeps_integer_assumptions():
+    expr = symbolic.pystr_to_symbolic("max(0, -__out_IDim_range_0 + __out_IDim_range_1)")
+
+    rt = symbolic.pystr_to_symbolic(symbolic.symstr(expr))
+
+    assert expr.is_integer
+    assert rt.is_integer
+
+
 if __name__ == '__main__':
     test_operator_roundtrip_renders_operator()
     test_ternary_roundtrip()
@@ -306,3 +353,6 @@ if __name__ == '__main__':
     test_subset_indirection_detects_index_subscript()
     test_subset_indirection_detects_nested_and_multidim_subscript()
     test_interstate_edge_assignment_roundtrip()
+    test_symbolic_expression_serialization_preserves_integerness()
+    test_symbolic_roundtrip_preserves_integerness()
+    test_max_roundtrip_keeps_integer_assumptions()

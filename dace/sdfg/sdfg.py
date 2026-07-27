@@ -73,7 +73,7 @@ class NestedDict(dict):
             else:
                 desc = desc.members[token]
             token = tokens.pop(0)
-            result = hasattr(desc, 'members') and token in desc.members
+            result = isinstance(desc, dt.Structure) and token in desc.members
         return result
 
     def keys(self):
@@ -119,13 +119,14 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
     Assumes the subscript slice can be coerced to a symbolic expression (e.g., no indirect access).
 
     :param node: The AST node to find memlets in.
     :param arrays: A dictionary mapping array names to their data descriptors (a-la ``sdfg.arrays``)
+    :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
     :return: A list of Memlet objects in the order they appear in the AST.
     """
     result: List[mm.Memlet] = []
@@ -136,6 +137,10 @@ def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]
             data, slc = astutils.subscript_to_slice(subnode, arrays)
             subset = sbs.Range(slc)
             result.append(mm.Memlet(data=data, subset=subset))
+        elif include_scalars and isinstance(subnode, ast.Name):
+            data = astutils.rname(subnode)
+            if data in arrays and isinstance(arrays[data], dace.data.Scalar):
+                result.append(mm.Memlet.from_array(data, arrays[data]))
 
     return result
 
@@ -393,19 +398,20 @@ class InterstateEdge(object):
 
         return {k: v for k, v in inferred_lhs_symbols.items() if k in lhs_symbols}
 
-    def get_read_memlets(self, arrays: Dict[str, dt.Data]) -> List[mm.Memlet]:
+    def get_read_memlets(self, arrays: Dict[str, dt.Data], include_scalars: bool = False) -> List[mm.Memlet]:
         """
         Returns a list of memlets (with data descriptors and subsets) used in this edge. This includes
         both reads in the condition and in every assignment.
 
         :param arrays: A dictionary mapping names to their corresponding data descriptors (a-la ``sdfg.arrays``)
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
         :return: A list of Memlet objects for each read.
         """
         result: List[mm.Memlet] = []
-        result.extend(memlets_in_ast(self.condition.code[0], arrays))
+        result.extend(memlets_in_ast(self.condition.code[0], arrays, include_scalars=include_scalars))
         for assign in self.assignments.values():
             vast = ast.parse(assign)
-            result.extend(memlets_in_ast(vast, arrays))
+            result.extend(memlets_in_ast(vast, arrays, include_scalars=include_scalars))
 
         return result
 
@@ -481,6 +487,9 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
+    # Explicitly-set build folder, or None to derive it from the configuration
+    _build_folder = None
+
     def __init__(self,
                  name: str,
                  constants: Dict[str, Tuple[dt.Data, Any]] = None,
@@ -550,14 +559,11 @@ class SDFG(ControlFlowRegion):
         result._nodes = copy.deepcopy(self._nodes, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
-        for k in ('_parent', '_parent_sdfg', '_parent_nsdfg_node'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
+        result._parent = memo.get(id(self._parent))
+        result._parent_sdfg = memo.get(id(self._parent_sdfg))
+        result._parent_nsdfg_node = memo.get(id(self._parent_nsdfg_node))
         # Copy SDFG list and transformation history
-        if hasattr(self, '_transformation_hist'):
-            setattr(result, '_transformation_hist', copy.deepcopy(self._transformation_hist, memo))
+        result._transformation_hist = copy.deepcopy(self._transformation_hist, memo)
         result._cfg_list = []
         if self._parent_sdfg is None:
             # Avoid import loops
@@ -688,6 +694,7 @@ class SDFG(ControlFlowRegion):
     @classmethod
     def from_json(cls, json_obj, context=None):
         context = context or {'sdfg': None}
+        context['version'] = json_obj.get('dace_version', context.get('version'))
         _type = json_obj['type']
         if _type != cls.__name__:
             raise TypeError("Class type mismatch")
@@ -699,13 +706,16 @@ class SDFG(ControlFlowRegion):
         edges = json_obj['edges']
 
         if 'constants_prop' in attrs:
-            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']))
+            constants_prop = dace.serialize.loads(dace.serialize.dumps(attrs['constants_prop']), context=context)
         else:
             constants_prop = None
 
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj, ignore_properties={'constants_prop', 'name', 'hash'})
+        dace.serialize.set_properties_from_json(ret,
+                                                json_obj,
+                                                context=context,
+                                                ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -717,7 +727,7 @@ class SDFG(ControlFlowRegion):
             nodelist.append(block)
 
         for e in edges:
-            e = dace.serialize.from_json(e)
+            e = dace.serialize.from_json(e, context=context)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_block' in json_obj:
@@ -1201,7 +1211,7 @@ class SDFG(ControlFlowRegion):
     @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
-        if hasattr(self, '_build_folder'):
+        if self._build_folder is not None:
             return self._build_folder
         cache_config = Config.get('cache')
         base_folder = Config.get('default_build_folder')
@@ -1468,9 +1478,10 @@ class SDFG(ControlFlowRegion):
 
     def read_and_write_sets(self) -> Tuple[Set[AnyStr], Set[AnyStr]]:
         """
-        Determines what data containers are read and written in this SDFG. Does
-        not include reads to subsets of containers that have previously been
-        written within the same state.
+        Determines what data containers are read and written in this SDFG.
+
+        Includes all reads including reads to subsets of containers that have
+        previously been written.
 
         :return: A two-tuple of sets of things denoting
                  ({data read}, {data written}).

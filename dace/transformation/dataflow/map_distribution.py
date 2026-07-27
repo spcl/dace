@@ -5,7 +5,7 @@ from copy import deepcopy
 from numbers import Number
 import dace
 import sympy
-from dace import data, subsets
+from dace import data, subsets, symbolic
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.transformation import transformation as pm
@@ -373,9 +373,11 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
 
             elif isinstance(desc, data.Array):
 
-                local_name, local_arr = sdfg.add_temp_transient([(desc.shape[0]) // Px, (desc.shape[1]) // Py],
-                                                                dtype=desc.dtype,
-                                                                storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient(
+                    [symbolic.int_floor(desc.shape[0], Px),
+                     symbolic.int_floor(desc.shape[1], Py)],
+                    dtype=desc.dtype,
+                    storage=desc.storage)
                 local_access = graph.add_access(local_name)
                 bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)
@@ -435,9 +437,11 @@ class ElementWiseArrayOperation2D(pm.SingleStateTransformation):
             if isinstance(desc, data.Scalar):
                 raise NotImplementedError
             elif isinstance(desc, data.Array):
-                local_name, local_arr = sdfg.add_temp_transient([(desc.shape[0]) // Px, (desc.shape[1]) // Py],
-                                                                dtype=desc.dtype,
-                                                                storage=desc.storage)
+                local_name, local_arr = sdfg.add_temp_transient(
+                    [symbolic.int_floor(desc.shape[0], Px),
+                     symbolic.int_floor(desc.shape[1], Py)],
+                    dtype=desc.dtype,
+                    storage=desc.storage)
                 local_access = graph.add_access(local_name)
                 bsizes_name, bsizes_arr = sdfg.add_temp_transient((2, ), dtype=dace.int32)
                 bsizes_access = graph.add_access(bsizes_name)

@@ -11,6 +11,7 @@ import ctypes
 import dataclasses
 
 from collections import OrderedDict
+from numbers import Integral
 from typing import Any, Dict, List, Set, Tuple, Union
 
 import numpy as np
@@ -89,7 +90,8 @@ class Data:
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.shape):
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.shape):
             raise TypeError('Shape must be a list or tuple of integer values '
                             'or symbols')
         if any((shp < 0) == True for shp in self.shape):
@@ -153,7 +155,7 @@ class Data:
 
     @property
     def veclen(self):
-        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+        return self.dtype.veclen
 
     @property
     def ctype(self):
@@ -191,7 +193,9 @@ class Data:
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                dimsize = (((self.shape[dim] + alignment - 1) // alignment) * alignment)
+                # int_ceil, never `//`: `(N + a - 1) // a` builds sympy `floor(...)`, whose argument
+                # sym2cpp prints WITHOUT the floor, truncating each term (N=1, a=8 gives 0, not 8).
+                dimsize = symbolic.int_ceil(self.shape[dim], alignment) * alignment
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
@@ -528,9 +532,10 @@ class Array(Data):
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
 
-        if any(not isinstance(s, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic)) for s in self.strides):
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+               for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer values or symbols')
-        if any(not isinstance(off, (int, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
                for off in self.offset):
             raise TypeError('Offset must be a list or tuple of integer values or symbols')
 
@@ -636,7 +641,7 @@ class Array(Data):
         """
         Used to set properties which depend on the shape of the array
         either to their default value, which depends on the shape, or
-        if explicitely provided to the given value. For internal use only.
+        if explicitly provided to the given value. For internal use only.
         """
         if shape is None:
             raise IndexError('Shape must not be None')
