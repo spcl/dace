@@ -33,11 +33,11 @@ def _is_symbolic_converter(converter) -> bool:
 def _is_symbolic_type(tp) -> bool:
     if tp is symbolic.SymExpr:
         return True
-    return isinstance(tp, type) and issubclass(tp, sp.Basic)
+    return isinstance(tp, type) and issubclass(tp, symbolic.SymbolicBasic)
 
 
 def _coerce_symbolic_property_value(value):
-    if isinstance(value, (symbolic.SymExpr, sp.Basic)):
+    if isinstance(value, (symbolic.SymExpr, symbolic.SymbolicBasic)):
         return value
     return pystr_to_symbolic(value, simplify=False)
 
@@ -1247,7 +1247,7 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
+        if (val is not None and not isinstance(val, (symbolic.SymbolicExpr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):

@@ -18,7 +18,7 @@ import packaging.version as packaging_version
 
 from dace import dtypes
 from dace import symbolic_engine
-from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
+from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic, Expr as SymbolicExpr
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
