@@ -87,5 +87,27 @@ def test_skew_bounds_t_range_covers_the_diagonal() -> None:
     assert any("N" in h and "M" in h for h in hi), f"expected an N+M upper term, got {hi}"
 
 
+def test_skew_bounds_seidel_diagonal_over_rebased_box() -> None:
+    """The ISL projection behind polybench ``seidel_2d``'s wavefront.
+
+    Once ``NormalizeLoopAndMapOrigin`` rebases both axes, seidel_2d's ``(i, j)`` nest is the square
+    ``0 <= u <= N-3``, ``0 <= v <= N-3``, and the legal schedule is the STEEP Gauss-Seidel diagonal
+    ``tau = (2, 1)`` -- the one whose stored deps ``{(0,-1), (-1,0), (-1,-1), (-1,1)}`` need
+    ``a > b > 0``. Projecting that skew must give ``t`` running from ``0`` to ``3*(N-3) = 3N - 9``,
+    which is exactly the diagonal bound the end-to-end test
+    ``canonicalize_wavefront_skew_test.test_seidel_2d_ij_wavefront_skews_under_reconstruct_plus_origin_knobs``
+    observes on the rewritten SDFG. Pinned here directly on the constraint set so a projection
+    regression is attributed to this layer rather than to the pass.
+    """
+    box = [_sym("u"), _sym("N - 3 - u"), _sym("v"), _sym("N - 3 - v")]
+    bounds = poly.skew_bounds(_DIMS, ("N", ), box, (2, 1), "t", "p")
+    assert bounds is not None, "the steep (2, 1) diagonal must be expressible"
+    lo = {str(symbolic.simplify(term)) for term in bounds.t_lo_terms}
+    assert "0" in lo, f"expected a 0 lower term, got {lo}"
+    hi = {str(symbolic.simplify(term)) for term in bounds.t_hi_terms}
+    assert any(symbolic.simplify(term - _sym("3*N - 9")) == 0 for term in bounds.t_hi_terms), \
+        f"expected an upper term equal to 3*N - 9, got {hi}"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
