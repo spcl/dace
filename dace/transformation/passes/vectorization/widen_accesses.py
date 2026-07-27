@@ -333,6 +333,9 @@ class WidenAccesses(ppl.Pass):
     @staticmethod
     def _data_names_of_edge(edge, side: str) -> List[str]:
         """Collect all data names that ``edge`` references on ``side``."""
+        # An ordering edge references no data at all; its endpoint's array name is not a touch.
+        if edge.data is not None and edge.data.is_empty():
+            return []
         names = []
         endpoint = edge.src if side == "src" else edge.dst
         if isinstance(endpoint, AccessNode):

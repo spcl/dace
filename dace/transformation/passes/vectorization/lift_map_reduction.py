@@ -540,7 +540,9 @@ class LiftMapReductionToReduce(ppl.Pass):
 
         # Correctness gate: accumulator pre-seeded to the op identity, so seeding
         # the fold with the identity reproduces ``init (op) fold``.
-        init_edges = state.in_edges(acc_in_node)
+        # Ordering edges seed nothing; overwriting one with a real memlet would leave the
+        # accumulator with no writer and read uninitialized memory as the identity.
+        init_edges = [e for e in state.in_edges(acc_in_node) if not e.data.is_empty()]
         if not init_edges:
             return False
         for ie in init_edges:

@@ -282,7 +282,9 @@ class BypassTrivialAssignTasklets(ppl.Pass):
                 # AN(src) -> [_out=_in] -> AN(dst) -> C becomes AN(src) -> C.
                 # Symmetric to the src-transient branch -- pick ``data``
                 # endpoint based on whether C is an AccessNode or a Tasklet.
-                consumers = list(istate.out_edges(dst_an))
+                # An ordering-only out-edge is not a consumer to reroute into; counting it skips
+                # the direct-copy fallback below and strands ``src_an`` isolated.
+                consumers = [e for e in istate.out_edges(dst_an) if not e.data.is_empty()]
                 if not consumers:
                     # No downstream consumer to reroute the source into. Dropping the
                     # tasklet here would strand ``src_an`` as an ISOLATED node (invalid
