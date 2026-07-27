@@ -1878,7 +1878,7 @@ def _ndarray_any(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, kwa
 # -------------------------------------------------------------------- #
 
 from dace.frontend.common.op_repository import infers_descriptor, infers_method_descriptor, infers_ufunc_descriptor
-from dace.frontend.python.replacements.type_inference import _method_reduction_descriptor
+from dace.frontend.python.replacements.type_inference import _method_reduction_descriptor, scalar_operand_descriptor
 
 
 def _clone_inferred_output(output):
@@ -2055,6 +2055,8 @@ def _infer_ufunc_reduce_descriptor(input_descs: Dict[str, data.Data],
                                    keepdims=False,
                                    **_kwargs):
     desc = _resolve_inference_operand(input_descs, arr)
+    if not isinstance(desc, data.Data):
+        desc = scalar_operand_descriptor(arr)
     if not isinstance(desc, data.Data):
         return None
 

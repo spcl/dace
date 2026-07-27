@@ -385,10 +385,26 @@ def is_flat(node: ast.AST) -> bool:
         return all(is_atom(element) for element in node.elts)
     if isinstance(node, ast.Call):
         callable_ok = is_atom(node.func)
-        args_ok = all(is_atom(a) for a in node.args)
-        kwargs_ok = all(kw.arg is not None and is_atom(kw.value) for kw in node.keywords)
+        args_ok = all(is_call_argument(a) for a in node.args)
+        kwargs_ok = all(kw.arg is not None and is_call_argument(kw.value) for kw in node.keywords)
         return callable_ok and args_ok and kwargs_ok
     return False
+
+
+def is_call_argument(node: ast.AST) -> bool:
+    """
+    Check whether an expression is a canonical call argument: an atom, or a
+    lambda.
+
+    Lambdas are arguments, never operands — they are the combiner of a
+    reduction intrinsic (``dace.reduce(lambda a, b: a + b, ...)``,
+    ``dace.elementwise``), which both frontends pass to the replacement
+    registry as source text (the classic frontend's ``visit_Lambda`` unparses
+    it; see ``semantics.inference.call_arguments``). They cannot be hoisted to
+    a temporary the way other compound arguments are, since there is no
+    container to hold a Python function.
+    """
+    return is_atom(node) or isinstance(node, ast.Lambda)
 
 
 def is_assign_target(node: ast.AST) -> bool:

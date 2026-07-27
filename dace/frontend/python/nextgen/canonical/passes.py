@@ -751,11 +751,11 @@ class ANFTransform(_BodyTransformer):
         if isinstance(expr, ast.Call):
             if not cpa.is_atom(expr.func):
                 raise _ShortCircuitHazard
-            expr.args = [self._flatten(a, hoisted, level='atom') for a in expr.args]
+            expr.args = [self._flatten_call_argument(a, hoisted) for a in expr.args]
             for keyword in expr.keywords:
                 if keyword.arg is None:
                     raise _ShortCircuitHazard
-                keyword.value = self._flatten(keyword.value, hoisted, level='atom')
+                keyword.value = self._flatten_call_argument(keyword.value, hoisted)
             return expr if level == 'flat' else self._hoist(expr, hoisted)
         if isinstance(expr, (ast.List, ast.Tuple)) and isinstance(getattr(expr, 'ctx', ast.Load()), ast.Load):
             # Sequence literals: flatten elements to atoms; the literal itself
@@ -778,6 +778,30 @@ class ANFTransform(_BodyTransformer):
         if cpa.is_atom(expr):
             return expr
         raise _ShortCircuitHazard
+
+    def _flatten_call_argument(self, argument: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
+        """
+        Flatten a call argument (or keyword value) to an atom, with one
+        normalization beyond the grammar: a ``UnaryOp`` over a non-constant
+        operand is hoisted to a temporary.
+
+        ``UnaryOp(op, atom)`` IS a canonical atom, so the grammar admits
+        ``numpy.exp(-alpha)`` — but the registry adapter that types a call
+        (``semantics.inference.call_arguments``) passes data operands to the
+        descriptor-inference registry BY CONTAINER NAME, and a negated operand
+        has no name. Leaving it inline therefore makes every registry call
+        with such an argument look unregistered, and it falls back to the
+        interpreter. Naming it here reduces the call to the ``b = -alpha;
+        numpy.exp(b)`` form that already lowers. Constant operands stay inline
+        (they fold to compile-time values, and hoisting them would turn a
+        constant argument into a container one).
+        """
+        if isinstance(argument, ast.Lambda):
+            return argument  # A canonical call argument on its own (see cpa.is_call_argument)
+        flattened = self._flatten(argument, hoisted, level='atom')
+        if isinstance(flattened, ast.UnaryOp) and not isinstance(flattened.operand, ast.Constant):
+            return self._hoist(flattened, hoisted)
+        return flattened
 
     def _flatten_target(self, target: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
         if isinstance(target, ast.Attribute) and not cpa.is_dataref(target):

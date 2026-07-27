@@ -282,8 +282,11 @@ def _ndarray_flatten(pv: ProgramVisitor,
                      arr: str,
                      order: StringLiteral = StringLiteral('C')) -> str:
     new_arr = flat(pv, sdfg, state, arr, order)
-    # `flatten` always returns a copy
-    if isinstance(new_arr, data.View):
+    # `flatten` always returns a copy. ``flat`` returns a NAME, so the
+    # view-ness test has to go through the descriptor: testing the name itself
+    # against ``data.View`` never matched, which made ``flatten()`` alias its
+    # source whenever ``flat`` took its view branch (a contiguous input).
+    if isinstance(sdfg.arrays[new_arr], data.View):
         from dace.frontend.python.replacements.array_creation import _ndarray_copy  # Avoid circular import
         return _ndarray_copy(pv, sdfg, state, new_arr)
     return new_arr
@@ -851,7 +854,7 @@ def _vsplit(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
 
 from dace.frontend.common.op_repository import (infers_descriptor, infers_method_descriptor,
                                                 infers_attribute_descriptor)
-from dace.frontend.python.replacements.type_inference import _get_desc, _to_int
+from dace.frontend.python.replacements.type_inference import _get_desc, _to_int, scalar_operand_descriptor
 from dace.frontend.python.replacements.utils import normalize_axes
 
 # -- Free functions ---------------------------------------------------- #
@@ -1278,6 +1281,11 @@ def _make_datatype_converter_inference(typeclass: str) -> None:
     @infers_descriptor(f'numpy.{typeclass}')
     def _infer(input_descs, arg, **_kw):
         desc = _get_desc(input_descs, arg)
+        if desc is None:
+            # A compile-time constant or symbolic argument (``dace.float64(3)``,
+            # ``dace.int64(N)``): the converter accepts these and produces a
+            # scalar of the target type.
+            desc = scalar_operand_descriptor(arg)
         if desc is None:
             return None
         return _infer_method_astype(desc, dtype)

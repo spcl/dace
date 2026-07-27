@@ -467,10 +467,19 @@ def _infer_mean(input_descs, arr, axis=None, **_kw):
     return _reduction_descriptor(input_descs, arr, axis, dtype_override=out_dtype)
 
 
+#: Index dtype the arg-reduction IMPLEMENTATIONS produce (``_argmax``/
+#: ``_argmin``'s ``result_type`` default). NumPy returns ``intp`` (int64)
+#: instead, but inference must describe what the implementation actually
+#: allocates: a frontend that sizes the result from inference and then copies
+#: the implementation's output into it (the nextgen frontend's deferred
+#: replacement expansion) emits a mismatched copy otherwise.
+_ARG_REDUCTION_INDEX_DTYPE = dtypes.int32
+
+
 @infers_descriptor('numpy.argmax')
 @infers_descriptor('numpy.argmin')
 def _infer_argminmax(input_descs, arr, axis=None, **_kw):
-    return _reduction_descriptor(input_descs, arr, axis, dtype_override=dtypes.int64)
+    return _reduction_descriptor(input_descs, arr, axis, dtype_override=_ARG_REDUCTION_INDEX_DTYPE)
 
 
 # Method inference for .max(), .min(), .argmax(), .argmin()
@@ -484,7 +493,7 @@ for _cls in ('Array', 'View', 'Scalar'):
 
 
 def _infer_method_argminmax(self_desc, axis=None, **_kw):
-    return _method_reduction_descriptor(self_desc, axis, dtype_override=dtypes.int64)
+    return _method_reduction_descriptor(self_desc, axis, dtype_override=_ARG_REDUCTION_INDEX_DTYPE)
 
 
 for _cls in ('Array', 'View', 'Scalar'):

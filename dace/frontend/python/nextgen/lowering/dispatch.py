@@ -45,9 +45,10 @@ cause. The taxonomy in use:
 """
 import ast
 import copy
-from typing import List, Optional, Tuple, Union
+import numbers
+from typing import Any, List, Optional, Tuple, Union
 
-from dace import data, dtypes, subsets
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -256,35 +257,59 @@ def _lower_reshape_call(target: ast.expr, call: ast.Call, qualname: str, state: 
     access under a fresh, explicitly-shaped view container — the "frontend
     view path" that view-producing registry replacements (like the classic
     ``reshape`` replacement) explicitly defer to, since
-    :func:`_expansion_viable` rejects any replacement that records a view (a
-    view binding is frontend-visible state, not something a deferred
+    :func:`_expansion_viable` rejects any replacement whose RESULT is a view
+    (a view binding is frontend-visible state, not something a deferred
     ``ReplacementCallNode`` can represent).
 
+    ``<data>.ravel()`` is included: it is ``reshape(-1)`` whenever NumPy would
+    return a view, i.e. on a contiguous source. On a non-contiguous source
+    NumPy copies, and so does the registry implementation — that case is left
+    to the deferred expansion by :func:`_reshape_operands`.
+
+    A non-name target (``out[:] = numpy.reshape(A, [3, 3])``) is not a
+    rebinding, so it takes the same view but copies through it into the
+    target's own subset.
+
     Returns False when the call is not a recognized/resolvable reshape form
-    (target not a name, base not a data access, shape not compile-time
-    integers, or element count mismatch); the caller then falls through to
-    the normal registry-call dispatch and, ultimately, a callback.
+    (target not a data access, base not a data access, shape not resolvable,
+    or element count mismatch); the caller then falls through to the normal
+    registry-call dispatch and, ultimately, a callback.
     """
-    if not isinstance(target, ast.Name):
-        return False
     base_expr, shape_args = _reshape_operands(call, qualname)
     if base_expr is None:
         return False
     access = resolve_access(base_expr, state)
     if access is None:
         return False
+    if _is_ravel_call(call) and not (isinstance(access.descriptor, data.Array)
+                                     and _is_contiguous_flat(access.descriptor)):
+        return False  # Non-contiguous ravel copies; the registry implementation does that
     shape = _reshape_shape(shape_args, access.subset, state)
     if shape is None:
         return False
+    target_access: Optional[DataAccess] = None
+    if not isinstance(target, ast.Name):
+        target_access = resolve_access(target, state)
+        if target_access is None:
+            return False
     view_descriptor = data.ArrayView(access.descriptor.dtype, shape)
-    view_name = state.context.add_container(target.id, view_descriptor)
-    state.context.bind(target.id, view_name)
+    view_name = state.context.add_container(target.id if target_access is None else '__reshape', view_descriptor)
+    if target_access is None:
+        state.context.bind(target.id, view_name)
     state.emitter.emit(
         tn.ViewNode(target=view_name,
                     source=access.container,
                     memlet=Memlet(data=access.container, subset=access.subset),
                     src_desc=access.descriptor,
                     view_desc=view_descriptor))
+    if target_access is not None:
+        # Writing the reshaped data into an existing container: copy out of
+        # the view, which carries the reshaped dimensions.
+        state.emitter.emit(
+            tn.CopyNode(target=target_access.container,
+                        memlet=Memlet(data=view_name,
+                                      subset=subsets.Range.from_array(view_descriptor),
+                                      other_subset=target_access.subset)))
     return True
 
 
@@ -308,18 +333,29 @@ def _reshape_operands(call: ast.Call, qualname: str) -> Tuple[Optional[ast.expr]
         return call.args[0], call.args[1:]
     if isinstance(call.func, ast.Attribute) and call.func.attr == 'reshape' and not call.keywords:
         return call.func.value, call.args
+    if _is_ravel_call(call):
+        # ``A.ravel()`` is ``A.reshape(-1)``; the single ``-1`` dimension is
+        # filled from the source's element count by ``_reshape_shape``.
+        return call.func.value, [ast.Constant(value=-1)]
     return None, []
+
+
+def _is_ravel_call(call: ast.Call) -> bool:
+    """Whether the call is the no-argument ``<data>.ravel()`` method form."""
+    return (isinstance(call.func, ast.Attribute) and call.func.attr == 'ravel' and not call.args and not call.keywords)
 
 
 def _reshape_shape(shape_args: List[ast.expr], source_subset, state: LoweringState) -> Optional[List]:
     """
-    Resolve reshape target-shape arguments to concrete dimension sizes,
-    filling in at most one ``-1`` placeholder dimension from the source's
-    total element count (NumPy semantics). None when a dimension is not a
-    compile-time integer or the requested shape's element count does not
-    match the source's (the caller degrades to a callback).
+    Resolve reshape target-shape arguments to dimension sizes, filling in at
+    most one ``-1`` placeholder dimension from the source's total element count
+    (NumPy semantics). Dimensions may be compile-time integers or symbolic
+    expressions (``A.reshape([1, N * N])``) — a view descriptor carries either.
+    None when a dimension resolves to neither, or when the requested shape's
+    element count does not match the source's (the caller degrades to a
+    callback).
     """
-    dims: List[int] = []
+    dims: List[Any] = []
     if len(shape_args) == 1:
         # A single shape argument: either a literal tuple/list (canonical
         # 'static' per Inferred.infer) or an ANF-hoisted name bound to one
@@ -330,16 +366,17 @@ def _reshape_shape(shape_args: List[ast.expr], source_subset, state: LoweringSta
         except UnsupportedFeatureError:
             inferred = None
         if inferred is not None and inferred.kind == 'static':
-            try:
-                dims = [int(element) for element in state.inference.sequence_constants(inferred.value)]
-            except (UnsupportedFeatureError, TypeError, ValueError):
-                return None
+            for element in inferred.value.elements:
+                dimension = _reshape_dimension(element, state)
+                if dimension is None:
+                    return None
+                dims.append(dimension)
     if not dims:
         for arg in shape_args:
-            value = state.inference.constant_int(arg)
-            if value is None:
+            dimension = _reshape_dimension(arg, state)
+            if dimension is None:
                 return None
-            dims.append(value)
+            dims.append(dimension)
     if not dims:
         return None
     total = source_subset.num_elements()
@@ -347,21 +384,46 @@ def _reshape_shape(shape_args: List[ast.expr], source_subset, state: LoweringSta
         known_product = 1
         placeholder = None
         for index, dim in enumerate(dims):
-            if dim == -1:
+            if isinstance(dim, int) and dim == -1:
                 if placeholder is not None:
                     return None
                 placeholder = index
             else:
-                known_product *= dim
+                known_product = known_product * dim
         if placeholder is not None:
-            if known_product == 0 or bool(total % known_product != 0):
+            if known_product == 0 or bool(symbolic.simplify(total % known_product) != 0):
                 return None
             dims[placeholder] = total // known_product
-        elif bool(known_product != total):
+        elif not _same_element_count(known_product, total):
             return None
     except Exception:
         return None
     return dims
+
+
+def _reshape_dimension(expression: ast.expr, state: LoweringState) -> Optional[Any]:
+    """
+    Resolve one reshape dimension to a compile-time integer or a symbolic
+    expression, or None when it is neither.
+    """
+    value = state.inference.constant_int(expression)
+    if value is not None:
+        return value
+    try:
+        inferred = state.inference.infer(expression)
+    except UnsupportedFeatureError:
+        return None
+    if inferred.kind == 'symbolic':
+        return inferred.value
+    return None
+
+
+def _same_element_count(requested: Any, total: Any) -> bool:
+    """Whether a requested shape's element count matches the source's, over
+    integers or symbolic expressions."""
+    if requested == total:
+        return True
+    return bool(symbolic.simplify(requested - total) == 0)
 
 
 def resolve_attribute_data(base: DataAccess, attr_name: str, state: LoweringState) -> Optional[DataAccess]:
@@ -490,8 +552,10 @@ def _run_attribute_trial(function, container: str, state: LoweringState) -> Opti
         return None
     if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
         result = result[1]
-    if shim.views or not isinstance(result, str) or result not in scratch.arrays:
+    if not isinstance(result, str) or result not in scratch.arrays:
         return None
+    if result in shim.views:
+        return None  # A view-valued result belongs on the frontend view path (see _expansion_viable)
     return scratch.arrays[result]
 
 
@@ -582,6 +646,7 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     inferred = state.inference.infer_call(call)
     if inferred is None:
         return False  # No registry entry: the interpreter fallback preserves semantics.
+    out_access: Optional[DataAccess] = None
     if inferred.is_none_output:
         if target is not None:
             # A call typed as zero-output but assigned to a target (e.g.
@@ -589,10 +654,18 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
             # the interpreter fallback preserves Python's own semantics
             # (assigning ``None``).
             return False
-    elif not inferred.is_data or target is None:
-        # A multi-output result or an unused (bare-statement) data-valued
-        # result: the interpreter fallback preserves semantics in both cases.
+    elif not inferred.is_data:
+        # A multi-output result: the interpreter fallback preserves semantics.
         return False
+    elif target is None:
+        # A bare-statement data-valued call. If its result goes to an ``out=``
+        # container (``numpy.add(A, B, out=C)``, ``numpy.concatenate([a, b],
+        # out=c)``), that container IS the target and the statement lowers;
+        # otherwise the result is unused and the interpreter fallback
+        # preserves semantics.
+        out_access = _out_keyword_access(call, state)
+        if out_access is None:
+            return False
 
     # NumPy universal functions, direct (numpy.add(...)) or through one of
     # their reduce/accumulate/outer methods (numpy.add.reduce(...)). A plain
@@ -610,10 +683,20 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     if ufunc_form is not None:
         ufunc, ufunc_method = ufunc_form
         if ufunc_method is None and not call.keywords:
-            target_access = _call_target_access(target, inferred, statement, state)
-            elementwise.emit_ufunc(target_access, ufunc.__name__, call.args, statement, state)
+            # Positional outputs (``numpy.add(A, B, C)``) are not operands:
+            # only the ufunc's first ``nin`` arguments are inputs, and the
+            # output container is already resolved in ``out_access``.
+            target_access = out_access or _call_target_access(target, inferred, statement, state)
+            elementwise.emit_ufunc(target_access, ufunc.__name__, call.args[:ufunc.nin], statement, state)
             return True
-        return _lower_ufunc_replacement_call(target, call, ufunc.__name__, ufunc_method, inferred, statement, state)
+        return _lower_ufunc_replacement_call(target,
+                                             call,
+                                             ufunc.__name__,
+                                             ufunc_method,
+                                             inferred,
+                                             statement,
+                                             state,
+                                             target_access=out_access)
 
     # Array/stream creation. ``qualname`` is already registry-normalized by
     # ``resolve_callee`` (e.g. ``dace.define_stream``, whose real module is
@@ -653,10 +736,30 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     # Deferred replacement expansion: the descriptor inference typed the call,
     # so vetted registry functions emit a ReplacementCallNode that
     # tree_to_sdfg expands through the classic replacement implementation.
-    if _lower_replacement_call(target, call, qualname, inferred, statement, state):
+    if _lower_replacement_call(target, call, qualname, inferred, statement, state, target_access=out_access):
         return True
 
     return False
+
+
+def _out_keyword_access(call: ast.Call, state: LoweringState) -> Optional[DataAccess]:
+    """
+    The container a call's output argument writes into, or None when the call
+    has none or it does not resolve to a data access.
+
+    Covers both spellings: an explicit ``out=`` keyword, and — for a direct
+    NumPy ufunc call — the positional output NumPy allows after the ufunc's
+    ``nin`` inputs (``numpy.add(A, B, C)``).
+    """
+    for keyword in call.keywords:
+        if keyword.arg == 'out':
+            return resolve_access(keyword.value, state)
+    ufunc_form = state.inference.resolve_ufunc_call(call)
+    if ufunc_form is not None:
+        ufunc, ufunc_method = ufunc_form
+        if ufunc_method is None and len(call.args) > ufunc.nin:
+            return resolve_access(call.args[ufunc.nin], state)
+    return None
 
 
 def _match_reduction(call: ast.Call, qualname: str) -> Optional[Tuple[str, ast.expr, Optional[ast.expr]]]:
@@ -706,8 +809,13 @@ def _method_call_receiver(call: ast.Call, state: LoweringState) -> Optional[Data
     return resolve_access(call.func.value, state)
 
 
-def _lower_replacement_call(target: Optional[ast.expr], call: ast.Call, qualname: str, inferred, statement: ast.stmt,
-                            state: LoweringState) -> bool:
+def _lower_replacement_call(target: Optional[ast.expr],
+                            call: ast.Call,
+                            qualname: str,
+                            inferred,
+                            statement: ast.stmt,
+                            state: LoweringState,
+                            target_access: Optional[DataAccess] = None) -> bool:
     """
     Emit a deferred :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
     for a vetted registry replacement (free function or bound method).
@@ -718,6 +826,8 @@ def _lower_replacement_call(target: Optional[ast.expr], call: ast.Call, qualname
         zero-output call (``inferred.is_none_output``) — resolved through the
         same method-family lookup (:func:`_method_call_receiver`,
         :func:`_method_registered`) as a targeted method call.
+    :param target_access: An already-resolved write target, used instead of
+        ``target`` when the call's output goes to an ``out=`` keyword argument.
     """
     name = qualname
     receiver: Optional[str] = None
@@ -752,9 +862,13 @@ def _lower_replacement_call(target: Optional[ast.expr], call: ast.Call, qualname
         # argument.
         arguments = [receiver] + arguments
         data_arguments = data_arguments | {receiver}
+    if _bind_compile_time_result(target, name, arguments, keywords, data_arguments, state, receiver):
+        return True
     if not _expansion_viable(name, arguments, keywords, data_arguments, state, receiver=receiver):
         return False
-    if target is None:
+    if target_access is not None:
+        target_container = target_access.container
+    elif target is None:
         # No frontend-declared target container to write into (a bare
         # statement): the schedule tree still requires a registered
         # container reference, so use the call's own data operand (the
@@ -777,6 +891,55 @@ def _lower_replacement_call(target: Optional[ast.expr], call: ast.Call, qualname
                                data_arguments=data_arguments,
                                receiver=receiver))
     return True
+
+
+def _bind_compile_time_result(target: Optional[ast.expr], name: str, arguments: List, keywords: dict,
+                              data_arguments: set, state: LoweringState, receiver: Optional[str]) -> bool:
+    """
+    Bind the target name to a replacement's COMPILE-TIME result, for
+    replacements that return a Python value rather than a container: ``len(A)``
+    yields the array's leading dimension (an int or a symbol), ``slice(0, 10)``
+    a Python ``slice``. There is nothing to emit for these — the value lives in
+    the frontend's binding repository and folds into whatever consumes it.
+
+    The value comes from running the replacement on a scratch SDFG, the same
+    trial :func:`_expansion_viable` performs; a result that names a scratch
+    container (the ordinary case) is not a compile-time value and returns
+    False, leaving the call to deferred expansion.
+
+    :return: True when the target was bound to a compile-time value.
+    """
+    from dace.frontend.common import op_repository as oprepo
+
+    if not isinstance(target, ast.Name):
+        return False
+    if receiver is not None:
+        function = oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
+    else:
+        function = oprepo.Replacements.get(name)
+    scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
+    try:
+        result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
+    except Exception:
+        return False
+    if not _is_compile_time_value(result) or shim.views or scratch_state.nodes():
+        # Either not a plain value, or the replacement also emitted dataflow
+        # for it — in which case the value is not the whole result.
+        return False
+    state.context.bind_constant(target.id, result)
+    return True
+
+
+def _is_compile_time_value(result: Any) -> bool:
+    """Whether a replacement's result is a compile-time Python value (as
+    opposed to a container name, ``None``, or a list of names)."""
+    if isinstance(result, (bool, numbers.Number, slice)):
+        return True
+    if symbolic.issymbolic(result):
+        return True
+    if isinstance(result, tuple) and result:
+        return all(_is_compile_time_value(element) for element in result)
+    return False
 
 
 def _replacement_trial_scratch(data_arguments: set, state: LoweringState):
@@ -827,8 +990,19 @@ def _expansion_viable(name: str,
         return False
     if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
         result = result[1]
-    if shim.views:
-        return False  # View bindings are frontend state; expansion cannot defer them
+    if isinstance(result, list) and len(result) == 1 and isinstance(result[0], str):
+        # Single-element list of output datanames: the convention ufunc
+        # implementations and the dtype-cast replacements (``dace.int64(A)``)
+        # use. ``visit_ReplacementCallNode`` normalizes it to the bare-string
+        # form, so accepting it here keeps the two checks in agreement.
+        result = result[0]
+    if isinstance(result, str) and result in shim.views:
+        # The RESULT is a view of an input (``reshape``/``ravel`` on contiguous
+        # data): binding that as a Python name is frontend state, so it belongs
+        # on the frontend view path (:func:`_lower_reshape_call`), not here.
+        # Views recorded on the way to a freshly computed result are fine --
+        # ``visit_ReplacementCallNode`` materializes those.
+        return False
     if isinstance(result, str):
         return result in scratch.arrays
     return result is None or result == []
@@ -842,8 +1016,14 @@ def _expansion_viable(name: str,
 _SUPPORTED_UFUNC_KEYWORDS = frozenset({'out', 'where', 'axis', 'keepdims', 'initial', 'dtype'})
 
 
-def _lower_ufunc_replacement_call(target: ast.expr, call: ast.Call, ufunc_name: str, ufunc_method: Optional[str],
-                                  inferred, statement: ast.stmt, state: LoweringState) -> bool:
+def _lower_ufunc_replacement_call(target: Optional[ast.expr],
+                                  call: ast.Call,
+                                  ufunc_name: str,
+                                  ufunc_method: Optional[str],
+                                  inferred,
+                                  statement: ast.stmt,
+                                  state: LoweringState,
+                                  target_access: Optional[DataAccess] = None) -> bool:
     """
     Emit a deferred ``ReplacementCallNode`` for a NumPy ufunc call that the
     lightweight elementwise mechanism cannot express: ``reduce``/
@@ -871,7 +1051,8 @@ def _lower_ufunc_replacement_call(target: ast.expr, call: ast.Call, ufunc_name: 
     arguments, keywords, data_arguments = converted
     if not _ufunc_expansion_viable(ufunc_name, ufunc_method, arguments, keywords, data_arguments, state):
         return False
-    target_access = _call_target_access(target, inferred, statement, state)
+    if target_access is None:
+        target_access = _call_target_access(target, inferred, statement, state)
     display_name = f'numpy.{ufunc_name}' + (f'.{ufunc_method}' if ufunc_method else '')
     state.emitter.emit(
         tn.ReplacementCallNode(qualname=display_name,
@@ -921,6 +1102,10 @@ def _replacement_arguments(call: ast.Call, state: LoweringState) -> Optional[Tup
     data_arguments = set()
 
     def convert(expression: ast.expr):
+        if isinstance(expression, ast.Lambda):
+            # Reduction combiners pass as source text, the convention both
+            # frontends use (see semantics.inference.call_arguments).
+            return True, astutils.unparse(expression)
         if isinstance(expression, ast.Name):
             binding = state.context.resolve(expression.id)
             if binding is not None and binding.kind == 'container':

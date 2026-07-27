@@ -1111,6 +1111,9 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # replacement.
         self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
                                                      self._pending_interstate_assignments())
+        # States existing before the expansion, so the view bindings it records
+        # can be materialized in exactly the states it creates (below).
+        states_before = set(sdfg.all_states()) - {self._current_state}
         shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
         if node.receiver is not None:
             # METHOD-family replacement (e.g. ``A.copy()``, see
@@ -1149,7 +1152,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
             shim.last_block = result[0].last_state or shim.last_block
             result = result[1]
-        self._current_state = shim.last_block
+        created_states = [s for s in sdfg.all_states() if s not in states_before]
+        # Some replacements chain states through a ``NestedCall`` but discard
+        # the ``NestedCall`` object itself (e.g. ``_ndarray_argmax``, which
+        # keeps only the result name), leaving ``shim.last_block`` at the HEAD
+        # of the chain they built. Continuing from there would order everything
+        # that follows before the replacement's own trailing writes -- an
+        # uninitialized read. Follow the linear chain of states this expansion
+        # created to its end instead.
+        self._current_state = _end_of_expansion_chain(shim.last_block, set(created_states))
 
         if isinstance(result, list) and len(result) == 1 and isinstance(result[0], str):
             # Ufunc implementations always return a single-element list of
@@ -1158,8 +1169,22 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             result = result[0]
 
         if shim.views:
-            raise NotImplementedError(
-                f"Replacement '{node.qualname}' records view bindings, which deferred expansion does not support.")
+            if isinstance(result, str) and result in shim.views:
+                # The replacement's RESULT is a view of one of its inputs (e.g.
+                # ``reshape``/``ravel`` on a contiguous array). Binding that as
+                # a Python name is frontend state -- writes through the name
+                # must reach the source array -- which a deferred call cannot
+                # express; the frontend has its own view-binding path for these
+                # (``lowering.dispatch._lower_reshape_call``).
+                raise NotImplementedError(
+                    f"Replacement '{node.qualname}' returns a view binding, which deferred expansion "
+                    f"does not support.")
+            # Views recorded on the way to a freshly computed result (e.g.
+            # ``argmax``/``flatten``, which flatten their input through a view
+            # first) are internal to the expansion: connect each one to its
+            # source here, exactly as the classic frontend does at the end of
+            # parsing, so the expansion's reads see real data.
+            _materialize_view_bindings(shim.views, created_states)
 
         if isinstance(result, str) and result in sdfg.arrays:
             if result != node.target:
@@ -1497,6 +1522,66 @@ def _create_state_boundary(
     label = "cf_state_boundary" if boundary_node.due_to_control_flow else "state_boundary"
     assignments = assignments if assignments is not None else {}
     return _insert_and_split_assignments(state, label=label, assignments=assignments)
+
+
+def _end_of_expansion_chain(block: ControlFlowBlock, created: set) -> ControlFlowBlock:
+    """
+    Follow a linear chain of states created by a replacement expansion to its
+    end, so that whatever the caller emits next orders after everything the
+    expansion wrote.
+
+    Only states the expansion itself created are followed, and only while the
+    chain is unambiguous (exactly one successor): anything else is left to the
+    caller's own state handling.
+    """
+    while True:
+        successors = [edge.dst for edge in block.parent_graph.out_edges(block) if edge.dst in created]
+        if len(successors) != 1:
+            return block
+        block = successors[0]
+
+
+def _materialize_view_bindings(views: dict[str, tuple[str, Memlet]], states: list[SDFGState]) -> None:
+    """
+    Connect view containers recorded by a replacement expansion to the data
+    they view.
+
+    A replacement that reshapes/flattens its input allocates a
+    :class:`~dace.data.View` and records ``views[view_name] = (source_name,
+    memlet)`` on the visitor instead of adding the edge itself; the classic
+    frontend materializes those bindings once, at the end of parsing
+    (``newast.py``'s ``_views_to_data``). Deferred expansion has no such final
+    pass, so an unconnected view access node would read uninitialized memory.
+    This performs the same materialization over the states an expansion just
+    created: a view node with no incoming edge gets a read of its source, one
+    with no outgoing edge gets a write to it. Views of views are handled by
+    iterating until no new access nodes appear.
+
+    :param views: The ``{view name: (source name, memlet)}`` bindings recorded
+                  by the expansion.
+    :param states: The states to materialize bindings in.
+    """
+    for state in states:
+        nodes = list(state.data_nodes())
+        while nodes:
+            new_nodes = []
+            for view_node in nodes:
+                if view_node.data not in views:
+                    continue
+                source_name, memlet = views[view_node.data]
+                if state.in_degree(view_node) == 0:
+                    read = state.add_read(source_name)
+                    state.add_edge(read, None, view_node, 'views', copy.deepcopy(memlet))
+                    new_nodes.append(read)
+                elif state.out_degree(view_node) == 0:
+                    write = state.add_write(source_name)
+                    state.add_edge(view_node, 'views', write, None, copy.deepcopy(memlet))
+                    new_nodes.append(write)
+                else:
+                    raise NotImplementedError(
+                        f'View "{view_node.data}" recorded by a replacement expansion already has both '
+                        f'incoming and outgoing edges')
+            nodes = new_nodes
 
 
 class ReplacementVisitorShim:

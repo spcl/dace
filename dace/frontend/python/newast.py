@@ -159,6 +159,13 @@ def _add_transient_data(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Data
     """ Adds to the sdfg transient data of the same dtype, shape and other
         parameters as sample_data. """
     func = AddTransientMethods.get(type(sample_data))
+    if func is None and isinstance(sample_data, data.View):
+        # Only the base View class is registered, so concrete view descriptors
+        # (ArrayView, ContainerView, StructureView) find no exact-type entry.
+        # They allocate like the base class: a compact transient of the view's
+        # own shape, which is what copying out of a view (``A.flatten()``)
+        # needs.
+        func = AddTransientMethods.get(data.View)
     if func is None:
         raise NotImplementedError
     if dtype is None:

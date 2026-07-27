@@ -351,6 +351,14 @@ class InferenceService:
         input_descs: Dict[str, data.Data] = {}
 
         def convert(argument: ast.expr) -> Tuple[bool, Any]:
+            if isinstance(argument, ast.Lambda):
+                # The combiner of a reduction intrinsic (``dace.reduce(lambda
+                # a, b: a + b, ...)``). Both frontends hand these to the
+                # registry as SOURCE TEXT -- the classic frontend's
+                # ``visit_Lambda`` unparses the node, and the implementations
+                # (and the WCR properties they build) parse the string back --
+                # so a lambda has no descriptor and never reaches ``infer``.
+                return True, astutils.unparse(argument)
             try:
                 inferred = self.infer(argument)
             except UnsupportedFeatureError:
@@ -499,6 +507,7 @@ class InferenceService:
         """
         if not isinstance(node, ast.Subscript):
             return node
+        node = self._restore_slice_objects(node)
         replacements: Dict[str, ast.expr] = {}
         for name in {n.id for n in ast.walk(node.slice) if isinstance(n, ast.Name)}:
             binding = self.context.resolve(name)
@@ -527,6 +536,69 @@ class InferenceService:
         restored = copy.deepcopy(node)
         restored.slice = _Substituter().visit(restored.slice)
         return ast.copy_location(restored, node)
+
+    def _restore_slice_objects(self, node: ast.Subscript) -> ast.Subscript:
+        """
+        Expand names bound to a compile-time Python ``slice`` into real slice
+        syntax before parsing a subscript.
+
+        ``A[i, j, kslice]`` where ``kslice`` is a ``dace.compiletime`` argument
+        (or the result of a ``slice(...)`` call) means exactly ``A[i, j,
+        start:stop:step]``, but the shared memlet parser sees only a name and
+        classifies it as a scalar index — which then looks like an
+        advanced-indexing array to the frontend. Rewriting it here keeps the two
+        spellings equivalent.
+        """
+
+        def as_slice_node(value: Any) -> Optional[ast.Slice]:
+            if isinstance(value, tuple) and len(value) == 1 and isinstance(value[0], slice):
+                # ``A[i, j, (slice(2, None),)]``: a one-element tuple around a
+                # slice indexes exactly like the slice itself (Python's own
+                # ``A[(s,)]`` == ``A[s]``). Nested-call argument binding can
+                # produce this wrapper.
+                value = value[0]
+            if not isinstance(value, slice):
+                return None
+            return ast.Slice(lower=None if value.start is None else ast.Constant(value=value.start),
+                             upper=None if value.stop is None else ast.Constant(value=value.stop),
+                             step=None if value.step is None else ast.Constant(value=value.step))
+
+        names = {n.id for n in ast.walk(node.slice) if isinstance(n, ast.Name)}
+        replacements: Dict[str, ast.expr] = {}
+        for name in names:
+            replaced = as_slice_node(self.constant_value(ast.Name(id=name, ctx=ast.Load())))
+            if replaced is not None:
+                replacements[name] = replaced
+        has_constant_slice = any(
+            isinstance(n, ast.Constant) and as_slice_node(n.value) is not None for n in ast.walk(node.slice))
+        if not replacements and not has_constant_slice:
+            return node
+
+        class _SliceSubstituter(ast.NodeTransformer):
+
+            def visit_Name(self, name_node: ast.Name) -> ast.AST:
+                if name_node.id not in replacements:
+                    return name_node
+                return copy.deepcopy(replacements[name_node.id])
+
+            def visit_Constant(self, constant_node: ast.Constant) -> ast.AST:
+                # Preprocessing embeds a resolved compile-time argument as a
+                # Constant carrying the Python object itself.
+                replaced = as_slice_node(constant_node.value)
+                return constant_node if replaced is None else replaced
+
+            def visit_Tuple(self, tuple_node: ast.Tuple) -> ast.AST:
+                tuple_node = self.generic_visit(tuple_node)
+                if len(tuple_node.elts) == 1 and isinstance(tuple_node.elts[0], ast.Slice):
+                    # A dimension slot holding a one-element tuple around a
+                    # slice (``A[i, j, (kslice,)]``, which nested-call argument
+                    # binding can produce) indexes as the slice itself.
+                    return tuple_node.elts[0]
+                return tuple_node
+
+        restored = copy.deepcopy(node)
+        restored.slice = _SliceSubstituter().visit(restored.slice)
+        return ast.fix_missing_locations(ast.copy_location(restored, node))
 
     def constant_int(self, node: ast.expr) -> Optional[int]:
         """Resolve a canonical atom to a compile-time integer, or None."""
@@ -587,7 +659,14 @@ class InferenceService:
             if binding.kind == 'static':
                 return Inferred(kind='static', value=self.context.static_values[node.id])
             if binding.kind == 'constant':
-                return Inferred(kind='constant', value=self.context.constant_values[node.id])
+                value = self.context.constant_values[node.id]
+                if symbolic.issymbolic(value):
+                    # A compile-time value that is a symbolic expression (e.g.
+                    # ``len(A)`` on a symbolically-shaped array) belongs to the
+                    # symbolic domain: it has a dtype and composes with other
+                    # symbolic expressions, which the constant domain does not.
+                    return Inferred(kind='symbolic', value=value)
+                return Inferred(kind='constant', value=value)
         if node.id in self.context.symbols:
             return Inferred(kind='symbolic', value=self.context.symbols[node.id])
         if node.id in self.context.constants:

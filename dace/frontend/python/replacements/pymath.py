@@ -128,7 +128,7 @@ def _round(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, input: Union[str, N
 
 from dace.frontend.common.op_repository import infers_attribute_descriptor, infers_descriptor, infers_method_descriptor
 from dace.frontend.python.replacements.utils import complex_to_scalar as _complex_to_scalar
-from dace.frontend.python.replacements.type_inference import _get_desc
+from dace.frontend.python.replacements.type_inference import _get_desc, scalar_operand_descriptor
 
 
 def _clone_shape_preserving_descriptor(desc: data.Data, dtype=None):
@@ -141,6 +141,11 @@ def _clone_shape_preserving_descriptor(desc: data.Data, dtype=None):
 
 def _infer_shape_preserving_math_descriptor(input_descs, input, dtype=None, **_kw):
     desc = _get_desc(input_descs, input)
+    if desc is None:
+        # A compile-time constant or symbolic argument (``math.sqrt(20)``,
+        # ``math.ceil(N / 2)``): ``simple_call`` materializes those into a
+        # scalar of the value's own type and computes into a scalar result.
+        desc = scalar_operand_descriptor(input)
     if desc is None:
         return None
     return _clone_shape_preserving_descriptor(desc, dtype=dtype)

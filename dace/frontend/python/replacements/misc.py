@@ -99,12 +99,14 @@ def elementwise(pv: ProgramVisitor,
 
 @oprepo.infers_descriptor('dace.elementwise')
 def _infer_elementwise(input_descs, func: Union[StringLiteral, str], in_array: str, out_array=None, **_kw):
-    desc = _get_desc(input_descs, out_array) if out_array is not None else None
-    if desc is None:
-        desc = _get_desc(input_descs, in_array)
+    if out_array is not None:
+        # Writing into a caller-provided output: a pure side-effect call with
+        # nothing to bind, the same convention ``dace.reduce``'s inference
+        # uses for its own ``out_array`` form.
+        return ()
+    desc = _get_desc(input_descs, in_array)
     if not isinstance(desc, data.Data):
         return None
     result = desc.clone()
-    if out_array is None:
-        result.transient = True
+    result.transient = True
     return result
