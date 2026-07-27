@@ -155,7 +155,7 @@ class Data:
 
     @property
     def veclen(self):
-        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+        return self.dtype.veclen
 
     @property
     def ctype(self):
@@ -193,7 +193,9 @@ class Data:
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                dimsize = (((self.shape[dim] + alignment - 1) // alignment) * alignment)
+                # int_ceil, never `//`: `(N + a - 1) // a` builds sympy `floor(...)`, whose argument
+                # sym2cpp prints WITHOUT the floor, truncating each term (N=1, a=8 gives 0, not 8).
+                dimsize = symbolic.int_ceil(self.shape[dim], alignment) * alignment
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
