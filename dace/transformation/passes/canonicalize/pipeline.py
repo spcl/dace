@@ -13,6 +13,7 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
+from dace.transformation.passes.canonicalize.absorb_state import AbsorbState
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
@@ -1034,6 +1035,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # real ``A[i, j+1]``, which every downstream dependence test needs.
         s += _structural_cleanup('loop_fuse')
         s += [('loop_fuse', ReconstructWavefrontNest())]
+    # GPU only: a state stranded between two loops blocks FuseLoops outright (it matches a two-node
+    # path graph). SinkStateIntoLoop above already recovers the case where the state can be replicated
+    # per iteration; AbsorbState recovers the disjoint case instead, reordering the state to after the
+    # second loop. GPU-gated because there fusing is worth more than the tidier block order -- one
+    # kernel launch instead of two -- while on CPU the two loops cost about the same either way.
+    if target == 'gpu':
+        s += [('loop_fuse', AbsorbState())]
     s += [('loop_fuse', LoopFusion())]
     s += [('loop_fuse', WavefrontSkew())]
     s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -1323,6 +1331,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # which is sympy floor() -- distributed by sympy and then printed WITHOUT the floor, so the
     # index truncates term by term. Normalizing here means nothing reaches codegen holding one.
     s += [('end', NormalizeFloorDivision())]
+
+    # Pipeline does not propagate `progress` to subpasses, so sweep once here instead of at each call site.
+    for _, unit in s:
+        if isinstance(unit, PatternMatchAndApplyRepeated):
+            unit.progress = False
     return s
 
 
