@@ -639,6 +639,7 @@ def test_reshape_reuse_in_same_state():
 
     sdfg = single_state_reshape_same_state.to_sdfg(simplify=False)
 
+    _pin_reduce_to_pure(sdfg)
     sdfg.expand_library_nodes()
     sdfg.apply_transformations_repeated([StateFusion])
 
