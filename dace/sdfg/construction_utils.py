@@ -97,10 +97,14 @@ def copy_state_contents(old_state: dace.SDFGState, new_state: dace.SDFGState) ->
         - Connections between the newly created nodes are preserved.
     """
     node_map = dict()
+    # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+    # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+    # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+    memo = {}
 
     # Copy all nodes
     for n in old_state.nodes():
-        c_n = copy.deepcopy(n)
+        c_n = copy.deepcopy(n, memo)
         node_map[n] = c_n
         new_state.add_node(c_n)
 

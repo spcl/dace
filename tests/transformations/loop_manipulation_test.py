@@ -239,7 +239,21 @@ def test_peeling_multi_state_body_emits_cfr_with_deepcopied_edges():
     assert np.allclose(B, (A + 1.0) * 2.0)
 
 
+def test_peeling_preserves_map_entry_exit_identity():
+    """ A scope's entry and exit must keep sharing ONE Map object across a peel. Cloning the body's
+        nodes against separate deepcopy memos hands them two, which validate() does not catch and
+        which codegen then turns into an unbalanced map scope (a `}` with no `{`). """
+    sdfg: dace.SDFG = tounroll.to_sdfg()
+    sdfg.simplify()
+    sdfg.apply_transformations(LoopPeeling, dict(count=2))
+
+    split = [(state.label, exit_node.map.label) for state in sdfg.all_states() for exit_node in state.nodes()
+             if isinstance(exit_node, dace.sdfg.nodes.MapExit) and state.entry_node(exit_node).map is not exit_node.map]
+    assert not split, f'MapEntry.map is not MapExit.map in {split}'
+
+
 if __name__ == '__main__':
+    test_peeling_preserves_map_entry_exit_identity()
     test_unroll()
     test_peeling_start()
     test_peeling_end()

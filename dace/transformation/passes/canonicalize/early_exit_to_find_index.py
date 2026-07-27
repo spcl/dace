@@ -1139,8 +1139,11 @@ class EarlyExitToFindIndex(ppl.Pass):
         for i, src_state in enumerate(state_blocks):
             cloned = body_loop.add_state(src_state.label, is_start_block=(i == 0))
             node_map: Dict[Any, Any] = {}
+            # Per source state: a scope's entry and exit share one Map object, which a per-node
+            # deepcopy would split. Not shared across states -- each cloned state is independent.
+            memo: Dict[int, Any] = {}
             for n in src_state.nodes():
-                cn = _copy.deepcopy(n)
+                cn = _copy.deepcopy(n, memo)
                 cloned.add_node(cn)
                 node_map[n] = cn
             for e in src_state.edges():

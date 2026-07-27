@@ -490,11 +490,30 @@ def validate_state(state: 'dace.sdfg.SDFGState',
         ########################################
         if isinstance(node, nd.EntryNode):
             try:
-                state.exit_node(node)
+                exit_node = state.exit_node(node)
             except StopIteration:
                 raise InvalidSDFGNodeError(
                     "Entry node does not have matching "
                     "exit node",
+                    sdfg,
+                    state_id,
+                    nid,
+                )
+
+            # A scope's entry and exit are two VIEWS of one Map/Consume object, and code that pairs
+            # them up relies on that identity (CPU codegen keys the map's encapsulating brace on it,
+            # so two objects emit a `}` with no `{`). Cloning the nodes against separate deepcopy
+            # memos silently hands them one object each -- everything else about the SDFG still looks
+            # well-formed, so without this the breakage first surfaces as a C++ syntax error.
+            if isinstance(node, nd.MapEntry):
+                shared_scope = node.map is exit_node.map
+            elif isinstance(node, nd.ConsumeEntry):
+                shared_scope = node.consume is exit_node.consume
+            else:
+                shared_scope = True
+            if not shared_scope:
+                raise InvalidSDFGNodeError(
+                    "Entry and exit nodes do not share the same scope object (copied separately?)",
                     sdfg,
                     state_id,
                     nid,

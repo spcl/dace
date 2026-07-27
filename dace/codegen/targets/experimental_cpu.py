@@ -25,8 +25,8 @@ from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.targets import cpp
-from dace.codegen.targets.cpu import (CPUCodeGen, decl_placement, hoist_loop_decls, map_schedule_is_sequential,
-                                      scalar_init_style)
+from dace.codegen.targets.cpu import (CPUCodeGen, aligned_new_value, decl_placement, hoist_loop_decls,
+                                      map_schedule_is_sequential, scalar_init_style, use_aligned_operator_new)
 from dace.frontend.python import astutils
 from dace.frontend.python.astutils import rname
 from dace.properties import CodeBlock
@@ -819,7 +819,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
                         sdfg: Optional['SDFG'] = None,
                         nodedesc: Optional[dt.Data] = None,
                         data_name: Optional[str] = None) -> str:
-        # Same aligned ``new[]`` as the base generator (paired with the base ``delete[]``), but
+        # Same aligned ``operator new[]`` as the base generator (paired with the base aligned
+        # ``delete[]``), but
         # route the element count through a generated ``<array>_size(...)`` helper when worthwhile
         # (see _register_size_function) so the allocation extent reads as a named function; fall back
         # to the classic ``sym2cpp(total_size)`` string (``arrsize``) otherwise.
@@ -829,7 +830,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if registered is not None:
                 fnname, call_args = registered
                 count = '%s(%s)' % (fnname, ', '.join(call_args))
-        return '%s = new %s DACE_ALIGN(64)[%s];\n' % (alloc_name, ctype, count)
+        aligned = ''
+        if nodedesc is not None and use_aligned_operator_new(nodedesc):
+            aligned = '(std::align_val_t(%d))' % aligned_new_value(nodedesc)
+        return '%s = new %s %s [%s];\n' % (alloc_name, aligned, ctype, count)
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
         # Emit each registered index / size helper once per OUTPUT FILE. A non-inline nested-SDFG

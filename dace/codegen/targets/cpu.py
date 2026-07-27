@@ -11,6 +11,7 @@ import numpy as np
 
 from dace import data, dtypes, registry, memlet as mmlt, subsets, symbolic, Config
 from dace.codegen import compiler_family, cppunparse, exceptions as cgx
+from dace.codegen.codeobject import CodeObject
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.targets import cpp
 from dace.codegen.common import codeblock_to_cpp, sym2cpp, update_persistent_desc
@@ -29,6 +30,29 @@ import re
 
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
+
+
+def use_aligned_operator_new(desc: data.Data) -> bool:
+    """Whether heap arrays are allocated with aligned ``operator new``.
+
+    The function considers the selected C++ standard and the `alignment` property
+    of the data descriptor.
+    """
+    try:
+        if int(Config.get('compiler', 'cpp_standard')) < 17:
+            return False  # Aligned `new` not supported by the standard.
+        if desc.alignment >= 0:
+            return True  # Alignment requested either default (0) or concrete value
+        return False
+    except ValueError:
+        return False
+
+
+def aligned_new_value(desc: data.Data) -> int:
+    """Alignment an aligned ``operator new[]`` must request for ``desc``. 0 means "unspecified",
+    which still gets the 64-byte default the old ``DACE_ALIGN(64)`` attribute asked for."""
+    return 64 if desc.alignment == 0 else desc.alignment
+
 
 #: C++ spelling of each ``codegen_params.loop_index_type`` value. ``auto`` deduces from the lower
 #: bound (for the usual ``0`` that is ``int``); the others state the width outright, as exact-width
@@ -490,7 +514,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # id(Map) -> whether its MapEntry opened an encapsulating C scope, so the matching MapExit
         # closes exactly the braces that were opened. Keyed on the Map, which the entry and exit
         # nodes share (they are reached through different subgraph views). See map_scope_needs_brace.
-        self._map_scope_braced: Dict[int, bool] = {}
+        self._map_scope_braced: Dict[tuple, bool] = {}
 
         # Keep track of generated NestedSDG, and the name of the assigned function
         self._generated_nested_sdfg = dict()
@@ -1167,13 +1191,19 @@ class CPUCodeGen(TargetCodeGenerator):
                 self._dispatcher.declared_arrays.add_global(name, DefinedType.Pointer, '%s *' % nodedesc.dtype.ctype)
 
             # Allocate in each OpenMP thread
+            aligned = ''
+            if use_aligned_operator_new(nodedesc):
+                align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
+                aligned = f'(std::align_val_t({align_value}))'
+
             allocation_stream.write(
                 """
                 #pragma omp parallel
                 {{
-                    {name} = new {ctype} DACE_ALIGN(64)[{arrsize}];""".format(ctype=nodedesc.dtype.ctype,
-                                                                              name=alloc_name,
-                                                                              arrsize=cpp.sym2cpp(arrsize)),
+                    {name} = new {aligned}{ctype} [{arrsize}];""".format(aligned=aligned,
+                                                                         ctype=nodedesc.dtype.ctype,
+                                                                         name=alloc_name,
+                                                                         arrsize=cpp.sym2cpp(arrsize)),
                 cfg,
                 state_id,
                 node,
@@ -1216,18 +1246,25 @@ class CPUCodeGen(TargetCodeGenerator):
               or (nodedesc.storage == dtypes.StorageType.Register and
                   (symbolic.issymbolic(arrsize, sdfg.constants) or
                    (arrsize_bytes and ((arrsize_bytes > Config.get("compiler", "max_stack_array_size")) == True))))):
-            callsite_stream.write(self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array)), cfg, state_id,
-                                  node)
+            callsite_stream.write(self.heap_free_stmt(alloc_name, isinstance(nodedesc, data.Array), nodedesc), cfg,
+                                  state_id, node)
         elif nodedesc.storage is dtypes.StorageType.CPU_ThreadLocal:
             # Deallocate in each OpenMP thread
             if isinstance(nodedesc, data.Array):
-                deleteop = "delete[]"
+                # Aligned pairing + trivial-destructibility guard as above.
+                if use_aligned_operator_new(nodedesc):
+                    align_value = 64 if nodedesc.alignment == 0 else nodedesc.alignment
+                    delete_stmt = (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
+                                   f"\"aligned heap deallocation skips destructors\"); "
+                                   f"::operator delete[]({alloc_name}, std::align_val_t({align_value}));")
+                else:
+                    delete_stmt = f"delete[] {alloc_name};"
             else:
-                deleteop = "delete"
+                delete_stmt = f"delete {alloc_name};"
             callsite_stream.write(
                 f"""#pragma omp parallel
                 {{
-                    {deleteop} {alloc_name};
+                    {delete_stmt}
                 }}""",
                 cfg,
                 state_id,
@@ -2309,11 +2346,26 @@ class CPUCodeGen(TargetCodeGenerator):
         which case the emitted statement is a definition. The trailing ``sdfg``/``nodedesc``/
         ``data_name`` are unused here; the readable generator overrides this to route the count
         through an ``<array>_size`` helper."""
-        return "%s = new %s DACE_ALIGN(64)[%s];\n" % (alloc_name, ctype, arrsize)
+        # ``DACE_ALIGN(64)`` on the element type only constrains the TYPE's alignment -- plain
+        # ``new[]`` is free to ignore it for an over-aligned type, so the buffer was never reliably
+        # aligned. Aligned ``operator new[]`` (C++17) is the allocation that actually honours it.
+        placement = ''
+        if nodedesc is not None and use_aligned_operator_new(nodedesc):
+            placement = f' (std::align_val_t({aligned_new_value(nodedesc)}))'
+        return f"{alloc_name} = new{placement} {ctype}[{arrsize}];\n"
 
-    def heap_free_stmt(self, alloc_name: str, is_array: bool) -> str:
+    def heap_free_stmt(self, alloc_name: str, is_array: bool, nodedesc: Optional[data.Data] = None) -> str:
         """ C++ statement freeing a CPU heap array (paired with heap_alloc_stmt). """
-        return ("delete[] %s;\n" if is_array else "delete %s;\n") % alloc_name
+        if not is_array:
+            return f"delete {alloc_name};\n"
+        # Memory from the aligned operator new[] must be released by the aligned operator delete[].
+        # The direct operator call skips destructors and relies on the new-expression emitting no
+        # array cookie -- both only hold for trivially destructible element types.
+        if nodedesc is not None and use_aligned_operator_new(nodedesc):
+            return (f"static_assert(std::is_trivially_destructible<{nodedesc.dtype.ctype}>::value, "
+                    f'"aligned heap deallocation skips destructors");\n'
+                    f"::operator delete[]({alloc_name}, std::align_val_t({aligned_new_value(nodedesc)}));\n")
+        return f"delete[] {alloc_name};\n"
 
     def rewrite_cpp_tasklet_body(self, node, sdfg, state_dfg):
         """C++ body of a native (C++/library) tasklet as it should be emitted. Verbatim here; the
@@ -2611,8 +2663,8 @@ class CPUCodeGen(TargetCodeGenerator):
                        and codegen is self and sdfg.parent is None and not inline and node.no_inline
                        and not self._nsdfg_subtree_is_cpu_only(node.sdfg))
         if do_external:
-            self._emit_external_translation_unit_call(sdfg, node, memlet_references, sdfg_label,
-                                                      function_stream, callsite_stream, cfg, state_id)
+            self._emit_external_translation_unit_call(sdfg, node, memlet_references, sdfg_label, function_stream,
+                                                      callsite_stream, cfg, state_id)
             self._dispatcher.declared_arrays.exit_scope(sdfg)
             self._dispatcher.defined_vars.exit_scope(sdfg)
             return
@@ -2957,7 +3009,7 @@ class CPUCodeGen(TargetCodeGenerator):
 
         # Encapsulate map with a C scope
         needs_brace = self.map_scope_needs_brace(sdfg, state_dfg, node)
-        self._map_scope_braced[id(node.map)] = needs_brace
+        self._map_scope_braced[self.map_scope_key(cfg, state_id, state_dfg, node)] = needs_brace
         if needs_brace:
             callsite_stream.write('{', cfg, state_id, node)
 
@@ -3146,7 +3198,7 @@ class CPUCodeGen(TargetCodeGenerator):
         result.write(outer_stream.getvalue())
 
         # Close the encapsulating C scope only if the matching MapEntry opened one.
-        if self._map_scope_braced.pop(id(node.map), True):
+        if self._map_scope_braced.pop(self.map_scope_key(cfg, state_id, state_dfg, map_node), True):
             callsite_stream.write('}', cfg, state_id, node)
 
         # Pop the OMP-reduction scope frame pushed by the matching MapEntry.
@@ -3370,6 +3422,18 @@ class CPUCodeGen(TargetCodeGenerator):
             instr.on_node_end(sdfg, cfg, state_dfg, node, callsite_stream, callsite_stream, function_stream)
 
     # Methods for subclasses to override
+
+    @staticmethod
+    def map_scope_key(cfg: ControlFlowRegion, state_id: int, state_dfg: SDFGState, entry: nodes.MapEntry) -> tuple:
+        """Structural identity of a map scope, for pairing a MapExit's brace with its MapEntry's.
+
+        NOT ``id(node.map)``: that assumes ``entry.map is exit.map``, which a transformation can break
+        by deep-copying the two nodes against separate memos, and CPython reuses an id once an object
+        is freed. Either way the exit would miss the entry's record, fall back to "was braced", and
+        emit a ``}`` with no ``{`` -- silently unbalanced C++ rather than an error (LoopPeeling did
+        exactly this). The block/node ids are stable for the whole of codegen.
+        """
+        return (cfg.cfg_id, state_id, state_dfg.node_id(entry))
 
     def map_scope_needs_brace(self, sdfg: SDFG, state_dfg: SDFGState, node: nodes.MapEntry) -> bool:
         """Whether the map's encapsulating C scope (``{ ... }``) must be emitted. It bounds only what is

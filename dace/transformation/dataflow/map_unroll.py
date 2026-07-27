@@ -61,13 +61,17 @@ class MapUnroll(transformation.SingleStateTransformation):
         for t in index_tuples:
             suffix = "_" + "_".join(map(str, t))
             node_to_unrolled = {}
+            # One memo per unrolled iteration: the map's entry and exit share a single Map object, so
+            # a per-node deepcopy would split that identity. Fresh for each `t` -- reusing it across
+            # iterations would alias every copy onto the first one's nodes.
+            memo = {}
             for node in subgraph:
                 if isinstance(node, nodes.NestedSDFG):
                     # Copy node without its nested SDFG, then deepcopy the SDFG separately -- ~2x
                     # faster than a JSON round-trip, even amortized over every copy.
                     nsdfg = node.sdfg
                     node.sdfg = None
-                    unrolled_node = copy.deepcopy(node)
+                    unrolled_node = copy.deepcopy(node, memo)
                     node.sdfg = nsdfg
                     unrolled_nsdfg = copy.deepcopy(nsdfg)
                     unrolled_nsdfg.name = nsdfg.name + suffix
@@ -77,7 +81,7 @@ class MapUnroll(transformation.SingleStateTransformation):
                     unrolled_node.sdfg = unrolled_nsdfg
                     unrolled_nsdfg.parent_nsdfg_node = unrolled_node
                 else:
-                    unrolled_node = copy.deepcopy(node)
+                    unrolled_node = copy.deepcopy(node, memo)
                     if node == map_entry:
                         # Fix the map bounds to only this iteration
                         unrolled_node.map.range = [(i, i, 1) for i in t]

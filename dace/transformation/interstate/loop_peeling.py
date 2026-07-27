@@ -114,8 +114,12 @@ class LoopPeeling(LoopUnroll):
             src_state: SDFGState = body_blocks[0]
             new_state = graph.add_state(it_label)
             node_map = {}
+            # ONE memo across every node: a scope's entry and exit share a single ``Map`` object, and
+            # copying each node against its own memo hands them two, silently breaking the
+            # ``entry.map is exit.map`` invariant that codegen keys its map-scope bookkeeping on.
+            memo = {}
             for n in src_state.nodes():
-                nn = copy.deepcopy(n)
+                nn = copy.deepcopy(n, memo)
                 node_map[n] = nn
                 new_state.add_node(nn)
             for e in src_state.edges():
@@ -179,6 +183,10 @@ class LoopPeeling(LoopUnroll):
         start = loop_analysis.get_init_assignment(self.loop)
         end = loop_analysis.get_loop_end(self.loop)
         stride = loop_analysis.get_loop_stride(self.loop)
+        # A symbolic bound makes every iterate value symbolic too, so the label falls back to the
+        # iteration index. Upstream dropped this in favour of always indexing; extended still needs
+        # it because _instantiate_peeled_iteration takes the suffix rather than an index.
+        is_symbolic = any(symbolic.issymbolic(r) for r in (start, end))
 
         if self.begin:
             peeled_iterations: List[ControlFlowBlock] = []

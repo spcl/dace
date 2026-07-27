@@ -129,7 +129,11 @@ class NestedGPUDeviceMapLowering(ppl.Pass):
                 nsdfg.symbol_mapping[sym] = sym
 
         # Copy over nodes (and generate accesses when needed)
-        node_map = {n: copy.deepcopy(n) for n in map_inner_nodes}
+        # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+        # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+        # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+        memo = {}
+        node_map = {n: copy.deepcopy(n, memo) for n in map_inner_nodes}
         for v in node_map.values():
             if_body_state.add_node(v)
         for e in map_inner_edges:

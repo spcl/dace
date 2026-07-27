@@ -435,8 +435,12 @@ def _sink_intervening_chain(graph: SDFGState, pe: nodes.MapEntry, nsdfg: nodes.N
 def _copy_state_contents(src: SDFGState, dst: SDFGState) -> Dict[nodes.Node, nodes.Node]:
     """Deep-copy all nodes and edges from ``src`` into ``dst``."""
     nmap: Dict[nodes.Node, nodes.Node] = {}
+    # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+    # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+    # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+    memo = {}
     for n in src.nodes():
-        new_n = _copy.deepcopy(n)
+        new_n = _copy.deepcopy(n, memo)
         dst.add_node(new_n)
         nmap[n] = new_n
     for e in src.edges():

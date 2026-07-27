@@ -32,6 +32,21 @@ from dace.codegen.target import make_absolute
 
 T = TypeVar('T')
 
+# Only readability-* fixes safe on include-stripped code (the experimental readable generator's
+# clang-tidy pass strips the header block, so a fix depending on types or a variable's full
+# use-set rewrites on a half-parse). Excluded: identifier naming/length, magic-numbers,
+# cognitive-complexity, uppercase-suffix (noise); non-const-parameter (const-qualifies a pointer
+# only forwarded to a nested-SDFG writer -> const vs non-const clash nvcc rejects); and
+# modernize-* (type-dependent -> miscompiled the CUDA block-reduction: an empty ``using`` alias
+# and a reduction index turned into a range-for value).
+# NOTE: the clang-tidy invocation itself (``apply_clang_tidy``) was dropped from
+# ``generate_program_folder`` by the build-caching refactor; nothing in ``dace/`` reads this
+# constant anymore. Kept only so ``tests/codegen/readable/test_clang_tidy.py`` still collects.
+CLANG_TIDY_CHECKS = ('readability-*,'
+                     '-readability-identifier-naming,-readability-identifier-length,-readability-magic-numbers,'
+                     '-readability-function-cognitive-complexity,-readability-uppercase-literal-suffix,'
+                     '-readability-avoid-const-params-in-decls,-readability-non-const-parameter')
+
 
 def generate_program_folder(
     sdfg,

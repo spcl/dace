@@ -517,8 +517,7 @@ def nest_state_subgraph(sdfg: SDFG,
     # Add scope symbols to the nested SDFG
     symbols_at_top = state.symbols_defined_at(top_scopenode)
     # Ordered: this drives ``add_symbol`` order, which is the nested SDFG's symbol order.
-    defined_vars = dict.fromkeys(
-        symbolic.pystr_to_symbolic(s) for s in [*symbols_at_top, *sdfg.symbols])
+    defined_vars = dict.fromkeys(symbolic.pystr_to_symbolic(s) for s in [*symbols_at_top, *sdfg.symbols])
     for v in defined_vars:
         if v in sdfg.symbols:
             sym = sdfg.symbols[v]
@@ -1199,8 +1198,13 @@ def replicate_scope(sdfg: SDFG, state: SDFGState, scope: ScopeSubgraphView) -> S
     new_entry = None
     new_exit = None
     to_find_new_names: Set[nodes.AccessNode] = set()
+    # One memo for the whole clone: a scope's entry and exit share a single Map/Consume object,
+    # and a per-node deepcopy hands them one copy each -- an identity split that validate_state
+    # now rejects and that CPU codegen would otherwise turn into an unbalanced map brace.
+    # The explicit new_exit.map fix-up below only repairs the OUTERMOST pair; nested maps need this.
+    memo = {}
     for node in scope.nodes():
-        node_copy = copy.deepcopy(node)
+        node_copy = copy.deepcopy(node, memo)
         if node == scope.entry:
             new_entry = node_copy
         elif node == exit_node:
