@@ -1,22 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-``CountLibraryNode`` -- Fortran ``COUNT(mask [, dim])`` intrinsic as a
-single library node.
+``CountLibraryNode`` -- Fortran ``COUNT(mask [, dim])`` intrinsic as a library node.
 
-The node owns the Fortran-COUNT semantics (input is a logical / integer
-mask, output is always integer regardless of mask kind, ``dim`` is in
-Fortran 1-based numbering) and delegates the actual reduction to the
-generic ``Reduce`` library node so all of Reduce's existing
-specialisations (CPU sequential, OpenMP, CUDA device / block, GPUAuto)
-are inherited for free.
-
-Expansions:
-
-``pure``      Default expansion -- builds a small inner SDFG containing
-              a single ``Reduce`` node with WCR ``lambda a,b: a + b``
-              and identity ``0``.  Avoids any WCR-on-tasklet pattern
-              (no per-element atomic add); the inner Reduce picks its
-              own schedule based on its own implementation.
+Delegates the reduction to the generic ``Reduce`` library node so all of Reduce's
+specialisations (CPU sequential, OpenMP, CUDA, GPUAuto) are inherited for free.
 """
 
 import dace
@@ -24,10 +11,6 @@ from dace import library, nodes, properties
 from dace.transformation.transformation import ExpandTransformation
 from .reduce import Reduce
 
-# Outer connector names this libnode publishes. Republished as
-# ``CountLibraryNode.INPUT_CONNECTOR_NAME`` / ``.OUTPUT_CONNECTOR_NAME``
-# so external consumers reference a class constant instead of a string
-# literal (mirrors ``copy_node`` / ``memset_node``).
 _INPUT_CONNECTOR_NAME = "_cnt_in"
 _OUTPUT_CONNECTOR_NAME = "_cnt_out"
 
@@ -75,18 +58,7 @@ def _fortran_dim_to_axes(dim, mask_rank):
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """
-    Default expansion: build a one-state SDFG containing a single
-    ``Reduce`` library node with WCR ``add`` and identity ``0``.  The
-    Reduce node is responsible for its own implementation choice
-    (sequential / OpenMP / CUDA …) -- this expansion stays target-
-    neutral.
-
-    No WCR edges land in the parent graph: the per-element accumulation
-    happens entirely inside the Reduce node's own expansion.  An
-    explicit cast tasklet narrows non-integer mask dtypes to ``int32``;
-    DaCe's simplification folds it for already-integer masks.
-    """
+    """Default expansion: builds an inner ``cast -> Reduce`` SDFG; Reduce picks its own implementation."""
     environments = []
 
     @staticmethod
@@ -97,25 +69,17 @@ class ExpandPure(ExpandTransformation):
         out_shape = [(e + 1 - b) // s for (b, e, s) in out_subset] if out_subset.dims() else []
         axes = _fortran_dim_to_axes(node.dim, len(mask_shape))
 
-        # Inner SDFG: cast → reduce.  Cast turns a non-integer mask
-        # (LOGICAL(1) i1 / LOGICAL(8) i64) into the int kind the
-        # Fortran COUNT spec returns.  For already-int masks the cast
-        # is a copy; simplification will fuse it with the reduction
-        # source when no cross-storage boundary intervenes.
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
         sdfg.add_array(mask_name, mask_shape, mask.dtype, mask.storage, strides=mask.strides)
         sdfg.add_transient("_mask_int", mask_shape, dace.int32, storage=mask.storage)
-        # ``out`` is a scalar when ``axes is None``; otherwise an array
-        # of the rank-reduced shape.  The parent-side memlet already
-        # carries the right shape, so we mirror it.
         if out_shape:
             sdfg.add_array(out_name, out_shape, out.dtype, out.storage, strides=out.strides)
         else:
             sdfg.add_scalar(out_name, out.dtype, storage=out.storage)
 
-        # State 1: int cast.  Mapped tasklet writing the int32 mask.
+        # COUNT returns int regardless of mask kind; cast before reducing.
         cast_state = sdfg.add_state(f"{node.label}_cast", is_start_block=True)
         params = [f"__i{i}" for i in range(len(mask_shape))]
         rng = {p: f"0:{s}" for p, s in zip(params, mask_shape)}
@@ -129,10 +93,6 @@ class ExpandPure(ExpandTransformation):
             external_edges=True,
         )
 
-        # State 2: Reduce node with sum / identity 0.  Reduce's own
-        # implementation choice (which itself can be ``pure``,
-        # ``OpenMP``, ``CUDA (device)``, …) decides whether this becomes
-        # a mapped sum, a parallel reduction, or a CUB call.
         reduce_state = sdfg.add_state_after(cast_state, f"{node.label}_reduce")
         red = Reduce(name=f"{node.label}_reduce_node", wcr="lambda a, b: a + b", axes=axes, identity=0)
         reduce_state.add_node(red)
@@ -147,34 +107,11 @@ class ExpandPure(ExpandTransformation):
 
 @library.node
 class CountLibraryNode(nodes.LibraryNode):
-    """Library node for the Fortran ``COUNT(mask [, dim])`` intrinsic.
-
-    Inputs / output:
-
-    ``_mask``  Logical / integer mask array.  Any dtype is accepted; the
-               expansion casts to ``int32`` before reducing.
-    ``_out``   Integer scalar (whole-array reduce) or array of rank
-               ``mask_rank - 1`` (per-dim reduce).
-
-    Properties:
-
-    ``dim``    Fortran 1-based reduction axis.  Default ``-1`` collapses
-               every axis to a scalar (the ``COUNT(mask)`` form); any
-               value in ``1..mask_rank`` selects ``COUNT(mask, dim=k)``.
-
-    Implementations:
-
-    ``pure``   Inner ``cast → Reduce`` SDFG.  Default and only entry;
-               Reduce's own per-target expansions inherit transparently.
-    """
+    """Library node for the Fortran ``COUNT(mask [, dim])`` intrinsic."""
 
     implementations = {"pure": ExpandPure}
     default_implementation = "pure"
 
-    # Connector names this libnode publishes. External consumers (tests,
-    # the Fortran frontend's emitter) must reference these constants
-    # instead of string literals so a future rename is a single-line
-    # change (mirrors ``CopyLibraryNode`` / ``MemsetLibraryNode``).
     INPUT_CONNECTOR_NAME = _INPUT_CONNECTOR_NAME
     OUTPUT_CONNECTOR_NAME = _OUTPUT_CONNECTOR_NAME
 

@@ -24,19 +24,6 @@ Pipeline (whole-array ``dim is None``):
 
 For ``dim is not None`` the same five states run with a Map whose
 outer iterators are the dim-reduced output coordinates.
-
-Future backends (not yet implemented; ``pure`` is the only registered
-implementation):
-
-* ``CUB``: ``cub::DeviceReduce::ArgMax`` / ``cub::DeviceReduce::ArgMin``
-  return a ``cub::KeyValuePair<int, T>``.  Sequential schedule on GPU.
-* ``OpenMP``: a user-defined reduction
-  (``#pragma omp declare reduction``) over a ``pair<val, idx>`` struct
-  with a custom combiner.  Lets the OpenMP 5.0 runtime own the parallel
-  scan.
-* ``stdpar``: ``std::min_element`` / ``std::max_element`` with
-  ``std::execution::par`` (or sequential, when the SDFG schedule is
-  sequential).  Index = iterator distance.
 """
 import dace
 import dace.dtypes as dtypes
@@ -79,15 +66,7 @@ def _flat_index_expr(rank: int, shape) -> str:
 def _emit_pure(node, parent_state: SDFGState, parent_sdfg: SDFG, func: str):
     """Shared pure expansion for :class:`ArgMin` / :class:`ArgMax` (``func`` picks the comparison
     direction). Raises ``NotImplementedError`` when a ``_mask`` connector is wired (not yet
-    implemented).
-
-    Multi-state pipeline (see module docstring); every WCR is a pure
-    ``min`` / ``max`` over a scalar.  Tasklet bodies are
-    single-statement: state init = ``__out = <literal>``, value reduce
-    = ``__out = __in``, idx reduce = ``__out = flat if (__in == bv) else sentinel``,
-    extract = one ``__o<d> = (__flat // stride) % extent + offset``
-    per dim.
-    """
+    implemented)."""
     desc_x, desc_idx, mask_desc, dim_zero = node.validate(parent_sdfg, parent_state)
     if mask_desc is not None:
         raise NotImplementedError(f"{type(node).__name__}: mask= argument is not yet supported in the pure expansion. "

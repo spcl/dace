@@ -14,13 +14,7 @@ from dace.libraries.blas import environments as blas_environments
 class FFT(nodes.LibraryNode):
     """Forward FFT.
 
-    With ``axis is None`` (default) the lib node treats the input shape
-    as the FFT extent (so a rank-2 input drives a true 2-D FFT, matching
-    ``np.fft.fftn`` semantics).  With ``axis`` set to a non-negative
-    integer the lib node performs a 1-D FFT along that axis and treats
-    the remaining axes as a batch dimension -- matching
-    ``np.fft.fft(x, axis=k)`` semantics and the per-axis pencil pattern
-    Quantum ESPRESSO's ``cft_1z`` / ``cft_1y`` / ``cft_1x`` use.
+    With ``axis`` set, performs a batched 1-D FFT along that axis instead of a full N-D transform.
     """
     implementations = {}
     default_implementation = 'pure'
@@ -164,10 +158,7 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
     cufftDestroy({plan_name});
     '''
 
-    # Axis-aware lowering: ``cufftMakePlanMany`` (which fits both the
-    # full-N-D case via ``rank>=2`` and the batched-1-D case via
-    # ``rank=1, howmany=...``).  For the simple N-D case we keep the old
-    # ``cufftMakePlan{N}d`` since its ABI is leaner.
+    # Keep ``cufftMakePlan{N}d`` for the N-D case since its ABI is leaner than cufftMakePlanMany.
     if axis is None:
         cdims = ', '.join([cpp.sym2cpp(s) for s in indesc.shape])
         # ``cufftMakePlan1d`` is the only variant that takes a ``batch`` argument;
@@ -245,14 +236,7 @@ def _generate_cufft_code(indesc: data.Data, outdesc: data.Data, sdfg: SDFG, is_i
 
 @library.register_expansion(FFT, 'FFTW3')
 class FFTW3FFTExpansion(xf.ExpandTransformation):
-    """CPU FFTW3 backend for :class:`FFT`.
-
-    Supports rank 1/2/3 over complex64 / complex128.  With ``node.axis``
-    set, performs a batched 1-D FFT along the named axis (matching
-    ``np.fft.fft(x, axis=k)``); axis must be the first or last
-    dimension (general intermediate axes need a copy or
-    ``fftw_plan_guru_dft``, deferred).
-    """
+    """CPU FFTW3 backend for :class:`FFT`. Supports rank 1/2/3; ``axis`` batches a 1-D FFT along the first/last dim."""
 
     environments = [env.FFTW3]
 
@@ -283,16 +267,7 @@ class FFTW3IFFTExpansion(xf.ExpandTransformation):
 
 
 def _generate_fftw3_code(indesc: data.Data, outdesc: data.Data, is_inverse: bool, axis=None):
-    """Emit a self-contained ``fftw_plan_*`` → ``execute`` → ``destroy_plan`` tasklet.
-
-    With ``axis is None`` -- the default -- we drive ``fftw_plan_dft_{rank}d``
-    for a full N-D transform.  With ``axis`` set we drive
-    ``fftw_plan_many_dft(rank=1, n=[N], howmany=...)`` for a batched 1-D
-    FFT along the named axis; the stride and dist are derived from the
-    descriptor shape assuming row-major C order.  Only axis = 0 or
-    axis = ndim-1 are supported (the contiguous-batch cases); general
-    intermediate axes would need ``fftw_plan_guru_dft`` or a copy.
-    """
+    """Emit a self-contained ``fftw_plan_*`` -> ``execute`` -> ``destroy_plan`` tasklet."""
     from dace.codegen.targets import cpp  # avoid import loop
 
     if len(indesc.shape) not in (1, 2, 3):
@@ -321,16 +296,13 @@ def _generate_fftw3_code(indesc: data.Data, outdesc: data.Data, is_inverse: bool
         """
     else:
         ndim = len(indesc.shape)
-        # Axis was already normalised by the frontend; clamp here defensively.
         axis_norm = int(axis) if axis >= 0 else ndim + int(axis)
         if axis_norm not in (0, ndim - 1):
             raise NotImplementedError(f"FFTW3 axis-aware expansion only handles axis=0 or axis=ndim-1 "
                                       f"(got axis={axis} on shape {indesc.shape}); intermediate axes need "
                                       f"``fftw_plan_guru_dft`` or a transposed copy.")
         n_sym = indesc.shape[axis_norm]
-        # ``howmany`` = product of all OTHER dims.  For ``axis=ndim-1`` (the
-        # last axis) consecutive FFTs are contiguous in memory; for
-        # ``axis=0`` consecutive FFTs are interleaved with stride 1.
+        # ``howmany`` = product of all OTHER dims; axis=ndim-1 is contiguous, axis=0 is strided.
         other_dims = [d for i, d in enumerate(indesc.shape) if i != axis_norm]
         howmany_sym = 1
         for d in other_dims:
@@ -338,7 +310,6 @@ def _generate_fftw3_code(indesc: data.Data, outdesc: data.Data, is_inverse: bool
         if axis_norm == ndim - 1:
             istride, idist = 1, n_sym
         else:
-            # axis == 0
             istride, idist = howmany_sym, 1
         code = f"""
         {{

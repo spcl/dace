@@ -1,21 +1,13 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``Broadcast`` library node -- Fortran ``SPREAD``.
 
-Fortran ``SPREAD(SOURCE, DIM, NCOPIES)`` inserts a new rank-1 axis at
-position ``DIM`` (Fortran 1-based) of size ``NCOPIES``, replicating
-``SOURCE`` along it.  The result rank is ``rank(SOURCE) + 1``.
-
-Pure expansion: a single Map writes the broadcasted output in parallel.
-Each tasklet reads ``SOURCE`` at the matching position from the
-input axes (excluding the inserted axis) and writes to the output.
-DaCe's scheduler picks the right OpenMP / GPU lowering for the Map.
+``SPREAD(SOURCE, DIM, NCOPIES)`` inserts a new rank-1 axis at position ``DIM``
+(1-based) of size ``NCOPIES``, replicating ``SOURCE`` along it; result rank is ``rank(SOURCE) + 1``.
 """
 import dace
 import dace.library
 import dace.properties
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, memlet as mm
-from dace.frontend.common import op_repository as oprepo
 from dace.transformation.transformation import ExpandTransformation
 
 
@@ -63,18 +55,8 @@ class ExpandBroadcastPure(ExpandTransformation):
 
 @dace.library.node
 class Broadcast(dace.sdfg.nodes.LibraryNode):
-    """Fortran ``SPREAD(SOURCE, DIM, NCOPIES)`` -- broadcast along a new axis.
-
-    Configurable:
-
-    * ``dim`` (default ``1``)  --  Fortran 1-based axis into which the
-      new replicated dimension is inserted.
-
-    Input shape is rank-R; output shape is rank-(R+1), with the
-    inserted ``dim``-th axis carrying ``NCOPIES`` copies of the source.
-    ``NCOPIES`` is inferred from the destination descriptor at expansion
-    time, so the lib node has no separate ``ncopies`` property.
-    """
+    """Fortran ``SPREAD(SOURCE, DIM, NCOPIES)`` -- broadcast along a new axis; ``NCOPIES`` is inferred
+    from the destination descriptor at expansion time."""
 
     implementations = {"pure": ExpandBroadcastPure}
     default_implementation = "pure"
@@ -105,15 +87,3 @@ class Broadcast(dace.sdfg.nodes.LibraryNode):
         if not (1 <= self.dim <= dst_rank):
             raise ValueError(f"Broadcast: dim={self.dim} out of range for dst rank-{dst_rank}")
         return desc_src, desc_dst, self.dim - 1
-
-
-@oprepo.replaces('dace.libraries.standard.broadcast')
-@oprepo.replaces('dace.libraries.standard.Broadcast')
-def broadcast_libnode(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, src, dst, *, dim=1):
-    src_in = state.add_read(src)
-    dst_w = state.add_write(dst)
-    node = Broadcast("broadcast", dim=dim)
-    state.add_node(node)
-    state.add_edge(src_in, None, node, '_src', mm.Memlet(src))
-    state.add_edge(node, '_dst', dst_w, None, mm.Memlet(dst))
-    return []

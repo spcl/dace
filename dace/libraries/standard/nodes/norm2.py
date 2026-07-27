@@ -4,11 +4,6 @@
 Fortran ``NORM2(X [, DIM])`` returns ``sqrt(sum(X**2))``.  Without
 ``DIM`` the result is a scalar over the whole array; with ``DIM``
 the reduction is along one axis and the result is rank-(R-1).
-
-Pure expansion: a single reduction map accumulates the sum of squares
-via WCR (parallel-safe), and a trailing tasklet writes ``sqrt`` of the
-accumulator into the user-facing scalar / per-slice output.  DaCe's
-scheduler picks OpenMP / GPU on the Map based on storage.
 """
 import dace
 import dace.library
@@ -45,7 +40,6 @@ class ExpandNorm2Pure(ExpandTransformation):
             sdfg.add_array("_out", out_shape, dtype)
         sdfg.add_transient("_sumsq", out_shape, dtype)
 
-        # Seed the accumulator with zero.
         init_state = sdfg.add_state(node.label + "_init")
         if dim_zero is None:
             init_state.add_mapped_tasklet(
@@ -68,7 +62,6 @@ class ExpandNorm2Pure(ExpandTransformation):
                 external_edges=True,
             )
 
-        # Reduce: ``sumsq += x[i]**2``.
         reduce_state = sdfg.add_state_after(init_state, node.label + "_sumsq")
         map_rng = {f"__i{d}": f"0:{shape[d]}" for d in range(rank)}
         x_subs = ", ".join([f"__i{d}" for d in range(rank)])
@@ -85,7 +78,6 @@ class ExpandNorm2Pure(ExpandTransformation):
             external_edges=True,
         )
 
-        # Finalize: ``out = sqrt(sumsq)``.
         final_state = sdfg.add_state_after(reduce_state, node.label + "_sqrt")
         if dim_zero is None:
             final_state.add_mapped_tasklet(
@@ -112,16 +104,7 @@ class ExpandNorm2Pure(ExpandTransformation):
 
 @dace.library.node
 class Norm2(dace.sdfg.nodes.LibraryNode):
-    """Fortran ``NORM2(X [, DIM])`` -- L2 (Euclidean) norm.
-
-    Configurable:
-
-    * ``dim``  --  Fortran 1-based reduction axis.  ``None`` reduces
-      the whole array to a scalar.
-
-    No ``DIM``: output is a length-1 scalar holding ``sqrt(sum(X**2))``.
-    With ``DIM``: output is rank-(R-1) with each slice's L2 norm.
-    """
+    """Fortran ``NORM2(X [, DIM])`` -- L2 (Euclidean) norm."""
 
     implementations = {"pure": ExpandNorm2Pure}
     default_implementation = "pure"

@@ -1,41 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``AllNode`` / ``AnyNode`` library nodes -- Fortran ``ALL(mask [, dim])``
-/ ``ANY(mask [, dim])`` logical reductions.
+"""``AllNode`` / ``AnyNode`` -- Fortran ``ALL(mask [, dim])`` / ``ANY(mask [, dim])`` logical reductions.
 
-``ALL`` is the logical-AND reduction (true iff every element is true,
-identity ``True``); ``ANY`` is the logical-OR reduction (true iff any
-element is true, identity ``False``).  They are DISTINCT library nodes
-(``AllNode`` and ``AnyNode``) sharing this file and their expansion
-builders.
-
-Both expansions are built with the DaCe **Python frontend**
-(``@dace.program``) rather than hand-assembled state by state.  This is
-the rule for these Fortran intrinsic nodes: a pure expansion either
-LOWERS to another library node (as ``CountLibraryNode`` delegates to
-``Reduce``) or is written as a ``@dace.program`` -- it must NOT
-hand-build an SDFG with ``add_state`` / ``add_mapped_tasklet``.  The
-frontend lowers ``dace.reduce`` to a ``Reduce`` node (so the CPU OpenMP
-``&&``/``||`` and GPU CUB specialisations are inherited for free) and
-natively supports ``break``, which is what makes the short-circuit
-variant a four-line loop.
-
-Expansions (shared by both nodes):
-
-``reduction``   Default.  ``dace.reduce(and/or, _mask, identity=...)`` ->
-                a ``Reduce`` node.  Scans every element with no early
-                exit, but RETARGETS: GPU CUB tree-reduction / CPU OpenMP
-                ``reduction(&&)`` / plain loop.  The parallel strategy.
-
-``sequential``  Whole-array short-circuit: a ``for`` loop that ``break``s
-                at the first ``.false.`` (ALL) / ``.true.`` (ANY) -- does
-                <= N iterations, but the break is a loop-carried
-                dependency so it is strictly serial (no GPU/OpenMP).
-                The CPU early-exit strategy.  Only the rank-1 whole-array
-                form is handled; anything else raises so the caller falls
-                back to ``reduction``.
-
-Same result either way; the choice is a cost-model trade-off (early exit
-vs parallelisability).
+``reduction`` (default) lowers ``dace.reduce`` to a ``Reduce`` node via a ``@dace.program``
+(GPU CUB / OpenMP / plain loop).  ``sequential`` is a rank-1 whole-array short-circuit ``break``
+loop.  Same result either way; the choice is a cost-model trade-off (early exit vs parallelism).
 """
 import dace
 from dace import library, nodes, properties
@@ -71,16 +39,7 @@ def _fortran_dim_to_axis(dim, mask_rank):
 
 
 def _descriptors(node, parent_sdfg, parent_state):
-    """``(mask_desc, out_desc, mask_shape, axis)`` rebuilt from the wired
-    edges -- the inner ``@dace.program`` is specialised against these so
-    it matches the parent connectors' shapes / dtypes / storage exactly
-    (sections, ``LOGICAL(1)`` masks, GPU storage all flow through).
-
-    The OUTPUT is always a BOOLEAN: ``ALL`` / ``ANY`` return a Fortran
-    LOGICAL, which the HLFIR bridge maps to ``dace.bool_``.  The mask
-    keeps its own dtype (any logical kind / int); the reduction lowering
-    casts the accumulator to bool (``!= 0``).  The caller (bridge /
-    test) must therefore wire ``_out`` to a ``bool`` array."""
+    """``(mask_desc, out_desc, mask_shape, axis)`` rebuilt from the wired edges, for the inner ``@dace.program``."""
     mask, mask_subset, out, out_subset = _validate_edges(node, parent_sdfg, parent_state)
     mask_shape = [(e + 1 - b) // s for (b, e, s) in mask_subset]
     out_shape = [(e + 1 - b) // s for (b, e, s) in out_subset] if out_subset.dims() else [1]
@@ -91,31 +50,14 @@ def _descriptors(node, parent_sdfg, parent_state):
 
 
 def _reduction_sdfg(node, parent_state, parent_sdfg, is_all):
-    """Parallel-reduction expansion via the Python frontend.
-
-    ``dace.reduce`` lowers to a ``Reduce`` node, so the per-target
-    schedule (pure map / OpenMP ``&&``/``||`` / CUB) is inherited.  The
-    logical identity MUST be explicit -- ``np.all`` / ``np.any`` lower
-    with identity 0, which is wrong for ALL (``0 and x ... == 0`` even
-    when every element is true).  ALL = AND-reduce with identity 1,
-    ANY = OR-reduce with identity 0.
-
-    The reduction accumulates in the MASK's element type (``a and b``
-    keeps an integer logical), so the result is cast to a normalised
-    ``0``/``1`` via ``!= 0`` before it lands in ``_out`` -- the output is
-    a boolean (``ALL`` / ``ANY`` return a LOGICAL scalar, and the
-    condition path wires a ``bool`` ``_out``).
-    """
+    """Parallel-reduction expansion: lowers ``dace.reduce`` to a ``Reduce`` node (AND id=1 for ALL, OR id=0 for ANY)."""
     mask_desc, out_desc, mask_shape, axis = _descriptors(node, parent_sdfg, parent_state)
     ident = 1 if is_all else 0
 
-    # The reduce accumulates in the MASK's element type; assigning the
-    # result into the boolean ``_out`` casts it.  Do NOT wrap in an
-    # explicit ``!= 0`` -- that introduces an untyped intermediate the
-    # frontend defaults to ``double``, which then trips the integer/bool
-    # ``Logical_And`` (``operator&`` is undefined on ``double``).  The
-    # mask is normalised to a clean ``0``/``1`` first so the accumulator
-    # type is the mask's int/bool (never a float logical kind).
+    # Mask is normalised via ``_mask != 0`` going IN, not the result coming
+    # out: wrapping the reduce result in ``!= 0`` makes an untyped
+    # intermediate that the frontend defaults to ``double``, breaking
+    # ``Logical_And``.
     if axis is None:
         if is_all:
 

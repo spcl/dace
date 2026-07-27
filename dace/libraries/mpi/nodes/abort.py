@@ -32,7 +32,6 @@ class ExpandAbortMPI(ExpandTransformation):
 class Abort(MPINode):
     """Collective ``MPI_Abort(comm, errorcode)``."""
 
-    # Global properties
     implementations = {
         "MPI": ExpandAbortMPI,
     }

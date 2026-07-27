@@ -89,9 +89,7 @@ class Orgqr(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, inputs={"_ain", "_tau"}, outputs={"_aout", "_res"}, **kwargs)
 
     def validate(self, sdfg, state):
-        """
-        :return: A two-tuple ((A, lda_in, lda_out, m, n), (tau, k)).
-        """
+        """Returns ((A, lda_in, lda_out, m, n), (tau, k))."""
         desc_A = lda_in = lda_out = m = n = desc_tau = k = None
         for e in state.in_edges(self):
             sq = copy.deepcopy(e.data.subset)

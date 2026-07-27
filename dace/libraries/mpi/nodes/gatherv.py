@@ -21,8 +21,6 @@ class ExpandGathervMPI(ExpandTransformation):
 
         if inbuffer.dtype.veclen > 1:
             raise NotImplementedError
-        if root.dtype.base_type != dtypes.int32:
-            raise ValueError("Gatherv root must be an integer!")
 
         comm = resolve_comm(node, parent_state)
 
@@ -46,7 +44,6 @@ class ExpandGathervMPI(ExpandTransformation):
 @library.node
 class Gatherv(MPINode):
 
-    # Global properties
     implementations = {
         "MPI": ExpandGathervMPI,
     }
@@ -60,10 +57,6 @@ class Gatherv(MPINode):
                          **kwargs)
 
     def validate(self, sdfg, state):
-        """
-        :return: A five-tuple ((inbuffer, in_count_str), outbuffer, recvcounts, displs, root)
-                 of the data descriptors in the parent SDFG.
-        """
         inbuffer, outbuffer, recvcounts, displs, root = None, None, None, None, None
         for e in state.out_edges(self):
             if e.src_conn == "_outbuffer":

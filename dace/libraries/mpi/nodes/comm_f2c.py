@@ -29,10 +29,8 @@ class ExpandCommF2cMPI(ExpandTransformation):
 
 @dace.library.node
 class CommF2c(MPINode):
-    """``MPI_Comm_f2c``: convert a Fortran integer communicator handle
-    (``_fcomm``) to an ``MPI_Comm`` (``_comm``)."""
+    """``MPI_Comm_f2c``: convert a Fortran integer communicator handle (``_fcomm``) to an ``MPI_Comm`` (``_comm``)."""
 
-    # Global properties
     implementations = {
         "MPI": ExpandCommF2cMPI,
     }

@@ -35,7 +35,6 @@ class ExpandCommSplitMPI(ExpandTransformation):
 class CommSplit(MPINode):
     """``MPI_Comm_split(comm, color, key)``, producing ``_newcomm``."""
 
-    # Global properties
     implementations = {
         "MPI": ExpandCommSplitMPI,
     }
@@ -45,9 +44,6 @@ class CommSplit(MPINode):
         super().__init__(name, *args, inputs={"_color", "_key"}, outputs={"_newcomm"}, **kwargs)
 
     def validate(self, sdfg, state):
-        """
-        :return: A two-tuple (color, key) of the data descriptors in the parent SDFG.
-        """
         color, key = None, None
         for e in state.in_edges(self):
             if e.dst_conn == "_color":

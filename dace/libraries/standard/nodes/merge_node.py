@@ -1,27 +1,8 @@
 """``MergeLibraryNode`` — Fortran ``MERGE(tsource, fsource, mask)`` intrinsic.
 
-Mirrors the modularity pattern of ``CopyLibraryNode`` /
-``MemsetLibraryNode``: the bridge / frontend can drop a ``MergeLibraryNode``
-into the SDFG instead of inlining a per-element conditional tasklet, so
-later passes (vectorisation, GPU offload, alternative backends) can pick
-their own expansion without touching the surrounding graph.
-
-Per-element semantics: ``_out[i] = _t[i] if _mask[i] else _f[i]``.
-
-Supported variants (Fortran standard):
-
-- **All-array** — ``_t``, ``_f``, ``_mask`` all have the result's shape.
-- **Scalar broadcast** — any of ``_t`` / ``_f`` (or both) is a single-
-  element input; the expansion broadcasts that value across every
-  iteration.  Mask is typically array-shaped (the broadcast variants
-  in Fortran).  Detected by inspecting each input edge's memlet
-  subset volume; the bridge wires the input memlet appropriately
-  (full-shape for arrays, single-element for scalars).
-- ``_mask`` itself can also be scalar (degenerate; Flang usually folds).
-
-Today only the ``pure`` expansion is provided (a mapped tasklet); GPU /
-CPU-vectorised expansions slot in the same way ``CopyLibraryNode``'s
-storage-aware variants do.
+Per-element semantics: ``_out[i] = _t[i] if _mask[i] else _f[i]``. Each of
+``_t``/``_f``/``_mask`` may be a full-shape array or a scalar broadcast;
+picked per input from its memlet subset volume (see ``_subset_volume``).
 """
 import dace
 from dace import library, nodes
@@ -52,16 +33,7 @@ def _subset_volume(subset):
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
-    """Pure SDFG expansion — one mapped tasklet doing the per-element
-    select.  Each input is independently broadcast or per-iteration:
-
-    - **Array input** (subset volume > 1 or symbolic): the inner SDFG
-      mirrors the full shape; the tasklet reads ``_t[i, j, …]`` etc.
-    - **Scalar input** (subset volume == 1): the inner SDFG declares a
-      length-1 array; the tasklet reads element ``0`` uniformly across
-      iterations.  Same shape for the operand whether it came in as a
-      Fortran scalar dummy or a sliced single element.
-    """
+    """Pure SDFG expansion: one mapped tasklet performing the per-element select."""
     environments = []
 
     @staticmethod
@@ -78,10 +50,6 @@ class ExpandPure(ExpandTransformation):
         sdfg = dace.SDFG(f"{node.label}_sdfg")
         sdfg.schedule = dace.dtypes.ScheduleType.Sequential
 
-        # Per-input descriptor + access expression.  Single-element
-        # inputs become a length-1 array on the inner SDFG and are
-        # indexed by ``0``; multi-element inputs match the iteration
-        # shape and are indexed per-iteration.
         def add_input(conn: str, edge):
             arr = parent_sdfg.arrays[edge.data.data]
             vol = _subset_volume(edge.data.subset)
@@ -118,21 +86,11 @@ class ExpandPure(ExpandTransformation):
 @library.node
 class MergeLibraryNode(nodes.LibraryNode):
     """Library node for the Fortran ``MERGE(tsource, fsource, mask)``
-    intrinsic.
-
-    Inputs ``_t``, ``_f``, ``_mask``; output ``_out``.  Each input may
-    cover the result shape (per-element) or a single element (broadcast
-    scalar).  The expansion reads the per-input subset volume to pick
-    its broadcast strategy.
-    """
+    intrinsic. Inputs ``_t``, ``_f``, ``_mask``; output ``_out``."""
 
     implementations = {"pure": ExpandPure}
     default_implementation = "pure"
 
-    # Connector names this libnode publishes. External consumers (tests,
-    # the Fortran frontend's emitter) must reference these constants
-    # instead of string literals so a future rename is a single-line
-    # change (mirrors ``CopyLibraryNode`` / ``MemsetLibraryNode``).
     TRUE_CONNECTOR_NAME = _TRUE_CONNECTOR_NAME
     FALSE_CONNECTOR_NAME = _FALSE_CONNECTOR_NAME
     MASK_CONNECTOR_NAME = _MASK_CONNECTOR_NAME

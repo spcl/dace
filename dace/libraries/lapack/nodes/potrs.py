@@ -89,9 +89,7 @@ class Potrs(dace.sdfg.nodes.LibraryNode):
         self.lower = lower
 
     def validate(self, sdfg, state):
-        """
-        :return: A two-tuple ((A, lda, n), (Bin, ldb_in, ldb_out, nrhs)).
-        """
+        """Returns ((A, lda, n), (Bin, ldb_in, ldb_out, nrhs))."""
         desc_A = desc_B = lda = ldb_in = ldb_out = None
         n_A = nrhs = None
         for e in state.in_edges(self):

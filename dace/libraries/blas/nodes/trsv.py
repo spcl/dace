@@ -7,8 +7,6 @@ import dace.sdfg.nodes
 from dace.transformation.transformation import ExpandTransformation
 from dace.libraries.blas import blas_helpers
 from .. import environments
-from dace import memlet as mm, SDFG, SDFGState
-from dace.frontend.common import op_repository as oprepo
 
 
 def _cblas_flags(node):
@@ -95,9 +93,7 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
         self.uplo, self.transA, self.unit_diag = uplo, transA, unit_diag
 
     def validate(self, sdfg, state):
-        """
-        :return: A four-tuple ((A, lda), (xin, sx_in), sx_out, n).
-        """
+        """Returns ((A, lda), (xin, sx_in), sx_out, n)."""
         desc_A = desc_x = lda = sx_in = sx_out = n = None
         for e in state.in_edges(self):
             sq = copy.deepcopy(e.data.subset)
@@ -116,29 +112,3 @@ class Trsv(dace.sdfg.nodes.LibraryNode):
         if desc_A is None or desc_x is None:
             raise ValueError("TRSV needs _A and _xin inputs and _xout output")
         return (desc_A, lda), (desc_x, sx_in), sx_out, n
-
-
-# Numpy replacement
-@oprepo.replaces('dace.libraries.blas.trsv')
-@oprepo.replaces('dace.libraries.blas.Trsv')
-def trsv_libnode(pv: 'ProgramVisitor',
-                 sdfg: SDFG,
-                 state: SDFGState,
-                 A,
-                 x,
-                 result=None,
-                 uplo=False,
-                 transA=False,
-                 unit_diag=False):
-    result = result if result is not None else x
-    A_in, x_in = state.add_read(A), state.add_read(x)
-    x_out = state.add_write(result)
-
-    libnode = Trsv('trsv', uplo=uplo, transA=transA, unit_diag=unit_diag)
-    state.add_node(libnode)
-
-    state.add_edge(A_in, None, libnode, '_A', mm.Memlet(A))
-    state.add_edge(x_in, None, libnode, '_xin', mm.Memlet(x))
-    state.add_edge(libnode, '_xout', x_out, None, mm.Memlet(result))
-
-    return []

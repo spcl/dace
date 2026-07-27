@@ -34,7 +34,6 @@ class ExpandCommRankMPI(ExpandTransformation):
 class CommRank(MPINode):
     """``MPI_Comm_rank``: the calling process's rank, on the ``_rank`` output."""
 
-    # Global properties
     implementations = {
         "MPI": ExpandCommRankMPI,
     }

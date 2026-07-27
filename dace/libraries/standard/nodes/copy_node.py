@@ -86,11 +86,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
             return 'Tasklet' if single_elt else 'MappedTasklet'
         return 'SharedMemoryCollective'
 
-    # 2. Single-element non-Shared copies -> bare ``Tasklet`` or ``MemcpyCUDA1D``:
-    #   cross CPU/GPU                 -> MemcpyCUDA1D (cudaMemcpyAsync)
-    #   same-side GPU<->GPU in kernel -> Tasklet (device-side _out = _in)
-    #   same-side GPU<->GPU host      -> MemcpyCUDA1D (D2D; host cannot deref device ptrs)
-    #   same-side w/ host endpoint    -> Tasklet (host runs the assignment)
+    # 2. Single-element non-Shared copies -> bare ``Tasklet`` or ``MemcpyCUDA1D``.
     if single_elt:
         if _is_cross_cpu_gpu(inp.storage, out.storage, node, parent_state):
             return 'MemcpyCUDA1D'
@@ -98,6 +94,7 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
         both_gpu_global = (inp.storage == dtypes.StorageType.GPU_Global
                            and out.storage == dtypes.StorageType.GPU_Global)
         if both_gpu_global and not inside_kernel:
+            # Host cannot deref device pointers -- D2D goes through cudaMemcpyAsync.
             return 'MemcpyCUDA1D'
         return 'Tasklet'
 
@@ -106,13 +103,11 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         return 'MappedTasklet'
 
-    # 4. Host CPU-resident multi-element copy: same-shape/contiguous/same-layout is one exact
-    # memcpy (MemcpyCPU) -- satisfies ExpandMemcpyCPU's contiguity precondition, so it always
-    # expands cleanly. Falls through to MappedTasklet only when size is KNOWN at compile time
-    # >= ``compiler.cpu.parallel_transfer_min_elements`` (OpenMP-parallel at top level, sequential
-    # if nested); a small or symbolic size keeps the single memcpy -- no forking for a size that
-    # may be tiny at runtime. Non-contiguous, mixed-layout, mismatched-shape (transpose), or
-    # rank-changing copies also fall through (MappedTasklet rejects transposes, walks reshapes 1-D).
+    # 4. Host CPU-resident multi-element copy: same-shape/contiguous/same-layout -> MemcpyCPU.
+    # Falls through to MappedTasklet only past ``compiler.cpu.parallel_transfer_min_elements``
+    # (known at compile time) -- a small or symbolic size keeps the single memcpy, so a size that
+    # may be tiny at runtime never forks. Non-contiguous/mismatched-shape/rank-changing copies fall
+    # through too.
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = (len(inp.shape) == len(out.shape)
                   and not any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())))
@@ -145,11 +140,7 @@ def cuda2d_pitch_params(
 ) -> Optional[Tuple[symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr, symbolic.SymExpr]]:
     """Element-count ``(dpitch, spitch, width, height)`` for a single ``cudaMemcpy2DAsync`` over a
     2D (or ``(N, 1)``-promoted) copy, or ``None`` if the shape/strides don't collapse to one call
-    (contiguous rows, contiguous columns, or outer/inner stride ratio equal to inner width).
-
-    Single source of truth for the ``MemcpyCUDA2D`` selector gate and the expander, so the two
-    can't drift: selector treats a non-``None`` result as "applies"; expander formats the same
-    components into the emitted call."""
+    (contiguous rows, contiguous columns, or outer/inner stride ratio equal to inner width)."""
     if src_strides[1] == 1 and dst_strides[1] == 1:
         return dst_strides[0], src_strides[0], copy_shape[1], copy_shape[0]
     if src_strides[0] == 1 and dst_strides[0] == 1:
@@ -507,12 +498,10 @@ class ExpandMemcpyCUDA2D(ExpandTransformation):
         # 1D-collapsed shapes promote to (N, 1) so one cudaMemcpy2D call covers strided 1D patterns.
         if len(in_shape_collapsed) == 1 and len(out_shape_collapsed) == 1:
             in_shape_2d = [in_shape_collapsed[0], 1]
-            out_shape_2d = [out_shape_collapsed[0], 1]
             in_strides_2d = [in_strides_collapsed[0], 1]
             out_strides_2d = [out_strides_collapsed[0], 1]
         elif len(in_shape_collapsed) == 2 and len(out_shape_collapsed) == 2:
             in_shape_2d = in_shape_collapsed
-            out_shape_2d = out_shape_collapsed
             in_strides_2d = in_strides_collapsed
             out_strides_2d = out_strides_collapsed
         else:
@@ -723,15 +712,7 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
 class CopyLibraryNode(nodes.LibraryNode):
     """Library node representing a data copy between two access nodes.
 
-    Each implementation name describes the C++ it emits: ``MappedTasklet`` (element-wise tasklet,
-    schedule from storages; also handles rank-mismatch reshapes via a 1-D walker when both
-    endpoints are packed-same-layout with contiguous subsets; a statically-large contiguous CPU
-    copy routes here too, so the element map parallelizes across OpenMP threads at top level),
-    ``Tasklet`` (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy`` for a small or
-    symbolic-size contiguous CPU copy), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
-    ``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided`` (Sequential map of ``cudaMemcpyAsync``),
-    ``SharedMemoryCollective`` (``dace::CopyND`` + ``__syncthreads()``; the only remaining
-    ``dace::CopyND`` user).
+    See each ``Expand*`` class docstring below for the C++ its implementation name emits.
 
     Design rationale: the libnode does NOT accept dynamic (Scalar) input connectors -- subset
     expressions must use symbols already in scope at construction time. This keeps the contract

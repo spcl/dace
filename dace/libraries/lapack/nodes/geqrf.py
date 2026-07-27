@@ -89,9 +89,7 @@ class Geqrf(dace.sdfg.nodes.LibraryNode):
         super().__init__(name, inputs={"_ain"}, outputs={"_aout", "_tau", "_res"}, **kwargs)
 
     def validate(self, sdfg, state):
-        """
-        :return: A two-tuple ((A, lda_in, lda_out, m, n), tau).
-        """
+        """Returns ((A, lda_in, lda_out, m, n), tau)."""
         desc_A = lda_in = lda_out = m = n = desc_tau = None
         for e in state.in_edges(self):
             if e.dst_conn != "_ain":

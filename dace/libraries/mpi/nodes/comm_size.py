@@ -34,7 +34,6 @@ class ExpandCommSizeMPI(ExpandTransformation):
 class CommSize(MPINode):
     """``MPI_Comm_size``: the number of processes, on the ``_size`` output."""
 
-    # Global properties
     implementations = {
         "MPI": ExpandCommSizeMPI,
     }
