@@ -105,6 +105,44 @@ The choice is exposed as the :attr:`ArgMaxLift.tie_break` knob -- ``'infer'``
 semantics are known state them directly instead of round-tripping through the
 comparison operator; ``'infer'`` reproduces the inference verbatim.
 
+Predicate-index loops (no value carrier)
+----------------------------------------
+
+TSVC ``s331`` tracks a position with NO value carrier at all -- the guard is a
+predicate against a loop-invariant threshold, and the only in-loop write is the
+index itself::
+
+    j = -1
+    for i in range(N):
+        if a[i] < 0.0:
+            j = i
+
+Because iterations run in increasing order the last writer wins, so the loop
+computes ``j = max{i : a[i] < 0.0}``, falling back to the pre-loop seed when the
+set is empty. That is a plain MAX over the masked iteration index::
+
+    j = max(seed, max over i of (i if a[i] < 0.0 else seed))
+
+Both halves of the equivalence need ``seed <= start``: with an empty predicate
+set every iteration contributes ``seed`` so the fold returns it, and with a
+non-empty set the largest matching ``i`` (which is ``>= start``) must beat the
+seed. :meth:`ArgMaxLift.match_predicate_index` proves that inequality and
+refuses when it is undecidable -- a seed above the iteration range would make
+the fold return the seed where the sequential loop returned a real position.
+
+The lift emits ``init(seed) -> Map(masked index, WCR max onto a private scalar)
+-> bind``, i.e. exactly the WCR-on-scalar shape
+:class:`~dace.transformation.passes.loop_to_reduce.LoopToReduce` produces in
+``wcr-scalar`` mode, which codegen lowers to ``#pragma omp parallel for``. No
+:class:`Reduce` libnode is used: the reduced quantity is the ITERATION INDEX
+masked by a predicate, not a slice of any array, so no array-slice fold can
+express it.
+
+The guard may name loop-invariant symbols, scalar containers and affine gathers
+``arr[b + c*i]``, each wired as a tasklet input; it may NOT name the tracked
+index (``if a[i] > 0 and j < 0`` is a find-FIRST search, not a max) nor read
+through an indirection (``a[b[i]]``).
+
 Break / early-exit loops
 ------------------------
 
@@ -123,14 +161,16 @@ correctly either -- so the refusal costs no parallelism ArgMaxLift could have
 delivered.
 """
 import ast
+import copy
 import re
-from typing import Any, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 import numpy as np
 
 import dace
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
+from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion, SDFGState, ControlFlowRegion, ConditionalBlock, BreakBlock
 from dace.transformation import pass_pipeline as ppl
@@ -233,6 +273,123 @@ class _Match2D(NamedTuple):
     last_wins: bool = False
 
 
+class MatchPredIndex(NamedTuple):
+    """A matched "last index at which a predicate holds" loop (TSVC ``s331``).
+
+    Distinct from :class:`_Match`: there is no value carrier and no comparison
+    against one. The reduced quantity is the ITERATION INDEX, masked by a
+    predicate over loop-invariant data, so the lift is a WCR-max map rather than
+    a :class:`Reduce` / ``ArgReduce`` over an array slice.
+
+    :param loop: The :class:`LoopRegion` to replace.
+    :param parent: ``loop.parent_graph`` (cached).
+    :param idx_carrier: The symbol tracking the position (``j``).
+    :param seed: ``idx_carrier``'s pre-loop value, proven ``<= iter_start``. It
+        is both the fold's identity and the mask's false-value, which is what
+        makes the empty-predicate case return it unchanged.
+    :param guard_code: The branch guard with every array read replaced by a
+        tasklet input connector name.
+    :param guard_inputs: ``(connector, memlet)`` per wired read, in wiring order.
+    :param iter_start: Loop start expression.
+    :param iter_end: Loop INCLUSIVE end expression.
+    """
+    loop: LoopRegion
+    parent: ControlFlowRegion
+    idx_carrier: str
+    seed: Any
+    guard_code: str
+    guard_inputs: List[Tuple[str, mm.Memlet]]
+    iter_start: Any
+    iter_end: Any
+
+
+class GuardReadWiring(ast.NodeTransformer):
+    """Replace every data read in a predicate guard by a tasklet input connector.
+
+    Two read shapes are wired: a 1-D subscript at a position that is either affine
+    in the loop variable (``arr[b + c*i]``, one element per iteration) or wholly
+    loop-invariant (``thr[0]``, broadcast into the map), and a bare
+    :class:`~dace.data.Scalar` / length-1 array name. Identical reads share one
+    connector. Anything else that touches a data container -- a multi-dimensional
+    subscript, an indirection ``a[b[i]]``, a bare name that is a full array -- sets
+    :attr:`refused`, because no single memlet expresses it.
+    """
+
+    def __init__(self, sdfg: SDFG, loop: LoopRegion):
+        self.sdfg = sdfg
+        self.loop = loop
+        self.reads: Dict[str, Tuple[str, mm.Memlet]] = {}
+        self.refused = False
+
+    def connector(self, key: str, array: str, subset: subsets.Range) -> ast.Name:
+        entry = self.reads.get(key)
+        if entry is None:
+            entry = (f'__guard{len(self.reads)}', mm.Memlet(data=array, subset=subset))
+            self.reads[key] = entry
+        return ast.Name(id=entry[0], ctx=ast.Load())
+
+    def visit_Subscript(self, node: ast.Subscript):
+        if not (isinstance(node.value, ast.Name) and node.value.id in self.sdfg.arrays):
+            self.refused = True
+            return node
+        array = node.value.id
+        # One index expression only makes a 1-D memlet; a rank mismatch would emit a
+        # subset of the wrong dimensionality.
+        if len(self.sdfg.arrays[array].shape) != 1:
+            self.refused = True
+            return node
+        idx = node.slice
+        if isinstance(idx, ast.Index):  # pragma: no cover -- legacy AST
+            idx = idx.value
+        if isinstance(idx, (ast.Tuple, ast.Slice, ast.List)):
+            self.refused = True
+            return node
+        try:
+            idx_str = ast.unparse(idx)
+        except Exception:  # pragma: no cover -- defensive
+            self.refused = True
+            return node
+        pos = self.position(idx_str)
+        if pos is None:
+            self.refused = True
+            return node
+        return ast.copy_location(self.connector(f'{array}[{pos}]', array, subsets.Range([(pos, pos, 1)])), node)
+
+    def position(self, idx_str: str) -> Optional[Any]:
+        """The single array position a guard read touches -- affine in the loop
+        variable, or wholly loop-invariant. ``None`` when it is neither, which is
+        exactly the indirection / loop-carried-index case no memlet can express.
+        """
+        try:
+            idx = symbolic.pystr_to_symbolic(idx_str)
+        except Exception:  # pragma: no cover -- defensive
+            return None
+        loop_var = symbolic.pystr_to_symbolic(self.loop.loop_variable)
+        if loop_var in idx.free_symbols:
+            # Reuses the affine gather parser, so an indirection ``a[b[i]]`` is
+            # refused exactly where the value paths refuse it.
+            aff = ArgMaxLift._affine_index_in_loop_var(idx_str, self.loop.loop_variable, self.loop)
+            if aff is None:
+                return None
+            base, coeff = aff
+            return symbolic.simplify(base + coeff * loop_var)
+        assigned: Dict[str, None] = {}
+        for e in self.loop.all_interstate_edges():
+            assigned.update(dict.fromkeys((e.data.assignments or {}).keys()))
+        if any(str(s) in assigned for s in idx.free_symbols):
+            return None  # a per-iteration symbol in the index is not loop-invariant
+        return symbolic.simplify(idx)
+
+    def visit_Name(self, node: ast.Name):
+        if node.id not in self.sdfg.arrays:
+            return node
+        desc = self.sdfg.arrays[node.id]
+        if not (isinstance(desc, data.Scalar) or (isinstance(desc, data.Array) and tuple(desc.shape) == (1, ))):
+            self.refused = True
+            return node
+        return ast.copy_location(self.connector(node.id, node.id, subsets.Range([(0, 0, 1)])), node)
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class ArgMaxLift(ppl.Pass):
@@ -319,6 +476,12 @@ class ArgMaxLift(ppl.Pass):
                 m2 = self._match_2d(region, sd)
                 if m2 is not None:
                     self._rewrite_2d(m2, sd)
+                    rewritten += 1
+                    continue
+                # Predicate-index, no value carrier (TSVC s331).
+                mp = self.match_predicate_index(region, sd)
+                if mp is not None:
+                    self.rewrite_predicate_index(mp, sd)
                     rewritten += 1
         return rewritten or None
 
@@ -954,7 +1117,8 @@ class ArgMaxLift(ppl.Pass):
             return arr, base, coeff
         return None
 
-    def _affine_index_in_loop_var(self, idx_str: str, loop_var: str, loop: LoopRegion):
+    @staticmethod
+    def _affine_index_in_loop_var(idx_str: str, loop_var: str, loop: LoopRegion):
         """Decompose a gather index ``idx_str`` as ``base + coeff*loop_var``.
 
         Returns ``(base, coeff)`` (sympy exprs) iff ``idx_str`` is affine and
@@ -1770,6 +1934,234 @@ class ArgMaxLift(ppl.Pass):
                               mm.Memlet(data=buf, subset=subsets.Range([(0, symbolic.simplify(n_elems - 1), 1)])))
         argmax_state.add_edge(node, '_out_val', wv, None, mm.Memlet(data=val_buf, subset=subsets.Range([(0, 0, 1)])))
         argmax_state.add_edge(node, '_out_idx', wi, None, mm.Memlet(data=idx_buf, subset=subsets.Range([(0, 0, 1)])))
+        sdfg.reset_cfg_list()
+
+    # ------------------- predicate index (TSVC s331) -------------------
+
+    def match_predicate_index(self, loop: LoopRegion, sdfg: SDFG) -> Optional[MatchPredIndex]:
+        """Match ``for i: if pred(a[i]): j = i`` -- a position tracked with NO value
+        carrier, i.e. ``j = max{i : pred}`` seeded from the pre-loop value of ``j``.
+
+        Runs only after :meth:`_match` / :meth:`_match_2d` have refused, so a loop
+        that carries a comparison against a value carrier never reaches here.
+        """
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if start is None or end is None or stride is None:
+            return None
+        try:
+            if int(symbolic.simplify(stride)) != 1:
+                return None
+        except (TypeError, ValueError):
+            return None
+        # A break makes the loop a find-FIRST search -- the position is the exit
+        # iteration, not the last match -- so the max-fold would overshoot it.
+        if self._contains_break(loop):
+            return None
+
+        # Body must hold exactly one ConditionalBlock (with optional empty wrappers).
+        cond_block = None
+        for b in loop.nodes():
+            if isinstance(b, ConditionalBlock):
+                if cond_block is not None:
+                    return None
+                cond_block = b
+            elif isinstance(b, SDFGState):
+                if len(b.nodes()) > 0:
+                    return None
+            else:
+                return None
+        if cond_block is None:
+            return None
+        non_else = [(c, br) for c, br in cond_block.branches if c is not None]
+        if len(non_else) != 1:
+            return None
+        cond_codeblock, true_branch = non_else[0]
+        if any(self._branch_has_content(br) for c, br in cond_block.branches if c is None):
+            return None
+
+        idx_carrier = self.true_branch_writes_index_only(true_branch, loop.loop_variable)
+        if idx_carrier is None or idx_carrier not in sdfg.symbols:
+            return None
+
+        # The ConditionalBlock owns no edges of its own, so ``loop.edges()`` is
+        # exactly the pre-guard binding chain (``a_index := a[i]``, ``t := a_index < 0``).
+        bindings: Dict[str, str] = {}
+        for e in loop.edges():
+            if not e.data.is_unconditional():
+                return None
+            for lhs, rhs in (e.data.assignments or {}).items():
+                if lhs in bindings or lhs == idx_carrier or lhs == loop.loop_variable:
+                    return None  # rebound within one iteration -> order-dependent
+                bindings[lhs] = str(rhs)
+
+        wired = self.wire_guard(cond_codeblock.as_string.strip(), bindings, idx_carrier, loop, sdfg)
+        if wired is None:
+            return None
+        guard_code, guard_inputs = wired
+
+        seed = self.predicate_seed(loop, idx_carrier, bindings, start)
+        if seed is None:
+            return None
+        return MatchPredIndex(loop=loop,
+                              parent=loop.parent_graph,
+                              idx_carrier=idx_carrier,
+                              seed=seed,
+                              guard_code=guard_code,
+                              guard_inputs=guard_inputs,
+                              iter_start=start,
+                              iter_end=end)
+
+    def true_branch_writes_index_only(self, true_branch, loop_var: str) -> Optional[str]:
+        """The one index carrier the true branch writes (``idx := loop_var``), or
+        ``None`` if it writes anything else, writes twice, or holds any node work --
+        the rewrite drops the branch wholesale, so a second effect would be lost.
+        """
+        if not isinstance(true_branch, ControlFlowRegion):
+            return None
+        idx_carrier = None
+        for e in true_branch.edges():
+            if not e.data.is_unconditional():
+                return None
+            for lhs, rhs in (e.data.assignments or {}).items():
+                if idx_carrier is not None or str(rhs).strip() != loop_var:
+                    return None
+                idx_carrier = lhs
+        for n in true_branch.nodes():
+            if not isinstance(n, SDFGState) or len(n.nodes()) > 0:
+                return None  # nested control flow / tasklet work is out of scope
+        return idx_carrier
+
+    def wire_guard(self, guard_str: str, bindings: Dict[str, str], idx_carrier: str, loop: LoopRegion,
+                   sdfg: SDFG) -> Optional[Tuple[str, List[Tuple[str, mm.Memlet]]]]:
+        """Turn the branch guard into mask-tasklet code plus the data inputs it reads.
+
+        The pre-guard bindings are substituted to a fixed point, then
+        :class:`GuardReadWiring` replaces every data read with an input connector.
+        Whatever names survive must be the loop variable or a loop-invariant symbol;
+        a call (``abs(a[i]) > t``) leaves its callee as a bare name that is no
+        symbol, so it is refused rather than emitted into the tasklet unresolved.
+        Naming ``idx_carrier`` is refused too: a guard reading the tracked position
+        is a find-FIRST search, not a max over positions.
+        """
+        try:
+            tree = ast.parse(guard_str, mode='eval').body
+        except SyntaxError:
+            return None
+        # One round per binding suffices for an acyclic chain; the bound stops a
+        # cyclic one (``x := y`` on one edge, ``y := x`` on another).
+        for _round in range(len(bindings) + 1):
+            finder = astutils.ASTFindReplace(dict(bindings))
+            tree = finder.visit(tree)
+            if finder.replace_count == 0:
+                break
+        else:
+            return None
+
+        wiring = GuardReadWiring(sdfg, loop)
+        tree = wiring.visit(tree)
+        if wiring.refused:
+            return None
+        connectors = dict.fromkeys(conn for conn, _memlet in wiring.reads.values())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Name):
+                continue
+            if node.id in connectors or node.id == loop.loop_variable:
+                continue
+            if node.id == idx_carrier or node.id in bindings or node.id not in sdfg.symbols:
+                return None
+        try:
+            code = ast.unparse(ast.fix_missing_locations(tree))
+        except Exception:  # pragma: no cover -- defensive
+            return None
+        return code, list(wiring.reads.values())
+
+    def predicate_seed(self, loop: LoopRegion, idx_carrier: str, bindings: Dict[str, str], start: Any) -> Optional[Any]:
+        """``idx_carrier``'s pre-loop value, iff loop-invariant and provably ``<= start``.
+
+        That inequality is the whole soundness argument of the lift: the mask folds
+        non-matching iterations to the seed, so the max returns the seed exactly when
+        no iteration matched -- but only while every matching position (all ``>=
+        start``) still beats it. An undecidable comparison is refused, never assumed.
+
+        The binding is looked up on a chain of PLAIN STATES each reached by exactly one
+        in-edge, so nothing can rebind the carrier between the seed and the loop; a
+        region on the chain (a prior loop writing the same symbol) leaves the collected
+        value stale and is refused rather than trusted.
+        """
+        parent = loop.parent_graph
+        cur, rhs = loop, None
+        walked: Dict[Any, None] = {}
+        while rhs is None:
+            ins = parent.in_edges(cur)
+            if len(ins) != 1:
+                return None
+            edge = ins[0]
+            rhs = (edge.data.assignments or {}).get(idx_carrier)
+            if rhs is None:
+                if not isinstance(edge.src, SDFGState) or edge.src in walked:
+                    return None  # a cycle has no single pre-loop value to read
+                walked[edge.src] = None
+                cur = edge.src
+        try:
+            seed = symbolic.pystr_to_symbolic(str(rhs))
+        except Exception:  # pragma: no cover -- defensive
+            return None
+        blocked = dict.fromkeys([loop.loop_variable, idx_carrier, *bindings])
+        if any(str(s) in blocked for s in seed.free_symbols):
+            return None
+        try:
+            if not bool(symbolic.simplify(seed - start) <= 0):
+                return None
+        except TypeError:
+            return None
+        return seed
+
+    def rewrite_predicate_index(self, m: MatchPredIndex, sdfg: SDFG):
+        """Replace the loop with ``init(seed) -> Map(masked index, WCR max) -> bind``.
+
+        The WCR-on-scalar map is the shape ``LoopToReduce(prefer='wcr-scalar')``
+        produces, which codegen lowers to a parallel reduction; the bind state
+        re-materialises the carrier symbol from the private scalar.
+        """
+        priv, _ = sdfg.add_scalar(f'_pred_index_{m.loop.label}',
+                                  sdfg.symbols[m.idx_carrier],
+                                  transient=True,
+                                  find_new_name=True)
+        seed_str = symbolic.symstr(m.seed)
+        priv_subset = subsets.Range([(0, 0, 1)])
+
+        init_state = m.parent.add_state(m.loop.label + '_predidx_init')
+        seed_tasklet = init_state.add_tasklet('pred_index_seed', {}, dict.fromkeys(['__out']), f'__out = {seed_str}')
+        init_state.add_edge(seed_tasklet, '__out', init_state.add_write(priv), None,
+                            mm.Memlet(data=priv, subset=copy.deepcopy(priv_subset)))
+
+        # The mask's false value IS the seed, so a non-matching iteration folds to the
+        # fold's identity and an all-false range leaves the seeded scalar untouched.
+        ivar = m.loop.loop_variable
+        map_state = m.parent.add_state(m.loop.label + '_predidx')
+        map_state.add_mapped_tasklet(
+            name='pred_index',
+            map_ranges={ivar: subsets.Range([(symbolic.simplify(m.iter_start), symbolic.simplify(m.iter_end), 1)])},
+            inputs={
+                conn: copy.deepcopy(memlet)
+                for conn, memlet in m.guard_inputs
+            },
+            code=f'__out = ({ivar} if ({m.guard_code}) else ({seed_str}))',
+            outputs={'__out': mm.Memlet(data=priv, subset=copy.deepcopy(priv_subset), wcr='lambda a, b: max(a, b)')},
+            external_edges=True)
+
+        bind_state = m.parent.add_state(m.loop.label + '_predidx_bind')
+        for ie in list(m.parent.in_edges(m.loop)):
+            m.parent.add_edge(ie.src, init_state, ie.data)
+            m.parent.remove_edge(ie)
+        m.parent.add_edge(init_state, map_state, dace.InterstateEdge())
+        m.parent.add_edge(map_state, bind_state, dace.InterstateEdge(assignments={m.idx_carrier: priv}))
+        for oe in list(m.parent.out_edges(m.loop)):
+            m.parent.add_edge(bind_state, oe.dst, oe.data)
+            m.parent.remove_edge(oe)
+        m.parent.remove_node(m.loop)
         sdfg.reset_cfg_list()
 
 

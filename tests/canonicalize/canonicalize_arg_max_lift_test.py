@@ -1136,5 +1136,285 @@ def test_shifted_gather_with_index_refused():
     assert int(out_idx[0]) == int(np.argmax(a))
 
 
+# -----------------------------------------------------------------------------
+# Predicate index, no value carrier (TSVC s331).
+# -----------------------------------------------------------------------------
+
+
+def _num_wcr_max_maps(sdfg) -> int:
+    """Maps whose exit carries a max-WCR write -- the parallel form the s331 lift emits."""
+    count = 0
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, dace.sdfg.nodes.MapExit):
+                continue
+            if any(e.data.wcr is not None and 'max' in e.data.wcr for e in state.out_edges(node)):
+                count += 1
+    return count
+
+
+def _run_s331(sdfg, a, n):
+    out = np.zeros(2)
+    sdfg(a=a.copy(), b=out, N=n)
+    return int(out[0])
+
+
+def _reference_last_index(a) -> int:
+    """The sequential loop's answer: last index with ``a[i] < 0``, else -1."""
+    hits = np.nonzero(a < 0.0)[0]
+    return int(hits[-1]) if len(hits) else -1
+
+
+def test_tsvc_s331_predicate_index_lifts_to_wcr_max_map():
+    """``j = -1; for i: if a[i] < 0.0: j = i`` is ``j = max{i : a[i] < 0}`` and lifts
+    to a parallel WCR-max map over the masked iteration index."""
+
+    @dace.program
+    def s331(a: dace.float64[N], b: dace.float64[2]):
+        j = -1
+        j = -1
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+        b[0] = j
+
+    sdfg = s331.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 1
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+    assert _num_wcr_max_maps(sdfg) == 1
+
+    n = 37
+    rng = np.random.default_rng(331)
+    a = np.abs(rng.standard_normal(n))
+    a[5] = -1.0
+    a[19] = -2.0
+    assert _run_s331(sdfg, a, n) == _reference_last_index(a) == 19
+
+
+def test_predicate_index_empty_predicate_set_yields_the_seed():
+    """No element satisfies the predicate -> the result is the pre-loop seed, and the
+    seed is READ from the source, not assumed to be -1."""
+
+    @dace.program
+    def s331_seed(a: dace.float64[N], b: dace.float64[2]):
+        j = -7
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+        b[0] = j
+
+    sdfg = s331_seed.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+
+    n = 24
+    a = np.abs(np.random.default_rng(3311).standard_normal(n)) + 1.0
+    assert _run_s331(sdfg, a, n) == -7, 'empty predicate set must return the seed verbatim'
+    # ... and a single match still beats the seed.
+    a[11] = -0.5
+    assert _run_s331(sdfg, a, n) == 11
+
+
+def test_predicate_index_last_match_wins_not_first():
+    """Distinguishes the max-reduction from a min- / first-match lowering: with matches
+    at both ends of the range only the LAST one is the sequential answer."""
+
+    @dace.program
+    def s331_last(a: dace.float64[N], b: dace.float64[2]):
+        j = -1
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+        b[0] = j
+
+    sdfg = s331_last.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    n = 40
+    a = np.abs(np.random.default_rng(3312).standard_normal(n)) + 1.0
+    a[2] = -1.0
+    a[3] = -1.0
+    a[n - 2] = -1.0
+    got = _run_s331(sdfg, a, n)
+    assert got == _reference_last_index(a) == n - 2, f'first-match lowering would have given 2, got {got}'
+
+
+def test_predicate_index_offset_loop_and_threshold_scalar():
+    """A non-zero loop start with a runtime threshold read from a scalar container:
+    the threshold is wired as a second tasklet input, and the seed check is against
+    the loop's own start."""
+
+    @dace.program
+    def s331_thr(a: dace.float64[N], thr: dace.float64[1], b: dace.float64[2]):
+        j = -3
+        for i in range(2, N):
+            if a[i] > thr[0]:
+                j = i
+        b[0] = j
+
+    sdfg = s331_thr.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    assert _num_loops(sdfg) == 0
+
+    n = 21
+    a = np.linspace(-1.0, 1.0, n)
+    thr = np.array([0.5])
+    out = np.zeros(2)
+    sdfg(a=a.copy(), thr=thr.copy(), b=out, N=n)
+    hits = np.nonzero(a[2:] > thr[0])[0]
+    assert int(out[0]) == (int(hits[-1]) + 2 if len(hits) else -3)
+
+    out = np.zeros(2)
+    sdfg(a=a.copy(), thr=np.array([5.0]), b=out, N=n)
+    assert int(out[0]) == -3, 'no element above the threshold must return the seed'
+
+
+def test_predicate_index_refuses_seed_above_the_loop_start():
+    """``j = 5`` over ``range(N)``: masking non-matching iterations with the seed would
+    let the seed WIN over a real match below it (``max(5, 2) == 5`` where the loop says
+    ``2``). The pass must refuse, and the untouched loop must still be correct."""
+
+    @dace.program
+    def high_seed(a: dace.float64[N], b: dace.float64[2]):
+        j = 5
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+        b[0] = j
+
+    sdfg = high_seed.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 1
+
+    n = 16
+    a = np.abs(np.random.default_rng(3313).standard_normal(n)) + 1.0
+    a[2] = -1.0
+    assert _run_s331(sdfg, a, n) == 2, 'sequential answer is the last match, not the seed'
+
+
+def test_predicate_index_refuses_guard_reading_the_carrier():
+    """``if a[i] < 0 and j < 0`` is a find-FIRST search -- the guard stops firing after
+    the first hit -- so it is NOT a max over positions and must be refused."""
+
+    @dace.program
+    def first_match(a: dace.float64[N], b: dace.float64[2]):
+        j = -1
+        for i in range(N):
+            if a[i] < 0.0 and j < 0:
+                j = i
+        b[0] = j
+
+    sdfg = first_match.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 1
+
+    n = 16
+    a = np.abs(np.random.default_rng(3314).standard_normal(n)) + 1.0
+    a[4] = -1.0
+    a[9] = -1.0
+    assert _run_s331(sdfg, a, n) == 4, 'find-first keeps the FIRST match'
+
+
+def test_predicate_index_refuses_extra_true_branch_write():
+    """A second write in the true branch is dropped by the rewrite, so it is refused."""
+
+    @dace.program
+    def two_writes(a: dace.float64[N], b: dace.float64[2]):
+        j = -1
+        k = -1
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+                k = i
+        b[0] = j + k
+
+    sdfg = two_writes.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 1
+
+
+def test_predicate_index_refuses_break():
+    """A break makes the loop a find-FIRST search; ``EarlyExitToFindIndex`` owns it."""
+
+    @dace.program
+    def with_break(a: dace.float64[N], b: dace.float64[2]):
+        j = -1
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+                break
+        b[0] = j
+
+    sdfg = with_break.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 1
+
+
+def test_predicate_index_refuses_indirect_guard_read():
+    """``a[b[i]]`` in the guard is not expressible as one memlet subset."""
+
+    @dace.program
+    def indirect(a: dace.float64[N], idx: dace.int64[N], b: dace.float64[2]):
+        j = -1
+        for i in range(N):
+            if a[idx[i]] < 0.0:
+                j = i
+        b[0] = j
+
+    sdfg = indirect.to_sdfg(simplify=True)
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 1
+
+
+def test_predicate_index_refuses_stale_seed_behind_a_prior_loop():
+    """A LOOP sits between the ``j = -1`` seed and the matched loop and can rebind
+    ``j`` to a value above the iteration range. The collected pre-loop binding is then
+    stale, so the seed check must refuse rather than trust it."""
+
+    @dace.program
+    def stale_seed(a: dace.float64[N], b: dace.float64[2]):
+        j = -1
+        for k in range(N):
+            if a[k] > 100.0:
+                j = k + 5
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+        b[0] = j
+
+    sdfg = stale_seed.to_sdfg(simplify=True)
+    assert _num_loops(sdfg) == 2
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert _num_loops(sdfg) == 2
+
+    n = 12
+    a = np.abs(np.random.default_rng(3315).standard_normal(n)) + 1.0
+    a[3] = 200.0
+    assert _run_s331(sdfg, a, n) == 8, 'the live seed comes from the prior loop, not from -1'
+
+
+def test_predicate_index_does_not_mutate_on_refusal():
+    """A refused match must leave the SDFG byte-identical -- the pass decides before
+    it touches anything."""
+
+    @dace.program
+    def high_seed(a: dace.float64[N], b: dace.float64[2]):
+        j = 5
+        for i in range(N):
+            if a[i] < 0.0:
+                j = i
+        b[0] = j
+
+    sdfg = high_seed.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    assert ArgMaxLift().apply_pass(sdfg, {}) is None
+    assert sdfg.to_json() == before
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
