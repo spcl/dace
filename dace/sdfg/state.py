@@ -141,7 +141,7 @@ class BlockGraphView(object):
         Iterate over all edges in this graph or subgraph.
         This includes dataflow edges, inter-state edges, and recursive edges within nested SDFGs. It returns tuples of
         the form (edge, parent), where the edge is either a dataflow edge, in which case the parent is an SDFG state, or
-        an inter-stte edge, in which case the parent is a control flow graph (i.e., an SDFG or a scope block).
+        an inter-state edge, in which case the parent is a control flow graph (i.e., an SDFG or a scope block).
         """
         return []
 
@@ -161,7 +161,7 @@ class BlockGraphView(object):
     @abc.abstractmethod
     def exit_node(self, entry_node: nd.EntryNode) -> Optional[nd.ExitNode]:
         """ Returns the exit node leaving the context opened by the given entry node. """
-        raise None
+        return None
 
     ###################################################################
     # Memlet-tracking methods
@@ -725,7 +725,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     freesyms |= codesyms
                     continue
 
-            if hasattr(n, 'used_symbols'):
+            if isinstance(n, nd.NestedSDFG):
                 freesyms |= n.used_symbols(all_symbols)
             else:
                 freesyms |= n.free_symbols
@@ -1294,7 +1294,7 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
 
         ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         return ret
 
@@ -1313,11 +1313,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 
-        for k in ('_parent_graph', '_sdfg'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
+        result._parent_graph = memo.get(id(self._parent_graph))
+        result._sdfg = memo.get(id(self._sdfg))
 
         return result
 
@@ -1372,7 +1369,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
                                                default=CodeBlock("1", language=dtypes.Language.CPP))
 
     location = DictProperty(key_type=str,
-                            value_type=symbolic.pystr_to_symbolic,
+                            value_type=sympy.Basic,
                             desc='Full storage location identifier (e.g., rank, GPU ID)')
 
     def __repr__(self) -> str:
@@ -1485,29 +1482,65 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         for edge in self.edges():
             edge.data.try_initialize(self.sdfg, self, edge)
 
+        # Resolve the authoritative dtype of every symbol an element may reference, so
+        # serialization emits a deterministic dtype that depends only on the enclosing
+        # scopes -- never on a symbol instance's own (cache-stale) dtype. The authority
+        # is rebuilt fresh on every serialization (never stored): opening a scope (entry
+        # node) augments the running map with that scope's ``new_symbols`` (its map
+        # iterators and dynamic-input connector symbols), and the parent level is
+        # restored when the recursion returns.
+        authority_by_node: Dict[nd.Node, Dict[str, dtypes.typeclass]] = {}
+        try:
+            scope_children = self.scope_children()
+
+            def _open_scope(scope_entry: Optional[nd.Node], authority: Dict[str, dtypes.typeclass]):
+                for child in scope_children.get(scope_entry, []):
+                    if isinstance(child, nd.EntryNode):
+                        inner = {**authority, **child.new_symbols(self.sdfg, self, authority)}
+                        authority_by_node[child] = inner
+                        _open_scope(child, inner)
+                    else:
+                        authority_by_node[child] = authority
+
+            _open_scope(None, dict(self.sdfg.symbols))
+        except (RuntimeError, ValueError, KeyError):
+            authority_by_node = {}
+
+        nodes_json = []
+        for n in self.nodes():
+            with symbolic.serialization_symbol_dtypes(authority_by_node.get(n, self.sdfg.symbols)):
+                nodes_json.append(n.to_json(self))
+
+        # An edge's memlet sees the symbols of both endpoints' scopes (the richer
+        # one is sometimes the source, e.g. MapExit -> AccessNode), so merge them.
+        edges_json = []
+        for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or '')):
+            authority = {**authority_by_node.get(e.src, {}), **authority_by_node.get(e.dst, {})}
+            with symbolic.serialization_symbol_dtypes(authority):
+                edges_json.append(e.to_json(self))
+
         ret = {
             'type': type(self).__name__,
             'label': self.name,
             'id': parent.node_id(self) if parent is not None else None,
             'collapsed': self.is_collapsed,
             'scope_dict': scope_dict,
-            'nodes': [n.to_json(self) for n in self.nodes()],
-            'edges':
-            [e.to_json(self) for e in sorted(self.edges(), key=lambda e: (e.src_conn or '', e.dst_conn or ''))],
+            'nodes': nodes_json,
+            'edges': edges_json,
             'attributes': serialize.all_properties_to_json(self),
         }
 
         return ret
 
     @classmethod
-    def from_json(cls, json_obj, context={'sdfg': None}, pre_ret=None):
+    def from_json(cls, json_obj, context=None, pre_ret=None):
         """ Loads the node properties, label and type into a dict.
 
             :param json_obj: The object containing information about this node.
                              NOTE: This may not be a string!
             :return: An SDFGState instance constructed from the passed data
         """
-
+        context = context or {'sdfg': None}
         _type = json_obj['type']
         if _type != cls.__name__:
             raise Exception("Class type mismatch")
@@ -1522,7 +1555,8 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         rec_ci = {
             'sdfg': context['sdfg'],
             'sdfg_state': ret,
-            'callback': context['callback'] if 'callback' in context else None
+            'callback': context.get('callback'),
+            'version': context.get('version'),
         }
         serialize.set_properties_from_json(ret, json_obj, rec_ci)
 
@@ -2203,12 +2237,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode) and src_node.data == cur_memlet.data)
 
         # Verify that connectors exist
-        if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors") and isinstance(edges[0].src, nd.CodeNode)
+        if (not memlet.is_empty() and isinstance(edges[0].src, nd.CodeNode)
                 and not isinstance(edges[0].src, nd.LibraryNode)
                 and (src_conn is None or src_conn not in edges[0].src.out_connectors)):
             raise ValueError("Output connector {} does not exist in {}".format(src_conn, edges[0].src.label))
-        if (not memlet.is_empty() and hasattr(edges[-1].dst, "in_connectors")
-                and isinstance(edges[-1].dst, nd.CodeNode) and not isinstance(edges[-1].dst, nd.LibraryNode)
+        if (not memlet.is_empty() and isinstance(edges[-1].dst, nd.CodeNode)
+                and not isinstance(edges[-1].dst, nd.LibraryNode)
                 and (dst_conn is None or dst_conn not in edges[-1].dst.in_connectors)):
             raise ValueError("Input connector {} does not exist in {}".format(dst_conn, edges[-1].dst.label))
 
@@ -3090,7 +3124,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
         ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         nodelist = []
         for n in nodes:
@@ -3102,7 +3136,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             nodelist.append(block)
 
         for e in edges:
-            e = dace.serialize.from_json(e)
+            e = dace.serialize.from_json(e, context=context)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
         if 'start_block' in json_obj:
@@ -3544,23 +3578,26 @@ class LoopRegion(ControlFlowRegion):
             codes.append(self.update_statement)
         return codes
 
-    def get_meta_read_memlets(self, arrays: Optional[Dict[str, dt.Data]] = None) -> List[mm.Memlet]:
+    def get_meta_read_memlets(self,
+                              arrays: Optional[Dict[str, dt.Data]] = None,
+                              include_scalars: bool = False) -> List[mm.Memlet]:
         """
         Get a list of all (read) memlets in meta codeblocks.
 
         :param arrays: An optional dictionary mapping array names to their data descriptors.
             If not not given defaults to ``self.sdfg.arrays``.
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
         """
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
 
         arrays = arrays if arrays is not None else self.sdfg.arrays
 
-        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays)
+        read_memlets = memlets_in_ast(self.loop_condition.code[0], arrays, include_scalars=include_scalars)
         if self.init_statement:
-            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays))
+            read_memlets.extend(memlets_in_ast(self.init_statement.code[0], arrays, include_scalars=include_scalars))
         if self.update_statement:
-            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays))
+            read_memlets.extend(memlets_in_ast(self.update_statement.code[0], arrays, include_scalars=include_scalars))
         return read_memlets
 
     def replace_meta_accesses(self, replacements):
@@ -3818,13 +3855,25 @@ class ConditionalBlock(AbstractControlFlowRegion):
                 codes.append(c)
         return codes
 
-    def get_meta_read_memlets(self) -> List[mm.Memlet]:
+    def get_meta_read_memlets(self,
+                              arrays: Optional[Dict[str, dt.Data]] = None,
+                              include_scalars: bool = False) -> List[mm.Memlet]:
+        """
+        Get a list of all (read) memlets in meta codeblocks.
+
+        :param arrays: An optional dictionary mapping array names to their data descriptors.
+            If not not given defaults to ``self.sdfg.arrays``.
+        :param include_scalars: If True, include Memlets for scalar accesses. Defaults to False to be backwards compatible.
+        """
         # Avoid cyclic imports.
         from dace.sdfg.sdfg import memlets_in_ast
+
+        arrays = arrays if arrays is not None else self.sdfg.arrays
+
         read_memlets = []
         for c, _ in self.branches:
             if c is not None:
-                read_memlets.extend(memlets_in_ast(c.code[0], self.sdfg.arrays))
+                read_memlets.extend(memlets_in_ast(c.code[0], arrays, include_scalars=include_scalars))
         return read_memlets
 
     def propagate_memlets(self, border_memlets: Dict[str, Dict[str, Optional[mm.Memlet]]]) -> None:
@@ -3922,11 +3971,11 @@ class ConditionalBlock(AbstractControlFlowRegion):
 
         ret = cls(label=json_obj['label'], sdfg=context['sdfg'])
 
-        dace.serialize.set_properties_from_json(ret, json_obj)
+        dace.serialize.set_properties_from_json(ret, json_obj, context=context)
 
         for condition, region in json_obj['branches']:
             if condition is not None:
-                ret.add_branch(CodeBlock.from_json(condition), ControlFlowRegion.from_json(region, context))
+                ret.add_branch(CodeBlock.from_json(condition, context), ControlFlowRegion.from_json(region, context))
             else:
                 ret.add_branch(None, ControlFlowRegion.from_json(region, context))
         return ret

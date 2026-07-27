@@ -132,10 +132,7 @@ def generate_program_folder(
 
     # Save the SDFG itself and its hash
     if sdfg is not None:
-        if folder_mode in ["development"]:
-            hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
-        else:
-            hash = sdfg.hash_sdfg()
+        hash = sdfg.save(os.path.join(out_path, "program.sdfgz"), hash=True, compress=True)
         filepath = os.path.join(out_path, 'include', 'hash.h')
         contents = f'#define __HASH_{sdfg.name} "{hash}"\n'
         if not identical_file_exists(filepath, contents):
@@ -155,7 +152,6 @@ def generate_program_folder(
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
     if folder_mode in ["development"]:
-
         # Copy a full snapshot of configuration script
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
 

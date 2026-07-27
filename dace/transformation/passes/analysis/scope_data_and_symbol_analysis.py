@@ -52,7 +52,7 @@ class ScopeDataAndSymbolAnalysis(ppl.Pass):
         return modified & (ppl.Modifies.CFG | ppl.Modifies.SDFG | ppl.Modifies.Nodes)
 
     def depends_on(self):
-        return {}
+        return []
 
     def apply_pass(self, sdfg: dace.SDFG, pipeline_res: Dict) -> Dict[str, ScopeAnalysis]:
         """

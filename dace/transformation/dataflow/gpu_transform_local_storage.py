@@ -411,7 +411,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
 
                     if self.fullcopy:
                         edge.data.subset = sbs.Range.from_array(node.desc(sdfg))
-                    edge.data.other_subset = newmemlet.subset
+                    edge.data.other_subset = copy.deepcopy(newmemlet.subset)
                     graph.add_edge(edge.src, edge.src_conn, node, None, edge.data)
                     graph.remove_edge(edge)
 
@@ -490,7 +490,7 @@ class GPUTransformLocalStorage(transformation.SingleStateTransformation):
                     edge.data.wcr = None
                     if self.fullcopy:
                         edge.data.subset = sbs.Range.from_array(node.desc(sdfg))
-                    edge.data.other_subset = newmemlet.subset
+                    edge.data.other_subset = copy.deepcopy(newmemlet.subset)
                     graph.add_edge(node, None, edge.dst, edge.dst_conn, edge.data)
                     graph.remove_edge(edge)
 

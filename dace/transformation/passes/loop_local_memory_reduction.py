@@ -114,7 +114,7 @@ class LoopLocalMemoryReduction(ppl.Pass):
         return modified != ppl.Modifies.Nothing
 
     def depends_on(self):
-        return {StateReachability, FindAccessStates, ConditionUniqueWrites}
+        return [StateReachability, FindAccessStates, ConditionUniqueWrites]
 
     def apply_pass(self, sdfg: sd.SDFG, pipeline_results: Dict[str, Any]) -> Optional[Set[str]]:
         self.num_applications = 0

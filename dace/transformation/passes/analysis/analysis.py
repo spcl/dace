@@ -41,7 +41,7 @@ class StateReachability(ppl.Pass):
         return modified & ppl.Modifies.CFG
 
     def depends_on(self):
-        return {ControlFlowBlockReachability}
+        return [ControlFlowBlockReachability]
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Dict[int, Dict[SDFGState, Set[SDFGState]]]:
         """
@@ -264,7 +264,7 @@ class AccessSets(ppl.Pass):
         if init_stmt:
             exprs.add(init_stmt)
         for expr in exprs:
-            readset |= symbolic.free_symbols_and_functions(expr) & arrays
+            readset |= (symbolic.free_symbols_and_functions(expr) | symbolic.arrays(expr)) & arrays
         return readset
 
     def apply_pass(self, top_sdfg: SDFG, _) -> Dict[ControlFlowBlock, Tuple[Set[str], Set[str]]]:
@@ -294,7 +294,8 @@ class AccessSets(ppl.Pass):
                     elif isinstance(block, ConditionalBlock):
                         for cond, _ in block.branches:
                             if cond is not None:
-                                readset |= symbolic.free_symbols_and_functions(cond.as_string) & arrays
+                                readset |= (symbolic.free_symbols_and_functions(cond.as_string)
+                                            | symbolic.arrays(cond.as_string)) & arrays
 
                 result[block] = (readset, writeset)
 
@@ -474,7 +475,7 @@ class SymbolWriteScopes(ppl.ControlFlowRegionPass):
         return modified & ppl.Modifies.Symbols | ppl.Modifies.CFG | ppl.Modifies.Edges | ppl.Modifies.Nodes
 
     def depends_on(self):
-        return {SymbolAccessSets, ControlFlowBlockReachability}
+        return [SymbolAccessSets, ControlFlowBlockReachability]
 
     def _find_dominating_write(self, sym: str, read: Union[ControlFlowBlock, Edge[InterstateEdge]],
                                block_idom: Dict[ControlFlowBlock, ControlFlowBlock]) -> Optional[Edge[InterstateEdge]]:
@@ -576,7 +577,7 @@ class ScalarWriteShadowScopes(ppl.Pass):
         return modified & ppl.Modifies.States
 
     def depends_on(self):
-        return {AccessSets, FindAccessNodes, ControlFlowBlockReachability}
+        return [AccessSets, FindAccessNodes, ControlFlowBlockReachability]
 
     def _find_dominating_write(self,
                                desc: str,
@@ -924,7 +925,7 @@ class StatePropagation(ppl.ControlFlowRegionPass):
         self.apply_to_conditionals = True
 
     def depends_on(self):
-        return {ControlFlowBlockReachability}
+        return [ControlFlowBlockReachability]
 
     def _propagate_in_cfg(self, cfg: ControlFlowRegion, reachable: Dict[ControlFlowBlock, Set[ControlFlowBlock]],
                           starting_executions: int, starting_dynamic_executions: bool):
@@ -1078,7 +1079,7 @@ class ConditionUniqueWrites(ppl.Pass):
         return modified & ppl.Modifies.CFG
 
     def depends_on(self):
-        return {}
+        return []
 
     def apply_pass(self, top_sdfg: SDFG, pipeline_res: Dict) -> Set[nd.AccessNode]:
         """

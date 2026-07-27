@@ -1,4 +1,4 @@
-# Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
 Contains replacements for N-dimensional array transformations.
 """
@@ -173,8 +173,8 @@ def _transpose(pv: ProgramVisitor,
     if axes == (1, 0):  # Special case for 2D transposition
         acc1 = state.add_read(inpname)
         acc2 = state.add_write(outname)
-        import dace.libraries.standard  # Avoid import loop
-        tasklet = dace.libraries.standard.Transpose('_Transpose_', restype)
+        import dace.libraries.linalg  # Avoid import loop
+        tasklet = dace.libraries.linalg.Transpose('_Transpose_', restype)
         state.add_node(tasklet)
         state.add_edge(acc1, None, tasklet, '_inp', Memlet.from_array(inpname, arr1))
         state.add_edge(tasklet, '_out', acc2, None, Memlet.from_array(outname, arr2))
@@ -191,7 +191,7 @@ def _transpose(pv: ProgramVisitor,
 
         read = state.add_read(inpname)
         write = state.add_write(outname)
-        from dace.libraries.standard import TensorTranspose
+        from dace.libraries.linalg import TensorTranspose  # Avoid import loop
         tasklet = TensorTranspose('_TensorTranspose', axes or list(range(len(arr1.shape))))
         state.add_node(tasklet)
         state.add_edge(read, None, tasklet, '_inp_tensor', Memlet.from_array(inpname, arr1))
@@ -335,9 +335,13 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
     # Also, keep in mind that `old_size * (orig_bytes // view_bytes)` is different.
     # E.g., if `orig_bytes == 1 and view_bytes == 2`: `old_size * (1 // 2) == old_size * 0`.
     newshape = list(desc.shape)
-    newstrides = [(s * orig_bytes) // view_bytes if i != contigdim else s for i, s in enumerate(desc.strides)]
+    # int_floor, never `//`: on a symbolic stride `//` builds sympy `floor(expr / d)`, whose argument
+    # sym2cpp prints WITHOUT the floor, leaving each term of the sum to truncate on its own.
+    newstrides = [
+        symbolic.int_floor(s * orig_bytes, view_bytes) if i != contigdim else s for i, s in enumerate(desc.strides)
+    ]
     # don't use `*=`, because it will break the bracket
-    newshape[contigdim] = (newshape[contigdim] * orig_bytes) // view_bytes
+    newshape[contigdim] = symbolic.int_floor(newshape[contigdim] * orig_bytes, view_bytes)
 
     newarr, _ = sdfg.add_view(arr,
                               newshape,
@@ -345,7 +349,7 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
                               storage=desc.storage,
                               strides=newstrides,
                               allow_conflicts=desc.allow_conflicts,
-                              total_size=(desc.total_size * orig_bytes) // view_bytes,
+                              total_size=symbolic.int_floor(desc.total_size * orig_bytes, view_bytes),
                               may_alias=desc.may_alias,
                               alignment=desc.alignment,
                               find_new_name=True)

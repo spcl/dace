@@ -702,7 +702,7 @@ class TaskletTransformer(ExtNodeTransformer):
         if name is not None:
             name += '_' + str(tasklet_ast.lineno)
         else:
-            name = getattr(tasklet_ast, 'name', 'tasklet_%d' % tasklet_ast.lineno)
+            name = tasklet_ast.name if isinstance(tasklet_ast, ast.FunctionDef) else 'tasklet_%d' % tasklet_ast.lineno
 
         if self.lang is None:
             self.lang = dtypes.Language.Python
@@ -2029,23 +2029,27 @@ class ProgramVisitor(ExtNodeVisitor):
                             self.sdfg.add_symbol(atomstr, self.defined[candidate].dtype)
 
                 for expr in symbolic.swalk(symval):
+                    # An array access in a bound (legacy ``arr(i)`` or ``Subscript(arr, i)``)
+                    # is hoisted to a dynamic-map-input symbol reading the array.
                     if symbolic.is_sympy_userfunction(expr):
-                        # If function contains a function
-                        if any(symbolic.contains_sympy_functions(a) for a in expr.args):
-                            raise DaceSyntaxError(self, node, 'Indirect accesses not supported in map ranges')
-                        arr = expr.func.__name__
-                        newvar = '__%s_%s%d' % (name, vid, ctr)
-                        repldict[arr] = newvar
-                        # Create memlet
-                        args = ','.join([str(a) for a in expr.args])
-                        if arr in self.variables:
-                            arr = self.variables[arr]
-                        if not isinstance(arr, str) or arr not in self.sdfg.arrays:
-                            rng = subsets.Range.from_string(args)
-                            args = str(rng)
-                        map_inputs[newvar] = Memlet.simple(arr, args)
-                        # ','.join([str(a) for a in expr.args]))
-                        ctr += 1
+                        arr, indices = expr.func.__name__, expr.args
+                    elif isinstance(expr, symbolic.Subscript):
+                        arr, indices = str(expr.args[0]), expr.args[1:]
+                    else:
+                        continue
+                    if any(symbolic.contains_sympy_functions(a) for a in indices):
+                        raise DaceSyntaxError(self, node, 'Indirect accesses not supported in map ranges')
+                    newvar = '__%s_%s%d' % (name, vid, ctr)
+                    repldict[arr] = newvar
+                    # Create memlet
+                    args = ','.join([str(a) for a in indices])
+                    if arr in self.variables:
+                        arr = self.variables[arr]
+                    if not isinstance(arr, str) or arr not in self.sdfg.arrays:
+                        rng = subsets.Range.from_string(args)
+                        args = str(rng)
+                    map_inputs[newvar] = Memlet.simple(arr, args)
+                    ctr += 1
                 # Replace functions with new variables
                 for find, replace in repldict.items():
                     val = re.sub(r"%s\(.*?\)" % find, val, replace)
@@ -2734,10 +2738,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
         side_effects = None
-        if isinstance(node, ast.FunctionDef) and hasattr(node, 'decorator_list') and isinstance(
-                node.decorator_list, list) and len(node.decorator_list) > 0 and hasattr(
-                    node.decorator_list[0], 'args') and isinstance(node.decorator_list[0].args, list) and len(
-                        node.decorator_list[0].args) > 0 and hasattr(node.decorator_list[0].args[0], 'value'):
+        if isinstance(node, ast.FunctionDef) and len(node.decorator_list) > 0 and hasattr(
+                node.decorator_list[0], 'args') and isinstance(node.decorator_list[0].args, list) and len(
+                    node.decorator_list[0].args) > 0 and hasattr(node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
@@ -3597,11 +3600,8 @@ class ProgramVisitor(ExtNodeVisitor):
 
             new_data, rng = None, None
             dtype_keys = tuple(dtypes.dtype_to_typeclass().keys())
-            if not (
-                    result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
-                (isinstance(result, str) and any(
-                    result in x
-                    for x in [self.sdfg.arrays, self.sdfg._pgrids, self.sdfg._subarrays, self.sdfg._rdistrarrays]))):
+            if not (result in self.sdfg.symbols or symbolic.issymbolic(result) or isinstance(result, dtype_keys) or
+                    (isinstance(result, str) and result in self.sdfg.arrays)):
                 raise DaceSyntaxError(
                     self, node, "In assignments, the rhs may only be "
                     "data, numerical/boolean constants "
@@ -3625,11 +3625,8 @@ class ProgramVisitor(ExtNodeVisitor):
                         true_name, new_data = self.sdfg.add_scalar(true_name, ttype, transient=True, find_new_name=True)
                     self.variables[name] = true_name
                     defined_vars[name] = true_name
-                if any(result in x for x in [self.sdfg._pgrids, self.sdfg._rdistrarrays, self.sdfg._subarrays]):
-                    # NOTE: In previous versions some `pgrid` and subgrid related replacement function,
-                    #   see `dace/frontend/common/distr.py`, created dummy variables with the same name
-                    #   as the entities, such as process grids, they created. Thus the frontend was
-                    #   finding them. Since this is now disallowed, we have to explicitly handle this case.
+                if (isinstance(result, str) and result in self.sdfg.arrays
+                        and isinstance(self.sdfg.arrays[result], data.DistributedDescriptor)):
                     self.variables[name] = result
                     defined_vars[name] = result
                     continue
@@ -4740,10 +4737,8 @@ class ProgramVisitor(ExtNodeVisitor):
             try:
                 if hasattr(func, "name"):
                     name = func.name
-                elif hasattr(func, "__class__"):
-                    name = func.__class__.__name__
                 else:
-                    name = "call"
+                    name = type(func).__name__
                 call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
                 self.cfg_target.add_node(call_region, ensure_unique_name=True)
                 self._on_block_added(call_region)
@@ -5217,8 +5212,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # Check for SDFG as fallback
             func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
             if func is None:
-                op1name = getattr(op1type, '__name__', op1type)
-                op2name = getattr(op2type, '__name__', op2type)
+                op1name = op1type.__name__ if isinstance(op1type, type) else op1type
+                op2name = op2type.__name__ if isinstance(op2type, type) else op2type
                 raise DaceSyntaxError(self, node, f'Operator {opname} is not defined for types {op1name} and {op2name}')
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))
@@ -5607,8 +5602,12 @@ class ProgramVisitor(ExtNodeVisitor):
                                                   arrobj.storage,
                                                   find_new_name=True)
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
+            # ``Memlet.simple`` keeps the subset by reference, but ``rng`` may be a
+            # cached Range shared by sibling slice reads, so give this edge its own copy.
             self.current_state.add_nedge(
-                rnode, wnode, Memlet.simple(array, rng, num_accesses=rng.num_elements(), other_subset_str=other_subset))
+                rnode, wnode,
+                Memlet.simple(array, copy.deepcopy(rng), num_accesses=rng.num_elements(),
+                              other_subset_str=other_subset))
         return tmp, other_subset
 
     def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:

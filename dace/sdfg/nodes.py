@@ -8,6 +8,7 @@ from collections.abc import KeysView
 import dace
 import itertools
 import dace.serialize
+import sympy as sp
 from typing import Any, Dict, Optional, Set, Union
 from dace.config import Config
 from dace.sdfg import graph
@@ -391,6 +392,10 @@ class CodeNode(Node):
     def free_symbols(self) -> Set[str]:
         return set().union(*[v.free_symbols for v in self.location.values()])
 
+    def has_side_effects(self, sdfg) -> bool:
+        """True if running this node may do more than write its outputs."""
+        return False
+
 
 @make_properties
 class Tasklet(CodeNode):
@@ -608,7 +613,7 @@ class NestedSDFG(CodeNode):
                              allow_none=True,
                              desc='Path to a file containing the SDFG for this nested SDFG')
     symbol_mapping = DictProperty(key_type=str,
-                                  value_type=dace.symbolic.pystr_to_symbolic,
+                                  value_type=sp.Basic,
                                   desc="Mapping between internal symbols and their values, expressed as "
                                   "symbolic expressions")
     debuginfo = DebugInfoProperty(allow_none=True)
@@ -681,6 +686,12 @@ class NestedSDFG(CodeNode):
             ret.sdfg.update_cfg_list([])
 
         return ret
+
+    def has_side_effects(self, sdfg) -> bool:
+        """True if any nested node has side effects. ``sdfg`` unused: inner ones apply."""
+        return any(
+            isinstance(node, CodeNode) and not isinstance(node, NestedSDFG) and node.has_side_effects(parent.sdfg)
+            for node, parent in self.sdfg.all_nodes_recursive())
 
     def used_symbols(self, all_symbols: bool) -> Set[str]:
         free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
@@ -1109,10 +1120,17 @@ class Map(object):
             warnings.warn(f'The iteration range of Map {self.label} is {self.range}, which contains a zero'
                           ' or negative sized range, which is allowed but not recommended.'
                           ' The Map will be turned into a no-ops.')
-        if any((inc <= 0) == True for (_, _, inc) in self.range):
-            # Should this be turned into an error?
-            warnings.warn(f'An increment of Map {self.label} was negative, which is allowerd'
-                          ' but probably not useful.')
+        # A Map is an unordered, ascending iteration domain; the backends
+        # emit an ascending loop, so a negative step has no valid lowering.
+        # An empty positive-step range iterates zero times and is left to
+        # the size warning above. A symbolic step is checked at runtime by
+        # an assertion in the generated (debug) code.
+        for (_, _, inc) in self.range:
+            if (inc < 0) == True:
+                raise ValueError(f'Map {self.label} has a negative step ({inc}) in range '
+                                 f'{self.range}. Maps must use a positive step; rewrite the '
+                                 'iteration ascending (canonicalization normalizes loops to a '
+                                 'positive unit step).')
 
     def get_param_num(self):
         """ Returns the number of map dimension parameters/symbols. """
@@ -1358,12 +1376,10 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
-    @property
-    def has_side_effects(self) -> bool:
+    def has_side_effects(self, sdfg) -> bool:
         """
         Returns True if this library node has other side effects (e.g., calling stateful libraries, communicating)
-        when expanded.
-        This method is meant to be extended by subclasses.
+        when expanded. ``sdfg`` is unused; taken to match :class:`CodeNode`.
         """
         return False
 

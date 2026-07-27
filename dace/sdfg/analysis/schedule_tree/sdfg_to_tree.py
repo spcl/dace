@@ -146,7 +146,7 @@ def _dealias_sdfg(sdfg: SDFG) -> None:
                 for e in nsdfg.all_interstate_edges():
                     repl_dict = dict()
                     syms = e.data.read_symbols()
-                    for memlet in e.data.get_read_memlets(nsdfg.arrays):
+                    for memlet in e.data.get_read_memlets(nsdfg.arrays, include_scalars=True):
                         if memlet.data in child_names:
                             repl_dict[str(memlet)] = unsqueeze_memlet(memlet, parent_edges_inputs[memlet.data].data)
                             if memlet.data in syms:
@@ -279,7 +279,7 @@ def _replace_memlets(sdfg: SDFG, input_mapping: Dict[str, Memlet], output_mappin
     for e in sdfg.all_interstate_edges():
         repl_dict = dict()
         syms = e.data.read_symbols()
-        for memlet in e.data.get_read_memlets(sdfg.arrays):
+        for memlet in e.data.get_read_memlets(sdfg.arrays, include_scalars=True):
             if memlet.data in input_mapping or memlet.data in output_mapping:
                 # If array name is both in the input connectors and output connectors with different
                 # memlets, this is undefined behavior. Prefer output

@@ -331,10 +331,7 @@ class Range(Subset):
         ret = []
 
         def a2s(obj):
-            if isinstance(obj, symbolic.SymExpr):
-                return {'main': str(obj.expr), 'approx': str(obj.approx)}
-            else:
-                return _simplified_str(obj)
+            return symbolic.serialize_symbolic(obj)
 
         for (start, end, step), tile in zip(self.ranges, self.tile_sizes):
             ret.append({'start': a2s(start), 'end': a2s(end), 'step': a2s(step), 'tile': a2s(tile)})
@@ -343,6 +340,7 @@ class Range(Subset):
 
     @staticmethod
     def from_json(obj, context=None):
+        from dace.properties import _symbolic_deserializer  # Avoid circular import
         if not isinstance(obj, dict):
             raise TypeError("Expected dict, got {}".format(type(obj)))
         if obj['type'] != 'Range':
@@ -352,15 +350,9 @@ class Range(Subset):
         ranges = obj['ranges']
         tuples = []
 
-        def p2s(x):
-            pts = symbolic.pystr_to_symbolic
-            if isinstance(x, str):
-                return pts(x)
-            else:
-                return symbolic.SymExpr(pts(x['main']), pts(x['approx']))
-
         for r in ranges:
-            tuples.append((p2s(r['start']), p2s(r['end']), p2s(r['step']), p2s(r['tile'])))
+            tuples.append((_symbolic_deserializer(r['start'], context), _symbolic_deserializer(r['end'], context),
+                           _symbolic_deserializer(r['step'], context), _symbolic_deserializer(r['tile'], context)))
 
         return Range(tuples)
 
@@ -368,7 +360,7 @@ class Range(Subset):
     def from_array(array: 'dace.data.Data'):
         """ Constructs a range that covers the full array given as input. """
         result = Range([(0, s - 1, 1) for s in array.shape])
-        if any(o != 0 for o in array.offset):
+        if hasattr(array, 'offset') and any(o != 0 for o in array.offset):
             result.offset(array.offset, True)
         return result
 
@@ -955,6 +947,29 @@ class Range(Subset):
         # Any step size != 1 -> not contiguous
         if any(s != 1 for (_, _, s) in self):
             return False
+
+        # Special case for 1D subsets.
+        if self.dims() == 1:
+            return (array.strides[0] == 1) == True
+
+        # Special case for 1D slicing, e.g. `a[idx0, b:e, idx2]`, i.e. there is only one dimensions
+        #  in which the size of the subset is larger than 1 and in all others it is 1. The subset
+        #  is continuous if that dimension has stride 1.
+        is_1d_slice = False
+        for copy_elem, stride in zip(self.size(), array.strides):
+            if (copy_elem == 1) == True:
+                continue
+            if (copy_elem == 0) == True:
+                return False  # Strange case, does it happen?
+            if is_1d_slice:
+                is_1d_slice = False  # There are multiple >1 size dimensions.
+                break
+            if (stride == 1) == False:
+                break  # The >1 size dimension is not associated to stride 1.
+            is_1d_slice = True
+        else:
+            if is_1d_slice:
+                return True
 
         # Determine array layout and calculate expression lengths accordingly
         if array.is_packed_fortran_strides():
