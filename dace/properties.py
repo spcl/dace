@@ -7,11 +7,11 @@ from dace.frontend.python.astutils import unparse, TaskletFreeSymbolVisitor
 import json
 import pydoc
 import re
-import sympy as sp
 import numpy as np
 import dace.subsets as sbs
 import dace
 import dace.serialize
+from functools import lru_cache
 from packaging.version import parse as parse_version
 from dace import symbolic
 from dace.symbolic import pystr_to_symbolic
@@ -33,13 +33,24 @@ def _is_symbolic_converter(converter) -> bool:
 def _is_symbolic_type(tp) -> bool:
     if tp is symbolic.SymExpr:
         return True
-    return isinstance(tp, type) and issubclass(tp, sp.Basic)
+    return isinstance(tp, type) and issubclass(tp, symbolic.SymbolicBasic)
 
 
 def _coerce_symbolic_property_value(value):
-    if isinstance(value, (symbolic.SymExpr, sp.Basic)):
+    if isinstance(value, (symbolic.SymExpr, symbolic.SymbolicBasic)):
         return value
     return pystr_to_symbolic(value, simplify=False)
+
+
+#: First version whose symbolic properties carry the typed wire format.
+_TYPED_SYMBOLIC_WIRE_VERSION = parse_version("2.0.0a4")
+
+
+@lru_cache(maxsize=None, typed=True)
+def _parsed_version(version: str):
+    """One version string per load, but it was parsed -- twice -- per deserialized property: 208k
+    calls and 12.5% of a CloudSC load."""
+    return parse_version(version)
 
 
 def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
@@ -51,7 +62,7 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     version = (context or {}).get("version", None)
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
-    if version is None or parse_version(version) < parse_version("2.0.0a4"):
+    if _parsed_version(version) < _TYPED_SYMBOLIC_WIRE_VERSION:
         return pystr_to_symbolic(value, simplify=False)
     return symbolic.deserialize_symbolic(value)
 
@@ -1247,7 +1258,7 @@ class SymbolicProperty(Property):
         return None
 
     def __set__(self, obj, val):
-        if (val is not None and not isinstance(val, (sp.Expr, Number, np.bool_, str))):
+        if (val is not None and not isinstance(val, (symbolic.SymbolicExpr, Number, np.bool_, str))):
             raise TypeError(f"Property {self.attr_name} must be a literal "
                             f"or symbolic expression, got: {type(val)}")
         if isinstance(val, (Number, str)):

@@ -17,7 +17,11 @@ import sympy.printing.str
 import packaging.version as packaging_version
 
 from dace import dtypes
+from dace import symbolic_engine
 from dace.symbolic_engine import native_parse, to_sympy, Basic as SymbolicBasic
+# Re-exported so a consumer asks `symbolic` for a backend-neutral head instead of naming sympy.
+# Unreferenced HERE, and `ruff-check --fix` runs in pre-commit -- without the noqa it deletes them.
+from dace.symbolic_engine import Boolean as SymbolicBoolean, Expr as SymbolicExpr  # noqa: F401
 
 DEFAULT_SYMBOL_TYPE = dtypes.int32
 
@@ -139,35 +143,61 @@ else:
     equal_valued = sympy.core.numbers.equal_valued
 
 
-class symbol(sympy.Symbol):
+def _symbol_spec(name, dtype, assumptions) -> Tuple[str, 'dtypes.typeclass', Dict[str, Any]]:
+    """Shared, so the backend factory and the sympy class cannot disagree on what a legal symbol is."""
+    if dtype is None:
+        dtype = DEFAULT_SYMBOL_TYPE
+    if name is None:
+        # Set name dynamically
+        name = "sym_" + str(symbol.s_currentsymbol)
+        symbol.s_currentsymbol += 1
+    elif name.startswith('__DACE'):
+        raise NameError('Symbols cannot start with __DACE')
+    elif not dtypes.validate_name(name):
+        raise NameError('Invalid symbol name "%s"' % name)
+
+    if not isinstance(dtype, dtypes.typeclass):
+        raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
+
+    dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
+    is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
+
+    # Don't pass `commutative` explicitly (SymPy defaults it to True anyway): keeping it out
+    # of `_assumptions_orig` avoids srepr/serialization order mismatches across build paths.
+    assumptions = {k: v for k, v in assumptions.items() if k != 'commutative'}
+    if 'integer' not in assumptions and numpy.any(is_integer):
+        assumptions['integer'] = True
+    return name, dtype, assumptions
+
+
+class SymbolMeta(type(sympy.Symbol)):
+    """`symbol` as a backend-neutral isinstance head: a native symbol IS a DaCe symbol.
+
+    `symbol` only -- `UndefinedSymbol` subclasses it and no engine mints the `?` sentinel.
+
+    NOT also the symbol FACTORY (T18): redirecting construction to the engine costs 41 gate failures
+    against the 1 it fixes, because DaCe pickles symbols (a PyO3 handle cannot), requires same-name
+    different-dtype instances (the engine forbids shadowing by design), and does frontend arithmetic
+    on them. Those three are prerequisites, not details.
+    """
+
+    def __instancecheck__(cls, obj) -> bool:
+        return super().__instancecheck__(obj) or (cls is symbol and symbolic_engine.is_native_symbol(obj))
+
+
+# Installed only when a foreign backend can produce values: a Python `__instancecheck__` frame
+# measured 288ns vs 34ns, and the redirect could never fire on the default path (cf. `_HEAD_META`).
+_SYMBOL_META = SymbolMeta if symbolic_engine.NATIVE_EXPR is not None else type(sympy.Symbol)
+
+
+class symbol(sympy.Symbol, metaclass=_SYMBOL_META):
     """ Defines a symbolic variable. Extends SymPy symbols with DaCe-related
         information. """
 
     s_currentsymbol = 0
 
     def __new__(cls, name=None, dtype=None, **assumptions):
-        if dtype is None:
-            dtype = DEFAULT_SYMBOL_TYPE
-        if name is None:
-            # Set name dynamically
-            name = "sym_" + str(symbol.s_currentsymbol)
-            symbol.s_currentsymbol += 1
-        elif name.startswith('__DACE'):
-            raise NameError('Symbols cannot start with __DACE')
-        elif not dtypes.validate_name(name):
-            raise NameError('Invalid symbol name "%s"' % name)
-
-        if not isinstance(dtype, dtypes.typeclass):
-            raise TypeError('dtype must be a DaCe type, got %s' % str(dtype))
-
-        dkeys = [k for k, v in dtypes.dtype_to_typeclass().items() if v == dtype]
-        is_integer = [issubclass(k, int) or issubclass(k, numpy.integer) for k in dkeys]
-
-        # Don't pass `commutative` explicitly (SymPy defaults it to True anyway): keeping it out
-        # of `_assumptions_orig` avoids srepr/serialization order mismatches across build paths.
-        assumptions = {k: v for k, v in assumptions.items() if k != 'commutative'}
-        if 'integer' not in assumptions and numpy.any(is_integer):
-            assumptions['integer'] = True
+        name, dtype, assumptions = _symbol_spec(name, dtype, assumptions)
         # Using __xnew__ as the regular __new__ is cached, which leads
         # to modifying different references of symbols with the same name.
         self = sympy.Symbol.__xnew__(cls, name, **assumptions)
@@ -248,6 +278,24 @@ class symbol(sympy.Symbol):
         def __neg__(self) -> sympy.Expr: ...
         def __pos__(self) -> sympy.Expr: ...
         # yapf: enable
+
+
+def sympy_symbol(name=None, dtype=None, **assumptions) -> symbol:
+    """DaCe symbol as a genuine sympy object, bypassing the backend factory.
+
+    Sympy island only: the value-to-sympy converter (the factory would recurse forever) and the
+    printers/serializers, where a foreign leaf grafted into a sympy tree just converts straight back.
+    """
+    return symbol.__new__(symbol, name, dtype, **assumptions)
+
+
+def is_symbol_leaf(value) -> bool:
+    """Plain DaCe symbol leaf carrying an authoritative `.dtype`.
+
+    Exact-kind, not `isinstance`: `UndefinedSymbol` subclasses `symbol` and a dtype must not be read
+    off the `?` sentinel. Replaces `type(value).__name__ == 'symbol'`, False for every native value.
+    """
+    return type(value) is symbol or symbolic_engine.is_native_symbol(value)
 
 
 #: Sentinel symbol for tile-shape broadcast dimensions in the K-dim
@@ -692,8 +740,18 @@ def _typed_constant_to_string(expr: TypedConstant) -> str:
     return f'dace.{expr.dtype.to_string()}({value})'
 
 
-def _symbol_default_assumptions(expr: symbol) -> Dict[str, Any]:
-    return symbol(expr.name, dtype=expr.dtype).assumptions0
+@lru_cache(maxsize=None, typed=True)
+def _default_assumptions_for_dtype(dtype: 'dtypes.typeclass') -> types.MappingProxyType:
+    """The assumption closure a dtype implies, for the serializer to diff against.
+
+    Name-independent: sympy derives these from the assumption kwargs alone, so ONE probe answers for
+    every symbol of that dtype. Two fresh `symbol` objects were built per printed symbol instead,
+    which measured 55% of `save()` on the largest CloudSC SDFG.
+
+    `sympy_symbol`, so the probe is sympy's own derived-fact closure rather than another engine's
+    reconstruction from a typed range -- otherwise the emitted kwargs would differ per backend.
+    """
+    return types.MappingProxyType(sympy_symbol('__assumption_probe', dtype=dtype).assumptions0)
 
 
 def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[str, Any]:
@@ -701,7 +759,7 @@ def _symbol_serializer_kwargs(expr: symbol, dtype: 'dtypes.typeclass') -> Dict[s
     if dtype != DEFAULT_SYMBOL_TYPE:
         kwargs['dtype'] = f'dace.{dtype.to_string()}'
 
-    default_assumptions = _symbol_default_assumptions(symbol(expr.name, dtype=dtype))
+    default_assumptions = _default_assumptions_for_dtype(dtype)
     for key, value in sorted(expr.assumptions0.items()):
         if key == 'commutative' or key.startswith('extended_'):
             continue
@@ -964,8 +1022,8 @@ def sympy_to_dace(exprs, symbol_map=None):
                     try:
                         repl[atom] = symbol_map[atom.name]
                     except KeyError:
-                        # Symbol is not in map, create a DaCe symbol with same assumptions
-                        repl[atom] = symbol(atom.name, **atom.assumptions0)
+                        # Substituted back into a sympy tree: a foreign leaf converts straight back.
+                        repl[atom] = sympy_symbol(atom.name, **atom.assumptions0)
             exprs[i] = expr.subs(repl)
     if oneelem:
         return exprs[0]
@@ -1138,6 +1196,138 @@ def is_undefined(expr: Union[SymbolicType, str]) -> bool:
     return False
 
 
+#: Symbol-leaf assumptions that govern index reasoning; a full dump differs between engines by
+#: construction (sympy derives dozens of facts, a typed engine carries a range).
+_STRUCTURAL_ASSUMPTIONS = ('integer', 'real', 'nonnegative', 'positive')
+
+
+def head_name(expr) -> Optional[str]:
+    """DaCe head-class name of `expr`, for any backend's value; `None` if not symbolic.
+
+    `type(x).__name__` is wrong under a backend that holds the head as node data and wraps every node
+    in one class -- a caller comparing to `'__int_floor'` silently takes its not-a-floordiv branch.
+    """
+    if symbolic_engine.NATIVE_EXPR is not None and isinstance(expr, symbolic_engine.NATIVE_EXPR):
+        # DaCe head first: the engine holds `int_floor(a, b)` structurally, as a division node named
+        # `floor`, and only the converter knows that spelling. `None` = plain algebra, no DaCe class.
+        return symbolic_engine.dace_head_name(expr) or str(expr.func)
+    return type(expr).__name__ if isinstance(expr, SymbolicBasic) else None
+
+
+#: One head spelled several ways: sympy's numeric/boolean singletons and its DaCe symbol subclass.
+#: Collapsed so a tree deserialized as sympy compares against a natively built one -- leaf values and
+#: assumption flags still have to match, so a real difference stays visible.
+_HEAD_ALIASES = {
+    'Zero': 'Integer',
+    'One': 'Integer',
+    'NegativeOne': 'Integer',
+    'symbol': 'Symbol',
+    'BooleanTrue': 'Boolean',
+    'BooleanFalse': 'Boolean',
+}
+
+
+def structural_repr(expr) -> str:
+    """Head/args/assumption tree as text; a structural comparator across backends.
+
+    `sympy.srepr` renders a foreign object by its Python class name, so a non-sympy expression
+    collapses to `Expr(Expr(), ...)` -- noise comparing equal to other noise.
+    """
+    head = head_name(expr)
+    head = _HEAD_ALIASES.get(head, head)
+    if head is None:
+        return repr(expr)
+    args = expr.args
+    if args:
+        return f'{head}({", ".join(structural_repr(a) for a in args)})'
+    if head != 'Symbol':
+        # A number's assumptions follow from its head and value. Rendering them would compare sympy's
+        # LAZY `assumptions0` cache, which is empty on a `Number` nothing has queried yet.
+        return f'{head}({expr})'
+    flags = ''.join(f', {k}=True' for k in _STRUCTURAL_ASSUMPTIONS if expr.assumptions0.get(k))
+    return f'{head}({expr}{flags})'
+
+
+#: `ask` predicate -> the sympy `Q` predicate that answers it on the island.
+_ASK_Q = {
+    'integer': sympy.Q.integer,
+    'nonnegative': sympy.Q.nonnegative,
+    'positive': sympy.Q.positive,
+    'negative': sympy.Q.negative,
+}
+
+
+def _ask_direct(predicate: str, expr) -> Optional[bool]:
+    """The expression's own answer. Explicit dispatch, never `getattr`."""
+    if predicate == 'integer':
+        return expr.is_integer
+    if predicate == 'nonnegative':
+        return expr.is_nonnegative
+    if predicate == 'positive':
+        return expr.is_positive
+    if predicate == 'negative':
+        return expr.is_negative
+    raise ValueError(f'unknown ask predicate {predicate!r}')
+
+
+def _ask_facts(symbols, facts: Dict[str, FrozenSet[str]]) -> List[Any]:
+    """`Q` predicates for what `facts` declares about `symbols`, plus each symbol's own integrality."""
+    out = []
+    for sym in symbols:
+        declared = facts.get(sym.name, frozenset())
+        if sym.is_integer or 'integer' in declared:
+            out.append(sympy.Q.integer(sym))
+        if 'positive' in declared:
+            out.append(sympy.Q.positive(sym))
+        elif 'nonnegative' in declared:
+            out.append(sympy.Q.nonnegative(sym))
+    return out
+
+
+def ask(predicate: str, expr, facts: Optional[Dict[str, FrozenSet[str]]] = None) -> Optional[bool]:
+    """Three-valued (`True`/`False`/`None`) query on `expr`, in whichever backend built it.
+
+    `facts` declares per symbol NAME what an enclosing scope knows ('integer'/'positive'/
+    'nonnegative') -- needed because sympy mints same-named symbols that lost their assumptions, which
+    is exactly what a typed engine carries in the symbol's range instead.
+
+    Cheap first: the expression's own answer, which a typed engine settles from that range. Only an
+    undecided query reaches sympy's assumption engine, where the declared facts can still close it.
+    """
+    if predicate not in _ASK_Q:
+        raise ValueError(f'unknown ask predicate {predicate!r}')
+    if isinstance(expr, str):
+        expr = pystr_to_symbolic(expr)
+    if not isinstance(expr, SymbolicBasic):
+        expr = symbolic_engine.sympify(expr)
+    answer = _ask_direct(predicate, expr)
+    if answer is not None:
+        return answer
+    if to_sympy is not None:
+        converted = to_sympy(expr)
+        if converted is not None:
+            expr = converted
+    if not isinstance(expr, sympy.Basic):
+        return None
+    expr = equalize_symbol(expr)
+    with sympy.assuming(*_ask_facts(expr.free_symbols, facts or {})):
+        return sympy.ask(_ASK_Q[predicate](expr))
+
+
+def apply_head(name: str, *args):
+    """Apply the DaCe symbolic head class `name` to `args`, in the ACTIVE backend's representation.
+
+    Calling the sympy class directly sympifies a native operand, dragging the whole expression back
+    onto the sympy island where its symbols hash differently from the engine's.
+    """
+    if symbolic_engine.NATIVE_EXPR is not None and any(isinstance(a, symbolic_engine.NATIVE_EXPR) for a in args):
+        return symbolic_engine.Function(name)(*args)
+    cls = _PYSTR2SYM_locals.get(name)
+    if not isinstance(cls, type):
+        raise ValueError(f'no DaCe symbolic head named {name!r}')
+    return cls(*args)
+
+
 def sympy_numeric_fix(expr):
     """ Fix for printing out integers as floats with ".00000000".
         Converts the float constants in a given expression to integers. """
@@ -1168,7 +1358,44 @@ def sympy_numeric_fix(expr):
     return expr
 
 
-class int_floor(sympy.Function):
+class DaceFunctionMeta(sympy.core.function.FunctionClass):
+    """Metaclass making a DaCe symbolic head an isinstance target for ANY backend's values.
+
+    These classes state a DaCe contract -- "this expression is an ``ITE``", "this one is the operator
+    spelling of ``bitwise_or``" -- rather than a sympy implementation detail. So the contract has to
+    hold whichever engine represents the value, and a value from a non-sympy backend can never be an
+    instance of a sympy class by type. Membership is decided from the head NAME through the existing
+    class hierarchy, so ``__bitwise_or`` still tests as a ``bitwise_or`` (it subclasses it) while
+    ``bitwise_or`` does NOT test as the ``__`` variant, and no second table can drift.
+
+    Without this, a pass asking ``isinstance(x, Subscript)`` silently took its NOT-a-subscript branch
+    for every value the other backend built -- a wrong answer, not an error (the map-range array
+    bound went un-hoisted; the vectorizer could not classify a gather index).
+    """
+
+    def __instancecheck__(cls, obj) -> bool:
+        if super().__instancecheck__(obj):
+            return True
+        # The converter's own class, not a name looked up in `_PYSTR2SYM_locals`: that table is keyed
+        # by PARSER spellings (`'And'`, `'Or'`, `'round'`) while the classes are `AND`, `OR`, `ROUND`,
+        # and `fma`/`mod`/`logical_*_shift` have no key at all -- so every `And`/`Or` guard, which is
+        # what the converter mints for the commonest shape there is, answered False.
+        head = symbolic_engine.dace_head_class(obj)
+        return head is not None and issubclass(head, cls)
+
+
+# Only installed when a foreign backend can actually produce values. Under the default backend the
+# override could never fire, and paying a Python `__instancecheck__` frame per `isinstance` to learn
+# that measured 288ns against 34ns for the plain check -- so the default path keeps sympy's own
+# metaclass and is bit-identical to having none of this.
+_HEAD_META = DaceFunctionMeta if symbolic_engine.NATIVE_EXPR is not None else sympy.core.function.FunctionClass
+
+
+class DaceFunction(sympy.Function, metaclass=_HEAD_META):
+    """Base for DaCe's own symbolic heads; carries only the backend-neutral isinstance protocol."""
+
+
+class int_floor(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1201,7 +1428,7 @@ class __int_floor(int_floor):
     pass
 
 
-class int_ceil(sympy.Function):
+class int_ceil(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1228,7 +1455,7 @@ class int_ceil(sympy.Function):
         return True
 
 
-class ipow(sympy.Function):
+class ipow(DaceFunction):
     """Integer power ``base ** exp`` with a non-negative integer exponent, lowered
     to ``dace::math::ipow`` (repeated multiply, exact integer) -- valid where
     ``dace::math::pow`` (libm ``double``) is not: an array size, subscript or loop
@@ -1284,7 +1511,7 @@ def relax_ipow(expr: SymbolicType) -> SymbolicType:
     return expr.rewrite(sympy.Pow)
 
 
-class fma(sympy.Function):
+class fma(DaceFunction):
     """Fused multiply-add ``a * b + c``.
 
     Minted by the vectorizer's FMA-fusion pass from an ``a * b + c`` chain so the tile-op
@@ -1310,7 +1537,7 @@ class fma(sympy.Function):
         return a * b + c
 
 
-class OR(sympy.Function):
+class OR(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1328,7 +1555,7 @@ class OR(sympy.Function):
         return True
 
 
-class AND(sympy.Function):
+class AND(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1346,7 +1573,7 @@ class AND(sympy.Function):
         return True
 
 
-class IfExpr(sympy.Function):
+class IfExpr(DaceFunction):
 
     @classmethod
     def eval(cls, x, y, z):
@@ -1386,7 +1613,7 @@ class IfExpr(sympy.Function):
             return False
 
 
-class ITE(sympy.Function):
+class ITE(DaceFunction):
     """Ternary blend: ``ITE(c, a, b)`` returns ``a`` when ``c`` is truthy,
     ``b`` otherwise. Lowered to a one-line C++ helper in
     ``dace/runtime/include/dace/ITE.h`` and recognized by the vectorizer's
@@ -1418,7 +1645,7 @@ class ITE(sympy.Function):
 merge = ITE
 
 
-class mod(sympy.Function):
+class mod(DaceFunction):
     """Floored modulus (Fortran ``MODULO`` / Python ``%`` on negatives).
 
     Two-arg ``mod(a, b)`` — distinct from sympy's built-in ``Mod`` (which
@@ -1436,7 +1663,7 @@ class mod(sympy.Function):
         return self.args[0].is_integer and self.args[1].is_integer
 
 
-class fortran_mod(sympy.Function):
+class fortran_mod(DaceFunction):
     """Floored modulus for use in symbolic expressions / memlet subsets.
 
     Two-arg ``fortran_mod(a, b)`` -- the Fortran ``MODULO`` semantics:
@@ -1481,7 +1708,10 @@ def _make_typecast_class(name: str) -> type:
         methods = {'nargs': 1, '_eval_is_real': lambda self: True}
     else:  # complex widths -- neither integer nor real
         methods = {'nargs': 1}
-    return type(name, (sympy.Function, ), methods)
+    # `DaceFunction`, not bare `sympy.Function`: a cast is a DaCe head, so it needs the neutral
+    # isinstance protocol. On `sympy.Function` alone, `isinstance(P('int32(a)'), int32)` was False for
+    # every value a non-sympy backend built -- while the head memo already paid for a cast-only key.
+    return type(name, (DaceFunction, ), methods)
 
 
 # Symbolic-function-name -> C++ cast emitted by ``DaceSympyPrinter``. ALL DaCe scalar typecasts
@@ -1498,23 +1728,23 @@ globals().update(_CAST_CLASSES)
 _builtin_userfunctions.update(_CAST_CLASSES)
 
 
-class bitwise_and(sympy.Function):
+class bitwise_and(DaceFunction):
     pass
 
 
-class bitwise_or(sympy.Function):
+class bitwise_or(DaceFunction):
     pass
 
 
-class bitwise_xor(sympy.Function):
+class bitwise_xor(DaceFunction):
     pass
 
 
-class bitwise_invert(sympy.Function):
+class bitwise_invert(DaceFunction):
     pass
 
 
-class left_shift(sympy.Function):
+class left_shift(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1531,7 +1761,7 @@ class left_shift(sympy.Function):
             return x << y
 
 
-class right_shift(sympy.Function):
+class right_shift(DaceFunction):
 
     @classmethod
     def eval(cls, x, y):
@@ -1548,7 +1778,7 @@ class right_shift(sympy.Function):
             return x >> y
 
 
-class logical_left_shift(sympy.Function):
+class logical_left_shift(DaceFunction):
     """Logical (zero-fill) left shift -- the Fortran ``ISHFT`` lowering.
 
     Distinct from :class:`left_shift`: it shifts the unsigned bit pattern (no
@@ -1565,7 +1795,7 @@ class logical_left_shift(sympy.Function):
             return x << y
 
 
-class logical_right_shift(sympy.Function):
+class logical_right_shift(DaceFunction):
     """Logical (zero-fill) right shift -- the Fortran ``ISHFT`` (negative count)
     lowering.
 
@@ -1581,7 +1811,7 @@ class logical_right_shift(sympy.Function):
             return x >> y
 
 
-class conj(sympy.Function):
+class conj(DaceFunction):
     pass
 
 
@@ -1613,7 +1843,7 @@ class __right_shift(right_shift):
     pass
 
 
-class ROUND(sympy.Function):
+class ROUND(DaceFunction):
 
     @classmethod
     def eval(cls, x):
@@ -1630,15 +1860,15 @@ class ROUND(sympy.Function):
         return True
 
 
-class Is(sympy.Function):
+class Is(DaceFunction):
     pass
 
 
-class IsNot(sympy.Function):
+class IsNot(DaceFunction):
     pass
 
 
-class Attr(sympy.Function):
+class Attr(DaceFunction):
     """
     Represents a get-attribute call on a function, equivalent to ``a.b`` in Python.
     """
@@ -1657,7 +1887,7 @@ class Attr(sympy.Function):
         return Attr(self.args[0].subs(*args, **kwargs), self.args[1].subs(*args, **kwargs))
 
 
-class Subscript(sympy.Function):
+class Subscript(DaceFunction):
     """
     Represents a subscript expression, equivalent to ``a[i, j, ...]`` in Python.
 
@@ -1845,7 +2075,8 @@ def evaluate_optional_arrays(expr, sdfg):
     if not isinstance(expr, sympy.Basic):
         return expr
 
-    none = symbol('NoneSymbol')
+    # `expr` is sympy here; a foreign sentinel hashes differently and matches nothing.
+    none = sympy_symbol('NoneSymbol')
 
     def _process_is(elem: Union[Is, IsNot]):
         if elem.args[0] == none:
@@ -2124,6 +2355,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
     :func:`serialize_symbolic`.
+
+    Mints via `sympy_symbol`, not the `symbol` factory: this reads the wire format the sympy
+    serializer wrote, and a foreign leaf in that tree would just convert straight back.
     """
 
     @staticmethod
@@ -2308,8 +2542,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     _constants = {
         'True': sympy.true,
         'False': sympy.false,
-        'None': symbol('NoneSymbol'),
-        'NoneSymbol': symbol('NoneSymbol'),
+        'None': sympy_symbol('NoneSymbol'),
+        'NoneSymbol': sympy_symbol('NoneSymbol'),
         'pi': sympy.pi,
         'E': sympy.E,
         'I': sympy.I,
@@ -2326,7 +2560,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if node.id == _SERIALIZED_UNDEFINED_SYMBOL:
             return UndefinedSymbol()
         if node.id.startswith(_SERIALIZED_SYMBOL_PREFIX):
-            return symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX):])
+            return sympy_symbol(node.id[len(_SERIALIZED_SYMBOL_PREFIX):])
         try:
             return getattr(dtypes, node.id)
         except AttributeError as ex:
@@ -2336,7 +2570,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.value, bool):
             return sympy.true if node.value else sympy.false
         if node.value is None:
-            return symbol('NoneSymbol')
+            return sympy_symbol('NoneSymbol')
         if isinstance(node.value, int):
             return sympy.Integer(node.value)
         if isinstance(node.value, float):
@@ -2397,7 +2631,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             symname = symname[len(_SERIALIZED_SYMBOL_PREFIX):]
             kwargs = {kw.arg: self._python_bool(self.visit(kw.value)) for kw in node.keywords}
             dtype = kwargs.pop('dtype', DEFAULT_SYMBOL_TYPE)
-            return symbol(symname, dtype=dtype, **kwargs)
+            return sympy_symbol(symname, dtype=dtype, **kwargs)
 
         if isinstance(node.func, ast.Name) and node.func.id == 'SymExpr':
             args = [self.visit(arg) for arg in node.args]
@@ -2429,7 +2663,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 return getattr(dtypes, node.attr)
             except AttributeError as ex:
                 raise TypeError(f'Unknown DaCe dtype "{node.attr}"') from ex
-        return Attr(self.visit(node.value), symbol(node.attr))
+        return Attr(self.visit(node.value), sympy_symbol(node.attr))
 
     def generic_visit(self, node):
         raise TypeError(f'Unsupported node in symbolic deserialization: {type(node).__name__}')
@@ -2450,7 +2684,7 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
     if isinstance(value, SymExpr):
         return SymExpr(_cast_symbolic_value(value.expr, dtype), _cast_symbolic_value(value.approx, dtype))
     if isinstance(value, symbol):
-        return symbol(value.name, dtype=dtype, **value.assumptions0)
+        return sympy_symbol(value.name, dtype=dtype, **value.assumptions0)
     if isinstance(value, TypedConstant):
         return TypedConstant(value.value, dtype=dtype)
     if isinstance(value, (sympy.Integer, sympy.Float, int, float, numpy.generic)):

@@ -90,7 +90,7 @@ class Data:
     # class can call `_validate()` without calling the subclasses'
     # `validate` function.
     def _validate(self):
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic))
                for s in self.shape):
             raise TypeError('Shape must be a list or tuple of integer values '
                             'or symbols')
@@ -141,7 +141,7 @@ class Data:
         result = set()
         if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
             for s in self.shape:
-                if isinstance(s, sp.Basic):
+                if isinstance(s, symbolic.SymbolicBasic):
                     result |= set(s.free_symbols)
         return result
 
@@ -594,10 +594,10 @@ class Array(Data):
         if len(self.offset) != len(self.shape):
             raise TypeError('Offset must be the same size as shape')
 
-        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(s, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic))
                for s in self.strides):
             raise TypeError('Strides must be a list or tuple of integer values or symbols')
-        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.sympy.Basic))
+        if any(not isinstance(off, (Integral, symbolic.SymExpr, symbolic.symbol, symbolic.SymbolicBasic))
                for off in self.offset):
             raise TypeError('Offset must be a list or tuple of integer values or symbols')
 
@@ -612,7 +612,9 @@ class Array(Data):
             return False
 
         for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive
+            # Shape has to be positive. Stays on sympy deliberately: re-minting the symbol with a
+            # `positive` assumption has no analogue in an engine that carries the range in the type,
+            # where re-declaring a symbol with a different range is a conflict, not a refinement.
             if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
@@ -685,13 +687,13 @@ class Array(Data):
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
         for s in self.strides:
-            if isinstance(s, sp.Expr):
+            if isinstance(s, symbolic.SymbolicExpr):
                 result |= set(s.free_symbols)
         for o in self.offset:
-            if isinstance(o, sp.Expr):
+            if isinstance(o, symbolic.SymbolicExpr):
                 result |= set(o.free_symbols)
         if (self.transient and not isinstance(self, (View, Reference))) or all_symbols:
-            if isinstance(self.total_size, sp.Expr):
+            if isinstance(self.total_size, symbolic.SymbolicExpr):
                 result |= set(self.total_size.free_symbols)
         return result
 
@@ -963,7 +965,9 @@ class Stream(Data):
             return False
 
         for s, (rb, re, rs) in zip(self.shape, rng):
-            # Shape has to be positive
+            # Shape has to be positive. Stays on sympy deliberately: re-minting the symbol with a
+            # `positive` assumption has no analogue in an engine that carries the range in the type,
+            # where re-declaring a symbol with a different range is a conflict, not a refinement.
             if isinstance(s, sp.Basic):
                 olds = s
                 if 'positive' in s.assumptions0:
@@ -996,10 +1000,10 @@ class Stream(Data):
 
     def used_symbols(self, all_symbols: bool) -> Set[symbolic.SymbolicType]:
         result = super().used_symbols(all_symbols)
-        if (self.transient or all_symbols) and isinstance(self.buffer_size, sp.Expr):
+        if (self.transient or all_symbols) and isinstance(self.buffer_size, symbolic.SymbolicExpr):
             result |= set(self.buffer_size.free_symbols)
         for o in self.offset:
-            if isinstance(o, sp.Expr):
+            if isinstance(o, symbolic.SymbolicExpr):
                 result |= set(o.free_symbols)
 
         return result
@@ -1050,7 +1054,7 @@ class Structure(Data):
                 fields_and_types[k] = v.dtype
             elif isinstance(v, dtypes.typeclass):
                 fields_and_types[k] = v
-            elif isinstance(v, (sp.Basic, symbolic.SymExpr)):
+            elif isinstance(v, (symbolic.SymbolicBasic, symbolic.SymExpr)):
                 symbols |= v.free_symbols
                 fields_and_types[k] = symbolic.symtype(v)
             elif isinstance(v, (int, np.integer)):

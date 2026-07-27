@@ -7,7 +7,7 @@ import sympy
 import dace
 from dace.codegen.targets.cpp import sym2cpp
 from dace.subsets import Indices, Range
-from dace.symbolic import pystr_to_symbolic, symbol
+from dace.symbolic import head_name, pystr_to_symbolic, symbol
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision, normalize
 
 N = dace.symbol("N")
@@ -16,7 +16,7 @@ N = dace.symbol("N")
 def test_parsed_dace_source_already_uses_int_floor():
     """`//` written in a kernel is fine -- pystr_to_symbolic maps it onto int_floor. This pass exists
     for the OTHER spelling, python's `//` applied to a sympy object in transformation code."""
-    assert type(pystr_to_symbolic("(N - 1) // 2")).__name__ == "__int_floor"
+    assert head_name(pystr_to_symbolic("(N - 1) // 2")) == "__int_floor"
     assert isinstance(symbol("N") // 2, sympy.floor)
 
 

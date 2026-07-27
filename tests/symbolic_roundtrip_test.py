@@ -62,6 +62,29 @@ def test_operator_uses_internal_variant():
     assert isinstance(op, bitwise_or)
 
 
+def test_head_isinstance_is_backend_independent():
+    # A DaCe head class states a DaCe contract ("this is an ITE"), not a sympy implementation
+    # detail, so `isinstance` against it must answer the same whichever engine built the value.
+    # Getting this wrong is silent: a pass asking `isinstance(x, Subscript)` just takes its
+    # not-a-subscript branch, so the map-range array bound went un-hoisted rather than erroring.
+    import dace.symbolic as symbolic_module
+    internal_or = symbolic_module.__dict__['__bitwise_or']
+    internal_floor = symbolic_module.__dict__['__int_floor']
+    # Structural heads: the engine may hold `int_floor` as a division node rather than a named call.
+    assert isinstance(pystr_to_symbolic('int_floor(a, 8)'), symbolic.int_floor)
+    assert isinstance(pystr_to_symbolic('int_ceil(a, 8)'), symbolic.int_ceil)
+    assert isinstance(pystr_to_symbolic('ITE(c, a, b)'), symbolic.ITE)
+    # The operator spelling is an instance of BOTH; the function spelling only of the bare class.
+    assert isinstance(pystr_to_symbolic('a | b'), internal_or)
+    assert isinstance(pystr_to_symbolic('a | b'), bitwise_or)
+    assert not isinstance(pystr_to_symbolic('bitwise_or(a, b)'), internal_or)
+    assert isinstance(pystr_to_symbolic('a // 8'), internal_floor)
+    # Negatives stay negative -- the protocol widens what counts, it does not answer True broadly.
+    assert not isinstance(pystr_to_symbolic('a + b'), symbolic.ITE)
+    assert not isinstance(pystr_to_symbolic('a'), bitwise_or)
+    assert not isinstance(3, symbolic.ITE)
+
+
 def test_explicit_function_name_preserved():
     # An explicit ``bitwise_or(a, b)`` keeps its spelling in Python but still lowers to
     # the operator in C++.
@@ -240,7 +263,9 @@ def test_boolean_preserved_and_distinct_from_int():
     assert _roundtrip('False') == 'False'
     assert _roundtrip('1') == '1'
     assert _roundtrip('0') == '0'
-    assert isinstance(pystr_to_symbolic('True'), sympy.logic.boolalg.BooleanTrue)
+    parsed = pystr_to_symbolic('True')
+    assert isinstance(parsed, symbolic.SymbolicBoolean) and bool(parsed) is True
+    assert parsed != pystr_to_symbolic('1')
     assert _roundtrip('True', cpp_mode=True) == 'true'
 
 
@@ -331,7 +356,7 @@ def test_symbolic_expression_serialization_preserves_integerness():
     original = sdfg.arrays["A"].shape[0]
     restored = reloaded.arrays["A"].shape[0]
 
-    assert sympy.srepr(original) == sympy.srepr(restored)
+    assert symbolic.structural_repr(original) == symbolic.structural_repr(restored)
     assert original == restored
     assert original.is_integer == restored.is_integer
 
