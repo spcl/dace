@@ -301,10 +301,18 @@ def test_length_one_array_target_falls_back_to_atomic():
     (it needs a scalar VARIABLE). Detection must refuse this case; the atomic
     path must fire instead. ``PrivatizeReductionAccumulator`` is the upstream
     rewrite that converts such targets into a transient ``Scalar``; without
-    it, atomic is the correct fallback."""
+    it, atomic is the correct fallback.
+
+    ``acc`` is deliberately NOT transient. ``compiler.cpu.implementation`` defaults to
+    ``experimental_readable``, whose pipeline runs ``ConvertLengthOneArraysToScalars`` before
+    codegen -- so a length-1 TRANSIENT array never reaches the reduction detector as an Array at
+    all; it arrives as a genuine ``double acc;`` for which ``reduction(+:acc)`` is both legal and
+    what we want. That conversion is ``transient_only``, because a non-transient descriptor is the
+    call contract, so a non-transient length-1 array is the case that still reaches the detector as
+    a pointer -- i.e. the one this test is about."""
     sdfg = dace.SDFG("wcr_len1_array_target")
     sdfg.add_array("src", [N], dace.float64)
-    sdfg.add_array("acc", [1], dace.float64, transient=True)  # length-1 Array, NOT Scalar
+    sdfg.add_array("acc", [1], dace.float64)  # length-1 Array, NOT Scalar, NOT transient
     sdfg.add_array("out", [1], dace.float64)
 
     init = sdfg.add_state("init", is_start_block=True)

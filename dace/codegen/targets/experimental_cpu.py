@@ -758,7 +758,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         DaCe deliberately routes the declaration and the allocation to two streams so a transient's
         DECLARATION can be hoisted to an outer scope while its ALLOCATION stays in an inner one.
         Fusing is a purely textual merge of two writes, so it is sound only when both land in the
-        same scope with nothing in between. All three of these must hold:
+        same scope with nothing in between. Both of these must hold:
 
         * ``not declared`` -- otherwise ``declare_array`` already emitted ``T *p = nullptr;`` in an
           enclosing scope (a transient whose size depends on a non-free symbol) and registered it in
@@ -772,26 +772,21 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
           unallocated member. For every other lifetime the dispatcher passes ONE stream for both
           (``declaration_stream = callsite_stream``) and the base writes the declaration immediately
           before the allocation, so merging them changes nothing but the text.
-        * ``arrsize`` is a RUNTIME extent -- a compile-time constant one keeps the split form because
-          GCC rejects the fused spelling. ``heap_alloc_stmt`` emits the element type carrying
-          ``DACE_ALIGN(64)`` (== ``__attribute__((aligned(64)))``), which is load-bearing: it makes
-          ``new`` call the over-aligned ``operator new[](size_t, align_val_t)``. With a constant
-          bound the new-type-id in a DECLARATION names the fixed array type ``double[1]``, whose
-          elements would each need 64-byte alignment at 8 bytes of size -- "error: alignment of array
-          elements is greater than element size". The very same ``new`` expression is accepted as a
-          bare assignment (the split form), and with a runtime bound no fixed array type is formed,
-          so both of those stay legal. No fused spelling avoids this (``::new``, a cast, an aligned
-          type alias and brace-init were all tried), and dropping ``DACE_ALIGN`` would silently
-          de-align the allocation, so a constant-extent heap array stays split.
+
+        A COMPILE-TIME-CONSTANT extent used to be excluded as well, because ``heap_alloc_stmt`` put
+        the alignment on the ELEMENT TYPE (``new double DACE_ALIGN(64)[1]``): in a declaration that
+        new-type-id names the fixed array type ``double[1]``, whose elements would each need 64-byte
+        alignment at 8 bytes of size, which GCC rejects ("alignment of array elements is greater than
+        element size"). Aligned ``operator new[]`` (upstream #2438) moved the alignment out of the
+        type and into a placement argument, so no over-aligned element type is formed and
+        ``double* p = new (std::align_val_t(64)) double[1];`` is well-formed. The exclusion is gone
+        with the constraint that motivated it.
 
         Registration is untouched: the caller still runs ``define_var(...)`` after this, so
         ``defined_vars`` (and ``declared_arrays``, which only ``declare_array`` populates) resolve
         later accesses exactly as before.
         """
         if declared or declaration_stream is not allocation_stream:
-            return None
-        # The same test the base uses to route a variable-length Register array to the heap.
-        if not symbolic.issymbolic(arrsize, sdfg.constants):
             return None
         return self.array_pointer_declarator(name, nodedesc)
 
@@ -830,10 +825,10 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if registered is not None:
                 fnname, call_args = registered
                 count = '%s(%s)' % (fnname, ', '.join(call_args))
-        aligned = ''
+        placement = ''
         if nodedesc is not None and use_aligned_operator_new(nodedesc):
-            aligned = '(std::align_val_t(%d))' % aligned_new_value(nodedesc)
-        return '%s = new %s %s [%s];\n' % (alloc_name, aligned, ctype, count)
+            placement = ' (std::align_val_t(%d))' % aligned_new_value(nodedesc)
+        return '%s = new%s %s[%s];\n' % (alloc_name, placement, ctype, count)
 
     def _flush_generated_functions(self, function_stream, cfg, state_id, node) -> None:
         # Emit each registered index / size helper once per OUTPUT FILE. A non-inline nested-SDFG

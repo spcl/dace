@@ -13,6 +13,15 @@ import dace
 from dace.config import Config
 
 
+#: The constexpr binding a write-once single-value transient gets. Which of the two spellings is
+#: emitted is ``scalar_emission_type``'s call, not this group's: the default (``scalar``, since
+#: ``c027cdf12``) normalizes the length-1 transient to a by-value Scalar and binds it as
+#: ``constexpr double s = 3.0;``, while ``len1_array`` keeps the array and binds
+#: ``constexpr double s[1] = {3.0};``. Matching both keeps these tests pinned on what they are about
+#: -- the value is bound at compile time rather than written at runtime.
+SCALAR_CONSTEXPR = re.compile(r'constexpr\s+double\s+s(\[1\])?\s*=\s*\{?\s*3')
+
+
 def _gen(sdfg_factory, impl, name):
     Config.set('compiler', 'cpu', 'implementation', value=impl)
     sdfg = sdfg_factory(name)
@@ -63,12 +72,18 @@ def _scalar_const_sdfg(name):
     return sdfg
 
 
-def _no_redundant_init(code, arrname):
-    """ Assert the promoted const array has no runtime init/allocation. """
+def _no_redundant_init(code, name):
+    """ Assert the promoted const data has no runtime init/allocation.
+
+    ``name`` is matched as a whole identifier rather than as a substring: under the default
+    ``scalar_emission_type`` a single-value transient is bound as ``s``, not ``s[0]``, so a
+    subscripted needle would silently scan zero lines and pass vacuously.
+    """
+    token = re.compile(r'\b%s\b' % re.escape(name))
     for line in code.splitlines():
-        if arrname in line:
-            assert 'new' not in line or 'constexpr' in line, f'runtime alloc of const {arrname}: {line}'
-            assert 'memset' not in line, f'redundant memset of const {arrname}: {line}'
+        if token.search(line):
+            assert 'new' not in line or 'constexpr' in line, f'runtime alloc of const {name}: {line}'
+            assert 'memset' not in line, f'redundant memset of const {name}: {line}'
 
 
 def test_const_init_flag_off_keeps_the_runtime_write():
@@ -86,10 +101,8 @@ def test_const_init_flag_off_keeps_the_runtime_write():
         Config.set('compiler', 'cpu', 'codegen_params', 'const_init', value='on')
     sdfg_on, code_on = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_flag_on')
 
-    assert not any('constexpr' in l and 's[1]' in l for l in code_off.splitlines()), \
-        'const_init=off still promoted the scalar to a constexpr'
-    assert any('constexpr' in l and 's[1]' in l for l in code_on.splitlines()), \
-        'const_init=on (the default) must still promote the scalar'
+    assert not SCALAR_CONSTEXPR.search(code_off), 'const_init=off still promoted the scalar to a constexpr'
+    assert SCALAR_CONSTEXPR.search(code_on), 'const_init=on (the default) must still promote the scalar'
 
     # Semantics are identical -- this key changes what is emitted, never what is computed.
     A = np.random.rand(8)
@@ -101,10 +114,9 @@ def test_const_init_flag_off_keeps_the_runtime_write():
 
 def test_scalar_constexpr_no_memset():
     sdfg, code = _gen(_scalar_const_sdfg, 'experimental_readable', 'sc_exp')
-    lines = code.splitlines()
-    # A write-once scalar is promoted to a length-1 constexpr array: constexpr double s[1] = {3.0};
-    assert any('constexpr' in l and 's[1]' in l and '3' in l for l in lines), 'scalar not emitted const/constexpr'
-    _no_redundant_init(code, ' s[')
+    # A write-once scalar is bound at compile time: constexpr double s = 3.0;
+    assert SCALAR_CONSTEXPR.search(code), 'scalar not emitted const/constexpr'
+    _no_redundant_init(code, 's')
     # correctness
     sdfg_l = _scalar_const_sdfg('sc_leg')
     Config.set('compiler', 'cpu', 'implementation', value='legacy')
@@ -122,7 +134,7 @@ def test_array_constexpr_full_no_memset():
     sdfg, code = _gen(fac, 'experimental_readable', 'ac_exp')
     assert any('constexpr' in l and 'arr[' in l and '= {' in l for l in code.splitlines()), \
         'array not emitted constexpr initializer'
-    _no_redundant_init(code, 'arr[')
+    _no_redundant_init(code, 'arr')
     # correctness
     Config.set('compiler', 'cpu', 'implementation', value='legacy')
     A = np.random.rand(4)
@@ -140,7 +152,7 @@ def test_array_constexpr_partial_zerofill():
     sdfg, code = _gen(fac, 'experimental_readable', 'ap_exp')
     lines = [l for l in code.splitlines() if 'constexpr' in l and 'arr[' in l and '= {' in l]
     assert lines, 'partial-init array not constexpr'
-    _no_redundant_init(code, 'arr[')
+    _no_redundant_init(code, 'arr')
     # Partial init: the readable generator zero-fills the unwritten elements (a
     # deliberate, defined-behavior choice). Legacy leaves them uninitialized
     # (garbage), so we assert the experimental result is the zero-filled value

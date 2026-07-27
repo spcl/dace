@@ -1,13 +1,16 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for ``compiler.cpu.codegen_params.scalar_init_style``.
 
-``split`` emits the legacy pair -- ``T x;`` at the scope top, ``x = expr;`` where the write happens.
-``fused`` (the default) emits ``T x = expr;``: the declaration IS the first write. The knob is
+``split`` (the default) emits the legacy pair -- ``T x;`` at the scope top, ``x = expr;`` where the
+write happens. ``fused`` emits ``T x = expr;``: the declaration IS the first write. The knob is
 experimental_readable-only, so legacy output is byte-identical for every value.
 
-Unlike most of the group, the default does NOT reproduce legacy's spelling: the readable generator
-deliberately prefers the fused binding. Legacy is untouched either way, so the byte-identity rule
-that governs legacy is not at stake.
+``fused`` was the default until ``2443e401e``. Folding a declaration into its write means DEFERRING
+it to that write, and the soundness proof for that is a set of structural scans (data nodes in other
+states, interstate edges, region conditions) -- each of which can only see a use that has a graph
+representation. A use with none, such as a free name in another state's tasklet code, is invisible to
+all of them and the deferred declaration then does not compile. ``split`` needs no such proof and is
+what legacy always emits, so the two now agree by default.
 """
 import numpy as np
 import pytest
@@ -56,16 +59,20 @@ def test_fused_folds_declaration_into_first_write(require_experimental):
     assert 't = t_0;' in fused, fused
 
 
-def test_default_style_is_fused(require_experimental):
-    """The default readable output equals the explicit ``fused`` output (byte-identical).
+def test_default_style_is_split(require_experimental):
+    """The default readable output equals the explicit ``split`` output (byte-identical), and is NOT
+    the ``fused`` one -- so the assertion cannot pass by the two spellings having converged.
 
-    The readable generator deliberately defaults to the fused binding rather than reproducing
-    legacy's ``T x;`` + ``x = expr;`` pair -- declaring a name at its defining write is the point of
-    a readable form. Legacy is unaffected either way; see test_legacy_byte_identical_across_style.
+    ``2443e401e`` flipped the default from ``fused`` to ``split``: fusing defers a declaration to its
+    write, and that deferral is only sound when every use of the scalar is provably inside the brace
+    the declaration lands in -- a proof that cannot see a use with no graph representation. See the
+    module docstring. Legacy is unaffected either way; see test_legacy_byte_identical_across_style.
     """
     with use_implementation(EXPERIMENTAL):
         default = generated_code(reassigned.to_sdfg(simplify=True))
-    assert default == readable_code(reassigned.to_sdfg(simplify=True), 'fused')
+    split = readable_code(reassigned.to_sdfg(simplify=True), 'split')
+    assert default == split
+    assert default != readable_code(reassigned.to_sdfg(simplify=True), 'fused')
 
 
 def test_legacy_byte_identical_across_style():

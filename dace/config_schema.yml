@@ -816,16 +816,17 @@ required:
                                     first use as it is PROVABLY SOUND to move it.
 
                                     INTERACTION with ``scalar_init_style``, which is NOT orthogonal for
-                                    scalars and cannot be: ``fused`` (that key's default) makes a
-                                    scalar's declaration BE its first write, so the declaration is at the
-                                    write by construction and there is no separate line for ``eager`` to
-                                    hoist. ``decl_placement`` governs only the declarations that remain
-                                    separate -- loop counters, and the scalars ``fused`` cannot fold
-                                    (a braced first-use tasklet). For those, ``fused`` still emits the
-                                    ``T x;`` at first use rather than the scope top, since a candidate it
-                                    meant to fold is one it means to declare near its write. So at the
-                                    default settings a braced-first-use scalar is NOT declared at its
-                                    scope top; set ``scalar_init_style: split`` to get that.
+                                    scalars and cannot be: ``fused`` (NOT that key's default -- it
+                                    defaults to ``split``) makes a scalar's declaration BE its first
+                                    write, so the declaration is at the write by construction and there is
+                                    no separate line for ``eager`` to hoist. ``decl_placement`` governs
+                                    only the declarations that remain separate -- loop counters, and the
+                                    scalars ``fused`` cannot fold (a braced first-use tasklet). For those,
+                                    ``fused`` still emits the ``T x;`` at first use rather than the scope
+                                    top, since a candidate it meant to fold is one it means to declare
+                                    near its write. So under ``scalar_init_style: fused`` a
+                                    braced-first-use scalar is NOT declared at its scope top; the default
+                                    ``split`` declares every scalar there.
 
                                     Two constructs are covered, and each has its own soundness gate --
                                     anything that does not

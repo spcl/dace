@@ -6,11 +6,11 @@ The legacy generator declares an allocated array and then assigns the allocation
 statements landing in two streams::
 
     double *tmp;
-    tmp = new double DACE_ALIGN(64)[N];
+    tmp = new (std::align_val_t(64)) double[N];
 
 The readable generator fuses them into a single definition carrying a restrict qualifier::
 
-    double* __restrict__ tmp = new double DACE_ALIGN(64)[N];
+    double* __restrict__ tmp = new (std::align_val_t(64)) double[N];
 
 Fusing is only a textual merge of two writes, so it is sound exactly when both land in the SAME
 scope. DaCe deliberately separates them (a DECLARATION may be hoisted to an outer scope while the
@@ -20,10 +20,11 @@ dispatcher handed out two different streams (the Persistent / External lifetimes
 lives in the state struct). Those fallbacks are asserted here too -- a wrong fusion yields an
 undeclared identifier or a shadowed redeclaration, neither of which a numerical check would catch.
 
-A COMPILE-TIME-CONSTANT extent also stays split: the emitted element type carries
-``DACE_ALIGN(64)``, and with a constant bound a fused declaration names the fixed array type
-``double[1]``, which GCC rejects ("alignment of array elements is greater than element size") even
-though the identical ``new`` is legal as a bare assignment.
+A COMPILE-TIME-CONSTANT extent fuses like any other. It used to stay split: the alignment then sat
+on the ELEMENT TYPE (``new double DACE_ALIGN(64)[2]``), and in a declaration that names the fixed
+array type ``double[2]``, which GCC rejects ("alignment of array elements is greater than element
+size"). Aligned ``operator new[]`` moved the alignment into a placement argument, so no over-aligned
+element type is formed and the fused spelling is well-formed.
 
 ``__restrict__`` is dropped only for a ``may_alias`` descriptor, matching the condition
 ``Array.as_arg`` already uses for kernel arguments.
@@ -91,17 +92,23 @@ def may_alias_transient_sdfg(name):
 
 def const_init_heap_sdfg(name):
     """Single-state ``const_runtime`` CPU_Heap array (``MarkConstInit`` sets ``const_init``):
-    ``s = A[0] * 2`` written once, then read by ``B[i] = A[i] + s``.
+    ``s[0] = A[0] * 2`` written once, then read by ``B[i] = A[i] + s[0]``.
 
     ``s`` is a CPU_Heap Array, so neither ``_is_const_scalar`` (Scalar only) nor
     ``_is_const_len1_array`` (Register only) claims it: it reaches the heap allocation path while
     being const-initialized, which is exactly the case a naive pointee-``const`` would miscompile.
+
+    The extent is 2, not 1, on purpose: ``scalar_emission_type`` (default ``scalar`` since
+    ``c027cdf12``) runs ``ConvertLengthOneArraysToScalars`` ahead of the const machinery, so a
+    length-1 transient never reaches the allocator as an Array at all -- it becomes a by-value Scalar
+    and takes the ``const T x = expr;`` path instead. 2 is still a COMPILE-TIME-CONSTANT extent,
+    which is the other property these tests need.
     """
     N = dace.symbol('N')
     sdfg = dace.SDFG(name)
     sdfg.add_array('A', [N], dace.float64)
     sdfg.add_array('B', [N], dace.float64)
-    sdfg.add_transient('s', [1], dace.float64, storage=dace.StorageType.CPU_Heap)
+    sdfg.add_transient('s', [2], dace.float64, storage=dace.StorageType.CPU_Heap)
     st = sdfg.add_state('main')
     ra0 = st.add_access('A')
     ts = st.add_tasklet('setc', {'a'}, {'o'}, 'o = a * 2.0')
@@ -125,10 +132,10 @@ def code_for(build, name, implementation):
 
 
 #: The fused definition: ``<type>* __restrict__ <name> = new <type> DACE_ALIGN(64)[<count>];``
-FUSED = re.compile(r'double\*\s+__restrict__\s+tmp\s*=\s*new\s+double\s+DACE_ALIGN\(64\)\[')
+FUSED = re.compile(r'double\*\s+__restrict__\s+tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[')
 #: The legacy split pair.
 SPLIT_DECL = re.compile(r'double\s*\*\s*tmp\s*;')
-SPLIT_ALLOC = re.compile(r'(?<![\w>])tmp\s*=\s*new\s+double\s+DACE_ALIGN\(64\)\[')
+SPLIT_ALLOC = re.compile(r'(?<![\w>])tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[')
 
 
 def test_fused_definition_with_restrict(require_experimental):
@@ -154,7 +161,7 @@ def test_persistent_lifetime_stays_split(require_experimental):
     declaration and the allocation two different streams, so it must NOT be fused into a local
     definition (which would shadow the member and leave it unallocated)."""
     code = code_for(persistent_transient_sdfg, 'fused_persistent', EXPERIMENTAL)
-    assert re.search(r'__state->[\w]*tmp\s*=\s*new\s+double\s+DACE_ALIGN\(64\)\[', code), \
+    assert re.search(r'__state->[\w]*tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[', code), \
         f'expected the state-struct member to keep the split assignment:\n{code}'
     assert not FUSED.search(code), f'a state-struct member must not be fused into a local definition:\n{code}'
 
@@ -163,26 +170,25 @@ def test_may_alias_drops_restrict(require_experimental):
     """``may_alias`` marks data deliberately reachable through another pointer: still fused, but the
     no-alias promise must not be made (mirrors ``Array.as_arg``)."""
     code = code_for(may_alias_transient_sdfg, 'fused_may_alias', EXPERIMENTAL)
-    assert re.search(r'double\*\s+tmp\s*=\s*new\s+double\s+DACE_ALIGN\(64\)\[', code), \
+    assert re.search(r'double\*\s+tmp\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[', code), \
         f'expected a fused definition:\n{code}'
     assert '__restrict__ tmp' not in code, f'restrict must be dropped for a may_alias array:\n{code}'
 
 
-def test_constant_extent_stays_split(require_experimental):
-    """A COMPILE-TIME-CONSTANT extent keeps the split form.
+def test_constant_extent_is_fused(require_experimental):
+    """A COMPILE-TIME-CONSTANT extent fuses like a symbolic one.
 
-    ``heap_alloc_stmt`` emits the element type carrying ``DACE_ALIGN(64)``, which makes ``new`` call
-    the over-aligned ``operator new[]``. With a constant bound, a fused DECLARATION names the fixed
-    array type ``double[1]`` and GCC rejects it ("alignment of array elements is greater than element
-    size"); the same ``new`` is legal as a bare assignment. So this must stay split rather than
-    de-align the allocation. ``const_init_heap_sdfg`` allocates ``s`` with a constant extent of 1.
+    It used to stay split: the alignment then sat on the element type (``new double DACE_ALIGN(64)
+    [2]``), and in a DECLARATION that names the fixed array type ``double[2]``, whose 8-byte elements
+    cannot each be 64-byte aligned -- GCC rejects it, while the identical ``new`` is legal as a bare
+    assignment. Aligned ``operator new[]`` moved the alignment into a placement argument, so no
+    over-aligned element type is formed and the exclusion is gone with its cause.
+    ``const_init_heap_sdfg`` allocates ``s`` with a constant extent of 2.
     """
     code = code_for(const_init_heap_sdfg, 'fused_const_extent', EXPERIMENTAL)
-    assert re.search(r'double\s*\*\s*s\s*;', code), f'expected the split declaration for a constant extent:\n{code}'
-    assert not re.search(r'double\*\s+__restrict__\s+s\s*=\s*new', code), \
-        f'a constant-extent heap array must not be fused (GCC rejects it):\n{code}'
-    # The alignment attribute must survive on the split path.
-    assert re.search(r's\s*=\s*new\s+double\s+DACE_ALIGN\(64\)\[', code), f'DACE_ALIGN was dropped:\n{code}'
+    assert re.search(r'double\*\s+__restrict__\s+s\s*=\s*new\s+\(std::align_val_t\(64\)\)\s+double\[', code), \
+        f'expected a fused definition for a constant extent:\n{code}'
+    assert not re.search(r'double\s*\*\s*s\s*;', code), f'the declaration was not fused away:\n{code}'
 
 
 def test_const_init_data_is_not_pointee_const(require_experimental):
