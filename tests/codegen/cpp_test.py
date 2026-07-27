@@ -4,7 +4,7 @@ from functools import reduce
 from operator import mul
 import warnings
 
-from dace import SDFG, Memlet, dtypes, symbol
+from dace import SDFG, Memlet, config, dtypes, symbol
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
 from dace.codegen.targets.cpu import use_aligned_operator_new
@@ -221,9 +221,15 @@ def test_pointer_argument_keeps_a_decimal_literal():
     state.add_nedge(entry, nsdfg_node, Memlet())
     state.add_memlet_path(nsdfg_node, exit, state.add_write('A'), src_conn='a', memlet=Memlet('A[0.5*j]'))
 
-    code = codegen.generate_code(sdfg)[0].clean_code
+    # Only the legacy generator keeps the nested SDFG as a call, so only there does a pointer
+    # argument carry the index. experimental_readable inlines it and indexes through A_idx.
+    with config.set_temporary('compiler', 'cpu', 'implementation', value='legacy'):
+        code = codegen.generate_code(sdfg)[0].clean_code
     assert '&A[(0.5 * j)]' in code
     assert '0->5' not in code
+
+    # The rewrite must leave the literal alone on the default path too, wherever it lands.
+    assert '0->5' not in codegen.generate_code(sdfg)[0].clean_code
 
 
 if __name__ == '__main__':
