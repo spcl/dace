@@ -534,8 +534,9 @@ def result_type_of(lhs, *rhs):
 
     # Extract the type if symbolic or data
     from dace.data import Data
-    lhs = lhs.dtype if (type(lhs).__name__ == 'symbol' or isinstance(lhs, Data)) else lhs
-    rhs = rhs.dtype if (type(rhs).__name__ == 'symbol' or isinstance(rhs, Data)) else rhs
+    from dace.symbolic import is_symbol_leaf
+    lhs = lhs.dtype if (is_symbol_leaf(lhs) or isinstance(lhs, Data)) else lhs
+    rhs = rhs.dtype if (is_symbol_leaf(rhs) or isinstance(rhs, Data)) else rhs
 
     if lhs == rhs:
         return lhs  # Types are the same, return either

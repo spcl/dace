@@ -263,7 +263,9 @@ def test_boolean_preserved_and_distinct_from_int():
     assert _roundtrip('False') == 'False'
     assert _roundtrip('1') == '1'
     assert _roundtrip('0') == '0'
-    assert isinstance(pystr_to_symbolic('True'), sympy.logic.boolalg.BooleanTrue)
+    parsed = pystr_to_symbolic('True')
+    assert isinstance(parsed, symbolic.SymbolicBoolean) and bool(parsed) is True
+    assert parsed != pystr_to_symbolic('1')
     assert _roundtrip('True', cpp_mode=True) == 'true'
 
 
@@ -354,7 +356,7 @@ def test_symbolic_expression_serialization_preserves_integerness():
     original = sdfg.arrays["A"].shape[0]
     restored = reloaded.arrays["A"].shape[0]
 
-    assert sympy.srepr(original) == sympy.srepr(restored)
+    assert symbolic.structural_repr(original) == symbolic.structural_repr(restored)
     assert original == restored
     assert original.is_integer == restored.is_integer
 

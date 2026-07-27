@@ -94,9 +94,13 @@ _IDXALG_NAMES = frozenset({
     "Atom",
     "AtomicExpr",
     "Number",
-    "Boolean",
-    "Relational",
 })
+
+# Heads sympy keeps in a submodule, not at top level. Real globals: the forwarding `__getattr__`
+# raises `AttributeError` on them (an `ImportError` at a `from` site -- the sympy backend had no
+# `Boolean` at all), and no consumer should need to know which submodule hides a head.
+Boolean = backend.logic.boolalg.Boolean
+Relational = backend.core.relational.Relational
 
 if _BACKEND_NAME == "idxalg":
     # idxalg is an OPTIONAL dependency: the default backend is sympy, so this import is reached
@@ -117,6 +121,10 @@ if _BACKEND_NAME == "idxalg":
     # Bind real sympy so idxalg isinstance heads also accept genuine sympy objects during the
     # hybrid period, and rare heads fall back to real sympy constructors.
     _idx.bind_sympy(backend)
+
+    # The submodule-resolved heads above, now this backend's own.
+    Boolean = _idx.Boolean
+    Relational = _idx.Relational
 
     def _to_idx(obj):
         """Structurally convert a sympy expression to an idxalg one (the hybrid boundary: while
@@ -390,6 +398,10 @@ if _BACKEND_NAME == "idxalg":
         except ValueError:
             return _idx.Expr(_idx._CTX.symbol_lazy(name))
 
+    def is_native_symbol(obj) -> bool:
+        """A symbol THIS backend built -- the one leaf carrying an authoritative dtype."""
+        return isinstance(obj, _idx.Expr) and _idx._CTX.kind(obj._e) == "Symbol"
+
     def _from_idx(e):
         """Convert an idxalg expression back to sympy (the `_sympy_` protocol): a still-sympy code
         path can then `sympify` an idxalg value handed to it. Symbols are rebuilt as DaCe
@@ -518,7 +530,9 @@ if _BACKEND_NAME == "idxalg":
         that aliasing. The construction cost is sympy's to fix, or Phase C's to stop paying.
         """
         from dace import symbolic as dsym
-        return dsym.symbol(name, dtype=_dtype_tc(dstr), **{k: True for k in flags})
+        # Not the `symbol` FACTORY: here it builds one of ours, so the converter would answer a
+        # sympy request with an idxalg value and recurse through `_sympy_()` forever.
+        return dsym.sympy_symbol(name, dtype=_dtype_tc(dstr), **{k: True for k in flags})
 
     def _from_idx_bool(name: str, e):
         """`And`/`Or`/`Not` rendered the way DaCe spells them.
@@ -648,16 +662,23 @@ if _BACKEND_NAME == "idxalg":
     # a `getattr` probe. `None` under the sympy backend, where no such value can exist.
     NATIVE_EXPR = _idx.Expr
 
-    # Kinds that can never carry a DaCe head class. Stated as a DENY list, not an allow list: a
-    # missing allow-list entry would silently answer "not an instance" -- the exact wrong-branch
-    # failure this protocol exists to remove -- whereas a missing deny entry only costs a lookup.
-    _NO_DACE_HEAD = frozenset(
-        {"Symbol", "Integer", "Float", "Number", "Boolean", "Undef", "Add", "Mul", "Min", "Max", "Cmp"})
+    # Kinds that can never carry a DaCe head class. A DENY list, not an allow list: a missing
+    # allow-list entry would silently answer "not an instance" -- the wrong-branch failure this
+    # protocol exists to remove -- whereas a missing deny entry only costs a conversion.
+    # Keyed on `kind` strings, so head NAMES ("Number", "Boolean", "Cmp") never matched and are gone;
+    # their kinds (Complex/Bool/Eq/...) are deliberately left out, since converting them yields the
+    # same head name sympy would report and keeps the two backends' answers identical.
+    _NO_DACE_HEAD = frozenset({"Symbol", "Integer", "Float", "Undef", "Add", "Mul", "Min", "Max"})
 
     _DACE_HEAD_MEMO: dict = {}
 
     def dace_head_name(obj):
-        """The name of the DaCe head class this backend's value would convert to, else ``None``.
+        """Name of :func:`dace_head_class`, else ``None``."""
+        cls = dace_head_class(obj)
+        return None if cls is None else cls.__name__
+
+    def dace_head_class(obj):
+        """The DaCe head class this backend's value would convert to, else ``None``.
 
         Some heads this backend names as DaCe does (an opaque call; the operator spellings, which
         carry their ``__`` prefix). Others it holds STRUCTURALLY -- ``int_floor(a, b)`` is a division
@@ -692,9 +713,11 @@ if _BACKEND_NAME == "idxalg":
         if key in _DACE_HEAD_MEMO:
             return _DACE_HEAD_MEMO[key]
         converted = _from_idx(obj)
-        name = None if converted is None else str(converted.func)
-        _DACE_HEAD_MEMO[key] = name
-        return name
+        # `type()`, not `.func`: only a Function subclass stringifies to its own name; a singleton head
+        # (`true`, `Zero`) gives `<class '...'>`, so `Boolean` leaked a class repr as a head name.
+        head = None if converted is None else type(converted)
+        _DACE_HEAD_MEMO[key] = head
+        return head
 
     def __getattr__(name: str):
         # PEP 562: only invoked for names not bound as module globals.
@@ -713,6 +736,11 @@ else:
     to_sympy = None
     NATIVE_EXPR = None
     dace_head_name = None
+    dace_head_class = None
+
+    def is_native_symbol(_obj) -> bool:
+        """Callable rather than `None` so call sites need no capability guard."""
+        return False
 
     def __getattr__(name: str):
         # PEP 562: forwards every symbolic name to sympy with no overhead on normal imports.

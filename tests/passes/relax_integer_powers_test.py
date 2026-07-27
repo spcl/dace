@@ -5,7 +5,7 @@ import pytest
 import sympy
 
 import dace
-from dace import data, symbolic
+from dace import data, symbolic, symbolic_engine
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.symbolic import ipow, pystr_to_symbolic, symstr
@@ -16,7 +16,7 @@ def _ipow_count(sdfg: dace.SDFG) -> int:
     """Count ``ipow`` occurrences across descriptors, map ranges and memlet subsets."""
 
     def atoms(expr):
-        return len(expr.atoms(ipow)) if isinstance(expr, sympy.Basic) else 0
+        return len(expr.atoms(ipow)) if isinstance(expr, symbolic.SymbolicBasic) else 0
 
     total = 0
     for sd in sdfg.all_sdfgs_recursive():
@@ -35,7 +35,7 @@ def _ipow_count(sdfg: dace.SDFG) -> int:
 
 def _prover() -> RelaxIntegerPowers:
     p = RelaxIntegerPowers()
-    p._pos = p._nonneg = p._int = frozenset()
+    p._facts = {}  # no enclosing scope: the expression's own leaves carry every fact
     return p
 
 
@@ -49,14 +49,14 @@ def test_ipow_roundtrips_through_serialization():
     e = R * ipow(R, K - i - 1) + ipow(R, K - i - 1)
     back = pystr_to_symbolic(str(e))
     assert symstr(e, cpp_mode=True) == symstr(back, cpp_mode=True)
-    assert any(type(a) is ipow for a in sympy.preorder_traversal(back))
+    assert any(symbolic.head_name(a) == 'ipow' for a in symbolic_engine.preorder_traversal(back))
 
 
 def test_ipow_survives_property_json_roundtrip_and_folds():
     P = symbolic.symbol('P')
     e = 64 * ipow(P, 2)
     back = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(e))
-    assert any(type(a) is ipow for a in sympy.preorder_traversal(back))
+    assert any(symbolic.head_name(a) == 'ipow' for a in symbolic_engine.preorder_traversal(back))
     assert int(symbolic.evaluate(back, {P: 4})) == 64 * 16
 
 
