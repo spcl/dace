@@ -540,16 +540,26 @@ if _BACKEND_NAME == "idxalg":
             raise ValueError(f"DaCe operator class {name!r} is not bound in the parser table")
         return cls(*args)
 
+    @functools.lru_cache(maxsize=None, typed=True)
     def _sympy_function_class(name: str):
-        """The real sympy ``Function`` subclass DaCe's parser binds to ``name``, else ``None``."""
+        """The real sympy ``Function`` subclass DaCe's parser binds to ``name``, else ``None``.
+
+        Falls back to sympy's own top-level namespace, which is exactly what `sympify` resolves
+        against under the incumbent backend -- so `sin`/`sqrt`/`gamma` come back as themselves and
+        not as applied undefs. A second hand-written name list here would drift silently.
+        """
         from dace.symbolic import _PYSTR2SYM_locals
         bound = _PYSTR2SYM_locals.get(name)
-        # The table also holds plain Symbols (sympy's ``_clash`` names); only a class is applicable.
-        if isinstance(bound, type) and issubclass(bound, backend.Function):
-            return bound
-        return None
+        if not isinstance(bound, type):
+            # The table also holds plain Symbols (sympy's ``_clash`` names) and `None` sentinels.
+            bound = vars(backend).get(name)
+        return bound if isinstance(bound, type) and issubclass(bound, backend.Function) else None
 
     _idx.set_sympy_converter(_from_idx)
+    # `Expr.dtype` must read as DaCe's own symbol dtype does -- a `typeclass`, not its name. DaCe
+    # feeds it straight into type-keyed tables (`SDFG.add_symbol` -> `dtype_to_typeclass`), where the
+    # bare string raised `KeyError: 'int64'`.
+    _idx.set_dtype_mapper(_dtype_tc)
 
     # Widths that need no `TypedConstant` wrapper: idxalg's own fallbacks plus DaCe's default symbol
     # width, since a constant at any of these carries no information a bare sympy number loses.
