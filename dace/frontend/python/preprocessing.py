@@ -1320,14 +1320,14 @@ class CallTreeResolver(ast.NodeVisitor):
         kwargs = [kwarg.arg for kwarg in node.keywords]
         result = set()
 
+        # "objname" holds the name of the "self" argument, if any
         if not isinstance(function, DaceProgram):
             # Make set of parameters from __sdfg_signature__
             parameters = [(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in function.__sdfg_signature__()[0]]
+            objname = False
         else:
             parameters = [(aname, arg.kind) for aname, arg in function.signature.parameters.items()]
-
-        # Handle "self" argument
-        objname = getattr(function, 'objname', False)
+            objname = function.objname
 
         nargs = len(posargs)
         arg_ind = 0

@@ -41,6 +41,5 @@ class MPINode(nodes.LibraryNode):
     Abstract class representing an MPI library node.
     """
 
-    @property
-    def has_side_effects(self) -> bool:
+    def has_side_effects(self, sdfg) -> bool:
         return True

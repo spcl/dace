@@ -48,8 +48,26 @@ def test_numpy_integral_shape_program():
     np.testing.assert_equal(A, 2)
 
 
+def test_strides_alignment_symbolic_uses_int_ceil():
+    """Aligned padding of a SYMBOLIC dimension must use int_ceil, never `//`.
+
+    `(N + a - 1) // a` builds sympy `floor(...)`; sym2cpp prints the argument WITHOUT the floor, so
+    each term truncates on its own and the padded size collapses (N=1, a=8 emits 0 instead of 8).
+    """
+    from dace.codegen.targets.cpp import sym2cpp
+    N = dace.symbol('N')
+    desc = dace.data.Array(dace.float32, [N])
+    _, total_size = desc.strides_from_layout(0, alignment=8)
+    assert 'floor' not in str(total_size).replace('int_ceil', ''), total_size
+    assert 'int_ceil' in sym2cpp(total_size), sym2cpp(total_size)
+    # alignment=1 is no padding: int_ceil(N, 1) must fold back to N, or every unaligned
+    # symbolic descriptor carries an int_ceil.
+    assert dace.data.Array(dace.float32, [N, N]).strides_from_layout(0, 1)[1] == N * N
+
+
 if __name__ == '__main__':
     test_strides()
     test_strides_alignment()
     test_numpy_integral_properties()
     test_numpy_integral_shape_program()
+    test_strides_alignment_symbolic_uses_int_ceil()

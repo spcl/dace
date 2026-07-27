@@ -430,8 +430,7 @@ def ndcopy_to_strided_copy(
     """
 
     # Cannot degenerate tiled copies
-    # In the case where subset is of type Indices, there are no tile_sizes
-    if hasattr(subset, 'tile_sizes') and any(ts != 1 for ts in subset.tile_sizes):
+    if isinstance(subset, subsets.Range) and any(ts != 1 for ts in subset.tile_sizes):
         return None
 
     # If the copy is contiguous, the difference between the first and last
@@ -1304,7 +1303,7 @@ class StructInitializer(ExtNodeTransformer):
 
         # Find all struct types in SDFG
         for array in sdfg.arrays.values():
-            if array is None or not hasattr(array, "dtype"):
+            if array is None:
                 continue
             if isinstance(array.dtype, dace.dtypes.struct):
                 self._structs[array.dtype.name] = array.dtype
