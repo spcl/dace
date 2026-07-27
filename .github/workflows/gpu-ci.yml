@@ -35,6 +35,8 @@ jobs:
         python -m pip install --upgrade pip
         pip install flake8 pytest-xdist coverage
         pip install mpi4py
+        # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
+        MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
         pip install cupy
         pip install cutensor-cu12
         pip uninstall -y dace
