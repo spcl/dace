@@ -101,6 +101,8 @@ class SplitMultiOutputTasklets(ppl.Pass):
             return False
 
         in_edges = {e.dst_conn: e for e in state.in_edges(tasklet) if e.dst_conn is not None}
+        # Ordering edges carry no connector, so they are absent from ``in_edges`` and would be lost.
+        order_srcs = [e.src for e in state.in_edges(tasklet) if e.data.is_empty()]
         out_edges = {e.src_conn: e for e in state.out_edges(tasklet) if e.src_conn is not None}
         if any(o not in out_edges for o in out_conns):
             return False
@@ -115,11 +117,18 @@ class SplitMultiOutputTasklets(ppl.Pass):
                 used_in |= (stmts[i][2] & in_conns)
             plans.append((o, sorted(sliced), used_in))
 
+        scope_entry = state.entry_node(tasklet)
         # Build the per-output tasklets and rewire edges (after slicing succeeds for
         # every output, so a partial failure never leaves a half-split state).
         for o, sliced, used_in in plans:
             code = "\n".join(f"{stmts[i][0]} = {stmts[i][1]}" for i in sliced)
             new_t = state.add_tasklet(f"{tasklet.label}_out_{o}", set(used_in), {o}, code)
+            if not used_in:
+                # Reads nothing, so it would become a second in-degree-0 BFS root inside the scope
+                # and scope_dict() would visit the map exit twice. Re-anchor it where the original was.
+                anchors = order_srcs or ([scope_entry] if scope_entry is not None else [])
+                for anchor in anchors:
+                    state.add_nedge(anchor, new_t, dace.Memlet())
             for ic in used_in:
                 e = in_edges[ic]
                 state.add_edge(e.src, e.src_conn, new_t, ic, copy.deepcopy(e.data))
