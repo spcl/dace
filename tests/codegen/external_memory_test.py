@@ -23,7 +23,9 @@ def test_external_mem(symbolic):
 
     # Test that there is no allocation
     code = sdfg.generate_code()[0].clean_code
+    # No heap allocation in either form (plain or C++ >= 17 aligned).
     assert 'new double' not in code
+    assert 'new (std::align_val_t(64)) double' not in code
     assert 'delete[]' not in code
     assert 'set_external_memory' in code
 
