@@ -181,3 +181,23 @@ def test_distributed_and_local_builds_interleave(tmp_path, private_cache):
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+def test_cache_key_separates_hosts(monkeypatch):
+    """The caches above are reachable from more than one machine -- ``DACE_BUILD_CACHE_DIR`` on shared
+    scratch, or the ``default_build_folder`` fallback on a cluster file system. The default cpu args
+    carry ``-march=native``, which the key can only see as a literal string, so identical inputs on
+    two different CPUs would otherwise collide and hand one host artifacts built for the other's
+    instruction set. The host identity in the key is what turns that into a miss."""
+    monkeypatch.setattr(compiler, 'host_isa_id', lambda: 'cpu-a')
+    on_a = compiler.cache_key('same', 'parts')
+    monkeypatch.setattr(compiler, 'host_isa_id', lambda: 'cpu-b')
+    assert compiler.cache_key('same', 'parts') != on_a
+
+
+def test_host_isa_id_is_stable_and_nonempty():
+    """A blank or drifting identity silently restores the collision above -- on every host at once,
+    since they would then all agree."""
+    first = compiler.host_isa_id()
+    assert first, 'no host identity derived; every CPU would share one cache key'
+    assert compiler.host_isa_id() == first, 'host identity is not stable within a process'

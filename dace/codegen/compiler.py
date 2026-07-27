@@ -10,6 +10,7 @@ import hashlib
 import io
 import os
 import pathlib
+import platform
 import re
 import shutil
 import shlex
@@ -17,6 +18,7 @@ import subprocess
 import tempfile
 from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
+from functools import lru_cache
 
 import dace
 from dace.config import Config
@@ -222,8 +224,30 @@ def build_type_flags() -> list:
     return list(table.get(Config.get('compiler', 'build_type'), []))
 
 
+@lru_cache(maxsize=1, typed=True)
+def host_isa_id() -> str:
+    """Identity of the instruction set ``-march=native`` resolves to on this host.
+
+    The CPU flag list is what the compiler's ``native`` detection reads, so hashing it separates
+    hosts that would be given different instructions. ``model name`` comes along for the tuning
+    half. Falls back to the platform triple where there is no ``/proc`` (macOS, Windows), which is
+    coarser but never wrong in the unsafe direction -- a coarse key over-separates, it cannot merge
+    two hosts that differ.
+    """
+    try:
+        with open('/proc/cpuinfo') as fp:  # 'Features' is the aarch64 spelling of 'flags'
+            fields = [ln for ln in fp if ln.startswith(('model name', 'flags', 'Features'))][:2]
+    except OSError:
+        fields = []
+    identity = ''.join(fields) if fields else f'{platform.machine()}|{platform.processor()}'
+    return hashlib.sha256(identity.encode()).hexdigest()[:12]
+
+
 def cache_key(*parts: object) -> str:
-    return hashlib.sha256('\0'.join(str(p) for p in parts).encode()).hexdigest()[:16]
+    # Everything keyed here was produced FOR this host: the default cpu args carry -march=native,
+    # and a cache root on shared storage (DACE_BUILD_CACHE_DIR, or the default_build_folder
+    # fallback) is reachable from nodes whose CPUs differ. Those must miss, not reuse.
+    return hashlib.sha256('\0'.join(str(p) for p in (*parts, host_isa_id())).encode()).hexdigest()[:16]
 
 
 def newest_mtime(path: str) -> float:
