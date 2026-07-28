@@ -50,14 +50,18 @@ GLOBAL_RANDOM_SEED = 0
 def xdist_build_folder():
     """Give each xdist worker its own build directory, so same-named SDFGs do not race.
 
-    Sets the CONFIG, not ``DACE_default_build_folder``: ``Config.get`` prefers the env var and
-    would defeat every ``set_temporary('default_build_folder')``.
+    Prefers the CONFIG: ``Config.get`` outranks it with the env var, which would defeat every
+    ``set_temporary('default_build_folder')``. An already-exported env var is moved too.
     """
     worker = os.environ.get('PYTEST_XDIST_WORKER')
     if not worker:
         return
     from dace.config import Config
-    Config.set('default_build_folder', value=os.path.join(Config.get('default_build_folder'), worker))
+    target = os.path.join(Config.get('default_build_folder'), worker)
+    # An exported env var outranks the config, so it has to move too or isolation is silently lost.
+    if 'DACE_default_build_folder' in os.environ:
+        os.environ['DACE_default_build_folder'] = target
+    Config.set('default_build_folder', value=target)
 
 
 @pytest.fixture(autouse=True)
