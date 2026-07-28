@@ -239,16 +239,26 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
     strict_scalar = Config.get_bool('compiler', 'nanobind_strict_scalar_cast')
 
     for name, desc in arglist.items():
-        # A pyobject's ctype is not a C++ type, so refuse here instead of
-        # emitting code that fails to compile. Returns are permanently out
-        # (arrays only); arguments are callbacks, deferred to part 2 of the port.
+        # A pyobject is an opaque PyObject* (`typedef void *pyobject` in
+        # pyinterop.h). Returns are permanently out (arrays only). A SCALAR
+        # pyobject argument passes through: the nb::object parameter holds a
+        # reference for the duration of the call and the raw pointer is
+        # forwarded - reading `.ptr()` needs no GIL, and the program must not
+        # retain the pointer beyond the call (ctypes-interface parity, which
+        # passes a borrowed ctypes.py_object the same way). Arrays of
+        # pyobjects are refused.
         if isinstance(desc.dtype, dtypes.pyobject):
             if name.startswith('__return'):
                 raise NotImplementedError(f'Nanobind interface: pyobject return value "{name}" is not supported; '
                                           f'the nanobind interface returns arrays only.')
-            raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is not supported yet '
-                                      f'(callbacks are deferred to part 2 of the port); '
-                                      f'use the ctypes interface (compiler.interface=ctypes).')
+            if not isinstance(desc, dt.Scalar):
+                raise NotImplementedError(f'Nanobind interface: pyobject argument "{name}" is only supported '
+                                          f'as a scalar, not as a {type(desc).__name__}; '
+                                          f'use the ctypes interface (compiler.interface=ctypes).')
+            params_by_name[name] = f'nb::object {name}'
+            call_args.append(f'reinterpret_cast<{desc.dtype.ctype}>({name}.ptr())')
+            nb_args_by_name[name] = f'nb::arg("{name}")'
+            continue
 
         # A callback's ctype is not a C++ type, so it cannot go through the
         # generic branches (hence the early `continue`). The wrapper passes the

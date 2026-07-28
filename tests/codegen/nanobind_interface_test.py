@@ -438,12 +438,11 @@ def test_nanobind_interface_get_exported_function():
 
 
 def test_nanobind_interface_pyobject_rejected():
-    """pyobject returns are dropped (arrays only); pyobject arguments are deferred to part 2.
+    """pyobject returns are dropped (arrays only); pyobject ARRAY arguments are
+    not supported (only scalars are).
 
     Both are rejected at codegen (the generator must refuse instead of emitting
-    C++ that does not compile), but with distinct messages: a pyobject return is
-    permanently unsupported (the nanobind interface returns arrays only), while a
-    pyobject argument (callbacks) is deferred to part 2 of the port.
+    C++ that does not compile), with distinct messages.
     """
     import pytest
     from dace import dtypes
@@ -455,11 +454,56 @@ def test_nanobind_interface_pyobject_rejected():
     with pytest.raises(NotImplementedError, match='arrays only'):
         generate_bindings_code(ret_sdfg)
 
-    # pyobject argument: deferred to part 2 (callbacks).
-    arg_sdfg = dace.SDFG('pyobject_arg_reject_probe')
-    arg_sdfg.add_scalar('cb', dtypes.pyobject())
-    with pytest.raises(NotImplementedError, match='part 2'):
+    # pyobject array argument: only scalars pass through.
+    arg_sdfg = dace.SDFG('pyobject_arr_reject_probe')
+    arg_sdfg.add_array('objs', [4], dtypes.pyobject())
+    with pytest.raises(NotImplementedError, match='scalar'):
         generate_bindings_code(arg_sdfg)
+
+
+def test_nanobind_interface_pyobject_scalar_binding():
+    """A pyobject scalar argument binds as nb::object and forwards the raw
+    PyObject* (reinterpret_cast to the opaque `pyobject` typedef)."""
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('pyobject_scalar_bind_probe')
+    sdfg.add_scalar('obj', dtypes.pyobject())
+    sdfg.add_array('A', [4], dace.float64)
+
+    code = generate_bindings_code(sdfg)
+    assert 'nb::object obj' in code
+    assert 'reinterpret_cast<pyobject>(obj.ptr())' in code
+    assert 'nb::arg("obj")' in code
+
+
+def test_nanobind_interface_pyobject_scalar_arg_e2e():
+    """A pyobject scalar argument passes through as an opaque PyObject* and
+    arrives at a callback as the very same object (identity preserved)."""
+    from dace import dtypes
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = dace.SDFG('pyobject_passthrough')
+        sdfg.add_scalar('obj', dtypes.pyobject())
+        sdfg.add_array('A', [4], dace.float64)
+        sdfg.add_symbol('consume', dace.callback(None, dtypes.pyobject()))
+        state = sdfg.add_state()
+        t = state.add_tasklet('t', {'o_in'}, {'a_out'}, 'consume(o_in)\na_out = 1.0')
+        state.add_edge(state.add_read('obj'), None, t, 'o_in', dace.Memlet('obj[0]'))
+        state.add_edge(t, 'a_out', state.add_write('A'), None, dace.Memlet('A[0]'))
+
+        csdfg = sdfg.compile()
+
+        class Payload:
+            pass
+
+        payload = Payload()
+        received = []
+        a = np.zeros(4)
+        csdfg(obj=payload, A=a, consume=lambda x: received.append(x))
+        assert a[0] == 1.0
+        assert len(received) == 1
+        assert received[0] is payload
 
 
 def test_nanobind_interface_callback_binding():
