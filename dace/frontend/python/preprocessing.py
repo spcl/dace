@@ -1405,15 +1405,15 @@ class LoopUnroller(ast.NodeTransformer):
         # Find out if unrolling should be done implicitly
         implicit = True
 
-        # Special case for map with @ operator
-        if isinstance(niter, ast.BinOp) and isinstance(niter.op, ast.MatMult):
-            try:
-                geniter = astutils.evalnode(niter.left, self.globals)
-                if isinstance(geniter, MapGenerator):
-                    niter = niter.left
-            except SyntaxError:
-                pass
-        # End of special case
+        # An operator applied to an iteration construct (``dace.map[0:N] @
+        # ScheduleType.Sequential``) evaluates to the construct itself, so the
+        # loop is as explicit as the unannotated form. Unwrap to the construct's
+        # own expression, which the generator check below recognizes.
+        from dace.frontend.python import iterators
+        while isinstance(niter, (ast.BinOp, ast.UnaryOp)):
+            if iterators.iteration_object(niter, self.globals) is None:
+                break
+            niter = niter.left if isinstance(niter, ast.BinOp) else niter.operand
 
         # Anything not a call is implicitly allowed
         if isinstance(niter, (ast.Call, ast.Subscript)):
@@ -1561,12 +1561,13 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
         return self._normalize_generic_iteration(node)
 
     def _is_structured_iterator(self, iterator: ast.AST) -> bool:
-        schedule_target = iterator.left if isinstance(iterator, ast.BinOp) and isinstance(iterator.op,
-                                                                                          ast.MatMult) else iterator
-        if isinstance(schedule_target, ast.Call):
-            return astutils.rname(schedule_target.func) in {'range', 'prange', 'parrange'}
-        if isinstance(schedule_target, ast.Subscript):
-            return astutils.rname(schedule_target.value) == 'dace.map'
+        from dace.frontend.python import iterators
+        # A DaCe iteration construct, however it is spelled and whatever
+        # operators are written on it (``dace.map[0:N] @ ScheduleType``).
+        if iterators.iteration_object(iterator, self.globals) is not None:
+            return True
+        if isinstance(iterator, ast.Call):
+            return astutils.rname(iterator.func) in {'range', 'prange', 'parrange'}
         return False
 
     def _normalize_indexed_iteration(self, node: ast.For) -> Optional[ast.For]:

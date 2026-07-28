@@ -16,7 +16,9 @@ Canonical statement grammar::
           | If(atomexpr, [stmt], [stmt])
           | While(atomexpr, [stmt])      # test is atomic (complex tests are pre-hoisted)
           | For(Name, range(atom, atom, atom), [stmt])
-          | For([Name...], dace.map[...] [@ atom], [stmt])   # optional schedule-type annotation
+          | For([Name...], <dace.map expression>, [stmt])    # any expression evaluating to a
+                                                             # map generator, e.g.
+                                                             # dace.map[...] @ ScheduleType
           | Return(atom | Tuple[atom] | None)
           | Break | Continue | Pass
           | ExplicitTasklet              # explicit-dataflow tasklet (opaque body)
@@ -418,52 +420,22 @@ def is_assign_target(node: ast.AST) -> bool:
 
 def is_dace_map_iterator(node: ast.AST, global_vars: Optional[Dict[str, Any]] = None) -> bool:
     """
-    Check whether a for-loop iterator is a ``dace.map[...]`` subscript.
+    Check whether a for-loop iterator denotes a ``dace.map`` iteration.
 
-    A schedule annotation (``dace.map[...] @ ScheduleType``) is not part of the
-    iterator here: ``NormalizeLoops`` moves it onto the ``For`` node, so the
-    canonical iterator has exactly one shape.
+    The check evaluates the header rather than matching its syntax (see
+    :mod:`~dace.frontend.python.iterators`), so every spelling that
+    produces the same generator object is one canonical form here:
+    ``dace.map[...]``, an aliased import (``dc.map[...]``, ``from dace import
+    map``), and any operator the generator defines
+    (``dace.map[...] @ ScheduleType.Sequential``).
 
-    :param global_vars: When given, the subscript's root is additionally
-        resolved through it (mirroring the alias resolution
-        :func:`~dace.frontend.python.nextgen.canonical.passes._refers_to`
-        already performs for ``dace.tasklet``/``dace.map`` decorators), so
-        module aliases (``import dace as dc`` -> ``dc.map[...]``) are
-        recognized. Without it, only the literal ``dace.map``/``map``
-        spellings are recognized.
+    :param global_vars: The program's global namespace, used to resolve the
+        header's names. Without it, only headers rooted in the ``dace`` module
+        itself resolve.
     """
-    if not isinstance(node, ast.Subscript):
-        return False
-    try:
-        from dace.frontend.python.astutils import rname
-        if rname(node.value) in ('dace.map', 'map'):
-            return True
-    except (AttributeError, TypeError):
-        pass
-    return global_vars is not None and _resolves_to_dace_map(node.value, global_vars)
-
-
-def _resolves_to_dace_map(node: ast.expr, global_vars: Dict[str, Any]) -> bool:
-    """
-    Resolve a candidate ``dace.map`` subscript root through import aliases.
-
-    Duplicates (rather than imports) the relevant part of
-    :func:`~dace.frontend.python.nextgen.canonical.passes._refers_to`'s
-    alias-resolution logic, specialized to ``dace.map``: importing that
-    function here would create a ``cpa`` <-> ``passes`` import cycle, since
-    ``passes.py`` already imports this module.
-    """
-    import dace  # Deferred to avoid an import cycle during package initialization
-    if isinstance(node, ast.Name):
-        return global_vars.get(node.id) is dace.map
-    if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.attr == 'map':
-        root = global_vars.get(node.value.id)
-        if root is None:
-            # Preprocessing rewrites aliased module imports to the real module
-            # name, which may be absent from the caller's globals.
-            return node.value.id == 'dace'
-        return getattr(root, 'map', None) is dace.map
-    return False
+    # Deferred to avoid an import cycle during package initialization
+    from dace.frontend.python import interface, iterators
+    return isinstance(iterators.iteration_object(node, global_vars), interface.MapGenerator)
 
 
 def is_range_iterator(node: ast.AST) -> bool:

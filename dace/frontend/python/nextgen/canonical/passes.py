@@ -622,11 +622,6 @@ class NormalizeLoops(_BodyTransformer):
     - ``prange(...)`` / ``parrange(...)`` become the ``dace.map[...]`` they are
       shorthand for (a 1-D parallel map — the same reading as the classic
       frontend's ``newast.py``).
-    - the schedule annotation in ``dace.map[...] @ ScheduleType`` moves off the
-      iterator onto the ``For`` node (``map_schedule``). The ``@`` there is
-      loop-header syntax, not an operator over values — nothing computes it —
-      so stripping it here is what keeps the canonical iterator a single form
-      (``dace.map[...]``) instead of two that every later stage has to match.
     - ``while`` loops with non-atomic tests become ``while True`` loops whose
       body starts with ``if not <test>: break``. The rewritten test re-evaluates
       at the loop head, so ``break`` and ``continue`` behave correctly, and the
@@ -641,11 +636,6 @@ class NormalizeLoops(_BodyTransformer):
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
         if isinstance(statement, CANONICAL_LEAVES):
             return statement
-        if (isinstance(statement, ast.For) and isinstance(statement.iter, ast.BinOp)
-                and isinstance(statement.iter.op, ast.MatMult) and isinstance(statement.iter.left, ast.Subscript)):
-            statement.map_schedule = statement.iter.right
-            statement.iter = statement.iter.left
-            # Fall through: the stripped iterator may still need normalizing.
         if (isinstance(statement, ast.For) and isinstance(statement.iter, ast.Call)
                 and isinstance(statement.iter.func, ast.Name) and statement.iter.func.id in self.PARALLEL_RANGES
                 and not statement.iter.keywords and 1 <= len(statement.iter.args) <= 3):
@@ -705,10 +695,13 @@ class ANFTransform(_BodyTransformer):
             elif isinstance(statement, ast.For):
                 if isinstance(statement.iter, ast.Call):
                     statement.iter.args = [self._flatten(a, hoisted, level='atom') for a in statement.iter.args]
-                elif isinstance(statement.iter, ast.Subscript):
-                    # Covers annotated maps too: NormalizeLoops has already
-                    # moved ``@ ScheduleType`` off the iterator.
-                    statement.iter.slice = self._flatten_index(statement.iter.slice, hoisted)
+                else:
+                    # Map bounds, wherever they sit in the header: an operator
+                    # written on the map (``dace.map[0:N] @ schedule``) leaves
+                    # the subscript nested inside the iterator expression.
+                    for subscript in ast.walk(statement.iter):
+                        if isinstance(subscript, ast.Subscript):
+                            subscript.slice = self._flatten_index(subscript.slice, hoisted)
                 self._recurse(statement)
             elif isinstance(statement, ast.Return) and statement.value is not None:
                 if isinstance(statement.value, ast.Tuple):

@@ -9,7 +9,7 @@ metadata), so memlet propagation and downstream analysis behave identically
 for frontend-produced and SDFG-derived schedule trees.
 """
 import ast
-from typing import Any, Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
 from dace import dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -18,6 +18,7 @@ from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
+from dace.frontend.python import iterators
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access, resolve_symbol_names
@@ -172,9 +173,15 @@ def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:
 def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     targets = statement.target.elts if isinstance(statement.target, ast.Tuple) else [statement.target]
     params = [target.id for target in targets]
-    schedule = _map_schedule(statement, state)
+    generator = iterators.iteration_object(statement.iter, state.context.globals)
+    if generator is None:
+        raise UnsupportedFeatureError(f'Could not resolve dace.map iterator: {astutils.unparse(statement.iter)}',
+                                      state.context.filename,
+                                      statement.iter,
+                                      category='explicit-map')
+    schedule = generator.schedule
     dynamic_inputs: List[tn.DynScopeCopyNode] = []
-    ranges = _parse_map_ranges(statement.iter, state, dynamic_inputs)
+    ranges = _parse_map_ranges(generator.rng, statement.iter, state, dynamic_inputs)
     if len(params) != len(ranges):
         raise UnsupportedFeatureError('Number of dace.map indices does not match number of ranges',
                                       state.context.filename,
@@ -198,64 +205,25 @@ def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
         state.lower_body(statement.body)
 
 
-def _map_schedule(statement: ast.For, state: LoweringState) -> Optional[dtypes.ScheduleType]:
-    """
-    The schedule type a ``dace.map`` loop was annotated with, or None.
-
-    The annotation is written ``dace.map[...] @ ScheduleType`` (the classic
-    frontend's ``newast.py`` ``_parse_for_iterator`` convention), but that
-    ``@`` is loop-header syntax rather than an operator over values, so
-    ``NormalizeLoops`` strips it during canonicalization and records the
-    annotation on the ``For`` node. Only its resolution to a
-    :class:`~dace.dtypes.ScheduleType` is left here, where the program globals
-    are in scope.
-    """
-    annotation = getattr(statement, 'map_schedule', None)
-    if annotation is None:
-        return None
-    schedule = _resolve_schedule_type(astutils.rname(annotation), state.context.globals)
-    if schedule is None:
-        raise UnsupportedFeatureError(f'Could not resolve dace.map schedule type: {astutils.unparse(annotation)}',
-                                      state.context.filename,
-                                      annotation,
-                                      category='explicit-map')
-    return schedule
-
-
-def _resolve_schedule_type(schedule_name: str, global_vars: Dict[str, Any]) -> Optional[dtypes.ScheduleType]:
-    """
-    Resolve a dotted schedule-type name (``ScheduleType.GPU_Device`` or
-    ``<module-alias>.ScheduleType.GPU_Device``) against the program's global
-    namespace, mirroring ``newast.py``'s ``_parse_for_iterator`` schedule
-    handling.
-    """
-    if schedule_name.startswith('ScheduleType.'):
-        return getattr(dtypes.ScheduleType, schedule_name[len('ScheduleType.'):], None)
-    module_name, separator, member_path = schedule_name.partition('.')
-    module = global_vars.get(module_name)
-    if separator and dtypes.ismodule(module):
-        schedule = module
-        for part in member_path.split('.'):
-            schedule = getattr(schedule, part, None)
-    else:
-        schedule = global_vars.get(schedule_name)
-    return schedule if isinstance(schedule, dtypes.ScheduleType) else None
-
-
-def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState,
+def _parse_map_ranges(rng: ast.expr, location: ast.expr, state: LoweringState,
                       dynamic_inputs: List[tn.DynScopeCopyNode]) -> List[Tuple]:
-    """Parse ``dace.map[start:stop:step, ...]`` into inclusive-end symbolic ranges.
+    """Parse the range of a ``dace.map[start:stop:step, ...]`` generator into inclusive-end symbolic ranges.
 
+    :param rng: The generator's range, still an AST: evaluating the header
+                (see :mod:`~dace.frontend.python.iterators`) leaves
+                subscript indices unevaluated, precisely so that the symbolic
+                and data-dependent bounds below survive to here.
+    :param location: The header node, for error reporting.
     :param dynamic_inputs: Collects a :class:`~dace.sdfg.analysis.schedule_tree.treenodes.DynScopeCopyNode`
                            for every data-dependent bound encountered (see :func:`_dynamic_bound`).
     """
-    dimensions = iterator.slice.elts if isinstance(iterator.slice, ast.Tuple) else [iterator.slice]
+    dimensions = rng.elts if isinstance(rng, ast.Tuple) else [rng]
     ranges = []
     for dimension in dimensions:
         if not isinstance(dimension, ast.Slice):
             raise UnsupportedFeatureError('dace.map dimensions must be slices',
                                           state.context.filename,
-                                          iterator,
+                                          location,
                                           category='explicit-map')
         start = _bound(dimension.lower, 0, state, dynamic_inputs)
         stop = _bound(dimension.upper, None, state, dynamic_inputs)
@@ -263,7 +231,7 @@ def _parse_map_ranges(iterator: ast.Subscript, state: LoweringState,
         if stop is None:
             raise UnsupportedFeatureError('dace.map dimensions require an upper bound',
                                           state.context.filename,
-                                          iterator,
+                                          location,
                                           category='explicit-map')
         ranges.append((start, stop - 1, step))
     return ranges

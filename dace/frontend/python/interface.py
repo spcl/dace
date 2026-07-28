@@ -200,8 +200,10 @@ class MapGenerator(Generic[_MapT], Iterable[_MapT]):
     for syntactic sugar.
     """
 
-    def __init__(self, rng: Union[slice, tuple[slice, ...]]):
+    def __init__(self, rng: Union[slice, tuple[slice, ...]], schedule: Optional[dtypes.ScheduleType] = None):
         self.rng = rng
+        #: Schedule the map was annotated with, or None for the default schedule.
+        self.schedule = schedule
 
     def __matmul__(self, schedule: dtypes.ScheduleType) -> Self:
         """
@@ -212,9 +214,14 @@ class MapGenerator(Generic[_MapT], Iterable[_MapT]):
 
             for i, j in dace.map[0:N, 0:M] @ ScheduleType.GPU_Global:
                 b[i, j] = a[i, j] + 1
+
+        :return: A generator over the same range, carrying the given schedule.
+                 The schedule has no effect in Python mode; the DaCe frontends
+                 read it off this object.
         """
-        # Ignored in Python mode
-        return self
+        if not isinstance(schedule, dtypes.ScheduleType):
+            raise TypeError(f'Map schedule must be a ScheduleType, got {type(schedule).__name__}')
+        return MapGenerator(self.rng, schedule)
 
     def __iter__(self) -> Iterator[_MapT]:
         return ndloop.ndrange(self.rng)
