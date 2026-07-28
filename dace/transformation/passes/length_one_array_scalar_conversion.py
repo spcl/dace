@@ -77,8 +77,10 @@ def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
     for block in sdfg.all_control_flow_blocks():
         if isinstance(block, ConditionalBlock):
             for branch in block.branches:
+                # Mutate the CodeBlock rather than reassigning the entry: ``add_branch`` appends a
+                # list but ``remove_branch`` rebuilds them as tuples, so assignment raises there.
                 if isinstance(branch[0], CodeBlock):
-                    branch[0] = CodeBlock(rewrite(branch[0].as_string), branch[0].language)
+                    branch[0].as_string = rewrite(branch[0].as_string)
         elif isinstance(block, LoopRegion):
             # init/update are optional -- a ``while`` LoopRegion has only the condition.
             if isinstance(block.init_statement, CodeBlock):

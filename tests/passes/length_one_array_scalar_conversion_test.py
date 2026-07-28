@@ -426,3 +426,37 @@ def test_arrayize_rewrites_interstate_edge_assignment():
     assignments = [dict(e.data.assignments) for e in sdfg.all_interstate_edges()]
     assert assignments == [{'a': 'arr[0]'}], assignments
     sdfg.validate()
+
+
+def test_arrayize_rewrites_conditional_guard_after_branch_removal():
+    """A ConditionalBlock guard is rewritten even once its branch entries have become tuples.
+
+    ``add_branch`` appends a list but ``remove_branch`` rebuilds the entries as tuples, so a pass
+    that reassigns ``branch[0]`` crashes on any conditional a branch was ever removed from.
+    """
+    from dace.properties import CodeBlock
+    from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+    sdfg = dace.SDFG('cond_after_removal')
+    sdfg.add_scalar('arr', dace.float64, transient=True)
+    sdfg.add_array('out', [1], dace.float64)
+    s0 = sdfg.add_state('s0', is_start_block=True)
+    t = s0.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s0.add_edge(t, 'o', s0.add_write('arr'), None, dace.Memlet('arr'))
+
+    cond = ConditionalBlock('cb')
+    sdfg.add_node(cond)
+    sdfg.add_edge(s0, cond, dace.InterstateEdge())
+    keep = ControlFlowRegion('keep', sdfg=sdfg)
+    drop = ControlFlowRegion('drop', sdfg=sdfg)
+    cond.add_branch(CodeBlock('arr > 0'), keep)
+    cond.add_branch(CodeBlock('arr < 0'), drop)
+    bs = keep.add_state('bs', is_start_block=True)
+    t2 = bs.add_tasklet('r', {}, {'o'}, 'o = 1.0')
+    bs.add_edge(t2, 'o', bs.add_write('out'), None, dace.Memlet('out[0]'))
+    cond.remove_branch(drop)
+
+    ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+
+    assert isinstance(sdfg.arrays['arr'], dace.data.Array)
+    assert 'arr[0]' in cond.branches[0][0].as_string, cond.branches[0][0].as_string
