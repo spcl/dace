@@ -1,37 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Write-conflict policy for the lowering stage.
+Write-conflict policy for the write paths a graph pass cannot decide.
 
-A write emitted inside a dataflow scope runs concurrently in every iteration of
-the enclosing map(s). It is correct only if it either provably cannot collide
-(distinct iterations touch distinct elements) or carries a conflict-resolution
-function. This module is the single place that decides which; every write path
-— assignments, replacement expansions, reductions, indirect writes — asks here
-instead of re-deriving the rule, so a new write path cannot silently reopen the
-race class that :func:`accumulation_wcr` closes.
+Whether a write collides is a property of the dataflow under a parallel scope,
+and :mod:`dace.transformation.passes.write_conflict_resolution` decides it
+there, on the finished graph, for every write. This module is what remains for
+the ONE case that pass cannot settle: an accumulation whose target element is
+chosen at runtime (``hist[bin] += 1``). No analysis of the emitted dataflow can
+say whether two iterations land on the same element, so the syntactic fact that
+the statement is an accumulation is the only evidence available — and it is
+only available here, before ANF hoists the self-reference out of the statement.
 
-The decision has two inputs, produced by two different stages:
-
-- the *accumulation marker* (``augmented_op`` for an operator fold,
-  ``accumulation_call`` for an order-independent combiner call like
-  ``b = max(b, x)``), attached during canonicalization by ``canonical/passes.py``
-  to statements that are read-modify-writes of their own target, and
-- the *collision test*, which needs the emission scope stack and therefore only
-  exists here.
-
-Canonicalization also marks self-referential writes it could **not** reduce to
-an accumulation (``conflict_hazard``). Those cannot be expressed as a WCR at
-all; :func:`report_unresolved` surfaces them as warnings rather than letting
-them lower as silent races. That reporting channel is deliberate: a racing
-read-modify-write still lowers to a callback-free schedule tree, so the
-callback-discrepancy check cannot see it.
+Everything else — plain accumulations, chained self-references, combiner calls
+like ``b = max(b, x)``, and the reporting of updates that have no
+conflict-resolution equivalent — moved to that pass, which sees the whole
+region instead of one statement. Deciding those here was unsound in a way no
+amount of marker refinement could fix: after ANF the self-read lives in a
+different statement, so a marker-driven conflict resolution folded a stale
+value and looked correct.
 """
 import ast
-import warnings
 from typing import Optional
 
 from dace.config import Config
-from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
@@ -60,42 +51,17 @@ WCR_OPERATORS = {
     ast.BitAnd: '&',
 }
 
-#: Combiner CALLS that are order-independent in the same sense
-#: :data:`WCR_OPERATORS` requires, and so may become a conflict-resolution
-#: lambda. Marked during canonicalization as ``accumulation_call`` (see
-#: ``canonical/passes.py::_accumulating_call``).
-WCR_CALL_COMBINERS = ('min', 'max')
-
-
-def call_accumulation_wcr(statement: ast.stmt, combiner: str, target: ast.expr, state: LoweringState) -> Optional[str]:
-    """
-    The conflict-resolution lambda for a self-referential write whose combiner
-    is an order-independent CALL (``b = max(b, x)`` inside a map), or None when
-    the write needs none.
-
-    Same policy as :func:`accumulation_wcr`, for the marker
-    canonicalization attaches to the call form. The caller must have confirmed
-    that ``combiner`` names the builtin the marker assumed.
-
-    :param statement: A canonical assignment carrying ``accumulation_call``.
-    """
-    if getattr(statement, 'accumulation_call', None) != combiner:
-        return None
-    if combiner not in WCR_CALL_COMBINERS or not state.emitter.in_dataflow_scope:
-        return None
-    if Config.get_bool('frontend', 'avoid_wcr') and not writes_collide(target, state):
-        return None
-    return f'lambda x, y: {combiner}(x, y)'
-
 
 def accumulation_wcr(statement: ast.stmt, state: LoweringState) -> Optional[str]:
     """
     The conflict-resolution lambda for an accumulation lowered inside a
     dataflow scope, or None when the write needs no conflict resolution.
 
-    Mirrors the classic frontend (``newast.py:3799-3812``): inside a map, an
-    accumulation is conflict-resolved unless ``frontend.avoid_wcr`` is set and
-    the write provably cannot collide.
+    Only consulted for a data-dependent target now (see the module docstring);
+    the rule itself still mirrors the classic frontend
+    (``newast.py:3799-3812``): inside a map, an accumulation is
+    conflict-resolved unless ``frontend.avoid_wcr`` is set and the write
+    provably cannot collide.
 
     :param statement: A canonical assignment; only statements carrying the
                       ``augmented_op`` marker attached by
@@ -133,25 +99,3 @@ def writes_collide(target: ast.expr, state: LoweringState) -> bool:
         return True
     free_symbols = {str(symbol) for symbol in access.subset.free_symbols}
     return not all(param in free_symbols for param in params)
-
-
-def report_unresolved(statement: ast.stmt, target: ast.expr, state: LoweringState) -> None:
-    """
-    Warn about a self-referential write inside a dataflow scope that
-    canonicalization could not reduce to an accumulation, and that therefore
-    lowers as a racing read-modify-write.
-
-    No-op unless the statement carries the ``conflict_hazard`` marker and the
-    write can actually collide. The classic frontend emits the same race
-    silently; making it observable is the point of this function.
-    """
-    reason = getattr(statement, 'conflict_hazard', None)
-    if reason is None or not state.emitter.in_dataflow_scope:
-        return
-    if not writes_collide(target, state):
-        return
-    location = f'{state.context.filename}:{getattr(statement, "lineno", "?")}'
-    warnings.warn(
-        f'Possible write conflict at {location}: "{astutils.unparse(target).strip()}" is both read '
-        f'and written by a statement running concurrently in a map, and the update ({reason}) has no '
-        f'conflict-resolution equivalent. The generated code contains a data race.', UserWarning)

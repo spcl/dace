@@ -47,10 +47,15 @@ class Binding:
                     that is assigned a second, differently-shaped value gets a
                     new repository container with a bumped version suffix
                     instead of mutating the original descriptor.
+    :param declared: Whether a type annotation (``b: dace.float64``) fixed this
+                     container's descriptor. Declared names are not re-typed by
+                     the values later assigned to them: the declaration is the
+                     type, and assignments convert into it.
     """
     kind: str
     container: Optional[str] = None
     version: int = 0
+    declared: bool = False
 
 
 class ProgramContext:
@@ -159,11 +164,18 @@ class ProgramContext:
             self.symbols.setdefault(free_symbol.name, free_symbol)
         return actual_name
 
-    def bind(self, source_name: str, container_name: str) -> None:
-        """Bind (or rebind) a source-level name to a repository container."""
+    def bind(self, source_name: str, container_name: str, declared: bool = False) -> None:
+        """Bind (or rebind) a source-level name to a repository container.
+
+        :param declared: Set when a type annotation fixes the descriptor of the
+                         bound container (see :class:`Binding`).
+        """
         existing = self.bindings.get(source_name)
         version = existing.version + 1 if existing is not None else 0
-        self.bindings[source_name] = Binding(kind='container', container=container_name, version=version)
+        self.bindings[source_name] = Binding(kind='container',
+                                             container=container_name,
+                                             version=version,
+                                             declared=declared)
 
     def bind_symbol(self, source_name: str, dtype: dtypes.typeclass = dtypes.int64) -> symbolic.symbol:
         """Bind a source-level name as a typed symbol (e.g., a loop index)."""

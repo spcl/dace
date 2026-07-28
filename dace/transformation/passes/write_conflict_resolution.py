@@ -91,6 +91,10 @@ WCR_OPERATORS: Dict[type, str] = {
 #: so may become a conflict-resolution lambda just like :data:`WCR_OPERATORS`.
 WCR_CALL_COMBINERS: Tuple[str, ...] = ('min', 'max')
 
+#: Operators whose operands may be exchanged without changing the result, used
+#: to present a combiner canonically (the element first).
+_COMMUTATIVE_OPERATORS = (ast.Add, ast.Mult, ast.BitOr, ast.BitXor, ast.BitAnd)
+
 
 @dataclass
 class ConflictReport:
@@ -344,13 +348,12 @@ def _classify_and_resolve(state: SDFGState, edge: MultiConnectorEdge[Memlet], sd
     if resolution is not None and not self_reads:
         return None  # Resolved and sound
 
-    if resolution is not None and isinstance(edge.src, nodes.NestedSDFG):
-        # Resolved inside, but with a self-read feeding it: composing across
-        # the nested SDFG boundary is not something this pass does, so report
-        # rather than guess.
-        location.reason = ('the conflict-resolved value is computed from an unsynchronized read of the '
-                           'same element inside a nested SDFG')
-        return location
+    if isinstance(edge.src, nodes.NestedSDFG):
+        # The write is produced inside a nested SDFG -- a map body, typically.
+        # The COLLISION was decided out here, where the enclosing scopes are
+        # visible; the read-modify-write itself is in there, where the region
+        # feeding it can be seen. Descend and resolve it at its own level.
+        return _resolve_inside(edge.src, edge.src_conn, location, aliased)
 
     if not self_reads:
         location.reason = ('concurrent iterations overwrite the same element with values that do not depend '
@@ -436,6 +439,55 @@ def _self_reads(state: SDFGState, edge: MultiConnectorEdge[Memlet], data_name: s
                 continue
             frontier.append(in_edge.src)
     return reads
+
+
+def _resolve_inside(node: nodes.NestedSDFG, connector: Optional[str], location: ConflictReport,
+                    aliased: Set[str]) -> Optional[ConflictReport]:
+    """
+    Resolve a conflicting write that a nested SDFG produces, from inside it.
+
+    Whether the write collides is a question about the ENCLOSING scopes, which
+    are only visible outside; what the write actually is — a plain overwrite, a
+    fold, a chain with a hoisted self-read — is only visible inside. So the
+    caller decides the first and delegates the second here, running the same
+    classification on the inner write edges. The conflict resolution installed
+    inside reaches the outer edges through memlet propagation.
+
+    A frontend's accumulation lands in exactly this shape whenever the map body
+    became a nested SDFG, which is why resolving it here is the prerequisite
+    for a frontend not having to decide conflicts itself.
+    """
+    if connector is None:
+        return location
+    inner_sdfg = node.sdfg
+    reports: List[ConflictReport] = []
+    for inner_state in inner_sdfg.all_states():
+        for access in inner_state.data_nodes():
+            if access.data != connector:
+                continue
+            for in_edge in list(inner_state.in_edges(access)):
+                if in_edge.data.is_empty():
+                    continue
+                inner = inner_state.memlet_path(in_edge)[0]
+                if isinstance(inner.src, nodes.EntryNode):
+                    continue
+                report = _classify_and_resolve(inner_state, inner, inner_sdfg, aliased)
+                if report is not None:
+                    reports.append(report)
+    if not reports:
+        # Nothing recognizable in there: report the write as the caller saw it.
+        location.reason = ('concurrent iterations write the same element from inside a nested SDFG, and '
+                           'the update was not recognizable there')
+        return location
+    if all(report.resolved for report in reports):
+        location.resolved = True
+        location.order_independent = all(report.order_independent for report in reports)
+        location.reason = '; '.join(sorted({report.reason for report in reports}))
+        return location
+    unresolved = [report for report in reports if not report.resolved]
+    location.reason = '; '.join(sorted({report.reason for report in unresolved}))
+    location.decidable = all(report.decidable for report in unresolved)
+    return location
 
 
 def _reference_targets(sdfg: SDFG) -> Set[str]:
@@ -658,6 +710,7 @@ def _compose_region(state: SDFGState, edge: MultiConnectorEdge[Memlet], self_rea
         return None
     total, contribution = factored
 
+    total = _canonical_operand_order(total)
     combiner = f'lambda x, y: {ast.unparse(_substitute_names(total, {_ACCUMULATOR: "x", _CONTRIBUTION: "y"}))}'
     return ComposedUpdate(combiner=combiner,
                           contribution=ast.unparse(contribution),
@@ -763,9 +816,15 @@ def _factor_contribution(total: ast.expr) -> Optional[Tuple[ast.expr, ast.expr]]
         if _ACCUMULATOR not in _names(node):
             subtrees.append(node)
             return
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.expr):
-                collect(child)
+        if isinstance(node, ast.Call):
+            # Only the arguments are operands: the callee is part of the
+            # combiner itself, and counting ``max`` as a contribution would
+            # make ``max(x, a)`` look like it had two of them.
+            children = list(node.args) + [keyword.value for keyword in node.keywords]
+        else:
+            children = [child for child in ast.iter_child_nodes(node) if isinstance(child, ast.expr)]
+        for child in children:
+            collect(child)
 
     collect(total)
     distinct = {ast.unparse(subtree) for subtree in subtrees}
@@ -785,6 +844,23 @@ def _factor_contribution(total: ast.expr) -> Optional[Tuple[ast.expr, ast.expr]]
     return ast.fix_missing_locations(_Replacer().visit(total)), contribution
 
 
+def _canonical_operand_order(total: ast.expr) -> ast.expr:
+    """
+    Put the element first in a commutative combiner, so that ``min(A[i], b[0])``
+    and ``min(b[0], A[i])`` produce the same conflict resolution rather than
+    two spellings of it. Only reorders where the operator commutes, so the
+    meaning is untouched.
+    """
+    if isinstance(total, ast.Call) and isinstance(total.func, ast.Name):
+        if total.func.id in WCR_CALL_COMBINERS and len(total.args) == 2:
+            if ast.unparse(total.args[0]) == _CONTRIBUTION and ast.unparse(total.args[1]) == _ACCUMULATOR:
+                total.args.reverse()
+    elif isinstance(total, ast.BinOp) and isinstance(total.op, _COMMUTATIVE_OPERATORS):
+        if ast.unparse(total.left) == _CONTRIBUTION and ast.unparse(total.right) == _ACCUMULATOR:
+            total.left, total.right = total.right, total.left
+    return total
+
+
 def _is_order_independent(total: ast.expr) -> bool:
     """
     Whether applying an update in any order yields the same result:
@@ -802,8 +878,7 @@ def _is_order_independent(total: ast.expr) -> bool:
             return True
         # The other order only folds for a commutative operator: ``y - x`` is
         # "contribution minus element", which does not accumulate at all.
-        return (left == _CONTRIBUTION and right == _ACCUMULATOR
-                and isinstance(total.op, (ast.Add, ast.Mult, ast.BitOr, ast.BitXor, ast.BitAnd)))
+        return (left == _CONTRIBUTION and right == _ACCUMULATOR and isinstance(total.op, _COMMUTATIVE_OPERATORS))
     if isinstance(total, ast.Call) and isinstance(total.func, ast.Name):
         if total.func.id not in WCR_CALL_COMBINERS or len(total.args) != 2:
             return False
@@ -921,7 +996,7 @@ def _combiner_of(expression: ast.expr, accumulator: str) -> Optional[str]:
             return None
         if _names(expression.left) == {accumulator} and accumulator not in _names(expression.right):
             return f'lambda x, y: x {symbol} y'
-        commutative = isinstance(expression.op, (ast.Add, ast.Mult, ast.BitOr, ast.BitXor, ast.BitAnd))
+        commutative = isinstance(expression.op, _COMMUTATIVE_OPERATORS)
         if (commutative and _names(expression.right) == {accumulator} and accumulator not in _names(expression.left)):
             return f'lambda x, y: x {symbol} y'
         return None
@@ -992,8 +1067,11 @@ def _prune_dangling_read(state: SDFGState, read: MultiConnectorEdge[Memlet]) -> 
         for in_edge in incoming:
             state.remove_edge(in_edge)
             source.remove_in_connector(in_edge.dst_conn)
-            if isinstance(in_edge.src, nodes.AccessNode) and state.degree(in_edge.src) == 0:
-                state.remove_node(in_edge.src)
+            # The read may have been routed through several enclosing scopes;
+            # each one now has a connector pair with nothing behind it, which
+            # memlet propagation trips over ("no internal edge for this
+            # external connector"). Keep unwinding outwards.
+            _prune_dangling_read(state, in_edge)
         return
     if isinstance(source, nodes.AccessNode) and state.degree(source) == 0:
         state.remove_node(source)

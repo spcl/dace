@@ -683,8 +683,10 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     if target is not None and not call.keywords:
         builtin_ufunc = _BUILTIN_ELEMENTWISE.get(qualname)
         if builtin_ufunc is not None and len(call.args) == _BUILTIN_ELEMENTWISE_ARITY[qualname]:
-            if _lower_combiner_accumulation(target, call, qualname, inferred, statement, state):
-                return True
+            # A self-referential ``b = max(b, x)`` needs no special handling
+            # here: it lowers as the plain read-modify-write it is, and
+            # ``ResolveWriteConflicts`` turns it into a max conflict resolution
+            # if the write turns out to collide.
             target_access = _call_target_access(target, inferred, statement, state)
             elementwise.emit_ufunc(target_access, builtin_ufunc, call.args, statement, state)
             return True
@@ -789,35 +791,6 @@ def _converter_dtype(qualname: str) -> Optional[dtypes.typeclass]:
         return _resolve_converter_dtype(name)
     except Exception:
         return None
-
-
-def _lower_combiner_accumulation(target: ast.expr, call: ast.Call, qualname: str, inferred, statement: ast.stmt,
-                                 state: LoweringState) -> bool:
-    """
-    Lower ``b[i] = max(b[i], x)`` inside a dataflow scope as a conflict-resolved
-    write: the accumulator operand is dropped and the write carries a ``max``/
-    ``min`` WCR, exactly as ``b[i] += x`` becomes a ``Sum`` WCR.
-
-    Without this, the statement lowers as an unsynchronized read-modify-write —
-    a silent data race — because concurrent map iterations write the same
-    element. The self-reference is only visible in the marker canonicalization
-    attaches (``accumulation_call``): by lowering time ANF has hoisted both
-    operands into temporaries, so the statement no longer mentions the target.
-    That hoisted read of the target becomes dead and is eliminated.
-
-    :return: True when the accumulation was emitted (the caller is done).
-    """
-    from dace.frontend.python.nextgen.lowering.mechanisms import conflict
-    wcr = conflict.call_accumulation_wcr(statement, qualname, target, state)
-    if wcr is None:
-        return False
-    side = getattr(statement, 'accumulator_side', None)
-    if side not in ('left', 'right'):
-        return False
-    contribution = call.args[1] if side == 'left' else call.args[0]
-    target_access = _call_target_access(target, inferred, statement, state)
-    elementwise.emit_computation(target_access, contribution, statement, state, wcr=wcr)
-    return True
 
 
 def _out_keyword_access(call: ast.Call, state: LoweringState) -> Optional[DataAccess]:

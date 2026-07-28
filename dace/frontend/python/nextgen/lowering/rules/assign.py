@@ -63,15 +63,16 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
         calls.lower_call_assign(statement, state)
         return
 
-    # Accumulation inside a dataflow scope: several iterations write the same
-    # element, so the write carries conflict resolution and the tasklet drops
-    # the self-read (``b[0] += x`` becomes ``b[0] (CR: Sum) = tasklet(x)``).
+    # Accumulation into a DATA-DEPENDENT target (``hist[bin] += 1``): the
+    # written element is chosen at runtime, so no analysis of the emitted
+    # dataflow can tell whether iterations collide, and the syntactic fact that
+    # this is an accumulation is the only evidence there is. Every other
+    # accumulation is left to ``ResolveWriteConflicts``, which sees the whole
+    # region rather than one statement -- including the self-read ANF hoists
+    # out of it, which is what made deciding it here unsound.
     wcr = conflict.accumulation_wcr(statement, state)
-    if wcr is not None and _lower_accumulation(target, statement, wcr, state):
+    if wcr is not None and _lower_indirect_accumulation(target, statement, wcr, state):
         return
-    # A self-referential write canonicalization could not reduce to an
-    # accumulation races here with no way to express the update as a WCR.
-    conflict.report_unresolved(statement, target, state)
 
     # Value-domain handling: sequence literals and operations on them that
     # fold at compile time bind statically without emitting nodes.
@@ -101,39 +102,38 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
                                       category='assign-target')
 
 
-def _lower_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state: LoweringState) -> bool:
+def _lower_indirect_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state: LoweringState) -> bool:
     """
-    Lower an accumulation as a conflict-resolved write of the accumulated value
-    alone, dropping the self-read that the WCR subsumes. Returns False when the
-    target does not resolve to a data access AND is not an indirect target
-    either, so the caller falls through to the ordinary assignment paths.
+    Lower an accumulation into a data-dependent target (``hist[bin] += 1``) as
+    a conflict-resolved indirect write of the accumulated value alone, dropping
+    the self-read that the conflict resolution subsumes.
 
-    Falling through is what keeps the commuted form (``b = x + b``, detected by
-    ``canonical/passes.py::DetectAccumulations``) safe for non-numeric values:
-    swapping the operands of ``+`` would reverse a Python sequence
-    concatenation, but a compile-time list or string never resolves to a
-    container here, so the swap only ever happens on numeric data.
+    This is the ONE accumulation the frontend still decides. The written
+    element is chosen at runtime, so ``ResolveWriteConflicts`` classifies such
+    a write as undecidable — it can neither prove nor rule out a collision —
+    and the syntactic fact that the statement is an accumulation is the only
+    evidence available. Every accumulation into a plain access returns False
+    here and is left to that pass, which reads the emitted dataflow instead of
+    one statement.
+
+    Returning False for anything else also keeps the commuted form
+    (``b = x + b``) safe for non-numeric values: swapping the operands of ``+``
+    would reverse a Python sequence concatenation, and a compile-time list or
+    string never reaches an indirect write.
     """
-    if not isinstance(target, (ast.Name, ast.Subscript, ast.Attribute)):
-        return False
-    if not isinstance(statement.value, ast.BinOp):
+    if not isinstance(target, ast.Subscript) or not isinstance(statement.value, ast.BinOp):
         return False
     # The accumulated value is whichever operand is not the self-read. A
     # desugared ``AugAssign`` carries no side marker and is always left-folded.
     accumulated = (statement.value.left
                    if getattr(statement, 'accumulator_side', 'left') == 'right' else statement.value.right)
     try:
-        target_access = resolve_access(target, state)
+        resolve_access(target, state)
     except UnsupportedFeatureError:
-        # A data-dependent target (``hist[bin] += 1``): not a plain access,
-        # but possibly an indirect one -- see lowering.access.lower_indirect_write.
-        if isinstance(target, ast.Subscript) and lower_indirect_write(target, accumulated, statement, state, wcr=wcr):
-            return True
-        return False
-    if target_access is None:
-        return False
-    dispatch.lower_computation(target_access, accumulated, statement, state, wcr=wcr)
-    return True
+        # Not a plain access, but possibly an indirect one -- see
+        # lowering.access.lower_indirect_write.
+        return lower_indirect_write(target, accumulated, statement, state, wcr=wcr)
+    return False
 
 
 def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, statement: ast.Assign,
@@ -580,7 +580,7 @@ def apply_annotation_hint(target_name: str, statement: ast.stmt, state: Lowering
     if binding is not None and binding.kind == 'container':
         return
     container = state.context.add_container(target_name, descriptor)
-    state.context.bind(target_name, container)
+    state.context.bind(target_name, container, declared=True)
 
 
 def annotation_descriptor(annotation: Optional[ast.expr], state: LoweringState) -> Optional[data.Data]:
@@ -626,9 +626,20 @@ def prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringSta
     bound container when it is compatible (in-place update) or registering a
     new one otherwise.
     """
+    binding = state.context.resolve(target.id)
     result_descriptor = _result_descriptor(inferred, state, statement)
 
-    binding = state.context.resolve(target.id)
+    # A declared type outranks the values later assigned to the name:
+    # ``ytmp: float32 = 0`` is a float32 accumulator holding zero, not an int64
+    # one, and a subsequent ``ytmp = t`` converts into float32 rather than
+    # re-typing the name. Without this the declaration would be found
+    # "incompatible" with the value and immediately rebound away -- and inside
+    # a loop that rebinding is loop-carried, which forces a callback.
+    if binding is not None and binding.kind == 'container' and binding.declared:
+        declared = state.context.containers[binding.container]
+        if _writable_as(declared, result_descriptor):
+            return DataAccess(binding.container, subsets.Range.from_array(declared), declared)
+
     if binding is not None and binding.kind == 'container':
         existing = state.context.containers[binding.container]
         if _compatible(existing, result_descriptor):
@@ -676,6 +687,22 @@ def _representable_constant(value) -> bool:
         return True
     except (KeyError, TypeError):
         return False
+
+
+def _writable_as(declared: data.Data, new: data.Data) -> bool:
+    """
+    Whether a value described by ``new`` can be written into a container
+    declared as ``declared``, converting on the way in.
+
+    Unlike :func:`_compatible` this ignores the dtype -- a declaration exists
+    precisely to override it -- and only asks whether the value fits the
+    declared storage: same shape, or a scalar broadcast into it.
+    """
+    if isinstance(declared, (data.View, data.Reference, data.Stream)) or isinstance(new, data.Stream):
+        return False
+    if isinstance(new, data.Scalar) or not new.shape:
+        return True
+    return tuple(declared.shape) == tuple(new.shape)
 
 
 def _compatible(existing: data.Data, new: data.Data) -> bool:

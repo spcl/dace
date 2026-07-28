@@ -519,14 +519,17 @@ _COMMUTATIVE_OPERATORS = (ast.Add, ast.Mult, ast.BitOr, ast.BitXor, ast.BitAnd)
 class DetectAccumulations(_BodyTransformer):
     """
     Recognize self-referential writes — reductions spelled without an augmented
-    operator — and annotate them, so the lowering stage has one marker to key
-    conflict resolution off instead of re-recognizing reduction idioms at every
-    write path.
+    operator — and annotate them, so the write paths that cannot read the
+    emitted dataflow have one marker to key off.
 
-    Inside a map, ``b = b + x`` and ``b = x + b`` are the same accumulation as
-    ``b += x`` and need the same conflict resolution on their write. Without
-    this pass only the literal ``+=`` spelling gets one and every other spelling
-    lowers as a silent data race — the hole the classic frontend still has.
+    **The conflict decision does NOT live here.** Whether a write collides is a
+    property of the dataflow under a parallel scope, which
+    ``transformation/passes/write_conflict_resolution.py`` reads directly off
+    the graph; this pass only records what the SYNTAX said, for the one write
+    path where the graph cannot answer: an accumulation into a data-dependent
+    target (``hist[bin] += 1``), whose written element is chosen at runtime.
+    The advanced-indexing write paths read the same marker to rebuild the
+    update they must perform in place.
 
     This must run **before** :class:`ANFTransform`, which hoists compound
     operands into temporaries and can move the self-reference out of the
@@ -544,19 +547,6 @@ class DetectAccumulations(_BodyTransformer):
       chained ``b = x + y + b``, which parses as ``(x + y) + b`` so the grouping
       of ``x + y`` survives the swap intact). Lowering reads the *other* operand
       as the accumulated value.
-    - ``accumulation_call`` — the same thing for an order-independent COMBINER
-      CALL: ``b = max(b, x)`` / ``b = min(x, b)``. Paired with
-      ``accumulator_side`` like the operator form.
-    - ``conflict_hazard`` — a self-referential write with no accumulation form
-      at all: ``b = b + x + y`` (would need inexact re-association), ``b = x - b``
-      (accumulator in a non-fold position of a non-commutative operator),
-      ``b = f(b, x)`` for any other call. These still lower as races, but
-      ``lowering/mechanisms/conflict.py`` reports them instead of letting them
-      pass silently.
-
-    Known blind spot: a conditional update (``if x > b: b = x``) is a race with
-    no self-reference in any single expression, so it is neither detected nor
-    reported here.
     """
     name = 'detect-accumulations'
 
@@ -585,54 +575,7 @@ class DetectAccumulations(_BodyTransformer):
                 statement.accumulator_side = 'right'
                 return statement
 
-        combiner = _accumulating_call(value, key)
-        if combiner is not None:
-            statement.accumulation_call, statement.accumulator_side = combiner
-            return statement
-
-        statement.conflict_hazard = _hazard_reason(value, key)
         return statement
-
-
-#: Two-argument functions that fold their accumulator order-independently —
-#: ``f(f(x, a), b) == f(f(x, b), a)`` — and so may become a conflict-resolution
-#: lambda, exactly like :data:`~...mechanisms.conflict.WCR_OPERATORS` does for
-#: binary operators. Recognized by NAME here because this pass runs before any
-#: name resolution; the lowering stage confirms the callee really is the
-#: builtin before acting on the marker.
-_WCR_CALL_COMBINERS = ('min', 'max')
-
-
-def _accumulating_call(value: ast.expr, key: str) -> Optional[Tuple[str, str]]:
-    """
-    Recognize ``b = max(b, x)`` / ``b = min(x, b)``: a two-argument call to an
-    order-independent combiner with the write target as exactly one argument.
-
-    :return: (combiner name, side of the accumulator), or None if the value is
-             not that form.
-    """
-    if not isinstance(value, ast.Call) or value.keywords or len(value.args) != 2:
-        return None
-    if not isinstance(value.func, ast.Name) or value.func.id not in _WCR_CALL_COMBINERS:
-        return None
-    left, right = value.args
-    if _reference_key(left) == key and not _reads_reference(right, key):
-        return value.func.id, 'left'
-    if _reference_key(right) == key and not _reads_reference(left, key):
-        return value.func.id, 'right'
-    return None
-
-
-def _hazard_reason(value: ast.expr, key: str) -> str:
-    """A short description of why a self-referential write could not be reduced
-    to an accumulation, for the lowering-stage race report."""
-    if isinstance(value, ast.Call):
-        return 'a call combining the target with other values'
-    if isinstance(value, ast.BinOp):
-        if _reference_key(value.right) == key:
-            return 'the target is a right operand of a non-commutative operator'
-        return 'a chained update that would need re-association'
-    return 'a compound expression reading the target'
 
 
 def _reference_key(expression: ast.AST) -> Optional[str]:
