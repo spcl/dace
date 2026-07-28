@@ -155,6 +155,54 @@ def test_resolves_a_nonlinear_but_factorable_update():
     assert _wcrs(sdfg) == {'lambda x, y: x + y * x'}
 
 
+def test_write_through_a_data_dependent_index_is_undecidable():
+    """A scatter chooses its element in the tasklet's own code, through a
+    whole-array pointer connector, so the graph does not say which element each
+    iteration writes: reported as undecidable, and NOT warned about by default,
+    because a warning on every scatter teaches people to ignore warnings."""
+    sdfg = dace.SDFG('scatter')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('idx', [N], dace.int64)
+    sdfg.add_array('b', [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', dict(i=f'0:{N}'))
+    tasklet = state.add_tasklet('scatter', {'__in', '__ind'}, {'__arr'}, '__arr[__ind] = __in')
+    tasklet.out_connectors['__arr'] = dace.dtypes.pointer(dace.float64)
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='__in', memlet=Memlet('a[i]'))
+    state.add_memlet_path(state.add_read('idx'), entry, tasklet, dst_conn='__ind', memlet=Memlet('idx[i]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('b'), src_conn='__arr', memlet=Memlet('b[0:N]'))
+
+    result, warned = _apply(sdfg)
+    assert not result['resolved'] and not result['unresolved']
+    assert len(result['undecidable']) == 1
+    assert not warned
+
+
+def test_writes_to_a_referenced_container_are_undecidable():
+    """A reference points wherever it was last set, at runtime. Everything this
+    pass does matches reads to writes BY CONTAINER NAME, which does not hold
+    once another container can alias this one -- so such writes are reported as
+    undecidable instead of being resolved on a name basis."""
+    sdfg = dace.SDFG('referenced')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('b', [1], dace.float64)
+    sdfg.add_reference('ref', [1], dace.float64)
+    setter = sdfg.add_state()
+    setter.add_edge(setter.add_read('b'), None, setter.add_access('ref'), 'set', Memlet('b[0]'))
+
+    state = sdfg.add_state_after(setter)
+    entry, exit_node = state.add_map('m', dict(i=f'0:{N}'))
+    tasklet = state.add_tasklet('update', {'__acc', '__in'}, {'__out'}, '__out = __acc + __in')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='__in', memlet=Memlet('a[i]'))
+    state.add_memlet_path(state.add_read('b'), entry, tasklet, dst_conn='__acc', memlet=Memlet('b[0]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('b'), src_conn='__out', memlet=Memlet('b[0]'))
+
+    result, _ = _apply(sdfg)
+    assert not result['resolved'], 'must not resolve by name while an alias exists'
+    assert len(result['undecidable']) == 1
+    assert 'reference' in result['undecidable'][0].reason
+
+
 def test_partitioned_write_is_not_a_conflict():
     sdfg = _partitioned_map()
     result, warned = _apply(sdfg)
@@ -381,6 +429,8 @@ if __name__ == '__main__':
     test_reports_unresolvable_accumulation()
     test_resolves_a_nonlinear_but_factorable_update()
     test_modulo_is_not_treated_as_order_independent()
+    test_write_through_a_data_dependent_index_is_undecidable()
+    test_writes_to_a_referenced_container_are_undecidable()
     test_partitioned_write_is_not_a_conflict()
     test_existing_conflict_resolution_is_left_alone()
     test_folds_an_existing_conflict_resolution_over_a_self_read()

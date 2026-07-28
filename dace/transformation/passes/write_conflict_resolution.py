@@ -35,6 +35,17 @@ Each conflicting write falls into one of four classes:
 - **conflicting overwrite** — concurrent iterations write the same element with
   values that do not depend on it (``out[0] = f(A[i])``). No conflict
   resolution can express "last writer wins"; reported.
+- **undecidable** — the graph does not say which element an iteration writes,
+  so a collision can be neither proved nor ruled out. Two sources: a scatter
+  through a whole-array pointer connector, where the index lives in the
+  tasklet's code (``__arr[__ind] = __val``); and anything involving a
+  :class:`~dace.data.Reference`, which points wherever it was last set at
+  runtime. References matter beyond their own writes: everything here matches
+  reads to writes BY CONTAINER NAME, and that stops holding as soon as another
+  container can alias one, so writes to a referenced container are left alone
+  rather than resolved on a name basis. Reported, but not warned about by
+  default — a warning that fires on every scatter teaches people to ignore
+  warnings.
 
 The order-independence policy lives in :data:`WCR_OPERATORS` and
 :data:`WCR_CALL_COMBINERS`: a combiner is order-independent only when
@@ -95,6 +106,12 @@ class ConflictReport:
     update. A resolved write that is NOT order-independent is race-free, but
     its result depends on thread order — the program itself is order-dependent
     and no lowering can change that."""
+    decidable: bool = True
+    """Whether the graph says which element each iteration writes. A scatter
+    through a data-dependent index does not: it may or may not collide, and
+    only the values of the index array decide. Reported, but not warned about
+    by default — a warning that fires on every scatter teaches people to ignore
+    warnings."""
 
     def __str__(self) -> str:
         return f'{self.data}[{self.subset}] in state "{self.state}": {self.reason}'
@@ -117,6 +134,12 @@ class ResolveWriteConflicts(ppl.Pass):
                                default=True,
                                desc='Emit a UserWarning for each conflicting write that could not be resolved')
 
+    warn_undecidable = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Also warn about writes whose target element the graph does not determine (a scatter '
+        'through a data-dependent index), which may or may not collide depending on runtime values')
+
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Memlets | ppl.Modifies.Nodes
 
@@ -130,13 +153,18 @@ class ResolveWriteConflicts(ppl.Pass):
         """
         resolved: List[ConflictReport] = []
         unresolved: List[ConflictReport] = []
+        undecidable: List[ConflictReport] = []
 
+        aliased = _reference_targets(sdfg)
         for state in sdfg.all_states():
             for edge in _conflicting_writes(state, sdfg):
-                report = _classify_and_resolve(state, edge)
+                report = _classify_and_resolve(state, edge, sdfg, aliased)
                 if report is None:
                     continue
-                (resolved if report.resolved else unresolved).append(report)
+                if not report.decidable:
+                    undecidable.append(report)
+                else:
+                    (resolved if report.resolved else unresolved).append(report)
 
         if self.warn:
             for report in unresolved:
@@ -153,9 +181,13 @@ class ResolveWriteConflicts(ppl.Pass):
                     f'combiner does not commute, so the result depends on the order in which the '
                     f'iterations of the enclosing parallel scope apply it.', UserWarning)
 
-        if not resolved and not unresolved:
+        if self.warn_undecidable:
+            for report in undecidable:
+                warnings.warn(f'Possibly conflicting write: {report}.', UserWarning)
+
+        if not resolved and not unresolved and not undecidable:
             return None
-        return {'resolved': resolved, 'unresolved': unresolved}
+        return {'resolved': resolved, 'unresolved': unresolved, 'undecidable': undecidable}
 
     def report(self, pass_retval: Dict[str, List[ConflictReport]]) -> str:
         return (f'Resolved {len(pass_retval["resolved"])} write conflict(s), '
@@ -200,9 +232,15 @@ def _conflicting_writes(state: SDFGState, sdfg: SDFG) -> List[MultiConnectorEdge
             subset = inner.data.get_dst_subset(inner, state) or inner.data.subset
             if subset is None:
                 continue
-            free_symbols = {str(symbol) for symbol in subset.free_symbols}
-            if all(param in free_symbols for param in params):
+            if _partitions(subset, params):
                 continue  # Partitioned: iterations write disjoint elements
+            # A nested SDFG's connector memlet covers the whole container until
+            # propagation narrows it, so the per-iteration subset is only
+            # visible inside. Ask there before calling it a collision.
+            if isinstance(inner.src, nodes.NestedSDFG):
+                nested = _nested_write_subsets(inner.src, inner.src_conn)
+                if nested and all(_partitions(nested_subset, params) for nested_subset in nested):
+                    continue
             if isinstance(sdfg.arrays.get(node.data), data.Stream):
                 # A stream is concurrent by construction: every push appends,
                 # so "the same element" is not a collision but the whole point.
@@ -264,11 +302,36 @@ def _inside_scope(state: SDFGState, node: nodes.Node, scope: nodes.EntryNode) ->
     return False
 
 
-def _classify_and_resolve(state: SDFGState, edge: MultiConnectorEdge[Memlet]) -> Optional[ConflictReport]:
+def _classify_and_resolve(state: SDFGState, edge: MultiConnectorEdge[Memlet], sdfg: SDFG,
+                          aliased: Set[str]) -> Optional[ConflictReport]:
     """Classify one conflicting write and resolve it if possible."""
     data_name = edge.data.data
     subset = edge.data.get_dst_subset(edge, state) or edge.data.subset
     location = ConflictReport(state=state.label, data=data_name, subset=str(subset), reason='')
+
+    # References break the assumption every step below relies on -- that a read
+    # and a write of the same element name the same container. A reference
+    # points wherever it was last set, at runtime, so a write THROUGH one has
+    # an unknown target, and a write TO a container some reference points at
+    # may be aliased by writes that never mention its name. Neither can be
+    # decided here, and resolving them by name could attach conflict
+    # resolution to the wrong update.
+    if isinstance(sdfg.arrays.get(data_name), data.Reference):
+        location.reason = ('the write goes through a reference, whose target is set at runtime, so the '
+                           'element it lands on is unknown')
+        location.decidable = False
+        return location
+    if data_name in aliased:
+        location.reason = (f'"{data_name}" is the target of a reference, so reads and writes of it '
+                           f'cannot be matched by container name')
+        location.decidable = False
+        return location
+
+    if _writes_through_pointer(edge) or _writes_somewhere_in(edge, state):
+        location.reason = ('the written element is chosen at runtime (a data-dependent index), so a '
+                           'collision can be neither proved nor ruled out')
+        location.decidable = False
+        return location
 
     self_reads = _self_reads(state, edge, data_name, str(subset))
 
@@ -373,6 +436,87 @@ def _self_reads(state: SDFGState, edge: MultiConnectorEdge[Memlet], data_name: s
                 continue
             frontier.append(in_edge.src)
     return reads
+
+
+def _reference_targets(sdfg: SDFG) -> Set[str]:
+    """
+    Containers that some :class:`~dace.data.Reference` in the SDFG is pointed
+    at (the source of an edge into a ``'set'`` connector).
+
+    A write to one of these may be aliased by a write through the reference,
+    which names a different container entirely -- so name-based matching, which
+    everything in this pass relies on, does not hold for them.
+    """
+    targets: Set[str] = set()
+    for state in sdfg.all_states():
+        for edge in state.edges():
+            if edge.dst_conn == 'set' and edge.data.data is not None:
+                targets.add(edge.data.data)
+    for node in sdfg.all_sdfgs_recursive():
+        if node is sdfg:
+            continue
+        targets |= _reference_targets(node)
+    return targets
+
+
+def _partitions(subset, params: Set[str]) -> bool:
+    """Whether a write subset varies with every enclosing parallel parameter,
+    so that distinct iterations touch distinct elements."""
+    free_symbols = {str(symbol) for symbol in subset.free_symbols}
+    return all(param in free_symbols for param in params)
+
+
+def _nested_write_subsets(node: nodes.Node, connector: Optional[str]) -> List:
+    """
+    The subsets a nested SDFG writes to the container behind one of its output
+    connectors, as seen from the inside — where the enclosing map's parameters
+    are in scope, so a per-iteration write is recognizable as one.
+    """
+    if not isinstance(node, nodes.NestedSDFG) or connector is None:
+        return []
+    result = []
+    for state in node.sdfg.all_states():
+        for access in state.data_nodes():
+            if access.data != connector:
+                continue
+            for in_edge in state.in_edges(access):
+                subset = in_edge.data.get_dst_subset(in_edge, state) or in_edge.data.subset
+                if subset is not None:
+                    result.append(subset)
+    return result
+
+
+def _writes_through_pointer(edge: MultiConnectorEdge[Memlet]) -> bool:
+    """
+    Whether a write goes through a whole-array POINTER connector, which means
+    the element it targets is chosen by the tasklet's own code
+    (``__arr[__ind0] = __val0``, the shape a frontend emits for a scatter).
+
+    The memlet then names the whole container, so nothing in the graph says
+    which element each iteration writes: a collision can be neither proved nor
+    ruled out.
+    """
+    if not isinstance(edge.src, nodes.Tasklet) or edge.src_conn is None:
+        return False
+    return isinstance(edge.src.out_connectors.get(edge.src_conn), dtypes.pointer)
+
+
+def _writes_somewhere_in(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> bool:
+    """
+    Whether a write touches FEWER elements than its subset spans — the
+    signature of "somewhere in here", which is how a scatter through an index
+    array is expressed (subset ``A[0:N]``, volume 1).
+
+    Such a memlet deliberately does not say which element is written, so a
+    collision depends on the index values and cannot be settled statically.
+    """
+    subset = edge.data.get_dst_subset(edge, state) or edge.data.subset
+    if subset is None or edge.data.volume is None:
+        return False
+    try:
+        return bool(subset.num_elements() > edge.data.volume > 0)
+    except TypeError:
+        return False  # Symbolic comparison with no definite answer
 
 
 def _nested_write_wcr(node: nodes.Node, connector: Optional[str]) -> Optional[str]:
