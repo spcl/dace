@@ -4,6 +4,7 @@ from typing import Dict, Union
 import dace
 import numpy as np
 import pytest
+import re
 import time
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
@@ -356,6 +357,29 @@ def test_gpu_callback():
         gpucallback(a)
 
     assert cp.allclose(a, expected)
+
+
+def test_gpu_callback_without_stream_warns():
+    # Codegen-only (no device needed): a GPU-touching callback that is not stream-aware must warn,
+    # and its whole component must be moved off the async streams onto the null stream.
+    @dace_inhibitor
+    def cb_no_stream(arr):
+        arr *= 2
+
+    @dace.program
+    def gpucallback(A: dace.float64[20]):
+        tmp = dace.ndarray([20], dace.float64, storage=dace.StorageType.GPU_Global)
+        tmp[:] = A
+        cb_no_stream(tmp)
+        A[:] = tmp
+
+    with pytest.warns(match="Automatically creating callback"):
+        sdfg = gpucallback.to_sdfg()
+    with pytest.warns(UserWarning, match="not stream-aware"):
+        code = sdfg.generate_code()
+
+    for obj in code:
+        assert not re.search(r'streams\[\d+\]', obj.clean_code), obj.name
 
 
 def test_bad_closure():
@@ -1134,6 +1158,7 @@ if __name__ == '__main__':
     test_reorder_nested()
     test_callback_samename()
     test_gpu_callback()
+    test_gpu_callback_without_stream_warns()
     test_bad_closure()
     test_object_with_nested_callback()
     test_two_parameters_same_name()
