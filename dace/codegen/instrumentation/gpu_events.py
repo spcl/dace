@@ -34,10 +34,9 @@ class GPUEventProvider(InstrumentationProvider):
 
     def _get_sobj(self, node: Union[nodes.EntryNode, nodes.ExitNode]):
         # Get object behind scope
-        if hasattr(node, 'consume'):
+        if isinstance(node, (nodes.ConsumeEntry, nodes.ConsumeExit)):
             return node.consume
-        else:
-            return node.map
+        return node.map
 
     def _create_event(self, id):
         return '''{backend}Event_t __dace_ev_{id};

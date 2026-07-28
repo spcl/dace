@@ -317,7 +317,7 @@ def _set_default_schedule_in_scope(state: SDFGState,
                 else:
                     local_child_schedule = child_schedule
                 node.schedule = local_child_schedule
-        elif getattr(node, 'schedule', False) and not isinstance(node, nodes.ExitNode):
+        elif isinstance(node, nodes.LibraryNode):
             if node.schedule == dtypes.ScheduleType.Default:
                 if child_schedule is None:
                     local_child_schedule = _determine_schedule_from_storage(state, node)

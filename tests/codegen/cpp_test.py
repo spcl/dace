@@ -7,6 +7,7 @@ import warnings
 from dace import SDFG, Memlet, dtypes
 from dace.codegen import codegen
 from dace.codegen.targets import cpp
+from dace.codegen.targets.cpu import _use_aligned_operator_new
 from dace.subsets import Range
 
 
@@ -150,7 +151,13 @@ def test_reshape_strides_from_strided_and_offset_range():
 def test_arrays_bigger_than_max_stack_size_get_deallocated():
     # Setup SDFG with array A that is too big to be allocated on the stack.
     sdfg = SDFG("test")
-    sdfg.add_array(name="A", shape=(10000, ), dtype=dtypes.float64, storage=dtypes.StorageType.Register, transient=True)
+    array_a_alignment = 128
+    _, a_desc = sdfg.add_array(name="A",
+                               shape=(10000, ),
+                               dtype=dtypes.float64,
+                               storage=dtypes.StorageType.Register,
+                               transient=True,
+                               alignment=array_a_alignment)
     state = sdfg.add_state("state", is_start_block=True)
     read = state.add_access("A")
     tasklet = state.add_tasklet("dummy", {"a"}, {}, "a = 1")
@@ -167,8 +174,14 @@ def test_arrays_bigger_than_max_stack_size_get_deallocated():
 
         # In code, assert that we allocate _and_ deallocate on the heap
         code = program_objects[0].clean_code
-        assert code.find("A = new double") > 0, "A is allocated on the heap."
-        assert code.find("delete[] A") > 0, "A is deallocated from the heap."
+        # Consult the active cpp_standard: C++ >= 17 emits the aligned
+        # new/delete forms, earlier standards the plain ones.
+        if _use_aligned_operator_new(a_desc):
+            assert f"A = new (std::align_val_t({array_a_alignment})) double" in code, "A is allocated on the heap."
+            assert f"::operator delete[](A, std::align_val_t({array_a_alignment}))" in code, "A is deallocated from the heap."
+        else:
+            assert "A = new double" in code, "A is allocated on the heap."
+            assert "delete[] A" in code, "A is deallocated from the heap."
 
 
 if __name__ == '__main__':
