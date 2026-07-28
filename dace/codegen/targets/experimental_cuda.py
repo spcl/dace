@@ -164,7 +164,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         reachability = access_nodes = None
         for sdfg in top_sdfg.all_sdfgs_recursive():
             pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if getattr(arr, 'pool', False) is True and arr.transient)
+                         if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
             if not pooled:
                 continue
             self.has_pool = True
@@ -463,7 +463,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         Claimed nodes are those carrying a GPU schedule served by this backend, plus every
         node encountered while already emitting device code.
         """
-        schedule = getattr(node, 'schedule', None)
+        schedule = node.schedule if isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)) else None
         if schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             return True
         if self._in_device_code:
@@ -512,11 +512,12 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
     def generate_node(self, sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgraphView, state_id: int, node: nodes.Node,
                       function_stream: CodeIOStream, callsite_stream: CodeIOStream):
 
-        gen = getattr(self, '_generate_' + type(node).__name__, False)
-
-        if gen is not False:
-            gen(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
-        elif type(node).__name__ == 'MapExit' and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
+        # Exact type, not isinstance: subclasses (e.g. RTLTasklet) belong to the CPU codegen.
+        if type(node) is nodes.NestedSDFG:
+            self._generate_NestedSDFG(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        elif type(node) is nodes.Tasklet:
+            self._generate_Tasklet(sdfg, cfg, dfg, state_id, node, function_stream, callsite_stream)
+        elif type(node) is nodes.MapExit and node.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN:
             # A GPU MapExit is closed by the kernel's scope manager; suppress the CPU fallback.
             return
         else:
@@ -677,9 +678,15 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if nodedesc.dtype == dtypes.gpuStream_t:
             return
 
-        gen = getattr(self, f'_prepare_{nodedesc.storage.name}_array', None)
-        if gen:
-            gen(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream, declaration_stream, allocation_stream)
+        if nodedesc.storage == dtypes.StorageType.GPU_Global:
+            self._prepare_GPU_Global_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
+        elif nodedesc.storage == dtypes.StorageType.CPU_Pinned:
+            self._prepare_CPU_Pinned_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
+        elif nodedesc.storage == dtypes.StorageType.GPU_Shared:
+            self._prepare_GPU_Shared_array(sdfg, cfg, dfg, state_id, node, nodedesc, function_stream,
+                                           declaration_stream, allocation_stream)
         else:
             raise NotImplementedError(f'CUDA: Unimplemented storage type {nodedesc.storage}')
 
@@ -1083,7 +1090,8 @@ class KernelSpec:
         ``compiler.cuda.<config_key>``. Raises if the name does not resolve
         to a DaCe ``typeclass``."""
         type_name = Config.get('compiler', 'cuda', config_key)
-        dtype = getattr(dtypes, type_name, None)
+        # Resolve against the typeclass registry ("dace::int32" -> int32) rather than the module namespace.
+        dtype = next((t for t, s in dtypes.TYPECLASS_TO_STRING.items() if s.rsplit('::', 1)[-1] == type_name), None)
         if not isinstance(dtype, dtypes.typeclass):
             raise ValueError(
                 f'Invalid {config_key} "{type_name}" configured (used for thread, block, and warp indices): '

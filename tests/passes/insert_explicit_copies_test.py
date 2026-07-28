@@ -71,8 +71,7 @@ def _assert_no_copynd(sdfg: dace.SDFG) -> None:
     """Assert ``generate_code`` emits no ``dace::CopyND`` template instantiations."""
     sdfg.expand_library_nodes()
     for obj in sdfg.generate_code():
-        code = obj.code if isinstance(obj.code, str) else getattr(obj.code, 'code', str(obj.code))
-        assert 'CopyND<' not in code, f"unexpected CopyND in code object {obj.title}"
+        assert 'CopyND<' not in obj.code, f"unexpected CopyND in code object {obj.title}"
 
 
 def _build_copy_sdfg(name, arrays, edge_memlet):

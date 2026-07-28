@@ -1589,9 +1589,7 @@ class CPUCodeGen(TargetCodeGenerator):
         # instrument attribute. The provider's hook can still filter by
         # node identity / label.
         instr_type = node.instrument
-        if (instr_type == dtypes.InstrumentationType.No_Instrumentation
-                and getattr(state_dfg, 'instrument', dtypes.InstrumentationType.No_Instrumentation)
-                != dtypes.InstrumentationType.No_Instrumentation):
+        if instr_type == dtypes.InstrumentationType.No_Instrumentation:
             instr_type = state_dfg.instrument
         instr = self._dispatcher.instrumentation.get(instr_type)
         if instr is not None:
