@@ -115,17 +115,6 @@ required:
                     If enabled, does not recompile code generated from SDFGs
                     if shared library (.so/.dll) file is present.
 
-            emit_tree_reductions:
-                type: bool
-                default: true
-                title: Emit tree reductions for parallel WCR
-                description: >
-                    Experimental automated tree-reduction emission for certain WCR patterns.
-                    If enabled, a conflict-free (WCR) reduction accumulator written from a GPU
-                    thread-block map is lowered to a per-thread-block ``cub::BlockReduce`` (one
-                    atomic per block) instead of a plain ``atomicAdd`` per thread -- correct but
-                    contended. Only affects codegen; the SDFG is unchanged either way.
-
             build_folder_mode:
                 type: str
                 default: development
