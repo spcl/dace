@@ -453,8 +453,10 @@ class SDFG(ControlFlowRegion):
     user_args = ArgumentSignatureProperty(
         allow_nested=True,
         desc='Optional structured signature for the nanobind interface\'s user_bind_call entry point: '
-        'entries are argument names or (nested) tuples of them, e.g. [("a", "b"), "c"]. Arguments not '
-        'listed must be inferable from listed ones. Empty disables generation of the entry point.')
+        'entries are argument names or (nested) tuples of them, e.g. [("a", "b"), "c"]. An empty '
+        'string entry is an ignored placeholder slot (the position exists in the caller\'s convention, '
+        'any value is accepted and never read). Arguments not listed must be inferable from listed '
+        'ones. Empty disables generation of the entry point.')
     constants_prop: Dict[str, Tuple[dt.Data, Any]] = Property(
         dtype=dict,
         default={},

@@ -501,6 +501,12 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
     inferable from listed ones, which makes completeness checkable here, at
     code-generation time.
 
+    An empty string entry is an IGNORED placeholder slot ("this position
+    exists in the caller's convention, dace does not need it"): at the top
+    level it becomes an ``nb::object`` parameter accepting anything (including
+    ``None``) that is never read; nested inside a tuple the position is
+    counted by the length check but never extracted.
+
     :return: The pair ``(method_source, def_source)``, both empty when
              ``user_args`` is empty.
     """
@@ -513,7 +519,9 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
 
     def _flatten(entry):
         if isinstance(entry, str):
-            flat.append(entry)
+            # '' is an ignored placeholder slot, not an argument name.
+            if entry:
+                flat.append(entry)
         else:
             if len(entry) == 0:
                 raise ValueError(f"SDFG '{name}': user_args contains an empty tuple.")
@@ -531,7 +539,8 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
             raise ValueError(f"SDFG '{name}': user_args lists argument '{n}' more than once.")
         listed.add(n)
 
-    # Initial scope: primitive scalars and plain arrays only.
+    # Initial scope: primitive scalars (plus opaque pyobject scalars) and
+    # plain arrays only.
     for n in flat:
         desc = arglist[n]
         if isinstance(desc, dt.ContainerArray) or isinstance(desc, dt.Structure):
@@ -539,8 +548,8 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
         elif isinstance(desc, dt.Array):
             supported = not isinstance(desc.dtype, dtypes.struct) and desc.optional is not True
         elif isinstance(desc, dt.Scalar):
-            supported = (not isinstance(desc.dtype, (dtypes.callback, dtypes.pyobject, dtypes.vector))
-                         and desc.dtype != dtypes.string and desc.dtype.base_type != dtypes.float16)
+            supported = (not isinstance(desc.dtype, (dtypes.callback, dtypes.vector)) and desc.dtype != dtypes.string
+                         and desc.dtype.base_type != dtypes.float16)
         else:
             supported = False
         if not supported:
@@ -587,6 +596,10 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
                        f'            throw std::invalid_argument("SDFG argument error: argument \'{path}\': '
                        f'expected a tuple of length {len(entry)}.");')
         for j, sub in enumerate(entry):
+            if sub == '':
+                # An ignored placeholder: counted by the length check above,
+                # never extracted - any value may sit in this position.
+                continue
             elem = f'{tuple_expr}[{j}]'
             sub_path = f'{path}[{j}]'
             if isinstance(sub, str):
@@ -606,7 +619,13 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
                 _emit_extractions(sub, sub_tuple, sub_path)
 
     for i, entry in enumerate(user_args, start=1):
-        if isinstance(entry, str):
+        if entry == '':
+            # Ignored placeholder slot: accepts anything (None included, hence
+            # .none()), never read - the unnamed parameter avoids an
+            # unused-parameter warning in the generated code.
+            params.append(f'nb::object /* arg{i}: ignored */')
+            def_args.append(f'nb::arg("arg{i}").none()')
+        elif isinstance(entry, str):
             params.append(param_decl[entry])
             def_args.append(arg_annot[entry])
         else:

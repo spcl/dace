@@ -70,13 +70,18 @@ class NanobindCompiledSDFG:
            :meth:`user_bind_call`, a structured fast-path entry point:
            ``user_args`` promises where each argument arrives (names or nested
            tuples of names, destructured in the compiled binding with
-           by-reference array semantics enforced per element). There are no
-           keyword arguments on that path - every argument is either listed or
-           inferred, verified at code generation - and it bypasses hooks,
-           ``do_not_execute``, callback wrapping and return handling
-           (return-value SDFGs are refused at code generation). The GPU
-           last-error check still runs and honors :attr:`gpu_error_check`.
-           ``__call__()`` never dispatches to it.
+           by-reference array semantics enforced per element). An empty string
+           entry is an ignored placeholder slot: the position exists in the
+           caller's convention, accepts any value (``None`` included) and is
+           never read - nested slots still count toward the tuple length.
+           Scalar ``pyobject`` arguments may be listed and pass through as
+           opaque ``PyObject*``. There are no keyword arguments on that
+           path - every argument is either listed or inferred, verified at
+           code generation - and it bypasses hooks, ``do_not_execute``,
+           callback wrapping and return handling (return-value SDFGs are
+           refused at code generation). The GPU last-error check still runs
+           and honors :attr:`gpu_error_check`. ``__call__()`` never
+           dispatches to it.
     :note: Marshalling of Python callbacks is done in Python.
     :note: There is no caching of the "previous call arguments", i.e.
            ``CompiledSDFG._lastargs``. This means that the symbolic sizes must be

@@ -2236,6 +2236,90 @@ def test_nanobind_interface_user_args_e2e():
         with pytest.raises(Exception):
             csdfg.user_bind_call((np.zeros(n, dtype=np.float32), b), 2.0)
 
+
+def test_nanobind_interface_user_args_pyobject_scalar_binding():
+    """A pyobject scalar may be listed in user_args: top-level it binds as
+    nb::object, nested it arrives via try_cast<nb::object>; the raw PyObject*
+    is forwarded either way."""
+    from dace import dtypes
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    def make():
+        sdfg = dace.SDFG('uargs_pyobj_probe')
+        sdfg.add_scalar('obj', dtypes.pyobject())
+        sdfg.add_array('A', [4], dace.float64)
+        return sdfg
+
+    sdfg = make()
+    sdfg.user_args = ['obj', 'A']
+    ucall = generate_bindings_code(sdfg).split('void user_call(')[1]
+    assert 'nb::object obj' in ucall.split(') {')[0]
+    assert 'reinterpret_cast<pyobject>(obj.ptr())' in ucall
+
+    sdfg = make()
+    sdfg.user_args = [('obj', 'A')]
+    ucall = generate_bindings_code(sdfg).split('void user_call(')[1]
+    assert 'try_cast<nb::object>' in ucall
+    assert 'reinterpret_cast<pyobject>(obj.ptr())' in ucall
+
+
+def test_nanobind_interface_user_args_pyobject_e2e():
+    """E2E: a pyobject rides through user_bind_call in a nested position
+    without disturbing its neighbors."""
+    from dace import dtypes
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = _uargs_axpy_sdfg()
+        sdfg.add_scalar('obj', dtypes.pyobject())
+        sdfg.user_args = [('A', 'obj'), 'B', 'alpha']
+        csdfg = sdfg.compile()
+
+        n = 16
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 2.0 * a + b
+        csdfg.user_bind_call((a, object()), b, 2.0)
+        assert np.allclose(b, expected)
+
+
+def test_nanobind_interface_user_args_ignore_slots_binding():
+    """'' entries are ignored placeholder slots: top-level they are nb::object
+    parameters accepting anything (incl. None) and never read; nested they are
+    counted by the tuple length check but never extracted."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = _uargs_axpy_sdfg()
+    sdfg.user_args = ['', ('A', '', 'B'), 'alpha']
+    ucall = generate_bindings_code(sdfg).split('void user_call(')[1]
+    sig = ucall.split(') {')[0]
+    body = ucall
+
+    assert 'nb::object' in sig  # the top-level ignored slot
+    assert 'nb::arg("arg1").none()' in body  # placeholder accepts None too
+    assert 'nb::len(arg2) != 3' in body  # the nested ignored slot is counted...
+    assert 'arg2[0]' in body and 'arg2[2]' in body
+    assert 'arg2[1]' not in body  # ...but never extracted
+
+
+def test_nanobind_interface_user_args_ignore_slots_e2e():
+    """E2E: ignored slots swallow arbitrary values (None, dicts) while the real
+    entries around them keep working; the tuple length check still counts them."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = _uargs_axpy_sdfg()
+        sdfg.user_args = ['', ('A', '', 'B'), 'alpha']
+        csdfg = sdfg.compile()
+
+        n = 16
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 2.0 * a + b
+        csdfg.user_bind_call(None, (a, {'junk': 1}, b), 2.0)
+        assert np.allclose(b, expected)
+
+        # The ignored nested slot still counts toward the tuple length.
+        with pytest.raises(Exception):
+            csdfg.user_bind_call(None, (a, b), 2.0)
+
         # Wrong tuple length is a clear error.
         with pytest.raises(Exception):
             csdfg.user_bind_call((a, ), 2.0)
