@@ -1171,9 +1171,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                               dict(node.keyword_arguments))
         elif node.qualname.startswith(oprepo.OPERATOR_QUALNAME_MARKER):
             # OPERATOR-family replacement (``A @ B``, see
-            # ``lowering.dispatch._lower_registry_operator``): looked up by
-            # (left classname, operator, right classname) rather than by name.
-            function = oprepo.Replacements.getop(*oprepo.decode_operator_qualname(node.qualname))
+            # ``lowering.dispatch._lower_registry_operator``): looked up by the
+            # AST operator and the operand CLASSES, which come from the
+            # operands themselves rather than from the recorded name.
+            from dace.frontend.python.nextgen.semantics.inference import operator_lookup_arguments
+            optype = oprepo.decode_operator_qualname(node.qualname)
+            values = [
+                sdfg.arrays[argument] if argument in node.data_arguments else argument for argument in node.arguments
+            ]
+            function = oprepo.Replacements.getop(*operator_lookup_arguments(optype, values))
             if function is None:
                 raise NotImplementedError(f"No operator replacement registered for '{node.qualname}'.")
             result = function(shim, sdfg, self._current_state, *node.arguments)

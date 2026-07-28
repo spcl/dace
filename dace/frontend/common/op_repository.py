@@ -173,26 +173,74 @@ def attribute_qualname(classname: str, attr_name: str) -> str:
 #: Marker introducing an OPERATOR-family deferred call
 #: (:meth:`Replacements.getop`) in a
 #: :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
-#: qualname, e.g. ``@op:Array.MatMult.Array``. Like
-#: :data:`ATTRIBUTE_QUALNAME_MARKER`, chosen to be unambiguous against real
-#: qualnames, which are dotted Python identifiers and never contain ``@``.
+#: qualname, e.g. ``@op:MatMult``. Like :data:`ATTRIBUTE_QUALNAME_MARKER`,
+#: chosen to be unambiguous against real qualnames, which are dotted Python
+#: identifiers and never contain ``@``.
+#:
+#: Only the AST operator name is encoded: the operand classes are read off the
+#: operands themselves at expansion time (:func:`operand_lookup_key`), so the
+#: lookup keeps the class-hierarchy resolution :meth:`Replacements.getop`
+#: performs instead of freezing one class name into the tree.
 OPERATOR_QUALNAME_MARKER = '@op:'
 
 
-def operator_qualname(left_classname: str, optype: str, right_classname: str) -> str:
+def operator_qualname(optype: str) -> str:
     """
     The :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
     qualname encoding an OPERATOR-family replacement (e.g. ``A @ B``), decoded
     back by ``tree_to_sdfg.visit_ReplacementCallNode``.
     """
-    return f'{OPERATOR_QUALNAME_MARKER}{left_classname}.{optype}.{right_classname}'
+    return f'{OPERATOR_QUALNAME_MARKER}{optype}'
 
 
-def decode_operator_qualname(qualname: str) -> Tuple[str, str, str]:
-    """The (left classname, operator type, right classname) an OPERATOR-family
-    qualname encodes."""
-    left, optype, right = qualname[len(OPERATOR_QUALNAME_MARKER):].split('.')
-    return left, optype, right
+def decode_operator_qualname(qualname: str) -> str:
+    """The AST operator name an OPERATOR-family qualname encodes."""
+    return qualname[len(OPERATOR_QUALNAME_MARKER):]
+
+
+#: Attribute marking an operator implementation as the plain ELEMENTWISE one:
+#: a result of the broadcast shape, computed per element. Set by
+#: :func:`elementwise_operator` on the implementations generated in
+#: ``replacements/operators.py``, and read by frontends that have their own
+#: (cheaper) elementwise lowering and need to know when it applies.
+#:
+#: Unmarked is the conservative answer. An operator registered for a type
+#: without this marker is an OVERRIDE with its own semantics — it may contract
+#: (``@``), change the storage (``A @ StorageType.GPU_Global``), or do anything
+#: else a dunder method can — so its result must be typed by the registry's own
+#: inference and computed by the registry's own implementation.
+ELEMENTWISE_OPERATOR_ATTRIBUTE = '__dace_elementwise_operator__'
+
+
+def elementwise_operator(func: Callable) -> Callable:
+    """Mark an operator implementation as plain elementwise (see
+    :data:`ELEMENTWISE_OPERATOR_ATTRIBUTE`)."""
+    setattr(func, ELEMENTWISE_OPERATOR_ATTRIBUTE, True)
+    return func
+
+
+def is_elementwise_operator(implementation: Optional[Callable]) -> bool:
+    """Whether an operator implementation is the plain elementwise one. False
+    for anything unregistered or unmarked — see
+    :data:`ELEMENTWISE_OPERATOR_ATTRIBUTE` for why that is the safe default."""
+    return bool(getattr(implementation, ELEMENTWISE_OPERATOR_ATTRIBUTE, False))
+
+
+def operand_lookup_key(operand: Any) -> Union[str, Type]:
+    """
+    The key to look an operator implementation up with
+    (:meth:`Replacements.getop`) for one operand.
+
+    Compile-time values (numbers, booleans, symbols, sequence and string
+    literals) have synthetic class names in the registry and answer with those.
+    Everything else — a data descriptor, a ``StorageType``, an MPI
+    communicator — answers with its TYPE, so the lookup walks the class
+    hierarchy and an ``ArrayView`` still matches a rule registered for
+    ``View``.
+    """
+    if (isinstance(operand, (bool, np.bool_, Number, list, tuple, str)) or symbolic.issymbolic(operand)):
+        return _get_inference_operand_types(operand)[0]
+    return type(operand)
 
 
 def _get_inference_operand_types(operand: Any) -> List[Optional[str]]:

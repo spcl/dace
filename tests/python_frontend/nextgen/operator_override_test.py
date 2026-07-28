@@ -1,14 +1,20 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests for the ``@`` operator, whose result is a contraction rather than the
-elementwise broadcast of its operands.
+Tests for operators the replacement registry OVERRIDES, of which ``@`` is the
+one with the most surface.
 
-Both stages have to know that. Inference asks the replacement registry's
-operator family for the result descriptor, and lowering emits a deferred
-replacement call that builds the real ``MatMul`` dataflow. Treating ``@`` like
-any other binary operator produced a silently wrong answer: ``(24, 12) @ (12,
-48)`` typed as (24, 12) and lowered as an elementwise multiply that read both
-operands out of bounds.
+Python operators are dunder methods: what ``A + B`` or ``A @ B`` means depends
+on the operand types, and DaCe records that in the registry. An implementation
+that is not the stock elementwise one may contract (``@``), move storage
+(``A @ StorageType.CPU_Heap``), reduce, or reshape — so neither the shape nor
+the dataflow may be assumed. Inference asks the registry for the result
+descriptor and lowering emits a deferred replacement call whenever the
+registered implementation is not marked elementwise; the criterion is that
+marker, not a list of operator names.
+
+Treating ``@`` as an ordinary binary operator produced a silently wrong
+answer: ``(24, 12) @ (12, 48)`` typed as (24, 12) and lowered as an
+elementwise multiply that read both operands out of bounds.
 """
 import numpy as np
 
@@ -109,9 +115,65 @@ def test_batched_matmul_with_unprovable_batch_dimensions():
     assert np.allclose(np.asarray(result), a @ b)
 
 
+def test_storage_cast_operator_is_an_override_too():
+    """``A @ StorageType.X`` is the same ``@``, overridden for a different
+    right-hand class. Nothing about it is matmul-specific, and the general rule
+    picks it up without naming it."""
+
+    @dace.program
+    def prog(a: dace.float64[8], out: dace.float64[8]):
+        b = a @ dace.StorageType.CPU_Heap
+        out[:] = b + 1
+
+    a, out = np.arange(8, dtype=np.float64), np.zeros(8)
+    tree = nextgen.parse_program(prog, a, out)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    calls = _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert len(calls) == 1 and calls[0].qualname.endswith('MatMult')
+    tree.as_sdfg().compile()(a=a, out=out)
+    assert np.allclose(out, a + 1)
+
+
+def test_elementwise_operators_keep_the_fast_path():
+    """The registry also registers the ordinary elementwise operators. Those
+    are marked as such and must keep lowering to maps, not to deferred calls
+    -- the override rule is about semantics, not about routing everything
+    through the registry."""
+
+    @dace.program
+    def prog(a: dace.float64[8], b: dace.float64[8], out: dace.float64[8]):
+        out[:] = -a + b * 2.0
+
+    tree = nextgen.parse_program(prog, np.zeros(8), np.zeros(8), np.zeros(8))
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert not _nodes_of_type(tree, tn.ReplacementCallNode)
+    assert _nodes_of_type(tree, tn.MapScope)
+
+    a, b, out = np.random.rand(8), np.random.rand(8), np.zeros(8)
+    tree.as_sdfg().compile()(a=a, b=b, out=out)
+    assert np.allclose(out, -a + b * 2.0)
+
+
+def test_override_criterion_is_the_registry_marker():
+    """The frontend asks the registry which operators are elementwise rather
+    than carrying its own list: every stock implementation is marked, and the
+    ones that are not are exactly the overrides."""
+    from dace.frontend.common import op_repository as oprepo
+    import dace.frontend.python.replacements  # noqa: F401 -- populates the registry
+
+    overrides = {key for key, fn in oprepo.Replacements._oprep.items() if not oprepo.is_elementwise_operator(fn)}
+    assert overrides, 'expected at least the MatMult overrides to be unmarked'
+    assert all(key[2] != 'Add' for key in overrides), 'plain arithmetic must be marked elementwise'
+    assert ('Array', 'Array', 'MatMult') in overrides
+    assert ('Array', 'StorageType', 'MatMult') in overrides
+
+
 if __name__ == '__main__':
     test_matmul_shape_and_dataflow()
     test_matmul_delegation_chain()
     test_matmul_of_a_transpose_operand()
     test_matmul_of_a_partial_operand()
     test_batched_matmul_with_unprovable_batch_dimensions()
+    test_storage_cast_operator_is_an_override_too()
+    test_elementwise_operators_keep_the_fast_path()
+    test_override_criterion_is_the_registry_marker()

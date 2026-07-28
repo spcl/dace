@@ -75,14 +75,17 @@ def _unop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, opcode: st
 def _makeunop(op, opcode):
 
     @oprepo.replaces_operator('Array', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         return _unop(visitor, sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('View', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         return _unop(visitor, sdfg, state, op1, opcode, op)
 
     @oprepo.replaces_operator('Scalar', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2=None):
         scalar1 = sdfg.arrays[op1]
         restype, _ = result_type([scalar1], op)
@@ -96,18 +99,21 @@ def _makeunop(op, opcode):
         return op2
 
     @oprepo.replaces_operator('NumConstant', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
 
     @oprepo.replaces_operator('BoolConstant', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: Number, op2=None):
         expr = '{o}(op1)'.format(o=opcode)
         vars = {'op1': op1}
         return eval(expr, vars)
 
     @oprepo.replaces_operator('symbol', op)
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: symbolic.symbol, op2=None):
         if opcode in _pyop2symtype.keys():
             try:
@@ -778,186 +784,230 @@ def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
 def _makebinop(op, opcode):
 
     @oprepo.replaces_operator('Array', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='ListLiteral')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
         op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
         return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
 
     @oprepo.replaces_operator('Array', op, otherclass='TupleLiteral')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
         op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
         return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='ListLiteral')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: ListLiteral):
         op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
         return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
 
     @oprepo.replaces_operator('View', op, otherclass='TupleLiteral')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: TupleLiteral):
         op2_arr = _materialize_sequence_literal(visitor, sdfg, state, op2)
         return _array_array_binop(visitor, sdfg, state, op1, op2_arr, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_array_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_scalar_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('Scalar', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('NumConstant', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('ListLiteral', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
         op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
         return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
 
     @oprepo.replaces_operator('ListLiteral', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: ListLiteral, op2: str):
         op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
         return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
 
     @oprepo.replaces_operator('TupleLiteral', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
         op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
         return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
 
     @oprepo.replaces_operator('TupleLiteral', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: TupleLiteral, op2: str):
         op1_arr = _materialize_sequence_literal(visitor, sdfg, state, op1)
         return _array_array_binop(visitor, sdfg, state, op1_arr, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('BoolConstant', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Array')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='View')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _array_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='Scalar')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _scalar_sym_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='NumConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='BoolConstant')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
     @oprepo.replaces_operator('symbol', op, otherclass='symbol')
+    @oprepo.elementwise_operator
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op2: str):
         return _const_const_binop(visitor, sdfg, state, op1, op2, op, opcode)
 
@@ -965,6 +1015,7 @@ def _makebinop(op, opcode):
 def _makeboolop(op: str, method: str):
 
     @oprepo.replaces_operator('StringLiteral', op, otherclass='StringLiteral')
+    @oprepo.elementwise_operator
     def _op(visitor: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, op1: StringLiteral, op2: StringLiteral):
         return getattr(op1, method)(op2)
 

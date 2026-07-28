@@ -160,6 +160,48 @@ def _padded(shape: Sequence[Any], other: Sequence[Any]) -> List[Any]:
     return [None] * pad + list(shape)
 
 
+def registry_operator_operands(node: ast.expr, operands: Sequence['Inferred']) -> Optional[Tuple[str, List[Any]]]:
+    """
+    The (AST operator name, operand values) an operator expression presents to
+    the replacement registry, or None when the expression is not one the
+    registry can be asked about.
+
+    Registry operator rules are keyed on the AST operator name and the operand
+    classes, and receive descriptors for data operands and plain values for
+    compile-time ones. Comparison chains and boolean operators are excluded:
+    they have no single operand pair to key on.
+
+    Shared by inference and lowering so both stages agree on which expressions
+    the registry owns.
+    """
+    if isinstance(node, ast.BinOp) and len(operands) == 2:
+        optype = type(node.op).__name__
+    elif isinstance(node, ast.UnaryOp) and len(operands) == 1:
+        optype = type(node.op).__name__
+    else:
+        return None
+    values = []
+    for operand in operands:
+        if operand.is_data:
+            values.append(operand.descriptor)
+        elif operand.kind in ('constant', 'symbolic'):
+            values.append(operand.value)
+        else:
+            return None  # A compile-time sequence or an opaque object
+    return optype, values
+
+
+def operator_lookup_arguments(optype: str, values: Sequence[Any]) -> Tuple[Any, ...]:
+    """The arguments to :meth:`Replacements.getop` for an operator over
+    ``values`` — (left, optype[, right]), each operand reduced to the key the
+    registry rules are registered under."""
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population
+    keys = [oprepo.operand_lookup_key(value) for value in values]
+    if len(keys) == 1:
+        return (keys[0], optype)
+    return (keys[0], optype, keys[1])
+
+
 class InferenceService:
     """Classifies canonical expressions against a :class:`ProgramContext`."""
 
@@ -963,34 +1005,38 @@ class InferenceService:
             return Inferred(kind='data', descriptor=data.Scalar(result_dtype))
         return Inferred(kind='data', descriptor=data.Array(result_dtype, list(shape)))
 
-    #: AST operators whose result is NOT the elementwise broadcast of their
-    #: operands, and which therefore have to be typed (and lowered) through the
-    #: replacement registry's operator family instead. Kept explicit rather
-    #: than "anything the registry knows": the registry also registers the
-    #: ordinary elementwise operators, which the broadcast rule types correctly
-    #: and the elementwise mechanism lowers far more cheaply than a deferred
-    #: expansion would.
-    REGISTRY_OPERATORS = {ast.MatMult: 'MatMult'}
-
     def _infer_registry_operator(self, node: ast.expr, operands: List['Inferred']) -> Optional['Inferred']:
-        """The result of an operator typed by the replacement registry
-        (:data:`REGISTRY_OPERATORS`), or None when this is not one of them or
-        the registry declines to type it."""
+        """
+        The result of an operator the replacement registry OVERRIDES for these
+        operand types, or None when it does not — the broadcast rule below
+        answers those.
+
+        An operator counts as overridden when the implementation registered for
+        its operand classes is not the stock elementwise one (see
+        ``op_repository.ELEMENTWISE_OPERATOR_ATTRIBUTE``). Python operators are
+        dunder methods, so an override may do anything: contract (``@``), move
+        storage (``A @ StorageType.GPU_Global``), reduce, reshape. Nothing here
+        may assume the result has the broadcast shape of the operands, so the
+        registry's own inference is asked for it.
+        """
         from dace.frontend.common import op_repository as oprepo  # Deferred: registry population
-        if not isinstance(node, ast.BinOp):
+        resolved = registry_operator_operands(node, operands)
+        if resolved is None:
             return None
-        optype = self.REGISTRY_OPERATORS.get(type(node.op))
-        if optype is None or len(operands) != 2 or not all(operand.is_data for operand in operands):
+        optype, values = resolved
+        implementation = oprepo.Replacements.getop(*operator_lookup_arguments(optype, values))
+        if implementation is None or oprepo.is_elementwise_operator(implementation):
             return None
-        infer_fn = oprepo.Replacements.get_operator_descriptor_inference(optype, operands[0].descriptor,
-                                                                         operands[1].descriptor)
-        if infer_fn is None:
-            return None
-        try:
-            result = infer_fn(operands[0].descriptor, operands[1].descriptor)
-        except Exception:
-            result = None
+        infer_fn = oprepo.Replacements.get_operator_descriptor_inference(optype, *values)
+        result = None
+        if infer_fn is not None:
+            try:
+                result = infer_fn(*values)
+            except Exception:
+                result = None
         if not isinstance(result, data.Data):
+            # The registry owns this operator's meaning here and could not type
+            # it, so nothing else may guess: the statement goes to a callback.
             raise UnsupportedFeatureError(f'Cannot determine the result of "{optype}" on these operands',
                                           self.context.filename,
                                           node,
