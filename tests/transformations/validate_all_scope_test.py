@@ -12,12 +12,14 @@ still has to be caught, at the match that caused it.
 """
 
 import warnings
+from typing import Tuple
 
 import pytest
 
 import dace
 from dace import SDFG, InterstateEdge, Memlet, dtypes
 from dace.sdfg import nodes as dnodes
+from dace.sdfg.state import LoopRegion
 from dace.sdfg.validation import InvalidSDFGError
 from dace.transformation import transformation as xf
 from dace.transformation.dataflow import MapCollapse, MapFusionVertical
@@ -90,6 +92,71 @@ def test_validate_all_catches_a_transformation_that_breaks_its_own_state():
         sdfg.apply_transformations_repeated(BreakTheState, validate=False, validate_all=True)
 
 
+def loop_with_target_state_at_index_one() -> Tuple[SDFG, LoopRegion, dace.SDFGState, dace.SDFGState]:
+    """SDFG whose top-level block 1 is an unrelated state, with the mapped state at index 1 of a loop."""
+    sdfg = SDFG('validate_scope_nested_region')
+    sdfg.add_array('A', [M], dtypes.float64)
+    sdfg.add_array('B', [M], dtypes.float64)
+    entry_state = sdfg.add_state('entry', is_start_block=True)
+    decoy = sdfg.add_state('decoy_block_at_index_one')
+    loop = LoopRegion('loop', 'i < 4', 'i', 'i = 0', 'i = i + 1', sdfg=sdfg)
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry_state, decoy, InterstateEdge())
+    sdfg.add_edge(decoy, loop, InterstateEdge())
+
+    preamble = loop.add_state('loop_preamble', is_start_block=True)
+    target = loop.add_state('target')
+    loop.add_edge(preamble, target, InterstateEdge())
+
+    ar, bw = target.add_access('A'), target.add_access('B')
+    map_entry, map_exit = target.add_map('doubler', {'k': f'0:{M}'})
+    tasklet = target.add_tasklet('x2', {'_in'}, {'_out'}, '_out = _in * 2.0')
+    target.add_memlet_path(ar, map_entry, tasklet, dst_conn='_in', memlet=Memlet('A[k]'))
+    target.add_memlet_path(tasklet, map_exit, bw, src_conn='_out', memlet=Memlet('B[k]'))
+    # ``add_node`` does not register the region, and pattern matching addresses matches by cfg id.
+    sdfg.reset_cfg_list()
+    sdfg.validate()
+    return sdfg, loop, target, decoy
+
+
+def test_validate_all_failure_in_a_region_names_the_state_it_matched():
+    """The ``validate_all`` failure names the state the match rewrote, not a same-index stranger.
+
+    ``match.state_id`` indexes the region the match lives in, so a match inside a loop reported at
+    index 1 was resolved against the SDFG's block 1 -- an unrelated top-level state -- and the error
+    sent the reader there.
+    """
+
+    @xf.explicit_cf_compatible
+    class BreakTheStateInRegion(xf.SingleStateTransformation):
+        """Applies to any MapEntry and leaves a dangling connector behind."""
+        map_entry = xf.PatternNode(dnodes.MapEntry)
+
+        @classmethod
+        def expressions(cls):
+            return [dace.sdfg.utils.node_path_graph(cls.map_entry)]
+
+        def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+            return True
+
+        def apply(self, graph, sdfg):
+            self.map_entry.add_in_connector('IN_dangling')
+
+    sdfg, loop, target, decoy = loop_with_target_state_at_index_one()
+    # The mapped state is block 1 of the loop, and an unrelated state is block 1 of the SDFG.
+    assert loop.node_id(target) == 1
+    assert sdfg.node(1) is decoy
+
+    with pytest.raises(InvalidSDFGError) as excinfo:
+        sdfg.apply_transformations_repeated(BreakTheStateInRegion, validate=False, validate_all=True)
+
+    err = excinfo.value
+    assert err.cfg is loop
+    assert err.resolve_block() is target
+    assert 'decoy_block_at_index_one' not in str(err)
+    assert '(at state target)' in str(err)
+
+
 def test_scoped_check_does_not_warn_about_transients_initialized_elsewhere():
     """A state-local check has no cross-state context: a transient another state initialized
     looks uninitialized. The scoped path seeds every descriptor as initialized, so a valid
@@ -155,4 +222,5 @@ def test_scoped_check_accepts_a_match_inside_a_nested_sdfg():
 if __name__ == '__main__':
     test_validate_all_still_fuses_a_valid_sdfg()
     test_validate_all_catches_a_transformation_that_breaks_its_own_state()
+    test_validate_all_failure_in_a_region_names_the_state_it_matched()
     test_scoped_check_does_not_warn_about_transients_initialized_elsewhere()

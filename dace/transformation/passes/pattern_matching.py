@@ -213,9 +213,13 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
             try:
                 self.validate_after_match(match, graph, sdfg)
             except InvalidSDFGError as err:
+                # ``match.state_id`` indexes ``tcfg``, not the SDFG.
                 raise InvalidSDFGError(
                     f'Validation failed after applying {match_name}. '
-                    f'{type(err).__name__}: {err}', sdfg, match.state_id) from err
+                    f'{type(err).__name__}: {err}',
+                    sdfg,
+                    match.state_id,
+                    cfg=tcfg) from err
 
     def _apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any], apply_once: bool) -> Dict[str, List[Any]]:
         """

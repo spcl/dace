@@ -178,6 +178,50 @@ def test_dse_malformed_conditional_block():
         DeadStateElimination().apply_pass(sdfg, {})
 
 
+def test_dse_malformed_conditional_block_in_region_names_its_own_region():
+    """The malformed-conditional error resolves its block id against the region the block lives in.
+
+    ``block_id`` indexes the *parent region*. Passing only the SDFG made the error resolve the id
+    against the SDFG's own block list, so a conditional at index 1 of a loop was reported as
+    whichever top-level block happened to sit at index 1 -- here, an unrelated state.
+    """
+    sdfg = dace.SDFG('dse_malformed_conditional_in_loop')
+    sdfg.add_symbol('a', dace.int32)
+    entry = sdfg.add_state('entry', is_start_block=True)
+    decoy = sdfg.add_state('decoy_block_at_index_one')
+    loop = LoopRegion('loop', 'i < 10', 'i', 'i = 0', 'i = i + 1')
+    sdfg.add_node(loop)
+    sdfg.add_edge(entry, decoy, dace.InterstateEdge())
+    sdfg.add_edge(decoy, loop, dace.InterstateEdge())
+
+    loop.add_state('preamble', is_start_block=True)
+    condition = ConditionalBlock('cond', sdfg, loop)
+    loop.add_node(condition)
+    loop.add_edge(loop.node(0), condition, dace.InterstateEdge())
+    branch_else = ControlFlowRegion('else', sdfg)
+    branch_else.add_state()
+    condition.add_branch(None, branch_else)
+    branch_if = ControlFlowRegion('if', sdfg)
+    branch_if.add_state()
+    condition.add_branch(CodeBlock('a > 0'), branch_if)
+    # ``add_node`` does not register the region, so the cfg ids are stale until this runs.
+    sdfg.reset_cfg_list()
+
+    # The conditional is block 1 of the loop, and an unrelated state is block 1 of the SDFG.
+    assert condition.block_id == 1
+    assert sdfg.node(1) is decoy
+
+    with pytest.raises(InvalidSDFGNodeError) as excinfo:
+        DeadStateElimination().apply_pass(sdfg, {})
+
+    err = excinfo.value
+    assert err.cfg is loop
+    assert err.resolve_block() is condition
+    assert err.to_json()['cfg_id'] == loop.cfg_id
+    # Formatting must not raise, and must not blame the unrelated top-level state.
+    assert 'decoy_block_at_index_one' not in str(err)
+
+
 def test_dde_simple():
 
     @dace.program
@@ -559,6 +603,7 @@ if __name__ == '__main__':
     test_dse_inside_loop_conditional()
     test_dse_dead_branches_match_declared_type()
     test_dse_malformed_conditional_block()
+    test_dse_malformed_conditional_block_in_region_names_its_own_region()
     test_dde_simple()
     test_dde_libnode()
     test_dde_access_node_in_scope(False)

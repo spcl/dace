@@ -175,6 +175,8 @@ class DeadStateElimination(ppl.Pass):
                         sdfg=block.sdfg,
                         state_id=block.block_id,
                         node_id=None,
+                        # ``block_id`` indexes the parent region, not the SDFG.
+                        cfg=block.parent_graph,
                     )
                 break
             # If an unconditional branch is found, ignore all other branches that follow this one.
