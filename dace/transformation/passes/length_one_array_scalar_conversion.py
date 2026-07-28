@@ -35,7 +35,7 @@ The HLFIR Fortran frontend uses ``ConvertLengthOneArraysToScalars`` as a post-ge
 ``Array`` needs a 1-element numpy buffer.
 """
 import re
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import dace
 from dace import Memlet, properties, subsets
@@ -43,6 +43,61 @@ from dace.properties import CodeBlock
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, nodes, utils as sdutil
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
+
+#: Rewrites one source-text slot; see :func:`rewrite_code_slots`.
+CodeSlotRewriter = Callable[[str], str]
+
+
+def rewrite_code_slots(sdfg: SDFG, rewrite: CodeSlotRewriter) -> None:
+    """Apply ``rewrite`` to every slot of ``sdfg`` that names a descriptor as source TEXT rather than
+    through a memlet: interstate-edge assignments and conditions, ``ConditionalBlock`` branch guards,
+    ``LoopRegion`` init / update / condition statements, and ``NestedSDFG.symbol_mapping`` values.
+
+    Shared by every pass that swaps a descriptor between ``Scalar`` and length-1 ``Array`` form: the
+    slots to visit are a property of the SDFG state machine, not of the direction of the swap, so only
+    the per-slot string transform differs between callers.
+
+    Scoped to ``sdfg`` alone -- it does NOT descend into nested SDFGs, because which inner descriptor
+    a rewritten outer name corresponds to is pass-specific (connector matching vs. a transient-only
+    rule), and a blind descent would rewrite an unrelated inner descriptor that merely shares the name.
+
+    :param sdfg: SDFG whose code slots are rewritten in place.
+    :param rewrite: maps a slot's source text to its replacement.
+    """
+    for edge in sdfg.all_interstate_edges():
+        ise = edge.data
+        if ise is None:
+            continue
+        for key, value in list(ise.assignments.items()):
+            if isinstance(value, str):
+                ise.assignments[key] = rewrite(value)
+        if isinstance(ise.condition, CodeBlock):
+            ise.condition = CodeBlock(rewrite(ise.condition.as_string), ise.condition.language)
+
+    for block in sdfg.all_control_flow_blocks():
+        if isinstance(block, ConditionalBlock):
+            for branch in block.branches:
+                if isinstance(branch[0], CodeBlock):
+                    branch[0] = CodeBlock(rewrite(branch[0].as_string), branch[0].language)
+        elif isinstance(block, LoopRegion):
+            # init/update are optional -- a ``while`` LoopRegion has only the condition.
+            if isinstance(block.init_statement, CodeBlock):
+                block.init_statement = CodeBlock(rewrite(block.init_statement.as_string), block.init_statement.language)
+            if isinstance(block.update_statement, CodeBlock):
+                block.update_statement = CodeBlock(rewrite(block.update_statement.as_string),
+                                                   block.update_statement.language)
+            if isinstance(block.loop_condition, CodeBlock):
+                block.loop_condition = CodeBlock(rewrite(block.loop_condition.as_string), block.loop_condition.language)
+
+    for state in sdfg.states():
+        for node in state.nodes():
+            if not isinstance(node, nodes.NestedSDFG):
+                continue
+            for key, value in list(node.symbol_mapping.items()):
+                text = value if isinstance(value, str) else str(value)
+                rewritten = rewrite(text)
+                if rewritten != text:
+                    node.symbol_mapping[key] = rewritten
 
 
 def _rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
@@ -62,6 +117,22 @@ def _rewrite_refs(expr: str, rename: Dict[str, str]) -> str:
         expr = re.sub(rf'(?<![\w.]){re.escape(old)}\[0\]', new, expr)
         if old != new:
             expr = re.sub(rf'(?<![\w.]){re.escape(old)}\b', new, expr)
+    return expr
+
+
+def rewrite_refs_to_element(expr: str, rename: Dict[str, str]) -> str:
+    """Inverse of :func:`_rewrite_refs`: point a bare reference at element 0 of a now-length-1 array.
+
+    For each ``old -> new`` in ``rename``, a bare ``old`` that is not already subscripted becomes
+    ``new[0]``. A token preceded by a word character or ``.`` is skipped, mirroring the forward
+    direction, and an already-subscripted ``old[...]`` is left alone so the rewrite is idempotent.
+
+    :param expr: source expression to rewrite.
+    :param rename: mapping from each rewritten descriptor's old name to its new name.
+    :returns: ``expr`` with each bare ``old`` rewritten to ``new[0]``.
+    """
+    for old, new in rename.items():
+        expr = re.sub(rf'(?<![\w.]){re.escape(old)}(?!\s*\[)\b', f'{new}[0]', expr)
     return expr
 
 
@@ -182,7 +253,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def _is_eligible(self, sdfg: SDFG, arr_name: str, arr: 'dace.data.Data', blocked: Set[str],
                      apply_filter: bool) -> bool:
         """Whether a descriptor is a length-1 (or, with ``single_element``, all-ones) array we may
-        rewrite: not a View / view source / opaque / ``ONE``-broadcast marker, and passing the filter."""
+        rewrite: not a View / view source / opaque, and passing the filter."""
         # ``ArrayReference`` derives from ``Array``, so it reaches here like any other array. Rewriting
         # one to a transient Scalar destroys the pointer alias and sends writes to a local instead --
         # the same reason ``View`` is excluded, and a silent miscompile rather than a validation error.
@@ -195,11 +266,6 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
         if not (is_len1 or is_single):
             return False
         if isinstance(arr.dtype, dace.dtypes.opaque):
-            return False
-        # A length-1 dim marked with the ``ONE`` broadcast sentinel (design 3.8.2) must stay an Array:
-        # scalarising would erase the broadcast intent gather/scatter lib-node lowerings need.
-        from dace.symbolic import ONE
-        if any(ONE in dim.free_symbols for dim in arr.shape if hasattr(dim, "free_symbols")):
             return False
         if apply_filter and self.filter is not None and arr_name not in self.filter:
             return False
@@ -273,21 +339,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                         for n in (edge.src, edge.dst)):
                     mem.other_subset = subsets.Range.from_string('0')
 
-        for edge in sdfg.all_interstate_edges():
-            edge.data.assignments = {k: _rewrite_refs(v, rename) for k, v in edge.data.assignments.items()}
-        for node in sdfg.all_control_flow_blocks():
-            if isinstance(node, ConditionalBlock):
-                for cond, _body in node.branches:
-                    if isinstance(cond, CodeBlock):
-                        cond.as_string = _rewrite_refs(cond.as_string, rename)
-        for node in sdfg.all_control_flow_regions():
-            if isinstance(node, LoopRegion):
-                cond = node.loop_condition
-                src = _rewrite_refs(cond.as_string if isinstance(cond, CodeBlock) else str(cond), rename)
-                if isinstance(cond, CodeBlock):
-                    cond.as_string = src
-                else:
-                    node.loop_condition = CodeBlock(src, dace.dtypes.Language.Python)
+        rewrite_code_slots(sdfg, lambda text: _rewrite_refs(text, rename))
 
         # Wire copy-in / copy-out for the staged non-transients. One shared start/sink state holds all.
         if staged:
@@ -428,6 +480,9 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 if mem is None or mem.data is None or mem.data not in rename:
                     continue
                 edge.data = Memlet(data=rename[mem.data], subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
+
+        # A bare textual reference now names an Array, so it must index element 0 to stay a value.
+        rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, rename))
 
         if staged:
             copyin = _copyin_state(sdfg) if any(r for _, _, r, _ in staged) else None
