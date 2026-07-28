@@ -19,6 +19,7 @@ single documented conversion helper, not a per-call shim pattern repeated everyw
 directed s-t max-flow/min-cut (handled in dace.graphlib.algorithms.flow.edmondskarp, which
 reuses this same helper).
 """
+import collections.abc
 import copy
 
 from networkx.exception import NetworkXError, NetworkXNoCycle, NetworkXNoPath, NetworkXUnfeasible, NodeNotFound
@@ -499,7 +500,7 @@ class RustworkxBackend:
         # passes an explicit, non-empty source list, so this doesn't affect anything reachable.
         import rustworkx
         G = _coerce(G)
-        sources = list(source) if isinstance(source, (list, tuple, set)) else [source]
+        sources = list(source) if isinstance(source, (list, tuple, collections.abc.Set)) else [source]
         for src in sources:
             # unlike the other methods here, real networkx does NOT raise for a missing/None
             # source in find_cycle -- it just finds no cycle from it. Match that: skip rather

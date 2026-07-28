@@ -3,6 +3,7 @@
     dataflow multigraph representation. """
 
 import ast
+import collections.abc
 from copy import deepcopy as dcpy
 from collections.abc import KeysView
 import dace
@@ -45,9 +46,9 @@ class Node(object):
 
     def __init__(self, in_connectors=None, out_connectors=None):
         # Convert connectors to typed connectors with autodetect type
-        if isinstance(in_connectors, (set, list, KeysView)):
+        if isinstance(in_connectors, (collections.abc.Set, list, KeysView)):
             in_connectors = {k: None for k in in_connectors}
-        if isinstance(out_connectors, (set, list, KeysView)):
+        if isinstance(out_connectors, (collections.abc.Set, list, KeysView)):
             out_connectors = {k: None for k in out_connectors}
 
         self.in_connectors = in_connectors or {}
