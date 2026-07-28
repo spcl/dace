@@ -1054,8 +1054,8 @@ def test_nanobind_interface_same_name_different_programs_coexist():
             csdfg2 = make(2.0).compile()
 
         # Neither was renamed: same-name coexistence, not the rename loop.
-        assert csdfg1.sdfg.name == 'coexist_tester'
-        assert csdfg2.sdfg.name == 'coexist_tester'
+        assert csdfg1.sdfg.name == 'coexist_tester', f'Build folders `csdfg1({csdfg1.sdfg.name}) = "{csdfg1.filename}"`, `csdfg1({csdfg2.sdfg.name}) = "{csdfg2.filename}"`'
+        assert csdfg2.sdfg.name == 'coexist_tester', f'Build folders `csdfg1({csdfg1.sdfg.name}) = "{csdfg1.filename}"`, `csdfg1({csdfg2.sdfg.name}) = "{csdfg2.filename}"`'
 
         a = np.zeros(4)
         csdfg1(A=a)
