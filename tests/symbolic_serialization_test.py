@@ -1,5 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 
+import gzip
+import os
+import warnings
+
 import numpy as np
 import threading
 import pytest
@@ -7,8 +11,9 @@ import pytest
 import dace
 from dace import subsets, symbolic
 from dace.codegen.common import sym2cpp
-from dace.properties import DictProperty, ListProperty
+from dace.properties import DictProperty, ListProperty, SymbolicProperty
 from dace.sdfg.infer_types import infer_connector_types
+from packaging.version import parse as parse_version
 import sympy
 import json
 
@@ -649,6 +654,65 @@ def test_sdfg_json_roundtrip_is_fixed_point():
     j1 = sdfg.to_json()
     j2 = dace.SDFG.from_json(j1).to_json()
     assert json.dumps(j1, sort_keys=True) == json.dumps(j2, sort_keys=True)
+
+
+def test_stale_version_stamp_with_dollar_escape_still_deserializes():
+    """A `$name` escape can only come from a writer at/after the wire version that introduced it
+    (see `DaceSympySerializer._print_Symbol`): a DaCe symbol name is a valid Python identifier, so
+    no older writer could ever emit one. A file stamped below that wire version but carrying the
+    escape anyway has a lying stamp, and the old-format branch must still parse it correctly
+    instead of raising a SympifyError and falling back to a `SerializableObject` placeholder.
+    """
+    json_range = {
+        'type': 'Range',
+        'ranges': [{
+            'start': '0',
+            'end': '-1 + $klon',
+            'step': '1',
+            'tile': '1'
+        }],
+    }
+    restored = subsets.Range.from_json(json_range, {"version": "2.0.0a3"})
+    assert isinstance(restored, subsets.Range)
+    _, end, _ = restored.ranges[0]
+    (end_sym, ) = end.free_symbols
+    assert isinstance(end_sym, symbolic.symbol)
+    assert end_sym.name == 'klon'
+
+
+def test_stale_version_stamp_numeric_values_still_deserialize():
+    """Companion to the `$`-escape regression: a symbolic property on the sub-2.0.0a4 branch also
+    receives plain JSON numbers (not just strings) for e.g. a Memlet volume or a loop's `executions`.
+    The `$`-escape sniff must stay a no-op for those instead of calling a string-only regex on them.
+    """
+    prop = SymbolicProperty(default=0)
+    stale_context = {"version": "2.0.0a3"}
+    assert prop.from_json(5, context=stale_context) == 5
+    assert float(prop.from_json(2.5, context=stale_context)) == 2.5
+
+
+_CLOUDSC = os.path.join(os.path.dirname(__file__), "sdfg", "data", "sdfg_reconstruction", "cloudsc_simplified.sdfgz")
+
+
+@pytest.mark.skipif(not os.path.exists(_CLOUDSC), reason="CloudSC fixture not present")
+def test_cloudsc_fixture_deserializes_to_real_sdfg_despite_stale_version_stamp():
+    """Regression test for the actual fixture: it is stamped `dace_version=2.0.0a3` (below the
+    typed-wire cutoff) yet its shape/stride expressions already carry `$name` escapes -- the
+    combination that used to warn `Failed to deserialize element` 8000+ times and then hand back a
+    `SerializableObject` in place of a `ControlFlowBlock`.
+    """
+    with gzip.open(_CLOUDSC, 'rt') as f:
+        stamp = json.loads(f.read())['dace_version']
+    assert parse_version(stamp) < parse_version("2.0.0a4"), \
+        "fixture must still carry a stale stamp for this regression to be meaningful"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        sdfg = dace.SDFG.from_file(_CLOUDSC)
+
+    assert isinstance(sdfg, dace.SDFG)
+    for node, _ in sdfg.all_nodes_recursive():
+        assert not isinstance(node, dace.serialize.SerializableObject)
 
 
 if __name__ == '__main__':

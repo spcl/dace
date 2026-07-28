@@ -63,6 +63,9 @@ def _symbolic_deserializer(value: str, context=None) -> symbolic.SymbolicType:
     if version is None:
         raise TypeError("Context must contain version information for symbolic deserialization")
     if _parsed_version(version) < _TYPED_SYMBOLIC_WIRE_VERSION:
+        # A `$`-escape below the wire version proves the stamp lied: no writer that old could emit one.
+        if symbolic.has_serialized_symbol_escape(value):
+            return symbolic.deserialize_symbolic(value)
         return pystr_to_symbolic(value, simplify=False)
     return symbolic.deserialize_symbolic(value)
 
