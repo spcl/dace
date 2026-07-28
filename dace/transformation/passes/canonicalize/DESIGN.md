@@ -211,24 +211,14 @@ a pass; capture as a planned canonicalize/codegen optimization.
 - Per-pass tests already exist under `tests/passes/` — extend, not replace.
 - `tests/canonicalize/` (mirrors `tests/autooptimize/`): numerical-equivalence
   (deep-copy pre-canonicalization, compile both, `np.allclose`), a SCoP
-  fission→parallelization test from the Polly paper, plus a ported
-  Polybench/Pluto corpus.
+  fission→parallelization test from the Polly paper
+  (`scop_fission_parallelization_test.py`, Polly PPL'12 Listing 1), plus a
+  ported Polybench/Pluto corpus.
+- The SCoP test surfaced two real defects in reused passes, both fixed
+  (outside this dir): `OffsetLoopsAndMaps` had an `int.subs`/`_apply`
+  traversal bug (its suite went 2→5 passing, 0 regressions); `LoopToMap` now
+  rejects a loop with multiple distinct write subscripts to one container
+  (e.g. `A[5*i]`/`A[3*i]`, which overlap across iterations — reproducer
+  `tests/transformations/loop_to_map_overlapping_writes_test.py`).
 - `yakup-env` needs `-fopenmp` in the CPU compiler args to compile generated
   SDFGs (otherwise `undefined symbol: omp_get_max_threads`).
-
-## Change log
-
-- *init*: subpackage scaffolded as `pipeline.py`; `CanonicalizationPipeline`
-  + `canonicalize()` compose existing yakup/dev passes, applied once in order.
-  Stage 1 (`Untile`) and the Stage-2 loop-fission step are TODOs (their code
-  lives outside this subpackage). Stage 8 (`hoist_if`) is a no-op for now.
-  Verified end-to-end on an `axpy` SDFG (numerically exact).
-- *scop test*: added `tests/canonicalize/scop_fission_parallelization_test.py`
-  (Polly PPL'12 Listing 1). Surfaced and fixed two real defects in reused
-  passes (outside this dir): `OffsetLoopsAndMaps` (`int.subs` /
-  ``_apply`` traversal; its suite 2→5 passing, 0 regressions) and `LoopToMap`
-  (now rejects a loop with multiple distinct write subscripts to one
-  container, e.g. ``A[5*i]``/``A[3*i]``, which overlap across iterations;
-  reproducer at `tests/transformations/loop_to_map_overlapping_writes_test.py`,
-  existing `loop_to_map_test.py` still fully green). SCoP test now passes both
-  numerical-correctness and fission-enables-parallelism.
