@@ -105,9 +105,9 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
     for arg_name, arg_val in args.items():
         if arg_name in sdfg.arrays:
             desc = sdfg.arrays[arg_name]
-            if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
+            if not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
+            symbolic_values = list(desc.shape) + list(desc.strides) + list(desc.offset)
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
