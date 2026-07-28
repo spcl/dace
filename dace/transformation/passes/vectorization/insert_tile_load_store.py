@@ -49,7 +49,11 @@ def _assert_post_stage_invariants(state: SDFGState) -> None:
     sdfg = state.sdfg
     for edge in state.edges():
         mem = edge.data
-        if mem is None:
+        # An empty memlet is an ORDERING edge (StateFusionExtended WAR/WAW, SplitTasklets
+        # anchor), not a data copy -- ``mem`` itself is never None here, so this must check
+        # ``is_empty()`` and not identity, else a legitimate happens-before edge between two
+        # ordinary (non-bridge) AccessNodes trips the AN->AN check below as a false violation.
+        if mem is None or mem.is_empty():
             continue
         src_is_libnode = isinstance(edge.src, (TileLoad, TileStore))
         dst_is_libnode = isinstance(edge.dst, (TileLoad, TileStore))
@@ -658,6 +662,12 @@ class InsertTileLoadStore(ppl.Pass):
             pre_stage_out_edges = list(inner_state.out_edges(an))
             if not pre_stage_in_edges:
                 continue  # No write to stage (pure source -- the read phase owns it).
+            # An empty in-edge carries no subset, so as representative it reports the full array
+            # and a genuine per-tile write is silently skipped (misclassified CONSTANT).
+            # Ordering only -- skip it.
+            pre_stage_in_edges = [e for e in pre_stage_in_edges if not e.data.is_empty()]
+            if not pre_stage_in_edges:
+                continue
             if any(isinstance(e.src, (TileLoad, TileStore)) for e in pre_stage_in_edges):
                 continue  # Already staged by phase 1's bridge->output insertion.
             # Pure sink (writes, no reads) is common. Other staged shape = in-place RMW
@@ -1358,6 +1368,13 @@ class InsertTileLoadStore(ppl.Pass):
                 # Walk downstream of this AN: capture all out-edges, queue any
                 # further tasklets so we resize THEIR scalar outputs too.
                 for downstream in inner_state.out_edges(e.dst):
+                    # An empty out-edge is an ordering edge (StateFusionExtended WAW, e.g. this
+                    # scalar reused as a first-state write ordered before a same-named second-state
+                    # write), not part of the tile-shape data chain -- forcing a subset onto it
+                    # below would turn a happens-before edge into a malformed one (subset set,
+                    # data still None) that no longer satisfies ``is_empty()``.
+                    if downstream.data.is_empty():
+                        continue
                     memlets_to_update.append(downstream)
                     if isinstance(downstream.dst, Tasklet) and id(downstream.dst) not in seen_tasklets:
                         seen_tasklets.add(id(downstream.dst))
