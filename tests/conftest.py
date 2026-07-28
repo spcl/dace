@@ -38,6 +38,16 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 
+# Give each xdist worker its own build directory. DaCe keys a build on the SDFG NAME, and many tests
+# reuse generic names ("testing", "tester", "reftest"), so two workers compiling same-named SDFGs race
+# on one .dacecache entry and intermittently load a half-written .so. That surfaces as failures which
+# move between runs and vanish serially -- it has masqueraded as a real regression more than once.
+# Serial runs keep the shared folder, so the build cache still works across an ordinary session.
+xdist_worker = os.environ.get("PYTEST_XDIST_WORKER")
+if xdist_worker:
+    os.environ["DACE_default_build_folder"] = os.path.join(
+        os.environ.get("DACE_default_build_folder", ".dacecache"), xdist_worker)
+
 import pytest
 
 #: Seed applied before every test, so a numerical comparison that only fails on some inputs fails
