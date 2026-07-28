@@ -6,7 +6,7 @@ import os
 import re
 import warnings
 from collections import defaultdict
-from typing import TYPE_CHECKING, Dict, List, Set
+from typing import TYPE_CHECKING, Dict, List, Optional, Set
 
 from dace import graphlib as nx
 
@@ -916,24 +916,30 @@ def validate_state(state: 'dace.sdfg.SDFGState',
 
         # Verify that source and destination subsets contain the same
         # number of elements
-        if not e.data.allow_oob and e.data.other_subset is not None and not (
-            (isinstance(src_node, nd.AccessNode) and isinstance(sdfg.arrays[src_node.data], dt.Stream)) or
-            (isinstance(dst_node, nd.AccessNode) and isinstance(sdfg.arrays[dst_node.data], dt.Stream))):
-            src_expr = (e.data.src_subset.num_elements() * sdfg.arrays[src_node.data].veclen)
-            dst_expr = (e.data.dst_subset.num_elements() * sdfg.arrays[dst_node.data].veclen)
-            if symbolic.inequal_symbols(src_expr, dst_expr):
-                error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
-                # NOTE: Make an exception for Views and reference sets
-                from dace.sdfg import utils
-                if (isinstance(sdfg.arrays[src_node.data], dt.View) and utils.get_view_edge(state, src_node) is e):
-                    warnings.warn(error.message)
-                    continue
-                if (isinstance(sdfg.arrays[dst_node.data], dt.View) and utils.get_view_edge(state, dst_node) is e):
-                    warnings.warn(error.message)
-                    continue
-                if e.dst_conn == 'set':
-                    continue
-                raise error
+        if not e.data.allow_oob and e.data.other_subset is not None:
+            # Only an AccessNode names a data descriptor: a scope node, NestedSDFG or code node reaches
+            # this edge through a connector, so it carries no Stream exemption, no vector length (the
+            # connector moves plain elements) and no View alias.
+            src_desc: Optional['dt.Data'] = sdfg.arrays[src_node.data] if isinstance(src_node, nd.AccessNode) else None
+            dst_desc: Optional['dt.Data'] = sdfg.arrays[dst_node.data] if isinstance(dst_node, nd.AccessNode) else None
+            if not isinstance(src_desc, dt.Stream) and not isinstance(dst_desc, dt.Stream):
+                src_veclen: int = src_desc.veclen if src_desc is not None else 1
+                dst_veclen: int = dst_desc.veclen if dst_desc is not None else 1
+                src_expr = e.data.src_subset.num_elements() * src_veclen
+                dst_expr = e.data.dst_subset.num_elements() * dst_veclen
+                if symbolic.inequal_symbols(src_expr, dst_expr):
+                    error = InvalidSDFGEdgeError('Dimensionality mismatch between src/dst subsets', sdfg, state_id, eid)
+                    # NOTE: Make an exception for Views and reference sets
+                    from dace.sdfg import utils
+                    if isinstance(src_desc, dt.View) and utils.get_view_edge(state, src_node) is e:
+                        warnings.warn(error.message)
+                        continue
+                    if isinstance(dst_desc, dt.View) and utils.get_view_edge(state, dst_node) is e:
+                        warnings.warn(error.message)
+                        continue
+                    if e.dst_conn == 'set':
+                        continue
+                    raise error
 
     if Config.get_bool('experimental.check_race_conditions'):
         node_labels = []
