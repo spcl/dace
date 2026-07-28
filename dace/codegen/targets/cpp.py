@@ -895,7 +895,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
                 callsite_stream.write(f'{common.get_gpu_backend()}Stream_t __dace_current_stream = {gpu_stream_conn};',
                                       cfg, state_id, node)
         elif host_node_on_gpu_memory and hasattr(node, "_cuda_stream"):
-            if max_streams >= 0:
+            if max_streams >= 0 and node._cuda_stream != 'nullptr':
                 callsite_stream.write(
                     'int __dace_current_stream_id = %d;\n%sStream_t __dace_current_stream = __state->gpu_context->streams[__dace_current_stream_id];'
                     % (node._cuda_stream, common.get_gpu_backend()),
@@ -1415,11 +1415,22 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
 
 
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
+def cuda_stream_expr(cuda_stream: Union[int, str]) -> str:
+    """Render a node's ``_cuda_stream`` annotation as a C++ stream expression.
+
+    A node that a stream-unaware GPU callback pinned to the default stream carries the string
+    ``'nullptr'`` rather than a slot index, so it must not be formatted as an array subscript.
+    """
+    if cuda_stream == 'nullptr':
+        return 'nullptr'
+    return "__state->gpu_context->streams[%d]" % cuda_stream
+
+
 def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)
     max_streams = int(Config.get("compiler", "cuda", "max_concurrent_streams"))
     if max_streams >= 0:
-        cudastream = "__state->gpu_context->streams[%d]" % node._cuda_stream
+        cudastream = cuda_stream_expr(node._cuda_stream)
     else:  # Only default stream is used
         cudastream = 'nullptr'
 
@@ -1468,11 +1479,10 @@ def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_str
                     and edge.dst._cuda_stream != node._cuda_stream):
                 callsite_stream.write(
                     """DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
-DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0));"""
-                    .format(
+DACE_GPU_CHECK({backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0));""".format(
                         ev=edge._cuda_event if hasattr(edge, "_cuda_event") else 0,
                         src_stream=cudastream,
-                        dst_stream=edge.dst._cuda_stream,
+                        dst_stream=cuda_stream_expr(edge.dst._cuda_stream),
                         backend=backend,
                     ),
                     cfg,
@@ -1501,11 +1511,10 @@ DACE_GPU_CHECK({backend}StreamWaitEvent(__state->gpu_context->streams[{dst_strea
                 elif e.dst._cuda_stream != node._cuda_stream:
                     callsite_stream.write(
                         """{backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream});
-    {backend}StreamWaitEvent(__state->gpu_context->streams[{dst_stream}], __state->gpu_context->events[{ev}], 0);""".
-                        format(
+    {backend}StreamWaitEvent({dst_stream}, __state->gpu_context->events[{ev}], 0);""".format(
                             ev=e._cuda_event if hasattr(e, "_cuda_event") else 0,
                             src_stream=cudastream,
-                            dst_stream=e.dst._cuda_stream,
+                            dst_stream=cuda_stream_expr(e.dst._cuda_stream),
                             backend=backend,
                         ),
                         cfg,
