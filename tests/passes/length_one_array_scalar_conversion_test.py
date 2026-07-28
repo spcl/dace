@@ -399,3 +399,30 @@ def test_other_subset_of_scalarized_side_collapses():
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+def test_arrayize_rewrites_interstate_edge_assignment():
+    """A scalar named on an interstate-edge assignment becomes ``name[0]`` once it is a length-1 array.
+
+    Leaving the bare name there reads the array itself where a value is expected -- a silent
+    miscompile rather than a validation error.
+    """
+    sdfg = dace.SDFG('arrayize_iedge')
+    sdfg.add_scalar('arr', dace.float64, transient=True)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_symbol('a', dace.float64)
+
+    s0 = sdfg.add_state('s0', is_start_block=True)
+    t = s0.add_tasklet('w', {}, {'o'}, 'o = 3.0')
+    s0.add_edge(t, 'o', s0.add_write('arr'), None, dace.Memlet('arr'))
+    s1 = sdfg.add_state('s1')
+    sdfg.add_edge(s0, s1, dace.InterstateEdge(assignments={'a': 'arr'}))
+    t2 = s1.add_tasklet('r', {}, {'o'}, 'o = a')
+    s1.add_edge(t2, 'o', s1.add_write('out'), None, dace.Memlet('out[0]'))
+
+    ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+
+    assert isinstance(sdfg.arrays['arr'], dace.data.Array)
+    assignments = [dict(e.data.assignments) for e in sdfg.all_interstate_edges()]
+    assert assignments == [{'a': 'arr[0]'}], assignments
+    sdfg.validate()

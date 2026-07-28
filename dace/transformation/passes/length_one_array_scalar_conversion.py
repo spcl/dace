@@ -253,7 +253,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
     def _is_eligible(self, sdfg: SDFG, arr_name: str, arr: 'dace.data.Data', blocked: Set[str],
                      apply_filter: bool) -> bool:
         """Whether a descriptor is a length-1 (or, with ``single_element``, all-ones) array we may
-        rewrite: not a View / view source / opaque / ``ONE``-broadcast marker, and passing the filter."""
+        rewrite: not a View / view source / opaque, and passing the filter."""
         # ``ArrayReference`` derives from ``Array``, so it reaches here like any other array. Rewriting
         # one to a transient Scalar destroys the pointer alias and sends writes to a local instead --
         # the same reason ``View`` is excluded, and a silent miscompile rather than a validation error.
