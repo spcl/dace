@@ -329,7 +329,8 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         # the shared index walks past the smaller side (permutations -> Transpose libnode;
         # reshapes -> rank-mismatch branch below). inequal_symbols normalizes same-named SymPy
         # symbols with differing assumption sets first, so a mismatch found here is real, not a
-        # symbol-identity artifact.
+        # symbol-identity artifact. A zero-volume copy never reaches here -- ``CopyLibraryNode.expand``
+        # removes the node outright before any implementation is dispatched.
         if any(symbolic.inequal_symbols(a, b) for a, b in zip(in_shape, out_shape)):
             raise ValueError(f"MappedTasklet same-rank copy requires matching per-dim shapes; got src "
                              f"{tuple(in_shape)} vs dst {tuple(out_shape)}. Per-dim permutations are not "
@@ -818,6 +819,29 @@ class CopyLibraryNode(nodes.LibraryNode):
                          inputs={CopyLibraryNode.INPUT_CONNECTOR_NAME},
                          outputs={CopyLibraryNode.OUTPUT_CONNECTOR_NAME},
                          **kwargs)
+
+    def expand(self, state_or_sdfg, state_or_impl=None, **kwargs) -> str:
+        """Overrides ``LibraryNode.expand``: a zero-volume copy (either side's subset carries no
+        elements) moves nothing, so no implementation -- memcpy, map, or tasklet -- has anything
+        to emit. The only correct expansion is removing the node and reconnecting its two
+        neighbors with a single empty (ordering-only) memlet, same as if the copy had never moved
+        data -- dropping the connection entirely is not an option, an isolated node is invalid.
+        Non-empty copies fall through to the standard implementation dispatch untouched.
+
+        :param state_or_sdfg: the owning state (new interface) or SDFG (deprecated interface).
+        :param state_or_impl: the implementation name (new interface) or state (deprecated interface).
+        :returns: ``'NoOp'`` for a removed zero-volume copy, else whatever ``LibraryNode.expand`` returns.
+        """
+        from dace.sdfg.state import SDFGState
+        state = state_or_sdfg if isinstance(state_or_sdfg, SDFGState) else state_or_impl
+        _, _, in_subset, _, _, out_subset = self.validate(state.sdfg, state, allow_cross_storage=True)
+        if in_subset.num_elements_exact() == 0 or out_subset.num_elements_exact() == 0:
+            in_edge = next(e for e in state.in_edges(self) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME)
+            out_edge = next(e for e in state.out_edges(self) if e.src_conn == CopyLibraryNode.OUTPUT_CONNECTOR_NAME)
+            state.add_edge(in_edge.src, in_edge.src_conn, out_edge.dst, out_edge.dst_conn, dace.memlet.Memlet())
+            state.remove_node(self)
+            return 'NoOp'
+        return super().expand(state_or_sdfg, state_or_impl, **kwargs)
 
     def src_storage(self, state) -> dtypes.StorageType:
         """Storage of the array feeding ``_cpy_in``, or ``Default`` if unwired.
