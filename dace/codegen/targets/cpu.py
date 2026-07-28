@@ -2,7 +2,7 @@
 import ast
 from copy import deepcopy
 from dace.sdfg.graph import MultiConnectorEdge
-from dace.sdfg.state import AbstractControlFlowRegion, ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
+from dace.sdfg.state import ControlFlowRegion, LoopRegion, SDFGState, StateSubgraphView
 import functools
 import itertools
 import warnings
