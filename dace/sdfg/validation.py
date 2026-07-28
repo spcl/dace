@@ -236,8 +236,9 @@ def validate_control_flow_region(sdfg: 'SDFG',
                         eid,
                         cfg=region)
 
-    # Check for interstate edges that write to scalars or arrays
-    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg)
+    # Check for interstate edges that write to scalars or arrays. Per region: this runs once per
+    # region, so passing the SDFG re-checked its edges every time and never checked the region's own.
+    _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg, region)
 
 
 def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context: bool):
@@ -1379,14 +1380,16 @@ def validate_memlet_data(memlet_data: str, access_data: str) -> bool:
     return mem_root == access_data
 
 
-def _no_writes_to_scalars_or_arrays_on_interstate_edges(cfg: 'dace.ControlFlowRegion'):
+def _no_writes_to_scalars_or_arrays_on_interstate_edges(sdfg: 'dace.SDFG', cfg: 'dace.ControlFlowRegion'):
     from dace.sdfg import InterstateEdge
+    # The owner is passed in rather than read off ``cfg.sdfg``, which a region move can leave stale.
+    arrays = sdfg.arrays
     for edge in cfg.edges():
         if edge.data is not None and isinstance(edge.data, InterstateEdge):
             # sdfg.arrays return arrays and scalars, it is invalid to write to them
-            if any([key in cfg.sdfg.arrays for key in edge.data.assignments]):
+            if any(key in arrays for key in edge.data.assignments):
                 raise InvalidSDFGInterstateEdgeError(
                     f'Assignment to a scalar or an array detected in an interstate edge: "{edge}"',
-                    cfg.sdfg,
+                    sdfg,
                     cfg.edge_id(edge),
                     cfg=cfg)
