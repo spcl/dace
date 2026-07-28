@@ -228,6 +228,7 @@ def _literal_code(value: Any) -> str:
 def _infer_local_array_descriptor(input_descs,
                                   shape: Shape,
                                   dtype: Optional[dtypes.typeclass] = None,
+                                  strides: Optional[Shape] = None,
                                   storage: dtypes.StorageType = dtypes.StorageType.Default,
                                   lifetime: dtypes.AllocationLifetime = dtypes.AllocationLifetime.Scope,
                                   **_kw):
@@ -242,7 +243,17 @@ def _infer_local_array_descriptor(input_descs,
             dtype = dtypes.dtype_to_typeclass(dtype)
         except (TypeError, ValueError):
             return None
-    return data.Array(dtype, out_shape, transient=True, storage=storage, lifetime=lifetime)
+    if strides is not None:
+        # ``strides=`` is part of the DESCRIPTOR, not of the contents, so it
+        # has to be inferred: a caller that allocates from this descriptor and
+        # then only initializes the contents (which is what the schedule-tree
+        # frontends do for creation calls) would otherwise silently drop it.
+        if not isinstance(strides, (list, tuple)):
+            strides = [strides]
+        strides = [int(stride) if isinstance(stride, Integral) else stride for stride in strides]
+        if len(strides) != len(out_shape):
+            return None
+    return data.Array(dtype, out_shape, transient=True, strides=strides, storage=storage, lifetime=lifetime)
 
 
 @oprepo.infers_descriptor('dace.define_local_scalar')
@@ -313,7 +324,11 @@ def _infer_literal_array_descriptor(input_descs,
                                     ndmin: int = 0,
                                     like: Any = None,
                                     **_kw):
-    del input_descs
+    # A data operand arrives as its container NAME (the inference calling
+    # convention), so resolve it before asking what ``numpy.array`` of it is --
+    # otherwise ``numpy.array(A)`` types as an array of the string "A".
+    if isinstance(obj, str) and obj in input_descs:
+        obj = input_descs[obj]
     return infer_array_creation_descriptor(obj,
                                            dtype=dtype,
                                            copy=copy,

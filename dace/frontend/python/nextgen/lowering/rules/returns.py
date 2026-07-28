@@ -71,7 +71,14 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
     if access is not None:
         shape = [s for s in access.subset.size() if s != 1] or [1]
         if return_name not in state.context.containers:
-            descriptor = data.Array(access.descriptor.dtype, shape)
+            source = access.descriptor
+            if isinstance(source, data.Array) and list(source.shape) == list(shape):
+                # A whole-array return keeps the source's LAYOUT: ``return A``
+                # hands back A itself in Python, strides included, so a
+                # default-layout copy would change what the caller observes.
+                descriptor = data.Array(source.dtype, shape, strides=list(source.strides))
+            else:
+                descriptor = data.Array(access.descriptor.dtype, shape)
             return_name = state.context.add_container(return_name, descriptor, transient=transient)
         descriptor = state.context.containers[return_name]
         state.emitter.emit(

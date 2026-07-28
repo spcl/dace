@@ -644,6 +644,13 @@ class InferenceService:
         for element in sequence.elements:
             value = self.constant_value(element)
             if value is None:
+                # A NESTED sequence (``((4, 5, 6), [1, 2, 3])``, which ANF
+                # hoists element-first) is still compile-time: resolve it the
+                # same way, one dimension down.
+                nested = self.static_sequence(element)
+                if nested is not None:
+                    result.append(self.sequence_constants(nested))
+                    continue
                 raise UnsupportedFeatureError(
                     f'Python sequence element "{astutils.unparse(element)}" is not a compile-time constant',
                     self.context.filename,
@@ -651,6 +658,15 @@ class InferenceService:
                     category='static-sequence')
             result.append(value)
         return result
+
+    def static_sequence(self, node: ast.expr) -> Optional[StaticSequence]:
+        """The compile-time Python sequence a canonical atom resolves to, or
+        None when it is not one."""
+        try:
+            inferred = self.infer(node)
+        except UnsupportedFeatureError:
+            return None
+        return inferred.value if inferred.kind == 'static' else None
 
     def sequence_descriptor(self, sequence: StaticSequence) -> data.Array:
         """The constant-array descriptor a static sequence materializes to."""

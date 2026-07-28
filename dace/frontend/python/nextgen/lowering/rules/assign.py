@@ -659,8 +659,14 @@ def _result_descriptor(inferred: Inferred, state: LoweringState, statement: ast.
             # Streams keep their full descriptor (buffer size etc.)
             return copy.deepcopy(descriptor)
         if isinstance(descriptor, data.Array):
+            # A fresh array of the same shape, dropping any VIEW-ness of the
+            # source (the result is its own storage) but keeping the layout:
+            # ``dace.ndarray(..., strides=(1, 2))`` means those strides, and
+            # rebuilding a default-layout array here would silently ignore
+            # them while the call still looks lowered.
             return data.Array(descriptor.dtype,
                               list(descriptor.shape),
+                              strides=list(descriptor.strides),
                               storage=descriptor.storage,
                               lifetime=descriptor.lifetime)
         return data.Scalar(descriptor.dtype, storage=descriptor.storage, lifetime=descriptor.lifetime)

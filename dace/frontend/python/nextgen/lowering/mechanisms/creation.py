@@ -47,12 +47,16 @@ def lower_creation(qualname: str, target: DataAccess, call: ast.Call, statement:
         _emit_fill(target, ast.Constant(value=1), statement, state)
         return
     if function in ('full', 'full_like'):
-        if len(call.args) < 2:
+        # NumPy names the second parameter ``fill_value``, so it may just as
+        # well arrive as a keyword (``numpy.full_like(A, fill_value=5)``).
+        fill_value = call.args[1] if len(call.args) >= 2 else next(
+            (keyword.value for keyword in call.keywords if keyword.arg == 'fill_value'), None)
+        if fill_value is None:
             raise UnsupportedFeatureError(f'"{qualname}" requires an explicit fill value',
                                           state.context.filename,
                                           statement,
                                           category='array-creation')
-        _emit_fill(target, call.args[1], statement, state)
+        _emit_fill(target, fill_value, statement, state)
         return
     if function == 'copy':
         source = resolve_access(call.args[0], state) if call.args else None

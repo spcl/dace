@@ -745,7 +745,11 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     # form CREATION_CALLS is keyed on).
     creation_name = qualname
     if creation_name in creation.CREATION_CALLS:
-        if any(keyword.arg not in ('dtype', 'fill_value', 'shape', 'storage', 'lifetime', 'buffer_size')
+        # Keywords this mechanism can honor: either they only affect the
+        # descriptor (which inference derived, and the caller already
+        # allocated from) or the contents this mechanism writes. Anything else
+        # would be silently ignored, so it falls back instead.
+        if any(keyword.arg not in ('dtype', 'fill_value', 'shape', 'strides', 'storage', 'lifetime', 'buffer_size')
                for keyword in call.keywords):
             return False
         target_access = _call_target_access(target, inferred, statement, state)
