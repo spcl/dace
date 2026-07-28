@@ -209,6 +209,37 @@ def test_partitioned_write_is_not_a_conflict():
     assert not result['resolved'] and not result['unresolved'] and not warned
 
 
+def test_write_through_a_view_is_not_a_conflict():
+    """
+    A per-iteration write that reaches its container through a VIEW is
+    partitioned like any other.
+
+    The edge leaving a view node carries the view's whole window regardless of
+    which element was written, so reading the subset off that edge made every
+    such write look like a collision. The per-iteration subset is on the writes
+    INTO the view and has to be composed back through the window.
+    """
+    sdfg = dace.SDFG('through_view')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_view('v', [N], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', dict(i=f'0:{N}'))
+
+    # The window is loop-INVARIANT (the whole array) while the write into it
+    # varies with the map parameter, so only the composition ``a[0 + i]`` says
+    # the iterations are disjoint -- the window edge on its own says they all
+    # write ``a[0:N]``.
+    view = state.add_access('v')
+    state.add_memlet_path(state.add_read('a'), entry, view, dst_conn='views', memlet=Memlet(f'a[0:{N}]'))
+    tasklet = state.add_tasklet('increment', {'__in'}, {'__out'}, '__out = __in + 1')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='__in', memlet=Memlet('a[i]'))
+    state.add_edge(tasklet, '__out', view, None, Memlet('v[i]'))
+    state.add_memlet_path(view, exit_node, state.add_write('a'), memlet=Memlet(f'a[0:{N}]'))
+
+    result, warned = _apply(sdfg)
+    assert not result['resolved'] and not result['unresolved'] and not warned
+
+
 def test_existing_conflict_resolution_is_left_alone():
     """A write that already carries conflict resolution, with no other read of
     the element feeding it, is sound and must not be touched or reported."""
@@ -432,6 +463,7 @@ if __name__ == '__main__':
     test_write_through_a_data_dependent_index_is_undecidable()
     test_writes_to_a_referenced_container_are_undecidable()
     test_partitioned_write_is_not_a_conflict()
+    test_write_through_a_view_is_not_a_conflict()
     test_existing_conflict_resolution_is_left_alone()
     test_folds_an_existing_conflict_resolution_over_a_self_read()
     test_reports_conflicting_overwrite()

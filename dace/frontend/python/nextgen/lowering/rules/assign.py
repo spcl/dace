@@ -706,11 +706,22 @@ def _writable_as(declared: data.Data, new: data.Data) -> bool:
 
 
 def _compatible(existing: data.Data, new: data.Data) -> bool:
-    """In-place updates require same dtype and shape (scalars always match on dtype)."""
+    """
+    In-place updates require same dtype and shape (scalars always match on
+    dtype).
+
+    A :class:`~dace.data.View` qualifies like any other array of its shape: a
+    view IS the window it names, so writing into it writes through to the
+    viewed container, which is what ``y = a[0:10]; y += 1`` has to do.
+    Refusing reuse here allocated a fresh container instead and rebound ``y``
+    to it BEFORE the right-hand side was lowered, so the update read the new,
+    uninitialized container and the original was never touched -- a silent
+    miscompilation, not a fallback.
+    """
     if existing.dtype != new.dtype:
         return False
     if isinstance(existing, data.Scalar) and isinstance(new, data.Scalar):
         return True
     if isinstance(existing, data.Array) and isinstance(new, data.Array):
-        return tuple(existing.shape) == tuple(new.shape) and not isinstance(existing, data.View)
+        return tuple(existing.shape) == tuple(new.shape)
     return False

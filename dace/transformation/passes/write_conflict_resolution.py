@@ -233,10 +233,12 @@ def _conflicting_writes(state: SDFGState, sdfg: SDFG) -> List[MultiConnectorEdge
             params = enclosing_parallel_params(state, inner.src)
             if not params:
                 continue
-            subset = inner.data.get_dst_subset(inner, state) or inner.data.subset
-            if subset is None:
+            # A write arriving from a view carries the view's whole window, so
+            # the per-iteration subset has to be read off the writes into it.
+            written = _write_subsets(inner, state)
+            if not written:
                 continue
-            if _partitions(subset, params):
+            if all(_partitions(subset, params) for subset in written):
                 continue  # Partitioned: iterations write disjoint elements
             # A nested SDFG's connector memlet covers the whole container until
             # propagation narrows it, so the per-iteration subset is only
@@ -532,9 +534,67 @@ def _nested_write_subsets(node: nodes.Node, connector: Optional[str]) -> List:
             if access.data != connector:
                 continue
             for in_edge in state.in_edges(access):
-                subset = in_edge.data.get_dst_subset(in_edge, state) or in_edge.data.subset
-                if subset is not None:
-                    result.append(subset)
+                result.extend(_write_subsets(in_edge, state))
+    return result
+
+
+def _write_subsets(edge: MultiConnectorEdge[Memlet], state: SDFGState) -> List:
+    """
+    The subsets one write edge actually touches, in the written container's
+    coordinates.
+
+    Normally that is just the edge's own destination subset. The exception is a
+    write arriving from a VIEW: the edge out of a view carries the view's whole
+    window (``y -> a`` is ``a[0:10]`` no matter which element was written), so
+    the per-iteration subset lives on the writes INTO the view and has to be
+    composed back through the window to be comparable.
+    """
+    if isinstance(edge.src, nodes.AccessNode) and isinstance(state.sdfg.arrays.get(edge.src.data), data.View):
+        through_view = _view_write_subsets(state, edge.src)
+        if through_view:
+            return through_view
+    subset = edge.data.get_dst_subset(edge, state) or edge.data.subset
+    return [subset] if subset is not None else []
+
+
+def _view_write_subsets(state: SDFGState, view: nodes.AccessNode) -> List:
+    """
+    The subsets written through a view, expressed in the viewed container's
+    coordinates.
+
+    A view node has two kinds of incoming edge: the one naming another
+    container is the window it looks through, and the ones naming the view
+    itself are the writes into it. Composing the second through the first gives
+    the element the write really lands on (``y[__i0]`` through ``a[0:10]`` is
+    ``a[__i0]``). Views may chain, so a window that is itself a view recurses.
+    """
+    window = None
+    writes = []
+    for edge in state.in_edges(view):
+        if edge.data.is_empty():
+            continue
+        if edge.data.data is not None and edge.data.data != view.data:
+            window = edge.data.get_src_subset(edge, state) or edge.data.subset
+            if isinstance(edge.src, nodes.AccessNode) and isinstance(state.sdfg.arrays.get(edge.src.data), data.View):
+                # A chained view: resolve this window in ITS source first.
+                outer = _view_write_subsets(state, edge.src)
+                if len(outer) == 1:
+                    window = outer[0]
+        else:
+            subset = edge.data.get_dst_subset(edge, state) or edge.data.subset
+            if subset is not None:
+                writes.append(subset)
+    if window is None:
+        return writes
+    result = []
+    for subset in writes:
+        try:
+            result.append(window.compose(subset))
+        except (TypeError, ValueError, NotImplementedError):
+            # Not composable (mismatched dimensionality, a non-Range subset):
+            # the write subset alone still names every symbol the composition
+            # would, which is all the partition test reads.
+            result.append(subset)
     return result
 
 
