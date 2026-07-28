@@ -221,7 +221,7 @@ def _run_compile_and_comparison_test(sdfg: dace.SDFG):
         assert numpy.allclose(a, b), f"Arrays for '{name}' differ:\n{a}\nvs\n{b}"
 
 
-@pytest.mark.parametrize("expression_str", example_expressions)
+@pytest.mark.parametrize("expression_str", example_expressions, ids=lambda e: f"expr{example_expressions.index(e)}")
 def test_single_tasklet_split(expression_str: str):
     sdfg = _generate_single_tasklet_sdfg(expression_str)
     _run_compile_and_comparison_test(sdfg)

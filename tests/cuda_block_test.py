@@ -181,6 +181,7 @@ def test_block_thread_specialization():
     tasklet.location['gpu_block'] = 1
 
     code = sdfg.generate_code()[1].clean_code  # Get GPU code (second file)
+    sdfg.compile()
     assert '>= 2' in code and '<= 8' in code
     assert ' == 1' in code
 
