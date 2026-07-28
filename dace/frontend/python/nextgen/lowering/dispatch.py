@@ -57,6 +57,7 @@ from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, Unsup
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values, streams
+from dace.frontend.python.nextgen.semantics.values import StaticSequence
 
 #: Full-reduction calls by registry-qualified name, mapped to their WCR ufunc.
 _REDUCTION_CALLS = {
@@ -659,8 +660,13 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
             # the interpreter fallback preserves Python's own semantics
             # (assigning ``None``).
             return False
+    elif inferred.is_data_tuple:
+        # Several result containers (``numpy.split``, ``numpy.divmod``). Every
+        # mechanism below writes ONE target, so this takes its own path.
+        return _lower_multi_output_call(target, call, qualname, inferred, statement, state)
     elif not inferred.is_data:
-        # A multi-output result: the interpreter fallback preserves semantics.
+        # Not a data-valued result at all: the interpreter fallback preserves
+        # semantics.
         return False
     elif target is None:
         # A bare-statement data-valued call. If its result goes to an ``out=``
@@ -858,6 +864,116 @@ def _method_call_receiver(call: ast.Call, state: LoweringState) -> Optional[Data
     if not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, (ast.Name, ast.Attribute)):
         return None
     return resolve_access(call.func.value, state)
+
+
+def _lower_multi_output_call(target: Optional[ast.expr], call: ast.Call, qualname: str, inferred, statement: ast.stmt,
+                             state: LoweringState) -> bool:
+    """
+    Lower a call whose result is SEVERAL containers (``numpy.split``,
+    ``numpy.divmod``, ``numpy.frexp``, ...) as one deferred replacement call
+    with one result container per output.
+
+    The target binds to a static sequence of container references, which is the
+    same representation an inlined multi-return nested program produces
+    (``rules.calls._bind_call_results``), so the element reads canonicalization
+    already emits for unpacking (``p = __unpack0[0]``) fold to direct accesses
+    with nothing further to build.
+
+    Returns False when the call cannot be lowered this way (no assignment
+    target, unresolvable arguments, or a trial expansion that does not produce
+    exactly the inferred number of containers), so the caller falls back to a
+    callback.
+    """
+    if not isinstance(target, ast.Name):
+        # A bare statement discards every result, and a subscript target would
+        # need a copy per output into subsets the call knows nothing about.
+        return False
+    converted = _replacement_arguments(call, state)
+    if converted is None:
+        return False
+    arguments, keywords, data_arguments = converted
+
+    ufunc_form = state.inference.resolve_ufunc_call(call)
+    ufunc_name: Optional[str] = None
+    ufunc_method: Optional[str] = None
+    name = qualname
+    if ufunc_form is not None:
+        ufunc, ufunc_method = ufunc_form
+        ufunc_name = ufunc.__name__
+        if ufunc_method is not None:
+            return False  # reduce/accumulate/outer are single-output by construction
+        unsupported = {keyword.arg for keyword in call.keywords} - _SUPPORTED_UFUNC_KEYWORDS
+        if unsupported:
+            return False
+        name = f'numpy.{ufunc_name}'
+        viable = _multi_output_viable(None, ufunc_name, None, arguments, keywords, data_arguments, state,
+                                      len(inferred.descriptors))
+    else:
+        if not _replacement_registered(name):
+            name = normalize_qualname(getattr(call.func, 'qualname', None) or astutils.rname(call.func))
+            if not _replacement_registered(name):
+                return False
+        viable = _multi_output_viable(name, None, None, arguments, keywords, data_arguments, state,
+                                      len(inferred.descriptors))
+    if not viable:
+        return False
+
+    containers = []
+    for descriptor in inferred.descriptors:
+        result_descriptor = copy.deepcopy(descriptor)
+        result_descriptor.transient = True
+        containers.append(state.context.add_container(f'{target.id}_out', result_descriptor))
+    state.emitter.emit(
+        tn.ReplacementCallNode(qualname=name,
+                               target=containers[0],
+                               extra_targets=containers[1:],
+                               arguments=arguments,
+                               keyword_arguments=keywords,
+                               data_arguments=data_arguments,
+                               ufunc_name=ufunc_name,
+                               ufunc_method=ufunc_method))
+    for container in containers:
+        state.context.bind(container, container)
+    elements = [ast.copy_location(ast.Name(id=container, ctx=ast.Load()), statement) for container in containers]
+    state.context.bind_static(target.id, StaticSequence(elements=elements, kind='tuple'))
+    return True
+
+
+def _multi_output_viable(name: Optional[str], ufunc_name: Optional[str], receiver: Optional[str], arguments: List,
+                         keywords: dict, data_arguments: set, state: LoweringState, expected: int) -> bool:
+    """
+    Trial-run a multi-output replacement on a scratch SDFG, the same
+    commit-after-trial check :func:`_expansion_viable` performs, but requiring
+    exactly ``expected`` result containers rather than one.
+
+    A result that is a view of an input is rejected for the same reason it is
+    there: a view binding is frontend-visible state that a deferred call cannot
+    represent.
+    """
+    from dace.frontend.common import op_repository as oprepo
+
+    scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
+    try:
+        if ufunc_name is not None:
+            function = oprepo.Replacements.get_ufunc(None)
+            if function is None:
+                return False
+            result = function(shim, None, scratch, scratch_state, ufunc_name, copy.deepcopy(list(arguments)),
+                              copy.deepcopy(dict(keywords)))
+        else:
+            function = oprepo.Replacements.get(name)
+            if function is None:
+                return False
+            result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
+    except Exception:
+        return False
+    if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
+        result = result[1]
+    if not isinstance(result, (list, tuple)) or len(result) != expected:
+        return False
+    if any(not isinstance(element, str) or element not in scratch.arrays for element in result):
+        return False
+    return not any(element in shim.views for element in result)
 
 
 def _lower_replacement_call(target: Optional[ast.expr],

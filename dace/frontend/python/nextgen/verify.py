@@ -70,8 +70,9 @@ def verify_tree(root: tn.ScheduleTreeRoot) -> None:
             elif isinstance(child, tn.ReplacementCallNode):
                 if not child.qualname:
                     problems.append(f'{where}: replacement call without a qualified name')
-                if not _known_container(child.target):
-                    problems.append(f'{where}: target "{child.target}" is not a registered container')
+                for name in child.targets:
+                    if not _known_container(name):
+                        problems.append(f'{where}: target "{name}" is not a registered container')
                 for name in child.data_arguments:
                     if not _known_container(name):
                         problems.append(f'{where}: replacement call references unknown container "{name}"')

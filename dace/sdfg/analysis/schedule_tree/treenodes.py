@@ -1150,7 +1150,10 @@ class ReplacementCallNode(ScheduleTreeNode):
                      For a ufunc call (``ufunc_name`` set), this is a display
                      name only -- the registry lookup goes through
                      ``ufunc_name``/``ufunc_method`` instead.
-    :param target: Repository container the call result is written to.
+    :param target: Repository container the call result is written to. For a
+                   multi-output replacement (``numpy.split``,
+                   ``numpy.divmod``), this is the FIRST result container and
+                   ``extra_targets`` holds the rest, in result order.
     :param arguments: Positional arguments; entries listed in
                       ``data_arguments`` are repository container names, all
                       other entries are compile-time Python values. For a
@@ -1181,6 +1184,10 @@ class ReplacementCallNode(ScheduleTreeNode):
     :param ufunc_method: ``'reduce'``, ``'accumulate'``, or ``'outer'`` for a
                          ufunc method call; ``None`` for a direct ufunc call
                          or a non-ufunc replacement.
+    :param extra_targets: Result containers after the first, in result order,
+                          for a replacement that produces several
+                          (``numpy.split``, ``numpy.divmod``). Empty for the
+                          ordinary single-result call.
     """
     qualname: str = ''
     target: str = ''
@@ -1190,11 +1197,18 @@ class ReplacementCallNode(ScheduleTreeNode):
     receiver: Optional[str] = None
     ufunc_name: Optional[str] = None
     ufunc_method: Optional[str] = None
+    extra_targets: List[str] = field(default_factory=list)
+
+    @property
+    def targets(self) -> List[str]:
+        """Every result container, in result order."""
+        return [self.target, *self.extra_targets]
 
     def as_string(self, indent: int = 0):
         rendered = [str(argument) for argument in self.arguments]
         rendered += [f'{name}={value}' for name, value in self.keyword_arguments.items()]
-        return indent * INDENTATION + f'{self.target} = replacement {self.qualname}({", ".join(rendered)})'
+        return (indent * INDENTATION +
+                f'{", ".join(self.targets)} = replacement {self.qualname}({", ".join(rendered)})')
 
     def input_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
@@ -1203,9 +1217,8 @@ class ReplacementCallNode(ScheduleTreeNode):
 
     def output_memlets(self, root: ScheduleTreeRoot | None = None, **kwargs) -> MemletSet:
         root = root if root is not None else self.get_root()
-        if self.target not in root.containers:
-            return MemletSet()
-        return MemletSet({Memlet.from_array(self.target, root.containers[self.target])})
+        return MemletSet(
+            Memlet.from_array(name, root.containers[name]) for name in self.targets if name in root.containers)
 
 
 @dataclass

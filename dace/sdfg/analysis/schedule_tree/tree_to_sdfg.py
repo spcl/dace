@@ -1202,6 +1202,27 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             # output datanames (List[UfuncOutput]); normalize to the same
             # bare-string form the generic replacement convention uses below.
             result = result[0]
+        elif node.extra_targets:
+            # A multi-output replacement (``numpy.split``, ``numpy.divmod``):
+            # one result container per declared target, in result order. The
+            # frontend already checked the arity on a scratch expansion
+            # (``dispatch._multi_output_viable``), so a mismatch here is a
+            # frontend bug rather than a user-facing limitation.
+            if not isinstance(result, (list, tuple)) or len(result) != len(node.targets):
+                raise NotImplementedError(f"Replacement '{node.qualname}' returned {result!r}, which does not match "
+                                          f'its {len(node.targets)} declared result containers.')
+            if shim.views:
+                _materialize_view_bindings(shim.views, created_states)
+            for produced, declared in zip(result, node.targets):
+                if produced == declared:
+                    continue
+                self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state, {})
+                state = self._current_state
+                state.add_nedge(state.add_read(produced), state.add_write(declared),
+                                Memlet.from_array(produced, sdfg.arrays[produced]))
+            self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
+                                                         self._pending_interstate_assignments())
+            return
 
         if shim.views:
             if isinstance(result, str) and result in shim.views:
@@ -1246,7 +1267,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         Make a replacement call's containers resolvable in the SDFG it expands
         into: the replacement looks every argument up in ``sdfg.arrays``.
         """
-        names = set(node.data_arguments) | {node.target}
+        names = set(node.data_arguments) | set(node.targets)
         if node.receiver is not None:
             names.add(node.receiver)
         for name in sorted(names):

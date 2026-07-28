@@ -50,20 +50,33 @@ class Inferred:
                  expression), ``'constant'`` (compile-time value),
                  ``'static'`` (compile-time Python sequence, see
                  :class:`~dace.frontend.python.nextgen.semantics.values.StaticSequence`),
-                 or ``'none'`` (a call whose registry descriptor inference
-                 confirmed a zero-output/pure-side-effect signature, e.g.
-                 ``A.fill(0)`` — distinct from :func:`infer_call` returning
-                 Python ``None`` for "no registry entry matched").
+                 ``'data-tuple'`` (a call producing SEVERAL containers, e.g.
+                 ``numpy.split``/``numpy.divmod``; the descriptors are in
+                 ``descriptors``), or ``'none'`` (a call whose registry
+                 descriptor inference confirmed a zero-output/pure-side-effect
+                 signature, e.g. ``A.fill(0)`` — distinct from
+                 :func:`infer_call` returning Python ``None`` for "no registry
+                 entry matched").
     :param descriptor: Result data descriptor for ``'data'`` expressions.
     :param value: The symbolic expression, constant, or static sequence otherwise.
+    :param descriptors: Result descriptors, in result order, for
+                        ``'data-tuple'`` expressions.
     """
     kind: str
     descriptor: Optional[data.Data] = None
     value: Any = None
+    descriptors: Optional[Tuple[data.Data, ...]] = None
 
     @property
     def is_data(self) -> bool:
         return self.kind == 'data'
+
+    @property
+    def is_data_tuple(self) -> bool:
+        """Whether this is a call result made of several containers. Kept
+        distinct from ``is_data`` on purpose: every single-result path would be
+        wrong for it, so it must opt in rather than opt out."""
+        return self.kind == 'data-tuple'
 
     @property
     def is_none_output(self) -> bool:
@@ -446,14 +459,15 @@ class InferenceService:
 
     def _registry_inference(self, infer_fn: Any, *args: Any, **kwargs: Any) -> Optional[Inferred]:
         """Invoke a registry inference function defensively and normalize its
-        result. Only single-descriptor results are supported; multi-output
-        inference results fall back. An empty tuple/list is the registry
-        convention for a confirmed zero-output/pure-side-effect signature
-        (e.g. ``infers_method_descriptor('Array', 'fill')`` — see
+        result. An empty tuple/list is the registry convention for a confirmed
+        zero-output/pure-side-effect signature (e.g.
+        ``infers_method_descriptor('Array', 'fill')`` — see
         ``array_creation.py``), distinguished here (``kind='none'``) from
         "no registry entry matched" (``None``), which callers must not
         conflate: one is a typed call with nothing to assign, the other is an
-        untyped call that should fall back to a callback."""
+        untyped call that should fall back to a callback. Several descriptors
+        are a multi-output call (``numpy.split``, ``numpy.divmod``) and come
+        back as ``kind='data-tuple'``."""
         try:
             result = infer_fn(*args, **kwargs)
         except Exception:
@@ -465,6 +479,8 @@ class InferenceService:
                 return Inferred(kind='data', descriptor=result[0])
             if len(result) == 0:
                 return Inferred(kind='none')
+            if all(isinstance(element, data.Data) for element in result):
+                return Inferred(kind='data-tuple', descriptors=tuple(result))
         return None
 
     def parse_access(self, node: Union[ast.Name, ast.Subscript]) -> MemletExpr:
