@@ -158,10 +158,14 @@ def update_map(op_in_map, uuid, new_misses, average=True):
             op_in_map[uuid] = (new_misses, 1)
 
 
-def calculate_op_in(op_in_map, work_map, stringify=False, assumptions={}):
+def calculate_op_in(op_in_map: Dict[str, sp.Expr],
+                    work_map: Dict[str, Tuple[sp.Expr, sp.Expr]],
+                    stringify: bool = False,
+                    assumptions: Dict[sp.Expr, sp.Expr] = {}):
     """ Calculates the operational intensity for each SDFG element from work and bytes loaded. """
     for uuid in op_in_map:
-        work = work_map[uuid].subs(assumptions)
+        # work_map entries are (work, depth) tuples, as produced by work_depth.analyze_sdfg; we only need work.
+        work = work_map[uuid][0].subs(assumptions)
         if work == 0 and op_in_map[uuid] == 0:
             op_in_map[uuid] = 0
         elif work != 0 and op_in_map[uuid] == 0:
@@ -698,7 +702,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
         elif isinstance(assumptions[sym], str):
             range_symbol[sym] = SymbolRange(int(x) for x in assumptions[sym].split(','))
             del assumptions[sym]
-    work_map = {}
+    work_map: Dict[str, Tuple[sp.Expr, sp.Expr]] = {}
 
     assumptions_list = [f'{x}=={y}' for x, y in assumptions.items()]
 
@@ -775,7 +779,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
                 # save cache misses
                 curr_cache_misses = dict(curr_op_in_map)
 
-                work_measurements.append(work_map[get_uuid(sdfg)].subs(assumptions))
+                work_measurements.append(work_map[get_uuid(sdfg)][0].subs(assumptions))
                 # put curr values in cache_miss_measurements
                 for k, v in curr_cache_misses.items():
                     if k in cache_miss_measurements:
