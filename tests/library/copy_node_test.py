@@ -1541,22 +1541,8 @@ def test_copy_single_element_d2h():
 # correct output, the test fails and should be deleted (the advantage is gone).
 
 
-def _legacy_fails(sdfg_leg: dace.SDFG, expected: np.ndarray, run) -> bool:
-    """``True`` if compiling/running the legacy SDFG raises OR produces output diverging from ``expected``.
-
-    :param sdfg_leg: SDFG with libnodes already replaced by direct edges.
-    :param expected: NumPy ground truth.
-    :param run: a callable ``run(exe) -> np.ndarray`` that runs the compiled SDFG and returns the dst array.
-    """
-    try:
-        exe = sdfg_leg.compile()
-        return not np.array_equal(run(exe), expected)
-    except Exception:
-        return True
-
-
-def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
-    """Pin: legacy direct-edge miscompiles a 4D->2D Fortran-packed reshape."""
+def test_legacy_matches_libnode_on_rank_mismatch_fortran_collapse():
+    """Legacy direct edge and the libnode agree on a 4D->2D Fortran-packed reshape."""
     src = _ArraySpec(shape=(2, 3, 4, 5),
                      storage=dace.dtypes.StorageType.CPU_Heap,
                      strides=(1, 2, 6, 24),
@@ -1589,8 +1575,9 @@ def test_legacy_silently_miscompiles_rank_mismatch_fortran_collapse():
         exe(src=A, dst=out)
         return out
 
-    assert _legacy_fails(sdfg_leg, expected, run), ("Legacy direct-edge no longer fails on 4D->2D Fortran reshape; "
-                                                    "remove this test, the libnode advantage is gone.")
+    # Was a pin on the legacy direct edge MISCOMPILING this reshape. Legacy now agrees with the
+    # libnode, so the case is kept as a positive test guarding the fix rather than deleted with it.
+    np.testing.assert_array_equal(run(sdfg_leg.compile()), expected)
 
 
 def test_single_element_in_kernel_register_to_gpu_global_routes_to_tasklet():
