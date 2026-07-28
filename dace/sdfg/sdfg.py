@@ -683,6 +683,16 @@ class SDFG(ControlFlowRegion):
             _strip_transformation_history(tmp)
 
         tmp['attributes']['name'] = self.name
+        # An explicitly-set build folder is part of the user's contract and
+        # survives serialization (it may be machine-specific - that is the
+        # user's responsibility, like the folder itself). A configuration-
+        # derived folder (`_build_folder` is None) is environment state and is
+        # deliberately NOT serialized: the key is omitted entirely, keeping
+        # the serialized form - and thus hashes and build caches - of such
+        # SDFGs unchanged, and it also avoids a cycle with the 'hash' cache
+        # mode, which derives the folder from this very JSON.
+        if self._build_folder is not None:
+            tmp['attributes']['build_folder'] = str(self._build_folder)
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
@@ -712,10 +722,15 @@ class SDFG(ControlFlowRegion):
 
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
+        # An explicitly-set build folder survives serialization; an absent key
+        # means the folder is configuration-derived (also the format written
+        # before this key existed) and stays None.
+        ret._build_folder = attrs.get('build_folder', None)
+
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
                                                 context=context,
-                                                ignore_properties={'constants_prop', 'name', 'hash'})
+                                                ignore_properties={'constants_prop', 'name', 'hash', 'build_folder'})
 
         nodelist = []
         for n in nodes:
