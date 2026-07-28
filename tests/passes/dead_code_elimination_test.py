@@ -122,6 +122,38 @@ def test_dse_inside_loop_conditional():
     assert set(sdfg.states()) == {start, s, s2, e, end}
 
 
+def test_dse_dead_branches_match_declared_type():
+    """``_find_dead_branches`` returns what its annotation promises: ``(Optional[CodeBlock], region)``.
+
+    It used to append two-element *lists* while claiming ``List[Tuple[...]]``. Today's only consumers
+    unpack and ``len()`` the result, so nothing broke -- but the annotation was a lie, and the guard of
+    an ``else`` arm is ``None``, which the element type did not admit either.
+    """
+    sdfg = dace.SDFG('dse_dead_branch_types')
+    sdfg.add_symbol('a', dace.int32)
+    cond_block = ConditionalBlock('cond', sdfg)
+    sdfg.add_node(cond_block, is_start_block=True)
+    taken = ControlFlowRegion('taken', sdfg)
+    taken.add_state()
+    cond_block.add_branch(CodeBlock('a >= a'), taken)
+    shadowed = ControlFlowRegion('shadowed', sdfg)
+    shadowed.add_state()
+    cond_block.add_branch(CodeBlock('a > 0'), shadowed)
+    otherwise = ControlFlowRegion('otherwise', sdfg)
+    otherwise.add_state()
+    cond_block.add_branch(None, otherwise)
+
+    dead = DeadStateElimination()._find_dead_branches(cond_block)
+
+    # The first arm is always true, so both later arms -- including the guardless ``else`` -- are dead.
+    assert [branch for _, branch in dead] == [shadowed, otherwise]
+    for entry in dead:
+        assert isinstance(entry, tuple), type(entry)
+        cond, branch = entry
+        assert cond is None or isinstance(cond, CodeBlock), type(cond)
+        assert isinstance(branch, ControlFlowRegion), type(branch)
+
+
 def test_dse_malformed_conditional_block():
     sdfg = dace.SDFG("dse_malformed_conditional_block")
     sdfg.add_symbol("a", dace.int32)
@@ -525,6 +557,7 @@ if __name__ == '__main__':
     test_dse_edge_condition_with_integer_as_boolean_regression()
     test_dse_inside_loop()
     test_dse_inside_loop_conditional()
+    test_dse_dead_branches_match_declared_type()
     test_dse_malformed_conditional_block()
     test_dde_simple()
     test_dde_libnode()
