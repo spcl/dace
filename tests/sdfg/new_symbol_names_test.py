@@ -7,6 +7,7 @@ import pytest
 
 import dace
 from dace import dtypes
+from dace.libraries.standard import Reduce
 from dace.sdfg import nodes
 
 N = dace.symbol('N')
@@ -49,6 +50,13 @@ def test_new_symbol_names_matches_new_symbols(program):
     sdfg = program.to_sdfg(simplify=False)
     assert_names_match(sdfg)
     sdfg.simplify(validate=False)
+    # 'auto' picks OpenMP (a raw tasklet, no map) for a top-level reduction -- pin 'pure' so
+    # the map-producing expansion runs, matching the comment below for every program here.
+    for nested in sdfg.all_sdfgs_recursive():
+        for state in nested.states():
+            for node in state.nodes():
+                if isinstance(node, Reduce):
+                    node.implementation = 'pure'
     # A reduction only becomes a map once its library node expands, as it does before code generation.
     sdfg.expand_library_nodes()
     assert assert_names_match(sdfg) > 0
