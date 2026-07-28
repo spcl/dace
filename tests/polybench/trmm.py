@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import polybench
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -62,5 +63,4 @@ def trmm(A: datatype[M, M], B: datatype[M, N], alpha: datatype[1]):
 
 
 if __name__ == '__main__':
-    import polybench
     polybench.main(sizes, args, outputs, init_array, trmm)

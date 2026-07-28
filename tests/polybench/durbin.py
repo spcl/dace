@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
+import polybench
 
 N = dace.symbol('N')
 
@@ -83,5 +84,4 @@ def durbin(r: datatype[N], y: datatype[N]):
 
 
 if __name__ == '__main__':
-    import polybench
     polybench.main(sizes, args, [(1, 'y')], init_array, durbin)
