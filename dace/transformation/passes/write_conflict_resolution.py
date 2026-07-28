@@ -48,7 +48,7 @@ import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
 
-from dace import SDFG, SDFGState, dtypes, properties
+from dace import SDFG, SDFGState, data, dtypes, properties
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.graph import MultiConnectorEdge
@@ -203,6 +203,10 @@ def _conflicting_writes(state: SDFGState, sdfg: SDFG) -> List[MultiConnectorEdge
             free_symbols = {str(symbol) for symbol in subset.free_symbols}
             if all(param in free_symbols for param in params):
                 continue  # Partitioned: iterations write disjoint elements
+            if isinstance(sdfg.arrays.get(node.data), data.Stream):
+                # A stream is concurrent by construction: every push appends,
+                # so "the same element" is not a collision but the whole point.
+                continue
             if _is_scope_private(state, sdfg, node.data, inner.src):
                 continue  # Per-iteration storage: every instance has its own copy
             result.append(inner)
@@ -268,8 +272,22 @@ def _classify_and_resolve(state: SDFGState, edge: MultiConnectorEdge[Memlet]) ->
 
     self_reads = _self_reads(state, edge, data_name, str(subset))
 
-    if edge.data.wcr is not None and not self_reads:
+    # A write produced inside a nested SDFG (a map body) carries its conflict
+    # resolution on the INNER edge; the connector edge only gains it once
+    # memlet propagation runs, which is after this pass. Ask the inner graph
+    # rather than depending on that ordering.
+    resolution = edge.data.wcr or _nested_write_wcr(edge.src, edge.src_conn)
+
+    if resolution is not None and not self_reads:
         return None  # Resolved and sound
+
+    if resolution is not None and isinstance(edge.src, nodes.NestedSDFG):
+        # Resolved inside, but with a self-read feeding it: composing across
+        # the nested SDFG boundary is not something this pass does, so report
+        # rather than guess.
+        location.reason = ('the conflict-resolved value is computed from an unsynchronized read of the '
+                           'same element inside a nested SDFG')
+        return location
 
     if not self_reads:
         location.reason = ('concurrent iterations overwrite the same element with values that do not depend '
@@ -280,7 +298,7 @@ def _classify_and_resolve(state: SDFGState, edge: MultiConnectorEdge[Memlet]) ->
     # the graph closest to what it was; anything longer (a chain the frontend's
     # ANF left behind, possibly with a conflict resolution ALREADY on the write
     # that silently folds a stale value) goes through region composition.
-    if edge.data.wcr is None:
+    if resolution is None:
         combiner = _extract_combiner(state, edge, self_reads)
         if combiner is not None:
             _apply_conflict_resolution(state, edge, combiner, self_reads)
@@ -355,6 +373,28 @@ def _self_reads(state: SDFGState, edge: MultiConnectorEdge[Memlet], data_name: s
                 continue
             frontier.append(in_edge.src)
     return reads
+
+
+def _nested_write_wcr(node: nodes.Node, connector: Optional[str]) -> Optional[str]:
+    """
+    The conflict resolution a nested SDFG applies to the container behind one
+    of its output connectors, or None when it applies none.
+
+    A write inside a map body emitted as a nested SDFG carries its conflict
+    resolution on the inner edge. The connector edge only gains it when memlet
+    propagation runs, so reading it from the inside makes this pass independent
+    of whether propagation has happened yet.
+    """
+    if not isinstance(node, nodes.NestedSDFG) or connector is None:
+        return None
+    resolutions = {
+        in_edge.data.wcr
+        for state in node.sdfg.all_states()
+        for access in state.data_nodes() if access.data == connector for in_edge in state.in_edges(access)
+    }
+    if len(resolutions) != 1:
+        return None  # No writes, or an inconsistent mix: do not assume
+    return next(iter(resolutions))
 
 
 def _depends_within(sdfg: SDFG, source: str, target: str) -> bool:

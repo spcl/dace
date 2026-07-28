@@ -15,6 +15,7 @@ from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, Contro
                              SDFGState)
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
+from dace.transformation.passes.write_conflict_resolution import ResolveWriteConflicts
 
 
 class StateBoundaryBehavior(Enum):
@@ -1401,6 +1402,14 @@ def from_schedule_tree(
     visitor = _StreeToSDFG(boundary_behavior=state_boundary_behavior, max_nested_sdfg=max_nested_sdfgs)
     visitor.visit(stree, sdfg=result)
     _connect_view_edges(result, visitor._view_bindings)
+
+    # Decide conflict resolution on the finished dataflow, before propagation
+    # widens the per-iteration subsets the decision reads. Any producer of
+    # parallel dataflow -- a frontend, a library node's expansion, a
+    # transformation -- lands here, which is the point: whether a write
+    # collides is a property of the graph, not of the syntax that produced it.
+    ResolveWriteConflicts().apply_pass(result, {})
+
     propagation.propagate_memlets_sdfg(result)
 
     return result

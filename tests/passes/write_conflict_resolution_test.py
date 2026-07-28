@@ -327,11 +327,16 @@ def test_corpus_chained_self_reference_is_resolved():
     from dace import dtypes
     from dace.sdfg import nodes as sdfg_nodes
 
-    sdfg = _frontend_sdfg(_chained_self_reference, *_matrix)
-    result, warned = _apply(sdfg)
-    assert len(result['resolved']) == 1 and not result['unresolved']
-    assert not result['resolved'][0].order_independent
-    assert warned
+    # ``from_schedule_tree`` runs the pass itself, so the conversion already
+    # carries the resolution -- applying it again must find nothing left.
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        sdfg = _frontend_sdfg(_chained_self_reference, *_matrix)
+    assert any('Order-dependent' in str(w.message) for w in caught)
+    assert 'lambda x, y: x + (x + y)' in _wcrs(sdfg)
+
+    result, _ = _apply(sdfg)
+    assert not result['resolved'] and not result['unresolved']
     sdfg.validate()
 
     for state in sdfg.all_states():
