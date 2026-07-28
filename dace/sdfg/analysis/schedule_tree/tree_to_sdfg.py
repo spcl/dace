@@ -1124,9 +1124,18 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         import dace.frontend.python.replacements  # noqa: F401 -- importing populates the registry
 
         # An expansion builds states, so it can only run where states exist: at
-        # the top level, or inside a map body that was emitted as a nested SDFG
-        # (``insert_state_boundaries`` forces the boundary that makes that
-        # happen). Directly under a map entry there is no state machine at all.
+        # the top level, or inside a body that was emitted as a nested SDFG.
+        #
+        # This is a DEFENSIVE check, not a capability limit: the state boundary
+        # ``insert_state_boundaries`` puts before every replacement call is what
+        # makes ``visit_MapScope`` emit the body as a nested SDFG in the first
+        # place, and it cascades outward through nested maps
+        # (``NestedSDFGStateBoundaryInserter``). The decision has to be made
+        # there rather than here, because by the time this node is visited the
+        # map entry and everything before it in the body are already emitted
+        # into the outer state -- nesting them retroactively would mean undoing
+        # that. Consume scopes reject the boundary earlier
+        # (``visit_ConsumeScope``), so they never reach this either.
         if self._dataflow_stack and not isinstance(self._dataflow_stack[-1][0], SDFG):
             raise NotImplementedError("Replacement calls directly inside a dataflow scope are not supported.")
         self._import_replacement_data(node, sdfg)
