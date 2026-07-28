@@ -100,9 +100,7 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.wcr is not None:
                 continue
 
-            # A reference-set edge assigns a POINTER, it does not move data. Rewriting it into a
-            # CopyLibraryNode drops the ``set`` connector, so the Reference is never bound and
-            # validation later reports it as used before it was set.
+            # A set binds a pointer, not data: lifting it drops the ``set`` connector.
             if edge.dst_conn == 'set':
                 continue
 
@@ -197,8 +195,7 @@ class InsertExplicitCopies(ppl.Pass):
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
-        # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
-        # ``set`` connector and leave the Reference unbound.
+        # A set binds a pointer, not data: lifting it drops the ``set`` connector.
         if edge.dst_conn == 'set':
             return False
         inner_desc = sdfg.arrays[inner_node.data]
@@ -224,9 +221,7 @@ class InsertExplicitCopies(ppl.Pass):
         outer_side_memlet = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         outer_side_memlet.dynamic = outer_memlet.dynamic
         outer_side_memlet.wcr = outer_memlet.wcr
-        # When the memlet already names both sides, that mapping IS the copy -- deriving one from the
-        # outer subset instead silently retargets the write (``B[1, i] -> [i + 2, 3]`` became
-        # ``A[1, i]``). Derive only when the memlet leaves the inner side unnamed.
+        # When the memlet names both sides that mapping IS the copy; deriving one retargets the write.
         if stage_in:
             inner_subset = outer_memlet.get_dst_subset(edge, state)
         else:
