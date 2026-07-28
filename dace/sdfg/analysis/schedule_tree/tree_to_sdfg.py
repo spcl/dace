@@ -1169,6 +1169,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 raise NotImplementedError(f"No ufunc replacement registered for '{node.qualname}'.")
             result = function(shim, None, sdfg, self._current_state, node.ufunc_name, list(node.arguments),
                               dict(node.keyword_arguments))
+        elif node.qualname.startswith(oprepo.OPERATOR_QUALNAME_MARKER):
+            # OPERATOR-family replacement (``A @ B``, see
+            # ``lowering.dispatch._lower_registry_operator``): looked up by
+            # (left classname, operator, right classname) rather than by name.
+            function = oprepo.Replacements.getop(*oprepo.decode_operator_qualname(node.qualname))
+            if function is None:
+                raise NotImplementedError(f"No operator replacement registered for '{node.qualname}'.")
+            result = function(shim, sdfg, self._current_state, *node.arguments)
         else:
             function = oprepo.Replacements.get(node.qualname)
             if function is None and oprepo.ATTRIBUTE_QUALNAME_MARKER in node.qualname:

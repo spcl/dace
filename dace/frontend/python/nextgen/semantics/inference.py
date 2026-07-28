@@ -946,6 +946,14 @@ class InferenceService:
             # Purely symbolic/constant expression
             return Inferred(kind='symbolic', value=self._symbolic_expression(node))
 
+        # Operators with their own registry inference (``@``, whose result is a
+        # contraction rather than a broadcast) answer for themselves. Without
+        # this, ``(24, 12) @ (12, 48)`` broadcasts to (24, 12) and lowers as an
+        # elementwise multiply -- the wrong answer, silently.
+        registry_result = self._infer_registry_operator(node, operands)
+        if registry_result is not None:
+            return registry_result
+
         result_dtype = self._result_dtype(operands, boolean_result)
         shape: Tuple[Any, ...] = ()
         for operand in data_operands:
@@ -954,6 +962,40 @@ class InferenceService:
         if not shape or all(s == 1 for s in shape):
             return Inferred(kind='data', descriptor=data.Scalar(result_dtype))
         return Inferred(kind='data', descriptor=data.Array(result_dtype, list(shape)))
+
+    #: AST operators whose result is NOT the elementwise broadcast of their
+    #: operands, and which therefore have to be typed (and lowered) through the
+    #: replacement registry's operator family instead. Kept explicit rather
+    #: than "anything the registry knows": the registry also registers the
+    #: ordinary elementwise operators, which the broadcast rule types correctly
+    #: and the elementwise mechanism lowers far more cheaply than a deferred
+    #: expansion would.
+    REGISTRY_OPERATORS = {ast.MatMult: 'MatMult'}
+
+    def _infer_registry_operator(self, node: ast.expr, operands: List['Inferred']) -> Optional['Inferred']:
+        """The result of an operator typed by the replacement registry
+        (:data:`REGISTRY_OPERATORS`), or None when this is not one of them or
+        the registry declines to type it."""
+        from dace.frontend.common import op_repository as oprepo  # Deferred: registry population
+        if not isinstance(node, ast.BinOp):
+            return None
+        optype = self.REGISTRY_OPERATORS.get(type(node.op))
+        if optype is None or len(operands) != 2 or not all(operand.is_data for operand in operands):
+            return None
+        infer_fn = oprepo.Replacements.get_operator_descriptor_inference(optype, operands[0].descriptor,
+                                                                         operands[1].descriptor)
+        if infer_fn is None:
+            return None
+        try:
+            result = infer_fn(operands[0].descriptor, operands[1].descriptor)
+        except Exception:
+            result = None
+        if not isinstance(result, data.Data):
+            raise UnsupportedFeatureError(f'Cannot determine the result of "{optype}" on these operands',
+                                          self.context.filename,
+                                          node,
+                                          category='type-inference')
+        return Inferred(kind='data', descriptor=result)
 
     def _result_dtype(self, operands: List[Inferred], boolean_result: bool) -> dtypes.typeclass:
         if boolean_result:

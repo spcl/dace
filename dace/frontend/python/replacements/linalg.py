@@ -341,12 +341,37 @@ from dace.frontend.python.replacements.type_inference import _get_desc
 from dace.frontend.python.schedule_tree.expression_support import (_matmul_output_shape)
 
 
+def _unprovable_batch_shape(left_shape, right_shape):
+    """
+    The batched-matmul result shape when the batch dimensions cannot be
+    *proved* to broadcast because they are different symbols (``[B, M, K] @
+    [L, K, N]``), or None when the shapes do not have that form.
+
+    This mirrors what the implementation itself does with such operands:
+    ``_matmult`` warns that the dimensions may not match and proceeds with the
+    left operand's batch. Declining to type it here would send the whole
+    expression to the interpreter over a dimension check the generated code
+    does not make either.
+    """
+    if len(left_shape) < 2 or len(right_shape) < 2:
+        return None
+    left_batch, right_batch = left_shape[:-2], right_shape[:-2]
+    if len(left_batch) != len(right_batch):
+        return None
+    for left_dim, right_dim in zip(left_batch, right_batch):
+        if symbolic.equal(left_dim, right_dim) is False:
+            return None  # Provably different: a real mismatch, not an unknown
+    return left_batch + (left_shape[-2], right_shape[-1])
+
+
 @infers_operator_descriptor('MatMult')
 def _infer_matmult(left_desc, right_desc):
     """Infer result descriptor for the ``@`` (MatMult) operator."""
     left_shape = tuple(left_desc.shape)
     right_shape = tuple(right_desc.shape)
     out_shape = _matmul_output_shape(left_shape, right_shape)
+    if out_shape is None:
+        out_shape = _unprovable_batch_shape(left_shape, right_shape)
     if out_shape is None:
         return None
 

@@ -54,7 +54,7 @@ from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
-from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
+from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values, streams
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
@@ -131,6 +131,11 @@ def lower_computation(target: DataAccess,
                                  'operates on an opaque Python object',
                                  category='pyobject-propagation')
             return
+        # Operators the elementwise mechanism cannot express (``@``, whose
+        # result is a contraction rather than a broadcast) go to the registry
+        # implementation that builds the real dataflow.
+        if _lower_registry_operator(target, value, statement, state):
+            return
         # NumPy advanced indexing gathers through its own map: the result index
         # space comes from the broadcast index arrays, not from the subset, so
         # the elementwise mechanism cannot express it.
@@ -141,6 +146,103 @@ def lower_computation(target: DataAccess,
         elementwise.emit_computation(target, rewritten, statement, state, wcr=wcr)
     except UnsupportedFeatureError as reason:
         fallback_to_callback(statement, state, reason)
+
+
+def _lower_registry_operator(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> bool:
+    """
+    Emit a deferred :class:`~...treenodes.ReplacementCallNode` for an operator
+    whose result is not the elementwise broadcast of its operands — today that
+    is ``@``, which the registry lowers to a ``MatMul`` library node.
+
+    Returns False when the expression is not such an operator or its operands
+    do not resolve to whole containers, so the caller falls through to the
+    ordinary computation paths. Lowering ``@`` elementwise instead would be a
+    silent miscompilation: the operands are read at the RESULT's index space,
+    which for ``(24, 12) @ (12, 48)`` is out of bounds on both.
+
+    :raises UnsupportedFeatureError: If the operator has to be lowered here
+        (the elementwise mechanism would be wrong) but cannot be — the caller
+        turns that into a callback, which is correct if slow.
+    """
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population
+    from dace.frontend.python.nextgen.semantics.inference import InferenceService
+
+    if not isinstance(value, ast.BinOp):
+        return False
+    optype = InferenceService.REGISTRY_OPERATORS.get(type(value.op))
+    if optype is None:
+        return False
+    operands = [_whole_container_operand(operand, statement, state) for operand in (value.left, value.right)]
+    if any(operand is None for operand in operands):
+        raise UnsupportedFeatureError(f'Operator "{optype}" needs data operands',
+                                      state.context.filename,
+                                      statement,
+                                      category='registry-operator')
+    left, right = operands
+    classnames = [type(operand.descriptor).__name__ for operand in operands]
+    if oprepo.Replacements.getop(classnames[0], optype, classnames[1]) is None:
+        raise UnsupportedFeatureError(
+            f'No registry implementation for "{optype}" on '
+            f'{classnames[0]}/{classnames[1]}',
+            state.context.filename,
+            statement,
+            category='registry-operator')
+    arguments = [left.container, right.container]
+    data_arguments = {left.container, right.container}
+    if not _expansion_viable(oprepo.operator_qualname(classnames[0], optype, classnames[1]), arguments, {},
+                             data_arguments, state):
+        raise UnsupportedFeatureError(f'Deferred expansion of "{optype}" is not viable here',
+                                      state.context.filename,
+                                      statement,
+                                      category='registry-operator')
+    target_container, copy_out = _replacement_write_target(target, state.inference.infer(value), state)
+    state.emitter.emit(
+        tn.ReplacementCallNode(qualname=oprepo.operator_qualname(classnames[0], optype, classnames[1]),
+                               target=target_container,
+                               arguments=arguments,
+                               keyword_arguments={},
+                               data_arguments=data_arguments))
+    if copy_out:
+        _emit_replacement_copy_out(target_container, target, state)
+    return True
+
+
+def _whole_container_operand(operand: ast.expr, statement: ast.stmt, state: LoweringState) -> Optional[DataAccess]:
+    """
+    Resolve one operand of a registry operator to a WHOLE container, which is
+    the only thing the registry implementations accept (they take container
+    names and read ``sdfg.arrays[name]``).
+
+    Three forms get there: a plain name, a registry attribute that produces
+    data (``a.T``), and a partial access (``A[i]``, a view), which is copied
+    into a temporary first — passing its base container instead would silently
+    operate on all of ``A``.
+
+    :return: The access, or None when the operand is not data at all.
+    """
+    access = None
+    if isinstance(operand, (ast.Name, ast.Attribute, ast.Subscript)):
+        access = resolve_access(operand, state)
+    if access is None and isinstance(operand, ast.Attribute):
+        base = resolve_access(operand.value, state)
+        if base is not None:
+            access = resolve_attribute_data(base, operand.attr, state)
+    if access is None:
+        return None
+    descriptor = state.context.containers.get(access.container)
+    if descriptor is not None and str(access.subset) == str(
+            subsets.Range.from_array(descriptor)) and not isinstance(descriptor, data.View):
+        return access
+    # A partial access or a view: stage it in a whole container of its own.
+    staged_descriptor = data.Array(access.descriptor.dtype, nondegenerate_shape(access.subset) or [1])
+    staged_descriptor.transient = True
+    staged = state.context.add_container('__operand', staged_descriptor)
+    state.emitter.emit(
+        tn.CopyNode(target=staged,
+                    memlet=Memlet(data=access.container,
+                                  subset=access.subset,
+                                  other_subset=subsets.Range.from_array(staged_descriptor))))
+    return DataAccess(staged, subsets.Range.from_array(staged_descriptor), staged_descriptor)
 
 
 def _lower_advanced_index(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> bool:
@@ -1188,6 +1290,8 @@ def _expansion_viable(name: str,
 
     if receiver is not None:
         function = oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
+    elif name.startswith(oprepo.OPERATOR_QUALNAME_MARKER):
+        function = oprepo.Replacements.getop(*oprepo.decode_operator_qualname(name))
     else:
         function = oprepo.Replacements.get(name)
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)

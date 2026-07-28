@@ -170,6 +170,31 @@ def attribute_qualname(classname: str, attr_name: str) -> str:
     return f'{classname}{ATTRIBUTE_QUALNAME_MARKER}{attr_name}'
 
 
+#: Marker introducing an OPERATOR-family deferred call
+#: (:meth:`Replacements.getop`) in a
+#: :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+#: qualname, e.g. ``@op:Array.MatMult.Array``. Like
+#: :data:`ATTRIBUTE_QUALNAME_MARKER`, chosen to be unambiguous against real
+#: qualnames, which are dotted Python identifiers and never contain ``@``.
+OPERATOR_QUALNAME_MARKER = '@op:'
+
+
+def operator_qualname(left_classname: str, optype: str, right_classname: str) -> str:
+    """
+    The :class:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode`
+    qualname encoding an OPERATOR-family replacement (e.g. ``A @ B``), decoded
+    back by ``tree_to_sdfg.visit_ReplacementCallNode``.
+    """
+    return f'{OPERATOR_QUALNAME_MARKER}{left_classname}.{optype}.{right_classname}'
+
+
+def decode_operator_qualname(qualname: str) -> Tuple[str, str, str]:
+    """The (left classname, operator type, right classname) an OPERATOR-family
+    qualname encodes."""
+    left, optype, right = qualname[len(OPERATOR_QUALNAME_MARKER):].split('.')
+    return left, optype, right
+
+
 def _get_inference_operand_types(operand: Any) -> List[Optional[str]]:
     if operand is _INFERENCE_MISSING:
         return [None]
