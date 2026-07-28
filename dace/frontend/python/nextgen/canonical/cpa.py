@@ -418,9 +418,11 @@ def is_assign_target(node: ast.AST) -> bool:
 
 def is_dace_map_iterator(node: ast.AST, global_vars: Optional[Dict[str, Any]] = None) -> bool:
     """
-    Check whether a for-loop iterator is a ``dace.map[...]`` subscript,
-    optionally decorated with a schedule-type annotation
-    (``dace.map[...] @ ScheduleType``, a ``BinOp`` with ``ast.MatMult``).
+    Check whether a for-loop iterator is a ``dace.map[...]`` subscript.
+
+    A schedule annotation (``dace.map[...] @ ScheduleType``) is not part of the
+    iterator here: ``NormalizeLoops`` moves it onto the ``For`` node, so the
+    canonical iterator has exactly one shape.
 
     :param global_vars: When given, the subscript's root is additionally
         resolved through it (mirroring the alias resolution
@@ -430,16 +432,15 @@ def is_dace_map_iterator(node: ast.AST, global_vars: Optional[Dict[str, Any]] = 
         recognized. Without it, only the literal ``dace.map``/``map``
         spellings are recognized.
     """
-    target = node.left if isinstance(node, ast.BinOp) and isinstance(node.op, ast.MatMult) else node
-    if not isinstance(target, ast.Subscript):
+    if not isinstance(node, ast.Subscript):
         return False
     try:
         from dace.frontend.python.astutils import rname
-        if rname(target.value) in ('dace.map', 'map'):
+        if rname(node.value) in ('dace.map', 'map'):
             return True
     except (AttributeError, TypeError):
         pass
-    return global_vars is not None and _resolves_to_dace_map(target.value, global_vars)
+    return global_vars is not None and _resolves_to_dace_map(node.value, global_vars)
 
 
 def _resolves_to_dace_map(node: ast.expr, global_vars: Dict[str, Any]) -> bool:

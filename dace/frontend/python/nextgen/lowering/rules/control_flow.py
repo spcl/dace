@@ -172,9 +172,9 @@ def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:
 def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     targets = statement.target.elts if isinstance(statement.target, ast.Tuple) else [statement.target]
     params = [target.id for target in targets]
-    range_iterator, schedule = _extract_map_schedule(statement.iter, state)
+    schedule = _map_schedule(statement, state)
     dynamic_inputs: List[tn.DynScopeCopyNode] = []
-    ranges = _parse_map_ranges(range_iterator, state, dynamic_inputs)
+    ranges = _parse_map_ranges(statement.iter, state, dynamic_inputs)
     if len(params) != len(ranges):
         raise UnsupportedFeatureError('Number of dace.map indices does not match number of ranges',
                                       state.context.filename,
@@ -198,25 +198,28 @@ def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
         state.lower_body(statement.body)
 
 
-def _extract_map_schedule(iterator: ast.expr,
-                          state: LoweringState) -> Tuple[ast.Subscript, Optional[dtypes.ScheduleType]]:
+def _map_schedule(statement: ast.For, state: LoweringState) -> Optional[dtypes.ScheduleType]:
     """
-    Split a ``dace.map`` for-iterator into its range subscript and an
-    optional schedule-type annotation: ``dace.map[...] @ ScheduleType`` is a
-    ``BinOp`` with ``ast.MatMult``, matching the classic frontend's
-    ``newast.py`` ``_parse_for_iterator`` convention. Iterators without the
-    ``@`` annotation are returned unchanged with schedule ``None``.
+    The schedule type a ``dace.map`` loop was annotated with, or None.
+
+    The annotation is written ``dace.map[...] @ ScheduleType`` (the classic
+    frontend's ``newast.py`` ``_parse_for_iterator`` convention), but that
+    ``@`` is loop-header syntax rather than an operator over values, so
+    ``NormalizeLoops`` strips it during canonicalization and records the
+    annotation on the ``For`` node. Only its resolution to a
+    :class:`~dace.dtypes.ScheduleType` is left here, where the program globals
+    are in scope.
     """
-    if not (isinstance(iterator, ast.BinOp) and isinstance(iterator.op, ast.MatMult)):
-        return iterator, None
-    schedule_name = astutils.rname(iterator.right)
-    schedule = _resolve_schedule_type(schedule_name, state.context.globals)
+    annotation = getattr(statement, 'map_schedule', None)
+    if annotation is None:
+        return None
+    schedule = _resolve_schedule_type(astutils.rname(annotation), state.context.globals)
     if schedule is None:
-        raise UnsupportedFeatureError(f'Could not resolve dace.map schedule type: {astutils.unparse(iterator.right)}',
+        raise UnsupportedFeatureError(f'Could not resolve dace.map schedule type: {astutils.unparse(annotation)}',
                                       state.context.filename,
-                                      iterator,
+                                      annotation,
                                       category='explicit-map')
-    return iterator.left, schedule
+    return schedule
 
 
 def _resolve_schedule_type(schedule_name: str, global_vars: Dict[str, Any]) -> Optional[dtypes.ScheduleType]:
