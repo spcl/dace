@@ -19,23 +19,31 @@ Each conflicting write falls into one of four classes:
 
 - **partitioned** — the write subset varies with every enclosing parallel
   parameter, so iterations touch disjoint elements. Nothing to do.
-- **resolvable read-modify-write** — the written value is computed from the
-  same element by an order-independent combiner (``b[i] = b[i] + x``). The
-  self-read is removed and the write carries the equivalent conflict resolution
-  (``b[i] (CR: Sum) = x``), which the code generator emits atomically.
-- **unresolvable read-modify-write** — a self-referential update whose combiner
-  is not order-independent, or whose region this pass cannot reduce to one.
-  Reported; the generated code races.
+- **read-modify-write** — the written value is computed from the same element.
+  The region feeding the write is composed into a single update expression over
+  the element and one contribution, the self-read is dropped, and the write
+  carries the equivalent conflict resolution (``b[i] (CR: Sum) = x``), which
+  the code generator applies atomically. Composition sees the WHOLE region, so
+  a self-read sitting in an earlier tasklet — invisible to a per-statement
+  marker, and the cause of conflict resolutions that silently fold a stale
+  value — is folded in rather than dropped.
+- **order-dependent read-modify-write** — the composed update is race-free but
+  its combiner does not commute (``b[i] = a[j] - b[i]``, or a chained
+  ``b[i] += b[i] + a[j]``, whose update is ``2x + y``). It is still resolved,
+  because an atomic update is strictly better than a racing one, and reported:
+  the PROGRAM is order-dependent and no lowering can give it one answer.
 - **conflicting overwrite** — concurrent iterations write the same element with
   values that do not depend on it (``out[0] = f(A[i])``). No conflict
   resolution can express "last writer wins"; reported.
 
 The order-independence policy lives in :data:`WCR_OPERATORS` and
-:data:`WCR_CALL_COMBINERS`: a combiner qualifies only when repeatedly folding
-the accumulator is order-independent, ``f(f(x, a), b) == f(f(x, b), a)``,
-because conflict resolution applies the combiner in arbitrary thread order.
+:data:`WCR_CALL_COMBINERS`: a combiner is order-independent only when
+``f(f(x, a), b) == f(f(x, b), a)``, because conflict resolution applies it in
+arbitrary thread order. Note that ``%`` is deliberately absent — it is in the
+classic Python frontend's table, which is why that frontend miscompiles it.
 """
 import ast
+import copy
 import warnings
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set, Tuple
@@ -75,11 +83,18 @@ WCR_CALL_COMBINERS: Tuple[str, ...] = ('min', 'max')
 
 @dataclass
 class ConflictReport:
-    """One conflicting write the pass could not resolve."""
+    """One conflicting write, and what the pass did about it."""
     state: str
     data: str
     subset: str
     reason: str
+    resolved: bool = False
+    """Whether the write now carries a conflict resolution (is race-free)."""
+    order_independent: bool = True
+    """Whether the result is independent of the order iterations apply the
+    update. A resolved write that is NOT order-independent is race-free, but
+    its result depends on thread order — the program itself is order-dependent
+    and no lowering can change that."""
 
     def __str__(self) -> str:
         return f'{self.data}[{self.subset}] in state "{self.state}": {self.reason}'
@@ -121,14 +136,22 @@ class ResolveWriteConflicts(ppl.Pass):
                 report = _classify_and_resolve(state, edge)
                 if report is None:
                     continue
-                (resolved if report.reason.startswith('resolved') else unresolved).append(report)
+                (resolved if report.resolved else unresolved).append(report)
 
-        for report in unresolved:
-            if self.warn:
+        if self.warn:
+            for report in unresolved:
                 warnings.warn(
                     f'Possible write conflict: {report}. Concurrent iterations of the enclosing '
                     f'parallel scope write the same element, and the update has no conflict-resolution '
                     f'equivalent. The generated code contains a data race.', UserWarning)
+            for report in (item for item in resolved if not item.order_independent):
+                # Race-free now, but the program itself is order-dependent: no
+                # lowering can give it a single well-defined answer, so say so
+                # rather than let it look settled.
+                warnings.warn(
+                    f'Order-dependent update: {report}. The write is now applied atomically, but the '
+                    f'combiner does not commute, so the result depends on the order in which the '
+                    f'iterations of the enclosing parallel scope apply it.', UserWarning)
 
         if not resolved and not unresolved:
             return None
@@ -245,16 +268,7 @@ def _classify_and_resolve(state: SDFGState, edge: MultiConnectorEdge[Memlet]) ->
 
     self_reads = _self_reads(state, edge, data_name, str(subset))
 
-    if edge.data.wcr is not None:
-        if self_reads:
-            # The write is conflict-resolved, but the value it contributes was
-            # itself computed from an UNSYNCHRONIZED read of the same element.
-            # The combiner is applied to a stale value, so the accumulation
-            # double-counts or loses updates -- the shape a syntactic marker
-            # cannot see, because the read lives in a different statement.
-            location.reason = ('the conflict-resolved value is computed from an unsynchronized read of the '
-                               'same element (the read is outside the atomic update)')
-            return location
+    if edge.data.wcr is not None and not self_reads:
         return None  # Resolved and sound
 
     if not self_reads:
@@ -262,13 +276,28 @@ def _classify_and_resolve(state: SDFGState, edge: MultiConnectorEdge[Memlet]) ->
                            'on it; no conflict resolution can express this')
         return location
 
-    combiner = _extract_combiner(state, edge, self_reads)
-    if combiner is None:
-        location.reason = 'the read-modify-write does not reduce to an order-independent combiner'
+    # A read-modify-write. The single-tasklet fold is the common case and keeps
+    # the graph closest to what it was; anything longer (a chain the frontend's
+    # ANF left behind, possibly with a conflict resolution ALREADY on the write
+    # that silently folds a stale value) goes through region composition.
+    if edge.data.wcr is None:
+        combiner = _extract_combiner(state, edge, self_reads)
+        if combiner is not None:
+            _apply_conflict_resolution(state, edge, combiner, self_reads)
+            location.reason = f'resolved into conflict resolution "{combiner}"'
+            location.resolved = True
+            return location
+
+    composed = _compose_region(state, edge, self_reads, data_name)
+    if composed is None:
+        location.reason = ('the read-modify-write does not reduce to a combiner over the element and a '
+                           'single contribution')
         return location
 
-    _apply_conflict_resolution(state, edge, combiner, self_reads)
-    location.reason = f'resolved into conflict resolution "{combiner}"'
+    _apply_composed_resolution(state, edge, composed)
+    location.reason = f'resolved into conflict resolution "{composed.combiner}"'
+    location.resolved = True
+    location.order_independent = composed.order_independent
     return location
 
 
@@ -374,6 +403,282 @@ def _depends_within(sdfg: SDFG, source: str, target: str) -> bool:
             return True
         frontier.extend(dependencies.get(name, ()))
     return False
+
+
+#: Placeholder names used while composing a read-modify-write region: the
+#: element's current value, and the value each iteration contributes.
+_ACCUMULATOR = '__wcr_x'
+_CONTRIBUTION = '__wcr_y'
+
+
+@dataclass
+class ComposedUpdate:
+    """A read-modify-write region reduced to a single conflict resolution."""
+    combiner: str
+    """The conflict-resolution lambda, over (element value, contribution)."""
+    contribution: str
+    """Tasklet expression computing what one iteration contributes."""
+    inputs: List[Tuple[str, MultiConnectorEdge[Memlet]]]
+    """(connector name, edge) for each value the contribution reads."""
+    region: List[nodes.Node]
+    """The nodes the region occupied, to be replaced."""
+    order_independent: bool
+    """Whether applying the combiner in any order gives the same result."""
+
+
+def _compose_region(state: SDFGState, edge: MultiConnectorEdge[Memlet], self_reads: List[MultiConnectorEdge[Memlet]],
+                    data_name: str) -> Optional[ComposedUpdate]:
+    """
+    Reduce a whole read-modify-write region to one conflict resolution.
+
+    The region is the chain of tasklets feeding the write. Inlining it gives
+    the new value as an expression over the element's current value and the
+    iteration's other inputs; folding the write's EXISTING conflict resolution
+    into that expression (if it has one) gives the total update. Rewriting the
+    total as ``f(element, contribution)`` is what makes it expressible as a
+    single atomic update.
+
+    This is what a per-statement marker cannot do: after ANF the self-read sits
+    in an earlier tasklet, so the frontend sees a plain accumulation and emits
+    a conflict resolution that folds a STALE value — correct-looking and
+    silently wrong. Here the whole region is visible at once.
+
+    :return: The composed update, or None if the region is not a chain of
+             single-expression tasklets, or its total does not factor into a
+             combiner over one contribution.
+    """
+    if not isinstance(edge.src, nodes.Tasklet):
+        return None
+    region: List[nodes.Node] = []
+    inputs: List[Tuple[str, MultiConnectorEdge[Memlet]]] = []
+    consumed: Set[int] = set()
+    value = _inline_producer(state, edge.src, self_reads, region, inputs, consumed)
+    if value is None:
+        return None
+
+    # Safety: every self-read must have been inlined into the expression. If
+    # one is still out there -- feeding a node the inliner could not absorb --
+    # the composed update would silently omit it, which is exactly the
+    # miscompilation this pass exists to catch. Report instead.
+    if len(consumed) != len(self_reads) or _ACCUMULATOR not in _names(value):
+        return None
+
+    total = value
+    if edge.data.wcr is not None:
+        total = _fold_existing_wcr(edge.data.wcr, value)
+        if total is None:
+            return None
+
+    factored = _factor_contribution(total)
+    if factored is None:
+        return None
+    total, contribution = factored
+
+    combiner = f'lambda x, y: {ast.unparse(_substitute_names(total, {_ACCUMULATOR: "x", _CONTRIBUTION: "y"}))}'
+    return ComposedUpdate(combiner=combiner,
+                          contribution=ast.unparse(contribution),
+                          inputs=inputs,
+                          region=region,
+                          order_independent=_is_order_independent(total))
+
+
+def _inline_producer(state: SDFGState, tasklet: nodes.Tasklet, self_reads: List[MultiConnectorEdge[Memlet]],
+                     region: List[nodes.Node], inputs: List[Tuple[str, MultiConnectorEdge[Memlet]]],
+                     consumed: Set[int]) -> Optional[ast.expr]:
+    """
+    The expression a tasklet produces, with its inputs inlined: the element's
+    own value becomes :data:`_ACCUMULATOR`, a value produced by another tasklet
+    of the region is inlined recursively, and anything else becomes an input of
+    the composed contribution.
+    """
+    expression = _single_output_expression(tasklet)
+    if expression is None:
+        return None
+    region.append(tasklet)
+
+    substitutions: Dict[str, ast.expr] = {}
+    for in_edge in state.in_edges(tasklet):
+        if in_edge.dst_conn is None:
+            continue
+        if any(read is in_edge for read in self_reads):
+            consumed.add(id(in_edge))
+            substitutions[in_edge.dst_conn] = ast.Name(id=_ACCUMULATOR, ctx=ast.Load())
+            continue
+        producer = _region_producer(state, in_edge)
+        if producer is not None:
+            inlined = _inline_producer(state, producer, self_reads, region, inputs, consumed)
+            if inlined is None:
+                return None
+            substitutions[in_edge.dst_conn] = inlined
+            continue
+        name = f'__wcr_in{len(inputs)}'
+        inputs.append((name, in_edge))
+        substitutions[in_edge.dst_conn] = ast.Name(id=name, ctx=ast.Load())
+    return _substitute_expressions(expression, substitutions)
+
+
+def _region_producer(state: SDFGState, in_edge: MultiConnectorEdge[Memlet]) -> Optional[nodes.Tasklet]:
+    """
+    The tasklet that produced this input, when it belongs to the same region: a
+    transient access node written by exactly one tasklet in the same scope, and
+    read only here.
+
+    Requiring a single reader keeps the rewrite local — inlining a value that
+    something else also consumes would leave that consumer without a producer.
+    """
+    if not isinstance(in_edge.src, nodes.AccessNode):
+        return None
+    access = in_edge.src
+    if state.in_degree(access) != 1:
+        return None
+    # Other consumers are tolerated only when they are the scope exit: a
+    # frontend routes a staging temporary out of the scope even when nothing
+    # outside reads it, and that dead write must not block the rewrite.
+    others = [out for out in state.out_edges(access) if out is not in_edge]
+    if any(not isinstance(out.dst, nodes.ExitNode) for out in others):
+        return None
+    producer_edge = next(iter(state.in_edges(access)))
+    if not isinstance(producer_edge.src, nodes.Tasklet):
+        return None
+    if state.entry_node(producer_edge.src) is not state.entry_node(in_edge.dst):
+        return None
+    return producer_edge.src
+
+
+def _fold_existing_wcr(wcr: str, value: ast.expr) -> Optional[ast.expr]:
+    """
+    Apply a write's existing conflict resolution to the value the region
+    produces: the memory already holds the element, so the effective update is
+    ``wcr(element, value)``.
+    """
+    try:
+        parsed = ast.parse(wcr, mode='eval').body
+    except SyntaxError:
+        return None
+    if not isinstance(parsed, ast.Lambda) or len(parsed.args.args) != 2:
+        return None
+    accumulator, contribution = (argument.arg for argument in parsed.args.args)
+    return _substitute_expressions(parsed.body, {
+        accumulator: ast.Name(id=_ACCUMULATOR, ctx=ast.Load()),
+        contribution: value,
+    })
+
+
+def _factor_contribution(total: ast.expr) -> Optional[Tuple[ast.expr, ast.expr]]:
+    """
+    Rewrite an update expression as a combiner over the element and ONE
+    contribution: every maximal subexpression that does not read the element
+    must be the same one, which then becomes :data:`_CONTRIBUTION`.
+
+    ``x + (x + a)`` factors (the only element-free subexpression is ``a``);
+    ``x * a + b`` does not, since a single contribution cannot stand for both.
+    """
+    subtrees: List[ast.expr] = []
+
+    def collect(node: ast.expr) -> None:
+        if _ACCUMULATOR not in _names(node):
+            subtrees.append(node)
+            return
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.expr):
+                collect(child)
+
+    collect(total)
+    distinct = {ast.unparse(subtree) for subtree in subtrees}
+    if len(distinct) != 1:
+        return None
+    contribution = subtrees[0]
+    replacement = ast.Name(id=_CONTRIBUTION, ctx=ast.Load())
+    source = ast.unparse(contribution)
+
+    class _Replacer(ast.NodeTransformer):
+
+        def visit(self, node):
+            if isinstance(node, ast.expr) and ast.unparse(node) == source:
+                return replacement
+            return super().generic_visit(node)
+
+    return ast.fix_missing_locations(_Replacer().visit(total)), contribution
+
+
+def _is_order_independent(total: ast.expr) -> bool:
+    """
+    Whether applying an update in any order yields the same result:
+    ``f(f(x, a), b) == f(f(x, b), a)``.
+
+    Only the shapes the policy tables vouch for qualify. Everything else is
+    still emitted — an atomic update is strictly better than a racing one — but
+    the caller says out loud that the result depends on the order.
+    """
+    if isinstance(total, ast.BinOp) and type(total.op) in WCR_OPERATORS:
+        left, right = ast.unparse(total.left), ast.unparse(total.right)
+        if left == _ACCUMULATOR and right == _CONTRIBUTION:
+            # Folding the accumulator on the left is what the table vouches
+            # for: (x OP a) OP b == (x OP b) OP a.
+            return True
+        # The other order only folds for a commutative operator: ``y - x`` is
+        # "contribution minus element", which does not accumulate at all.
+        return (left == _CONTRIBUTION and right == _ACCUMULATOR
+                and isinstance(total.op, (ast.Add, ast.Mult, ast.BitOr, ast.BitXor, ast.BitAnd)))
+    if isinstance(total, ast.Call) and isinstance(total.func, ast.Name):
+        if total.func.id not in WCR_CALL_COMBINERS or len(total.args) != 2:
+            return False
+        return {ast.unparse(argument) for argument in total.args} == {_ACCUMULATOR, _CONTRIBUTION}
+    return False
+
+
+def _substitute_expressions(expression: ast.expr, substitutions: Dict[str, ast.expr]) -> ast.expr:
+    """Replace names in an expression with whole expressions."""
+
+    class _Substituter(ast.NodeTransformer):
+
+        def visit_Name(self, node: ast.Name) -> ast.AST:
+            replacement = substitutions.get(node.id)
+            return node if replacement is None else copy.deepcopy(replacement)
+
+    return ast.fix_missing_locations(_Substituter().visit(copy.deepcopy(expression)))
+
+
+def _substitute_names(expression: ast.expr, renaming: Dict[str, str]) -> ast.expr:
+    """Rename names in an expression."""
+    return _substitute_expressions(expression, {
+        name: ast.Name(id=new, ctx=ast.Load())
+        for name, new in renaming.items()
+    })
+
+
+def _apply_composed_resolution(state: SDFGState, edge: MultiConnectorEdge[Memlet], composed: ComposedUpdate) -> None:
+    """
+    Turn a read-modify-write region into a conflict-resolved write: the writing
+    tasklet computes only the contribution, and the composed combiner goes on
+    the write path.
+
+    The rest of the region is left in place rather than deleted. It no longer
+    feeds the write, so it is dead code that dead-dataflow elimination removes
+    — and leaving it avoids surgery on scope connectivity, which is easy to get
+    subtly wrong and impossible to notice until code generation.
+    """
+    writer: nodes.Tasklet = edge.src
+    # Sources the contribution still needs must survive the teardown below,
+    # connectors included -- pruning one and re-attaching to it would leave the
+    # edge pointing at a connector that no longer exists.
+    reused = {(id(source_edge.src), source_edge.src_conn) for _, source_edge in composed.inputs}
+    for in_edge in list(state.in_edges(writer)):
+        state.remove_edge(in_edge)
+        if (id(in_edge.src), in_edge.src_conn) not in reused:
+            _prune_dangling_read(state, in_edge)
+    for connector in list(writer.in_connectors):
+        writer.remove_in_connector(connector)
+
+    for name, source_edge in composed.inputs:
+        writer.add_in_connector(name)
+        state.add_edge(source_edge.src, source_edge.src_conn, writer, name, copy.deepcopy(source_edge.data))
+
+    output = next(iter(writer.out_connectors))
+    writer.code.code = ast.parse(f'{output} = {composed.contribution}').body
+
+    for path_edge in state.memlet_path(edge):
+        path_edge.data.wcr = composed.combiner
 
 
 def _extract_combiner(state: SDFGState, edge: MultiConnectorEdge[Memlet],
@@ -494,15 +799,17 @@ def _prune_dangling_read(state: SDFGState, read: MultiConnectorEdge[Memlet]) -> 
     that conflict resolution made unnecessary."""
     source = read.src
     if isinstance(source, nodes.EntryNode):
-        if read.src_conn is not None and state.out_degree(source) > 0:
-            if not any(out.src_conn == read.src_conn for out in state.out_edges(source)):
-                incoming = [e for e in state.in_edges(source) if e.dst_conn == 'IN_' + read.src_conn[4:]]
-                source.remove_out_connector(read.src_conn)
-                for in_edge in incoming:
-                    state.remove_edge(in_edge)
-                    source.remove_in_connector(in_edge.dst_conn)
-                    if isinstance(in_edge.src, nodes.AccessNode) and state.degree(in_edge.src) == 0:
-                        state.remove_node(in_edge.src)
+        if read.src_conn is None:
+            return
+        if any(out.src_conn == read.src_conn for out in state.out_edges(source)):
+            return  # Still feeding something else inside the scope
+        incoming = [e for e in state.in_edges(source) if e.dst_conn == 'IN_' + read.src_conn[4:]]
+        source.remove_out_connector(read.src_conn)
+        for in_edge in incoming:
+            state.remove_edge(in_edge)
+            source.remove_in_connector(in_edge.dst_conn)
+            if isinstance(in_edge.src, nodes.AccessNode) and state.degree(in_edge.src) == 0:
+                state.remove_node(in_edge.src)
         return
     if isinstance(source, nodes.AccessNode) and state.degree(source) == 0:
         state.remove_node(source)

@@ -61,7 +61,7 @@ def _apply(sdfg: dace.SDFG):
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter('always')
         result = ResolveWriteConflicts().apply_pass(sdfg, {})
-    warned = [w for w in caught if 'write conflict' in str(w.message)]
+    warned = [w for w in caught if 'write conflict' in str(w.message) or 'Order-dependent' in str(w.message)]
     return result or {'resolved': [], 'unresolved': []}, warned
 
 
@@ -92,30 +92,67 @@ def test_resolves_order_independent_accumulation(code, combiner, reference):
     assert np.allclose(b[0], reference(a))
 
 
-@pytest.mark.parametrize('code, why', [
-    ('__out = __in - __acc', 'the accumulator is not in a folding position'),
-    ('__out = __acc % __in', 'the modulo operator is not order-independent'),
-    ('__out = __acc + __in * __acc', 'the accumulator is read more than once'),
+@pytest.mark.parametrize('code, combiner', [
+    ('__out = __in - __acc', 'lambda x, y: y - x'),
+    ('__out = __acc % __in', 'lambda x, y: x % y'),
 ])
-def test_reports_unresolvable_accumulation(code, why):
-    """A self-referential write with no order-independent combiner still races,
-    but must not do so silently."""
+def test_resolves_but_reports_order_dependent_update(code, combiner):
+    """A self-referential update whose combiner does not commute is still made
+    race-free — an atomic update beats a racing one — but the result depends on
+    thread order, which is a property of the PROGRAM that no lowering can fix,
+    so it must be reported rather than left looking settled."""
     sdfg = _accumulating_map(code)
     result, warned = _apply(sdfg)
 
-    assert not result['resolved'], why
+    assert len(result['resolved']) == 1 and not result['unresolved']
+    assert not result['resolved'][0].order_independent
+    assert _wcrs(sdfg) == {combiner}
+    assert any('order-dependent' in str(w.message).lower() for w in warned)
+
+
+def test_modulo_is_not_treated_as_order_independent():
+    """``%`` is in the classic frontend's conflict-resolution table, which is
+    why that frontend miscompiles it: ``(30 % 17) % 27 == 13`` while
+    ``(30 % 27) % 17 == 3``. It may be applied atomically, but never silently."""
+    assert (30 % 17) % 27 != (30 % 27) % 17
+    result, warned = _apply(_accumulating_map('__out = __acc % __in'))
+    assert not result['resolved'][0].order_independent
+    assert warned
+
+
+def test_reports_unresolvable_accumulation():
+    """An update that does not reduce to a combiner over the element and ONE
+    contribution: conflict resolution passes exactly two values, so two
+    independent per-iteration inputs cannot both survive."""
+    sdfg = dace.SDFG('two_contributions')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('c', [N], dace.float64)
+    sdfg.add_array('b', [1], dace.float64)
+    state = sdfg.add_state()
+    entry, exit_node = state.add_map('m', dict(i=f'0:{N}'))
+    tasklet = state.add_tasklet('update', {'__acc', '__in', '__in2'}, {'__out'}, '__out = __acc * __in + __in2')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='__in', memlet=Memlet('a[i]'))
+    state.add_memlet_path(state.add_read('c'), entry, tasklet, dst_conn='__in2', memlet=Memlet('c[i]'))
+    state.add_memlet_path(state.add_read('b'), entry, tasklet, dst_conn='__acc', memlet=Memlet('b[0]'))
+    state.add_memlet_path(tasklet, exit_node, state.add_write('b'), src_conn='__out', memlet=Memlet('b[0]'))
+
+    result, warned = _apply(sdfg)
+
+    assert not result['resolved']
     assert len(result['unresolved']) == 1
     assert warned
     assert not _wcrs(sdfg)
 
 
-def test_modulo_is_excluded_on_purpose():
-    """``%`` is in the classic frontend's conflict-resolution table but is not
-    order-independent — ``(30 % 17) % 27 == 13`` while ``(30 % 27) % 17 == 3``
-    — so this pass must refuse it."""
-    assert (30 % 17) % 27 != (30 % 27) % 17
-    result, _ = _apply(_accumulating_map('__out = __acc % __in'))
-    assert not result['resolved']
+def test_resolves_a_nonlinear_but_factorable_update():
+    """``b = b + a * b`` reads the element twice, but still factors into a
+    combiner over the element and one contribution (``x + y * x``), so it is
+    resolved — order-dependently."""
+    sdfg = _accumulating_map('__out = __acc + __in * __acc')
+    result, _ = _apply(sdfg)
+    assert len(result['resolved']) == 1
+    assert not result['resolved'][0].order_independent
+    assert _wcrs(sdfg) == {'lambda x, y: x + y * x'}
 
 
 def test_partitioned_write_is_not_a_conflict():
@@ -142,10 +179,12 @@ def test_existing_conflict_resolution_is_left_alone():
     assert not result['resolved'] and not result['unresolved'] and not warned
 
 
-def test_reports_conflict_resolution_with_an_unsynchronized_self_read():
+def test_folds_an_existing_conflict_resolution_over_a_self_read():
     """The shape a syntactic marker cannot see: the write IS conflict-resolved,
-    but the value it contributes was computed from a separate, unsynchronized
-    read of the same element, so the combiner folds a stale value."""
+    but the value it contributes was computed from a separate read of the same
+    element, so the combiner folds a stale value. Composing the existing
+    conflict resolution with the region gives the true update, ``x + (x + y)``.
+    """
     sdfg = dace.SDFG('stale_self_read')
     sdfg.add_array('a', [N], dace.float64)
     sdfg.add_array('b', [1], dace.float64)
@@ -159,10 +198,11 @@ def test_reports_conflict_resolution_with_an_unsynchronized_self_read():
     state.add_memlet_path(tasklet, exit_node, state.add_write('b'), src_conn='__out', memlet=memlet)
 
     result, warned = _apply(sdfg)
-    assert not result['resolved']
-    assert len(result['unresolved']) == 1
-    assert 'unsynchronized read' in result['unresolved'][0].reason
+    assert len(result['resolved']) == 1 and not result['unresolved']
+    assert _wcrs(sdfg) == {'lambda x, y: x + (x + y)'}
+    assert not result['resolved'][0].order_independent
     assert warned
+    sdfg.validate()
 
 
 def test_reports_conflicting_overwrite():
@@ -272,14 +312,44 @@ def test_corpus_sound_programs_are_clean(program, arguments):
     assert not result['resolved'] and not result['unresolved'] and not warned
 
 
-def test_corpus_chained_self_reference_is_reported():
-    """``b += b + a``: ANF hoists the extra self-read into its own statement,
-    so the frontend's marker sees a plain accumulation and emits a conflict
-    resolution that folds a stale value. The graph shows what the syntax hid."""
-    result, warned = _apply(_frontend_sdfg(_chained_self_reference, *_matrix))
-    assert len(result['unresolved']) == 1
-    assert 'unsynchronized read' in result['unresolved'][0].reason
+def test_corpus_chained_self_reference_is_resolved():
+    """``b += b + a``: ANF hoists the extra self-read into its own statement, so
+    the frontend's marker sees a plain accumulation and emits a conflict
+    resolution that folds a stale value — measured at ``769756.8`` where the
+    serial answer is ~``10``. Composing the region recovers the true update,
+    ``x + (x + y)``.
+
+    Verified by EXECUTION under a sequential schedule: the update does not
+    commute, so under a parallel schedule there is no single right answer to
+    compare against, but with one iteration order there is exactly one, and the
+    composed atomic update must reproduce it.
+    """
+    from dace import dtypes
+    from dace.sdfg import nodes as sdfg_nodes
+
+    sdfg = _frontend_sdfg(_chained_self_reference, *_matrix)
+    result, warned = _apply(sdfg)
+    assert len(result['resolved']) == 1 and not result['unresolved']
+    assert not result['resolved'][0].order_independent
     assert warned
+    sdfg.validate()
+
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if isinstance(node, sdfg_nodes.MapEntry):
+                node.map.schedule = dtypes.ScheduleType.Sequential
+
+    rng = np.random.default_rng(0)
+    a = rng.random((M, M))
+    b = rng.random((M, M))
+    expected = b.copy()
+    for i in range(M):
+        for j in range(M):
+            expected[i, 0] = expected[i, 0] + (expected[i, 0] + a[i, j])
+
+    result_b = b.copy()
+    sdfg(a=a, b=result_b)
+    assert np.allclose(result_b[:, 0], expected[:, 0])
 
 
 def test_corpus_replacement_overwrite_is_reported():
@@ -300,17 +370,19 @@ if __name__ == '__main__':
         ('__out = min(__in, __acc)', 'lambda x, y: min(x, y)', lambda a: min(a.min(), 0.0))
     ]:
         test_resolves_order_independent_accumulation(_code, _combiner, _reference)
-    for _code, _why in [('__out = __in - __acc', ''), ('__out = __acc % __in', ''),
-                        ('__out = __acc + __in * __acc', '')]:
-        test_reports_unresolvable_accumulation(_code, _why)
-    test_modulo_is_excluded_on_purpose()
+    for _code, _combiner in [('__out = __in - __acc', 'lambda x, y: y - x'),
+                             ('__out = __acc % __in', 'lambda x, y: x % y')]:
+        test_resolves_but_reports_order_dependent_update(_code, _combiner)
+    test_reports_unresolvable_accumulation()
+    test_resolves_a_nonlinear_but_factorable_update()
+    test_modulo_is_not_treated_as_order_independent()
     test_partitioned_write_is_not_a_conflict()
     test_existing_conflict_resolution_is_left_alone()
-    test_reports_conflict_resolution_with_an_unsynchronized_self_read()
+    test_folds_an_existing_conflict_resolution_over_a_self_read()
     test_reports_conflicting_overwrite()
     test_per_iteration_transient_is_not_a_conflict()
     for _program, _arguments in [(_augmented, _matrix), (_spelled_out, _matrix), (_combiner_call, _matrix),
                                  (_partitioned_replacement, (np.zeros((4, 8)), np.zeros(4)))]:
         test_corpus_sound_programs_are_clean(_program, _arguments)
-    test_corpus_chained_self_reference_is_reported()
+    test_corpus_chained_self_reference_is_resolved()
     test_corpus_replacement_overwrite_is_reported()
