@@ -21,6 +21,7 @@ from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access, resolve_symbol_names
+from dace.frontend.python.nextgen.lowering.mechanisms import static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.context import BindingSnapshot
 from dace.frontend.python.nextgen.semantics.joins import merge_branches
@@ -279,6 +280,9 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
     """
     if node is None:
         return default
+    # ``A.shape[0]`` as a bound is a compile-time value, not a data read: fold
+    # it before anything resolves ``A.shape`` as the container ``A``.
+    node = static_values.fold_descriptor_properties(node, state)
     if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)):
         # May raise UnsupportedFeatureError (e.g. a data-dependent index
         # inside the bound itself), falling the whole loop back to a callback.

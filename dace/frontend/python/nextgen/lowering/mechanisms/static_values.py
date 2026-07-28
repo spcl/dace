@@ -9,10 +9,13 @@ container in the repository.
 """
 import ast
 import copy
+from numbers import Number
+from typing import Optional
 
 import numpy
 
 from dace import data, dtypes, subsets
+from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.semantics import values
@@ -63,6 +66,56 @@ def fold_static_subscripts(value: ast.expr, state: LoweringState) -> ast.expr:
             return self.generic_visit(subscript_node)
 
     return ast.fix_missing_locations(_Folder().visit(copy.deepcopy(value)))
+
+
+def fold_descriptor_properties(value: ast.expr, state: LoweringState) -> ast.expr:
+    """
+    Replace descriptor-property reads inside an expression with the
+    compile-time value they denote: ``A.shape[0]`` becomes ``N`` (or ``20``),
+    ``A.ndim`` becomes ``2``.
+
+    Inference already resolves these, but every consumer downstream of it
+    resolves ATTRIBUTES as data — ``A.shape`` names ``A``, and the operand
+    silently becomes the whole array. Folding them here is what lets a shape
+    read appear anywhere an ordinary number can (``A[i, j] *= A.shape[0]``, or
+    a map bound), not just as an entire right-hand side.
+
+    Registry attributes that need a real data operation (``A.T``, ``.real``,
+    ``.flat``) infer as data and are left untouched, as is ``A.dtype``, whose
+    value is a typeclass rather than a number.
+    """
+
+    def folded(node: ast.expr) -> Optional[ast.expr]:
+        try:
+            inferred = state.inference.infer(node)
+        except UnsupportedFeatureError:
+            return None
+        if inferred.kind == 'symbolic':
+            try:
+                replacement = ast.parse(str(inferred.value), mode='eval').body
+            except SyntaxError:
+                return None
+        elif inferred.kind == 'constant' and isinstance(inferred.value, Number):
+            replacement = ast.Constant(value=inferred.value)
+        else:
+            return None
+        return ast.fix_missing_locations(ast.copy_location(replacement, node))
+
+    class _Folder(ast.NodeTransformer):
+
+        def visit_Attribute(self, attribute_node: ast.Attribute) -> ast.AST:
+            return folded(attribute_node) or self.generic_visit(attribute_node)
+
+        def visit_Subscript(self, subscript_node: ast.Subscript) -> ast.AST:
+            if isinstance(subscript_node.value, ast.Attribute):
+                replacement = folded(subscript_node)
+                if replacement is not None:
+                    return replacement
+            return self.generic_visit(subscript_node)
+
+    if not any(isinstance(node, ast.Attribute) for node in ast.walk(value)):
+        return value
+    return _Folder().visit(copy.deepcopy(value))
 
 
 def materialize_operands(value: ast.expr, state: LoweringState) -> ast.expr:

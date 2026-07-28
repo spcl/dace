@@ -74,6 +74,12 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     if wcr is not None and _lower_indirect_accumulation(target, statement, wcr, state):
         return
 
+    # Descriptor PROPERTY reads (``A.shape[0]``, ``A.ndim``) are compile-time
+    # values, but the computation path would resolve ``A.shape`` as data and
+    # see all of ``A``. Substitute the value they denote before anything tries
+    # to lower them.
+    value = statement.value = static_values.fold_descriptor_properties(value, state)
+
     # Value-domain handling: sequence literals and operations on them that
     # fold at compile time bind statically without emitting nodes.
     try:

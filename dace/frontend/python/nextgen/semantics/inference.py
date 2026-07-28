@@ -770,6 +770,25 @@ class InferenceService:
                                       node,
                                       category='type-inference')
 
+    def _infer_constant_element(self, sequence, node: ast.Subscript) -> Inferred:
+        """
+        Index a compile-time Python sequence value (``A.shape[0]``) with a
+        compile-time index.
+
+        :raises UnsupportedFeatureError: If the index is not compile-time or
+            out of range -- both are things only the interpreter can settle.
+        """
+        index = self.constant_int(node.slice)
+        if index is None or not -len(sequence) <= index < len(sequence):
+            raise UnsupportedFeatureError(f'Cannot index "{astutils.unparse(node.value)}" at compile time',
+                                          self.context.filename,
+                                          node,
+                                          category='type-inference')
+        element = sequence[index]
+        if symbolic.issymbolic(element):
+            return Inferred(kind='symbolic', value=element)
+        return Inferred(kind='constant', value=element)
+
     def _infer_subscript(self, node: ast.Subscript) -> Inferred:
         base = self.infer(node.value)
         if base.kind == 'static':
@@ -777,6 +796,13 @@ class InferenceService:
             if isinstance(element, ast.expr):
                 return self.infer(element)
             return Inferred(kind='static', value=element)
+        if base.kind == 'constant' and isinstance(base.value, (tuple, list)):
+            # A compile-time Python sequence that is a VALUE rather than a
+            # source-level literal -- ``A.shape``, most of all, whose elements
+            # may be symbols. Indexing it folds here; the alternative is a
+            # callback around ``A.shape[0]``, which then poisons the loop bound
+            # that reads it.
+            return self._infer_constant_element(base.value, node)
         if not base.is_data:
             raise UnsupportedFeatureError('Subscript of a non-container value',
                                           self.context.filename,

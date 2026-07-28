@@ -39,6 +39,21 @@ def _name_load(name: str, template: ast.AST) -> ast.Name:
     return _located(ast.Name(id=name, ctx=ast.Load()), template)
 
 
+def _parallel_range_map(call: ast.Call) -> ast.Subscript:
+    """
+    The ``dace.map[start:stop:step]`` a ``prange``/``parrange`` call is
+    shorthand for, with ``range``'s own argument conventions.
+    """
+    arguments = list(call.args)
+    if len(arguments) == 1:
+        arguments = [_located(ast.Constant(value=0), call), arguments[0]]
+    lower, upper = arguments[0], arguments[1]
+    step = arguments[2] if len(arguments) > 2 else None
+    dimension = _located(ast.Slice(lower=lower, upper=upper, step=step), call)
+    base = _located(ast.Attribute(value=_name_load('dace', call), attr='map', ctx=ast.Load()), call)
+    return ast.fix_missing_locations(_located(ast.Subscript(value=base, slice=dimension, ctx=ast.Load()), call))
+
+
 def _name_store(name: str, template: ast.AST) -> ast.Name:
     return _located(ast.Name(id=name, ctx=ast.Store()), template)
 
@@ -604,6 +619,9 @@ class NormalizeLoops(_BodyTransformer):
     Normalize loop headers:
 
     - ``range(stop)`` / ``range(start, stop)`` become ``range(start, stop, step)``.
+    - ``prange(...)`` / ``parrange(...)`` become the ``dace.map[...]`` they are
+      shorthand for (a 1-D parallel map — the same reading as the classic
+      frontend's ``newast.py``).
     - ``while`` loops with non-atomic tests become ``while True`` loops whose
       body starts with ``if not <test>: break``. The rewritten test re-evaluates
       at the loop head, so ``break`` and ``continue`` behave correctly, and the
@@ -612,9 +630,17 @@ class NormalizeLoops(_BodyTransformer):
     """
     name = 'normalize-loops'
 
+    #: Parallel-range aliases, which are ``dace.map`` over one dimension.
+    PARALLEL_RANGES = ('prange', 'parrange')
+
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
         if isinstance(statement, CANONICAL_LEAVES):
             return statement
+        if (isinstance(statement, ast.For) and isinstance(statement.iter, ast.Call)
+                and isinstance(statement.iter.func, ast.Name) and statement.iter.func.id in self.PARALLEL_RANGES
+                and not statement.iter.keywords and 1 <= len(statement.iter.args) <= 3):
+            statement.iter = _parallel_range_map(statement.iter)
+            return self._recurse(statement)
         if isinstance(statement, ast.For) and isinstance(statement.iter, ast.Call) and isinstance(
                 statement.iter.func, ast.Name) and statement.iter.func.id == 'range' and not statement.iter.keywords:
             args = statement.iter.args
