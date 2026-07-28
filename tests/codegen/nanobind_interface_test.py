@@ -1047,15 +1047,20 @@ def test_nanobind_interface_same_name_different_programs_coexist():
         return sdfg
 
     with set_temporary('compiler', 'interface', value='nanobind'):
-        # Distinct build folders per content (the default 'name' cache would
-        # collide the folders and trigger the same-path rename instead).
-        with set_temporary('cache', value='hash'):
-            csdfg1 = make(1.0).compile()
-            csdfg2 = make(2.0).compile()
+        # Distinct build folders per content: the default 'name' cache would
+        # collide the folders and trigger the same-path rename instead. The
+        # env var must be dropped first - a DACE_cache export (the nanobind CI
+        # sets 'unique', under which same-named programs in one process share
+        # a folder and rename) takes precedence over set_temporary.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv('DACE_cache', raising=False)
+            with set_temporary('cache', value='hash'):
+                csdfg1 = make(1.0).compile()
+                csdfg2 = make(2.0).compile()
 
         # Neither was renamed: same-name coexistence, not the rename loop.
-        assert csdfg1.sdfg.name == 'coexist_tester', f'Build folders `csdfg1({csdfg1.sdfg.name}) = "{csdfg1.filename}"`, `csdfg1({csdfg2.sdfg.name}) = "{csdfg2.filename}"`'
-        assert csdfg2.sdfg.name == 'coexist_tester', f'Build folders `csdfg1({csdfg1.sdfg.name}) = "{csdfg1.filename}"`, `csdfg1({csdfg2.sdfg.name}) = "{csdfg2.filename}"`'
+        assert csdfg1.sdfg.name == 'coexist_tester', f'Build folders `csdfg1({csdfg1.sdfg.name}) = "{csdfg1.filename}"`, `csdfg2({csdfg2.sdfg.name}) = "{csdfg2.filename}"`'
+        assert csdfg2.sdfg.name == 'coexist_tester', f'Build folders `csdfg1({csdfg1.sdfg.name}) = "{csdfg1.filename}"`, `csdfg2({csdfg2.sdfg.name}) = "{csdfg2.filename}"`'
 
         a = np.zeros(4)
         csdfg1(A=a)
