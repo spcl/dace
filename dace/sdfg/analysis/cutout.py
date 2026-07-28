@@ -213,8 +213,13 @@ class SDFGCutout(SDFG):
         if reduce_input_config:
             nodes = _reduce_in_configuration(state, nodes, use_alibi_nodes, symbols_map)
 
+        # Shared across all clone_f calls below: a MapEntry/MapExit pair references one Map object, and
+        # cloning them via separate deepcopy calls (each with its own memo) would hand them two - keeping
+        # one memo for the whole cutout preserves that shared identity.
+        clone_memo: Dict[int, Any] = {}
+
         def clone_f(x: Union[Memlet, InterstateEdge, nd.Node, ControlFlowBlock]):
-            ret = copy.deepcopy(x)
+            ret = copy.deepcopy(x, clone_memo)
             if preserve_guids:
                 ret.guid = x.guid
             return ret
