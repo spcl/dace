@@ -93,6 +93,11 @@ class InsertExplicitCopies(ppl.Pass):
             if memlet.wcr is not None:
                 continue
 
+            # A reference-set edge assigns a POINTER, it does not move data. Rewriting it into a
+            # CopyLibraryNode drops the ``set`` connector, so the Reference is never bound.
+            if edge.dst_conn == 'set':
+                continue
+
             src_desc = sdfg.arrays[src_node.data]
             dst_desc = sdfg.arrays[dst_node.data]
 
@@ -182,6 +187,10 @@ class InsertExplicitCopies(ppl.Pass):
         inner_node = edge.dst if stage_in else edge.src
         if not isinstance(inner_node, nodes.AccessNode) or edge.data.is_empty():
             return False
+        # A reference-set edge binds a POINTER rather than moving data; lifting it would drop the
+        # ``set`` connector and leave the Reference unbound.
+        if edge.dst_conn == 'set':
+            return False
         inner_desc = sdfg.arrays[inner_node.data]
         if isinstance(inner_desc, data.View):
             return False
@@ -205,7 +214,16 @@ class InsertExplicitCopies(ppl.Pass):
         outer_side_memlet = Memlet(data=outer.data, subset=copy.deepcopy(outer_subset))
         outer_side_memlet.dynamic = outer_memlet.dynamic
         outer_side_memlet.wcr = outer_memlet.wcr
-        inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
+        # When the memlet already names both sides, that mapping IS the copy -- deriving one from the
+        # outer subset instead silently retargets the write (``B[1, i] -> [i + 2, 3]`` became ``A[1, i]``).
+        if stage_in:
+            inner_subset = outer_memlet.get_dst_subset(edge, state)
+        else:
+            inner_subset = outer_memlet.get_src_subset(edge, state)
+        if inner_subset is None or outer_memlet.other_subset is None:
+            inner_subset = _derive_matching_dst_subset(outer_subset, inner_desc)
+        else:
+            inner_subset = copy.deepcopy(inner_subset)
         inner_memlet = Memlet(data=inner_node.data, subset=inner_subset)
         label = (f"copy_{outer.data}_to_{inner_node.data}" if stage_in else f"copy_{inner_node.data}_to_{outer.data}")
         libnode = CopyLibraryNode(name=label)

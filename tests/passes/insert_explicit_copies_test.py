@@ -965,5 +965,81 @@ def test_iec_skips_dtype_converting_copy():
     assert _count_direct_copy_edges(sdfg) == 1, "the dtype-converting edge must be left in place"
 
 
+def test_iec_skips_reference_set_edge():
+    """A ``set`` edge binds a POINTER, it does not move data. Rewriting it into a ``CopyLibraryNode``
+    drops the ``set`` connector, so the Reference is never bound and validation rejects the SDFG.
+    Regression: both the direct-copy and the map-staging path lifted reference-set edges."""
+    sdfg = dace.SDFG("iec_reference_set")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_reference("ref", [20], dace.float64)
+    setstate = sdfg.add_state("set_ref")
+    setstate.add_edge(setstate.add_read("A"), None, setstate.add_write("ref"), "set", Memlet("A[0:20]"))
+    usestate = sdfg.add_state_after(setstate, "use_ref")
+    t = usestate.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    usestate.add_edge(t, "o", usestate.add_write("ref"), None, Memlet("ref[3]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a reference-set edge must not be lowered to CopyLibraryNode"
+    assert [e for e in setstate.edges() if e.dst_conn == "set"], "the reference-set edge must survive the pass"
+    sdfg.validate()
+    A = np.zeros(20, dtype=np.float64)
+    sdfg(A=A)
+    assert A[3] == 1.0, "the write through the Reference must land in the aliased array"
+
+
+def test_iec_skips_reference_set_edge_through_map():
+    """Same guard on the map-staging path: ``A -> MapEntry -> ref[set]`` must not be lifted."""
+    sdfg = dace.SDFG("iec_reference_set_staged")
+    sdfg.add_array("A", [20], dace.float64)
+    sdfg.add_reference("ref", [4], dace.float64)
+    state = sdfg.add_state("s")
+    me, mx = state.add_map("m", {"i": "0:20:4"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    ref = state.add_access("ref")
+    state.add_memlet_path(state.add_read("A"), me, ref, dst_conn="set", memlet=Memlet("A[i:i+4]"))
+    t = state.add_tasklet("one", {}, {"o"}, "o = 1.0")
+    state.add_edge(ref, None, t, None, Memlet())
+    state.add_memlet_path(t, mx, state.add_write("A"), src_conn="o", memlet=Memlet("A[i]"))
+
+    InsertExplicitCopies().apply_pass(sdfg, {})
+
+    assert _count_copy_nodes(sdfg) == 0, "a reference-set edge must not be lifted through a MapEntry"
+    assert [e for e in state.edges() if e.dst_conn == "set"], "the reference-set edge must survive the pass"
+    sdfg.validate()
+
+
+def test_iec_staging_keeps_memlet_named_inner_subset():
+    """When a staging memlet names BOTH sides, that mapping IS the copy. Deriving the inner subset
+    from the outer one instead silently retargets the access: ``B[1, i] -> [i + 2, 3]`` copied
+    ``A[1, i]``, a wrong-address copy that still validates and still runs."""
+    sdfg = dace.SDFG("iec_staging_two_sided")
+    sdfg.add_array("B", [4, 4], dace.float64, storage=_CPU)
+    sdfg.add_array("A", [4, 4], dace.float64, storage=_CPU, transient=True)
+    state = sdfg.add_state("s")
+    a = state.add_access("A")
+    me, mx = state.add_map("outer", {"i": "0:2"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    ime, imx = state.add_map("fill", {"r": "0:4", "c": "0:4"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    t = state.add_tasklet("fill", {}, {"_out"}, "_out = 10.0 * r + c")
+    state.add_edge(me, None, ime, None, Memlet())
+    state.add_edge(ime, None, t, None, Memlet())
+    state.add_memlet_path(t, imx, a, src_conn="_out", memlet=Memlet("A[r, c]"))
+    mx.add_in_connector("IN_b")
+    mx.add_out_connector("OUT_b")
+    state.add_edge(a, None, mx, "IN_b", Memlet(data="B", subset="1, i", other_subset="i + 2, 3"))
+    state.add_edge(mx, "OUT_b", state.add_write("B"), None, Memlet(data="B", subset="1, i"))
+
+    assert InsertExplicitCopies().apply_pass(sdfg, {}) == 1
+
+    cn, _ = _find_libnode_and_scope(state)
+    in_edges = [e for e in state.in_edges(cn) if e.dst_conn == CopyLibraryNode.INPUT_CONNECTOR_NAME]
+    assert str(in_edges[0].data.subset) == "i + 2, 3", \
+        f"inner subset must keep the mapping the memlet named, got {in_edges[0].data.subset}"
+
+    # A[r, c] == 10 * r + c, so the named mapping yields A[2, 3] and A[3, 3]; the derived one gave A[1, 0:2].
+    B = np.zeros((4, 4), dtype=np.float64)
+    sdfg(B=B)
+    np.testing.assert_array_equal(B[1], np.array([23.0, 33.0, 0.0, 0.0]))
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
