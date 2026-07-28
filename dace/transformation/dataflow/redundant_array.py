@@ -260,23 +260,35 @@ def find_dims_to_pop2(
     return dims_to_pop
 
 
-def pop_dims(subset, dims):
-    popped = []
+#: A dimension removed by ``pop_dims()``: its ``(start, end, step)`` range and its tile size.
+PoppedDim = Tuple[Tuple[symbolic.SymbolicType, symbolic.SymbolicType, symbolic.SymbolicType], symbolic.SymbolicType]
+
+
+def pop_dims(subset: subsets.Range, dims: Sequence[int]) -> Tuple[subsets.Range, List[PoppedDim]]:
+    """
+    Remove the dimensions listed in ``dims`` from ``subset``.
+
+    ``subsets.Indices`` is handled as well, in which case an ``Indices`` is returned, since it is a
+    ``subsets.Range`` whose every dimension is a single point.
+
+    Returns:
+        The reduced subset and the removed ``(range, tile_size)`` pairs, in removal order. Feed both,
+        together with the very same ``dims``, into ``compose_and_push_back()`` to restore them.
+
+    :param subset: The subset to remove dimensions from.
+    :param dims: Dimensions to remove, indexing ``subset`` as it is passed in.
+    """
+    popped: List[PoppedDim] = []
+    ranges = copy.deepcopy(subset.ranges)
+    tsizes = copy.deepcopy(subset.tile_sizes)
+    # `dims` indexes the original subset, so removing low-to-high would shift every later index.
+    for i in sorted(dims, reverse=True):
+        popped.append((ranges.pop(i), tsizes.pop(i)))
     if isinstance(subset, subsets.Indices):
-        indices = copy.deepcopy(subsets.Indices)
-        for i in dims:
-            popped.append(indices.pop(i))
-        return subsets.Indices(indices)
-    else:
-        ranges = copy.deepcopy(subset.ranges)
-        tsizes = copy.deepcopy(subset.tile_sizes)
-        for i in dims:
-            r = ranges.pop(i)
-            t = tsizes.pop(i)
-            popped.append((r, t))
-        new_subset = subsets.Range(ranges)
-        new_subset.tile_sizes = tsizes
-        return new_subset, popped
+        return subsets.Indices([rb for rb, _, _ in ranges]), popped
+    new_subset = subsets.Range(ranges)
+    new_subset.tile_sizes = tsizes
+    return new_subset, popped
 
 
 def compose_and_push_back(first, second, dims=None, popped=None):
@@ -284,7 +296,8 @@ def compose_and_push_back(first, second, dims=None, popped=None):
     if dims and popped and len(dims) == len(popped):
         ranges = subset.ranges
         tsizes = subset.tile_sizes
-        for d, (r, t) in zip(reversed(dims), reversed(popped)):
+        # Exact inverse of `pop_dims()`: it removed high-to-low, so re-insert low-to-high.
+        for d, (r, t) in zip(sorted(dims), reversed(popped)):
             ranges.insert(d, r)
             tsizes.insert(d, t)
         subset = subsets.Range(ranges)
