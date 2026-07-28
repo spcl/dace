@@ -124,6 +124,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._max_nested_sdfg = max_nested_sdfg
 
+        self._body_local: list[set[str]] = []
+        """Per nested-SDFG body: the transients used only within it, which stay
+        local to that SDFG instead of becoming connectors (see
+        ``_body_local_transients``)."""
+
     def _apply_nview_array_override(self, array_name: str, sdfg: SDFG) -> bool:
         """
         Apply an NView override if applicable. Returns true if the NView was applied.
@@ -407,9 +412,16 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         self._current_nestedSDFG = id(inner_sdfg)
         self._current_state = start_state
 
+        # Transients this body alone uses stay INSIDE it rather than becoming
+        # connectors: routing a per-statement staging temporary through the map
+        # entry and exit would make every iteration share one instance of it.
+        self._body_local.append(_body_local_transients(node, self._ctx.root, sdfg))
+
         # visit children
         with _TreeScope(node, self._ctx, self._current_state):
             self.visit(node.children, sdfg=inner_sdfg)
+
+        self._body_local.pop()
 
         # restore current state and stacks
         self._current_state = self._pop_state(old_state_label)
@@ -841,19 +853,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             if isinstance(scope_node, SDFG):
                 # Copy data descriptor from parent SDFG and add input connector
                 if memlet.data not in sdfg.arrays:
-                    parent_sdfg = self._parent_sdfg_with_array(memlet.data, sdfg)
+                    self._ensure_nested_container(memlet.data, sdfg)
 
-                    # Support for  NView nodes
-                    use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[memlet.data].transient:
-                            sdfg.arrays[memlet.data].transient = False
-
-                    # Dev note: memlet.data and nview.target are identical
-                    assert memlet.data not in to_connect["inputs"]
+                # A body-local transient stays inside this SDFG; only shared
+                # containers become connectors.
+                if not sdfg.arrays[memlet.data].transient:
                     to_connect["inputs"].add(memlet.data)
             else:
                 assert scope_node is None
@@ -893,20 +897,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
             if isinstance(scope_node, SDFG):
                 if memlet.data not in sdfg.arrays:
-                    parent_sdfg: SDFG = self._parent_sdfg_with_array(memlet.data, sdfg)
+                    self._ensure_nested_container(memlet.data, sdfg)
 
-                    # Support for NView nodes
-                    use_nview = self._apply_nview_array_override(memlet.data, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(memlet.data, parent_sdfg.arrays[memlet.data].clone())
-
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[memlet.data].transient:
-                            sdfg.arrays[memlet.data].transient = False
-
-                # Add out_connector in any case if not yet present, e.g. write after read
-                # Dev note: memlet.data and nview.target are identical
-                to_connect["outputs"].add(memlet.data)
+                # Add out_connector in any case if not yet present, e.g. write
+                # after read -- unless the container is body-local, in which
+                # case it stays inside this SDFG.
+                if not sdfg.arrays[memlet.data].transient:
+                    to_connect["outputs"].add(memlet.data)
 
             else:
                 assert scope_node is None
@@ -1269,6 +1266,15 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if name in sdfg.arrays or self._apply_nview_array_override(name, sdfg):
             return
         binding = self._view_bindings.get(name)
+        if binding is None and self._body_local and name in self._body_local[-1]:
+            # Used only inside this body: keep it a transient of the nested
+            # SDFG, so each scope instance gets its own copy instead of all
+            # iterations sharing one through a connector.
+            parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
+            descriptor = parent_sdfg.arrays[name].clone()
+            descriptor.transient = True
+            sdfg.add_datadesc(name, descriptor)
+            return
         if binding is not None:
             # A view binding is a relationship between two containers, and its
             # subset generally depends on the enclosing map parameters
@@ -1626,6 +1632,50 @@ def _create_state_boundary(
     label = "cf_state_boundary" if boundary_node.due_to_control_flow else "state_boundary"
     assignments = assignments if assignments is not None else {}
     return _insert_and_split_assignments(state, label=label, assignments=assignments)
+
+
+def _body_local_transients(scope: tn.ScheduleTreeScope, root: tn.ScheduleTreeRoot, sdfg: SDFG) -> set[str]:
+    """
+    The transients a scope's body uses that nothing outside it references.
+
+    Such a container is per-iteration storage — a staging temporary a frontend
+    emitted for one statement, most typically — and must stay local to the
+    nested SDFG the body becomes. Passing it through the scope's connectors
+    instead would allocate ONE instance shared by every concurrent iteration,
+    which is a data race: iteration ``i`` could read the value iteration ``j``
+    had just staged there.
+
+    :param scope: The scope whose body is being emitted as a nested SDFG.
+    :param root: The whole tree, to find references from outside the body.
+    """
+    inside = {id(node) for node in scope.preorder_traversal()}
+    # A scope node's memlet sets aggregate its whole subtree, so an ANCESTOR of
+    # this body reports the body's own containers as if they were used outside
+    # it. Ancestors are neither inside nor outside; skip them.
+    ancestors: set[int] = set()
+    parent = scope.parent
+    while parent is not None:
+        ancestors.add(id(parent))
+        parent = getattr(parent, 'parent', None)
+
+    used_inside: set[str] = set()
+    used_outside: set[str] = set()
+    for node in root.preorder_traversal():
+        if id(node) in ancestors:
+            continue
+        target = used_inside if id(node) in inside else used_outside
+        for memlet in list(node.input_memlets()) + list(node.output_memlets()):
+            if memlet.data is not None:
+                target.add(memlet.data)
+        for attribute in ('target', 'source'):
+            name = getattr(node, attribute, None)
+            if isinstance(name, str):
+                target.add(name)
+    return {
+        name
+        for name in used_inside - used_outside
+        if name in sdfg.arrays and sdfg.arrays[name].transient and name not in root.arg_names
+    }
 
 
 def _end_of_expansion_chain(block: ControlFlowBlock, created: set) -> ControlFlowBlock:
