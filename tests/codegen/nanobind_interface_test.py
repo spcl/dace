@@ -351,6 +351,51 @@ def test_nanobind_interface_rename_third_compile_consistent():
             assert np.allclose(b, expected)
 
 
+def test_nanobind_interface_report_follows_rename():
+    """Instrumentation reports of a collision-renamed program are found via the
+    compiled handle's sdfg (the renamed compile copy, which knows its own
+    folder). The ORIGINAL object keeps looking in its identity-derived folder
+    and finds nothing - the accepted limitation behind refusing
+    SDFG.safe_call() on nanobind."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_report(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        # First compile occupies the (folder, name) identity.
+        axpy_nanobind_report.to_sdfg().compile()
+
+        # The instrumented recompile of the same name is renamed away.
+        sdfg = axpy_nanobind_report.to_sdfg()
+        sdfg.instrument = dace.InstrumentationType.Timer
+        csdfg = sdfg.compile()
+        assert csdfg.sdfg.name == f'{sdfg.name}_0'
+
+        n = 8
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        csdfg(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
+        csdfg.finalize()  # __dace_exit is what saves the report
+
+        assert csdfg.sdfg.get_latest_report() is not None
+        assert sdfg.get_latest_report() is None
+
+
+def test_nanobind_interface_sdfg_safe_call_refused():
+    """SDFG.safe_call() is refused on the nanobind interface: it compiles
+    internally and hides the compiled object, so after a collision rename any
+    post-call query on the original SDFG (e.g. get_latest_report()) would
+    silently look in the wrong folder. compile() + CompiledSDFG.safe_call()
+    is the supported route."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = dace.SDFG('sdfg_safe_call_refuse_probe')
+        sdfg.add_array('A', [4], dace.float64)
+        with pytest.raises(NotImplementedError, match='safe_call'):
+            sdfg.safe_call(A=np.zeros(4))
+
+
 def test_nanobind_interface_name_collision_error():
     """With compiler.nanobind_name_collision=error, a taken name refuses to compile."""
     import pytest

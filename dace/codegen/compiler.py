@@ -719,12 +719,18 @@ def safe_call_precompiled(sdfg, args, kwargs) -> None:
     # Absolute, so the child resolves it regardless of its working directory.
     folder = os.path.abspath(str(sdfg.build_folder))
     with tempfile.NamedTemporaryFile(suffix='.pickle') as channel:
-        pickle.dump({'folder': folder, 'sdfg': sdfg, 'args': args, 'kwargs': kwargs}, channel)
+        # The parent's cwd travels along: the child chdirs to it after its
+        # imports, so cwd-relative artifact paths baked into the binary (the
+        # instrumentation report goes to ``<build_folder>/perf``, which is
+        # usually relative) resolve to the same place the parent will look.
+        pickle.dump({'folder': folder, 'cwd': os.getcwd(), 'sdfg': sdfg, 'args': args, 'kwargs': kwargs}, channel)
         channel.flush()
 
-        # Run from a neutral directory: the child works with absolute paths, and
-        # a cwd that contains a ``dace`` directory would shadow the installed
-        # package as a namespace package and break ``import dace`` in the child.
+        # START from a neutral directory: a cwd that contains a ``dace``
+        # directory would shadow the installed package as a namespace package
+        # and break ``import dace`` in the child. Once the import is done the
+        # child chdirs to the parent's cwd (see _safe_call_subprocess_main) -
+        # harmless then, since ``dace`` is already in the child's sys.modules.
         result = subprocess.run([
             sys.executable, '-c', 'from dace.codegen.compiler import _safe_call_subprocess_main; '
             f'_safe_call_subprocess_main(r"{channel.name}")'
@@ -754,8 +760,20 @@ def _safe_call_subprocess_main(pickle_path: str) -> None:
     with open(pickle_path, 'r+b') as channel:
         data = pickle.load(channel)
 
+        # The child was started in a neutral directory so ``import dace``
+        # could not be shadowed; now that imports are done, adopt the parent's
+        # cwd so cwd-relative artifact paths (the instrumentation report)
+        # resolve exactly as they do for the parent.
+        os.chdir(data['cwd'])
+
         csdfg = load_precompiled_sdfg(data['folder'], data['sdfg'])
         csdfg(*data['args'], **data['kwargs'])
+
+        # Finalize explicitly: __dace_exit is what saves the instrumentation
+        # report, and on the nanobind interface nothing runs it at process
+        # exit (extension modules are never unloaded, unlike ctypes' DLL
+        # teardown). Deterministic on both interfaces.
+        csdfg.finalize()
 
         channel.seek(0)
         channel.truncate()

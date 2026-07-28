@@ -2781,7 +2781,21 @@ class SDFG(ControlFlowRegion):
         """
         Invokes an SDFG in a separate process to avoid crashes in the main process,generating and compiling code if necessary.
         Raises an exception if the SDFG execution fails.
+
+        :note: Not supported on the nanobind interface: this method compiles
+            internally and hides the compiled object, but a compiled nanobind
+            module cannot be reloaded, so a recompile under an already-loaded
+            identity is silently renamed into a different build folder -
+            post-call queries on THIS object (e.g. ``get_latest_report()``)
+            would then silently look in the wrong place. Use ``compile()``
+            and ``CompiledSDFG.safe_call()`` instead, and query reports via
+            the compiled object's ``sdfg``.
         """
+        if Config.get('compiler', 'interface') == 'nanobind':
+            raise NotImplementedError(
+                'SDFG.safe_call() is not supported on the nanobind interface: it hides the compiled object, '
+                'whose collision rename would make post-call queries on this SDFG unsound. '
+                'Use sdfg.compile() and CompiledSDFG.safe_call() instead.')
         with hooks.invoke_sdfg_call_hooks(self) as sdfg:
             binaryobj = sdfg.compile()
 
