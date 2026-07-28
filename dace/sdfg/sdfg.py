@@ -537,6 +537,7 @@ class SDFG(ControlFlowRegion):
         # Helper fields to avoid code generation and compilation
         self._regenerate_code = True
         self._recompile = True
+        self._build_folder = None
 
         # Counter to resolve name conflicts
         self._orig_name = name
