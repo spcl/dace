@@ -200,9 +200,11 @@ work_depth_test_cases: Dict[str, Tuple[DaceProgram, Tuple[symbolic.SymbolicType,
     'break_while_loop': (break_while_loop, (sp.Symbol('num_execs_0_7') * N, sp.Symbol('num_execs_0_7'))),
     'sequential_ifs': (sequntial_ifs, (sp.Max(N + 1, M) + sp.Max(N + 1, M + 1), sp.Max(1, M) + 1)),
     'reduction_library_node': (reduction_library_node, (456, sp.log(456))),
-    'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.log(N))),
+    # Depth is Max(0, log(N)): the depth-of-DAG traversal seeds max_depth at 0 and cannot assume N > 1,
+    # so log(N) alone is unsound (negative for 0 < N < 1). Numeric N folds the Max away; symbolic N does not.
+    'reduction_library_node_symbolic': (reduction_library_node_symbolic, (N, sp.Max(0, sp.log(N)))),
     'gemm_library_node': (gemm_library_node, (2 * 456 * 200 * 111, sp.log(200))),
-    'gemm_library_node_symbolic': (gemm_library_node_symbolic, (2 * M * K * N, sp.log(K)))
+    'gemm_library_node_symbolic': (gemm_library_node_symbolic, (2 * M * K * N, sp.Max(0, sp.log(K))))
 }
 
 
@@ -250,9 +252,10 @@ tests_cases_avg_par = {
     'break_for_loop': (break_for_loop, N),
     'break_while_loop': (break_while_loop, N),
     'reduction_library_node': (reduction_library_node, 456 / sp.log(456)),
-    'reduction_library_node_symbolic': (reduction_library_node_symbolic, N / sp.log(N)),
+    # See work_depth_test_cases: depth is Max(0, log(N)) for unconstrained symbolic N.
+    'reduction_library_node_symbolic': (reduction_library_node_symbolic, N / sp.Max(0, sp.log(N))),
     'gemm_library_node': (gemm_library_node, 2 * 456 * 200 * 111 / sp.log(200)),
-    'gemm_library_node_symbolic': (gemm_library_node_symbolic, 2 * M * K * N / sp.log(K)),
+    'gemm_library_node_symbolic': (gemm_library_node_symbolic, 2 * M * K * N / sp.Max(0, sp.log(K))),
 }
 
 
