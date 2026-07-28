@@ -2721,7 +2721,7 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         if isinstance(cfg, ConditionalBlock):
             for i, (n_cond, n_body) in enumerate(cfg.branches):
                 if n_cond is not None:
-                    cfg.branches[0] = (repl_code_block_or_str(n_cond, scalar_name, str(scalar_val)), n_body)
+                    cfg.branches[i] = (repl_code_block_or_str(n_cond, scalar_name, str(scalar_val)), n_body)
 
     for edge in sdfg.all_interstate_edges(recursive=True):
         edge.data.replace_dict({f"{scalar_name}": f"{scalar_val}"})

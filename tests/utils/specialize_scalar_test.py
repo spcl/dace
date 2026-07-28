@@ -110,6 +110,50 @@ def test_use_in_if_block():
     assert "nlev" not in cb.branches[0][0].as_string
 
 
+def _get_sdfg_with_symbol_use_in_multi_arm_if():
+    """Conditional with two guards plus an else, each arm carrying a distinguishable body."""
+    sdfg = dace.SDFG("multi_arm")
+    _, A = sdfg.add_array(name="A", shape=[
+        5,
+    ], dtype=dace.float64, transient=False)
+    sdfg.add_array(name="B", shape=[
+        5,
+    ], dtype=dace.float64, transient=False)
+    sdfg.add_scalar(name="nlev", dtype=dace.int64)
+    cb = ConditionalBlock(label="cfb1", sdfg=sdfg, parent=sdfg)
+    sdfg.add_node(cb, is_start_block=True)
+    for label, condition in (("low", "nlev < 100"), ("high", "nlev > 200"), ("otherwise", None)):
+        cfg = dace.ControlFlowRegion(label=f"cfg_{label}", sdfg=sdfg, parent=cb)
+        cb.add_branch(condition=None if condition is None else CodeBlock(condition), branch=cfg)
+        s = cfg.add_state(label=f"s_{label}")
+        s.add_edge(s.add_access("A"), None, s.add_access("B"), None, dace.memlet.Memlet.from_array("A", A))
+    return sdfg, cb
+
+
+def test_use_in_multi_arm_if_block():
+    """Every arm of a multi-arm conditional is rewritten, and arm 0 is not overwritten by a later arm.
+
+    The loop over ``branches`` used to assign to ``branches[0]`` regardless of the iteration index, so
+    arm 0 was replaced once per guarded arm -- ending up holding the *last* arm's guard and body -- and
+    arms 1.. kept their unspecialized guards. A single-arm conditional cannot tell the two apart.
+    """
+    sdfg, cb = _get_sdfg_with_symbol_use_in_multi_arm_if()
+    bodies_before = [branch for _, branch in cb.branches]
+    sdfg.validate()
+
+    sdutil.specialize_scalar(sdfg=sdfg, scalar_name="nlev", scalar_val="90")
+    sdfg.validate()
+
+    assert len(cb.branches) == 3
+    # Guards of every conditional arm are specialized, not just the first one.
+    assert cb.branches[0][0].as_string == "(90 < 100)", cb.branches[0][0].as_string
+    assert cb.branches[1][0].as_string == "(90 > 200)", cb.branches[1][0].as_string
+    # The else arm has no guard and stays untouched.
+    assert cb.branches[2][0] is None
+    # No arm's body was displaced onto another arm.
+    assert [branch for _, branch in cb.branches] == bodies_before
+
+
 def test_use_in_for_cfg():
     sdfg = _get_sdfg_with_symbol_use_in_for_cfg()
     sdfg.validate()
@@ -255,6 +299,7 @@ def test_tasklet_with_type_cast():
 if __name__ == "__main__":
     test_specialize_with_dynamic_input()
     test_use_in_if_block()
+    test_use_in_multi_arm_if_block()
     test_interstate_assignment()
     test_interstate_read()
     test_use_in_for_cfg()
