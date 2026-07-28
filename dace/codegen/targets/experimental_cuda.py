@@ -4,6 +4,8 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
 import networkx as nx
 
 import dace
+from ordered_set import OrderedSet
+
 from dace import data as dt, Memlet
 from dace import dtypes, registry, symbolic, subsets
 from dace.config import Config
@@ -91,7 +93,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         self._current_kernel_spec: Optional[KernelSpec] = None
         self._gpu_stream_manager: Optional[GPUStreamManager] = None
         self._kernel_dimensions_map: Dict[nodes.MapEntry, Tuple[List, List]] = {}
-        self._tb_inserted_kernels: Set[nodes.MapEntry] = set()
+        self._tb_inserted_kernels: Set[nodes.MapEntry] = OrderedSet()
         self._kernel_arglists: Dict[nodes.MapEntry, Dict[str, dt.Data]] = {}
 
     def preprocess(self, sdfg: SDFG):
@@ -111,7 +113,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # tiled; both are consulted when emitting kernel launches.
         atb_results = pipeline_results.get('AddThreadBlockMaps', {}) or {}
         self._kernel_dimensions_map = atb_results.get('kernel_dimensions_map', {})
-        self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', set())
+        self._tb_inserted_kernels = atb_results.get('tb_inserted_kernels', OrderedSet())
 
         # Library-node expansion adds new nested SDFGs with new cfg_ids; re-seed
         # the framecode's symbol/constant cache so lookups succeed for them.
@@ -163,8 +165,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         """
         reachability = access_nodes = None
         for sdfg in top_sdfg.all_sdfgs_recursive():
-            pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
+            pooled = OrderedSet(
+                aname for aname, arr in sdfg.arrays.items()
+                if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
             if not pooled:
                 continue
             self.has_pool = True
@@ -185,7 +188,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             reachable = reachability[sdfg.cfg_id]
             access_sets = access_nodes[sdfg.cfg_id]
             for state in sdfg.states():
-                last_state_arrays: Set[str] = set(
+                last_state_arrays: Set[str] = OrderedSet(
                     s for s in access_sets
                     if s in pooled and state in access_sets[s] and not (access_sets[s] & reachable[state]) - {state})
 
@@ -202,7 +205,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     # end of state (empty set); otherwise release at the common
                     # descendant following the ends of all memlet paths
                     # (e.g., (a)->...->[tasklet]-->...->(b)).
-                    terminators = set()
+                    terminators = OrderedSet()
                     if terminator is not None and state.entry_node(terminator) is None:
                         for e in state.out_edges(terminator):
                             if isinstance(e.dst, nodes.EntryNode):
@@ -213,7 +216,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     self.pool_release[(sdfg, aname)] = (state, terminators)
 
             # Release anything still live at SDFG sink.
-            unfreed = set(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
+            unfreed = OrderedSet(arr for arr in pooled if (sdfg, arr) not in self.pool_release)
             if unfreed:
                 sinks = sdfg.sink_nodes()
                 if len(sinks) == 1:
@@ -226,7 +229,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
                     raise ValueError('End state not found when trying to free pooled memory')
 
                 for arr in unfreed:
-                    self.pool_release[(sdfg, arr)] = (sink, set())
+                    self.pool_release[(sdfg, arr)] = (sink, OrderedSet())
 
     @property
     def has_initializer(self) -> bool:
@@ -483,7 +486,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # Emit cudaFree for pooled transients whose lifetime ends in this state.
         if not self._in_device_code:
 
-            handled_keys = set()
+            handled_keys = OrderedSet()
             backend = self.backend
             for (pool_sdfg, name), (pool_state, _) in self.pool_release.items():
 
