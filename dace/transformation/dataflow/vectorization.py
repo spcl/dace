@@ -130,7 +130,12 @@ class Vectorization(transformation.SingleStateTransformation):
         if self.strided_map:
             new_range = [dim_from, dim_to - vector_size + 1, vector_size]
         else:
-            new_range = [dim_from // vector_size, ((dim_to + 1) // vector_size) - 1, dim_skip]
+            # int_floor, never `//`: `(dim_to + 1) // vector_size` is a sum numerator, the shape
+            # sympy splits into separately-truncating terms once the floor is dropped by sym2cpp.
+            new_range = [
+                symbolic.int_floor(dim_from, vector_size),
+                symbolic.int_floor(dim_to + 1, vector_size) - 1, dim_skip
+            ]
 
         # Create preamble non-vectorized map (replacing the original map)
         if create_preamble:

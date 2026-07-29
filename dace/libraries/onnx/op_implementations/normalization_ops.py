@@ -50,14 +50,19 @@ def LogSoftmax(input, output):
 # ============================================================================
 
 
+def _layernorm_first_axis(node, X):
+    # The attribute is absent in opsets that predate it; ONNX defaults it to -1.
+    axis = node.axis if hasattr(node, 'axis') else -1
+    return axis if axis >= 0 else len(X.shape) + axis
+
+
 def _layernorm_axis(node, X):
-    axis = node.axis if hasattr(node, 'axis') and node.axis >= 0 else len(X.shape) + node.axis
-    return tuple(range(axis, len(X.shape)))
+    return tuple(range(_layernorm_first_axis(node, X), len(X.shape)))
 
 
 def _layernorm_norm_size(node, X):
-    axis = node.axis if hasattr(node, 'axis') and node.axis >= 0 else len(X.shape) + node.axis
-    return int(np.prod([X.shape[i] for i in range(axis, len(X.shape))]))
+    first = _layernorm_first_axis(node, X)
+    return int(np.prod([X.shape[i] for i in range(first, len(X.shape))]))
 
 
 def _layernorm_epsilon(node, X):
