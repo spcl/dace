@@ -118,7 +118,9 @@ def test_view_computation_writes_through():
 
     func = tree.as_sdfg().compile()
     a = np.zeros((4, 10))
-    b = np.arange(20, dtype=np.float64).reshape(2, 10)
+    # ``.copy()``: reshape returns a view of the arange result, and DaCe
+    # rejects NumPy views as arguments unless compiler.allow_view_arguments.
+    b = np.arange(20, dtype=np.float64).reshape(2, 10).copy()
     reference = a.copy()
     reference[0:2, :] = b * 2.0
     func(a=a, b=b)

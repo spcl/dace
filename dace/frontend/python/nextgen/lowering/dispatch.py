@@ -83,7 +83,7 @@ _BUILTIN_ELEMENTWISE = {'min': 'minimum', 'max': 'maximum', 'abs': 'absolute'}
 _BUILTIN_ELEMENTWISE_ARITY = {'min': 2, 'max': 2, 'abs': 1}
 
 
-def _replacement_registered(name: str) -> bool:
+def _replacement_registered(name: str, require_descriptor_inference: bool = True) -> bool:
     """
     Whether a call is eligible for deferred replacement expansion
     (``tree_to_sdfg.visit_ReplacementCallNode``): it must have BOTH a
@@ -91,14 +91,20 @@ def _replacement_registered(name: str) -> bool:
     entry (the frontend must type the result to allocate the target
     container). Replacements needing ``ProgramVisitor`` machinery beyond the
     expansion shim's surface fail loudly at expansion time.
+
+    :param require_descriptor_inference: Whether an inference entry is
+        required. Only DEFERRED expansion needs one, to allocate the result
+        container before the replacement runs; the frontend view path
+        (:func:`_lower_view_call`) takes its descriptor from the trial run
+        itself and passes False.
     """
     from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
     if oprepo.Replacements.get(name) is None:
         return False
-    return oprepo.Replacements.get_descriptor_inference(name) is not None
+    return not require_descriptor_inference or oprepo.Replacements.get_descriptor_inference(name) is not None
 
 
-def _method_registered(descriptor: data.Data, method_name: str) -> bool:
+def _method_registered(descriptor: data.Data, method_name: str, require_descriptor_inference: bool = True) -> bool:
     """
     Whether a bound-method call is eligible for deferred replacement
     expansion, mirroring :func:`_replacement_registered` for the ``_method_rep``
@@ -108,7 +114,8 @@ def _method_registered(descriptor: data.Data, method_name: str) -> bool:
     from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
     if oprepo.Replacements.get_method(type(descriptor), method_name) is None:
         return False
-    return oprepo.Replacements.get_method_descriptor_inference(type(descriptor), method_name) is not None
+    return (not require_descriptor_inference
+            or oprepo.Replacements.get_method_descriptor_inference(type(descriptor), method_name) is not None)
 
 
 def lower_computation(target: DataAccess,
@@ -421,6 +428,8 @@ def lower_call(target: Optional[ast.expr], call: ast.Call, statement: ast.stmt, 
         return
     if target is not None and _lower_reshape_call(target, call, qualname, state):
         return
+    if target is not None and _lower_view_call(target, call, qualname, state):
+        return
     try:
         if _lower_registry_call(target, call, qualname, callee, statement, state):
             return
@@ -499,6 +508,184 @@ def _lower_reshape_call(target: ast.expr, call: ast.Call, qualname: str, state: 
                                       subset=subsets.Range.from_array(view_descriptor),
                                       other_subset=target_access.subset)))
     return True
+
+
+def _lower_view_call(target: ast.expr, call: ast.Call, qualname: str, state: LoweringState) -> bool:
+    """
+    Lower any registry call whose RESULT is a view of one of its own data
+    arguments — ``A.view(dace.int32)``, the dtype-reinterpreting view — as a
+    frontend view binding.
+
+    This is the general form of the path :func:`_lower_reshape_call`
+    implements for one shape-changing call, and it exists for the same reason:
+    a view binding is frontend-visible state that a deferred
+    ``ReplacementCallNode`` cannot represent (:func:`_expansion_viable`
+    rejects a view-valued result outright), so a replacement that returns one
+    lowers here or not at all. Nothing about the call is recognized
+    syntactically — the replacement is looked up like any other, trial-run on
+    a scratch SDFG, and taken only if what it produced was exactly one view of
+    an input and no dataflow — so a newly registered view-returning
+    replacement needs no change here.
+
+    The emitted descriptor is the one the TRIAL computed rather than one
+    re-derived from inference: the replacement is the authority on the
+    reinterpreted shape and strides (``view()`` divides them with
+    ``symbolic.int_floor``, which prints correctly for a symbolic stride where
+    ``//`` does not).
+
+    ``reshape`` keeps its dedicated path ahead of this one because it resolves
+    a ``-1`` dimension and checks the element count, neither of which the
+    registry implementation does; this path only sees the forms that one
+    declines.
+    """
+    # No descriptor-inference entry is required: the view descriptor comes
+    # from the trial run below, not from the frontend typing the result first.
+    name, receiver = _resolve_replacement_name(call, qualname, state, require_descriptor_inference=False)
+    if name is None:
+        return False
+    converted = _replacement_arguments(call, state)
+    if converted is None:
+        return False
+    arguments, keywords, data_arguments = converted
+    if receiver is not None:
+        arguments = [receiver] + arguments
+        data_arguments = data_arguments | {receiver}
+    function = _replacement_implementation(name, receiver, arguments, data_arguments, state)
+    if function is None:
+        return False
+    trial = _run_view_trial(function, arguments, keywords, data_arguments, state)
+    if trial is None:
+        return False
+    view_descriptor, source, memlet = trial
+    if not _view_matches_window(view_descriptor, state.context.containers[source], memlet):
+        return False
+    view_descriptor = copy.deepcopy(view_descriptor)
+    target_access: Optional[DataAccess] = None
+    if not isinstance(target, ast.Name):
+        target_access = resolve_access(target, state)
+        if target_access is None:
+            return False
+    view_name = state.context.add_container(target.id if target_access is None else '__view', view_descriptor)
+    if target_access is None:
+        state.context.bind(target.id, view_name)
+    state.emitter.emit(
+        tn.ViewNode(target=view_name,
+                    source=source,
+                    memlet=copy.deepcopy(memlet),
+                    src_desc=state.context.containers[source],
+                    view_desc=view_descriptor))
+    if target_access is not None:
+        # Writing the viewed data into an existing container, as in
+        # ``_lower_reshape_call``: copy out of the view, which carries the
+        # reinterpreted dimensions.
+        state.emitter.emit(
+            tn.CopyNode(target=target_access.container,
+                        memlet=Memlet(data=view_name,
+                                      subset=subsets.Range.from_array(view_descriptor),
+                                      other_subset=target_access.subset)))
+    return True
+
+
+def _run_view_trial(function, arguments: List, keywords: dict, data_arguments: set,
+                    state: LoweringState) -> Optional[Tuple[data.Data, str, Memlet]]:
+    """
+    Trial-run a replacement on a scratch SDFG (the same trial-before-commit
+    shape as :func:`_expansion_viable`) and report the view binding it
+    recorded.
+
+    :return: (view descriptor, source container, viewing memlet) when the
+             result is exactly one view of one of the call's own data
+             arguments and the replacement emitted no dataflow of its own —
+             all a :class:`~...treenodes.ViewNode` can express — otherwise
+             None, leaving the call to the ordinary dispatch below.
+    """
+    scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
+    try:
+        result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
+    except Exception:
+        return None
+    result = _unwrap_nested_call(result)
+    if not isinstance(result, str) or result not in shim.views:
+        return None  # Not a view-valued result: an ordinary replacement
+    if len(shim.views) != 1 or scratch_state.number_of_nodes() > 0:
+        return None  # Additional bindings or dataflow a single ViewNode would drop
+    source, memlet = shim.views[result]
+    if source not in data_arguments or source not in state.context.containers:
+        return None  # A view of the replacement's own temporary, not of an argument
+    return scratch.arrays[result], source, memlet
+
+
+def _view_matches_window(view_descriptor: data.Data, source_descriptor: data.Data, memlet: Memlet) -> bool:
+    """
+    Whether a view descriptor reinterprets exactly the window its viewing
+    memlet names, measured in BYTES (the dtypes may differ — that is the point
+    of ``A.view(dtype)``).
+
+    A view is an aliasing reinterpretation, not an allocation, so it holds
+    neither more nor fewer bytes than the subset it aliases: more reads out of
+    bounds, fewer means part of the named window is unreachable through it.
+    The registry implementations do not all check this — ``reshape`` builds a
+    ``(2, 4)`` view of a 6-element array, where NumPy raises — so a binding
+    that provably disagrees with its own window is refused here and the call
+    falls through to a path that preserves Python's own error (ultimately the
+    callback).
+
+    The view side is measured by its SHAPE, not its ``total_size``: a view
+    inherits the source's total size (``reshape`` passes it through verbatim),
+    so it is the shape that says how far indexing it reaches. Only a PROVABLE
+    disagreement is refused; symbolic sizes that do not compare are accepted,
+    since the alternative is refusing every symbolically-shaped view.
+    """
+    view_bytes = data._prod(view_descriptor.shape) * view_descriptor.dtype.bytes
+    window_bytes = memlet.subset.num_elements() * source_descriptor.dtype.bytes
+    difference = symbolic.simplify(view_bytes - window_bytes)
+    return not (difference.is_number and difference != 0)
+
+
+def _resolve_replacement_name(call: ast.Call,
+                              qualname: str,
+                              state: LoweringState,
+                              require_descriptor_inference: bool = True) -> Tuple[Optional[str], Optional[str]]:
+    """
+    The registry key a call lowers through, as (name, receiver container).
+
+    A free function is keyed by its registry-normalized qualname; a method
+    (``A.copy()``, ``A.view(dtype)``) by its bare method name plus the
+    container its receiver resolves to, which is also the replacement's first
+    positional argument (the classic frontend's convention, ``newast.py``'s
+    Call visitor). Returns (None, None) when the call is registered under
+    neither.
+
+    :param require_descriptor_inference: See :func:`_replacement_registered`.
+    """
+    if _replacement_registered(qualname, require_descriptor_inference):
+        return qualname, None
+    fallback = normalize_qualname(getattr(call.func, 'qualname', None) or astutils.rname(call.func))
+    if _replacement_registered(fallback, require_descriptor_inference):
+        return fallback, None
+    receiver_access = _method_call_receiver(call, state)
+    if (receiver_access is not None
+            and _method_registered(receiver_access.descriptor, call.func.attr, require_descriptor_inference)):
+        return call.func.attr, receiver_access.container
+    return None, None
+
+
+def _replacement_implementation(name: str, receiver: Optional[str], arguments: List, data_arguments: set,
+                                state: LoweringState):
+    """
+    The registry implementation a resolved replacement name refers to: a bound
+    method on the receiver's descriptor class, an operator resolved from its
+    operand classes (which keeps ``getop``'s class-hierarchy resolution), or a
+    free function.
+    """
+    from dace.frontend.common import op_repository as oprepo
+
+    if receiver is not None:
+        return oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
+    if name.startswith(oprepo.OPERATOR_QUALNAME_MARKER):
+        return oprepo.Replacements.getop(*_operator_lookup(oprepo.decode_operator_qualname(name), arguments,
+                                                           data_arguments, state.context.containers))
+    return oprepo.Replacements.get(name)
 
 
 def _reshape_operands(call: ast.Call, qualname: str, state: LoweringState) -> Tuple[Optional[ast.expr], List[ast.expr]]:
@@ -1196,26 +1383,15 @@ def _lower_replacement_call(target: Optional[ast.expr],
     :param target_access: An already-resolved write target, used instead of
         ``target`` when the call's output goes to an ``out=`` keyword argument.
     """
-    name = qualname
-    receiver: Optional[str] = None
-    if not _replacement_registered(name):
-        name = normalize_qualname(getattr(call.func, 'qualname', None) or astutils.rname(call.func))
-        if not _replacement_registered(name):
-            name = None
-            # Not a registered free function: try the method family
-            # (``_method_rep``), e.g. ``A.copy()``/``A.fill(0)``. Works for
-            # both a targeted, data-valued method call and a bare-statement,
-            # zero-output one (e.g. ``A.fill(0)``) -- this check doesn't
-            # depend on ``target``/``inferred.is_none_output`` because the
-            # caller's own gates above already guarantee the two are paired
-            # correctly (targeted only when data-valued, untargeted only
-            # when zero-output) before execution ever reaches here.
-            receiver_access = _method_call_receiver(call, state)
-            if receiver_access is not None and _method_registered(receiver_access.descriptor, call.func.attr):
-                receiver = receiver_access.container
-                name = call.func.attr
-            if name is None:
-                return False
+    # The method family (``_method_rep``, e.g. ``A.copy()``/``A.fill(0)``)
+    # covers both a targeted, data-valued method call and a bare-statement,
+    # zero-output one; that doesn't depend on ``target``/
+    # ``inferred.is_none_output`` because the caller's own gates above already
+    # guarantee the two are paired correctly (targeted only when data-valued,
+    # untargeted only when zero-output) before execution ever reaches here.
+    name, receiver = _resolve_replacement_name(call, qualname, state)
+    if name is None:
+        return False
     # NOTE: expansion inside a dataflow scope is allowed. The expansion adds
     # state machinery, which a map body cannot hold directly -- but
     # ``tree_to_sdfg`` emits a map body containing a state boundary as a NESTED
@@ -1380,17 +1556,7 @@ def _expansion_viable(name: str,
     non-viable outcomes are exceptions, recorded view bindings, and
     unsupported return forms.
     """
-    from dace.frontend.common import op_repository as oprepo
-
-    if receiver is not None:
-        function = oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
-    elif name.startswith(oprepo.OPERATOR_QUALNAME_MARKER):
-        # OPERATOR family: the operand classes come from the operands, so the
-        # lookup keeps the class-hierarchy resolution ``getop`` performs.
-        function = oprepo.Replacements.getop(*_operator_lookup(oprepo.decode_operator_qualname(name), arguments,
-                                                               data_arguments, state.context.containers))
-    else:
-        function = oprepo.Replacements.get(name)
+    function = _replacement_implementation(name, receiver, arguments, data_arguments, state)
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
         result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
