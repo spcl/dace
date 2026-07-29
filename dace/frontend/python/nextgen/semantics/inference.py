@@ -187,6 +187,15 @@ def _qualified_object_name(obj: Any, fallback: Optional[str]) -> Optional[str]:
     return fallback
 
 
+def _registered_qualname(name: Optional[str]) -> bool:
+    """Whether the replacement registry has an entry under this exact name,
+    in either the implementation or the descriptor-inference keyspace."""
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    if name is None:
+        return False
+    return (oprepo.Replacements.get(name) is not None or oprepo.Replacements.get_descriptor_inference(name) is not None)
+
+
 def broadcast_shapes(first: Sequence[Any], second: Sequence[Any]) -> Tuple[Any, ...]:
     """
     NumPy-style shape broadcasting for symbolic shapes.
@@ -354,13 +363,29 @@ class InferenceService:
                 break
             resolved = getattr(resolved, attribute, None)
 
+        candidates: List[str] = []
         if resolved is not None:
             qualified = _qualified_object_name(resolved, None)
             if qualified is not None:
-                return normalize_qualname(qualified), resolved
+                candidates.append(normalize_qualname(qualified))
         if len(parts) > 1 and isinstance(root, types.ModuleType):
-            return normalize_qualname(f'{root.__name__}.{".".join(parts[1:])}'), resolved
-        return normalize_qualname('.'.join(parts)), resolved
+            # The call-site path with the module alias resolved
+            # (``donnx.ONNXGather`` -> ``dace.libraries.onnx.ONNXGather``).
+            candidates.append(normalize_qualname(f'{root.__name__}.{".".join(parts[1:])}'))
+        candidates.append(normalize_qualname('.'.join(parts)))
+        # Prefer whichever spelling the registry actually knows. A library that
+        # registers its replacements under a package's PUBLIC path while the
+        # objects themselves live in a private submodule (the ONNX op registry
+        # keys ``dace.libraries.onnx.ONNXGather`` for a class whose
+        # ``__module__.__name__`` is ``dace.libraries.onnx.nodes.
+        # onnx_op_registry.ONNXGather_13``) is reachable only through the
+        # module-path candidate. Asking the registry keeps this from being one
+        # more entry in :data:`_QUALNAME_MODULE_REWRITES`, which can only
+        # describe rewrites known in advance.
+        for candidate in candidates:
+            if _registered_qualname(candidate):
+                return candidate, resolved
+        return candidates[0], resolved
 
     #: Ufunc methods with dedicated registry entries (``get_ufunc(method)``).
     _UFUNC_METHODS = ('reduce', 'accumulate', 'outer')

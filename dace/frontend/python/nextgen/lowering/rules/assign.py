@@ -709,6 +709,14 @@ def _result_descriptor(inferred: Inferred, state: LoweringState, statement: ast.
         if isinstance(descriptor, data.Stream):
             # Streams keep their full descriptor (buffer size etc.)
             return copy.deepcopy(descriptor)
+        if not isinstance(descriptor, (data.Array, data.Scalar)):
+            # Not storage this can re-allocate: a communicator
+            # (``ProcessGrid``, from ``MPI.COMM_WORLD.Create_cart``), a
+            # structure, ... -- the descriptor IS the value, and reducing it to
+            # a scalar of its dtype loses the type that later method calls on
+            # the name resolve through (``pgrid.Bcast(A)`` is registered on
+            # ``ProcessGrid``, not on a scalar).
+            return copy.deepcopy(descriptor)
         if isinstance(descriptor, data.Array):
             # A fresh array of the same shape, dropping any VIEW-ness of the
             # source (the result is its own storage) but keeping the layout:

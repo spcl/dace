@@ -1454,6 +1454,39 @@ from dace.frontend.common.op_repository import infers_descriptor, infers_method_
 from dace.frontend.python.replacements.type_inference import _get_desc
 
 
+def _process_grid_descriptor(shape: ShapeType):
+    """
+    A process-grid descriptor for a grid the REPLACEMENT will create.
+
+    The frontend types the name a grid-creating call binds, so that later
+    method calls on that name resolve through the ``ProcessGrid``
+    registrations (``pgrid.Bcast(A)`` is registered on ``ProcessGrid``, and a
+    name typed as an opaque scalar matches nothing). The grid itself is
+    installed by :meth:`~dace.sdfg.sdfg.SDFG.add_pgrid` when the replacement
+    runs, which is also what fills in its ``name`` -- so an UNNAMED descriptor
+    is the marker for "declared by the frontend, not yet installed" (see
+    ``tree_to_sdfg._StreeToSDFG._release_declared_descriptor``).
+    """
+    from dace.data.distributed import ProcessGrid
+    return ProcessGrid('', False, [symbolic.pystr_to_symbolic(dim) if isinstance(dim, str) else dim for dim in shape])
+
+
+def _subgrid_descriptor(parent_desc, color: Sequence[Union[Integral, bool]]):
+    """
+    A declared descriptor for a sub-grid of ``parent_desc`` (see
+    :func:`_process_grid_descriptor`): the dimensions ``color`` keeps.
+
+    Declared as a plain grid rather than a sub-grid: the parent LINK is part of
+    the installed descriptor (and a sub-grid without one does not validate),
+    while what the frontend needs from a declaration is only its type and
+    shape.
+    """
+    from dace.data.distributed import ProcessGrid
+    if not isinstance(parent_desc, ProcessGrid):
+        return _pyobject_scalar_descriptor()
+    return _process_grid_descriptor([dim for dim, remain in zip(parent_desc.shape, color) if remain])
+
+
 def _pyobject_scalar_descriptor():
     return data.Scalar(dtypes.pyobject(), transient=True)
 
@@ -1473,22 +1506,22 @@ def _zero_output(*_args, **_kwargs):
 @infers_descriptor('mpi4py.MPI.COMM_WORLD.Create_cart')
 @infers_descriptor('dace.comm.Cart_create')
 def _infer_cart_create(input_descs, dims, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _process_grid_descriptor(dims)
 
 
 @infers_method_descriptor('Intracomm', 'Create_cart')
 def _infer_intracomm_create(self_desc, dims, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _process_grid_descriptor(dims)
 
 
 @infers_descriptor('dace.comm.Cart_sub')
 def _infer_cart_sub(input_descs, parent_grid, color, exact_grid=None, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _subgrid_descriptor(input_descs.get(parent_grid), color)
 
 
 @infers_method_descriptor('ProcessGrid', 'Sub')
 def _infer_pgrid_sub(self_desc, color, **_kw):
-    return _pyobject_scalar_descriptor()
+    return _subgrid_descriptor(self_desc, color)
 
 
 for _name in ('mpi4py.MPI.COMM_WORLD.Bcast', 'dace.comm.Bcast', 'mpi4py.MPI.COMM_WORLD.Reduce', 'dace.comm.Reduce',

@@ -1446,8 +1446,14 @@ def _lower_replacement_call(target: Optional[ast.expr],
         # ``visit_ReplacementCallNode`` never dereferences it as a copy
         # destination for a genuinely zero-output replacement (its result is
         # ``None``/``[]``).
+        #
+        # Keyword values count: a library-node replacement takes ALL of its
+        # operands by keyword (``donnx.ONNXGather(data=inp, output=out,
+        # axis=1)``), so restricting the search to positional arguments left
+        # those calls with no stand-in and dropped them to a callback.
+        operands = list(arguments) + list(keywords.values())
         target_container = receiver or next(
-            (value for value in arguments if isinstance(value, str) and value in data_arguments), None)
+            (value for value in operands if isinstance(value, str) and value in data_arguments), None)
         if target_container is None:
             return False
     else:
@@ -1560,6 +1566,14 @@ def _replacement_trial_scratch(data_arguments: set, state: LoweringState):
     for data_name in data_arguments:
         descriptor = copy.deepcopy(state.context.containers[data_name])
         descriptor.transient = False
+        if isinstance(descriptor, data.DistributedDescriptor) and not descriptor.name:
+            # A DECLARED communicator (the MPI replacements' inference types the
+            # name a grid-creating call binds; the grid itself is installed when
+            # that call's own expansion runs). By the time THIS replacement runs
+            # for real, the declaration has been replaced by the installed
+            # descriptor, so the scratch has to show it installed too -- a
+            # sub-grid of an unnamed parent does not even validate.
+            descriptor.name = data_name
         scratch.add_datadesc(data_name, descriptor)
     scratch_state = scratch.add_state()
     shim = ReplacementVisitorShim(scratch, scratch_state, '__viability_target')

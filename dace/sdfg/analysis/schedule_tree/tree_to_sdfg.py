@@ -5,7 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum, auto
 from types import TracebackType
-from typing import Final, Sequence
+from typing import Final, Optional, Sequence
 
 from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
@@ -1190,6 +1190,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._dataflow_stack and not isinstance(self._dataflow_stack[-1][0], SDFG):
             raise NotImplementedError("Replacement calls directly inside a dataflow scope are not supported.")
         self._import_replacement_data(node, sdfg)
+        self._release_declared_descriptor(node.target, sdfg)
 
         # The expansion adds its own access nodes for the call's data
         # arguments. Those must not land in a state that already writes them
@@ -1328,6 +1329,30 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         self._current_state = _create_state_boundary(tn.StateBoundaryNode(), self._current_state,
                                                      self._pending_interstate_assignments())
+
+    def _release_declared_descriptor(self, target: Optional[str], sdfg: SDFG) -> None:
+        """
+        Free a DECLARED distributed descriptor's name before its replacement
+        runs, so the replacement installs the real one under that name.
+
+        A communicator (``ProcessGrid``, from ``MPI.COMM_WORLD.Create_cart``)
+        is not storage a frontend can allocate: ``SDFG.add_pgrid`` is what
+        creates it, together with its ``name`` property and its init/exit code.
+        The frontend still registers a descriptor of the right TYPE under the
+        target name, because that is what later method calls on the name
+        resolve through (``pgrid.Bcast(A)`` is registered on ``ProcessGrid``,
+        not on a scalar). Leaving that declaration in place would make
+        ``add_pgrid`` find the name taken and install the real grid beside it,
+        wiring the collectives to the uninitialized declaration.
+
+        A descriptor whose ``name`` is set was installed by a replacement, or
+        came from a real SDFG through ``sdfg_to_tree``, and is left alone.
+        """
+        if target is None or target not in sdfg.arrays:
+            return
+        descriptor = sdfg.arrays[target]
+        if isinstance(descriptor, data.DistributedDescriptor) and not descriptor.name:
+            sdfg.remove_data(target, validate=False)
 
     def _import_replacement_data(self, node: tn.ReplacementCallNode, sdfg: SDFG) -> None:
         """

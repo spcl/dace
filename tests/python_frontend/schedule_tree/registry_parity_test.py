@@ -207,13 +207,24 @@ def test_recent_alias_and_method_inference_regressions():
     assert numpy_int16_result.dtype == dace.int16
     assert tuple(numpy_int16_result.shape) == (2, 3)
 
+    # A grid-creating call types the name it binds as a ProcessGrid DECLARATION
+    # (unnamed: the grid itself is installed by the replacement, which is what
+    # fills in the name), so that method calls on that name resolve through the
+    # ProcessGrid registrations -- ``pgrid.Bcast(A)`` matches nothing on a
+    # scalar.
     cart_create_result = infer_cart_create({}, [2, 2])
-    assert isinstance(cart_create_result, dace.data.Scalar)
-    assert isinstance(cart_create_result.dtype, dtypes.pyobject)
+    assert isinstance(cart_create_result, dace.data.ProcessGrid)
+    assert not cart_create_result.name
+    assert tuple(cart_create_result.shape) == (2, 2)
 
-    cart_sub_result = infer_cart_sub({}, 'pgrid', [True, False])
-    assert isinstance(cart_sub_result, dace.data.Scalar)
-    assert isinstance(cart_sub_result.dtype, dtypes.pyobject)
+    cart_sub_result = infer_cart_sub({'pgrid': cart_create_result}, 'pgrid', [True, False])
+    assert isinstance(cart_sub_result, dace.data.ProcessGrid)
+    assert tuple(cart_sub_result.shape) == (2, )
+
+    # A parent that is not a grid (an unresolved operand) stays opaque.
+    unresolved_sub_result = infer_cart_sub({}, 'pgrid', [True, False])
+    assert isinstance(unresolved_sub_result, dace.data.Scalar)
+    assert isinstance(unresolved_sub_result.dtype, dtypes.pyobject)
 
     dace_bool_result = infer_dace_bool({'A': matrix}, 'A')
     assert isinstance(dace_bool_result, dace.data.Array)
@@ -368,15 +379,19 @@ def test_recent_alias_and_method_inference_regressions():
     assert tuple(select_result.shape) == (2, 3)
 
     pyobject_self = dace.data.Scalar(dtypes.pyobject(), transient=True)
+    # Grid-creating calls declare a ProcessGrid (see the ``Cart_create``
+    # assertions above); a sub-grid of a receiver that is NOT one stays opaque.
     intracomm_create_result = infer_intracomm_create_cart(pyobject_self, [2, 2])
-    assert isinstance(intracomm_create_result, dace.data.Scalar)
-    assert isinstance(intracomm_create_result.dtype, dtypes.pyobject)
+    assert isinstance(intracomm_create_result, dace.data.ProcessGrid)
+    assert tuple(intracomm_create_result.shape) == (2, 2)
 
     assert infer_intracomm_allreduce(pyobject_self, None, 'A', 'MPI_SUM') == ()
 
-    processgrid_sub_result = infer_processgrid_sub(pyobject_self, [True, False])
-    assert isinstance(processgrid_sub_result, dace.data.Scalar)
-    assert isinstance(processgrid_sub_result.dtype, dtypes.pyobject)
+    processgrid_sub_result = infer_processgrid_sub(intracomm_create_result, [True, False])
+    assert isinstance(processgrid_sub_result, dace.data.ProcessGrid)
+    assert tuple(processgrid_sub_result.shape) == (2, )
+
+    assert isinstance(infer_processgrid_sub(pyobject_self, [True, False]).dtype, dtypes.pyobject)
 
     processgrid_isend_result = infer_processgrid_isend(pyobject_self, 'A', 0, 0)
     assert isinstance(processgrid_isend_result, dace.data.Array)

@@ -133,7 +133,6 @@ def test_newly_registered_view_replacement_needs_no_frontend_change():
     returning a view of its receiver, lowers as a view binding on the strength
     of what the trial run produced."""
 
-    @oprepo.replaces_method('Array', 'firsthalf')
     def _firsthalf(pv, sdfg, state, arr: str) -> str:
         descriptor = sdfg.arrays[arr]
         half = descriptor.shape[0] // 2
@@ -143,10 +142,17 @@ def test_newly_registered_view_replacement_needs_no_frontend_change():
 
     @dace.program
     def half_view(A: dace.float64[8]):
-        h = A.firsthalf()  # noqa: F821 -- registered above, resolved through the registry
+        h = A.firsthalf()  # noqa: F821 -- registered below, resolved through the registry
         h[:] = 1.0
 
-    tree = nextgen.parse_program(half_view, np.zeros(8))
+    # Registered for the duration of this test only: the registry is global, and
+    # a leftover entry shows up as an unpaired registration in
+    # ``schedule_tree/registry_parity_test.py``.
+    oprepo.replaces_method('Array', 'firsthalf')(_firsthalf)
+    try:
+        tree = nextgen.parse_program(half_view, np.zeros(8))
+    finally:
+        del oprepo.Replacements._method_rep[('Array', 'firsthalf')]
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
     views = _nodes_of_type(tree, tn.ViewNode)
     assert len(views) == 1 and tuple(views[0].view_desc.shape) == (4, )
