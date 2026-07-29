@@ -56,5 +56,5 @@ jobs:
         # Each parametrized regime builds and compiles the whole SDFG repeatedly;
         # a couple of workers parallelize the regimes without oversubscribing memory.
         pytest -n 2 -m integration --tb=short --timeout_method thread --timeout=2400 \
-          tests/corpus/cloudsc_parallelize_chain_test.py \
-          tests/corpus/cloudsc_transform_chain_test.py
+          tests/corpus/cloudsc/cloudsc_parallelize_chain_test.py \
+          tests/corpus/cloudsc/cloudsc_transform_chain_test.py
