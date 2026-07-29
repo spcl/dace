@@ -2340,6 +2340,35 @@ def test_nanobind_interface_user_args_e2e():
             csdfg.user_bind_call((np.zeros(n, dtype=np.float32), b), 2.0)
 
 
+def test_nanobind_interface_user_args_position_name_collision():
+    """An SDFG argument literally named like a synthesized positional
+    parameter (arg1, arg2, ...) must not be shadowed by it: the synthesized
+    C++ names are mangled away from real argument names (trailing '_')."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = dace.SDFG('uargs_argname_clash')
+        sdfg.add_array('arg1', [4], dace.float64)
+        sdfg.add_array('B', [4], dace.float64)
+        state = sdfg.add_state()
+        t = state.add_tasklet('t', {'i'}, {'o'}, 'o = i + 1.0')
+        state.add_edge(state.add_read('arg1'), None, t, 'i', dace.Memlet('arg1[0]'))
+        state.add_edge(t, 'o', state.add_write('B'), None, dace.Memlet('B[0]'))
+        sdfg.user_args = [('arg1', 'B')]
+
+        # The tuple parameter at position 1 yields its name to the real
+        # argument 'arg1' listed inside it.
+        sig = generate_bindings_code(sdfg).split('void user_call(')[1].split(') {')[0]
+        assert 'nb::tuple arg1_' in sig
+
+        # The real proof is that it compiles and runs (RED: C++ shadowing).
+        csdfg = sdfg.compile()
+        a = np.ones(4)
+        b = np.zeros(4)
+        csdfg.user_bind_call((a, b))
+        assert b[0] == 2.0
+
+
 def test_nanobind_interface_user_args_pyobject_scalar_binding():
     """A pyobject scalar may be listed in user_args: top-level it binds as
     nb::object, nested it arrives via try_cast<nb::object>; the raw PyObject*

@@ -636,6 +636,20 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
     def_args: List[str] = []
     extract: List[str] = []
 
+    # Synthesized identifiers (positional tuple parameters `argN`, their
+    # nested locals `argN_M`, ignored-slot names) must not shadow real
+    # argument names: every listed name becomes a C++ declaration in the
+    # same scope, so a real argument literally called `arg1` would otherwise
+    # redeclare the parameter. Mangle with trailing underscores until free.
+    taken = set(arglist)
+
+    def _fresh(base: str) -> str:
+        candidate = base
+        while candidate in taken:
+            candidate += '_'
+        taken.add(candidate)
+        return candidate
+
     def _emit_extractions(entry, tuple_expr: str, path: str):
         extract.append(f'if (nb::len({tuple_expr}) != {len(entry)})\n'
                        f'            throw std::invalid_argument("SDFG argument error: argument \'{path}\': '
@@ -655,7 +669,7 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
                     f'            throw std::invalid_argument("SDFG argument error: argument \'{sub}\' '
                     f'(in {sub_path}): incompatible value.");')
             else:
-                sub_tuple = f'{tuple_expr}_{j}'
+                sub_tuple = _fresh(f'{tuple_expr}_{j}')
                 extract.append(
                     f'nb::tuple {sub_tuple};\n'
                     f'        if (!nb::try_cast<nb::tuple>({elem}, {sub_tuple}, false))\n'
@@ -668,15 +682,19 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
             # Ignored placeholder slot: accepts anything (None included, hence
             # .none()), never read - the unnamed parameter avoids an
             # unused-parameter warning in the generated code.
-            params.append(f'nb::object /* arg{i}: ignored */')
-            def_args.append(f'nb::arg("arg{i}").none()')
+            pname = _fresh(f'arg{i}')
+            params.append(f'nb::object /* {pname}: ignored */')
+            def_args.append(f'nb::arg("{pname}").none()')
         elif isinstance(entry, str):
             params.append(param_decl[entry])
             def_args.append(arg_annot[entry])
         else:
-            params.append(f'nb::tuple arg{i}')
-            def_args.append(f'nb::arg("arg{i}")')
-            _emit_extractions(entry, f'arg{i}', f'arg{i}')
+            # The error-message path stays the pretty position label argN;
+            # only the C++ identifier is mangled on a collision.
+            pname = _fresh(f'arg{i}')
+            params.append(f'nb::tuple {pname}')
+            def_args.append(f'nb::arg("{pname}")')
+            _emit_extractions(entry, pname, f'arg{i}')
 
     # Unlisted inferable symbols: plain const locals - no optional machinery,
     # since completeness is already guaranteed above.
