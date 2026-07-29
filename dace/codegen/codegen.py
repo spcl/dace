@@ -144,6 +144,35 @@ def _get_codegen_targets(sdfg: SDFG, frame: framecode.DaCeCodeGenerator):
         disp.instrumentation[sdfg.instrument] = provider_mapping[sdfg.instrument]
 
 
+def inline_host_nested_sdfgs(sdfg: SDFG) -> None:
+    """Flatten the nested SDFGs the CPU target emits, leaving device-level nests where they are.
+
+    ``compiler.cpu.implementation`` selects a *CPU* code generator, so its readability sweeps may only
+    restructure what the CPU target emits. A nested SDFG inside a GPU scope belongs to the CUDA target,
+    which emits it as a ``DACE_DFI`` device function; inlining it deletes that function and with it the
+    const-qualification of its parameters (:func:`dace.codegen.targets.cpp.emit_memlet_reference`).
+    """
+    from dace.sdfg.scope import is_devicelevel_gpu
+    from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
+    from dace.transformation.interstate.sdfg_nesting import InlineSDFG
+
+    # Both inline transformations honour ``no_inline``, so pin the device-level nests for the sweep and
+    # hand the SDFG back exactly as it came in. Inlining reuses node objects and never moves a node into
+    # a scope it was not already inside, so device-level membership cannot change under the sweep.
+    pinned = [
+        node for node, parent in sdfg.all_nodes_recursive() if isinstance(node, dace.nodes.NestedSDFG)
+        and not node.no_inline and isinstance(parent, SDFGState) and is_devicelevel_gpu(parent.sdfg, parent, node)
+    ]
+    for node in pinned:
+        node.no_inline = True
+    try:
+        sdfg.apply_transformations_repeated(InlineSDFG)
+        sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+    finally:
+        for node in pinned:
+            node.no_inline = False
+
+
 def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     """
     Generates code as a list of code objects for a given SDFG.
@@ -213,8 +242,8 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
 
     # Wrap top-level map-nests/loops into no_inline nested SDFGs (own .cpp each, via the do_split path
     # in _generate_NestedSDFG; and, for GPU nests, own standalone SDFG + .cu via the do_external path).
-    # Must run before the readable generator's InlineSDFG sweep below (which would otherwise inline them
-    # straight back) and after expand_library_nodes.
+    # Must run before inline_host_nested_sdfgs below (which would otherwise inline them straight back)
+    # and after expand_library_nodes.
     if (config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'split_nsdfg_translation_units')
             or config.Config.get_bool('compiler', 'cpu', 'codegen_params', 'external_translation_units')):
         from dace.transformation.passes.outline_top_level_nests import outline_top_level_nests
@@ -229,10 +258,7 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         from dace.transformation.passes.mark_const_init import MarkConstInit
         from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors
         from dace.transformation.passes.canonicalize_nested_index_names import CanonicalizeNestedIndexNames
-        from dace.transformation.interstate.sdfg_nesting import InlineSDFG
-        from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
-        sdfg.apply_transformations_repeated(InlineSDFG)
-        sdfg.apply_transformations_repeated(InlineMultistateSDFG)
+        inline_host_nested_sdfgs(sdfg)
         infer_types.infer_connector_types(sdfg)
         infer_types.set_default_schedule_and_storage_types(sdfg, None)
         # Normalize single-value transients to Scalar/len1-array (default is transient-only, so the
