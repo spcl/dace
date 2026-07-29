@@ -28,7 +28,7 @@ def _materialize_sequence_literal(visitor: ProgramVisitor, sdfg: SDFG, state: SD
                                                                        populate_dynamic_literal_array)
 
     value = literal.value
-    desc = infer_dynamic_literal_descriptor(value, sdfg)
+    desc = infer_dynamic_literal_descriptor(value, sdfg.arrays, sdfg.symbols)
     if desc is None:
         raise SyntaxError('Operand cannot be materialized as an array literal')
 

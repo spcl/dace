@@ -10,7 +10,7 @@ from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 from copy import deepcopy as dcpy
 from numbers import Integral
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 import numpy as np
 
@@ -78,11 +78,29 @@ def infer_array_creation_descriptor(obj: Any,
 
 
 def infer_dynamic_literal_descriptor(obj: Any,
-                                     sdfg: SDFG,
+                                     arrays: Mapping[str, data.Data],
+                                     symbols: Optional[Mapping[str, Any]] = None,
                                      *,
                                      dtype: dtypes.typeclass = None,
                                      ndmin: int = 0) -> Optional[data.Array]:
-    shape_dtype = _infer_dynamic_literal_shape_dtype(obj, sdfg)
+    """
+    The descriptor of an array literal whose ELEMENTS are runtime values
+    (``numpy.array([A[0], B[i]])``), whose shape and dtype therefore come from
+    the elements' own descriptors rather than from evaluating the literal.
+
+    :param arrays: Data descriptors by container name. Data operands reach
+        both the replacement (from an SDFG) and the descriptor-inference hook
+        (from the caller's input descriptors) as container NAMES, so this is
+        the only lookup either needs.
+    :param symbols: Symbol types by name, when available.
+    """
+    if dtype is not None and not isinstance(dtype, dtypes.typeclass):
+        # The caller may pass a NumPy type (``numpy.array(..., dtype=np.float64)``)
+        try:
+            dtype = dtypes.typeclass(dtype)
+        except TypeError:
+            return None
+    shape_dtype = _infer_dynamic_literal_shape_dtype(obj, arrays, symbols or {})
     if shape_dtype is None:
         return None
 
@@ -157,12 +175,14 @@ def _is_entire_literal_constant(obj: Any) -> bool:
     return isinstance(obj, (np.generic, bool, int, float, complex))
 
 
-def _infer_dynamic_literal_shape_dtype(obj: Any, sdfg: SDFG) -> Optional[tuple[tuple[int, ...], dtypes.typeclass]]:
+def _infer_dynamic_literal_shape_dtype(
+        obj: Any, arrays: Mapping[str, data.Data],
+        symbols: Mapping[str, Any]) -> Optional[tuple[tuple[int, ...], dtypes.typeclass]]:
     if isinstance(obj, (list, tuple)):
         child_shapes: list[tuple[int, ...]] = []
         child_dtype: Optional[dtypes.typeclass] = None
         for element in obj:
-            shape_dtype = _infer_dynamic_literal_shape_dtype(element, sdfg)
+            shape_dtype = _infer_dynamic_literal_shape_dtype(element, arrays, symbols)
             if shape_dtype is None:
                 return None
             element_shape, element_dtype = shape_dtype
@@ -177,13 +197,14 @@ def _infer_dynamic_literal_shape_dtype(obj: Any, sdfg: SDFG) -> Optional[tuple[t
             return None
         return ((len(obj), ) + first_shape, child_dtype)
 
-    dtype = _dynamic_literal_scalar_dtype(obj, sdfg)
+    dtype = _dynamic_literal_scalar_dtype(obj, arrays, symbols)
     if dtype is None:
         return None
     return (tuple(), dtype)
 
 
-def _dynamic_literal_scalar_dtype(obj: Any, sdfg: SDFG) -> Optional[dtypes.typeclass]:
+def _dynamic_literal_scalar_dtype(obj: Any, arrays: Mapping[str, data.Data],
+                                  symbols: Mapping[str, Any]) -> Optional[dtypes.typeclass]:
     if isinstance(obj, np.generic):
         return dtypes.typeclass(obj.dtype.type)
     if isinstance(obj, bool):
@@ -193,15 +214,15 @@ def _dynamic_literal_scalar_dtype(obj: Any, sdfg: SDFG) -> Optional[dtypes.typec
     if symbolic.issymbolic(obj):
         return sym_type(obj)
     if isinstance(obj, str):
-        if obj in sdfg.arrays:
-            desc = sdfg.arrays[obj]
+        if obj in arrays:
+            desc = arrays[obj]
             if isinstance(desc, data.Scalar):
                 return desc.dtype
             if isinstance(desc, data.Array) and tuple(desc.shape) == (1, ):
                 return desc.dtype
             return None
-        if obj in sdfg.symbols:
-            return sdfg.symbols[obj]
+        if obj in symbols:
+            return symbols[obj]
         try:
             parsed = symbolic.pystr_to_symbolic(obj)
         except Exception:
@@ -329,13 +350,21 @@ def _infer_literal_array_descriptor(input_descs,
     # otherwise ``numpy.array(A)`` types as an array of the string "A".
     if isinstance(obj, str) and obj in input_descs:
         obj = input_descs[obj]
-    return infer_array_creation_descriptor(obj,
-                                           dtype=dtype,
-                                           copy=copy,
-                                           order=order,
-                                           subok=subok,
-                                           ndmin=ndmin,
-                                           like=like)
+    descriptor = infer_array_creation_descriptor(obj,
+                                                 dtype=dtype,
+                                                 copy=copy,
+                                                 order=order,
+                                                 subok=subok,
+                                                 ndmin=ndmin,
+                                                 like=like)
+    if descriptor is None and like is None:
+        # A literal whose ELEMENTS are runtime values (``numpy.array([A[0],
+        # B[i]])``) cannot be evaluated to get its shape and dtype; they come
+        # from the element descriptors instead, exactly as the implementation
+        # derives them from the SDFG (``populate_dynamic_literal_array`` then
+        # fills the container one element at a time).
+        descriptor = infer_dynamic_literal_descriptor(obj, input_descs, dtype=dtype, ndmin=ndmin)
+    return descriptor
 
 
 @oprepo.replaces('dace.define_local')
@@ -465,7 +494,7 @@ def _define_literal_ex(pv: ProgramVisitor,
                                                like=like)
         dynamic_literal = desc is None
         if dynamic_literal:
-            desc = infer_dynamic_literal_descriptor(obj, sdfg, dtype=dtype, ndmin=ndmin)
+            desc = infer_dynamic_literal_descriptor(obj, sdfg.arrays, sdfg.symbols, dtype=dtype, ndmin=ndmin)
             if desc is None:
                 raise DaceSyntaxError(pv, None, 'Could not infer numpy.array descriptor from literal input')
         else:
