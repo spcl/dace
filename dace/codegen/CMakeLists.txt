@@ -305,6 +305,19 @@ set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDA
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 
+# Optional additive static archive (lib<name>.a) built from the same sources as the shared library.
+# Opt-in via compiler.static_archive; the .so is untouched.
+if (DACE_STATIC_ARCHIVE)
+    add_library(${DACE_PROGRAM_NAME}_static STATIC ${DACE_CPP_FILES} ${DACE_OBJECTS})
+    target_link_libraries(${DACE_PROGRAM_NAME}_static PUBLIC ${DACE_LIBS})
+    # The archive is meant to be linked INTO a shared library, so it must be position-independent.
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY POSITION_INDEPENDENT_CODE ON)
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY OUTPUT_NAME ${DACE_PROGRAM_NAME})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_STANDARD_REQUIRED ON)
+    set_property(TARGET ${DACE_PROGRAM_NAME}_static PROPERTY CXX_EXTENSIONS OFF)
+endif()
+
 # Create DaCe loader stub
 add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
 target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})

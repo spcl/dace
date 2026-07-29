@@ -406,7 +406,6 @@ def build_native(program_folder: str,
                  targets: Dict,
                  environments,
                  build_folder: str,
-                 build_env: dict,
                  output_stream=None) -> None:
     """Compile and link a prepared program folder into ``build/lib<name>.<ext>`` (+ loader stub).
 
@@ -417,7 +416,6 @@ def build_native(program_folder: str,
     :param files: source paths relative to ``<program_folder>/src`` (from ``dace_files.csv``).
     :param targets: ``{target_name: TargetCodeGenerator}`` for the linkable sources.
     :param environments: resolved environment classes the SDFG uses.
-    :param build_env: subprocess environment (MPI-rank identity stripped by the caller).
     """
     # Reuse the caller's subprocess runner (keeps the SIGCHLD/MPI-env safeguards). Lazy import keeps
     # this module free of an import cycle with compiler.py.
@@ -441,7 +439,7 @@ def build_native(program_folder: str,
         if Config.get_bool('debugprint'):
             print(f'Native build: {line}')
         try:
-            _run_liveoutput(line, shell=True, cwd=build_folder, output_stream=stream, env=build_env)
+            _run_liveoutput(line, shell=True, cwd=build_folder, output_stream=stream)
         except subprocess.CalledProcessError as ex:
             raise cgx.CompilationError('Compiler failure:\n' + ex.output)
 

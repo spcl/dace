@@ -431,6 +431,13 @@ def configure_and_compile(
         folder_mode = Config.get('compiler.build_folder_mode')
     assert folder_mode in ["development", "production"]
 
+    # Rejected before any folder is made or any code compiled, so a typo'd mode cannot silently
+    # fall back to the other backend after doing half the work.
+    build_mode = Config.get('compiler', 'build_mode').strip().lower()
+    if build_mode not in ('cmake', 'native'):
+        raise cgx.CompilerConfigurationError(
+            f"Unknown compiler.build_mode {Config.get('compiler', 'build_mode')!r}; expected 'cmake' or 'native'.")
+
     if program_name is None:
         program_name = os.path.basename(program_folder)
     program_folder = os.path.abspath(program_folder)
@@ -471,6 +478,69 @@ def configure_and_compile(
         elif '/MT' not in os.environ['_CL_']:
             os.environ['_CL_'] = os.environ['_CL_'] + ' /MT'
 
+    # Resolve the environments the SDFG uses; both build backends take their flags from these.
+    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
+        environments = set(l.strip() for l in f)
+    environments = dace.library.get_environments_and_dependencies(environments)
+
+    # Build the shared library either directly (native) or through CMake. Both write it to the same
+    # development-mode location that the shared tail below expects.
+    if build_mode == 'native':
+        # Lazy: native_compiler imports from this module, so a top-level import would be a cycle.
+        from dace.codegen import native_compiler
+        native_compiler.build_native(program_folder=program_folder,
+                                     program_name=program_name,
+                                     files=files,
+                                     targets=targets,
+                                     environments=environments,
+                                     build_folder=build_folder,
+                                     output_stream=output_stream)
+    else:
+        cmake_configure_and_build(program_folder=program_folder,
+                                  program_name=program_name,
+                                  src_folder=src_folder,
+                                  build_folder=build_folder,
+                                  files=files,
+                                  targets=targets,
+                                  environments=environments,
+                                  output_stream=output_stream)
+
+    # Get the names of the library files that were generated.
+    #  Currently we are still in the `development` folder mode.
+    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
+    libstub_path = _get_stub_library_path(lib_path)
+
+    # In production mode, we are now deleting what we need and relocating it.
+    if folder_mode == "production":
+        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
+        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
+        program_folder = pathlib.Path(program_folder)
+        # TODO: Find out where `sample/` are generated and suppress their generation.
+        for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
+            if (program_folder / to_delete).is_dir():
+                shutil.rmtree(os.path.join(program_folder, to_delete))
+            else:
+                (program_folder / to_delete).unlink()
+
+    return lib_path
+
+
+def cmake_configure_and_build(
+    program_folder: str,
+    program_name: str,
+    src_folder: str,
+    build_folder: str,
+    files: List[str],
+    targets: Dict,
+    environments,
+    output_stream=None,
+) -> None:
+    """Configure and build a prepared program folder with CMake (the default ``build_mode``).
+
+    :param files: source paths relative to ``<program_folder>/src`` (from ``dace_files.csv``).
+    :param targets: ``{target name: TargetCodeGenerator}`` for the linkable sources.
+    :param environments: resolved environment classes the SDFG uses.
+    """
     # Start forming CMake command
     dace_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     # Ninja's global dependency graph parallelizes a multi-source build better than Make's
@@ -487,12 +557,6 @@ def configure_and_compile(
         "-DDACE_PROGRAM_NAME={}".format(program_name),
         "-DDACE_CPP_STANDARD={}".format(Config.get('compiler', 'cpp_standard')),
     ]
-
-    # Get required environments are retrieve the CMake information
-    with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
-        environments = set(l.strip() for l in f)
-
-    environments = dace.library.get_environments_and_dependencies(environments)
 
     environment_flags, cmake_link_flags = get_environment_flags(environments)
     cmake_command += sorted(environment_flags)
@@ -518,6 +582,10 @@ def configure_and_compile(
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
     cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
+    # Additive static archive next to the .so (opt-in; matches native build mode). Part of the
+    # command ``shape`` below, so a static-archive build never reuses a non-archive recording.
+    cmake_command.append(
+        "-DDACE_STATIC_ARCHIVE={}".format("ON" if Config.get_bool('compiler', 'static_archive') else "OFF"))
     # Free -- the generator already knows the commands -- and lets tooling see a generated source's
     # exact compile flags.
     cmake_command.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
@@ -566,25 +634,6 @@ def configure_and_compile(
             command_db.publish(
                 build_cache_root(), command_key,
                 command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
-
-    # Get the names of the library files that were generated.
-    #  Currently we are still in the `development` folder mode.
-    lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
-    libstub_path = _get_stub_library_path(lib_path)
-
-    # In production mode, we are now deleting what we need and relocating it.
-    if folder_mode == "production":
-        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
-        libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
-        program_folder = pathlib.Path(program_folder)
-        # TODO: Find out where `sample/` are generated and suppress their generation.
-        for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
-            if (program_folder / to_delete).is_dir():
-                shutil.rmtree(os.path.join(program_folder, to_delete))
-            else:
-                (program_folder / to_delete).unlink()
-
-    return lib_path
 
 
 def get_program_handle(
