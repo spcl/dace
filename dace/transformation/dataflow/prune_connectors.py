@@ -73,18 +73,23 @@ class PruneConnectors(pm.SingleStateTransformation):
                         prune_in.discard(e.data.data)
 
         # A container can also be live SYMBOLICALLY rather than as dataflow: as an index inside a
-        # memlet subset (tsvc_2_5 gather ``src[__tmp_r]``), or in an interstate-edge condition or
-        # assignment. ``read_and_write_sets`` records only the container a memlet NAMES, never the
-        # symbols in its SUBSET, so neither reaches it -- and ``SDFG.free_symbols`` does not catch
-        # it either, because while the connector still exists the name is a DESCRIPTOR, not a
-        # symbol. It only turns into a free symbol once ``apply`` removes the data, which is
-        # exactly the "Missing symbols on nested SDFG" the validator then raises (nodes.py:809).
+        # memlet subset (tsvc_2_5 gather ``src[__tmp_r]``), inside a NODE (a tasklet whose code names
+        # the container after an interstate assignment was folded into it -- ``__out = tmp1 * tmp2``
+        # for an integer explicit-map elementwise kernel -- or a deeper NestedSDFG reading it), or in
+        # an interstate-edge condition or assignment. ``read_and_write_sets`` records only the
+        # container a memlet NAMES, never the symbols in its SUBSET or in node properties, so none of
+        # these reaches it -- and ``SDFG.free_symbols`` does not catch it either, because while the
+        # connector still exists the name is a DESCRIPTOR, not a symbol. It only turns into a free
+        # symbol once ``apply`` removes the data, which is exactly the "Missing symbols on nested
+        # SDFG" the validator then raises (nodes.py:809).
         if prune_in or prune_out:
             symbolic_uses: Set[str] = set()
             for inner_state in nsdfg.sdfg.states():
                 for e in inner_state.edges():
                     if e.data is not None:
                         symbolic_uses |= {str(s) for s in e.data.free_symbols}
+                for n in inner_state.nodes():
+                    symbolic_uses |= {str(s) for s in n.free_symbols}
             for e in nsdfg.sdfg.all_interstate_edges():
                 symbolic_uses |= {str(s) for s in e.data.free_symbols}
             prune_in -= symbolic_uses

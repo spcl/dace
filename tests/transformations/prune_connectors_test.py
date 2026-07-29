@@ -531,6 +531,43 @@ def test_prune_connectors_keeps_memlet_subset_index():
     sdfg.validate()
 
 
+def test_prune_connectors_keeps_tasklet_code_reference():
+    """A connector named only by a TASKLET's code must survive.
+
+    A scalar NSDFG input can be consumed symbolically -- bound into an interstate assignment that
+    symbol/constant propagation then folds into the tasklet's code (``__out = a * b``, the shape an
+    integer explicit-map elementwise kernel lowers to). No memlet names ``a``/``b`` any more, so
+    ``read_and_write_sets`` reports them dead; pruning them drops the operands and leaves the
+    tasklet reading two undefined names, which surfaces much later as a ``KeyError`` while
+    ``SDFG.arglist`` builds the scalar arguments.
+    """
+    sdfg = dace.SDFG('tasklet_code_tester')
+    A, A_desc = sdfg.add_array('A', [4], dace.int64)
+    B, B_desc = sdfg.add_array('B', [4], dace.int64)
+    C, C_desc = sdfg.add_array('C', [4], dace.int64)
+
+    nsdfg = dace.SDFG('nested')
+    a, _ = nsdfg.add_scalar('a', A_desc.dtype)
+    b, _ = nsdfg.add_scalar('b', B_desc.dtype)
+    c, _ = nsdfg.add_scalar('c', C_desc.dtype)
+    nstate = nsdfg.add_state('body', is_start_block=True)
+    # ``a`` and ``b`` appear only inside the tasklet CODE -- no connector, no memlet names them.
+    tasklet = nstate.add_tasklet('folded', {}, {'__out'}, f'__out = ({a} * {b})')
+    nstate.add_edge(tasklet, '__out', nstate.add_access(c), None, dace.Memlet('c[0]'))
+
+    state = sdfg.add_state()
+    nsdfg_node = state.add_nested_sdfg(nsdfg, inputs={a, b}, outputs={c})
+    me, mx = state.add_map('map', dict(i="0:4"))
+    state.add_memlet_path(state.add_access(A), me, nsdfg_node, dst_conn=a, memlet=dace.Memlet(f"{A}[i]"))
+    state.add_memlet_path(state.add_access(B), me, nsdfg_node, dst_conn=b, memlet=dace.Memlet(f"{B}[i]"))
+    state.add_memlet_path(nsdfg_node, mx, state.add_access(C), src_conn=c, memlet=dace.Memlet(f"{C}[i]"))
+
+    assert 0 == sdfg.apply_transformations_repeated(PruneConnectors)
+    assert a in nsdfg_node.in_connectors
+    assert b in nsdfg_node.in_connectors
+    sdfg.validate()
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--N", default=64)
@@ -548,3 +585,4 @@ if __name__ == "__main__":
     test_prune_connectors_with_conditional_block()
     test_prune_connectors_keeps_inner_wcr_accumulator()
     test_prune_connectors_keeps_memlet_subset_index()
+    test_prune_connectors_keeps_tasklet_code_reference()
