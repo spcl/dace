@@ -478,10 +478,10 @@ class Range(Subset):
         coord = self.coord_at(i)
 
         # Return i0 + i1*size0 + i2*size1*size0 + ....
-        # Cancel out stride since we determine the initial offset only here
-        return sum(
-            _expr(s) * _expr(astr) / _expr(rs)
-            for s, (_, _, rs), astr in zip(coord, self.ranges, self.absolute_strides(strides)))
+        # The array stride directly, rather than `absolute_strides` divided back down by the range
+        # step: those are `rs * strides[i]` and `rs`, so the division only undoes the multiplication,
+        # and it cancels only because `/` is modeled over the rationals.
+        return sum(_expr(s) * _expr(stride) for s, _, stride in zip(coord, self.ranges, strides))
 
     def data_dims(self):
         return (sum(1 if (re - rb + 1) != 1 else 0 for rb, re, _ in self.ranges) + sum(1 if ts != 1 else 0
