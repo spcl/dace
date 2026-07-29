@@ -75,6 +75,8 @@ import re
 import copy as _copy
 from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
+from ordered_set import OrderedSet
+
 import dace
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace import memlet as mm
@@ -734,7 +736,7 @@ class EarlyExitToFindIndex(ppl.Pass):
                 # A bare loop-invariant scalar the cond reads (wired as a phi-Map
                 # ``[0]`` connector): count it as a read so a body write to the
                 # same scalar trips the disjointness gate below.
-                cond_reads[name] = None
+                cond_reads.add(name)
         # 2) Body write-sets.
         pre_writes = self._collect_array_writes(body_pre_blocks, sdfg)
         post_writes = self._collect_array_writes(body_post_blocks, sdfg)
@@ -757,31 +759,31 @@ class EarlyExitToFindIndex(ppl.Pass):
             return False
         return True
 
-    def _read_arrays_from_expr(self, expr_str: str, sdfg: SDFG) -> Dict[str, None]:
+    def _read_arrays_from_expr(self, expr_str: str, sdfg: SDFG) -> OrderedSet[str]:
         """Return the set of array names read by the expression string.
         Recognises ``arr[i_expr]`` subscripts."""
         try:
             tree = ast.parse(expr_str, mode='eval').body
         except SyntaxError:
-            return {}
-        out: Dict[str, None] = {}
+            return OrderedSet()
+        out: OrderedSet[str] = OrderedSet()
         for node in ast.walk(tree):
             if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name):
                 if node.value.id in sdfg.arrays:
-                    out[node.value.id] = None
+                    out.add(node.value.id)
         return out
 
-    def _expr_names(self, expr_str: str) -> Dict[str, None]:
+    def _expr_names(self, expr_str: str) -> OrderedSet[str]:
         """Return the set of bare ``ast.Name`` identifiers referenced by
         ``expr_str``. Used to discover transient scalars the cond reads
         through gather chains the AST inliner did not flatten."""
         try:
             tree = ast.parse(expr_str, mode='eval').body
         except SyntaxError:
-            return {}
-        return dict.fromkeys(n.id for n in ast.walk(tree) if isinstance(n, ast.Name))
+            return OrderedSet()
+        return OrderedSet(n.id for n in ast.walk(tree) if isinstance(n, ast.Name))
 
-    def _trace_transient_to_source_arrays(self, name: str, blocks, sdfg: SDFG) -> Dict[str, None]:
+    def _trace_transient_to_source_arrays(self, name: str, blocks, sdfg: SDFG) -> OrderedSet[str]:
         """Trace a transient ``name`` written inside any state in
         ``blocks`` back to the non-transient arrays that gather feed
         it. Used by :meth:`_check_soundness` to widen ``cond_reads``
@@ -793,14 +795,14 @@ class EarlyExitToFindIndex(ppl.Pass):
         a visited set on transient names.
         """
         if name not in sdfg.arrays:
-            return {}
+            return OrderedSet()
         desc = sdfg.arrays[name]
         if not desc.transient:
             # ``name`` is already a non-transient array; the caller
             # path treats it directly.
-            return {name: None}
-        out: Dict[str, None] = {}
-        visited: Dict[str, None] = {name: None}
+            return OrderedSet((name, ))
+        out: OrderedSet[str] = OrderedSet()
+        visited: OrderedSet[str] = OrderedSet((name, ))
         pending = [name]
         while pending:
             target = pending.pop()
@@ -824,16 +826,16 @@ class EarlyExitToFindIndex(ppl.Pass):
                         src_desc = sdfg.arrays[src_name]
                         if src_desc.transient:
                             if src_name not in visited:
-                                visited[src_name] = None
+                                visited.add(src_name)
                                 pending.append(src_name)
                         else:
-                            out[src_name] = None
+                            out.add(src_name)
         return out
 
-    def _collect_array_writes(self, blocks, sdfg: SDFG) -> Dict[str, None]:
+    def _collect_array_writes(self, blocks, sdfg: SDFG) -> OrderedSet[str]:
         """Collect every non-transient array name written by any state in
         ``blocks``."""
-        out: Dict[str, None] = {}
+        out: OrderedSet[str] = OrderedSet()
         for b in blocks:
             if not isinstance(b, SDFGState):
                 continue
@@ -845,7 +847,7 @@ class EarlyExitToFindIndex(ppl.Pass):
                     continue
                 if desc.transient:
                     continue
-                out[n.data] = None
+                out.add(n.data)
         return out
 
     def _body_parallelizable_modulo_break(self, loop, cond_block, sdfg) -> bool:
