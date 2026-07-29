@@ -836,8 +836,8 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
                 if multistate:
                     alloc_scope = sdfg
-                elif (isinstance(curscope, SDFGState) and curstate is not None
-                      and desc.storage in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global)
+                elif (isinstance(curscope, SDFGState) and curstate is not None and desc.storage
+                      in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global, dtypes.StorageType.Default)
                       and scope_allocation_repeats_per_iteration(curstate)
                       and first_node_instance is not None and not utils.is_nonfree_sym_dependent(
                           first_node_instance, desc, first_state_instance, fsyms[sdfg.cfg_id])):
