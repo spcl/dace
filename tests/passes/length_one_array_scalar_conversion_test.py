@@ -397,6 +397,54 @@ def test_other_subset_of_scalarized_side_collapses():
     sdfg.validate()
 
 
+def _scatter_sdfg(tmp_is_scalar: bool) -> dace.SDFG:
+    """``for i: A[(i+1) % 2] = B[i]`` staged through a single-value transient. The copy edge names the
+    TRANSIENT, so the destination index lives in ``other_subset``."""
+    sdfg = dace.SDFG("len1_other_subset_survives")
+    st = sdfg.add_state("s")
+    sdfg.add_array("A", [2], dace.int32)
+    sdfg.add_array("B", [2], dace.int32)
+    if tmp_is_scalar:
+        sdfg.add_scalar("tmp", dace.int32, transient=True)
+    else:
+        sdfg.add_array("tmp", [1], dace.int32, transient=True)
+    me, mx = st.add_map("m", {"i": "0:2"}, schedule=dace.dtypes.ScheduleType.Sequential)
+    me.add_in_connector("IN_B")
+    me.add_out_connector("OUT_B")
+    mx.add_in_connector("IN_A")
+    mx.add_out_connector("OUT_A")
+    st.add_edge(st.add_read("B"), None, me, "IN_B", dace.Memlet("B[0:2]"))
+    tmp = st.add_access("tmp")
+    st.add_edge(me, "OUT_B", tmp, None, dace.Memlet("B[i]"))
+    wa = st.add_access("A")
+    st.add_edge(tmp, None, wa, None, dace.Memlet("tmp[0] -> [((i+1)%2)]"))
+    st.add_edge(wa, None, mx, "IN_A", dace.Memlet("A[0:2]"))
+    st.add_edge(mx, "OUT_A", st.add_access("A"), None, dace.Memlet("A[0:2]"))
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize("inverse", [False, True])
+def test_other_subset_of_untouched_side_survives(inverse):
+    """The rewritten side of a copy edge says NOTHING about the other side. Dropping the untouched
+    side's ``other_subset`` silently redirects every write to element 0 -- a scatter turns into a
+    single overwrite, with no validation error to catch it."""
+    sdfg = _scatter_sdfg(tmp_is_scalar=inverse)
+    if inverse:
+        ConvertScalarsToLengthOneArrays().apply_pass(sdfg, {})
+    else:
+        ConvertLengthOneArraysToScalars().apply_pass(sdfg, {})
+    st = sdfg.states()[0]
+    copy = next(e for e in st.edges() if e.data.data == "tmp" and e.data.other_subset is not None)
+    assert str(copy.data.other_subset) != "0"
+    sdfg.validate()
+
+    a = np.zeros(2, np.int32)
+    b = np.array([11, 22], np.int32)
+    sdfg(A=a, B=b)
+    assert a[0] == b[1] and a[1] == b[0]
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
 

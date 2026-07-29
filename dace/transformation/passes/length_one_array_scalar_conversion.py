@@ -138,6 +138,34 @@ def rewrite_refs_to_element(expr: str, rename: Dict[str, str]) -> str:
     return expr
 
 
+def repoint_memlet_to_element(edge: 'dace.sdfg.graph.MultiConnectorEdge', rename: Dict[str, str]) -> None:
+    """Re-point one edge's memlet at the rewritten descriptors, collapsing each rewritten side's subset
+    to the single element ``0``.
+
+    A memlet names only ONE side of a copy edge (``data`` / ``subset``); the opposite side's index
+    lives in ``other_subset``. The two sides are rewritten INDEPENDENTLY here -- the named side being
+    a rewritten descriptor says nothing about the other side, whose index must survive untouched when
+    it is not itself rewritten. Mutating in place (rather than building a replacement ``Memlet`` from
+    a handful of fields) is what keeps ``other_subset`` -- and volume, ``wcr_nonatomic``, ``allow_oob``
+    and the cached src/dst orientation -- from being silently dropped.
+
+    :param edge: edge whose memlet is rewritten in place.
+    :param rename: mapping from each rewritten descriptor's old name to its new name.
+    """
+    mem = edge.data
+    # An empty memlet is a pure ORDERING edge -- it names no descriptor and must survive untouched.
+    if mem is None or mem.is_empty() or mem.data is None:
+        return
+    if mem.data in rename:
+        mem.data = rename[mem.data]
+        mem.subset = subsets.Range.from_string('0')
+    # The other side collapses only when IT is a rewritten descriptor, else validation rejects the rank.
+    if mem.other_subset is not None and any(
+            isinstance(n, nodes.AccessNode) and n.data in rename.values() and n.data != mem.data
+            for n in (edge.src, edge.dst)):
+        mem.other_subset = subsets.Range.from_string('0')
+
+
 def _descriptor_is_read(sdfg: SDFG, name: str) -> bool:
     """True if ``name`` is read anywhere in ``sdfg`` (some AccessNode of it has an out-edge)."""
     for state in sdfg.all_states():
@@ -328,18 +356,7 @@ class ConvertLengthOneArraysToScalars(ppl.Pass):
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
             for edge in state.edges():
-                mem = edge.data
-                if mem is None or mem.data is None:
-                    continue
-                if mem.data in rename:
-                    edge.data = Memlet(data=rename[mem.data], subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
-                    continue
-                # A copy edge names only ONE side; the opposite is ``other_subset``. When THAT side is
-                # a rewritten descriptor, its subset collapses too, else validation rejects the rank.
-                if mem.other_subset is not None and any(
-                        isinstance(n, nodes.AccessNode) and n.data in rename.values() and n.data != mem.data
-                        for n in (edge.src, edge.dst)):
-                    mem.other_subset = subsets.Range.from_string('0')
+                repoint_memlet_to_element(edge, rename)
 
         rewrite_code_slots(sdfg, lambda text: _rewrite_refs(text, rename))
 
@@ -478,10 +495,7 @@ class ConvertScalarsToLengthOneArrays(ppl.Pass):
                 if isinstance(node, nodes.AccessNode) and node.data in rename:
                     node.data = rename[node.data]
             for edge in state.edges():
-                mem = edge.data
-                if mem is None or mem.data is None or mem.data not in rename:
-                    continue
-                edge.data = Memlet(data=rename[mem.data], subset='0', wcr=mem.wcr, dynamic=mem.dynamic)
+                repoint_memlet_to_element(edge, rename)
 
         # A bare textual reference now names an Array, so it must index element 0 to stay a value.
         rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, rename))
