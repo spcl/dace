@@ -763,6 +763,12 @@ class ANFTransform(_BodyTransformer):
             expr.slice = self._flatten_index(expr.slice, hoisted)
             return expr if level != 'atom' else self._hoist(expr, hoisted)
         if isinstance(expr, ast.Call):
+            if isinstance(expr.func, ast.Attribute) and not cpa.is_atom(expr.func):
+                # A method call on a computed receiver
+                # (``numpy.arange(10).reshape(10, 1)``): the receiver is
+                # hoisted first, so it is evaluated before the arguments, as
+                # Python does.
+                expr.func = self._as_dataref(expr.func, hoisted)
             if not cpa.is_atom(expr.func):
                 raise _ShortCircuitHazard
             expr.args = [self._flatten_call_argument(a, hoisted) for a in expr.args]
@@ -836,8 +842,12 @@ class ANFTransform(_BodyTransformer):
         same single-level member-access machinery as top-level members,
         without widening the dataref grammar itself.
 
-        Chains not rooted at a ``Name`` (e.g. attribute access on an embedded
-        constant) are returned unchanged: they remain legal atoms and either
+        A chain rooted in a COMPUTED value (``(a @ b).T``,
+        ``numpy.arange(10).reshape(...)``) has its base hoisted into a
+        temporary, which is the ordinary ANF treatment of a compound
+        subexpression: the attribute then reads a named container and lowers
+        through the same path as ``A.T``. Chains rooted at an embedded
+        constant are returned unchanged: they remain legal atoms and either
         resolve semantically or fall back during lowering.
         """
         if cpa.is_dataref(node) or not isinstance(node, ast.Attribute):
@@ -845,7 +855,10 @@ class ANFTransform(_BodyTransformer):
         root = node.value
         while isinstance(root, ast.Attribute):
             root = root.value
+        if isinstance(root, ast.Constant):
+            return node
         if not isinstance(root, ast.Name):
+            node.value = self._flatten(node.value, hoisted, level='atom')
             return node
         base = self._as_dataref(node.value, hoisted)
         if not isinstance(base, ast.Name):
@@ -899,6 +912,11 @@ class ANFTransform(_BodyTransformer):
             return node
         if isinstance(node, ast.Subscript) and isinstance(node.ctx, ast.Load) and cpa.is_dataref(node.value):
             node.slice = self._flatten_index(node.slice, hoisted)
+            if not cpa.is_bounded_index_operand(node):
+                # Deeper than the one level of indirection an index admits
+                # (``A[x[x[i]]]``): name the inner read, which is exactly the
+                # hoisting the grammar's depth cutoff assumes happens here.
+                return self._hoist(node, hoisted)
             return node
         return self._flatten(node, hoisted, level='atom')
 

@@ -142,10 +142,62 @@ def lower_computation(target: DataAccess,
         if _lower_advanced_index(target, value, statement, state):
             return
         value = _materialize_advanced_indices(value, statement, state)
+        value = _materialize_attribute_reads(value, state)
         rewritten = static_values.materialize_operands(value, state)
         elementwise.emit_computation(target, rewritten, statement, state, wcr=wcr)
     except UnsupportedFeatureError as reason:
         fallback_to_callback(statement, state, reason)
+
+
+def _materialize_attribute_reads(value: ast.expr, state: LoweringState) -> ast.expr:
+    """
+    Replace registry ATTRIBUTE-family reads (``A.T``/``.real``/``.imag``/
+    ``.flat``) inside an expression with the container they produce.
+
+    ``rules.assign.lower_attribute_assign`` covers the one position where such
+    a read is a whole right-hand side bound to a NAME. Anywhere else
+    (``c[:, :] = a.T``, ``c[:] = a.T + b``) the read reaches the elementwise
+    mechanism, which has no resolution for an attribute and substitutes it
+    verbatim into the generated tasklet (``__out = __in0.T``) -- a wrong
+    program, and one that only fails at C++ compile time. Materializing here
+    reduces those forms to the ``__attr0 = a.T; c[:, :] = __attr0`` shape that
+    already lowers.
+
+    :raises UnsupportedFeatureError: Inside a dataflow scope, where the
+        materialization (a deferred replacement call, or a view binding) is
+        not a legal node -- the statement degrades to a callback instead.
+    """
+    reads = [
+        node for node in ast.walk(value) if isinstance(node, ast.Attribute)
+        and isinstance(getattr(node, 'ctx', ast.Load()), ast.Load) and node.attr in SUPPORTED_DATA_ATTRIBUTES
+    ]
+    if not reads:
+        return value
+    materialized: dict = {}
+    for read in reads:
+        base = resolve_access(read.value, state)
+        if base is None:
+            continue
+        if state.emitter.in_dataflow_scope:
+            raise UnsupportedFeatureError(f'Attribute "{astutils.unparse(read)}" inside a dataflow scope',
+                                          state.context.filename,
+                                          read,
+                                          category='attribute')
+        access = resolve_attribute_data(base, read.attr, state)
+        if access is not None:
+            materialized[ast.dump(read)] = access.container
+    if not materialized:
+        return value
+
+    class _Substituter(ast.NodeTransformer):
+
+        def visit_Attribute(self, attribute_node: ast.Attribute) -> ast.AST:
+            container = materialized.get(ast.dump(attribute_node))
+            if container is None:
+                return self.generic_visit(attribute_node)
+            return ast.copy_location(ast.Name(id=container, ctx=ast.Load()), attribute_node)
+
+    return ast.fix_missing_locations(_Substituter().visit(copy.deepcopy(value)))
 
 
 def _lower_registry_operator(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> bool:

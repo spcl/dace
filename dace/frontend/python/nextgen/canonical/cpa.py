@@ -308,7 +308,7 @@ def is_atomexpr(node: ast.AST) -> bool:
     return False
 
 
-def _is_bounded_index_operand(node: ast.AST) -> bool:
+def is_bounded_index_operand(node: ast.AST) -> bool:
     """
     Check whether an expression is valid AS PART OF an index expression: an
     atom, or a data subscript (``A_col[j]``) whose OWN index is atom-only.
@@ -329,7 +329,7 @@ def _is_bounded_index_operand(node: ast.AST) -> bool:
     if isinstance(node, ast.Subscript):
         return is_dataref(node.value) and _is_atom_index(node.slice)
     if isinstance(node, ast.UnaryOp):
-        return _is_bounded_index_operand(node.operand)
+        return is_bounded_index_operand(node.operand)
     return False
 
 
@@ -337,7 +337,7 @@ def _is_atom_index(node: ast.AST) -> bool:
     """
     Check whether a subscript index is built from atoms (and depth-1
     arithmetic on atoms) only -- the innermost level
-    :func:`_is_bounded_index_operand` allows a nested subscript's own index
+    :func:`is_bounded_index_operand` allows a nested subscript's own index
     to use. Deliberately admits ``ptr[i + 1]``-shaped bounds (a BinOp of two
     atoms), matching :func:`is_index_expr`'s own top-level allowance -- this
     is the measured-working dynamic-range-bound pattern
@@ -358,14 +358,14 @@ def _is_atom_index(node: ast.AST) -> bool:
 def is_index_expr(node: ast.AST) -> bool:
     """
     Check whether an expression is a canonical index expression (depth-1): a
-    bounded index operand (see :func:`_is_bounded_index_operand`), or a
+    bounded index operand (see :func:`is_bounded_index_operand`), or a
     binary operation of two of them (e.g. the ``i + 1`` in ``A[i + 1]``, or
     the ``A_col[j]`` data-read operand in ``x[A_col[j]]``).
     """
-    if _is_bounded_index_operand(node):
+    if is_bounded_index_operand(node):
         return True
     if isinstance(node, ast.BinOp):
-        return _is_bounded_index_operand(node.left) and _is_bounded_index_operand(node.right)
+        return is_bounded_index_operand(node.left) and is_bounded_index_operand(node.right)
     return False
 
 
