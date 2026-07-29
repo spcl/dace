@@ -2404,7 +2404,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 base_ptr = replace_float_literals(base_ptr)
-                callsite_stream.write(f'{cdtype.ctype} __restrict__ {edge.src_conn} = {base_ptr};', cfg, state_id,
+                # ``may_alias`` data is deliberately reachable through a second pointer, so promising
+                # no-alias on this out-connector alias is a miscompile -- same guard as
+                # ``generate_nsdfg_header`` and ``ExperimentalCPUCodeGen.array_pointer_declarator``.
+                restrict = '' if (isinstance(desc, data.Array) and desc.may_alias) else '__restrict__ '
+                callsite_stream.write(f'{cdtype.ctype} {restrict}{edge.src_conn} = {base_ptr};', cfg, state_id,
                                       src_node)
             else:
                 callsite_stream.write(f'{cdtype.as_arg(edge.src_conn)};', cfg, state_id, src_node)
