@@ -436,7 +436,9 @@ def _make_datatype_converter(typeclass: str):
     elif typeclass in {"int", "float", "complex"}:
         dtype = dtypes.dtype_to_typeclass(eval(typeclass))
     else:
-        dtype = dtypes.dtype_to_typeclass(getattr(np, typeclass))
+        # np.dtype resolves numpy names and the ml_dtypes-registered low-precision
+        # names (bfloat16 / float8_e4m3fn / float8_e5m2) alike.
+        dtype = dtypes.dtype_to_typeclass(np.dtype(typeclass).type)
 
     @oprepo.replaces(typeclass)
     @oprepo.replaces("dace.{}".format(typeclass))
