@@ -119,6 +119,44 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
+def _sdfg_build_folder_getter(sdfg) -> str:
+    """Returns the path to the build cache folder for ``sdfg``.
+
+    If the build folder was explicitly set it is returned. If not set, then the function
+    will consult the configuration key ``default_build_folder`` and also ``cache``,
+    which both influence the returned path.
+    It is also important that retrieving the folder through this function does not set
+    the build folder in the SDFG.
+
+    :note: This function is used as getter for the ``SDFG.build_folder`` property, do not use directly.
+    :note: It is unspecific if the path is absolute or not.
+    """
+    if getattr(sdfg, "_build_folder", None) is not None:
+        return sdfg._build_folder
+    cache_config = Config.get('cache')
+    base_folder = Config.get('default_build_folder')
+    if cache_config == 'single':
+        # Always use the same directory, overwriting any other program,
+        # preventing parallelism and caching of multiple programs, but
+        # saving space and potentially build time
+        return os.path.join(base_folder, 'single_cache')
+    elif cache_config == 'hash':
+        # Any change to the SDFG will result in a new cache folder
+        md5_hash = md5(str(sdfg.to_json()).encode('utf-8')).hexdigest()
+        return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
+    elif cache_config == 'unique':
+        # Base name on location in memory, so no caching is possible between
+        # processes or subsequent invocations
+        md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
+        return os.path.join(base_folder, f'{sdfg.name}_{md5_hash}')
+    elif cache_config == 'name':
+        # Overwrites previous invocations, and can clash with other programs
+        # if executed in parallel in the same working directory
+        return os.path.join(base_folder, sdfg.name)
+    else:
+        raise ValueError(f'Unknown cache configuration: {cache_config}')
+
+
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
     """
     Generates a list of memlets from each of the subscripts that appear in the Python AST.
@@ -487,8 +525,15 @@ class SDFG(ControlFlowRegion):
                                            default=False,
                                            desc="Whether the SDFG contains explicit control flow constructs")
 
-    # Explicitly-set build folder, or None to derive it from the configuration
-    _build_folder = None
+    build_folder = Property(
+        dtype=str,
+        default=None,
+        allow_none=True,
+        getter=_sdfg_build_folder_getter,
+        desc='Returns the path to the build cache folder for SDFG. For a in dept '
+        'description see ``_sdfg_build_folder_getter()``.',
+        serialize_if=lambda sdfg: sdfg._build_folder is not None,
+    )
 
     def __init__(self,
                  name: str,
@@ -537,7 +582,6 @@ class SDFG(ControlFlowRegion):
         # Helper fields to avoid code generation and compilation
         self._regenerate_code = True
         self._recompile = True
-        self._build_folder = None
 
         # Counter to resolve name conflicts
         self._orig_name = name
@@ -684,16 +728,6 @@ class SDFG(ControlFlowRegion):
             _strip_transformation_history(tmp)
 
         tmp['attributes']['name'] = self.name
-        # An explicitly-set build folder is part of the user's contract and
-        # survives serialization (it may be machine-specific - that is the
-        # user's responsibility, like the folder itself). A configuration-
-        # derived folder (`_build_folder` is None) is environment state and is
-        # deliberately NOT serialized: the key is omitted entirely, keeping
-        # the serialized form - and thus hashes and build caches - of such
-        # SDFGs unchanged, and it also avoids a cycle with the 'hash' cache
-        # mode, which derives the folder from this very JSON.
-        if self._build_folder is not None:
-            tmp['attributes']['build_folder'] = str(self._build_folder)
         if hash:
             tmp['attributes']['hash'] = self.hash_sdfg(tmp)
 
@@ -723,15 +757,10 @@ class SDFG(ControlFlowRegion):
 
         ret = SDFG(name=attrs['name'], constants=constants_prop, parent=context['sdfg'])
 
-        # An explicitly-set build folder survives serialization; an absent key
-        # means the folder is configuration-derived (also the format written
-        # before this key existed) and stays None.
-        ret._build_folder = attrs.get('build_folder', None)
-
         dace.serialize.set_properties_from_json(ret,
                                                 json_obj,
                                                 context=context,
-                                                ignore_properties={'constants_prop', 'name', 'hash', 'build_folder'})
+                                                ignore_properties={'constants_prop', 'name', 'hash'})
 
         nodelist = []
         for n in nodes:
@@ -1223,38 +1252,6 @@ class SDFG(ControlFlowRegion):
         # Avoid import loop
         from dace.sdfg.analysis.schedule_tree import sdfg_to_tree as s2t
         return s2t.as_schedule_tree(self, in_place=in_place)
-
-    @property
-    def build_folder(self) -> str:
-        """ Returns a relative path to the build cache folder for this SDFG. """
-        if self._build_folder is not None:
-            return self._build_folder
-        cache_config = Config.get('cache')
-        base_folder = Config.get('default_build_folder')
-        if cache_config == 'single':
-            # Always use the same directory, overwriting any other program,
-            # preventing parallelism and caching of multiple programs, but
-            # saving space and potentially build time
-            return os.path.join(base_folder, 'single_cache')
-        elif cache_config == 'hash':
-            # Any change to the SDFG will result in a new cache folder
-            md5_hash = md5(str(self.to_json()).encode('utf-8')).hexdigest()
-            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
-        elif cache_config == 'unique':
-            # Base name on location in memory, so no caching is possible between
-            # processes or subsequent invocations
-            md5_hash = md5(str(os.getpid()).encode('utf-8')).hexdigest()
-            return os.path.join(base_folder, f'{self.name}_{md5_hash}')
-        elif cache_config == 'name':
-            # Overwrites previous invocations, and can clash with other programs
-            # if executed in parallel in the same working directory
-            return os.path.join(base_folder, self.name)
-        else:
-            raise ValueError(f'Unknown cache configuration: {cache_config}')
-
-    @build_folder.setter
-    def build_folder(self, newfolder: str):
-        self._build_folder = newfolder
 
     def remove_data(self, name, validate=True):
         """ Removes a data descriptor from the SDFG.
