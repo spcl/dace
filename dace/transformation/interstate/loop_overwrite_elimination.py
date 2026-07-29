@@ -104,6 +104,9 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 unique_set.add(name)
 
         # All the uniuque data needs to be written and read in the same index, otherwise there might be a loop-carried dependency.
+        # An EMPTY memlet is a pure ordering edge and accesses nothing: its ``get_src/dst_subset`` is
+        # ``None``, which the subset tests below would otherwise read as a whole-array, never-intersecting
+        # access and refuse a perfectly overwritable loop (``A[0] = B[i]; A[0] = C[i]``).
         for state in states:
             for dn in state.data_nodes():
                 if dn.data not in unique_set:
@@ -111,11 +114,15 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 read_subsets = set()
                 write_subsets = set()
                 for e in state.out_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
                     read_subsets.add(e.data.get_src_subset(e, state))
                 for e in state.in_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
@@ -130,6 +137,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 if dn.data in unique_set:
                     continue
                 for e in state.in_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False
@@ -150,6 +159,8 @@ class LoopOverwriteElimination(transformation.MultiStateTransformation):
                 if dn.data in unique_set or dn.data not in write_subsets:
                     continue
                 for e in state.out_edges(dn):
+                    if e.data.is_empty():
+                        continue
                     # If pointers are involved or it's not an overwrite, give up
                     if e.data.dynamic or e.data.wcr is not None:
                         return False

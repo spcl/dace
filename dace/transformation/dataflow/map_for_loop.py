@@ -57,11 +57,24 @@ class MapToForLoop(transformation.SingleStateTransformation):
     + :class:`~dace.transformation.interstate.multistate_inline.InlineMultistateSDFG`
     so the LoopRegion lands directly at the parent CFR. Set
     ``inline_after=False`` to keep the legacy wrapped form.
+
+    Sequentializing a map is always LEGAL, reductions included, so by default the
+    only refusal is the structural one (a single map parameter). Canonicalization
+    additionally does not *want* a surviving reduction serialized; it opts into that
+    preference with ``keep_reductions_parallel``.
     """
 
     map_entry = transformation.PatternNode(nodes.MapEntry)
 
     loop_region: Optional[LoopRegion] = None
+
+    keep_reductions_parallel = properties.Property(
+        dtype=bool,
+        default=False,
+        desc='Refuse a map whose surviving WCR output is a genuine parallel reduction, so it stays a '
+        'map and codegens to an OpenMP reduction instead of a sequential loop. A canonicalization '
+        'PREFERENCE, not a legality condition: off by default so that consumers which mechanically '
+        'need the map->loop rewrite (DoubleBuffering, StencilTiling) are not silently refused.')
 
     inline_after = properties.Property(dtype=bool,
                                        default=True,
@@ -84,29 +97,32 @@ class MapToForLoop(transformation.SingleStateTransformation):
         if len(self.map_entry.map.params) > 1:
             return False
 
-        # Refuse a map that still has a WCR (reduction) output. By this point
-        # WCRToAugAssign has rewritten every conflict-free (injective) WCR into an
-        # explicit RMW, so a surviving WCR output is a genuine parallel reduction.
-        # Lowering it to a sequential loop serializes the reduction AND severs an
-        # in-state-consumed accumulator; keep it a parallel map so it codegens to an
-        # OpenMP reduction and the producer->consumer edge is preserved.
-        map_exit = graph.exit_node(self.map_entry)
-        for e in graph.out_edges(map_exit):
-            if e.data is not None and e.data.wcr is not None:
-                return False
+        # Everything below is the canonicalization PREFERENCE, not legality -- see
+        # ``keep_reductions_parallel``.
+        if self.keep_reductions_parallel:
+            # Refuse a map that still has a WCR (reduction) output. By this point
+            # WCRToAugAssign has rewritten every conflict-free (injective) WCR into an
+            # explicit RMW, so a surviving WCR output is a genuine parallel reduction.
+            # Lowering it to a sequential loop serializes the reduction AND severs an
+            # in-state-consumed accumulator; keep it a parallel map so it codegens to an
+            # OpenMP reduction and the producer->consumer edge is preserved.
+            map_exit = graph.exit_node(self.map_entry)
+            for e in graph.out_edges(map_exit):
+                if e.data is not None and e.data.wcr is not None:
+                    return False
 
-        # Refuse a map whose body carries a DATA-DEPENDENT (indirect) scatter reduction,
-        # i.e. a surviving WCR write ``A[bin] (wcr)= ...`` whose index ``bin`` is computed
-        # from input data (a histogram / bincount ``np.add.at`` shape). The reduction WCR
-        # here is buried inside the body (a nested SDFG), so the map-exit scan above misses
-        # it. Such a scatter is a genuine parallel reduction that codegens soundly as an
-        # atomic-WCR parallel map, but -- unlike an affine/structured reduction (covariance,
-        # gemm) -- canon CANNOT re-parallelize it once serialized to a loop: LoopToReduce
-        # needs a scalar/affine accumulator and ScatterToGuardedMaps needs a precomputed
-        # index ARRAY, neither of which matches a computed index. Lowering it would strand
-        # the loop as sequential; keep it the parallel scatter map instead.
-        if _map_body_has_data_dependent_wcr(graph, self.map_entry):
-            return False
+            # Refuse a map whose body carries a DATA-DEPENDENT (indirect) scatter reduction,
+            # i.e. a surviving WCR write ``A[bin] (wcr)= ...`` whose index ``bin`` is computed
+            # from input data (a histogram / bincount ``np.add.at`` shape). The reduction WCR
+            # here is buried inside the body (a nested SDFG), so the map-exit scan above misses
+            # it. Such a scatter is a genuine parallel reduction that codegens soundly as an
+            # atomic-WCR parallel map, but -- unlike an affine/structured reduction (covariance,
+            # gemm) -- canon CANNOT re-parallelize it once serialized to a loop: LoopToReduce
+            # needs a scalar/affine accumulator and ScatterToGuardedMaps needs a precomputed
+            # index ARRAY, neither of which matches a computed index. Lowering it would strand
+            # the loop as sequential; keep it the parallel scatter map instead.
+            if _map_body_has_data_dependent_wcr(graph, self.map_entry):
+                return False
 
         return True
 

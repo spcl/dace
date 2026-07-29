@@ -523,7 +523,9 @@ class UntileLoops(ppl.Pass):
         from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         applied = count_applied(PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {}))
-        applied += count_applied(PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {}))
+        lower_maps = MapToForLoop()
+        lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
+        applied += count_applied(PatternMatchAndApplyRepeated([lower_maps]).apply_pass(sdfg, {}))
         # Sweep up any NSDFG wrappers that survived MapToForLoop's
         # inline_after step because they were Map-scoped at the time.
         # After all Maps are lifted they are no longer scoped, so a

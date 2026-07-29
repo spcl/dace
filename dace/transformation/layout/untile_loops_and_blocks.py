@@ -54,7 +54,9 @@ class UntileLoopsAndBlocks(ppl.Pass):
         from dace.transformation.interstate.multistate_inline import InlineMultistateSDFG
         from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
         applied = count_applied(PatternMatchAndApplyRepeated([MapExpansion()]).apply_pass(sdfg, {}))
-        applied += count_applied(PatternMatchAndApplyRepeated([MapToForLoop()]).apply_pass(sdfg, {}))
+        lower_maps = MapToForLoop()
+        lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
+        applied += count_applied(PatternMatchAndApplyRepeated([lower_maps]).apply_pass(sdfg, {}))
         for _ in range(16):
             before = sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.nodes.NestedSDFG))
             applied += count_applied(PatternMatchAndApplyRepeated([ExpandNestedSDFGInputs()]).apply_pass(sdfg, {}))

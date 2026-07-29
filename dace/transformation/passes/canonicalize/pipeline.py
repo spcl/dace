@@ -618,7 +618,9 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('lower', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
     # lower: every map -> LoopRegion (MapToLoop = reuse MapToForLoop), then
     # structural cleanup (no SimplifyPass).
-    s += [('lower', PatternMatchAndApplyRepeated([MapToForLoop()]))]
+    lower_maps = MapToForLoop()
+    lower_maps.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
+    s += [('lower', PatternMatchAndApplyRepeated([lower_maps]))]
     s += _structural_cleanup('lower')
     # MapToForLoop leaves empty *_pre_state / *_post_state boundary states;
     # inside a guard branch they make the body look like a heterogeneous

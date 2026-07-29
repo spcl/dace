@@ -56,6 +56,49 @@ def _index_syms_across_nesting(sdfg: SDFG, write_subset) -> set:
     return syms
 
 
+def boundary_write_index_syms(sdfg: SDFG, data_name: str) -> set:
+    """Symbol NAMES the write index depends on in the PARENT namespace, for a write leaving
+    ``sdfg`` through the nested-SDFG output connector ``data_name``.
+
+    ``nest_state_subgraph`` rebases a boundary connector's descriptor onto the crossing memlet, so
+    the INNER subset of a write to it (``__tmp[0]`` on a shape-(1,) connector) can NEVER mention
+    the enclosing map's parameters -- even when the outer memlet that connector maps to
+    (``A[i, j]``) varies with every one of them. ``_index_syms_across_nesting`` follows the
+    ``symbol_mapping`` chain, which covers a renamed ITERATOR but not this DATA boundary; without
+    the outer subset the parent-map guard reads every conflict-free through-connector WCR as an
+    invariant reduction and keeps it (``A[i, j] += 2.0`` under ``dace.map[0:N, 0:N]``).
+
+    Only the NSDFG node's OWN out-edge is read: its subset is the precise parent-namespace image of
+    the connector. Edges further out are propagated over the enclosing map and have the map
+    parameters unioned away, so they could only drop symbols, never add one. A connector that fans
+    out to several writes stops the walk: the symbols are only sound per write path, and unioning
+    them would let one injective path vouch for an invariant sibling.
+
+    :param sdfg: The nested SDFG the write lives in.
+    :param data_name: The written data descriptor's name inside ``sdfg``.
+    :returns: The set of symbol names the outer write index depends on (empty if not a boundary).
+    """
+    syms = set()
+    cur, conn = sdfg, data_name
+    while cur.parent_nsdfg_node is not None and cur.parent is not None:
+        node = cur.parent_nsdfg_node
+        if conn not in node.out_connectors:
+            break
+        state = cur.parent
+        edges = [e for e in state.out_edges_by_connector(node, conn) if e.data is not None and not e.data.is_empty()]
+        if len(edges) != 1 or edges[0].data.data is None:
+            break
+        edge = edges[0]
+        subset = edge.data.get_dst_subset(edge, state)
+        if subset is None:
+            subset = edge.data.subset
+        if subset is None:
+            break
+        syms |= {str(s) for s in subset.free_symbols}
+        cur, conn = cur.parent_sdfg, edge.data.data
+    return syms
+
+
 def _wcr_write_is_injective(write_subset, params: List[str]) -> bool:
     """Write at ``write_subset`` hits a DISTINCT element per distinct enclosing-map ``params``
     value → conflict-free → WCR droppable for explicit RMW without cross-lane race.
@@ -1097,6 +1140,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
                     outer_map_params |= set(scope.map.params)
             outer_map_params -= set(params)
             index_syms = _index_syms_across_nesting(sdfg, sub)
+            index_syms |= boundary_write_index_syms(sdfg, self.output.data)
             if any(str(it) not in index_syms for it in outer_map_params):
                 return False
         # The tasklet must already READ BACK the destination element (same data, same subset), so
@@ -1237,6 +1281,7 @@ class WCRToAugAssign(transformation.SingleStateTransformation):
             # (an injective per-element in-place RMW like s212 ``b[i] += a[i+1]*d[i]``), not a
             # cross-iteration reduction that must keep its WCR.
             index_syms = _index_syms_across_nesting(sdfg, edge.data.subset)
+            index_syms |= boundary_write_index_syms(sdfg, edge.data.data)
             if any(str(it) not in index_syms for it in outer_map_params):
                 return False
 

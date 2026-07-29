@@ -135,6 +135,7 @@ def _convert_maps_to_loops(outer: LoopRegion) -> bool:
             return True
         state, entry = found
         instance = MapToForLoop()
+        instance.keep_reductions_parallel = True  # canon preference, off in the transformation's default contract
         instance.map_entry = entry
         if not instance.can_be_applied(state, expr_index=0, sdfg=state.sdfg, permissive=False):
             return False
