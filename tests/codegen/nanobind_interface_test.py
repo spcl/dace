@@ -393,6 +393,42 @@ def test_nanobind_interface_report_follows_rename():
         assert sdfg.get_latest_report() is None, diag
 
 
+def test_nanobind_interface_perf_folder_only_when_instrumented():
+    """The perf/ report folder is created exactly when the SDFG is
+    instrumented, in BOTH folder modes. Production mode used to skip it
+    entirely, silently dropping every report (the runtime's report.save()
+    neither creates directories nor reports a failed open); uninstrumented
+    folders stay lean in both modes."""
+    import os
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_perfdir(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        # Production mode (env must yield to set_temporary, see gotcha):
+        # no perf/ without instrumentation, perf/ with it.
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv('DACE_compiler_build_folder_mode', raising=False)
+            with set_temporary('compiler', 'build_folder_mode', value='production'):
+                csdfg = axpy_nanobind_perfdir.to_sdfg().compile()
+                assert not os.path.isdir(os.path.join(csdfg.sdfg.build_folder, 'perf'))
+
+                sdfg2 = axpy_nanobind_perfdir.to_sdfg()
+                sdfg2.instrument = dace.InstrumentationType.Timer
+                csdfg2 = sdfg2.compile()  # collision-renamed - irrelevant here
+                assert os.path.isdir(os.path.join(csdfg2.sdfg.build_folder, 'perf'))
+
+            # Development mode: uninstrumented folders are lean here too
+            # (previously perf/ was created unconditionally).
+            with set_temporary('compiler', 'build_folder_mode', value='development'):
+                sdfg3 = axpy_nanobind_perfdir.to_sdfg()
+                csdfg3 = sdfg3.compile()  # renamed again - fresh folder
+                assert not os.path.isdir(os.path.join(csdfg3.sdfg.build_folder, 'perf'))
+
+
 def test_nanobind_interface_sdfg_safe_call_refused():
     """SDFG.safe_call() is refused on the nanobind interface: it compiles
     internally and hides the compiled object, so after a collision rename any

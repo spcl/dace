@@ -1057,8 +1057,11 @@ class SDFG(ControlFlowRegion):
         if self.instrument != dtypes.InstrumentationType.No_Instrumentation:
             return True
         try:
+            # There are two different `instrument` attributes one in `SDFGState`, with type
+            #  `InstrumentationType` and one in `AccessNode`, with type `DataInstrumentationType`.
+            #  The check bellow works for both cases.
             next(n for n, _ in self.all_nodes_recursive()
-                 if hasattr(n, 'instrument') and n.instrument != dtypes.InstrumentationType.No_Instrumentation)
+                 if hasattr(n, 'instrument') and n.instrument != type(n.instrument).No_Instrumentation)
             return True
         except StopIteration:
             return False
