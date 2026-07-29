@@ -18,8 +18,6 @@ op_source = """
 #include <torch/torch.h>
 #include <torch/script.h>
 
-#include <ATen/NamedTensorUtils.h>
-
 using torch::Tensor;
 using torch::DeviceType;
 using torch::autograd::tensor_list;

@@ -17,6 +17,7 @@ from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 
 if TYPE_CHECKING:
+    from dace.codegen.compiled_sdfg import CompiledSDFG
     from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 try:
@@ -134,9 +135,9 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
     for arg_name, arg_val in args.items():
         if arg_name in sdfg.arrays:
             desc = sdfg.arrays[arg_name]
-            if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
+            if not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
+            symbolic_values = list(desc.shape) + list(desc.strides) + list(desc.offset)
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
@@ -929,7 +930,8 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
 
         return sdfg, cachekey
 
-    def load_precompiled_sdfg(self, path: str, *args, **kwargs) -> None:
+    def load_precompiled_sdfg(self, path: str, *args,
+                              **kwargs) -> tuple['CompiledSDFG', cached_program.ProgramCacheKey]:
         """
         Loads an external compiled SDFG object that will be invoked when the
         function is called.

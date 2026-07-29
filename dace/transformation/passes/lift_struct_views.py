@@ -355,7 +355,7 @@ class LiftStructViews(ppl.Pass):
         return modified & ppl.Modifies.AccessNodes & ppl.Modifies.Tasklets & ppl.Modifies.Memlets
 
     def depends_on(self):
-        return {}
+        return []
 
     def _lift_control_flow_region_access(self, cfg: ControlFlowRegion, result: Dict[str, Set[str]]) -> bool:
         lifted_something = False
