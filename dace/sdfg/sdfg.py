@@ -8,6 +8,7 @@ from numbers import Integral
 import os
 import json
 from hashlib import md5, sha256
+import pathlib
 import random
 import shutil
 import sys
@@ -119,7 +120,7 @@ def _replace_dict_values(d, old, new):
             d[k] = new
 
 
-def _sdfg_build_folder_getter(sdfg) -> str:
+def _sdfg_build_folder_getter(sdfg: "SDFG") -> str:
     """Returns the path to the build cache folder for ``sdfg``.
 
     If the build folder was explicitly set it is returned. If not set, then the function
@@ -155,6 +156,20 @@ def _sdfg_build_folder_getter(sdfg) -> str:
         return os.path.join(base_folder, sdfg.name)
     else:
         raise ValueError(f'Unknown cache configuration: {cache_config}')
+
+
+def _sdfg_build_folder_setter(sdfg: "SDFG", new_build_folder: Union[str, None, pathlib.Path]) -> None:
+    if new_build_folder is None:
+        sdfg._build_folder = None
+    elif isinstance(new_build_folder, (str, pathlib.Path)):
+        sdfg._build_folder = str(new_build_folder)
+        if len(sdfg._build_folder) == 0:
+            raise ValueError(
+                f'Passed the empty string as new build folder to SDFG "{sdfg.name}", to clear it use `None`.')
+    else:
+        raise TypeError(
+            f'Can not assign "{new_build_folder}" ({type(new_build_folder).__name__}) as new build folder to SDFG "{sdfg.name}".'
+        )
 
 
 def memlets_in_ast(node: ast.AST, arrays: Dict[str, dt.Data], *, include_scalars: bool = False) -> List[mm.Memlet]:
@@ -529,10 +544,11 @@ class SDFG(ControlFlowRegion):
         dtype=str,
         default=None,
         allow_none=True,
-        getter=_sdfg_build_folder_getter,
         desc='Returns the path to the build cache folder for SDFG. For a in dept '
         'description see ``_sdfg_build_folder_getter()``.',
         serialize_if=lambda sdfg: sdfg._build_folder is not None,
+        getter=_sdfg_build_folder_getter,
+        setter=_sdfg_build_folder_setter,
     )
 
     def __init__(self,

@@ -47,6 +47,10 @@ def test_relative_explicit_build_folder_kept_verbatim():
 def test_pathlib_build_folder_serializes_as_string():
     sdfg = _make_sdfg()
     sdfg.build_folder = pathlib.Path('/pathlib/folder')
+
+    # As an implementation detail it is transformed into a string.
+    assert isinstance(sdfg._build_folder, str)
+
     j = sdfg.to_json()
     assert j['attributes']['build_folder'] == '/pathlib/folder'
     assert isinstance(j['attributes']['build_folder'], str)
