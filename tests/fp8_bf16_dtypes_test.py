@@ -13,11 +13,6 @@ import pytest
 import dace
 from dace import dtypes
 
-skip_lowp_args_on_nanobind = pytest.mark.skipif(
-    dace.Config.get('compiler', 'interface') == 'nanobind',
-    reason='numpy cannot export ml_dtypes-backed arrays via DLPack or the buffer protocol, so the '
-    'nanobind marshalling refuses bfloat16/float8 arguments at codegen; ctypes passes raw pointers.')
-
 # (typeclass, ml_dtypes scalar, byte width, ctype string, raw-view numpy dtype)
 LOWP = [
     (dace.bfloat16, ml_dtypes.bfloat16, 2, "dace::bfloat16", np.uint16),
@@ -93,7 +88,6 @@ def _run_add_one(tc, arr):
     return out
 
 
-@skip_lowp_args_on_nanobind
 @pytest.mark.parametrize("tc,scalar,nbytes,ctype,raw", LOWP)
 def test_numpy_roundtrip_and_compute(tc, scalar, nbytes, ctype, raw):
     # Pass an ml_dtypes array in from outside, compute, get it back -- bit-exact vs ml_dtypes.
@@ -104,7 +98,6 @@ def test_numpy_roundtrip_and_compute(tc, scalar, nbytes, ctype, raw):
 
 
 @pytest.mark.gpu
-@skip_lowp_args_on_nanobind
 @pytest.mark.parametrize("tc,scalar,nbytes,ctype,raw", LOWP)
 def test_gpu_cpu_representation_equivalence(tc, scalar, nbytes, ctype, raw):
     # Identity host->device->host copy. The GPU array is the CUDA native type; if it did not share
@@ -136,7 +129,6 @@ def test_gpu_cpu_representation_equivalence(tc, scalar, nbytes, ctype, raw):
     np.testing.assert_array_equal(gpu.view(raw), a.view(raw))
 
 
-@skip_lowp_args_on_nanobind
 def test_openmp_reduction_bf16():
     # Forces the OpenMP Reduce expansion, which emits `reduction(+: out)` over dace::bfloat16 and so
     # needs the `declare reduction` the runtime header provides. N <= 256 keeps a bf16 sum of ones
@@ -161,7 +153,6 @@ def test_openmp_reduction_bf16():
 
 
 @pytest.mark.gpu
-@skip_lowp_args_on_nanobind
 def test_gpu_cpu_compute_equivalence_bf16():
     # bfloat16 has device arithmetic (__nv_bfloat16), so CPU and GPU must produce identical bytes.
     a = SAMPLE.astype(ml_dtypes.bfloat16)

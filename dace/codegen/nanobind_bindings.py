@@ -21,6 +21,12 @@ from dace import data as dt, dtypes, symbolic
 from dace.codegen.common import sym2cpp
 from dace.config import Config
 
+# ml_dtypes-backed low-precision types: numpy cannot export their arrays via
+# DLPack or the buffer protocol, so they bypass nb::ndarray entirely (see the
+# __array_interface__ branch in _argument_binding) and are excluded from
+# shape/stride inference sources and from user_args.
+_LOWP_TYPES = (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2)
+
 # RAII wrapper around a Python buffer view; nested inside the generated handle,
 # emitted only when the SDFG has struct arguments. PyBUF_SIMPLE yields the raw
 # contiguous bytes regardless of the compound dtype that makes nb::ndarray
@@ -121,7 +127,7 @@ def _symbol_fallbacks(arglist: Dict[str, dt.Data], arg_names: List[str],
     sources = [(name, desc) for name, desc in arglist.items()
                if name in arg_names_set and isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
                and not isinstance(desc.dtype, (dtypes.struct, dtypes.vector)) and desc.optional is not True
-               and not name.startswith('__return')]
+               and desc.dtype.base_type not in _LOWP_TYPES and not name.startswith('__return')]
 
     dace_infer_src = f'__dace_infer_src_{id(arglist)}'
     placeholder = sympy.Symbol(dace_infer_src)
@@ -277,17 +283,42 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
             raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                       f'{type(desc).__name__} is not supported; returns are arrays only.')
 
-        # bfloat16 / float8 (ml_dtypes-backed): numpy can export such arrays
-        # neither via DLPack (BufferError) nor the buffer protocol ("cannot
-        # include dtype 'E' in a buffer"), so nb::ndarray could never ingest
-        # them even with a dtype_traits specialization - and without one the
-        # generated C++ does not compile. Refuse clearly for arrays and
-        # scalars alike; the ctypes interface passes them as raw pointers.
-        # See: https://github.com/wjakob/nanobind/discussions/560
-        if desc.dtype.base_type in (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2):
+        # bfloat16 / float8 (ml_dtypes-backed): numpy cannot export such
+        # arrays via DLPack (BufferError) or the buffer protocol ("cannot
+        # include dtype 'E' in a buffer"), so nb::ndarray can never ingest
+        # them, even with a dtype_traits specialization
+        # (https://github.com/wjakob/nanobind/discussions/560). But numpy
+        # DOES expose __array_interface__ - the very protocol the ctypes
+        # marshaller reads - so a plain array binds as nb::object and the
+        # raw pointer is extracted from the interface dict in setup (GIL
+        # held; the nb::object parameter keeps the array alive across the
+        # call). The typestr itemsize check is the one sanity guard: no
+        # dtype identity, no contiguity checks - ctypes-grade by design.
+        if desc.dtype.base_type in _LOWP_TYPES:
+            if (isinstance(desc, dt.Array) and not isinstance(desc, dt.ContainerArray)
+                    and not isinstance(desc.dtype, (dtypes.struct, dtypes.vector)) and desc.optional is not True):
+                iface = ('__cuda_array_interface__'
+                         if desc.storage == dtypes.StorageType.GPU_Global else '__array_interface__')
+                nbytes = desc.dtype.base_type.bytes
+                lowp_name = desc.dtype.base_type.to_string()
+                # The guard is itemsize-only: the kind letter varies (ml_dtypes
+                # registers e5m2 as '<f1' but bfloat16/e4m3fn as '<V2'/'<V1'),
+                # and dtype identity is not part of this contract anyway.
+                setup_stmts.append(
+                    f'nb::object {name}__ai = {name}.attr("{iface}");\n'
+                    f'        const std::string {name}__ts = nb::cast<std::string>({name}__ai["typestr"]);\n'
+                    f'        if ({name}__ts.size() < 3 || {name}__ts.substr(2) != "{nbytes}")\n'
+                    f'            throw std::invalid_argument("SDFG argument error: argument \'{name}\': expected a '
+                    f'{lowp_name} array (itemsize {nbytes}), got typestr \'" + {name}__ts + "\'.");\n'
+                    f'        const std::uintptr_t {name}__ptr = '
+                    f'nb::cast<std::uintptr_t>(nb::tuple({name}__ai["data"])[0]);')
+                params_by_name[name] = f'nb::object {name}'
+                call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__ptr)')
+                nb_args_by_name[name] = f'nb::arg("{name}")'
+                continue
             raise NotImplementedError(f'Nanobind interface: argument "{name}" of low-precision type '
-                                      f'{desc.dtype} is not supported (numpy cannot export ml_dtypes-'
-                                      f'backed arrays via DLPack or the buffer protocol); '
+                                      f'{desc.dtype} is only supported as a plain non-nullable array '
+                                      f'(scalars would need value type-casters); '
                                       f'use the ctypes interface (compiler.interface=ctypes).')
 
         # A float16 *scalar* would need a nanobind value type-caster for
@@ -559,7 +590,8 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
         if isinstance(desc, dt.ContainerArray) or isinstance(desc, dt.Structure):
             supported = False
         elif isinstance(desc, dt.Array):
-            supported = not isinstance(desc.dtype, dtypes.struct) and desc.optional is not True
+            supported = (not isinstance(desc.dtype, dtypes.struct) and desc.optional is not True
+                         and desc.dtype.base_type not in _LOWP_TYPES)
         elif isinstance(desc, dt.Scalar):
             supported = (not isinstance(desc.dtype, (dtypes.callback, dtypes.vector)) and desc.dtype != dtypes.string
                          and desc.dtype.base_type != dtypes.float16)

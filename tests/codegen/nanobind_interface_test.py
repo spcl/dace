@@ -562,22 +562,50 @@ def test_nanobind_interface_pyobject_scalar_arg_e2e():
 
 
 def test_nanobind_interface_lowp_dtypes_rejected():
-    """bfloat16/float8 (ml_dtypes-backed) arguments are refused at codegen:
-    numpy can export such arrays neither via DLPack nor the buffer protocol
-    (BufferError / "cannot include dtype 'E' in a buffer"), so the nanobind
-    marshalling could never ingest them - refuse instead of emitting C++ that
-    fails to compile (nb::ndarray<dace::bfloat16> has no dtype_traits)."""
+    """bfloat16/float8 SCALARS are refused at codegen (they would need value
+    type-casters, like float16 scalars); arrays pass through the
+    __array_interface__ pointer extraction instead (see the binding test)."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
-
-    for lowp in (dace.bfloat16, dace.float8_e4m3fn, dace.float8_e5m2):
-        sdfg = dace.SDFG(f'lowp_reject_{lowp.to_string()}')
-        sdfg.add_array('A', [4], lowp)
-        with pytest.raises(NotImplementedError, match='ctypes'):
-            generate_bindings_code(sdfg)
 
     sdfg = dace.SDFG('lowp_reject_scalar')
     sdfg.add_scalar('x', dace.bfloat16)
     with pytest.raises(NotImplementedError, match='ctypes'):
+        generate_bindings_code(sdfg)
+
+
+def test_nanobind_interface_lowp_array_binding():
+    """A bfloat16/float8 array binds as nb::object: numpy cannot export
+    ml_dtypes arrays via DLPack or the buffer protocol, but it does expose
+    __array_interface__ - the raw pointer is extracted from there (the same
+    protocol the ctypes marshaller uses), with a typestr itemsize check as
+    the one sanity guard. GPU arrays read __cuda_array_interface__."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('lowp_array_bind_probe')
+    sdfg.add_array('A', [4], dace.bfloat16)
+    sdfg.add_array('B', [4], dace.float8_e4m3fn)
+    code = generate_bindings_code(sdfg)
+    sig = code.split('void call(')[1].split(') {')[0]
+    assert 'nb::object A' in sig
+    assert '__array_interface__' in code
+    # Itemsize-only guard: the typestr kind letter varies across ml_dtypes.
+    assert 'expected a bfloat16 array (itemsize 2)' in code
+    assert 'expected a float8_e4m3fn array (itemsize 1)' in code
+    assert 'reinterpret_cast<dace::bfloat16 *>' in code
+    assert 'reinterpret_cast<dace::float8_e4m3fn *>' in code
+
+    # GPU storage reads the CUDA flavor of the protocol.
+    sdfg = dace.SDFG('lowp_gpu_bind_probe')
+    sdfg.add_array('A', [4], dace.bfloat16, storage=dace.StorageType.GPU_Global)
+    code = generate_bindings_code(sdfg)
+    assert '__cuda_array_interface__' in code
+
+    # Not eligible for user_args (needs setup statements, outside the fast
+    # path's initial scope).
+    sdfg = dace.SDFG('lowp_uargs_probe')
+    sdfg.add_array('A', [4], dace.bfloat16)
+    sdfg.user_args = ['A']
+    with pytest.raises(ValueError, match='not supported'):
         generate_bindings_code(sdfg)
 
 
