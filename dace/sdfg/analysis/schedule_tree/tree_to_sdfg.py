@@ -1550,6 +1550,8 @@ def _connect_view_edges(sdfg: SDFG, bindings: 'dict[str, tn.ViewNode]') -> None:
                 if (any(e.dst_conn == 'views' for e in state.in_edges(view_node))
                         or any(e.src_conn == 'views' for e in state.out_edges(view_node))):
                     continue
+                if not _import_view_source(sdfg, binding.source):
+                    continue
                 memlet = copy.deepcopy(binding.memlet)
                 if state.in_degree(view_node) == 0:
                     source = state.add_read(binding.source)
@@ -1563,6 +1565,33 @@ def _connect_view_edges(sdfg: SDFG, bindings: 'dict[str, tn.ViewNode]') -> None:
                     raise NotImplementedError(f"View '{view_node.data}' is both read and written in one state; "
                                               "cannot determine the viewing direction.")
             to_process = next_round
+
+
+def _import_view_source(sdfg: SDFG, name: str) -> bool:
+    """
+    Make a view's SOURCE resolvable in the SDFG the view is being connected in.
+
+    A view bound inside a scope body (``__anf0 = view A[4 * i:4 * i + 4]``
+    within a map) is materialized in the nested SDFG that body becomes, where
+    the source array does not exist yet -- it lives in an enclosing SDFG and
+    has to be imported as the non-transient a connector requires. The connector
+    itself follows from the access node this then allows (see the connector
+    scan in ``visit_MapScope``, which runs after view resolution).
+
+    :return: Whether the source is available (False when no enclosing SDFG has
+             it, in which case the caller leaves the view unconnected).
+    """
+    if name in sdfg.arrays:
+        return True
+    parent = sdfg.parent.sdfg if sdfg.parent is not None else None
+    while parent is not None and name not in parent.arrays:
+        parent = parent.parent.sdfg if parent.parent is not None else None
+    if parent is None:
+        return False
+    descriptor = parent.arrays[name].clone()
+    descriptor.transient = False
+    sdfg.add_datadesc(name, descriptor)
+    return True
 
 
 def _insert_state_boundaries_to_tree(stree: tn.ScheduleTreeRoot) -> tn.ScheduleTreeRoot:

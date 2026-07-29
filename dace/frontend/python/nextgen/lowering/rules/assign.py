@@ -29,10 +29,15 @@ a planned optimization pass, not a correctness requirement.
 """
 import ast
 import copy
-from typing import Optional, Tuple
+import numbers
+from typing import Any, Optional, Tuple
 
-from dace import data, dtypes, subsets
+import numpy
+
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.semantics import structures as structure_support
@@ -112,6 +117,10 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
         except UnsupportedFeatureError as retried:
             dispatch.fallback_to_callback(statement, state, retried)
             return
+    if isinstance(target, ast.Name) and _index_temporary(statement) and _bind_index_symbol(
+            target.id, value, inferred, state):
+        return
+
     if inferred.kind == 'static':
         if isinstance(target, ast.Name) and _reference_binding(target.id, state) is None:
             state.context.bind_static(target.id, inferred.value)
@@ -131,6 +140,74 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
                                       state.context.filename,
                                       statement,
                                       category='assign-target')
+
+
+def _index_temporary(statement: ast.stmt) -> bool:
+    """Whether canonicalization hoisted this binding out of a subscript INDEX
+    (``ANFTransform._flatten_index``)."""
+    return getattr(statement, 'index_temporary', False)
+
+
+def _bind_index_symbol(name: str, value: ast.expr, inferred: Inferred, state: LoweringState) -> bool:
+    """
+    Bind a temporary hoisted out of an index position as a SYMBOL rather than
+    materializing it as a scalar transient.
+
+    ``doc/extensions/symbolic.rst`` ("Symbolic types vs. scalars") puts a
+    quantity that is set once and consumed in a range on the symbol side, and a
+    subscript bound is exactly that. Materializing it as a container instead
+    put a data name where a memlet expects a symbol -- which is refused
+    outright inside a dataflow scope, and even outside one keeps sizes like
+    ``__anf0 * 96 - i * 96`` from folding to 96.
+
+    Two ways to get there, both of which must work (an index is an index):
+
+    - a compile-time SYMBOLIC value (``i + 1`` over map parameters and symbols)
+      IS the expression; the name binds to it and nothing is emitted, so the
+      subset carries the arithmetic and the symbolic machinery folds it;
+    - a value read from DATA (``n = bounds[0]`` … ``A[:n]``) defines a real
+      symbol through an interstate assignment
+      (:class:`~...treenodes.AssignNode`), the same mechanism dynamic map
+      bounds and the advanced-indexing gather use.
+
+    :return: True when the name was bound as a symbol (nothing else to lower).
+    """
+    if inferred.kind in ('symbolic', 'constant') and (symbolic.issymbolic(inferred.value)
+                                                      or isinstance(inferred.value, numbers.Integral)):
+        state.context.bind_constant(name, inferred.value)
+        return True
+    if not inferred.is_data or not isinstance(inferred.descriptor.dtype, (dtypes.typeclass, )):
+        return False
+    if not numpy.issubdtype(inferred.descriptor.dtype.type, numpy.integer):
+        return False  # A non-integer index is not a symbol; let the ordinary paths report it
+    try:
+        access = resolve_access(value, state)
+    except UnsupportedFeatureError:
+        return False
+    if access is None:
+        return False
+    read = _scalar_read_expression(access)
+    if read is None:
+        return False
+    symbol_name = state.context.fresh_name(f'__idx_{name.lstrip("_")}_')
+    state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
+    state.emitter.emit(
+        tn.AssignNode(name=symbol_name, value=CodeBlock(read), edge=InterstateEdge(assignments={symbol_name: read})))
+    state.context.bind_symbol(name, access.descriptor.dtype, symbol_name=symbol_name)
+    return True
+
+
+def _scalar_read_expression(access: DataAccess) -> Optional[str]:
+    """A single-element access rendered for an interstate assignment
+    (``bounds[0]``), or None if the access is not one element."""
+    if isinstance(access.descriptor, data.Scalar):
+        return f'{access.container}[0]'
+    try:
+        if data._prod(access.subset.size()) != 1:
+            return None
+    except TypeError:
+        return None
+    return f'{access.container}[{", ".join(str(begin) for begin, _, _ in access.subset.ranges)}]'
 
 
 def _lower_indirect_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state: LoweringState) -> bool:
@@ -320,9 +397,13 @@ def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Infer
 
     An EXISTING :class:`~dace.data.Reference` member can be assigned as a
     whole — the assignment re-points the member (a :class:`RefSetNode`),
-    matching SDFG reference semantics. Rebinding an existing non-reference
-    member has no dataflow equivalent (write into a subset instead) and
-    degrades to the interpreter. A member that does not exist yet on a
+    matching SDFG reference semantics. Any other existing member is embedded
+    STORAGE, so assigning to it writes into that storage (``B.sum = tmp`` is a
+    write of ``tmp`` into the member's element, ``B.y = A.y`` a copy) — the
+    same treatment a newly created member gets below. Re-POINTING a
+    non-reference member is what has no dataflow equivalent, and a value that
+    does not fit its storage surfaces as a feature gap from the computation
+    path. A member that does not exist yet on a
     :class:`~dace.data.PythonClass` base is created dynamically (mirroring
     the classic frontend's ``_ensure_pythonclass_member``, see
     :func:`_create_pythonclass_member`); attributes that are neither an
@@ -332,11 +413,8 @@ def _lower_member_assign(target: ast.Attribute, value: ast.expr, inferred: Infer
     access = resolve_access(target, state)
     if access is not None:
         if not isinstance(access.descriptor, data.Reference):
-            raise UnsupportedFeatureError(
-                f'Cannot rebind non-reference structure member "{label}" (write into a subset instead)',
-                state.context.filename,
-                statement,
-                category='structure-member')
+            dispatch.lower_computation(access, value, statement, state)
+            return
         _lower_reference_set(label, (access.container, access.descriptor), value, inferred, statement, state)
         return
 
@@ -695,6 +773,15 @@ def prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringSta
         existing = state.context.containers[binding.container]
         if _compatible(existing, result_descriptor):
             return DataAccess(binding.container, subsets.Range.from_array(existing), existing)
+        if inferred.kind in ('constant', 'symbolic') and _writable_as(existing, result_descriptor):
+            # A compile-time SCALAR written into a name that already holds a
+            # container converts into it (``b = dace.ndarray(...)`` … ``b = 0``
+            # fills ``b``), which is what the classic frontend does and what
+            # makes such an assignment mergeable across branches -- rebinding
+            # the name to a fresh scalar of the literal's own type instead left
+            # the branches of an if/elif/else disagreeing on both the container
+            # and its dtype, and the whole chain fell back.
+            return DataAccess(binding.container, subsets.Range.from_array(existing), existing)
 
     container_name = state.context.add_container(target.id, result_descriptor)
     state.context.bind(target.id, container_name)
@@ -789,4 +876,16 @@ def _compatible(existing: data.Data, new: data.Data) -> bool:
         return True
     if isinstance(existing, data.Array) and isinstance(new, data.Array):
         return tuple(existing.shape) == tuple(new.shape)
+    # A scalar container holds a one-element result, and vice versa: the two
+    # descriptors name the same single element, so the write goes in place
+    # rather than rebinding the name (``i = 1`` … ``i += j`` with ``j`` a
+    # ``float64[1]`` is one accumulator, not two containers -- and inside a
+    # loop the rebinding would be loop-carried and force a callback).
+    if isinstance(existing, (data.Scalar, data.Array)) and isinstance(new, (data.Scalar, data.Array)):
+        return _element_count(existing) == 1 and _element_count(new) == 1
     return False
+
+
+def _element_count(descriptor: data.Data) -> Any:
+    """The number of elements a scalar/array descriptor holds."""
+    return data._prod(descriptor.shape) if isinstance(descriptor, data.Array) else 1

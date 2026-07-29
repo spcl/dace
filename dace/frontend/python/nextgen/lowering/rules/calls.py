@@ -14,8 +14,10 @@ import copy
 import types
 from typing import Any, Dict, List, Optional, Tuple
 
-from dace import data, subsets
+from dace import data, subsets, symbolic
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg.sdfg import InterstateEdge
 from dace.utils import prod
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
@@ -91,8 +93,8 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     # nothing; any failure here falls back to the interpreter, preserving
     # totality. Failures during emission (step 4) are frontend bugs and raise.
     try:
-        callee_body, parameter_bindings, callee_globals, argument_labels, pending_views = _prepare_callee(
-            call, callee, state)
+        (callee_body, parameter_bindings, callee_globals, argument_labels, pending_views,
+         pending_symbols) = _prepare_callee(call, callee, state)
     except Exception as reason:  # Unparseable callee, unsupported argument, ...
         fallback_to_callback(statement,
                              state,
@@ -122,6 +124,15 @@ def lower_nested_call(target: Optional[ast.expr], call: ast.Call, callee: Any, s
     # views (see ``_reshape_view_descriptor``) before entering the callee
     # scope, matching the classic frontend's NView placement immediately
     # before the nested call.
+    # Symbols specialized from runtime scalars are defined here, before the
+    # call scope, so the callee body (and the shapes of anything it allocates)
+    # can use them (see ``_map_symbol_keywords``).
+    for symbol_name, source_container in pending_symbols:
+        assignment = f'{source_container}[0]'
+        state.emitter.emit(
+            tn.AssignNode(name=symbol_name,
+                          value=CodeBlock(assignment),
+                          edge=InterstateEdge(assignments={symbol_name: assignment})))
     for view_container, source_container, source_descriptor, view_descriptor in pending_views:
         state.emitter.emit(
             tn.ViewNode(target=view_container,
@@ -160,14 +171,16 @@ def _prepare_callee(
     deferred to the caller, which commits to inlining only after the
     return-shape checks pass.
 
-    :return: A 5-tuple of (canonical callee body — a fresh deep copy, since
+    :return: A 6-tuple of (canonical callee body — a fresh deep copy, since
              lowering mutates it, parameter-to-container bindings, resolved
-             callee globals, argument label mapping, and a list of pending
+             callee globals, argument label mapping, a list of pending
              argument-reinterpretation views as (view container, source
-             container, source descriptor, view descriptor) tuples).
+             container, source descriptor, view descriptor) tuples, and a list
+             of pending symbol definitions as (symbol name, source container)
+             pairs — see ``_map_symbol_keywords``).
     """
-    (argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, spec_key,
-     pending_views) = _map_arguments(call, callee, state)
+    (argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, spec_key, pending_views,
+     pending_symbols) = _map_arguments(call, callee, state)
 
     # Cache key: callee identity (function AND bound object — two instances
     # share __call__ source but specialize separately through their attribute
@@ -205,7 +218,7 @@ def _prepare_callee(
     memo: Dict[int, Any] = {}
     _seed_embedded_objects(parse.canonical_body, memo)
     body = copy.deepcopy(parse.canonical_body, memo)
-    return body, parameter_bindings, parse.program_globals, argument_labels, pending_views
+    return body, parameter_bindings, parse.program_globals, argument_labels, pending_views, pending_symbols
 
 
 def _seed_embedded_objects(statements: List[ast.stmt], memo: Dict[int, Any]) -> None:
@@ -306,12 +319,26 @@ def _map_arguments(
                                       call,
                                       category='inline-fallback:arguments')
     provided: Dict[str, ast.expr] = dict(zip(parameter_names, call.args))
+    symbol_keywords: Dict[str, ast.expr] = {}
     for keyword in call.keywords:
-        if keyword.arg is None or keyword.arg in provided or keyword.arg not in parameter_names:
+        if keyword.arg is None or keyword.arg in provided:
             raise UnsupportedFeatureError(f'Unsupported keyword argument in call to "{callee.name}"',
                                           state.context.filename,
                                           call,
                                           category='inline-fallback:arguments')
+        if keyword.arg not in parameter_names:
+            # A keyword naming one of the callee's free SYMBOLS specializes it
+            # for this call (``inner(A=A, symsym=tmp)``,
+            # ``pressure_poisson(p, dx, dy, b, nit=nit)``) — the classic
+            # frontend's symbol mapping on the nested SDFG. Anything else is a
+            # keyword the callee has no use for.
+            if not _names_callee_symbol(callee, keyword.arg):
+                raise UnsupportedFeatureError(f'Unsupported keyword argument in call to "{callee.name}"',
+                                              state.context.filename,
+                                              call,
+                                              category='inline-fallback:arguments')
+            symbol_keywords[keyword.arg] = keyword.value
+            continue
         provided[keyword.arg] = keyword.value
 
     callee_globals = dict(callee.global_vars)
@@ -376,8 +403,70 @@ def _map_arguments(
                                           state.context.filename,
                                           argument,
                                           category='inline-fallback:arguments')
+    pending_symbols = _map_symbol_keywords(symbol_keywords, callee, callee_globals, specialization, call, state)
     return (argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, tuple(specialization),
-            pending_views)
+            pending_views, pending_symbols)
+
+
+def _names_callee_symbol(callee: Any, name: str) -> bool:
+    """
+    Whether a keyword names one of the callee's free symbols, under either
+    spelling: the SYMBOL's name (``N=...`` for ``dace.symbol('N')``) or the
+    name the callee's namespace binds it to, which differs for an anonymous
+    symbol (``W = dace.symbol()`` is really ``sym_0``).
+    """
+    if name in getattr(callee, 'symbols', ()):
+        return True
+    return isinstance(getattr(callee, 'global_vars', {}).get(name), symbolic.symbol)
+
+
+def _map_symbol_keywords(symbol_keywords: Dict[str, ast.expr], callee: Any, callee_globals: Dict[str, Any],
+                         specialization: List, call: ast.Call, state: LoweringState) -> List[Tuple[str, str]]:
+    """
+    Specialize the callee's free symbols from ``SYMBOL=value`` keywords.
+
+    A compile-time value (a constant or an expression over the caller's own
+    symbols) is substituted directly into the callee's namespace, so its parse
+    sees the caller's expression wherever the symbol appears — including in the
+    shapes of the containers it allocates.
+
+    A RUNTIME value (a scalar the caller computed) cannot be substituted, so it
+    is promoted to a symbol of the caller: a fresh symbol is defined from the
+    scalar by an interstate assignment emitted immediately before the call
+    (returned as pending work, since inlining is not committed yet), and the
+    callee is specialized to that symbol. This is the schedule-tree equivalent
+    of the classic frontend's symbol mapping on a nested SDFG. The symbol is
+    named per CALL SITE: two sites passing different values must not share one,
+    since containers allocated by the first are still sized by it.
+
+    :return: (symbol name, source container) pairs whose interstate assignment
+             the caller emits once it commits to inlining.
+    """
+    pending_symbols: List[Tuple[str, str]] = []
+    for name, argument in symbol_keywords.items():
+        inferred = state.inference.infer(argument)
+        if inferred.kind in ('constant', 'symbolic'):
+            callee_globals[name] = inferred.value
+            specialization.append((name, 'symbol', repr(inferred.value)))
+            continue
+        if not inferred.is_data or not isinstance(argument, ast.Name):
+            raise UnsupportedFeatureError(f'Unsupported symbol argument "{name}" in call to "{callee.name}"',
+                                          state.context.filename,
+                                          argument,
+                                          category='inline-fallback:arguments')
+        container = state.context.container_of(argument.id, argument)
+        descriptor = state.context.containers[container]
+        if data._prod(descriptor.shape) != 1:
+            raise UnsupportedFeatureError(f'Symbol argument "{name}" in call to "{callee.name}" is not a scalar',
+                                          state.context.filename,
+                                          argument,
+                                          category='inline-fallback:arguments')
+        symbol_name = f'__sym_{name}_{call.lineno}_{call.col_offset}'
+        state.context.symbols.setdefault(symbol_name, symbolic.symbol(symbol_name, descriptor.dtype))
+        callee_globals[name] = state.context.symbols[symbol_name]
+        specialization.append((name, 'symbol', symbol_name))
+        pending_symbols.append((symbol_name, container))
+    return pending_symbols
 
 
 def _parse_callee(callee: Any, argtypes: Dict[str, data.Data], callee_globals: Dict[str, Any],

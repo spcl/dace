@@ -146,9 +146,52 @@ def test_structure_execution():
     assert np.allclose(arr, expected)
 
 
+def test_scalar_member_write():
+    """A structure member is embedded STORAGE, so assigning to it writes into
+    that storage -- including a scalar member, which has no subset to write
+    through and used to degrade to a callback."""
+    SumStruct = dace.data.Structure(dict(total=dace.data.Scalar(dace.float64)), name='SumStruct')
+
+    @dace.program
+    def accumulate(A: dace.float64[8], B: SumStruct, C: dace.float64[8]):
+        total = 0.0
+        for i in range(8):
+            total += A[i]
+        B.total = total
+        for i in range(8):
+            C[i] = A[i] + B.total
+
+    tree = nextgen.parse_program(accumulate, np.zeros(8), SumStruct, np.zeros(8))
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
+def test_nested_member_write():
+    """The same for a member of a nested structure (``B.x.b = A.x.b``)."""
+    Nested = dace.data.Structure(
+        {
+            'x': dace.data.Structure({
+                'a': dace.float32[20],
+                'b': dace.int32
+            }, name='InnerStruct'),
+            'y': dace.float64[10, 10]
+        },
+        name='OuterStruct')
+
+    @dace.program
+    def copy_members(A: Nested, B: Nested):
+        B.x.a[:] = A.x.a[:]
+        B.x.b = A.x.b
+        B.y[:] = A.y[:]
+
+    tree = nextgen.parse_program(copy_members, Nested, Nested)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+
 if __name__ == '__main__':
     test_structure_members()
     test_structure_vs_old_frontend()
     test_structure_unknown_member()
     test_nested_structure_members()
     test_structure_execution()
+    test_scalar_member_write()
+    test_nested_member_write()

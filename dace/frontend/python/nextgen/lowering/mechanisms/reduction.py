@@ -7,9 +7,10 @@ output memlet carries a write-conflict resolution (WCR) function from the
 shared ufunc table.
 """
 import ast
+import copy
 from typing import Optional, Tuple
 
-from dace import subsets, symbolic
+from dace import data, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -60,10 +61,11 @@ def emit_reduction(target: DataAccess,
             return
 
     if not target.is_scalar_access:
-        raise UnsupportedFeatureError('Full reductions require a scalar target',
-                                      state.context.filename,
-                                      statement,
-                                      category='reduction')
+        # ``out[i:i + 5] = numpy.sum(A)``: a full reduction produces ONE value,
+        # and assigning it to an array subset broadcasts it (NumPy's own rule).
+        # Reduce into a scalar temporary and fill the target from it.
+        _emit_broadcast_reduction(target, ufunc_name, source, statement, state)
+        return
 
     line = getattr(statement, 'lineno', 0)
     source_shape = nondegenerate_shape(source.subset)
@@ -80,7 +82,7 @@ def emit_reduction(target: DataAccess,
         state.emitter.emit(
             tn.TaskletNode(node=init_tasklet,
                            in_memlets={},
-                           out_memlets={'__out': Memlet(data=target.container, subset=target.subset)}))
+                           out_memlets={'__out': Memlet(data=target.container, subset=copy.deepcopy(target.subset))}))
     else:
         first_element = subsets.Range([(start, start, 1) for start, _, _ in source.subset.ranges])
         first_access = DataAccess(source.container, first_element, source.descriptor)
@@ -92,7 +94,33 @@ def emit_reduction(target: DataAccess,
     map_node = nodes.MapEntry(nodes.Map(f'reduce_{line}', params, map_range))
     tasklet = nodes.Tasklet(f'reduce_{line}', {'__in0'}, {'__out'}, '__out = __in0')
     in_memlets = {'__in0': Memlet(data=source.container, subset=indexed_subset(source, params, source_shape))}
-    out_memlets = {'__out': Memlet(data=target.container, subset=target.subset, wcr=specification['reduce'])}
+    out_memlets = {
+        '__out': Memlet(data=target.container, subset=copy.deepcopy(target.subset), wcr=specification['reduce'])
+    }
+    with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
+        state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+
+
+def _emit_broadcast_reduction(target: DataAccess, ufunc_name: str, source: DataAccess, statement: ast.stmt,
+                              state: LoweringState) -> None:
+    """Reduce into a scalar temporary, then broadcast it over ``target``'s
+    subset (see the call site for why this is what NumPy does)."""
+    line = getattr(statement, 'lineno', 0)
+    scalar_descriptor = data.Scalar(target.descriptor.dtype)
+    container = state.context.add_container(f'__reduce_{line}', scalar_descriptor)
+    scalar_target = DataAccess(container, subsets.Range.from_array(scalar_descriptor), scalar_descriptor)
+    emit_reduction(scalar_target, ufunc_name, source, statement, state)
+
+    target_shape = nondegenerate_shape(target.subset)
+    if not target_shape:
+        _emit_scalar_tasklet(f'reduce_broadcast_{line}', '__in0', scalar_target, target, state)
+        return
+    params = [f'__i{i}' for i in range(len(target_shape))]
+    map_node = nodes.MapEntry(
+        nodes.Map(f'reduce_broadcast_{line}', params, subsets.Range([(0, size - 1, 1) for size in target_shape])))
+    tasklet = nodes.Tasklet(f'reduce_broadcast_{line}', {'__in0'}, {'__out'}, '__out = __in0')
+    in_memlets = {'__in0': Memlet(data=container, subset=subsets.Range.from_array(scalar_descriptor))}
+    out_memlets = {'__out': Memlet(data=target.container, subset=indexed_subset(target, params, target_shape))}
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
 
@@ -168,4 +196,4 @@ def _emit_scalar_tasklet(label: str, connector: str, source: DataAccess, target:
     state.emitter.emit(
         tn.TaskletNode(node=tasklet,
                        in_memlets={connector: Memlet(data=source.container, subset=source.subset)},
-                       out_memlets={'__out': Memlet(data=target.container, subset=target.subset)}))
+                       out_memlets={'__out': Memlet(data=target.container, subset=copy.deepcopy(target.subset))}))

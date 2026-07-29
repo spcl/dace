@@ -78,6 +78,11 @@ class ProgramContext:
         #: resolve through the base Structure, matching ``SDFG.arrays``.
         self.containers: Dict[str, data.Data] = NestedDict()
         self.symbols: Dict[str, Any] = {}
+        #: Source name -> repository symbol name, for the rare symbol whose
+        #: repository name differs (see :meth:`bind_symbol`). The repository
+        #: itself is keyed by the symbol's own name, since it IS the tree's
+        #: symbol table.
+        self.symbol_aliases: Dict[str, str] = {}
         #: Compile-time constants as (descriptor, value) tuples, shared with the tree root.
         self.constants: Dict[str, Tuple[data.Data, Any]] = dict(constants)
 
@@ -177,12 +182,34 @@ class ProgramContext:
                                              version=version,
                                              declared=declared)
 
-    def bind_symbol(self, source_name: str, dtype: dtypes.typeclass = dtypes.int64) -> symbolic.symbol:
-        """Bind a source-level name as a typed symbol (e.g., a loop index)."""
-        symbol_value = symbolic.symbol(source_name, dtype)
-        self.symbols[source_name] = symbol_value
+    def bind_symbol(self,
+                    source_name: str,
+                    dtype: dtypes.typeclass = dtypes.int64,
+                    symbol_name: Optional[str] = None) -> symbolic.symbol:
+        """
+        Bind a source-level name as a typed symbol (e.g., a loop index).
+
+        :param symbol_name: The repository name of the symbol, when it has to
+            differ from the source name -- a loop variable that shadows an
+            existing CONTAINER of the same name needs its own (an SDFG rejects
+            a symbol and a data descriptor sharing a name). Every consumer
+            reaches the symbol through this binding, so the indirection is
+            invisible: :meth:`defined_view` hands the memlet parser the symbol
+            OBJECT under the source name, and ``resolve_symbol_names`` rewrites
+            emitted code to the symbol's own name.
+        """
+        symbol_value = symbolic.symbol(symbol_name or source_name, dtype)
+        self.symbols[symbol_value.name] = symbol_value
+        if symbol_value.name != source_name:
+            self.symbol_aliases[source_name] = symbol_value.name
+        else:
+            self.symbol_aliases.pop(source_name, None)
         self.bindings[source_name] = Binding(kind='symbol')
         return symbol_value
+
+    def symbol_of(self, source_name: str) -> Any:
+        """The symbol object a symbol-bound source name refers to."""
+        return self.symbols[self.symbol_aliases.get(source_name, source_name)]
 
     def bind_static(self, source_name: str, value: StaticSequence) -> None:
         """Bind a source-level name to a compile-time Python sequence value."""
@@ -380,5 +407,14 @@ class ProgramContext:
                         member = self.member_access_of(source_name, member_name)
                         if member is not None:
                             result[f'{source_name}.{member_name}'] = member[1]
+        for source_name, value in self.constant_values.items():
+            # Names bound to a compile-time SYMBOLIC value (an index hoisted
+            # out of a subscript, see ``rules.assign._bind_index_symbol``)
+            # resolve to the expression itself.
+            if symbolic.issymbolic(value) or isinstance(value, int):
+                result[source_name] = value
         result.update(self.symbols)
+        for source_name, symbol_name in self.symbol_aliases.items():
+            if symbol_name in self.symbols:
+                result[source_name] = self.symbols[symbol_name]
         return result

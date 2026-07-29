@@ -884,8 +884,24 @@ class ANFTransform(_BodyTransformer):
         return node
 
     def _flatten_index(self, index: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
+        """
+        Flatten a subscript index, marking every temporary hoisted out of it.
+
+        A quantity consumed in a RANGE is a symbol, not a scalar transient
+        (``doc/extensions/symbolic.rst``, "Symbolic types vs. scalars"), and by
+        the time lowering sees ``__anf0 = i + 1`` nothing says where the value
+        is used. The mark carries that here, the same way an assignment
+        target's hoisted base carries ``aliasing_required``.
+        """
+        already_hoisted = len(hoisted)
+        result = self._flatten_index_parts(index, hoisted)
+        for lifted in hoisted[already_hoisted:]:
+            lifted.index_temporary = True
+        return result
+
+    def _flatten_index_parts(self, index: ast.expr, hoisted: List[ast.stmt]) -> ast.expr:
         if isinstance(index, ast.Tuple):
-            index.elts = [self._flatten_index(e, hoisted) for e in index.elts]
+            index.elts = [self._flatten_index_parts(e, hoisted) for e in index.elts]
             return index
         if isinstance(index, ast.Slice):
             for field in ('lower', 'upper', 'step'):

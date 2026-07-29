@@ -10,6 +10,8 @@ from typing import Dict, List, Optional, Tuple
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
@@ -141,7 +143,7 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
         else:
             return None
         expr = state.inference.parse_access(node)
-        subset = expr.subset
+        subset = substitute_symbolic_scalars(expr.subset, state.context)
         if isinstance(subset, subsets.Indices):
             subset = subsets.Range.from_indices(subset)
         if expr.arrdims:
@@ -158,20 +160,90 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
                 state.context.filename,
                 node,
                 category='data-dependent-subscript')
-        if scalar_reads and state.emitter.in_dataflow_scope:
-            # Scalar containers in subsets are legitimate at control-flow
-            # level (scalar-to-symbol promotion turns them into symbols), but
-            # inside a dataflow scope no such mechanism exists — the memlet
-            # would reference a runtime scalar as if it were a symbol.
-            raise UnsupportedFeatureError(
-                f'Subscript index reads scalar container(s) {", ".join(sorted(scalar_reads))} inside a '
-                'dataflow scope',
-                state.context.filename,
-                node,
-                category='data-dependent-subscript')
+        if scalar_reads:
+            subset = _promote_range_scalars(subset, scalar_reads, node, state)
         kept = kept_dimensions(node.slice, len(subset.ranges))
         return DataAccess(base_container, subset, base_descriptor, kept_dims=kept, new_axes=tuple(expr.new_axes or ()))
     return None
+
+
+def _promote_range_scalars(subset: subsets.Range, names: set, node: ast.AST, state: LoweringState) -> subsets.Range:
+    """
+    Replace scalar containers that determine a subset's LENGTH with symbols
+    defined from them, through an interstate assignment emitted just before the
+    access.
+
+    ``doc/extensions/symbolic.rst`` puts a quantity consumed in a range on the
+    symbol side, and a length is one: a container name left in a range prints
+    as data where the code generator expects a symbol (``O[0:n]`` with a scalar
+    ``n`` emitted invalid C++), and inside a dataflow scope it was refused
+    outright as a data-dependent subscript.
+
+    A scalar that only picks an ELEMENT (a dimension of length one, ``A[i]``
+    with a scalar ``i``) is left alone: that is indirection, which the
+    computation mechanisms lower by reading the scalar as data. The symbol is
+    minted fresh per access rather than cached per container, so a scalar that
+    is reassigned between two accesses cannot leave a stale definition behind.
+
+    :raises UnsupportedFeatureError: If a length-determining scalar cannot be
+        promoted (a non-integer scalar), which is a genuine feature gap.
+    """
+    promotable = set()
+    for dimension, size in zip(subset.ranges, subset.size()):
+        if size == 1:
+            continue
+        for component in dimension:
+            promotable |= names & symbolic.free_symbols_and_functions(component)
+    if not promotable:
+        return subset
+    replacements = {}
+    for name in sorted(promotable):
+        binding = state.context.resolve(name)
+        descriptor = state.context.containers[binding.container]
+        if not isinstance(descriptor.dtype, dtypes.typeclass) or descriptor.dtype not in dtypes.INTEGER_TYPES:
+            raise UnsupportedFeatureError(f'Subscript length depends on non-integer scalar "{name}"',
+                                          state.context.filename,
+                                          node,
+                                          category='data-dependent-subscript')
+        symbol_name = state.context.fresh_name(f'__idx_{name.lstrip("_")}_')
+        state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, descriptor.dtype)
+        read = f'{binding.container}[0]'
+        state.emitter.emit(
+            tn.AssignNode(name=symbol_name, value=CodeBlock(read),
+                          edge=InterstateEdge(assignments={symbol_name: read})))
+        replacements[symbolic.pystr_to_symbolic(name)] = state.context.symbols[symbol_name]
+    promoted = copy.deepcopy(subset)
+    promoted.replace(replacements)
+    return promoted
+
+
+def substitute_symbolic_scalars(subset, context):
+    """
+    Put back the symbolic VALUE of any ANF temporary a subset references.
+
+    Canonicalization hoists a compound index expression into a temporary
+    (``O[i * 96:(i + 1) * 96]`` becomes ``__anf0 = i + 1; O[i * 96:__anf0 *
+    96]``), and that temporary is materialized as a scalar container. In a
+    subset the container NAME is meaningless -- it reads as a data-dependent
+    index, which inside a dataflow scope is refused outright, and even outside
+    one it keeps sizes like ``__anf0 * 96 - i * 96`` from folding to 96.
+
+    The temporaries that hold a compile-time symbolic value record it
+    (``ProgramContext.symbolic_scalar_values``, written for single-assignment
+    ANF temps precisely so the value survives materialization), so substituting
+    it back recovers the expression the source wrote.
+    """
+    if not context.symbolic_scalar_values:
+        return subset
+    replacements = {symbolic.pystr_to_symbolic(name): value for name, value in context.symbolic_scalar_values.items()}
+    if not replacements:
+        return subset
+    try:
+        substituted = copy.deepcopy(subset)
+        substituted.replace(replacements)
+        return substituted
+    except Exception:
+        return subset  # A subset shape the substitution cannot rewrite: leave it alone
 
 
 def data_dependent_container_names(subset: subsets.Range, context) -> Tuple[set, set]:
@@ -300,6 +372,10 @@ def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:
             binding = state.context.resolve(name_node.id)
             if binding is not None and binding.kind == 'container':
                 name_node.id = binding.container
+            elif binding is not None and binding.kind == 'symbol':
+                # A symbol's repository name may differ from the source name
+                # (see ``ProgramContext.bind_symbol``).
+                name_node.id = state.context.symbol_of(name_node.id).name
             return name_node
 
     return ast.fix_missing_locations(_Renamer().visit(result))

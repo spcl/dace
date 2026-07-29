@@ -136,7 +136,8 @@ def _collect_warm_tasks(body: List[ast.stmt], context,
         if id(callee.f) in visited:
             continue
         try:
-            argtypes, callee_globals, _, _, injected_defaults, spec_key, _ = calls._map_arguments(call, callee, state)
+            argtypes, callee_globals, _, _, injected_defaults, spec_key, _, _ = calls._map_arguments(
+                call, callee, state)
         except Exception:
             continue  # Not statically resolvable here; parses inline on demand
         key = (id(callee), callee.resolve_functions, id(callee.methodobj), spec_key)

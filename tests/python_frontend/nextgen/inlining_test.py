@@ -4,6 +4,8 @@ Tests for nested ``@dace.program`` call inlining in the next-generation
 frontend: structural inlining into FunctionCallScope with a shared repository,
 return-value binding, recursion/early-return fallback, and explicit SDFG calls.
 """
+import numpy as np
+
 import dace
 from dace.frontend.python import nextgen
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
@@ -281,6 +283,71 @@ def test_compiletime_constant_arguments():
     assert np.allclose(result, 2.0)
 
 
+def test_symbol_keyword_specializes_the_callee():
+    """``callee(A, SYMBOL=value)`` specializes one of the callee's free
+    symbols, the classic frontend's symbol mapping on a nested SDFG. A
+    compile-time value substitutes directly into the callee's namespace."""
+    M = dace.symbol('M')
+
+    @dace.program
+    def filler(out: dace.float64[8]):
+        out[:] = M
+
+    @dace.program
+    def caller(out: dace.float64[8]):
+        filler(out, M=7)
+
+    result = np.zeros(8)
+    tree = nextgen.parse_program(caller, result)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert len(_nodes_of_type(tree, tn.FunctionCallScope)) == 1
+
+    tree.as_sdfg().compile()(out=result)
+    assert np.allclose(result, 7.0)
+
+
+def test_runtime_symbol_keyword_is_promoted_to_a_symbol():
+    """A symbol keyword whose value is a RUNTIME scalar cannot be substituted:
+    a symbol of the caller is defined from it immediately before the call
+    (an interstate assignment) and the callee specialized to that symbol, so
+    the callee may still use it in shapes."""
+    K = dace.symbol('K')
+
+    @dace.program
+    def sized(out: dace.float64[8]):
+        tmp = np.zeros((K, ), dtype=np.float64)
+        tmp[:] = 2.0
+        out[0:K] = tmp
+
+    @dace.program
+    def caller(out: dace.float64[8], bounds: dace.int64[1]):
+        k = bounds[0]
+        sized(out, K=k)
+
+    result, bounds = np.zeros(8), np.array([5], dtype=np.int64)
+    tree = nextgen.parse_program(caller, result, bounds)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    assigns = _nodes_of_type(tree, tn.AssignNode)
+    assert len(assigns) == 1 and assigns[0].name.startswith('__sym_K')
+
+    tree.as_sdfg().compile()(out=result, bounds=bounds)
+    assert np.allclose(result[:5], 2.0) and np.allclose(result[5:], 0.0)
+
+
+def test_unknown_keyword_still_falls_back():
+    """A keyword that names neither a parameter nor a free symbol of the callee
+    is not something to specialize -- the call stays interpreter work."""
+
+    @dace.program
+    def caller(arr: dace.float64[8]):
+        _add_one(arr, nonsense=3)
+
+    tree = nextgen.parse_program(caller, np.zeros(8))
+    callbacks = _nodes_of_type(tree, tn.PythonCallbackNode)
+    assert len(callbacks) == 1
+    assert 'inline-fallback:arguments' in callbacks[0].reason
+
+
 if __name__ == '__main__':
     test_bare_call_inlines()
     test_return_value_binding()
@@ -294,3 +361,6 @@ if __name__ == '__main__':
     test_nested_callee_calls_callee()
     test_sdfg_valued_callee()
     test_compiletime_constant_arguments()
+    test_symbol_keyword_specializes_the_callee()
+    test_runtime_symbol_keyword_is_promoted_to_a_symbol()
+    test_unknown_keyword_still_falls_back()

@@ -187,6 +187,38 @@ def _qualified_object_name(obj: Any, fallback: Optional[str]) -> Optional[str]:
     return fallback
 
 
+#: Kind ranks for NEP 50 weak promotion (see
+#: :meth:`InferenceService._result_dtype`): a literal only widens a typed
+#: operand when its own kind ranks higher.
+_WEAK_SCALAR_RANKS = {bool: 0, int: 1, float: 2, complex: 3}
+_WEAK_KIND_DEFAULTS = {0: dtypes.bool_, 1: dtypes.int64, 2: dtypes.float64, 3: dtypes.complex128}
+_DTYPE_KIND_RANKS = {'b': 0, 'i': 1, 'u': 1, 'f': 2, 'c': 3}
+
+
+def _weak_scalar_rank(operand: 'Inferred') -> Optional[int]:
+    """
+    The weak-promotion rank of an operand that is a Python scalar LITERAL, or
+    None for anything typed.
+
+    Exact types only: ``numpy.int32(1)`` is a typed value that promotes
+    normally, while the ``1`` in ``i + 1`` is weak. ``bool`` is checked before
+    ``int`` because it is a subclass of it.
+    """
+    if operand.kind != 'constant':
+        return None
+    return _WEAK_SCALAR_RANKS.get(type(operand.value))
+
+
+def _dtype_kind_rank(dtype: dtypes.typeclass) -> int:
+    """The kind rank of a dace dtype, on the same scale as
+    :data:`_WEAK_SCALAR_RANKS`. Unknown kinds rank highest, so a literal never
+    widens them."""
+    try:
+        return _DTYPE_KIND_RANKS.get(numpy.dtype(dtype.type).kind, len(_WEAK_KIND_DEFAULTS))
+    except TypeError:
+        return len(_WEAK_KIND_DEFAULTS)
+
+
 def _registered_qualname(name: Optional[str]) -> bool:
     """Whether the replacement registry has an entry under this exact name,
     in either the implementation or the descriptor-inference keyspace."""
@@ -809,7 +841,7 @@ class InferenceService:
                     return Inferred(kind='symbolic', value=symbolic_value)
                 return Inferred(kind='data', descriptor=self.context.containers[binding.container])
             if binding.kind == 'symbol':
-                return Inferred(kind='symbolic', value=self.context.symbols[node.id])
+                return Inferred(kind='symbolic', value=self.context.symbol_of(node.id))
             if binding.kind == 'static':
                 return Inferred(kind='static', value=self.context.static_values[node.id])
             if binding.kind == 'constant':
@@ -1086,7 +1118,14 @@ class InferenceService:
         for operand in data_operands:
             operand_shape = tuple(operand.descriptor.shape) if isinstance(operand.descriptor, data.Array) else ()
             shape = broadcast_shapes(shape, operand_shape)
-        if not shape or all(s == 1 for s in shape):
+        if not shape:
+            # No array operand contributed a dimension: a genuine scalar
+            # expression (``A[0] + 1``). A size-1 array operand is NOT one --
+            # NumPy keeps the dimension (``numpy.zeros(1) + 3`` has shape
+            # (1,)), and collapsing it here made ``total += x[i]`` on a
+            # ``float64[1]`` parameter incompatible with its own container, so
+            # the name was rebound to a fresh scalar and the parameter was
+            # never written.
             return Inferred(kind='data', descriptor=data.Scalar(result_dtype))
         return Inferred(kind='data', descriptor=data.Array(result_dtype, list(shape)))
 
@@ -1129,14 +1168,40 @@ class InferenceService:
         return Inferred(kind='data', descriptor=result)
 
     def _result_dtype(self, operands: List[Inferred], boolean_result: bool) -> dtypes.typeclass:
+        """
+        The dtype of an operator's result, with WEAK promotion for Python
+        scalar literals (NumPy's NEP 50, the rule NumPy 2 implements): a plain
+        ``1`` or ``1.5`` written in the source takes the dtype of the typed
+        operands instead of widening it, so ``i + 1`` on an ``int32`` stays
+        ``int32``. A literal of a HIGHER kind still promotes, to the default
+        dtype of its own kind (``int32_array + 1.5`` is float64).
+
+        Widening here is not merely imprecise: it made every ``i += 1`` counter
+        rebind its name to a differently-typed container, which inside a loop
+        is a loop-carried rebinding and forced the whole loop into a callback.
+        """
         if boolean_result:
             return dtypes.bool_
-        known = [dtype for dtype in (self.dtype_of(op) for op in operands) if dtype is not None]
-        if not known:
-            raise UnsupportedFeatureError('Cannot determine operator result type',
-                                          self.context.filename,
-                                          category='type-inference')
-        return dtypes.result_type_of(known[0], *known[1:]) if len(known) > 1 else known[0]
+        strong: List[dtypes.typeclass] = []
+        weak_rank: Optional[int] = None
+        for operand in operands:
+            rank = _weak_scalar_rank(operand)
+            if rank is not None:
+                weak_rank = rank if weak_rank is None else max(weak_rank, rank)
+                continue
+            dtype = self.dtype_of(operand)
+            if dtype is not None:
+                strong.append(dtype)
+        if not strong:
+            if weak_rank is None:
+                raise UnsupportedFeatureError('Cannot determine operator result type',
+                                              self.context.filename,
+                                              category='type-inference')
+            return _WEAK_KIND_DEFAULTS[weak_rank]
+        result = dtypes.result_type_of(strong[0], *strong[1:]) if len(strong) > 1 else strong[0]
+        if weak_rank is not None and weak_rank > _dtype_kind_rank(result):
+            result = dtypes.result_type_of(result, _WEAK_KIND_DEFAULTS[weak_rank])
+        return result
 
     def _demote_to_bool(self, operand: Inferred) -> Inferred:
         if operand.is_data:

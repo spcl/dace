@@ -253,6 +253,31 @@ def test_elif_chain_merges():
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 
+def test_constant_written_into_an_existing_container_merges():
+    """``b = dace.ndarray(...)`` then ``b = 0`` in one branch: a compile-time
+    scalar written into a name that already holds a container converts INTO it
+    (what the classic frontend does), so the branches still agree on the
+    container and the chain merges instead of falling back."""
+    import numpy as np
+
+    @dace.program
+    def choose(a: dace.float32[1]):
+        b = dace.ndarray((1, ), dtype=dace.float32)
+        if a[0] < 0:
+            b = 0
+        elif a[0] < 1:
+            b = 1
+        else:
+            b = a
+        return b
+
+    tree = nextgen.parse_program(choose, np.zeros(1, dtype=np.float32))
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+
+    a = np.full(1, np.float32(np.pi), dtype=np.float32)
+    assert np.allclose(tree.as_sdfg().compile()(a=a), np.pi)
+
+
 if __name__ == '__main__':
     test_if_inplace_scalar_rebind_no_merge_nodes()
     test_if_divergent_alias_merges_with_refsets()
@@ -266,3 +291,4 @@ if __name__ == '__main__':
     test_while_body_unstable_falls_back()
     test_for_alias_rebind_falls_back()
     test_elif_chain_merges()
+    test_constant_written_into_an_existing_container_merges()

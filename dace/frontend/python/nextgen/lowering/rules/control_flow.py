@@ -101,7 +101,16 @@ def lower_while(statement: ast.While, state: LoweringState) -> None:
 @rule(ast.For)
 def lower_for(statement: ast.For, state: LoweringState) -> None:
     if cpa.is_range_iterator(statement.iter, state.context.globals):
-        _lower_loop_with_stability_check(statement, lambda s: _lower_range_loop(statement, s), state)
+        # The iteration variable is the loop's OWN binding, not a carried one:
+        # a sequential loop rebinds it to its symbol, and Python leaves that
+        # value visible afterwards (``i = -1; for i in range(N): ...; if i >
+        # 10``). A dace.map's parameter gets no such exemption -- it is scoped
+        # to the map body, so a name that outlives the scope really would need
+        # a merge.
+        _lower_loop_with_stability_check(statement,
+                                         lambda s: _lower_range_loop(statement, s),
+                                         state,
+                                         owned_names=(statement.target.id, ))
     elif cpa.is_dace_map_iterator(statement.iter, state.context.globals):
         _lower_loop_with_stability_check(statement, lambda s: _lower_map_loop(statement, s), state)
     else:
@@ -110,7 +119,10 @@ def lower_for(statement: ast.For, state: LoweringState) -> None:
             f'{astutils.unparse(statement.iter)}', state.context.filename, statement)
 
 
-def _lower_loop_with_stability_check(statement: ast.stmt, emit_loop, state: LoweringState) -> None:
+def _lower_loop_with_stability_check(statement: ast.stmt,
+                                     emit_loop,
+                                     state: LoweringState,
+                                     owned_names: Tuple[str, ...] = ()) -> None:
     """
     Lower a loop and enforce the loop-entry stability rule: any name bound
     before the loop whose binding the body changed (a different container,
@@ -118,6 +130,13 @@ def _lower_loop_with_stability_check(statement: ast.stmt, emit_loop, state: Lowe
     design intentionally avoids — the loop rolls back and re-lowers as a
     single Python callback instead. In-place rebinding through the same
     container (the common case for scalars) passes.
+
+    One class of instability is repaired rather than rejected: a name bound to
+    a COMPILE-TIME VALUE before the loop that the body materializes into a
+    container (``i = numpy.int32(1)`` … ``while …: i += 1``). Nothing about
+    that needs a merge — the name simply has to be a container by the time the
+    loop starts — so the promotion is emitted ahead of the loop and the body
+    re-lowered once against it (:func:`_promote_and_retry`).
     """
     from dace.frontend.python.nextgen.lowering import dispatch
     mark = state.emitter.checkpoint()
@@ -129,17 +148,78 @@ def _lower_loop_with_stability_check(statement: ast.stmt, emit_loop, state: Lowe
         state.context.restore(before)
         dispatch.fallback_to_callback(statement, state, reason)
         return
-    reason = _loop_instability(before, state)
-    if reason is not None:
-        state.emitter.rollback(mark)
-        state.context.restore(before)
-        dispatch.fallback_to_callback(statement, state, reason, category='loop-stability')
+    reason = _loop_instability(before, state, owned_names)
+    if reason is None:
+        return
+    promotable = _promotable_names(before, state)
+    state.emitter.rollback(mark)
+    state.context.restore(before)
+    if promotable and _promote_and_retry(promotable, statement, emit_loop, state, owned_names):
+        return
+    state.emitter.rollback(mark)
+    state.context.restore(before)
+    dispatch.fallback_to_callback(statement, state, reason, category='loop-stability')
 
 
-def _loop_instability(before: BindingSnapshot, state: LoweringState) -> Optional[str]:
-    """The reason a loop body is binding-unstable, or None if it is stable.
-    Names first bound inside the body are loop-local and always stable."""
+def _promotable_names(before: BindingSnapshot, state: LoweringState) -> List[str]:
+    """
+    Names the loop body turned from a compile-time VALUE into a container.
+
+    These are the instabilities a promotion before the loop repairs: the value
+    is the same either way, so binding it to a container up front costs only
+    the constant-folding of its pre-loop reads — and the alternative is running
+    the whole loop in the interpreter. Every other instability (a container
+    rebound to a differently-shaped one, a name unbound) genuinely needs a
+    merge and is left alone.
+    """
+    promotable = []
     for name, binding in before.bindings.items():
+        current = state.context.bindings.get(name)
+        if (binding.kind == 'constant' and current is not None and current.kind == 'container'
+                and name in before.constant_values):
+            promotable.append(name)
+    return promotable
+
+
+def _promote_and_retry(names: List[str],
+                       statement: ast.stmt,
+                       emit_loop,
+                       state: LoweringState,
+                       owned_names: Tuple[str, ...] = ()) -> bool:
+    """
+    Bind each name in ``names`` to a container holding its compile-time value,
+    then lower the loop again. Returns True if the retry is stable; the caller
+    rolls everything back and falls back otherwise.
+    """
+    from dace.frontend.python.nextgen.lowering.registry import lower_statement
+    for name in names:
+        value = state.context.constant_values[name]
+        assignment = ast.copy_location(
+            ast.Assign(targets=[ast.Name(id=name, ctx=ast.Store())], value=ast.Constant(value=value)), statement)
+        ast.fix_missing_locations(assignment)
+        try:
+            lower_statement(assignment, state)
+        except UnsupportedFeatureError:
+            return False
+        if state.context.bindings[name].kind != 'container':
+            return False  # Not representable as a container (e.g. an enum value)
+    promoted = state.context.snapshot()
+    try:
+        emit_loop(state)
+    except UnsupportedFeatureError:
+        return False
+    return _loop_instability(promoted, state, owned_names) is None
+
+
+def _loop_instability(before: BindingSnapshot, state: LoweringState, owned_names: Tuple[str,
+                                                                                        ...] = ()) -> Optional[str]:
+    """The reason a loop body is binding-unstable, or None if it is stable.
+    Names first bound inside the body are loop-local and always stable, and so
+    are ``owned_names`` -- names the loop itself binds (its iteration
+    variable)."""
+    for name, binding in before.bindings.items():
+        if name in owned_names:
+            continue
         current = state.context.bindings.get(name)
         if current is None:
             return f'loop body unbinds "{name}"'
@@ -151,7 +231,7 @@ def _loop_instability(before: BindingSnapshot, state: LoweringState) -> Optional
 
 
 def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:
-    loop_variable = statement.target.id
+    source_name = statement.target.id
     start, stop, step = (astutils.unparse(resolve_symbol_names(argument, state)) for argument in statement.iter.args)
     comparator = '<'
     try:
@@ -160,7 +240,13 @@ def _lower_range_loop(statement: ast.For, state: LoweringState) -> None:
     except TypeError:
         pass
 
-    state.context.bind_symbol(loop_variable, _index_dtype(statement.iter.args, state))
+    # A loop variable that shadows a CONTAINER of the same name (``i = -1``
+    # before the loop) needs a symbol name of its own: an SDFG rejects a symbol
+    # and a data descriptor sharing one.
+    loop_variable = source_name
+    if source_name in state.context.containers:
+        loop_variable = state.context.fresh_name(f'{source_name}_')
+    state.context.bind_symbol(source_name, _index_dtype(statement.iter.args, state), symbol_name=loop_variable)
     loop = LoopRegion(f'for_{statement.lineno}',
                       condition_expr=f'{loop_variable} {comparator} {stop}',
                       loop_var=loop_variable,
@@ -187,6 +273,7 @@ def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
                                       state.context.filename,
                                       statement,
                                       category='explicit-map')
+    shadowed = {param: state.context.bindings.get(param) for param in params}
     for param in params:
         state.context.bind_symbol(param)
     # Dynamic-range inputs (data-dependent bounds) are emitted as siblings
@@ -203,6 +290,17 @@ def _lower_map_loop(statement: ast.For, state: LoweringState) -> None:
     map_node = nodes.MapEntry(map_)
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.lower_body(statement.body)
+    # A map parameter is scoped to the map: it exists as a symbol only inside
+    # the scope. Leaving the binding in place made the name look loop-carried
+    # to a LATER scope that reuses it (``for i in dace.map[...]`` twice, the
+    # second body assigning ``i = 1``), which rolled that whole scope back to a
+    # callback. Restoring what the name meant before the map also un-shadows
+    # any outer binding it hid.
+    for param, previous in shadowed.items():
+        if previous is None:
+            state.context.bindings.pop(param, None)
+        else:
+            state.context.bindings[param] = previous
 
 
 def _parse_map_ranges(rng: ast.expr, location: ast.expr, state: LoweringState,
