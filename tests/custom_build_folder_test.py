@@ -66,5 +66,5 @@ def test_custom_build_folder_2():
 
 
 if __name__ == '__main__':
-    #test_custom_build_folder()
+    test_custom_build_folder()
     test_custom_build_folder_2()
