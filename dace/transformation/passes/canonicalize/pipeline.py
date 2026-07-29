@@ -85,6 +85,7 @@ from dace.transformation.passes.canonicalize.untile_loops import UntileLoops
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.passes.canonicalize.loop_to_conditional_reduce import LoopToConditionalReduce
+from dace.transformation.passes.canonicalize.loop_to_stream_compaction import LoopToStreamCompaction
 from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
 from dace.transformation.passes.canonicalize.loop_to_syrk import LoopToSyrk
@@ -908,9 +909,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # Map whose codegen emits the OpenMP ``reduction(op:acc)`` clause (CPU) / block-warp
     # tree-reduce (GPU), instead of the per-passing-thread guarded atomic the raw conditional
     # lowers to.
+    # LoopToStreamCompaction runs LAST in loop_to_x, after every reduction-shaped lift has had its
+    # refusal: a guarded ``if cond: acc OP= x`` is a masked REDUCTION and belongs to
+    # LoopToConditionalReduce, whereas this pass claims the complementary shape where the carried
+    # scalar is the write INDEX (``if cond: j += 1; a[j] = f(i)``), which no other lift matches.
+    # It must precede ``parallelize``: it emits three loops -- mask, scan, scatter -- and force-lifts
+    # the two parallel ones itself (it owns the disjointness proof for the cursor-indexed writes;
+    # LoopToMap cannot reconstruct it), leaving the residue for the later stages to fuse and
+    # schedule. It must also precede ``reduction_to_wcr_map``, whose ``LoopToReduce('wcr-scalar')``
+    # pins every loop nested in a sequential loop -- the s343 inner compaction loop is exactly that,
+    # and a pinned loop is refused here (correctly: the pin is a directive, not an obstacle).
     s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', LoopToReduce()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
-          ('loop_to_x', LoopToConditionalReduce())]
+          ('loop_to_x', LoopToConditionalReduce()), ('loop_to_x', LoopToStreamCompaction())]
 
     # cascade_iedges_up (pre-parallelize): re-run after fission / normalize rewrite
     # the CFG; MUST precede LoopToMap. Re-unique the iterators (ssa) so the

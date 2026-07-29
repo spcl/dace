@@ -104,6 +104,12 @@ For loops `a[idx[i]] = …` over an indirection array `idx`, emits a sort + adja
 [`scatter_conflict_guard.py`](../scatter_conflict_guard.py)
 The sort + adjacent-equal compare is implemented as a parallel Map with WCR-`+` reduction into an `int64` counter, then a sequential `__builtin_trap()` state reads the count via interstate-edge symbol binding and traps if positive. Per-thread accumulation + tree-merge end-of-region; no false sharing.
 
+### Loop → stream compaction (scan-derived scatter, disjoint by construction)
+[`loop_to_stream_compaction.py::LoopToStreamCompaction`](loop_to_stream_compaction.py)
+For a conditional append `if cond(i): j += K; a[j] = f(i)`, the loop-carried output cursor is replaced by its closed form `j_in + K·rank[i]`, where `rank` is the EXCLUSIVE prefix sum of the guard mask. The scattered slots are then disjoint without any runtime check — `rank` is strictly increasing on the taken iterations and a non-taken iteration writes nothing — which is why this needs neither `ScatterToGuardedMaps`' sort-based permutation check (whose whole-array duplicate count would false-trap: `rank` repeats on the non-taken positions) nor a `Scan` on the carried array (the carry is the write INDEX, not the value, so it is the complementary domain to `LoopToScan`). The pass owns only the cursor-disjointness proof; every other dependence is delegated to `LoopToMap.can_be_applied` non-permissively on a copy where the cursor is modelled as an injective affine index.
+- Blelloch, *"Prefix Sums and Their Applications"*, 1990 §1.3 — "array packing"/stream compaction is the canonical scan application.
+- Billeter, Olsson, Assarsson, *"Efficient Stream Compaction on Wide SIMD Many-Core Architectures"*, HPG '09 — the mask/scan/scatter decomposition in practice.
+
 ### Reroll-unrolled-loops (merge-tree generalisation)
 [`reroll_unrolled_loops.py::RerollUnrolledLoops`](reroll_unrolled_loops.py)
 Detects manually-unrolled lane chains (step `S`, `m` equally-spaced lanes at offsets `{0, g, …, (m−1)g}`) and re-rolls to a step-`g` loop. Allows lane components to overlap at associative-merge tasklets (`+`, `·`, `min`, `max`) classified via `dace.symbolic.pystr_to_symbolic` + `type(expr).__name__`. Generalisation covers TSVC s352 (single-expression `m`-term dot product).
