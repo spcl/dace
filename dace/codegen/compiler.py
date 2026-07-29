@@ -148,6 +148,15 @@ def generate_program_folder(
     with open(os.path.join(out_path, "INTERFACE"), "w") as interface_file:
         interface_file.write(interface)
 
+    # Create the instrumentation-report folder when reports can actually be
+    # produced: the runtime's report.save() opens `<folder>/perf/report-*.json`
+    # with a bare std::ofstream, which neither creates directories nor reports
+    # a failed open - a missing folder drops every report SILENTLY. Gated on
+    # instrumentation, so uninstrumented folders stay lean in both folder
+    # modes; the production trim list deliberately does not touch `perf`.
+    if sdfg is not None and sdfg.is_instrumented():
+        os.makedirs(os.path.join(out_path, 'perf'), exist_ok=True)
+
     # Write list of files
     #  Needed to communicate with `configure_and_compile()`, deleted in production mode.
     with open(os.path.join(out_path, "dace_files.csv"), "w") as filelist_file:
@@ -330,9 +339,13 @@ def configure_and_compile(
     build_folder = os.path.join(program_folder, "build")
     os.makedirs(build_folder, exist_ok=True)
 
-    # Prepare performance report folder if requested.
-    if folder_mode == "development":
-        os.makedirs(os.path.join(program_folder, "perf"), exist_ok=True)
+    # NOTE: The instrumentation-report folder (`perf/`) is NOT created here:
+    #   this function only knows the program folder, but whether reports can
+    #   exist at all is a property of the SDFG (`SDFG.is_instrumented()`), so
+    #   `generate_program_folder()` creates it - for instrumented SDFGs only,
+    #   in BOTH folder modes. It must exist before the program runs, because
+    #   the runtime's report.save() neither creates directories nor reports a
+    #   failed open (reports would be dropped silently).
 
     # Read list of DaCe files to compile.
     # We do this instead of iterating over source files in the directory to
