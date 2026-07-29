@@ -570,8 +570,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Create dataflow graph for state's children.
 
         # DFG to code scheme: Only generate code for nodes whose all
-        # dependencies have been executed (topological sort).
-        # For different connected components, run them concurrently.
+        # dependencies have been executed (topological sort). Independent components are
+        # emitted one after the other -- they carry no dependence, so any order is correct.
+        # Never wrapped in ``#pragma omp parallel sections``: a map inside a section still
+        # emits its own ``#pragma omp parallel for``, which the default OMP_MAX_ACTIVE_LEVELS=1
+        # then runs on a team of ONE, so the wrapper trades every map's parallelism for at
+        # most a lexical-component-count speedup that OpenMP does not even guarantee to
+        # deliver (fewer threads than sections == serial, unspecified order).
 
         components = dace.sdfg.concurrent_subgraphs(state)
 
@@ -584,11 +589,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                callsite_stream,
                                                skip_entry_node=False)
         else:
-            if sdfg.openmp_sections:
-                callsite_stream.write("#pragma omp parallel sections\n{")
             for c in components:
-                if sdfg.openmp_sections:
-                    callsite_stream.write("#pragma omp section\n{")
                 self._dispatcher.dispatch_subgraph(sdfg,
                                                    cfg,
                                                    c,
@@ -596,10 +597,6 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                                                    global_stream,
                                                    callsite_stream,
                                                    skip_entry_node=False)
-                if sdfg.openmp_sections:
-                    callsite_stream.write("} // End omp section")
-            if sdfg.openmp_sections:
-                callsite_stream.write("} // End omp sections")
 
         #####################
         # Write state footer
@@ -841,9 +838,9 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     alloc_scope = sdfg
                 elif (isinstance(curscope, SDFGState) and curstate is not None
                       and desc.storage in (dtypes.StorageType.CPU_Heap, dtypes.StorageType.GPU_Global)
-                      and scope_allocation_repeats_per_iteration(curstate) and first_node_instance is not None
-                      and not utils.is_nonfree_sym_dependent(first_node_instance, desc, first_state_instance,
-                                                             fsyms[sdfg.cfg_id])):
+                      and scope_allocation_repeats_per_iteration(curstate)
+                      and first_node_instance is not None and not utils.is_nonfree_sym_dependent(
+                          first_node_instance, desc, first_state_instance, fsyms[sdfg.cfg_id])):
                     # Placing it at the one state that uses it re-allocates the buffer on every iteration of
                     # the enclosing loop; the SDFG entry dominates that state, so one buffer serves them all.
                     # Only the PLACEMENT moves -- ``desc.lifetime`` stays Scope.

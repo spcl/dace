@@ -1,7 +1,18 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
+
 import dace
-from dace import Memlet
 import numpy as np
+from dace import Memlet
+from dace.sdfg.utils import concurrent_subgraphs
+
+N = dace.symbol('N')
+
+
+@dace.program
+def two_concurrent_components(A: dace.float64[N], B: dace.float64[N], C: dace.float64[N], D: dace.float64[N]):
+    C[:] = A + 1.0
+    D[:] = B * 2.0
 
 
 def test_duplicate_codegen():
@@ -65,5 +76,37 @@ def test_duplicate_codegen():
     assert F[0] == 2
 
 
+def test_concurrent_components_are_not_wrapped_in_omp_sections():
+    """A state's independent components must be emitted one after the other, never in
+    ``#pragma omp parallel sections``: the wrapper pushes each map's own
+    ``#pragma omp parallel for`` a nesting level down, where OMP_MAX_ACTIVE_LEVELS=1 gives
+    it a team of one, and OpenMP does not even promise the sections run concurrently."""
+    sdfg = two_concurrent_components.to_sdfg(simplify=True)
+
+    multi = [st for st in sdfg.states() if len(concurrent_subgraphs(st)) > 1]
+    assert multi, 'fixture is vacuous: no state has concurrent components to wrap'
+
+    # Poke the retired knob on a throwaway copy: the codegen must ignore it, not honour it.
+    probe = copy.deepcopy(sdfg)
+    probe.openmp_sections = True
+    code = '\n'.join(o.clean_code for o in probe.generate_code())
+
+    assert 'omp parallel sections' not in code
+    assert '#pragma omp section' not in code
+    # The parallelism has to still be there, in the maps -- one per component.
+    assert code.count('#pragma omp parallel for') == 2
+    # The knob is gone from the SDFG API, so nothing can ask for the construct back.
+    assert 'openmp_sections' not in dace.SDFG.__properties__
+
+    rng = np.random.default_rng(1234)
+    A, B = rng.random(64), rng.random(64)
+    C, D = np.zeros(64), np.zeros(64)
+    sdfg(A=A, B=B, C=C, D=D, N=64)
+    # A single fp64 add / multiply-by-two is exact, so the oracle comparison needs no tolerance.
+    assert np.array_equal(C, A + 1.0)
+    assert np.array_equal(D, B * 2.0)
+
+
 if __name__ == "__main__":
     test_duplicate_codegen()
+    test_concurrent_components_are_not_wrapped_in_omp_sections()

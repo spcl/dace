@@ -220,9 +220,6 @@ def enable_hooks(args: argparse.Namespace) -> List[int]:
     if args.sequential:
 
         def make_sequential(sdfg: dace.SDFG):
-            # Disable OpenMP sections
-            for sd in sdfg.all_sdfgs_recursive():
-                sd.openmp_sections = False
             # Disable OpenMP maps
             for n, _ in sdfg.all_nodes_recursive():
                 if isinstance(n, dace.nodes.EntryNode):

@@ -685,10 +685,6 @@ def auto_optimize(sdfg: SDFG,
 
     # TODO(later): Safe vectorization
 
-    # Disable OpenMP parallel sections on a per-SDFG basis
-    for nsdfg in sdfg.all_sdfgs_recursive():
-        nsdfg.openmp_sections = False
-
     # Set all Default storage types that are constant sized to registers
     move_small_arrays_to_stack(sdfg)
 

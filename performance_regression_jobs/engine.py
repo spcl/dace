@@ -853,8 +853,6 @@ def make_sequential(sdfg):
     """Deep-copy + force every map to Sequential (dace/cli/daceprof.py:222-232's logic)."""
     import dace
     s = copy.deepcopy(sdfg)
-    for sd in s.all_sdfgs_recursive():
-        sd.openmp_sections = False
     for n, _ in s.all_nodes_recursive():
         if isinstance(n, dace.nodes.EntryNode) and getattr(
                 n, 'schedule', False) in (dace.ScheduleType.CPU_Multicore, dace.ScheduleType.CPU_Persistent,

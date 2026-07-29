@@ -430,11 +430,15 @@ required:
                     openmp_sections:
                         type: bool
                         default: false
-                        title: Use OpenMP sections
+                        title: Use OpenMP sections (Snitch target only)
                         description: >
-                            If set to true, multiple connected components will
-                            generate "#pragma omp parallel sections" code around
-                            them.
+                            If set to true, the Snitch target wraps a state's
+                            multiple connected components in "#pragma omp parallel
+                            sections". The CPU target never emits the construct: a
+                            map inside a section still emits its own "#pragma omp
+                            parallel for", which the default OMP_MAX_ACTIVE_LEVELS=1
+                            runs on a team of one, so the wrapper costs more
+                            parallelism than the lexical component count can repay.
 
                     parallel_transfer_min_elements:
                         type: int
