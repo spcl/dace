@@ -1566,8 +1566,14 @@ class IteratorForLoopNormalizer(ast.NodeTransformer):
         # operators are written on it (``dace.map[0:N] @ ScheduleType``).
         if iterators.iteration_object(iterator, self.globals) is not None:
             return True
+        # ``range``, under whatever name the program bound it to.
+        if iterators.iteration_callable(iterator, self.globals) is not None:
+            return True
+        # ``prange``/``parrange`` are matched by name because there is no
+        # object to resolve: DaCe exports neither, the spelling being borrowed
+        # from other parallel-Python dialects.
         if isinstance(iterator, ast.Call):
-            return astutils.rname(iterator.func) in {'range', 'prange', 'parrange'}
+            return astutils.rname(iterator.func) in {'prange', 'parrange'}
         return False
 
     def _normalize_indexed_iteration(self, node: ast.For) -> Optional[ast.For]:

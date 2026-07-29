@@ -411,7 +411,7 @@ def _lower_reshape_call(target: ast.expr, call: ast.Call, qualname: str, state: 
     or element count mismatch); the caller then falls through to the normal
     registry-call dispatch and, ultimately, a callback.
     """
-    base_expr, shape_args = _reshape_operands(call, qualname)
+    base_expr, shape_args = _reshape_operands(call, qualname, state)
     if base_expr is None:
         return False
     access = resolve_access(base_expr, state)
@@ -449,7 +449,7 @@ def _lower_reshape_call(target: ast.expr, call: ast.Call, qualname: str, state: 
     return True
 
 
-def _reshape_operands(call: ast.Call, qualname: str) -> Tuple[Optional[ast.expr], List[ast.expr]]:
+def _reshape_operands(call: ast.Call, qualname: str, state: LoweringState) -> Tuple[Optional[ast.expr], List[ast.expr]]:
     """
     The (base array expression, shape argument expressions) of a reshape call
     form, or (None, []) if the call is not one of the recognized forms:
@@ -459,15 +459,17 @@ def _reshape_operands(call: ast.Call, qualname: str) -> Tuple[Optional[ast.expr]
     to a static sequence, so :func:`_reshape_shape` resolves through
     inference rather than requiring an inline ``ast.Tuple``/``ast.List``.
 
-    The ``numpy.reshape`` form is checked first: its ``call.func`` is also an
-    ``ast.Attribute`` ending in ``.reshape`` (``Attribute(value=Name('numpy'),
-    attr='reshape')``), so checking the method form first would misparse it as
-    ``<numpy module>.reshape(A, s)`` — the module as the base array and
-    ``(A, s)`` as the shape arguments.
+    Both forms are ``Attribute`` calls ending in ``.reshape``
+    (``numpy.reshape(A, s)`` is ``Attribute(value=Name('numpy'),
+    attr='reshape')``), so the method form is recognized by what its base
+    resolves to — a registered container — rather than by its syntax; the
+    module base of the function form resolves to no data and cannot be
+    misread as the array being reshaped.
     """
     if qualname == 'numpy.reshape' and not call.keywords and call.args:
         return call.args[0], call.args[1:]
-    if isinstance(call.func, ast.Attribute) and call.func.attr == 'reshape' and not call.keywords:
+    if (isinstance(call.func, ast.Attribute) and call.func.attr == 'reshape' and not call.keywords
+            and resolve_access(call.func.value, state) is not None):
         return call.func.value, call.args
     if _is_ravel_call(call):
         # ``A.ravel()`` is ``A.reshape(-1)``; the single ``-1`` dimension is
@@ -658,6 +660,20 @@ def _materialize_attribute_replacement(base: DataAccess, attr_name: str, state: 
     return DataAccess(container, subsets.Range.from_array(descriptor), descriptor)
 
 
+def _unwrap_nested_call(result: Any) -> Any:
+    """
+    The value a replacement returned, with the state-chaining wrapper removed.
+
+    Replacements that need several states return a ``(NestedCall, result)``
+    pair, the first element being a bookkeeping object for the caller's state
+    machine rather than part of the result.
+    """
+    from dace.frontend.python.nested_call import NestedCall  # Deferred to keep rule import light
+    if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], NestedCall):
+        return result[1]
+    return result
+
+
 def _run_attribute_trial(function, container: str, state: LoweringState) -> Optional[data.Data]:
     """
     Run an ATTRIBUTE-family replacement on a scratch SDFG with a single data
@@ -686,8 +702,7 @@ def _run_attribute_trial(function, container: str, state: LoweringState) -> Opti
         result = function(shim, scratch, scratch_state, container)
     except Exception:
         return None
-    if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
-        result = result[1]
+    result = _unwrap_nested_call(result)
     if not isinstance(result, str) or result not in scratch.arrays:
         return None
     if result in shim.views:
@@ -1101,8 +1116,7 @@ def _multi_output_viable(name: Optional[str], ufunc_name: Optional[str], receive
             result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
     except Exception:
         return False
-    if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
-        result = result[1]
+    result = _unwrap_nested_call(result)
     if not isinstance(result, (list, tuple)) or len(result) != expected:
         return False
     if any(not isinstance(element, str) or element not in scratch.arrays for element in result):
@@ -1330,8 +1344,7 @@ def _expansion_viable(name: str,
         result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
     except Exception:
         return False
-    if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
-        result = result[1]
+    result = _unwrap_nested_call(result)
     if isinstance(result, list) and len(result) == 1 and isinstance(result[0], str):
         # Single-element list of output datanames: the convention ufunc
         # implementations and the dtype-cast replacements (``dace.int64(A)``)
@@ -1428,8 +1441,7 @@ def _ufunc_expansion_viable(ufunc_name: str, ufunc_method: Optional[str], argume
                           copy.deepcopy(dict(keywords)))
     except Exception:
         return False
-    if isinstance(result, tuple) and len(result) == 2 and type(result[0]).__name__ == 'NestedCall':
-        result = result[1]
+    result = _unwrap_nested_call(result)
     if shim.views:
         return False  # View bindings are frontend state; expansion cannot defer them
     return isinstance(result, list) and len(result) == 1 and isinstance(result[0], str) and result[0] in scratch.arrays

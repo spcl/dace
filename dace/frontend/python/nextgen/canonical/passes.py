@@ -24,6 +24,7 @@ import ast
 import copy
 from typing import List, Optional, Tuple, Union
 
+from dace.frontend.python import iterators
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.canonical.cpa import CANONICAL_LEAVES, ExplicitConsume, ExplicitTasklet, OpaqueStmt
 
@@ -631,6 +632,12 @@ class NormalizeLoops(_BodyTransformer):
     name = 'normalize-loops'
 
     #: Parallel-range aliases, which are ``dace.map`` over one dimension.
+    #:
+    #: Unlike ``range`` and ``dace.map``, these are matched by name because
+    #: there is no object to resolve: DaCe exports no ``prange``/``parrange``,
+    #: the spelling being borrowed from other parallel-Python dialects, so a
+    #: program using one names something that does not exist. The classic
+    #: frontend reads them the same way.
     PARALLEL_RANGES = ('prange', 'parrange')
 
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
@@ -641,8 +648,9 @@ class NormalizeLoops(_BodyTransformer):
                 and not statement.iter.keywords and 1 <= len(statement.iter.args) <= 3):
             statement.iter = _parallel_range_map(statement.iter)
             return self._recurse(statement)
-        if isinstance(statement, ast.For) and isinstance(statement.iter, ast.Call) and isinstance(
-                statement.iter.func, ast.Name) and statement.iter.func.id == 'range' and not statement.iter.keywords:
+        if (isinstance(statement, ast.For)
+                and iterators.iteration_callable(statement.iter, self.context.global_vars) is not None
+                and not statement.iter.keywords):
             args = statement.iter.args
             if len(args) == 1:
                 zero = _located(ast.Constant(value=0), statement.iter)

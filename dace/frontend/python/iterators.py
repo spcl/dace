@@ -27,6 +27,12 @@ them here would both fail and throw away the information lowering needs.
 Iteration constructs are written to accept that: ``MapGenerator`` stores its
 range without inspecting it.
 
+The same rule covers the header forms that are *calls* rather than objects
+(``range(0, N, 1)``, see :func:`iteration_callable`): the callee is resolved
+through the globals and identified by object identity, and its arguments stay
+ASTs, so a program that rebinds ``range`` is not read as looping over the
+built-in.
+
 Evaluation is guarded on both ends — the expression is only evaluated while it
 is rooted in a registered construct, its leaves are names and literals so that
 resolving a header never *calls* anything, and any failure yields "not an
@@ -88,6 +94,18 @@ def construct_factories() -> Tuple[type, ...]:
     return (interface.map, )
 
 
+def callable_constructs() -> Tuple[Any, ...]:
+    """
+    Callables whose *call* is an iteration construct (``range(0, N, 1)``).
+
+    These are recognized by object identity, exactly like the constructs in
+    :func:`construct_types`, and for the same reason the call itself is never
+    made: its arguments are loop bounds, which may be symbolic or
+    data-dependent, so only the callee is resolved and the arguments stay ASTs.
+    """
+    return (range, )
+
+
 def is_construct(value: Any) -> bool:
     """Whether a value is an iteration construct, or the class that produces one."""
     if value is UNRESOLVED:
@@ -107,6 +125,25 @@ def iteration_object(node: ast.expr, global_vars: Optional[Dict[str, Any]] = Non
     """
     value = evaluate(node, global_vars if global_vars is not None else {})
     return value if isinstance(value, construct_types()) else None
+
+
+def iteration_callable(node: ast.AST, global_vars: Optional[Dict[str, Any]] = None) -> Optional[Any]:
+    """
+    The iteration callable a ``for``-loop header calls, or None if the header
+    is not a call to one (see :func:`callable_constructs`).
+
+    Resolving the callee rather than matching its name means that a program
+    which rebinds ``range`` is not mis-read as looping over the built-in, and
+    that any spelling of the built-in (an ``import``ed alias, a name bound to
+    it in the closure) is recognized.
+
+    :param node: The iterator expression (``For.iter``).
+    :param global_vars: The program's global namespace.
+    """
+    if not isinstance(node, ast.Call):
+        return None
+    function = _closure_value(node.func, global_vars if global_vars is not None else {})
+    return function if any(function is candidate for candidate in callable_constructs()) else None
 
 
 def evaluate(node: ast.expr, global_vars: Dict[str, Any]) -> Any:

@@ -89,6 +89,24 @@ def test_concrete_shape_folds_to_a_constant():
     assert np.allclose(a, reference)
 
 
+def test_registered_value_attribute_is_compile_time():
+    """
+    ``A.size`` is a registry ATTRIBUTE entry that computes a value rather than
+    data. Inference asks the registry entry itself, so such an attribute is a
+    compile-time value here without the frontend naming it.
+    """
+
+    @dace.program
+    def sizes(A: dace.float64[N, N], out: dace.float64[1]):
+        out[0] = A.size
+
+    a, out = np.random.rand(20, 20), np.zeros(1)
+    tree = nextgen.parse_program(sizes, a, out)
+    assert not _nodes_of_type(tree, tn.PythonCallbackNode)
+    tree.as_sdfg().compile()(A=a, out=out, N=20)
+    assert out[0] == 400
+
+
 def test_parallel_range_is_a_map():
     """``parrange``/``prange`` are shorthand for a one-dimensional map."""
 
@@ -111,4 +129,5 @@ if __name__ == '__main__':
     test_shape_inside_an_expression()
     test_shape_and_ndim_in_map_ranges()
     test_concrete_shape_folds_to_a_constant()
+    test_registered_value_attribute_is_compile_time()
     test_parallel_range_is_a_map()

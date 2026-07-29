@@ -23,6 +23,14 @@ from dace.frontend.python.interface import MapGenerator
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
+#: The built-in under another name, to show that ``range`` is resolved.
+builtin_range = range
+
+
+def two_element_range(stop):
+    """A program-defined ``range`` that is not the built-in."""
+    return [0, 1]
+
 
 def _map_schedules(root: tn.ScheduleTreeRoot):
     """The (params, schedule) of every map scope in a schedule tree."""
@@ -169,6 +177,46 @@ def test_map_spellings_are_one_canonical_form():
         assert cpa.is_dace_map_iterator(header, globals_), source
 
 
+def test_range_is_resolved_not_name_matched():
+    """
+    ``range`` is recognized as the object it resolves to, like ``dace.map``:
+    an aliased built-in is the same loop, and a rebound name is not one.
+    """
+    header = ast.parse('range(0, 10, 1)', mode='eval').body
+    assert cpa.is_range_iterator(header, {})
+    assert cpa.is_range_iterator(header, {'range': range})
+    assert cpa.is_range_iterator(ast.parse('rng(0, 10, 1)', mode='eval').body, {'rng': range})
+    assert not cpa.is_range_iterator(header, {'range': lambda *bounds: [0, 1]})
+
+
+def test_aliased_range_loop_is_a_loop():
+    """A program looping over an aliased built-in gets a loop, not a callback."""
+
+    @dace.program
+    def counted(a: dace.float64[20]):
+        for i in builtin_range(20):
+            a[i] = 1.0
+
+    root = nextgen.parse_program(counted, np.zeros(20))
+    assert not _callbacks(root)
+
+
+def test_shadowed_range_is_not_read_as_the_builtin():
+    """
+    A program that rebinds ``range`` iterates what it actually bound. The
+    frontend has no compile-time reading for that, so the loop degrades to the
+    ordinary Python-iterator path instead of silently becoming ``0..stop``.
+    """
+
+    @dace.program
+    def shadowed(a: dace.float64[20]):
+        for i in two_element_range(20):
+            a[i] = 1.0
+
+    root = nextgen.parse_program(shadowed, np.zeros(20))
+    assert _callbacks(root)
+
+
 def test_bad_schedule_operand_degrades():
     """
     An operand the construct rejects (``@ 5``) makes the header something the
@@ -199,4 +247,7 @@ if __name__ == '__main__':
     test_header_resolution_calls_nothing()
     test_header_evaluation_keeps_bounds_symbolic()
     test_map_spellings_are_one_canonical_form()
+    test_range_is_resolved_not_name_matched()
+    test_aliased_range_loop_is_a_loop()
+    test_shadowed_range_is_not_read_as_the_builtin()
     test_bad_schedule_operand_degrades()

@@ -100,7 +100,7 @@ def lower_while(statement: ast.While, state: LoweringState) -> None:
 
 @rule(ast.For)
 def lower_for(statement: ast.For, state: LoweringState) -> None:
-    if cpa.is_range_iterator(statement.iter):
+    if cpa.is_range_iterator(statement.iter, state.context.globals):
         _lower_loop_with_stability_check(statement, lambda s: _lower_range_loop(statement, s), state)
     elif cpa.is_dace_map_iterator(statement.iter, state.context.globals):
         _lower_loop_with_stability_check(statement, lambda s: _lower_map_loop(statement, s), state)

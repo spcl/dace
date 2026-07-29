@@ -29,6 +29,61 @@ from dace.frontend.python.nextgen.semantics.values import StaticSequence
 #: Comparison and boolean operators always produce booleans.
 _BOOLEAN_OPS = (ast.Compare, ast.BoolOp)
 
+#: Array properties readable at compile time straight off the data descriptor,
+#: as the NumPy array interface spells them.
+#:
+#: Enumerated rather than forwarded to the descriptor object generically
+#: (``getattr(descriptor, attr)``): a data descriptor is a DaCe object, not an
+#: ``ndarray``, and most of its properties either mean something else under the
+#: same name (``strides`` counts elements, not bytes) or are internal
+#: (``transient``, ``storage``, ``lifetime``). A property is listed here when
+#: reading it from the descriptor is what the program asked for; each query
+#: returns None when the descriptor cannot answer it.
+DESCRIPTOR_PROPERTIES: Dict[str, Any] = {
+    'dtype': lambda descriptor: descriptor.dtype,
+    'shape': lambda descriptor: tuple(descriptor.shape) if isinstance(descriptor, data.Array) else None,
+    'ndim': lambda descriptor: len(descriptor.shape) if isinstance(descriptor, data.Array) else None,
+}
+
+
+def _attribute_value(descriptor: data.Data, attr_name: str) -> Any:
+    """
+    Evaluate an ATTRIBUTE-family replacement that computes a compile-time
+    value rather than data (``A.size``), returning None when there is no such
+    entry or it produces something else.
+
+    The replacement is run on a scratch SDFG, the same trial-before-commit
+    shape ``lowering.dispatch._run_attribute_trial`` uses for the attributes
+    that do produce data; here the trial is what distinguishes the two, since
+    a value-valued entry is exactly one that returns no data name and builds
+    no dataflow. Everything downstream is already generic over compile-time
+    values (``mechanisms.static_values.fold_descriptor_properties`` folds
+    whatever inference reports), so registering a new such attribute needs no
+    frontend change.
+    """
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population
+    from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import ReplacementVisitorShim
+    from dace.sdfg.sdfg import SDFG
+
+    function = oprepo.Replacements.get_attribute(type(descriptor), attr_name)
+    if function is None:
+        return None
+    scratch = SDFG('__attribute_value')
+    scratch_descriptor = copy.deepcopy(descriptor)
+    scratch_descriptor.transient = False
+    scratch.add_datadesc('__attr_base', scratch_descriptor)
+    scratch_state = scratch.add_state()
+    shim = ReplacementVisitorShim(scratch, scratch_state, '__attr_value')
+    try:
+        result = function(shim, scratch, scratch_state, '__attr_base')
+    except Exception:
+        return None
+    if shim.views or scratch_state.number_of_nodes() > 0 or len(scratch.nodes()) > 1:
+        return None  # Produced dataflow: a data attribute, handled above
+    if isinstance(result, (int, float, complex)) or symbolic.issymbolic(result):
+        return result
+    return None
+
 
 def _apply_unary_operator(operator: ast.unaryop, value: Any) -> Any:
     """Apply a unary AST operator to a compile-time constant."""
@@ -775,12 +830,11 @@ class InferenceService:
             # (``A.dtype``, ``A.shape``, ``A.ndim``)
             if binding is not None and binding.kind == 'container':
                 descriptor = self.context.containers[binding.container]
-                if node.attr == 'dtype':
-                    return Inferred(kind='constant', value=descriptor.dtype)
-                if node.attr == 'shape' and isinstance(descriptor, data.Array):
-                    return Inferred(kind='constant', value=tuple(descriptor.shape))
-                if node.attr == 'ndim' and isinstance(descriptor, data.Array):
-                    return Inferred(kind='constant', value=len(descriptor.shape))
+                query = DESCRIPTOR_PROPERTIES.get(node.attr)
+                if query is not None:
+                    value = query(descriptor)
+                    if value is not None:
+                        return Inferred(kind='constant', value=value)
                 # Registry-backed attributes needing an actual data operation
                 # (``.T``/``.real``/``.imag``/``.flat``): typed through the
                 # ATTRIBUTE family of the replacement registry so
@@ -802,6 +856,12 @@ class InferenceService:
                             result = result[0]
                         if isinstance(result, data.Data):
                             return Inferred(kind='data', descriptor=result)
+                # Registry-backed attributes computing a compile-time *value*
+                # rather than data (``A.size``): asked of the registry entry
+                # itself, so a newly registered one needs no change here.
+                value = _attribute_value(descriptor, node.attr)
+                if value is not None:
+                    return Inferred(kind='symbolic' if symbolic.issymbolic(value) else 'constant', value=value)
         _, resolved = self.resolve_callee(node)
         if resolved is not None:
             if isinstance(resolved, symbolic.symbol):

@@ -438,10 +438,21 @@ def is_dace_map_iterator(node: ast.AST, global_vars: Optional[Dict[str, Any]] = 
     return isinstance(iterators.iteration_object(node, global_vars), interface.MapGenerator)
 
 
-def is_range_iterator(node: ast.AST) -> bool:
-    """Check whether a for-loop iterator is a normalized 3-argument ``range`` call."""
-    return (isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == 'range'
-            and len(node.args) == 3 and all(is_atom(a) for a in node.args) and not node.keywords)
+def is_range_iterator(node: ast.AST, global_vars: Optional[Dict[str, Any]] = None) -> bool:
+    """
+    Check whether a for-loop iterator is a normalized 3-argument ``range`` call.
+
+    Like :func:`is_dace_map_iterator`, the callee is resolved through the
+    program globals rather than matched by name (see
+    :mod:`~dace.frontend.python.iterators`), so a program that rebinds
+    ``range`` is not read as looping over the built-in.
+
+    :param global_vars: The program's global namespace. Without it, only the
+        built-in itself resolves.
+    """
+    from dace.frontend.python import iterators  # Deferred to avoid an import cycle during package initialization
+    return (iterators.iteration_callable(node, global_vars) is not None and len(node.args) == 3
+            and all(is_atom(a) for a in node.args) and not node.keywords)
 
 
 def is_return_value(node: ast.AST) -> bool:
@@ -455,8 +466,9 @@ def _violations_in_statement(node: ast.stmt, global_vars: Optional[Dict[str, Any
     """
     Yield CPA violations for a single statement (non-recursive).
 
-    :param global_vars: Passed through to :func:`is_dace_map_iterator` so
-        ``dace.map`` for-iterators are recognized through import aliases.
+    :param global_vars: Passed through to :func:`is_range_iterator` and
+        :func:`is_dace_map_iterator` so for-iterators are recognized through
+        whatever names the program bound them to.
     """
     if isinstance(node, CANONICAL_LEAVES):
         return
@@ -481,7 +493,7 @@ def _violations_in_statement(node: ast.stmt, global_vars: Optional[Dict[str, Any
         if node.orelse:
             yield 'while-else must be desugared before verification'
     elif isinstance(node, ast.For):
-        if is_range_iterator(node.iter):
+        if is_range_iterator(node.iter, global_vars):
             if not isinstance(node.target, ast.Name):
                 yield 'range-loop target must be a single name'
         elif is_dace_map_iterator(node.iter, global_vars):
@@ -512,8 +524,9 @@ def verify_canonical(tree: ast.FunctionDef,
     """
     Verify the CPA postcondition of the canonicalization stage.
 
-    :param global_vars: Passed through to :func:`is_dace_map_iterator` so
-        ``dace.map`` for-iterators are recognized through import aliases.
+    :param global_vars: Passed through to :func:`is_range_iterator` and
+        :func:`is_dace_map_iterator` so for-iterators are recognized through
+        whatever names the program bound them to.
     :raises CanonicalViolationError: If any statement violates the contract.
         This indicates a canonicalization bug — the stage is required to be
         total over arbitrary input.

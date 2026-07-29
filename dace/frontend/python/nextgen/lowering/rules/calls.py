@@ -11,6 +11,7 @@ any other opaque statement.
 """
 import ast
 import copy
+import types
 from typing import Any, Dict, List, Optional, Tuple
 
 from dace import data, subsets
@@ -391,10 +392,7 @@ def _parse_callee(callee: Any, argtypes: Dict[str, data.Data], callee_globals: D
     from dace.frontend.python.nextgen.lowering import parse_cache
     from dace.frontend.python.nextgen.pipeline import CanonicalizationPipeline, PipelineContext
 
-    modules = {
-        key: value.__name__
-        for key, value in callee_globals.items() if hasattr(value, '__name__') and type(value).__name__ == 'module'
-    }
+    modules = {key: value.__name__ for key, value in callee_globals.items() if isinstance(value, types.ModuleType)}
     modules['builtins'] = ''
     parsed_ast, closure = preprocessing.preprocess_dace_program(callee.f,
                                                                 argtypes,
