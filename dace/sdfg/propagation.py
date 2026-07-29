@@ -1686,10 +1686,8 @@ def propagate_subset(memlets: List[Memlet],
     else:
         defined_variables = set(defined_variables)
 
-    if undefined_variables is not None:
-        defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
-    else:
-        undefined_variables = set()
+    undefined_variables = set(symbolic.pystr_to_symbolic(p) for p in undefined_variables or set())
+    defined_variables -= undefined_variables
 
     # Propagate subset
     variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
@@ -1714,7 +1712,10 @@ def propagate_subset(memlets: List[Memlet],
         else:
             subset = md.subset
 
-        for pclass in MemletPattern.extensions():
+        subset_free_symbols = set(symbolic.pystr_to_symbolic(s) for s in subset.free_symbols)
+        # Local symbols are opaque outside their defining scope, so use the conservative fallback.
+        applicable_patterns = [] if subset_free_symbols & undefined_variables else MemletPattern.extensions()
+        for pclass in applicable_patterns:
             pattern = pclass()
             if pattern.can_be_applied([subset], variable_context, rng, [md]):
                 tmp_subset = pattern.propagate(arr, [subset], rng)
