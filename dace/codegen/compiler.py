@@ -4,14 +4,16 @@
     returns the corresponding CompiledSDFG object. """
 
 import collections
+import contextlib
 import io
 import os
 import pathlib
 import re
 import shutil
 import shlex
+import signal
 import subprocess
-from typing import Callable, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
+from typing import Callable, Iterator, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 
 import dace
@@ -638,8 +640,36 @@ def identical_file_exists(filename: str, file_contents: str):
     return True
 
 
+@contextlib.contextmanager
+def build_subprocess_sigmask() -> Iterator[None]:
+    """Temporarily unblock ``SIGCHLD`` on the calling thread, so that a subprocess forked inside
+    this context inherits an unblocked ``SIGCHLD``.
+
+    MPI/Slurm launchers (``srun``, ``mpirun``) start their tasks with ``SIGCHLD`` blocked, and a
+    signal mask is inherited across fork and exec. CMake (KWSys) learns that the helpers it spawns
+    during configure -- ``uname``, the compiler-id/ABI test binaries, ``make``/``ninja`` -- have
+    exited by receiving ``SIGCHLD``, and waits for it in ``select()``. Blocked, the signal goes
+    pending instead of being delivered, ``select()`` is never interrupted, ``waitpid`` is never
+    called, and the build wedges with a live ``cmake`` and defunct children.
+
+    A child inherits the forking thread's mask and ``Popen`` does not reset it, so unblocking
+    around the fork is enough. ``pthread_sigmask`` is per-thread, so this disturbs neither another
+    thread nor the process's steady-state mask. No-op on Windows, which has neither
+    ``pthread_sigmask`` nor ``SIGCHLD``."""
+    if os.name != 'posix' or signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, []):
+        yield  # Already deliverable: the common, non-launcher case.
+        return
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGCHLD})
+
+
 def _run_liveoutput(command, output_stream=None, **kwargs):
-    process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
+    # Only the fork itself has to happen with SIGCHLD deliverable.
+    with build_subprocess_sigmask():
+        process = subprocess.Popen(command, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, **kwargs)
     output = io.StringIO()
     while True:
         line = process.stdout.readline().rstrip()
