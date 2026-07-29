@@ -379,8 +379,18 @@ def test_nanobind_interface_report_follows_rename():
         csdfg(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
         csdfg.finalize()  # __dace_exit is what saves the report
 
-        assert csdfg.sdfg.get_latest_report() is not None
-        assert sdfg.get_latest_report() is None
+        # Diagnostics for the CI-only failure of the first assert (passes
+        # locally standalone, under the full CI env, and in full-file runs):
+        # where did the report go?
+        import os
+        folder = str(csdfg.sdfg.build_folder)
+        perf = os.path.join(folder, 'perf')
+        diag = (f'cwd="{os.getcwd()}", build_folder="{folder}" '
+                f'(exists={os.path.isdir(folder)}), perf exists={os.path.isdir(perf)}, '
+                f'perf content={os.listdir(perf) if os.path.isdir(perf) else "n/a"}, '
+                f'original folder="{sdfg.build_folder}" (exists={os.path.isdir(str(sdfg.build_folder))})')
+        assert csdfg.sdfg.get_latest_report() is not None, diag
+        assert sdfg.get_latest_report() is None, diag
 
 
 def test_nanobind_interface_sdfg_safe_call_refused():
