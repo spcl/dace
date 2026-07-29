@@ -828,7 +828,24 @@ class ANFTransform(_BodyTransformer):
             return self._as_dataref(target, hoisted)
         if isinstance(target, ast.Subscript):
             if not cpa.is_dataref(target.value):
-                target.value = self._as_dataref(target.value, hoisted)
+                # A CHAINED target (``A[:, 1:5][:, 0:2] = ...``, ``L[i + 1][i]
+                # = ...``): name the base, the same atom-level hoisting a
+                # chained subscript already gets in value position.
+                #
+                # Such a temporary must ALIAS what it names -- ``__anf0 =
+                # A[:, 1:5]`` binds a view (NumPy basic indexing, see
+                # ``rules.assign._lower_view_binding``), and the write through
+                # the outer subscript then reaches ``A``. Whether a given base
+                # can alias depends on its type, which is not known here, so
+                # the requirement is RECORDED on the hoisted statements and
+                # enforced during lowering (``rules.assign``): a base that would
+                # only lower to a copy (``A.T[0:2][0] = 5``, where the transpose
+                # is computed) degrades to a callback rather than silently
+                # discarding the write.
+                already_hoisted = len(hoisted)
+                target.value = self._flatten(target.value, hoisted, level='atom')
+                for lifted in hoisted[already_hoisted:]:
+                    lifted.aliasing_required = True
             target.slice = self._flatten_index(target.slice, hoisted)
         return target
 

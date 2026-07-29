@@ -836,7 +836,7 @@ def resolve_attribute_data(base: DataAccess, attr_name: str, state: LoweringStat
     """
     if attr_name not in SUPPORTED_DATA_ATTRIBUTES:
         return None
-    if attr_name == 'flat' and isinstance(base.descriptor, data.Array) and _is_contiguous_flat(base.descriptor):
+    if attribute_aliases_source(base, attr_name):
         return _materialize_flat_view(base, state)
     return _materialize_attribute_replacement(base, attr_name, state)
 
@@ -970,33 +970,57 @@ def lower_attribute_assign(target: ast.Name, value: ast.Attribute, state: Loweri
     return True
 
 
-def rewrite_flat_subscript_base(target: ast.Subscript, state: LoweringState) -> ast.Subscript:
+def attribute_aliases_source(base: DataAccess, attr_name: str) -> bool:
     """
-    Rewrite a ``A.flat[...]`` subscript target to reference the materialized
-    flat-view container directly, so the ordinary subscript-assignment
-    machinery (``rules.assign._lower_subscript_assign``/``access.resolve_access``,
-    neither of which know about the ATTRIBUTE registry) can resolve it.
+    Whether a registered data attribute ALIASES its source, so a write through
+    it reaches the source array -- as opposed to computing a fresh array, where
+    a write would be discarded. This is the distinction
+    :func:`resolve_attribute_data` acts on, asked ahead of materializing.
 
-    Only the CONTIGUOUS case is rewritten: NumPy's flatiter is an aliasing
-    view there (see :func:`resolve_attribute_data`), so a write through it
-    must reach the source array. A non-contiguous ``.flat`` computes a
-    disposable copy -- subscripting it as a write target would silently
-    discard the write, so it is deliberately left unrewritten and falls
-    through to the ordinary (and, for this form, unsupported) paths, which
-    degrade to a callback instead of miscompiling.
-
-    Returns ``target`` unchanged when it is not a rewritable ``.flat`` base.
+    A contiguous ``.flat`` is NumPy's flatiter over the same storage; a
+    non-contiguous one, and ``.T``/``.real``/``.imag``, compute a copy.
     """
-    if not isinstance(target.value, ast.Attribute) or target.value.attr != 'flat':
-        return target
-    base = resolve_access(target.value.value, state)
-    if base is None or not isinstance(base.descriptor, data.Array) or not _is_contiguous_flat(base.descriptor):
-        return target
-    access = resolve_attribute_data(base, 'flat', state)
+    return attr_name == 'flat' and isinstance(base.descriptor, data.Array) and _is_contiguous_flat(base.descriptor)
+
+
+def rewrite_attribute_subscript_base(subscript: ast.Subscript, state: LoweringState, writable: bool) -> ast.Subscript:
+    """
+    Rewrite a subscript over a registry ATTRIBUTE-family read (``A.flat[10:15]``,
+    ``A.T[0:2]``) to reference the materialized container directly, so the
+    ordinary subscript machinery (``rules.assign``/``access.resolve_access``,
+    neither of which knows about the ATTRIBUTE registry) can resolve it.
+    Without this the access reaches the shared memlet parser with ``A.flat`` as
+    a data NAME (*"Use of undefined data"*) and the statement degrades to a
+    callback.
+
+    :param writable: Whether the subscript is a WRITE target. A write may only
+        be rewritten onto an attribute that aliases its source
+        (:func:`attribute_aliases_source`); rewriting a computed one would
+        silently discard the write, so those are left alone and degrade to a
+        callback instead of miscompiling. A read of a computed attribute is
+        just a read of the copy, and is always safe.
+
+    Returns ``subscript`` unchanged when its base is not a rewritable
+    attribute read.
+    """
+    if not isinstance(subscript.value, ast.Attribute) or subscript.value.attr not in SUPPORTED_DATA_ATTRIBUTES:
+        return subscript
+    base = resolve_access(subscript.value.value, state)
+    if base is None:
+        return subscript
+    aliases = attribute_aliases_source(base, subscript.value.attr)
+    if writable and not aliases:
+        return subscript
+    if not aliases and state.emitter.in_dataflow_scope:
+        # Materializing a computed attribute emits a deferred replacement call,
+        # which is not a legal node inside a scope (see
+        # :func:`_materialize_attribute_reads`).
+        return subscript
+    access = resolve_attribute_data(base, subscript.value.attr, state)
     if access is None:
-        return target
-    rewritten = copy.copy(target)
-    rewritten.value = ast.copy_location(ast.Name(id=access.container, ctx=ast.Load()), target.value)
+        return subscript
+    rewritten = copy.copy(subscript)
+    rewritten.value = ast.copy_location(ast.Name(id=access.container, ctx=ast.Load()), subscript.value)
     return rewritten
 
 

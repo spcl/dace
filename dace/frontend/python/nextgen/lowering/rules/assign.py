@@ -45,6 +45,16 @@ from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import Inferred
 
 
+def _aliasing_required(statement: ast.stmt) -> bool:
+    """
+    Whether this binding was hoisted out of an assignment TARGET's base by
+    canonicalization (``ANFTransform._flatten_target``) and therefore has to
+    alias what it names -- a write through the outer subscript must reach the
+    source, so a binding that would only copy is refused instead.
+    """
+    return getattr(statement, 'aliasing_required', False)
+
+
 @rule(ast.Assign)
 def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     target = statement.targets[0]
@@ -85,8 +95,23 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     try:
         inferred = state.inference.infer(value)
     except UnsupportedFeatureError as reason:
-        dispatch.fallback_to_callback(statement, state, reason)
-        return
+        # ``b = A.flat[10:15]`` / ``b = A.T[0:2]``: inference types the base
+        # attribute, but the shared memlet parser then sees "A.flat" as a data
+        # NAME and rejects it. Materializing the attribute read gives the
+        # subscript a real container to index, after which both inference and
+        # lowering proceed normally. Attempted only after a failure, so no
+        # attribute is materialized speculatively.
+        rewritten = (dispatch.rewrite_attribute_subscript_base(value, state, writable=_aliasing_required(statement))
+                     if isinstance(value, ast.Subscript) else value)
+        if rewritten is value:
+            dispatch.fallback_to_callback(statement, state, reason)
+            return
+        value = statement.value = rewritten
+        try:
+            inferred = state.inference.infer(value)
+        except UnsupportedFeatureError as retried:
+            dispatch.fallback_to_callback(statement, state, retried)
+            return
     if inferred.kind == 'static':
         if isinstance(target, ast.Name) and _reference_binding(target.id, state) is None:
             state.context.bind_static(target.id, inferred.value)
@@ -221,6 +246,16 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
         if access is not None and access.numpy_shape:
             _lower_view_binding(target, access, state)
             return
+
+    if _aliasing_required(statement):
+        # Canonicalization hoisted this binding out of an assignment TARGET's
+        # base (``A[:, 1:5][:, 0:2] = ...``), so it must alias what it names.
+        # Every path below computes a fresh container, through which a write
+        # would be silently discarded.
+        raise UnsupportedFeatureError(f'Assignment target base "{astutils.unparse(value)}" cannot bind a view',
+                                      state.context.filename,
+                                      statement,
+                                      category='assign-target')
 
     # Constants with no C representation (enum classes, type objects, ...)
     # cannot materialize as containers; they bind as compile-time values so
@@ -370,11 +405,11 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
                             state: LoweringState) -> None:
     # ``A.flat[idx] = ...`` on a contiguous array: rewrite the base to the
     # materialized flat-view container (see
-    # ``dispatch.rewrite_flat_subscript_base``) so the ordinary machinery
+    # ``dispatch.rewrite_attribute_subscript_base``) so the ordinary machinery
     # below, which only resolves a plain-name or structure-member base,
     # can write through it -- NumPy's flatiter aliases the source, so this
     # must reach ``A``, not a disposable copy.
-    target = dispatch.rewrite_flat_subscript_base(target, state)
+    target = dispatch.rewrite_attribute_subscript_base(target, state, writable=True)
     if _lower_advanced_index_write(target, value, statement, state):
         return
     try:
@@ -393,6 +428,16 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
                                       state.context.filename,
                                       statement,
                                       category='undefined-name')
+    if isinstance(target_access.descriptor.dtype, dtypes.pyobject):
+        # Writing INTO an opaque Python object (``__anf0[0] = 5`` where an
+        # earlier fallback left ``__anf0`` a pyobject): the write has to run in
+        # the interpreter too, or it lands in a container unrelated to whatever
+        # the object refers to. The read side of the same propagation is
+        # ``dispatch._consumes_pyobject``.
+        raise UnsupportedFeatureError(f'Assignment into an opaque Python object "{astutils.unparse(target)}"',
+                                      state.context.filename,
+                                      statement,
+                                      category='pyobject-propagation')
 
     # Subset-to-subset copy
     if isinstance(value, (ast.Name, ast.Subscript)):
