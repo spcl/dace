@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import re
 import warnings
 
 import sympy as sp
@@ -381,10 +382,12 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
-    # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
-    # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
+    # NOTE: A dot separating names indicates nested data and structures, and structures are
+    # implemented as pointers, so it becomes an arrow. Only a dot BETWEEN NAMES qualifies: `expr`
+    # ends in an index expression, so a decimal literal there was rewritten too, e.g.
+    # `&A[(0.5 * j)]` -> `&A[(0->5 * j)]`, which does not compile.
     if 'dace_get_pyobject_attr' not in expr:
-        expr = expr.replace('.', '->')
+        expr = re.sub(r'\.(?=[A-Za-z_])', '->', expr)
 
     return (typedef + ref, pointer_name, expr)
 
