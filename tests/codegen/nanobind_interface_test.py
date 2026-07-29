@@ -551,6 +551,26 @@ def test_nanobind_interface_pyobject_scalar_arg_e2e():
         assert received[0] is payload
 
 
+def test_nanobind_interface_lowp_dtypes_rejected():
+    """bfloat16/float8 (ml_dtypes-backed) arguments are refused at codegen:
+    numpy can export such arrays neither via DLPack nor the buffer protocol
+    (BufferError / "cannot include dtype 'E' in a buffer"), so the nanobind
+    marshalling could never ingest them - refuse instead of emitting C++ that
+    fails to compile (nb::ndarray<dace::bfloat16> has no dtype_traits)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    for lowp in (dace.bfloat16, dace.float8_e4m3fn, dace.float8_e5m2):
+        sdfg = dace.SDFG(f'lowp_reject_{lowp.to_string()}')
+        sdfg.add_array('A', [4], lowp)
+        with pytest.raises(NotImplementedError, match='ctypes'):
+            generate_bindings_code(sdfg)
+
+    sdfg = dace.SDFG('lowp_reject_scalar')
+    sdfg.add_scalar('x', dace.bfloat16)
+    with pytest.raises(NotImplementedError, match='ctypes'):
+        generate_bindings_code(sdfg)
+
+
 def test_nanobind_interface_callback_binding():
     """A callback argument binds as a function-pointer address (std::uintptr_t + reinterpret_cast)."""
     from dace.codegen.nanobind_bindings import generate_bindings_code

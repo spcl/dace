@@ -277,6 +277,19 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
             raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                       f'{type(desc).__name__} is not supported; returns are arrays only.')
 
+        # bfloat16 / float8 (ml_dtypes-backed): numpy can export such arrays
+        # neither via DLPack (BufferError) nor the buffer protocol ("cannot
+        # include dtype 'E' in a buffer"), so nb::ndarray could never ingest
+        # them even with a dtype_traits specialization - and without one the
+        # generated C++ does not compile. Refuse clearly for arrays and
+        # scalars alike; the ctypes interface passes them as raw pointers.
+        # See: https://github.com/wjakob/nanobind/discussions/560
+        if desc.dtype.base_type in (dtypes.bfloat16, dtypes.float8_e4m3fn, dtypes.float8_e5m2):
+            raise NotImplementedError(f'Nanobind interface: argument "{name}" of low-precision type '
+                                      f'{desc.dtype} is not supported (numpy cannot export ml_dtypes-'
+                                      f'backed arrays via DLPack or the buffer protocol); '
+                                      f'use the ctypes interface (compiler.interface=ctypes).')
+
         # A float16 *scalar* would need a nanobind value type-caster for
         # dace::half (Python float <-> half); float16 arrays are handled via a
         # dtype_traits specialization (see _uses_half_ndarray). Scalars are rare
