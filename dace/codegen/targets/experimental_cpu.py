@@ -621,6 +621,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             else:
                 inline[name] = in_map.get(name, out_map.get(name))
 
+        self._drop_captured_inlines(node, inline)
+
         # Inlining an edge skips its copy dispatch (see _connector_needs_copy),
         # which is also what registers the edge's copy target as "used" -- and
         # thereby generates that target's file-level setup (e.g. the CUDA
@@ -633,6 +635,33 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
             if name in out_edges:
                 self._register_inlined_copy_target(sdfg, state_dfg, node, out_edges[name], is_output=True)
         return inline
+
+    def _drop_captured_inlines(self, node, inline: Dict[str, str]) -> None:
+        """
+        Removes from ``inline`` every connector whose access text would be CAPTURED by the tasklet
+        body, i.e. whose access text names an identifier the body itself already uses.
+
+        The access text is spliced into a raw C++ body that this generator does not parse, so it lands
+        inside whatever scope the body declares. If the body declares that identifier (``tblis_tensor
+        A, B, C;`` in the TBLIS ``TensorDot`` expansion, with the contracted array also named ``A``),
+        the inlined name binds to the body's local instead of the array -- a wrong program, not a
+        compile error, whenever the local happens to have a compatible type. Detecting a *declaration*
+        needs a C++ parser; any occurrence is the sound over-approximation, and the cost of an extra
+        refusal is only the classic connector copy-in/out, which is always correct.
+
+        Connectors that stay inlined vanish from the body, so they cannot capture anything; dropping
+        one puts its name back into the body, hence the fixpoint.
+        """
+        if not inline:
+            return
+        body_names = self._used_identifiers(node)
+        while True:
+            occupied = body_names - set(inline)
+            captured = [c for c, access in inline.items() if not occupied.isdisjoint(IDENTIFIER_TOKENS.findall(access))]
+            if not captured:
+                return
+            for conn in captured:
+                del inline[conn]
 
     def _register_inlined_copy_target(self, sdfg, state_dfg, node, edge, is_output: bool) -> None:
         """

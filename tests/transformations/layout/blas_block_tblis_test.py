@@ -114,8 +114,26 @@ def test_gemm_blocked_emits_blocked_tblis_call():
     assert "tblis_init_tensor_scaled_d(&C" in code
 
 
+def test_tblis_body_locals_are_not_captured():
+    """The TBLIS body declares its own ``tblis_tensor A, B, C;``. Inlining the connectors into that
+    body would bind them to those locals instead of the identically named arrays, so the connector
+    copy-in/out must survive. Codegen only -- runs where TBLIS is not installed."""
+    M, K, N = 8, 12, 6
+    sdfg, _ = _gemm_sdfg("gemm_tblis_capture", M, K, N)
+    assert GemmToTensorDot().apply_pass(sdfg, {}) == 1
+    _the_tensordot(sdfg).implementation = "TBLIS"
+    sdfg.validate()
+
+    code = sdfg.generate_code()[0].clean_code
+    for conn in ("_left_tensor", "_right_tensor", "_out_tensor"):
+        assert f"(double*){conn}" in code
+    for arr in ("A", "B", "C"):
+        assert f"(double*){arr}" not in code
+
+
 if __name__ == "__main__":
     test_gemm_blocked_emits_blocked_tblis_call()
+    test_tblis_body_locals_are_not_captured()
     test_gemm_to_tblis_matches_numpy()
     test_gemm_blocked_tblis_matches_numpy()
     print("blas_block_tblis tests PASS")
