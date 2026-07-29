@@ -319,6 +319,34 @@ def test_invalid_sdfgs_are_still_rejected(name: str, builder: Callable[[], dace.
         builder().validate()
 
 
+def test_unserializable_invalid_sdfg_still_reports():
+    """``validate_sdfg`` dumps the invalid graph for inspection. That dump walks the very graph that
+    is broken, so it can raise on its own -- and an exception from the dump would replace the
+    diagnostic with an unrelated traceback."""
+    sdfg = dace.SDFG('unserializable_invalid')
+    sdfg.add_array('A', [4], dace.float64)
+    sdfg.add_array('B', [4], dace.float64)
+
+    inner = dace.SDFG('inner')
+    inner.add_array('A', [4], dace.float64)
+    inner.add_array('B', [4], dace.float64)
+    istate = inner.add_state('istate', is_start_block=True)
+    istate.add_nedge(istate.add_read('A'), istate.add_write('B'), dace.Memlet('A[0:4]'))
+
+    state = sdfg.add_state('outer', is_start_block=True)
+    nsdfg = state.add_nested_sdfg(inner, {'A': None}, {'B': None})
+    state.add_edge(state.add_read('A'), None, nsdfg, 'A', dace.Memlet('A[0:4]'))
+    state.add_edge(nsdfg, 'B', state.add_write('B'), None, dace.Memlet('B[0:4]'))
+    sdfg.validate()
+
+    # An owner-less block: invalid, and ``SDFGState.to_json`` dereferences ``self.sdfg`` unguarded.
+    istate.sdfg = None
+
+    with pytest.raises(InvalidSDFGNodeError) as info:
+        sdfg.validate()
+    assert 'Node validation failed' in str(info.value)
+
+
 if __name__ == '__main__':
     test_unresolvable_ids_still_format(lambda sdfg: InvalidSDFGNodeError('boom', sdfg, 99, 7))
     test_isolated_node_in_nested_region_is_printable()
@@ -333,3 +361,5 @@ if __name__ == '__main__':
     test_valid_nested_regions_still_validate(valid_loop)
     for _name, _builder in NESTED_NODE_ERRORS:
         test_invalid_sdfgs_are_still_rejected(_name, _builder)
+
+    test_unserializable_invalid_sdfg_still_reports()

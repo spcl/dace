@@ -1,5 +1,7 @@
 # Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
 
+import copy
+
 import numpy as np
 import dace
 from dace.properties import CodeBlock
@@ -134,8 +136,44 @@ def test_conditional_block_read_and_write_sets_branch_condition():
     assert not PruneConnectors.can_be_applied_to(sdfg=sdfg, nsdfg=nsdfg_node, expr_index=0, permissive=False)
 
 
+def test_add_branch_owns_deep_copied_subtree():
+    """``copy.deepcopy`` of a region taken out of its SDFG resolves ``_sdfg`` through the memo and
+    comes back owner-less. ``add_branch`` is what re-establishes ownership -- for the whole subtree,
+    not just the branch root, exactly as ``add_node`` does."""
+    sdfg = dace.SDFG('add_branch_ownership')
+    sdfg.add_array('A', (1, ), dace.float32)
+    sdfg.add_symbol('i', dace.int32)
+    state0 = sdfg.add_state('state0', is_start_block=True)
+
+    if1 = ConditionalBlock('if1')
+    sdfg.add_node(if1)
+    sdfg.add_edge(state0, if1, InterstateEdge())
+
+    if_body = ControlFlowRegion('if_body', sdfg=sdfg)
+    inner = ControlFlowRegion('inner')
+    if_body.add_node(inner, is_start_block=True)
+    state1 = inner.add_state('state1', is_start_block=True)
+    state1.add_edge(state1.add_tasklet('t1', None, {'a'}, 'a = 100'), 'a', state1.add_access('A'), None,
+                    dace.Memlet('A[0]'))
+    if1.add_branch(CodeBlock('i == 1'), if_body)
+
+    orphan = copy.deepcopy(if_body)
+    assert all(block.sdfg is None for block in orphan.all_control_flow_blocks())
+
+    if1.add_branch(None, orphan)
+    assert orphan.sdfg is sdfg
+    for block in orphan.all_control_flow_blocks():
+        assert block.sdfg is sdfg, f'{block} kept a stale owner after add_branch'
+    sdfg.validate()
+
+    A = np.ones((1, ), dtype=np.float32)
+    sdfg(i=0, A=A)
+    assert A[0] == 100
+
+
 if __name__ == '__main__':
     test_cond_region_if()
     test_serialization()
     test_if_else()
     test_conditional_block_read_and_write_sets_branch_condition()
+    test_add_branch_owns_deep_copied_subtree()

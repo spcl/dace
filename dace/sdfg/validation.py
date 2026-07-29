@@ -378,8 +378,14 @@ def validate_sdfg(sdfg: 'dace.sdfg.SDFG', references: Set[int] = None, **context
         # to debug -- silently, since the path in the message still looks right.
         safe_name = re.sub(r'\W+', '_', sdfg.name)[:80] or 'sdfg'
         fpath = os.path.join('_dacegraphs', f'invalid_{safe_name}_{os.getpid()}.sdfgz')
-        sdfg.save(fpath, exception=ex, compress=True)
-        ex.path = fpath
+        # Serializing an invalid graph may itself fail (a broken back-pointer is exactly what
+        # ``to_json`` walks). The dump is a debugging convenience; letting it replace ``ex`` hides
+        # the defect being reported behind an unrelated traceback.
+        try:
+            sdfg.save(fpath, exception=ex, compress=True)
+            ex.path = fpath
+        except Exception as save_ex:  # noqa: BLE001 -- the diagnostic outranks the dump
+            warnings.warn(f'Could not save the invalid SDFG to {fpath}: {save_ex!r}')
         raise
 
 
