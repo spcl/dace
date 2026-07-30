@@ -125,6 +125,20 @@ class ProgramContext:
         #: once and used immediately, so the alias can never go stale.
         self.symbolic_scalar_values: Dict[str, Any] = {}
 
+        #: Descriptors of array-valued index EXPRESSIONS, under the synthetic
+        #: names inference gives them so the shared memlet parser recognizes
+        #: them as advanced indices (``InferenceService`` names ``A[ind[0]]``'s
+        #: index ``__idxexpr0``). These are types WITHOUT storage: they never
+        #: reach the tree, and lowering materializes the same expressions into
+        #: real containers. Kept here only so the advanced-indexing shape rules
+        #: can look up a descriptor for a name that is deliberately not in the
+        #: repository. Keyed by placeholder name.
+        self.index_expression_types: Dict[str, data.Data] = {}
+
+        #: Index expression source text -> its placeholder name, so one
+        #: expression keeps one name however often it is re-inferred.
+        self.index_expression_names: Dict[str, str] = {}
+
         #: Per-parse cache of preprocessed+canonicalized callees, shared by
         #: all call sites (including nested inline scopes, which reuse this
         #: context object).

@@ -108,6 +108,13 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
         # attribute is materialized speculatively.
         rewritten = (dispatch.rewrite_attribute_subscript_base(value, state, writable=_aliasing_required(statement))
                      if isinstance(value, ast.Subscript) else value)
+        if rewritten is value and isinstance(value, ast.Subscript):
+            # ``A[ind[0, 0:3]]``: an array-valued index the memlet parser only
+            # accepts as a bare name. Unlike the other spellings it fails
+            # during INFERENCE -- the parser renders the index as an applied
+            # function it then cannot sympify (``ind(0, 0:3)``) -- so the
+            # rewrite has to happen here as well as at the lowering paths.
+            rewritten = dispatch.materialize_array_indices(value, state)
         if rewritten is value:
             dispatch.fallback_to_callback(statement, state, reason)
             return
@@ -548,6 +555,10 @@ def _lower_advanced_index_write(target: ast.Subscript, value: ast.expr, statemen
         base = resolve_access(target.value, state)
         if base is None:
             return False
+        # An array-valued index the parser only recognizes as a bare name
+        # (``A[2:4, ind[1], 3] = ...``) is materialized first, so the write
+        # forms match the read forms.
+        target = dispatch.materialize_array_indices(target, state)
         expr = state.inference.parse_access(target)
         if not expr.arrdims:
             return False

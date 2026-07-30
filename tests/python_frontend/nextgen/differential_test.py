@@ -291,45 +291,60 @@ def test_signature_comparison(program, callback_budget):
         assert interop.has_compute(new_signature) or new_signature.callback_count > 0
 
 
+#: Inputs are drawn from a generator seeded per factory CALL, so a case sees
+#: the same values no matter what ran before it. These tests compare a compiled
+#: result against a NumPy reference; drawing from the global RNG made the inputs
+#: depend on test order, which is how a disagreement here becomes a failure
+#: nobody can reproduce (one did: a parallel accumulation whose result was
+#: wrong once in a full-suite run and never again).
+_SEED = 20260729
+
+
+def _rng():
+    return np.random.default_rng(_SEED)
+
+
 def _copy_inputs():
-    A = np.random.rand(12)
-    return {'A': A, 'B': np.zeros(12)}, {'N': 12}
+    return {'A': _rng().random(12), 'B': np.zeros(12)}, {'N': 12}
 
 
 def _elementwise_inputs():
-    return {'A': np.random.rand(12), 'B': np.random.rand(12), 'C': np.zeros(12)}, {'N': 12}
+    rng = _rng()
+    return {'A': rng.random(12), 'B': rng.random(12), 'C': np.zeros(12)}, {'N': 12}
 
 
 def _broadcast_inputs():
-    return {'A': np.random.rand(6, 4), 'b': np.random.rand(4), 'C': np.zeros((6, 4))}, {'N': 6, 'M': 4}
+    rng = _rng()
+    return {'A': rng.random((6, 4)), 'b': rng.random(4), 'C': np.zeros((6, 4))}, {'N': 6, 'M': 4}
 
 
 def _tasklet_inputs():
-    return {'A': np.random.rand(12), 'B': np.zeros(12)}, {'N': 12}
+    return {'A': _rng().random(12), 'B': np.zeros(12)}, {'N': 12}
 
 
 def _creation_inputs():
-    return {'A': np.random.rand(10)}, {}
+    return {'A': _rng().random(10)}, {}
 
 
 def _accumulate_inputs():
-    return {'A': np.random.rand(12)}, {'N': 12}
+    return {'A': _rng().random(12)}, {'N': 12}
 
 
 def _nested_inputs():
-    return {'A': np.random.rand(12), 'B': np.zeros(12)}, {'N': 12}
+    return {'A': _rng().random(12), 'B': np.zeros(12)}, {'N': 12}
 
 
 def _branch_inputs():
-    return {'A': np.random.rand(12), 'flag': np.int32(1)}, {'N': 12}
+    return {'A': _rng().random(12), 'flag': np.int32(1)}, {'N': 12}
 
 
 def _while_inputs():
-    return {'A': np.random.rand(12)}, {'N': 12}
+    return {'A': _rng().random(12)}, {'N': 12}
 
 
 def _elementwise_accumulate_inputs():
-    return {'A': np.random.rand(12), 'B': np.random.rand(12)}, {'N': 12}
+    rng = _rng()
+    return {'A': rng.random(12), 'B': rng.random(12)}, {'N': 12}
 
 
 #: (program, input factory, reference function computing the expected outputs
@@ -350,7 +365,7 @@ EXECUTION_CORPUS = [
     pytest.param(prog_callback, _tasklet_inputs, lambda a: {'A': np.concatenate(([1.0], a['A'][1:]))}, id='callback'),
     pytest.param(prog_elif,
                  lambda: ({
-                     'A': np.random.rand(12),
+                     'A': _rng().random(12),
                      'flag': np.int32(-1)
                  }, {
                      'N': 12
@@ -379,7 +394,7 @@ EXECUTION_CORPUS = [
                  id='detected_callable'),
     pytest.param(prog_view_read,
                  lambda: ({
-                     'A': np.random.rand(12),
+                     'A': _rng().random(12),
                      'B': np.zeros(4)
                  }, {
                      'N': 12
@@ -412,7 +427,7 @@ EXECUTION_CORPUS = [
                  id='map_accumulate_nested'),
     pytest.param(prog_map_accumulate_product,
                  lambda: ({
-                     'A': np.random.rand(12) + 0.5
+                     'A': _rng().random(12) + 0.5
                  }, {
                      'N': 12
                  }),

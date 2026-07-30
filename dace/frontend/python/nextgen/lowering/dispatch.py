@@ -54,6 +54,7 @@ from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
+from dace.frontend.python.nextgen.lowering import access as access_module
 from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values, streams
@@ -362,10 +363,107 @@ def _advanced_index_access(value: ast.expr, state: LoweringState):
     base = resolve_access(value.value, state)
     if base is None:
         return None
+    value = materialize_array_indices(value, state)
     expr = state.inference.parse_access(value)
     if not expr.arrdims:
         return None
     return advanced_indexing.analyze(value, expr, base.container, base.descriptor, state.context, state.inference)
+
+
+def materialize_array_indices(node: ast.Subscript, state: LoweringState) -> ast.Subscript:
+    """
+    Rewrite array-valued index EXPRESSIONS into containers bound to plain
+    names, returning the rewritten subscript.
+
+    The shared memlet parser recognizes an advanced (array-valued) index only
+    when it is written as a bare name whose descriptor it can look up
+    (``memlet_parser._fill_missing_slices``). Anything else -- ``A[ind[0]]``,
+    ``A[2:4, ind[1], 3]``, ``A[ind[0] + 1]`` -- is not a name, so the parser
+    took it for a symbolic expression, produced a subset referring to a
+    function of runtime data, and the access fell back to the interpreter.
+    That is a spelling restriction, not a feature boundary: the same access
+    written through a temporary already lowered.
+
+    Materializing here reduces every spelling to the one that works. The
+    container is cached for the statement (``LoweringState.index_arrays``), so
+    an index named twice in one statement -- as an accumulation's read and
+    write sides always do -- is evaluated once.
+
+    :raises UnsupportedFeatureError: If an index expression is array-valued but
+        of a dtype advanced indexing does not take (only integer and boolean
+        arrays index; a float array is a user error the parser reports).
+    """
+    elements = access_module.index_elements(node.slice)
+    replacements: dict = {}
+    for element in elements:
+        # A plain name is what the parser already accepts, and a slice or
+        # constant is not an array index at all.
+        if isinstance(element, (ast.Slice, ast.Name, ast.Constant)):
+            continue
+        container = _array_index_container(element, node, state)
+        if container is not None:
+            replacements[astutils.unparse(element)] = container
+    if not replacements:
+        return node
+    rewritten = copy.deepcopy(node)
+    rewritten.slice = access_module.substitute_index_reads(rewritten.slice, replacements)
+    return ast.fix_missing_locations(ast.copy_location(rewritten, node))
+
+
+def _array_index_container(element: ast.expr, node: ast.Subscript, state: LoweringState) -> Optional[str]:
+    """
+    The container holding the value of one array-valued index expression,
+    materializing it on first use, or None when the expression is not an
+    array-valued index (a scalar, a symbol, or an unresolvable form that the
+    ordinary paths report on).
+    """
+    if isinstance(element, ast.Subscript):
+        # ``A[ind.T[0]]``: the index is a subscript of a registry ATTRIBUTE
+        # read, which is not a data name either. Materializing the attribute
+        # first gives it one, after which it resolves like any other index.
+        element = rewrite_attribute_subscript_base(element, state, writable=False)
+    try:
+        access = resolve_access(element, state)
+    except UnsupportedFeatureError:
+        access = None  # e.g. a nested indirection; not our case to rewrite
+
+    if access is not None:
+        shape = access.numpy_shape
+        dtype = access.descriptor.dtype
+    else:
+        inferred = state.inference.infer(element)
+        if not inferred.is_data or inferred.descriptor is None:
+            return None
+        shape = [size for size in inferred.descriptor.shape if size != 1]
+        dtype = inferred.descriptor.dtype
+    if not shape:
+        return None  # A scalar index is indirection, lowered by the tasklet paths
+    if not isinstance(dtype, dtypes.typeclass) or (dtype not in dtypes.INTEGER_TYPES
+                                                   and dtype not in (dtypes.bool, dtypes.bool_)):
+        raise UnsupportedFeatureError(
+            f'Index expression "{astutils.unparse(element)}" is an array of {dtype}, '
+            'which cannot index (only integer and boolean arrays can)',
+            state.context.filename,
+            node,
+            category='advanced-index')
+
+    key = astutils.unparse(element)
+    cached = state.index_arrays.get(key)
+    if cached is not None:
+        return cached
+
+    descriptor = data.Array(dtype, shape)
+    container = state.context.add_container('__idxarr', descriptor)
+    # Bound to itself so the substituted name resolves as an ordinary container.
+    state.context.bind(container, container)
+    target = DataAccess(container, subsets.Range.from_array(descriptor), descriptor)
+    if access is not None:
+        state.emitter.emit(tn.CopyNode(target=container, memlet=Memlet(data=access.container, subset=access.subset)))
+    else:
+        # A computed index (``ind[0] + 1``): evaluate it into the container.
+        elementwise.emit_computation(target, element, node, state)
+    state.index_arrays[key] = container
+    return container
 
 
 def _materialize_advanced_indices(value: ast.expr, statement: ast.stmt, state: LoweringState) -> ast.expr:

@@ -751,7 +751,13 @@ def _index_descriptor(name: str, context) -> Optional[data.Data]:
     binding = context.resolve(name)
     if binding is not None and binding.kind == 'container':
         return context.containers.get(binding.container)
-    return context.containers.get(name)
+    if name in context.containers:
+        return context.containers[name]
+    # An array-valued index EXPRESSION inference gave a name to for typing
+    # (``ProgramContext.index_expression_types``). It has a shape and a dtype
+    # but no storage, which is all the shape rules here need; the emitting
+    # paths only ever see the real container lowering materializes for it.
+    return context.index_expression_types.get(name)
 
 
 def _index_container(index: Any, dimension: int, container: str, context, inference, node: ast.expr) -> str:

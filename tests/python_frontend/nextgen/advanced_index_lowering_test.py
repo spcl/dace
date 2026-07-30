@@ -122,6 +122,157 @@ def test_index_as_a_registry_operator_operand():
     np.testing.assert_allclose(result.ravel()[0], vals @ x[cols])
 
 
+# --- Index expressions
+#
+# The shared memlet parser recognizes an array-valued index only when it is
+# written as a bare NAME whose descriptor it can look up. Every other spelling
+# -- `A[ind[0]]`, `A[2:4, ind[1], 3]`, `A[ind[0] + 1]` -- was taken for a
+# symbolic expression, which is the damaging failure: the access typed as a
+# single ELEMENT rather than failing, so an ANF temporary holding the result
+# was allocated as a scalar and the error surfaced later as a broadcast
+# complaint about a different statement.
+
+
+def test_index_expression_read():
+    """An index array reached through a subscript, not a name."""
+
+    @dace.program
+    def program(A: dace.float64[N], ind: dace.int32[2, 3], O: dace.float64[3]):
+        O[:] = A[ind[0]]
+
+    A, ind, O = np.random.default_rng(0).random(20), np.array([[1, 3, 5], [0, 2, 4]], dtype=np.int32), np.zeros(3)
+    _run(program, A=A, ind=ind, O=O, N=20, M=3)
+    np.testing.assert_allclose(O, A[ind[0]])
+
+
+def test_computed_index_expression():
+    """The index is an expression over an array, evaluated into a container."""
+
+    @dace.program
+    def program(A: dace.float64[N], ind: dace.int32[2, 3], O: dace.float64[3]):
+        O[:] = A[ind[0] + 1]
+
+    A, ind, O = np.random.default_rng(1).random(20), np.array([[1, 3, 5], [0, 2, 4]], dtype=np.int32), np.zeros(3)
+    _run(program, A=A, ind=ind, O=O, N=20, M=3)
+    np.testing.assert_allclose(O, A[ind[0] + 1])
+
+
+def test_sliced_index_expression():
+    """``A[ind[0, 0:3]]``: this spelling fails during INFERENCE rather than at
+    lowering -- the parser renders the index as an applied function it cannot
+    then sympify -- so it exercises the recovery in ``rules.assign``."""
+
+    @dace.program
+    def program(A: dace.float64[N], ind: dace.int32[2, 5], O: dace.float64[3]):
+        O[:] = A[ind[0, 0:3]]
+
+    A = np.random.default_rng(2).random(20)
+    ind = np.array([[1, 3, 5, 7, 9], [0, 2, 4, 6, 8]], dtype=np.int32)
+    O = np.zeros(3)
+    _run(program, A=A, ind=ind, O=O, N=20, M=3)
+    np.testing.assert_allclose(O, A[ind[0, 0:3]])
+
+
+def test_index_expression_nested_in_an_expression():
+    """The result shape has to be right at inference time: an ANF temporary is
+    allocated from it, and a scalar temporary silently truncates the gather."""
+
+    @dace.program
+    def program(A: dace.float64[N], ind: dace.int32[2, 3], B: dace.float64[3], O: dace.float64[3]):
+        O[:] = A[ind[0]] * 2.0 + B
+
+    rng = np.random.default_rng(3)
+    A, B, O = rng.random(20), rng.random(3), np.zeros(3)
+    ind = np.array([[1, 3, 5], [0, 2, 4]], dtype=np.int32)
+    _run(program, A=A, ind=ind, B=B, O=O, N=20, M=3)
+    np.testing.assert_allclose(O, A[ind[0]] * 2.0 + B)
+
+
+def test_two_index_expressions_broadcast():
+    """Two array-valued index expressions in one subscript."""
+
+    @dace.program
+    def program(A: dace.float64[6, 10], ind: dace.int32[2, 3], O: dace.float64[3]):
+        O[:] = A[ind[1], ind[0]]
+
+    A = np.arange(60, dtype=np.float64).reshape(6, 10).copy()
+    ind, O = np.array([[1, 3, 5], [0, 2, 4]], dtype=np.int32), np.zeros(3)
+    _run(program, A=A, ind=ind, O=O, N=6, M=10)
+    np.testing.assert_allclose(O, A[ind[1], ind[0]])
+
+
+def test_index_expression_through_an_attribute():
+    """``A[ind.T[0]]``: the index is a subscript of a registry attribute read,
+    which is not a data name either."""
+
+    @dace.program
+    def program(A: dace.float64[N], ind: dace.int32[3, 2], O: dace.float64[3]):
+        O[:] = A[ind.T[0]]
+
+    A = np.random.default_rng(4).random(20)
+    ind, O = np.array([[1, 0], [3, 2], [5, 4]], dtype=np.int32), np.zeros(3)
+    _run(program, A=A, ind=ind, O=O, N=20, M=3)
+    np.testing.assert_allclose(O, A[ind.T[0].copy()])
+
+
+def test_index_expression_write_and_accumulate():
+    """Both write forms, including the accumulation whose read and write sides
+    name the same index expression (evaluated once, per statement)."""
+
+    @dace.program
+    def overwrite(A: dace.float64[N], ind: dace.int32[2, 3], B: dace.float64[3]):
+        A[ind[0]] = B
+
+    @dace.program
+    def accumulate(A: dace.float64[N], ind: dace.int32[2, 3], B: dace.float64[3]):
+        A[ind[0]] += B
+
+    rng = np.random.default_rng(5)
+    ind = np.array([[1, 3, 5], [0, 2, 4]], dtype=np.int32)
+
+    A, B = rng.random(20), rng.random(3)
+    expected = A.copy()
+    expected[ind[0]] = B
+    _run(overwrite, A=A, ind=ind, B=B, N=20, M=3)
+    np.testing.assert_allclose(A, expected)
+
+    A, B = rng.random(20), rng.random(3)
+    expected = A.copy()
+    expected[ind[0]] += B
+    _run(accumulate, A=A, ind=ind, B=B, N=20, M=3)
+    np.testing.assert_allclose(A, expected)
+
+
+def test_multidim_index_expression_write():
+    """``A[2:4, ind[1], 3] += B``: an index expression combined with a slice
+    and a scalar (the shape `augmented_assignment_to_slice_test` uses)."""
+
+    @dace.program
+    def program(A: dace.int32[20, 10, 6], ind: dace.int32[2, 5], B: dace.int32[5]):
+        A[2:4, ind[1], 3] += B
+
+    A = np.arange(20 * 10 * 6, dtype=np.int32).reshape(20, 10, 6).copy()
+    ind = np.array([[1, 3, 5, 7, 9], [0, 2, 4, 6, 8]], dtype=np.int32)
+    B = np.arange(5, dtype=np.int32) + 100
+    expected = A.copy()
+    expected[2:4, ind[1], 3] += B
+    _run(program, A=A, ind=ind, B=B, N=20, M=5)
+    np.testing.assert_array_equal(A, expected)
+
+
+def test_scalar_index_expression_is_not_advanced_indexing():
+    """A single-element index expression selects one element, so it stays
+    indirection rather than becoming a gather."""
+
+    @dace.program
+    def program(A: dace.float64[N], ind: dace.int32[2, 3], O: dace.float64[1]):
+        O[0] = A[ind[0, 1]]
+
+    A, ind, O = np.random.default_rng(6).random(20), np.array([[1, 3, 5], [0, 2, 4]], dtype=np.int32), np.zeros(1)
+    _run(program, A=A, ind=ind, O=O, N=20, M=3)
+    np.testing.assert_allclose(O[0], A[ind[0, 1]])
+
+
 # --- Writes
 
 
@@ -263,6 +414,15 @@ if __name__ == '__main__':
     test_index_combined_with_slices()
     test_index_inside_a_larger_expression()
     test_index_as_a_registry_operator_operand()
+    test_index_expression_read()
+    test_computed_index_expression()
+    test_sliced_index_expression()
+    test_index_expression_nested_in_an_expression()
+    test_two_index_expressions_broadcast()
+    test_index_expression_through_an_attribute()
+    test_index_expression_write_and_accumulate()
+    test_multidim_index_expression_write()
+    test_scalar_index_expression_is_not_advanced_indexing()
     test_write_through_index_array()
     test_accumulate_through_index_array()
     test_write_combined_with_slices()

@@ -39,6 +39,11 @@ class LoweringState:
         #: extents; the scalar cannot change within one statement, and the
         #: cache is dropped before the next one in case it changes there.
         self.index_symbols: Dict[str, str] = {}
+        #: Index expression -> container materialized for it
+        #: (``lowering.dispatch.materialize_array_indices``), valid for the
+        #: current statement only, so an array-valued index named on both sides
+        #: of an accumulation is evaluated once.
+        self.index_arrays: Dict[str, str] = {}
 
     def lower_body(self, body) -> None:
         """Lower a list of canonical statements into the current scope."""
@@ -82,6 +87,7 @@ def lower_statement(statement: ast.stmt, state: LoweringState) -> None:
     mark = state.emitter.checkpoint()
     saved_bindings = state.context.snapshot()
     state.index_symbols = {}
+    state.index_arrays = {}
     try:
         handler(statement, state)
     except UnsupportedFeatureError as reason:

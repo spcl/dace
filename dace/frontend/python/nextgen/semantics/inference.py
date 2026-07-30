@@ -649,7 +649,9 @@ class InferenceService:
             every failure at this boundary is a feature gap, not a crash.
         """
         try:
-            return ParseMemlet(self._shim, self.context.defined_view(), self._restore_index_sequences(node))
+            defined = self.context.defined_view()
+            parsed = self._name_array_index_expressions(self._restore_index_sequences(node), defined)
+            return ParseMemlet(self._shim, defined, parsed)
         except UnsupportedFeatureError:
             raise
         except Exception as error:
@@ -657,6 +659,81 @@ class InferenceService:
                                           self.context.filename,
                                           node,
                                           category='memlet-parse')
+
+    def _name_array_index_expressions(self, node: Union[ast.Name, ast.Subscript],
+                                      defined: Dict[str, Any]) -> Union[ast.Name, ast.Subscript]:
+        """
+        Give every array-valued index EXPRESSION a name the memlet parser can
+        look up, so the access types as the advanced indexing it is.
+
+        The parser recognizes an array index only as a bare name
+        (``memlet_parser._fill_missing_slices``); written any other way
+        (``A[ind[0]]``, ``A[2:4, ind[1], 3]``) the index becomes an applied
+        symbolic function, and the access types as a single ELEMENT. That is
+        the damaging failure: the shape is wrong rather than absent, so an ANF
+        temporary holding the result is allocated as a scalar and the real
+        error surfaces later as a broadcast-rank complaint about an unrelated
+        statement.
+
+        The names introduced here are for typing only -- they carry a
+        descriptor, not storage. Lowering materializes the same expressions
+        into real containers
+        (``lowering.dispatch.materialize_array_indices``), which is why this
+        may add entries to ``defined`` without touching the repository.
+        """
+        if not isinstance(node, ast.Subscript):
+            return node
+        elements = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
+        replacements: Dict[str, str] = {}
+        for element in elements:
+            if isinstance(element, (ast.Slice, ast.Name, ast.Constant)):
+                continue
+            descriptor = self._array_index_descriptor(element)
+            if descriptor is None:
+                continue
+            source = astutils.unparse(element)
+            name = self.context.index_expression_names.get(source)
+            if name is None:
+                name = f'__idxexpr{len(self.context.index_expression_names)}'
+                self.context.index_expression_names[source] = name
+            self.context.index_expression_types[name] = descriptor
+            defined[name] = descriptor
+            replacements[source] = name
+        if not replacements:
+            return node
+
+        class _Substituter(ast.NodeTransformer):
+
+            def visit(self, visited: ast.AST) -> ast.AST:
+                key = astutils.unparse(visited) if isinstance(visited, ast.expr) else None
+                if key in replacements:
+                    return ast.copy_location(ast.Name(id=replacements[key], ctx=ast.Load()), visited)
+                return super().visit(visited)
+
+        named = copy.deepcopy(node)
+        named.slice = _Substituter().visit(named.slice)
+        return ast.fix_missing_locations(ast.copy_location(named, node))
+
+    def _array_index_descriptor(self, element: ast.expr) -> Optional[data.Data]:
+        """The descriptor of an index expression that is an integer or boolean
+        ARRAY, or None when it is anything else (a scalar, a symbol, or an
+        expression this service cannot type)."""
+        try:
+            inferred = self.infer(element)
+        except Exception:
+            return None
+        if not inferred.is_data or inferred.descriptor is None:
+            return None
+        descriptor = inferred.descriptor
+        shape = [size for size in descriptor.shape if size != 1]
+        if not shape:
+            return None
+        dtype = descriptor.dtype
+        if not isinstance(dtype, dtypes.typeclass):
+            return None
+        if dtype not in dtypes.INTEGER_TYPES and dtype not in (dtypes.bool, dtypes.bool_):
+            return None
+        return data.Array(dtype, shape)
 
     def _restore_index_sequences(self, node: Union[ast.Name, ast.Subscript]) -> Union[ast.Name, ast.Subscript]:
         """
