@@ -1,9 +1,9 @@
-#!/bin/sh
+.#!/bin/sh
 
 set -e
 
 # Install dependencies
-pip install --upgrade twine build
+pip install --upgrade twine build --break-system-packages
 
 # Synchronize submodules
 git submodule update --init --recursive

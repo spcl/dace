@@ -79,7 +79,7 @@ EXPECTED = {
     'cholesky': ('N**2*(N + 1)/2', 1183),
     'correlation': ('M*(M*N + 8*N + 3)', 2750),
     'covariance': ('M*(M*N + M + 3*N + 2)', 2145),
-    'deriche': ('32*H*W', 960), 
+    'deriche': ('32*H*W', 960),
     'doitgen': ('2*NP**2*NQ*NR', 1200),
     'durbin': ('2*N**2 + 4*N - 4', 386),
     'fdtd-2d': ('TMAX*(11*NX*NY - 8*NX - 8*NY + 5)', 1503),
@@ -92,16 +92,16 @@ EXPECTED = {
     'jacobi-1d': ('6*tsteps*(N - 2)', 264),
     'jacobi-2d': ('10*tsteps*(N - 2)**2', 4840),
     'lu': ('N**2*(N - 1)', 2028),
-    'ludcmp': ('N*(N**2 + 2*N - 2)', 2509), 
-    'mvt': ('4*N**2', 676), 
-    'nussinov': ('N*(N**2 + 3*N - 4)/6', 442), 
+    'ludcmp': ('N*(N**2 + 2*N - 2)', 2509),
+    'mvt': ('4*N**2', 676),
+    'nussinov': ('N*(N**2 + 3*N - 4)/6', 442),
     'seidel-2d': ('9*tsteps*(N - 2)**2', 4356),
     'symm': ('M*N*(5*M + 7)/2', 4433),
-    'syr2k': ('N*(6*M + 1)*(N + 1)/2', 6097), 
+    'syr2k': ('N*(6*M + 1)*(N + 1)/2', 6097),
     'syrk': ('N*(3*M + 1)*(N + 1)/2', 3094),
     'trisolv': ('N*(3*N - 1)/2', 247),
     'trmm': ('M*N*(M + 1)', 1716),
-    }
+}
 
 
 @contextmanager
@@ -116,11 +116,13 @@ def _on_path(directory):
         if added:
             sys.path.remove(path_str)
 
+
 def _load_kernel(stem: str):
     """Import the PolyBench kernel module by path (the file names are not valid module names) and
     return its ``dace.program``."""
     with _on_path(_POLYBENCH_DIR):
-        spec = importlib.util.spec_from_file_location('polybench_' + stem.replace('-', '_'), _POLYBENCH_DIR / f'{stem}.py')
+        spec = importlib.util.spec_from_file_location('polybench_' + stem.replace('-', '_'),
+                                                      _POLYBENCH_DIR / f'{stem}.py')
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
         return getattr(module, _KERNEL_FUNCS[stem])
@@ -157,6 +159,7 @@ def test_polybench_compute(stem):
     """The compute work of each PolyBench kernel matches its pinned closed form and value."""
     work = _compute_work(_load_kernel(stem).to_sdfg(simplify=True))
     _assert_matches(work, EXPECTED[stem])
+
 
 if __name__ == '__main__':
     pytest.main([__file__])
