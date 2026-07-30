@@ -725,7 +725,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     freesyms |= codesyms
                     continue
 
-            if hasattr(n, 'used_symbols'):
+            if isinstance(n, nd.NestedSDFG):
                 freesyms |= n.used_symbols(all_symbols)
             else:
                 freesyms |= n.free_symbols
@@ -1314,11 +1314,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 
-        for k in ('_parent_graph', '_sdfg'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
+        result._parent_graph = memo.get(id(self._parent_graph))
+        result._sdfg = memo.get(id(self._sdfg))
 
         return result
 
@@ -2241,12 +2238,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode) and src_node.data == cur_memlet.data)
 
         # Verify that connectors exist
-        if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors") and isinstance(edges[0].src, nd.CodeNode)
+        if (not memlet.is_empty() and isinstance(edges[0].src, nd.CodeNode)
                 and not isinstance(edges[0].src, nd.LibraryNode)
                 and (src_conn is None or src_conn not in edges[0].src.out_connectors)):
             raise ValueError("Output connector {} does not exist in {}".format(src_conn, edges[0].src.label))
-        if (not memlet.is_empty() and hasattr(edges[-1].dst, "in_connectors")
-                and isinstance(edges[-1].dst, nd.CodeNode) and not isinstance(edges[-1].dst, nd.LibraryNode)
+        if (not memlet.is_empty() and isinstance(edges[-1].dst, nd.CodeNode)
+                and not isinstance(edges[-1].dst, nd.LibraryNode)
                 and (dst_conn is None or dst_conn not in edges[-1].dst.in_connectors)):
             raise ValueError("Input connector {} does not exist in {}".format(dst_conn, edges[-1].dst.label))
 
@@ -2885,8 +2882,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
+        # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
+        # count guard rots.
+        self._labels = (self._labels or set()) | {s.label for s in self.nodes()}
         return dt.find_new_name(proposed or 'block', self._labels)
 
     def add_node(self,
