@@ -2785,20 +2785,20 @@ class SDFG(ControlFlowRegion):
         Invokes an SDFG in a separate process to avoid crashes in the main process,generating and compiling code if necessary.
         Raises an exception if the SDFG execution fails.
 
-        :note: Not supported on the nanobind interface: this method compiles
-            internally and hides the compiled object, but a compiled nanobind
-            module cannot be reloaded, so a recompile under an already-loaded
-            identity is silently renamed into a different build folder -
-            post-call queries on THIS object (e.g. ``get_latest_report()``)
-            would then silently look in the wrong place. Use ``compile()``
-            and ``CompiledSDFG.safe_call()`` instead, and query reports via
-            the compiled object's ``sdfg``.
+        :note: This function is not supported for the ``nanobind`` interface. To use
+            ``safe_call()`` with ``nanobind`` compile the SDFG explicitly and call
+            ``safe_call()`` on the returned object.
         """
         if Config.get('compiler', 'interface') == 'nanobind':
-            raise NotImplementedError(
-                'SDFG.safe_call() is not supported on the nanobind interface: it hides the compiled object, '
-                'whose collision rename would make post-call queries on this SDFG unsound. '
-                'Use sdfg.compile() and CompiledSDFG.safe_call() instead.')
+            # NOTE: The reason why we do not support this function under ``nanobind`` is
+            #   because we can not guarantee that it a recompilation does not happen. If
+            #   a recompilation happens then the reports are written to a different build
+            #   folder, the one of the explicitly created compiled SDFG below. Thus the
+            #   main reason is that it does not work, but that `SDFG.get_latest_report`
+            #   does not find the right folder. Some tricks to avoid that would be setting
+            #   `compiler.use_cache` to True.
+            raise NotImplementedError('SDFG.safe_call() is not supported on the nanobind interface. '
+                                      'Use sdfg.compile() and CompiledSDFG.safe_call() instead.')
         with hooks.invoke_sdfg_call_hooks(self) as sdfg:
             binaryobj = sdfg.compile()
 
