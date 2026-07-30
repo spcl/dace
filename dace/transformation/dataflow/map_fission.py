@@ -361,8 +361,6 @@ class MapFission(transformation.SingleStateTransformation):
 
         for state, subgraph in subgraphs:
             components = MapFission._components(subgraph)
-            sources = subgraph.source_nodes()
-            sinks = subgraph.sink_nodes()
 
             # Collect external edges
             if self.expr_index == 0:
@@ -390,7 +388,6 @@ class MapFission(transformation.SingleStateTransformation):
             # (``path[eindex - 1]`` at entry, ``path[eindex + 1]`` at exit).
             # An empty dependency edge has a one-element path and thus no
             # outside edge: store ``None``.
-            edge_to_outer = {}
             edge_to_outer = {}
             for edge in external_edges_entry:
                 if self.expr_index == 0:
@@ -520,25 +517,27 @@ class MapFission(transformation.SingleStateTransformation):
                 # Empty memlet edge in nested SDFGs
                 if state.out_degree(component_out) == 0:
                     state.add_edge(component_out, None, mx, None, mm.Memlet())
-            # Connect other sources/sinks not in components (access nodes)
-            # directly to external nodes
+            # Connect the boundary edges that cross at an AccessNode directly to the external nodes.
+            # The per-component loops above consumed every boundary edge incident to a component_in/component_out,
+            # so each edge still left in ``edge_to_outer`` crosses at an AccessNode. Such a node is NOT necessarily
+            # a source/sink of the subgraph: a border transient that is read inside the map AND copied out through
+            # map_exit is neither, and keying the rewiring on source/sink membership left its boundary edge to be
+            # dropped as collateral of removing the outer map -- silently losing the copy and orphaning the outer
+            # node ('Isolated node'; TSVC s152/s221/s241/s243).
+            # The outer memlet already spans the whole map range and the border transient now carries the map
+            # dimensions, so the copy is the outer memlet with the border side left implicit (its full extent).
             if self.expr_index == 0:
-                for node in sources:
-                    if isinstance(node, nodes.AccessNode):
-                        for edge in state.in_edges(node):
-                            outer_edge = edge_to_outer.get(edge)
-                            if outer_edge is None:  # No outer feeder: nothing to rewire.
-                                continue
-                            memlet = dcpy(edge.data)
-                            memlet.subset = subsets.Range(outer_map.range.ranges + memlet.subset.ranges)
-                            state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn, memlet)
-
-                for node in sinks:
-                    if isinstance(node, nodes.AccessNode):
-                        for edge in state.out_edges(node):
-                            outer_edge = edge_to_outer.get(edge)
-                            if outer_edge is None:  # No outer consumer: nothing to rewire.
-                                continue
+                for node in subgraph.nodes():
+                    if not isinstance(node, nodes.AccessNode):
+                        continue
+                    for edge in state.in_edges(node):
+                        outer_edge = edge_to_outer.get(edge)  # None for internal edges and empty dependency edges
+                        if outer_edge is not None:
+                            state.add_edge(outer_edge.src, outer_edge.src_conn, edge.dst, edge.dst_conn,
+                                           dcpy(outer_edge.data))
+                    for edge in state.out_edges(node):
+                        outer_edge = edge_to_outer.get(edge)
+                        if outer_edge is not None:
                             state.add_edge(edge.src, edge.src_conn, outer_edge.dst, outer_edge.dst_conn,
                                            dcpy(outer_edge.data))
 

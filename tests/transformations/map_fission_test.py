@@ -1152,6 +1152,88 @@ def test_nested_loop_iterator_is_not_mapped_at_the_parent():
                     assert not (loop_vars & node.symbol_mapping.keys())
 
 
+N_border = dace.symbol('N_border')
+M_border = 4  # a literal: a symbolic inner extent only adds a heap-allocated variable-length transient
+
+
+@dace.program
+def border_copied_out_of_map(a: dace.float64[N_border, M_border], b: dace.float64[N_border, M_border],
+                             c: dace.float64[N_border, M_border]):
+    for i in dace.map[0:N_border]:
+        t = c[i, :] * 2.0
+        a[i, :] = t
+        b[i, :] = t + 1.0
+
+
+def test_border_access_node_read_inside_and_copied_out():
+    """A border transient that is read inside the map AND copied out through ``map_exit`` is neither a source
+    nor a sink of the fissioned subgraph. Keying the boundary rewiring on source/sink membership left that
+    copy unreplaced, so removing the outer map dropped it: the write to ``a`` was silently lost and its
+    AccessNode left isolated, which the validator then rejected (TSVC s152/s221/s241/s243)."""
+    sdfg = border_copied_out_of_map.to_sdfg(simplify=True)
+    state = sdfg.states()[0]
+    map_entry = next(n for n in state.nodes() if isinstance(n, nodes.MapEntry) and state.entry_node(n) is None)
+    assert MapFission.can_be_applied_to(sdfg, expr_index=0, map_entry=map_entry)
+    MapFission.apply_to(sdfg, expr_index=0, map_entry=map_entry)
+    sdfg.validate()
+
+    # The copy out of the border transient must survive, now as a copy outside the fissioned maps.
+    awrite = next(n for n in state.nodes() if isinstance(n, nodes.AccessNode) and n.data == 'a')
+    assert [e for e in state.in_edges(awrite) if isinstance(e.src, nodes.AccessNode)]
+
+    n, m = 6, M_border
+    rng = np.random.default_rng(7)
+    cval = rng.random((n, m))
+    aval, bval = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(a=aval, b=bval, c=cval, N_border=n)
+    assert np.allclose(aval, cval * 2.0)
+    assert np.allclose(bval, cval * 2.0 + 1.0)
+
+
+def test_border_access_node_copied_into_map():
+    """Mirror shape: the border transient is filled by a copy IN through ``map_entry`` and read by two
+    components. The rewiring prepended the map's own range to the inner memlet, which both added a dimension
+    the outer container does not have and, for a map not starting at zero, indexed the border transient past
+    its extent. The outer memlet already spans the map range, so it is the copy."""
+    sdfg = dace.SDFG('border_copied_into_map')
+    sdfg.add_array('c', [N_border, M_border], dace.float64)
+    sdfg.add_array('a', [N_border, M_border], dace.float64)
+    sdfg.add_array('b', [N_border, M_border], dace.float64)
+    sdfg.add_transient('t', [M_border], dace.float64)
+    state = sdfg.add_state()
+    cnode, anode, bnode = state.add_read('c'), state.add_write('a'), state.add_write('b')
+    tnode = state.add_access('t')
+    me, mx = state.add_map('outer', dict(i='1:N_border'))
+    state.add_memlet_path(cnode,
+                          me,
+                          tnode,
+                          memlet=dace.Memlet(data='c', subset=f'i, 0:{M_border}', other_subset=f'0:{M_border}'))
+    for label, code, dst, name in (('scale', 'y = x * 2.0', anode, 'a'), ('shift', 'y = x + 1.0', bnode, 'b')):
+        ime, imx = state.add_map(label, dict(j=f'0:{M_border}'))
+        tasklet = state.add_tasklet(label, {'x': None}, {'y': None}, code)
+        state.add_memlet_path(tnode, ime, tasklet, dst_conn='x', memlet=dace.Memlet('t[j]'))
+        state.add_memlet_path(tasklet, imx, mx, dst, src_conn='y', memlet=dace.Memlet(f'{name}[i, j]'))
+    sdfg.validate()
+
+    n, m = 6, M_border
+    rng = np.random.default_rng(3)
+    cval = rng.random((n, m))
+    expected_a, expected_b = cval * 2.0, cval + 1.0
+    aval, bval = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(a=aval, b=bval, c=cval, N_border=n)
+    assert np.allclose(aval[1:], expected_a[1:])
+    assert np.allclose(bval[1:], expected_b[1:])
+
+    assert MapFission.can_be_applied_to(sdfg, expr_index=0, map_entry=me)
+    MapFission.apply_to(sdfg, expr_index=0, map_entry=me)
+    sdfg.validate()
+
+    aval, bval = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(a=aval, b=bval, c=cval, N_border=n)
+    assert np.allclose(aval[1:], expected_a[1:])
+    assert np.allclose(bval[1:], expected_b[1:])
+
+
 if __name__ == '__main__':
     test_subgraph()
     test_nested_sdfg()
@@ -1186,3 +1268,5 @@ if __name__ == '__main__':
     test_symbol_use_index_agrees_with_the_per_loop_scan()
     test_counter_read_after_its_loop_is_not_internal()
     test_nested_loop_iterator_is_not_mapped_at_the_parent()
+    test_border_access_node_read_inside_and_copied_out()
+    test_border_access_node_copied_into_map()
