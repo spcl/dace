@@ -245,8 +245,12 @@ class FuseConsecutiveLoops(ppl.Pass):
             subset = _normalize(str(e.data.subset), loop_var) if (e.data and e.data.subset is not None) else ''
             data_name = _canon_data(e.data.data, local_scratch) if (e.data is not None and e.data.data) else ''
             wcr = str(e.data.wcr) if e.data is not None else ''
-            edge_sig.append((_node_key(e.src, loop_var, local_scratch), e.src_conn,
-                             _node_key(e.dst, loop_var, local_scratch), e.dst_conn, data_name, subset, wcr))
+            # Connectors are the only raw fields here, and a memlet-path edge carries None while a
+            # View's carries 'views'. Two edges whose endpoints canonicalize alike then reach a
+            # None-vs-str comparison in the sort below, so spell an absent connector like the rest.
+            src_key = _node_key(e.src, loop_var, local_scratch)
+            dst_key = _node_key(e.dst, loop_var, local_scratch)
+            edge_sig.append((src_key, e.src_conn or '', dst_key, e.dst_conn or '', data_name, subset, wcr))
         return (tuple(node_sig), tuple(sorted(edge_sig)))
 
     def _merge(self, cfg: ControlFlowRegion, first: LoopRegion, second: LoopRegion, link) -> None:

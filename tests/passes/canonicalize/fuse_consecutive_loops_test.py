@@ -61,6 +61,19 @@ def _non_adjacent_sums(a: dace.float64[N], out: dace.float64[1]):
     out[0] = s
 
 
+@dace.program
+def _lu_view_and_copy_tie(A: dace.float64[N, N]):
+    # PolyBench lu's row/col-view matmul shape (A[i, :j] @ A[:j, j]): canonicalizing this
+    # ties a View's boundary edge (connector 'views') against a plain AccessNode copy
+    # edge (connector None) on otherwise-identical tile/remainder loop bodies.
+    for i in range(N):
+        for j in range(i):
+            A[i, j] -= A[i, :j] @ A[:j, j]
+            A[i, j] /= A[j, j]
+        for j in range(i, N):
+            A[i, j] -= A[i, :i] @ A[:i, j]
+
+
 def _nloops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
                if isinstance(r, LoopRegion) and r.loop_variable)
@@ -147,6 +160,18 @@ def test_non_adjacent_ranges_not_fused():
     out = np.zeros(1)
     sdfg(a=a.copy(), out=out, N=n)
     assert np.isclose(out[0], np.sum(a[:5]) + np.sum(a[10:]))
+
+
+def test_view_and_plain_copy_edge_tie_does_not_raise_typeerror():
+    """PolyBench ``lu``'s row/col-view matmul body, run through the FULL canonicalize
+    pipeline (this is where the tying shape actually arises -- not at the frontend/simplify
+    level): ``_state_signature`` must not crash comparing a View edge's 'views' connector
+    against a plain copy edge's None. Before the fix this raised
+    ``TypeError: '<' not supported between instances of 'NoneType' and 'str'``."""
+    sdfg = _lu_view_and_copy_tie.to_sdfg(simplify=True)
+    sdfg.validate()
+    canonicalize(sdfg, target='cpu')
+    sdfg.validate()
 
 
 if __name__ == "__main__":
