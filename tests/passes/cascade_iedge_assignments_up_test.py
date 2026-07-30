@@ -31,7 +31,10 @@ import pytest
 import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (CascadeInterstateEdgeAssignmentsUp)
+from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import (CascadeInterstateEdgeAssignmentsUp,
+                                                                                  names_read_by)
+from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
+from dace.transformation.passes.simplification.control_flow_raising import ControlFlowRaising
 
 N = dace.symbol('N')
 K = dace.symbol('K')
@@ -741,6 +744,49 @@ def test_read_of_key_before_the_assignment_inside_the_body_refuses():
     a = np.zeros(4)
     sdfg(a=a, N=2, K=1)
     assert np.array_equal(a, np.array([1.0, 0.0, 1.0, 0.0])), f'first iteration read the hoisted value: {a}'
+
+
+def test_names_read_by_keeps_the_array_base():
+    """``pystr_to_symbolic('A[0]').free_symbols`` is empty -- the guard needs the base name."""
+    assert 'A' in names_read_by('A[0]')
+    assert set(names_read_by('A[i] + B[0]')) == {'A', 'B', 'i'}
+    assert 'min' not in names_read_by('min(A[0], K)')
+
+
+@dace.program
+def accumulate_in_place(A: dace.int64[N]):
+    for i in range(N):
+        A[0] = A[0] + A[i]
+
+
+def test_constant_index_element_read_of_a_loop_written_array_stays_inside():
+    """``A_index = A[0]`` is not invariant when the loop body writes ``A``.
+
+    Integer element reads become interstate-edge symbol assignments after symbol promotion, so
+    this shape does reach the pass (contrary to what
+    :func:`test_data_dependent_assignment_refuses_or_stays` assumes). ``A[0]`` carries no free
+    symbol at all, so nothing tied it to the iteration: hoisting it made every iteration reuse
+    the pre-loop element and the last writer won.
+    """
+    n = 8
+    sdfg = accumulate_in_place.to_sdfg(simplify=False)
+    sdfg.simplify()
+    ScalarToSymbolPromotion().apply_pass(sdfg, {})
+    ControlFlowRaising().apply_pass(sdfg, {})
+
+    # Pin the shape the pass is asked about, so a frontend change cannot make this vacuous.
+    assert any(str(rhs) == 'A[0]' for _, _, rhs in _all_iedge_assignments(sdfg))
+
+    assert _apply(sdfg) == 0
+    assert [rhs for _, _, rhs in _assignments_inside_loops(sdfg) if str(rhs) == 'A[0]']
+
+    oracle = np.arange(1, n + 1, dtype=np.int64)
+    for i in range(n):
+        oracle[0] = oracle[0] + oracle[i]
+
+    got = np.arange(1, n + 1, dtype=np.int64)
+    sdfg(A=got, N=n)
+    assert got[0] == oracle[0], f'hoisted element read: {got[0]} != {oracle[0]}'
 
 
 if __name__ == '__main__':

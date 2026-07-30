@@ -56,9 +56,11 @@ inward passes that may have buried invariant assignments inside loops, and
 again before the parallelization stage so the ``LoopToMap`` refuse-check
 sees a clean shape.
 """
+import ast
 from typing import Any, Dict, Optional, Tuple
 
-from dace import SDFG, symbolic
+from dace import SDFG
+from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, SDFGState
@@ -66,12 +68,21 @@ from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
 
 
-def _free(expr: str) -> Dict[str, None]:
-    """Free symbols of a string expression."""
+def names_read_by(expr: str) -> Dict[str, None]:
+    """Every name a string expression reads: symbols AND the data containers it subscripts.
+
+    Read off the AST, not off ``pystr_to_symbolic``: sympy renders ``A[0]`` as an indexed
+    object whose ``free_symbols`` is empty, so the array base is lost. A guard that compares
+    this against the containers written inside a region needs ``A``, or an element read is
+    treated as invariant and hoisted out of the loop that writes it.
+    """
     try:
-        return dict.fromkeys(str(s) for s in symbolic.pystr_to_symbolic(expr).free_symbols)
+        visitor = astutils.TaskletFreeSymbolVisitor([])
+        visitor.visit(ast.parse(expr.strip(), mode='eval'))
     except Exception:
         return {}
+    # Consumed only by membership tests, so the visitor's unordered set cannot reach codegen.
+    return dict.fromkeys(visitor.free_symbols)
 
 
 def _region_writes(region: ControlFlowRegion) -> Tuple[Dict[str, None], Dict[str, None]]:
@@ -184,7 +195,7 @@ def _block_reads_symbols(block: ControlFlowBlock) -> Optional[Dict[str, None]]:
                 return None
         for e in block.all_interstate_edges():
             for rhs in e.data.assignments.values():
-                syms.update(_free(rhs))
+                syms.update(names_read_by(rhs))
             if not e.data.is_unconditional():
                 try:
                     syms.update(dict.fromkeys(str(s) for s in e.data.condition.get_free_symbols()))
@@ -303,7 +314,7 @@ def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: 
                    block, so those blocks are checked here; ``_legal_to_hoist_into`` only ever sees
                    ``edge_region`` from the outside and cannot look in.
     """
-    rhs_syms = _free(rhs)
+    rhs_syms = names_read_by(rhs)
     # legality scan (early-exit AND): iteration order does not affect the True/False outcome
     for b in dict.fromkeys([*_predecessors_in(edge_region, origin), origin]):
         reads = _block_reads_symbols(b)
