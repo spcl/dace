@@ -248,6 +248,8 @@ class NormalizeMapBody(ppl.Pass):
         _dedup_boundary_aliases(state, keep)
 
         sdutil.set_nested_sdfg_parent_references(base)
-        for blk in base.all_control_flow_blocks(recursive=True):
+        # Not recursive: that descends THROUGH NestedSDFG nodes, so a state owned by a deeper SDFG
+        # would get ``base`` as its owner and later miss that SDFG's own arrays.
+        for blk in base.all_control_flow_blocks():
             blk.sdfg = base
         return True

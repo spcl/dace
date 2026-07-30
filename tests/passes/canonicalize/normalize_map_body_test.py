@@ -19,10 +19,15 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock
+from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
+from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
+from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 N = dace.symbol('N')
+M = dace.symbol('M')
 
 
 @dace.program
@@ -157,6 +162,68 @@ def test_merge_siblings_data_vs_connector_name_collision():
     A, B = np.zeros(n), np.zeros(n)
     sdfg(X=X.copy(), A=A, B=B, N=n)
     assert np.allclose(A, X + 2.0) and np.allclose(B, X + 1.0)
+
+
+@dace.program
+def two_level_siblings(a: dace.float64[N, M], b: dace.float64[N, M], c: dace.float64[N, M]):
+    for i in range(N):
+        for j in range(M):
+            b[i, j] = a[i, j] + 1.0
+    for i in range(N):
+        for j in range(M):
+            c[i, j] = a[i, j] * 2.0
+
+
+def two_level_sibling_sdfg() -> dace.SDFG:
+    """Two independent doubly-nested loops (writing ``b``/``c`` from ``a``), taken through real
+    transformations -- NOT hand-built -- to the exact shape ``correlation``'s two-level
+    ``LoopToMap`` nesting plus sibling merge hits: ``LoopToMap`` converts each branch's outer AND
+    inner loop (2 applications per branch, 4 total), so each branch is its own
+    ``Map{NestedSDFG{Map{NestedSDFG}}}`` (3 SDFG levels). ``StateFusionExtended`` then co-locates
+    the two branches' states, and ``MapFusionHorizontal`` fuses their outer maps into ONE top-level
+    map holding the two branches as SIBLING NestedSDFGs -- each sibling still owning its own
+    further-nested Map+NestedSDFG underneath."""
+    sdfg = two_level_siblings.to_sdfg(simplify=True)
+    sdfg.simplify()
+    PatternMatchAndApplyRepeated([LoopToMap()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([StateFusionExtended()]).apply_pass(sdfg, {})
+    PatternMatchAndApplyRepeated([MapFusionHorizontal()]).apply_pass(sdfg, {})
+    return sdfg
+
+
+def sdfg_backpointer_violations(sdfg: dace.SDFG):
+    """Every state under ``sdfg`` (through its OWN control-flow regions, never through a
+    ``NestedSDFG`` codenode) must have ``state.sdfg is sdfg``; recurse into each NestedSDFG's own
+    SDFG separately. Returns the ``(sdfg label, state label)`` pairs that violate this."""
+    violations = []
+    for state in sdfg.all_states():
+        if state.sdfg is not sdfg:
+            violations.append((sdfg.label, state.label))
+        for node in state.nodes():
+            if isinstance(node, nodes.NestedSDFG):
+                violations += sdfg_backpointer_violations(node.sdfg)
+    return violations
+
+
+def test_merge_siblings_preserves_deep_nested_state_backpointers():
+    """``_merge_siblings`` must re-point only the blocks ``base`` actually owns.
+
+    Before the fix, its cleanup loop swept ``all_control_flow_blocks(recursive=True)`` -- which
+    descends THROUGH NestedSDFG codenodes -- and stamped ``base`` onto states owned by the
+    sibling's OWN further-nested SDFG (a third level down), even though that deeper SDFG has its
+    own private arrays ``base`` does not. Both the direct backpointer invariant and
+    ``sdfg.validate()`` must hold after the merge, and the merged SDFG must still run exact."""
+    sdfg = two_level_sibling_sdfg()
+    assert NormalizeMapBody().apply_pass(sdfg, {}) == 1, "the two top-level siblings must merge"
+    assert sdfg_backpointer_violations(sdfg) == [], "a state's .sdfg must be its immediate owning SDFG"
+    sdfg.validate()
+
+    n, m = 6, 5
+    rng = np.random.default_rng(0)
+    a = rng.random((n, m))
+    b, c = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(a=a.copy(), b=b, c=c, N=n, M=m)
+    assert np.allclose(b, a + 1.0) and np.allclose(c, a * 2.0)
 
 
 if __name__ == "__main__":
