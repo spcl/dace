@@ -142,6 +142,7 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
             base_descriptor = member.descriptor
         else:
             return None
+        node = promote_index_reads(node, state)
         expr = state.inference.parse_access(node)
         subset = substitute_symbolic_scalars(expr.subset, state.context)
         if isinstance(subset, subsets.Indices):
@@ -151,70 +152,138 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
                                           state.context.filename,
                                           node,
                                           category='data-dependent-subscript')
-        scalar_reads, array_reads = data_dependent_container_names(subset, state.context)
+        _, array_reads = data_dependent_container_names(subset, state.context)
         if array_reads:
-            # An array element read inside the index (x[A_col[j]]): genuine
-            # indirection, only supported by the explicit-tasklet rule.
+            # An array element read left in an ELEMENT position of an
+            # otherwise element-only subscript (x[A_col[j]]): genuine
+            # indirection, lowered by the tasklet paths, not here.
             raise UnsupportedFeatureError(
                 f'Data-dependent subscript index (reads {", ".join(sorted(array_reads))}) is not supported here',
                 state.context.filename,
                 node,
                 category='data-dependent-subscript')
-        if scalar_reads:
-            subset = _promote_range_scalars(subset, scalar_reads, node, state)
         kept = kept_dimensions(node.slice, len(subset.ranges))
         return DataAccess(base_container, subset, base_descriptor, kept_dims=kept, new_axes=tuple(expr.new_axes or ()))
     return None
 
 
-def _promote_range_scalars(subset: subsets.Range, names: set, node: ast.AST, state: LoweringState) -> subsets.Range:
+def promote_index_reads(node: ast.Subscript, state: LoweringState, force_elements: bool = False) -> ast.Subscript:
     """
-    Replace scalar containers that determine a subset's LENGTH with symbols
-    defined from them, through an interstate assignment emitted just before the
-    access.
+    Rewrite the data reads inside a subscript's index that belong on the SYMBOL
+    side into symbols defined from them, each by an interstate assignment
+    (:class:`~...treenodes.AssignNode`) emitted just before the access -- the
+    same mechanism dynamic map bounds use.
 
     ``doc/extensions/symbolic.rst`` puts a quantity consumed in a range on the
-    symbol side, and a length is one: a container name left in a range prints
-    as data where the code generator expects a symbol (``O[0:n]`` with a scalar
-    ``n`` emitted invalid C++), and inside a dataflow scope it was refused
-    outright as a data-dependent subscript.
+    symbol side, and that is decided by the index FORM, not by the extent it
+    happens to produce:
 
-    A scalar that only picks an ELEMENT (a dimension of length one, ``A[i]``
-    with a scalar ``i``) is left alone: that is indirection, which the
-    computation mechanisms lower by reading the scalar as data. The symbol is
-    minted fresh per access rather than cached per container, so a scalar that
-    is reassigned between two accesses cannot leave a stale definition behind.
+    - every SLICE BOUND is a range bound, including one that spans a single
+      element (``A[n:n + 1]``). Left as data, a container name in a range
+      prints where the code generator expects a symbol, and lowering it as
+      indirection instead is worse still: the source goes behind a pointer
+      connector and the slice stays in the tasklet code
+      (``__out = __in0[0:__in1] + 1.0``), from which the code generator drops
+      the subscript entirely and emits pointer arithmetic;
+    - an ELEMENT position too, but only when some other dimension is
+      slice-formed (``A[col[i], 0:5]``). Indirection lowers a whole-element
+      read, so a subscript that keeps a range cannot use it at all -- that
+      shape reached SDFG construction as ``__in0[__in1, 0:5]`` and failed
+      there.
 
-    :raises UnsupportedFeatureError: If a length-determining scalar cannot be
-        promoted (a non-integer scalar), which is a genuine feature gap.
+    An element position in an otherwise element-only subscript (``A[n]``,
+    ``x[A_col[j]]``) is left alone: that IS indirection, which the tasklet
+    paths lower by reading the index as data (with the conflict resolution an
+    indirect write needs).
+
+    Symbols are cached for the duration of one statement
+    (``LoweringState.index_symbols``), keyed by the read they are defined from,
+    so a target and the operands of one statement share a single definition --
+    ``O[0:n] = A[0:n] + 1.0`` needs its two subsets to agree on one symbol, not
+    on two symbols that merely hold equal values. The cache is dropped between
+    statements, so a scalar reassigned in between cannot leave a stale
+    definition behind.
+
+    :param force_elements: Promote element positions unconditionally. Set when
+        the subscript is itself becoming an interstate assignment's right-hand
+        side (``O[0:ends[k]]`` defines a symbol from ``ends[k]``, so ``k`` has
+        to be a symbol there too -- an interstate edge cannot read data).
+    :raises UnsupportedFeatureError: If a read that has to be promoted is not
+        of integer type, which is a genuine feature gap.
     """
-    promotable = set()
-    for dimension, size in zip(subset.ranges, subset.size()):
-        if size == 1:
-            continue
-        for component in dimension:
-            promotable |= names & symbolic.free_symbols_and_functions(component)
-    if not promotable:
-        return subset
-    replacements = {}
-    for name in sorted(promotable):
-        binding = state.context.resolve(name)
-        descriptor = state.context.containers[binding.container]
-        if not isinstance(descriptor.dtype, dtypes.typeclass) or descriptor.dtype not in dtypes.INTEGER_TYPES:
-            raise UnsupportedFeatureError(f'Subscript length depends on non-integer scalar "{name}"',
-                                          state.context.filename,
-                                          node,
-                                          category='data-dependent-subscript')
-        symbol_name = state.context.fresh_name(f'__idx_{name.lstrip("_")}_')
-        state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, descriptor.dtype)
-        read = f'{binding.container}[0]'
-        state.emitter.emit(
-            tn.AssignNode(name=symbol_name, value=CodeBlock(read),
-                          edge=InterstateEdge(assignments={symbol_name: read})))
-        replacements[symbolic.pystr_to_symbolic(name)] = state.context.symbols[symbol_name]
-    promoted = copy.deepcopy(subset)
-    promoted.replace(replacements)
-    return promoted
+    elements = index_elements(node.slice)
+    keeps_range = any(isinstance(element, ast.Slice) for element in elements)
+    sources: List[ast.expr] = []
+    for element in elements:
+        if isinstance(element, ast.Slice):
+            sources.extend(bound for bound in (element.lower, element.upper, element.step) if bound is not None)
+        elif keeps_range or force_elements:
+            sources.append(element)
+
+    replacements: Dict[str, str] = {}
+    for source in sources:
+        for read in scalar_data_reads(source, state):
+            key = astutils.unparse(read)
+            if key not in replacements:
+                replacements[key] = _index_symbol(read, node, state)
+    if not replacements:
+        return node
+    promoted = copy.deepcopy(node)
+    promoted.slice = substitute_index_reads(promoted.slice, replacements)
+    return ast.fix_missing_locations(ast.copy_location(promoted, node))
+
+
+def _index_symbol(read: ast.expr, node: ast.AST, state: LoweringState) -> str:
+    """
+    The symbol defined from a single data read in an index position, reusing
+    this statement's definition of the same read if there is one.
+
+    The read becomes an interstate assignment's right-hand side, which can name
+    symbols but not data, so its own indices are promoted first (``ends[k]``
+    with a scalar ``k`` defines its symbol from ``ends[__idx_k_0]``).
+    """
+    if isinstance(read, ast.Subscript):
+        read = promote_index_reads(read, state, force_elements=True)
+    access = resolve_access(read, state)
+    expression = scalar_read_expression(access) if access is not None else None
+    if expression is None or data_dependent_container_names(access.subset, state.context) != (set(), set()):
+        raise UnsupportedFeatureError(
+            f'Subscript index reads "{astutils.unparse(read)}", which is not a single element of known position',
+            state.context.filename,
+            node,
+            category='data-dependent-subscript')
+    existing = state.index_symbols.get(expression)
+    if existing is not None:
+        return existing
+    dtype = access.descriptor.dtype
+    if not isinstance(dtype, dtypes.typeclass) or dtype not in dtypes.INTEGER_TYPES:
+        raise UnsupportedFeatureError(f'Subscript index depends on non-integer data "{access.container}"',
+                                      state.context.filename,
+                                      node,
+                                      category='data-dependent-subscript')
+    # A structure member arrives as a dotted repository path, which is not a
+    # legal symbol name.
+    symbol_name = state.context.fresh_name(f'__idx_{access.container.lstrip("_").replace(".", "_")}_')
+    state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, dtype)
+    state.emitter.emit(
+        tn.AssignNode(name=symbol_name,
+                      value=CodeBlock(expression),
+                      edge=InterstateEdge(assignments={symbol_name: expression})))
+    state.index_symbols[expression] = symbol_name
+    return symbol_name
+
+
+def scalar_read_expression(access: DataAccess) -> Optional[str]:
+    """A single-element access rendered for an interstate assignment
+    (``bounds[0]``), or None if the access is not one element."""
+    if isinstance(access.descriptor, data.Scalar):
+        return f'{access.container}[0]'
+    try:
+        if data._prod(access.subset.size()) != 1:
+            return None
+    except TypeError:
+        return None
+    return f'{access.container}[{", ".join(str(begin) for begin, _, _ in access.subset.ranges)}]'
 
 
 def substitute_symbolic_scalars(subset, context):
@@ -313,6 +382,15 @@ def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> Li
     (``x[A_col[j]]``) as a full-array connector plus synthetic index
     connectors, rather than falling back to the interpreter.
 
+    Indirection lowers a whole-ELEMENT read, so a subscript that keeps a range
+    (``A[0:n]``, ``A[col[i], 0:5]``) has none: its data-dependent indices
+    belong on the symbol side and are promoted there by
+    :func:`promote_index_reads`. Reporting them here instead put the source
+    behind a pointer connector and left the slice in the tasklet code
+    (``__out = __in0[0:__in1] + 1.0``), from which the code generator drops the
+    subscript entirely and emits ``__in0_0 + 1.0`` -- pointer arithmetic where
+    an element was meant, caught only by the C++ compiler.
+
     Only *scalar* index reads count. A whole-array index (``A[indices]``) is
     NumPy advanced indexing — a different feature, with its own broadcasting
     and result-shape rules — and is left to :func:`resolve_access`, which
@@ -326,6 +404,27 @@ def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> Li
     """
     if not isinstance(array_expression, ast.Subscript):
         return []
+    elements = index_elements(array_expression.slice)
+    if any(isinstance(element, ast.Slice) for element in elements):
+        return []
+    reads: List[ast.expr] = []
+    seen: set = set()
+    for element in elements:
+        for read in scalar_data_reads(element, state):
+            key = astutils.unparse(read)
+            if key not in seen:
+                seen.add(key)
+                reads.append(read)
+    return reads
+
+
+def scalar_data_reads(expression: ast.expr, state: LoweringState) -> List[ast.expr]:
+    """
+    The outermost single-element data reads inside an expression, in order of
+    first appearance and deduplicated by source text. Shared by
+    :func:`indirect_index_reads` (which lowers them as tasklet connectors) and
+    :func:`promote_index_reads` (which defines symbols from them).
+    """
     reads: List[ast.expr] = []
     seen: set = set()
 
@@ -354,8 +453,13 @@ def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> Li
         def visit_Name(self, node: ast.Name) -> None:
             self._try_collect(node)
 
-    _Collector().visit(array_expression.slice)
+    _Collector().visit(expression)
     return reads
+
+
+def index_elements(slice_node: ast.expr) -> List[ast.expr]:
+    """The per-dimension elements of a subscript index, as a flat list."""
+    return list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
 
 
 def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:

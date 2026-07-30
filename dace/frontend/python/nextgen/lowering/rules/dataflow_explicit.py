@@ -38,7 +38,8 @@ from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import parse_memlet
 from dace.frontend.python.nextgen.canonical.cpa import ExplicitConsume, ExplicitTasklet
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
-from dace.frontend.python.nextgen.lowering.access import indirect_index_reads, resolve_access, substitute_index_reads
+from dace.frontend.python.nextgen.lowering.access import (indirect_index_reads, promote_index_reads, resolve_access,
+                                                          substitute_index_reads)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import _LocationShim
 
@@ -67,22 +68,31 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
     for body_statement in statement.statements:
         binop = _memlet_binop(body_statement)
         if binop is not None:
+            indirect = indirect_index_reads(binop.right, state)
+            source = binop.right
+            if not indirect and isinstance(source, ast.Subscript):
+                # A data read in a slice BOUND (``x[rows[i]:rows[i] + 2]``) is
+                # a range bound, not indirection, so it belongs on the symbol
+                # side -- the same rule the assignment paths apply through
+                # ``resolve_access``. Left to the memlet parser it becomes an
+                # un-evaluated ``rows(i)`` inside the subset.
+                source = promote_index_reads(source, state)
+                if source is not binop.right:
+                    defined = state.context.defined_view()  # The promotion added symbols
             if isinstance(binop.op, ast.LShift):  # local << A[...]
-                indirect = indirect_index_reads(binop.right, state)
                 if indirect:
                     _lower_indirect_memlet(binop.left, binop.right, indirect, in_memlets, out_memlets, prelude,
                                            epilogue, True, state, body_statement)
                     continue
-                connector, memlet = _parse_tasklet_memlet(binop.right, binop.left, defined, state, body_statement)
+                connector, memlet = _parse_tasklet_memlet(source, binop.left, defined, state, body_statement)
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 in_memlets[connector] = _to_repository(memlet, state, body_statement)
             else:  # local >> A[...]
-                indirect = indirect_index_reads(binop.right, state)
                 if indirect:
                     _lower_indirect_memlet(binop.left, binop.right, indirect, in_memlets, out_memlets, prelude,
                                            epilogue, False, state, body_statement)
                     continue
-                connector, memlet = _parse_tasklet_memlet(binop.left, binop.right, defined, state, body_statement)
+                connector, memlet = _parse_tasklet_memlet(binop.left, source, defined, state, body_statement)
                 _check_connector(connector, in_memlets, out_memlets, state, body_statement)
                 out_memlets[connector] = _to_repository(memlet, state, body_statement)
             continue

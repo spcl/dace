@@ -44,7 +44,7 @@ from dace.frontend.python.nextgen.semantics import structures as structure_suppo
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
 from dace.frontend.python.nextgen.lowering.access import (DataAccess, lower_indirect_write, nondegenerate_shape,
-                                                          resolve_access)
+                                                          resolve_access, scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.mechanisms import conflict, static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import Inferred
@@ -186,7 +186,7 @@ def _bind_index_symbol(name: str, value: ast.expr, inferred: Inferred, state: Lo
         return False
     if access is None:
         return False
-    read = _scalar_read_expression(access)
+    read = scalar_read_expression(access)
     if read is None:
         return False
     symbol_name = state.context.fresh_name(f'__idx_{name.lstrip("_")}_')
@@ -195,19 +195,6 @@ def _bind_index_symbol(name: str, value: ast.expr, inferred: Inferred, state: Lo
         tn.AssignNode(name=symbol_name, value=CodeBlock(read), edge=InterstateEdge(assignments={symbol_name: read})))
     state.context.bind_symbol(name, access.descriptor.dtype, symbol_name=symbol_name)
     return True
-
-
-def _scalar_read_expression(access: DataAccess) -> Optional[str]:
-    """A single-element access rendered for an interstate assignment
-    (``bounds[0]``), or None if the access is not one element."""
-    if isinstance(access.descriptor, data.Scalar):
-        return f'{access.container}[0]'
-    try:
-        if data._prod(access.subset.size()) != 1:
-            return None
-    except TypeError:
-        return None
-    return f'{access.container}[{", ".join(str(begin) for begin, _, _ in access.subset.ranges)}]'
 
 
 def _lower_indirect_accumulation(target: ast.expr, statement: ast.Assign, wcr: str, state: LoweringState) -> bool:

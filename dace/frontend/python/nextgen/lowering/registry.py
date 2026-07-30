@@ -31,6 +31,14 @@ class LoweringState:
         #: Optional progress feedback (dace.cli.progress.OptionalProgressBar),
         #: ticked once per lowered statement when set.
         self.progress = None
+        #: Scalar container -> symbol promoted from it for a range bound
+        #: (``lowering.access._promote_range_scalars``), valid for the current
+        #: statement only. A statement's target and operands resolve
+        #: separately, so without this ``O[0:n] = A[0:n] + 1.0`` would define
+        #: two symbols and give the write and the read subsets different
+        #: extents; the scalar cannot change within one statement, and the
+        #: cache is dropped before the next one in case it changes there.
+        self.index_symbols: Dict[str, str] = {}
 
     def lower_body(self, body) -> None:
         """Lower a list of canonical statements into the current scope."""
@@ -73,6 +81,7 @@ def lower_statement(statement: ast.stmt, state: LoweringState) -> None:
         state.progress.next()
     mark = state.emitter.checkpoint()
     saved_bindings = state.context.snapshot()
+    state.index_symbols = {}
     try:
         handler(statement, state)
     except UnsupportedFeatureError as reason:
