@@ -620,6 +620,18 @@ def test_dependency_change_same_edge(extra_state):
 
     sdfg.validate()
 
+    # Diagnostic for the CI-only intermittent failure (a[0] == 0 instead of
+    # 540, i.e. the loop exited after iteration zero; unreproducible locally
+    # across standalone/file/directory/cache-poisoning/hash-seed sweeps).
+    # The post-pass structure in the failure message distinguishes a
+    # mis-propagation (wrong assignments/tasklet visible here) from a
+    # codegen or execution fault (structure correct, result still wrong).
+    diag = ' | '.join([
+        f'{e.src.label}->{e.dst.label}: cond={e.data.condition.as_string!r} '
+        f'asgn={dict(sorted(e.data.assignments.items()))}'
+        for e in sorted(sdfg.edges(), key=lambda e: (e.src.label, e.dst.label))
+    ] + [f'tasklet: {t.code.as_string!r}'])
+
     # Python code equivalent of the above SDFG
     ref = 0
     i60 = 0
@@ -629,7 +641,7 @@ def test_dependency_change_same_edge(extra_state):
 
     a = np.zeros([1], np.int64)
     sdfg(a=a)
-    assert a[0] == ref
+    assert a[0] == ref, diag
 
 
 if __name__ == '__main__':
