@@ -51,8 +51,10 @@ jobs:
         # The tests build with ``simplify=False`` and apply simplification as an explicit step,
         # so the automatic heuristic must not have run first.
         export DACE_optimizer_automatic_simplification=0
-        # Sequential on purpose: the SDFG is parsed once per process and memoized, so xdist
-        # workers would each pay the multi-minute parse instead of sharing one.
-        pytest -n 1 --tb=short --timeout_method thread --timeout=3600 \
-          tests/corpus/cloudsc_regression_test.py \
-          tests/passes/constant_propagation_on_cloudsc_test.py
+        # Ask the installed package where it lives instead of assuming the job's directory.
+        ROOT=$(python -c 'import pathlib, dace; print(pathlib.Path(dace.__file__).resolve().parents[1])')
+        # No xdist: the SDFG is parsed once per process and memoized, so a worker per test would
+        # pay the multi-minute parse again instead of sharing one.
+        pytest --tb=short --timeout_method thread --timeout=3600 \
+          "$ROOT/tests/corpus/cloudsc_regression_test.py" \
+          "$ROOT/tests/passes/constant_propagation_on_cloudsc_test.py"
