@@ -69,8 +69,9 @@ def test_perf_folder_created_exactly_when_instrumented(tmp_path):
                 sdfg.instrument = dtypes.InstrumentationType.Timer
             objects = codegen.generate_code(sdfg)
             out = str(tmp_path / sdfg.name)
+            should_folder_exists = instrumented or folder_mode == "development"
             compiler.generate_program_folder(sdfg, objects, out, folder_mode=folder_mode)
-            assert os.path.isdir(os.path.join(out, 'perf')) == instrumented, \
+            assert os.path.isdir(os.path.join(out, 'perf')) == should_folder_exists, \
                 f'perf/ existence mismatch for folder_mode={folder_mode}, instrumented={instrumented}'
 
 
