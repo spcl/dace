@@ -11,8 +11,8 @@ from dace import data, dtypes, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes, memlet_utils as mmu
 from dace.sdfg.sdfg import SDFG, ControlFlowRegion, InterstateEdge
-from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, ReturnBlock,
-                             SDFGState)
+from dace.sdfg.state import (BreakBlock, ConditionalBlock, ContinueBlock, ControlFlowBlock, LoopRegion, NamedRegion,
+                             ReturnBlock, SDFGState)
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg import propagation
 from dace.transformation.passes.write_conflict_resolution import ResolveWriteConflicts
@@ -1075,6 +1075,23 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             self._current_state,
             assignments=pending,
         )
+
+    def visit_NamedRegionScope(self, node: tn.NamedRegionScope, sdfg: SDFG) -> None:
+        # A labeled grouping: it becomes a real NamedRegion so the label
+        # survives for profiling and transformation targeting, but it
+        # constrains nothing, so the body lowers into it unchanged.
+        current_state = self._current_state
+        assert current_state is not None
+        cf_region = current_state.parent_graph
+
+        named_region = NamedRegion(node.label)
+        cf_region.add_node(named_region, ensure_unique_name=True)
+        _insert_and_split_assignments(current_state, named_region, assignments=self._pending_interstate_assignments())
+
+        self._current_state = named_region.add_state(f'named_region_state_{id(node)}', is_start_block=True)
+        self.visit(node.children, sdfg=sdfg)
+
+        self._current_state = _insert_and_split_assignments(named_region, label=f'named_region_after_{id(node)}')
 
     def visit_FunctionCallScope(self, node: tn.FunctionCallScope, sdfg: SDFG) -> None:
         # An inlined nested-program body: its contents lower transparently in

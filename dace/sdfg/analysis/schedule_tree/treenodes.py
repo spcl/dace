@@ -388,6 +388,35 @@ class FunctionCallScope(ControlFlowScope):
 
 
 @dataclass
+class NamedRegionScope(ControlFlowScope):
+    """
+    A labeled grouping of statements (``with dace.named("phase 1"):``),
+    corresponding to a :class:`~dace.sdfg.state.NamedRegion` in the SDFG.
+
+    The label carries no semantics -- the region groups its children for
+    readability, profiling and transformation targeting -- so the scope is
+    transparent to everything except the code that reproduces it.
+    """
+    label: str = ''
+
+    def __init__(self,
+                 *,
+                 label: str = '',
+                 children: list[ScheduleTreeNode],
+                 parent: ScheduleTreeScope | None = None) -> None:
+        # Explicit, so construction goes through ScheduleTreeScope.__init__,
+        # which parents the children. A dataclass-generated __init__ assigns
+        # the list as-is, which leaves prebuilt children (as ``sdfg_to_tree``
+        # hands them over) pointing at their old parent.
+        super().__init__(children=children, parent=parent)
+        self.label = label
+
+    def as_string(self, indent: int = 0):
+        result = indent * INDENTATION + f'named region "{self.label}":\n'
+        return result + super().as_string(indent)
+
+
+@dataclass
 class SDFGCallNode(ScheduleTreeNode):
     """
     Represents a call to an SDFG-valued callee that remains explicit in the

@@ -5,8 +5,8 @@ from typing import Dict, List, Set
 import dace
 from dace import data, subsets, symbolic
 from dace.sdfg.sdfg import InterstateEdge, SDFG
-from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion, ReturnBlock, SDFGState,
-                             UnstructuredControlFlow)
+from dace.sdfg.state import (ConditionalBlock, ControlFlowBlock, ControlFlowRegion, FunctionCallRegion, LoopRegion,
+                             NamedRegion, ReturnBlock, SDFGState, UnstructuredControlFlow)
 from dace.sdfg import utils as sdutil, graph as gr, nodes as nd
 from dace.sdfg.replace import replace_datadesc_names
 from dace.frontend.python.astutils import negate_expr
@@ -708,6 +708,15 @@ def _block_schedule_tree(block: ControlFlowBlock) -> List[tn.ScheduleTreeNode]:
                     children.extend(_isedge_schedule_tree(oedges[0], emit_goto_for_successors=False))
                 else:
                     pivot = None
+
+        # NOTE: FunctionCallRegion derives from NamedRegion but is not one --
+        # it keeps flattening here, as it did before named regions were
+        # represented at all.
+        if isinstance(block, NamedRegion) and not isinstance(block, FunctionCallRegion):
+            # A labeled grouping: keep the label, which is the whole point of
+            # the region -- flattening it here would lose it on every
+            # round-trip through the schedule tree.
+            return [tn.NamedRegionScope(label=block.label, children=children)]
 
         if isinstance(block, LoopRegion):
             # If this is a loop region, wrap everything in a loop scope node.

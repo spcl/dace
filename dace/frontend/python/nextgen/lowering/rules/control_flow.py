@@ -416,3 +416,18 @@ def lower_continue(statement: ast.Continue, state: LoweringState) -> None:
 @rule(ast.Pass)
 def lower_pass(statement: ast.Pass, state: LoweringState) -> None:
     pass
+
+
+@rule(cpa.NamedRegionStmt)
+def lower_named_region(statement: cpa.NamedRegionStmt, state: LoweringState) -> None:
+    """
+    Lower ``with dace.named("label"):`` to a
+    :class:`~...treenodes.NamedRegionScope`.
+
+    The label groups statements without changing what they mean, so the body
+    lowers into the scope exactly as it would outside one -- no binding scope
+    of its own (Python's ``with`` introduces none either), and names assigned
+    inside stay visible after it.
+    """
+    with state.emitter.scope(tn.NamedRegionScope(label=statement.label, children=[])):
+        state.lower_body(statement.body)

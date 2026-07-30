@@ -274,6 +274,32 @@ def test_element_index_beside_a_slice_becomes_a_symbol():
     assert np.allclose(O, A[col])
 
 
+def test_unindexed_dimensions_count_as_a_range():
+    """``G[k, E, neigh[a, b]]`` on a 5-D ``G``: no slice is written, but the
+    two unindexed dimensions stay whole, so the subscript keeps a range and
+    indirection cannot express it (the shape sse uses).
+
+    Judging by written slices alone left this on the indirection path, where
+    the trailing dimensions have nowhere to go, and it fell back instead."""
+
+    @dace.program
+    def contract(neigh: dace.int32[2, 2], G: dace.float64[4, 3, 2], O: dace.float64[2, 2, 2]):
+        for a, b in dace.map[0:2, 0:2]:
+            O[a, b] = G[a + 1, neigh[a, b]]
+
+    neigh = np.array([[0, 2], [1, 0]], dtype=np.int32)
+    G, O = np.arange(24, dtype=np.float64).reshape(4, 3, 2).copy(), np.zeros((2, 2, 2))
+    tree = nextgen.parse_program(contract, neigh, G, O)
+    assert not _callbacks(tree)
+    assigns = [node for node in tree.preorder_traversal() if isinstance(node, tn.AssignNode)]
+    assert len(assigns) == 1 and assigns[0].name.startswith('__idx_neigh')
+
+    tree.as_sdfg().compile()(neigh=neigh, G=G, O=O)
+    for a in range(2):
+        for b in range(2):
+            assert np.allclose(O[a, b], G[a + 1, neigh[a, b]])
+
+
 def test_element_index_alone_stays_indirection():
     """The complement of the rule: with no range in the subscript, a
     data-dependent element index is genuine indirection and keeps lowering as
@@ -352,6 +378,7 @@ if __name__ == '__main__':
     test_a_bound_read_through_a_scalar_index()
     test_a_step_read_from_data()
     test_element_index_beside_a_slice_becomes_a_symbol()
+    test_unindexed_dimensions_count_as_a_range()
     test_element_index_alone_stays_indirection()
     test_explicit_tasklet_memlet_with_a_data_bound()
     test_a_reassigned_bound_gets_a_fresh_symbol()

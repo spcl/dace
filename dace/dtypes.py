@@ -1557,6 +1557,22 @@ def validate_name(name):
     return True
 
 
+def sanitize_name(name: str, fallback: str = 'unnamed') -> str:
+    """
+    Coerce a string into a name :func:`validate_name` accepts, for the places
+    where a freely chosen label becomes part of a generated name -- a
+    :class:`~dace.sdfg.state.NamedRegion`'s label is user text
+    (``with dace.named("phase 1"):``), and inlining the region prefixes it onto
+    every block name inside.
+
+    :param fallback: Returned when the string has nothing usable left in it.
+    """
+    candidate = re.sub(r'[^a-zA-Z0-9_.]', '_', name or '')
+    if candidate and candidate[0].isdigit():
+        candidate = '_' + candidate
+    return candidate if validate_name(candidate) else fallback
+
+
 def can_access(schedule: ScheduleType, storage: StorageType):
     """
     Identifies whether a container of a storage type can be accessed in a specific schedule.

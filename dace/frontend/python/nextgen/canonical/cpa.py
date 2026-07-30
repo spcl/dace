@@ -23,6 +23,7 @@ Canonical statement grammar::
           | Break | Continue | Pass
           | ExplicitTasklet              # explicit-dataflow tasklet (opaque body)
           | ExplicitConsume              # explicit consume scope (stream pop)
+          | NamedRegionStmt([stmt])      # labeled statement grouping (dace.named)
           | OpaqueStmt                   # explicit interpreter-fallback marker
 
     flat  := atomexpr
@@ -143,6 +144,41 @@ class ExplicitTasklet(ast.stmt):
         self.code_global = code_global
         self.code_init = code_init
         self.code_exit = code_exit
+        self.original = original
+        if location is not None:
+            ast.copy_location(self, location)
+
+
+class NamedRegionStmt(ast.stmt):
+    """
+    Canonical marker for a labeled statement grouping (``with dace.named("phase
+    1"):``), lowered to a
+    :class:`~dace.sdfg.analysis.schedule_tree.treenodes.NamedRegionScope`.
+
+    Unlike the other ``with``-derived markers, the body is ordinary *program*
+    code: the label groups statements for readability, profiling and
+    transformation targeting without changing what they mean. So ``body`` is
+    exposed under the name every canonicalization pass already recurses into
+    (``_BodyTransformer._recurse``), and the statements inside are
+    canonicalized exactly as they would be outside.
+
+    :param label: The region label.
+    :param body: The grouped statements.
+    :param original: The original ``with`` statement, restored when a
+                     surrounding region falls back to a callback.
+    """
+    _fields = ()
+
+    def __init__(self,
+                 label: str = '',
+                 body: Optional[List[ast.stmt]] = None,
+                 location: Optional[ast.AST] = None,
+                 original: Optional[ast.stmt] = None):
+        # All parameters default so ``copy.deepcopy`` can reconstruct the node
+        # (``ast.AST.__reduce__`` rebuilds with no arguments).
+        super().__init__()
+        self.label = label
+        self.body = body if body is not None else []
         self.original = original
         if location is not None:
             ast.copy_location(self, location)
@@ -512,7 +548,7 @@ def _violations_in_statement(node: ast.stmt, global_vars: Optional[Dict[str, Any
         # other bare expressions are not.
         if not (isinstance(node.value, ast.Call) and is_flat(node.value)):
             yield f'Non-canonical expression statement: {ast.dump(node.value)[:80]}'
-    elif isinstance(node, (ast.Break, ast.Continue, ast.Pass)):
+    elif isinstance(node, (ast.Break, ast.Continue, ast.Pass, NamedRegionStmt)):
         return
     else:
         yield f'Statement type {type(node).__name__} is not part of the canonical subset'

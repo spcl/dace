@@ -142,7 +142,7 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
             base_descriptor = member.descriptor
         else:
             return None
-        node = promote_index_reads(node, state)
+        node = promote_index_reads(node, state, ndim=len(base_descriptor.shape))
         expr = state.inference.parse_access(node)
         subset = substitute_symbolic_scalars(expr.subset, state.context)
         if isinstance(subset, subsets.Indices):
@@ -167,7 +167,37 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
     return None
 
 
-def promote_index_reads(node: ast.Subscript, state: LoweringState, force_elements: bool = False) -> ast.Subscript:
+def keeps_range(node: ast.Subscript, state: LoweringState, ndim: Optional[int] = None) -> bool:
+    """
+    Whether a subscript's result still spans a range in some dimension, which
+    is what decides whether indirection can express it at all (indirection
+    lowers a whole-ELEMENT read).
+
+    A range need not be written as a slice: indexing fewer dimensions than the
+    array has leaves the rest whole (``G[k, E, neigh[a, b]]`` on a 5-D ``G``),
+    and ``Ellipsis`` stands for however many of those there are.
+
+    :param ndim: The base container's rank, when the caller already knows it.
+    """
+    elements = index_elements(node.slice)
+    if any(isinstance(element, ast.Slice) for element in elements):
+        return True
+    if any(isinstance(element, ast.Constant) and element.value is Ellipsis for element in elements):
+        return True
+    if ndim is None:
+        base = resolve_access(node.value, state) if isinstance(node.value, (ast.Name, ast.Attribute)) else None
+        if base is None:
+            return False
+        ndim = len(base.subset.ranges)
+    # ``newaxis`` consumes no source dimension (see ``kept_dimensions``).
+    indexed = [element for element in elements if not (isinstance(element, ast.Constant) and element.value is None)]
+    return len(indexed) < ndim
+
+
+def promote_index_reads(node: ast.Subscript,
+                        state: LoweringState,
+                        force_elements: bool = False,
+                        ndim: Optional[int] = None) -> ast.Subscript:
     """
     Rewrite the data reads inside a subscript's index that belong on the SYMBOL
     side into symbols defined from them, each by an interstate assignment
@@ -185,11 +215,12 @@ def promote_index_reads(node: ast.Subscript, state: LoweringState, force_element
       connector and the slice stays in the tasklet code
       (``__out = __in0[0:__in1] + 1.0``), from which the code generator drops
       the subscript entirely and emits pointer arithmetic;
-    - an ELEMENT position too, but only when some other dimension is
-      slice-formed (``A[col[i], 0:5]``). Indirection lowers a whole-element
-      read, so a subscript that keeps a range cannot use it at all -- that
-      shape reached SDFG construction as ``__in0[__in1, 0:5]`` and failed
-      there.
+    - an ELEMENT position too, but only when the subscript still spans a range
+      somewhere (``A[col[i], 0:5]``, and equally ``G[k, E, neigh[a, b]]`` on a
+      5-D ``G``, where the unindexed dimensions stay whole -- see
+      :func:`keeps_range`). Indirection lowers a whole-element read, so a
+      subscript that keeps a range cannot use it at all -- that shape reached
+      SDFG construction as ``__in0[__in1, 0:5]`` and failed there.
 
     An element position in an otherwise element-only subscript (``A[n]``,
     ``x[A_col[j]]``) is left alone: that IS indirection, which the tasklet
@@ -212,12 +243,12 @@ def promote_index_reads(node: ast.Subscript, state: LoweringState, force_element
         of integer type, which is a genuine feature gap.
     """
     elements = index_elements(node.slice)
-    keeps_range = any(isinstance(element, ast.Slice) for element in elements)
+    ranged = force_elements or keeps_range(node, state, ndim)
     sources: List[ast.expr] = []
     for element in elements:
         if isinstance(element, ast.Slice):
             sources.extend(bound for bound in (element.lower, element.upper, element.step) if bound is not None)
-        elif keeps_range or force_elements:
+        elif ranged:
             sources.append(element)
 
     replacements: Dict[str, str] = {}
@@ -404,9 +435,9 @@ def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> Li
     """
     if not isinstance(array_expression, ast.Subscript):
         return []
-    elements = index_elements(array_expression.slice)
-    if any(isinstance(element, ast.Slice) for element in elements):
+    if keeps_range(array_expression, state):
         return []
+    elements = index_elements(array_expression.slice)
     reads: List[ast.expr] = []
     seen: set = set()
     for element in elements:

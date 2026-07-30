@@ -138,17 +138,20 @@ def lower_computation(target: DataAccess,
                                  'operates on an opaque Python object',
                                  category='pyobject-propagation')
             return
-        # Operators the elementwise mechanism cannot express (``@``, whose
-        # result is a contraction rather than a broadcast) go to the registry
-        # implementation that builds the real dataflow.
-        if _lower_registry_operator(target, value, statement, state):
-            return
         # NumPy advanced indexing gathers through its own map: the result index
         # space comes from the broadcast index arrays, not from the subset, so
         # the elementwise mechanism cannot express it.
         if _lower_advanced_index(target, value, statement, state):
             return
+        # Before dispatching on the operator: a registry implementation resolves
+        # its operands as plain accesses, and an array-valued index is not one
+        # (``vals @ x[cols]`` in spmv). Gathering first leaves it a container.
         value = _materialize_advanced_indices(value, statement, state)
+        # Operators the elementwise mechanism cannot express (``@``, whose
+        # result is a contraction rather than a broadcast) go to the registry
+        # implementation that builds the real dataflow.
+        if _lower_registry_operator(target, value, statement, state):
+            return
         value = _materialize_attribute_reads(value, state)
         rewritten = static_values.materialize_operands(value, state)
         elementwise.emit_computation(target, rewritten, statement, state, wcr=wcr)

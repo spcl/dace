@@ -24,9 +24,10 @@ import ast
 import copy
 from typing import List, Optional, Tuple, Union
 
-from dace.frontend.python import iterators
+from dace.frontend.python import astutils, iterators
 from dace.frontend.python.nextgen.canonical import cpa
-from dace.frontend.python.nextgen.canonical.cpa import CANONICAL_LEAVES, ExplicitConsume, ExplicitTasklet, OpaqueStmt
+from dace.frontend.python.nextgen.canonical.cpa import (CANONICAL_LEAVES, ExplicitConsume, ExplicitTasklet,
+                                                        NamedRegionStmt, OpaqueStmt)
 
 _TERMINAL_STMTS = (ast.Break, ast.Continue, ast.Pass)
 
@@ -149,6 +150,9 @@ class RecognizeExplicitDataflow(_BodyTransformer):
       following the classic contract: the function takes exactly (element,
       PE index) parameters and the decorator at least (stream, num_pes).
       Malformed forms are left for MarkOpaque.
+    - ``with dace.named("label"):`` becomes a :class:`NamedRegionStmt`. It is
+      recognized here only because that is where ``with`` statements are read;
+      its body is ordinary program code and is canonicalized recursively.
 
     Explicit-dataflow support matrix (frontend/tree level): with-tasklets,
     decorated tasklets/maps/mapscopes/consumes/consumescopes, dynamic-volume
@@ -173,6 +177,14 @@ class RecognizeExplicitDataflow(_BodyTransformer):
                                        location=statement,
                                        original=statement,
                                        **_tasklet_arguments(context_expr))
+            if _refers_to(callee, 'dace.named', self.context.global_vars):
+                # The body is ordinary program code, so it is recursed into
+                # like any other compound statement.
+                region = NamedRegionStmt(label=_named_region_label(context_expr, statement, self.context.global_vars),
+                                         body=statement.body,
+                                         location=statement,
+                                         original=statement)
+                return self._recurse(region)
         if isinstance(statement, ast.FunctionDef) and len(statement.decorator_list) == 1:
             decorator = statement.decorator_list[0]
             decorator_callee = decorator.func if isinstance(decorator, ast.Call) else decorator
@@ -322,6 +334,26 @@ def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:
             return root is dace
         return getattr(root, attribute_name, None) is builtin
     return False
+
+
+def _named_region_label(context_expr: ast.expr, statement: ast.stmt, global_vars: dict) -> str:
+    """
+    The label of a ``with dace.named(...)`` region, resolved the way the
+    classic frontend resolves it (``newast.py::visit_With``): evaluate the
+    context expression and read its ``name``, falling back to a label built
+    from the line number.
+
+    Both spellings reach the fallback: bare ``with dace.named:`` evaluates to
+    the class, which has no ``name``, and ``dace.named()`` leaves it None.
+    """
+    try:
+        evaluated = astutils.evalnode(context_expr, global_vars)
+        label = getattr(evaluated, 'name', None)
+        if isinstance(label, str):
+            return label
+    except Exception:
+        pass  # An unevaluable label expression is not a reason to reject the region
+    return f'Named Region {getattr(statement, "lineno", 0)}'
 
 
 def _tasklet_arguments(node: ast.expr) -> dict:

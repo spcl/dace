@@ -40,6 +40,7 @@ FRONTEND_LEGAL_NODES: FrozenSet[Type[tn.ScheduleTreeNode]] = frozenset({
     tn.PythonCallbackNode,
     tn.ReassignExternalNode,
     tn.FunctionCallScope,
+    tn.NamedRegionScope,
     tn.SDFGCallNode,
 })
 

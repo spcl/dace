@@ -103,6 +103,25 @@ def test_index_inside_a_larger_expression():
     np.testing.assert_allclose(result.ravel(), A[ind] + B)
 
 
+def test_index_as_a_registry_operator_operand():
+    """A gather feeding an operator the elementwise mechanism cannot express
+    (``vals @ x[cols]``, the shape of every spmv).
+
+    A registry implementation resolves its operands as plain accesses and an
+    array-valued index is not one, so the gather has to be materialized BEFORE
+    operator dispatch; the other order sent the whole statement to a callback.
+    """
+
+    @dace.program
+    def program(vals: dace.float64[M], x: dace.float64[N], cols: dace.int32[M]):
+        return vals @ x[cols]
+
+    vals, x = np.random.rand(3), np.random.rand(20)
+    cols = np.array([1, 5, 9], dtype=np.int32)
+    result = np.asarray(_run(program, vals=vals, x=x, cols=cols, N=20, M=3))
+    np.testing.assert_allclose(result.ravel()[0], vals @ x[cols])
+
+
 # --- Writes
 
 
@@ -243,6 +262,7 @@ if __name__ == '__main__':
     test_index_by_two_arrays_broadcasts()
     test_index_combined_with_slices()
     test_index_inside_a_larger_expression()
+    test_index_as_a_registry_operator_operand()
     test_write_through_index_array()
     test_accumulate_through_index_array()
     test_write_combined_with_slices()
