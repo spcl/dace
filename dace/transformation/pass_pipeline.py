@@ -2,14 +2,29 @@
 """
 API for SDFG analysis and manipulation Passes, as well as Pipelines that contain multiple dependent passes.
 """
+
 from dace import properties, serialize
 from dace.sdfg import SDFG, SDFGState, graph as gr, nodes, utils as sdutil
 
+import inspect
 from enum import Flag, auto
-from typing import Any, Dict, Iterator, List, Optional, Set, Type, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Set, Type, Union
 from dataclasses import dataclass
 
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
+
+
+def unique_dependencies(passes: Iterable['Pass']) -> List[Union[Type['Pass'], 'Pass']]:
+    """
+    Collects the dependencies of the given passes, preserving their listed order and removing duplicates.
+
+    :param passes: An iterable of passes whose ``depends_on`` results should be combined.
+    :return: A list of the combined dependencies, in order and without duplicates.
+    """
+    deps = []
+    for p in passes:
+        deps.extend(p.depends_on())
+    return list(dict.fromkeys(deps))  # Remove duplicates while preserving order
 
 
 class Modifies(Flag):
@@ -55,13 +70,16 @@ class Pass:
 
     CATEGORY: str = 'Helper'
 
-    def depends_on(self) -> Set[Union[Type['Pass'], 'Pass']]:
+    #: Set to True by the ``dace.transformation.explicit_cf_compatible`` decorator
+    __explicit_cf_compatible__: bool = False
+
+    def depends_on(self) -> List[Union[Type['Pass'], 'Pass']]:
         """
         If in the context of a ``Pipeline``, which other Passes need to run first.
 
-        :return: A set of Pass subclasses or objects that need to run prior to this Pass.
+        :return: A list of Pass subclasses or objects that need to run prior to this Pass.
         """
-        return set()
+        return []
 
     def modifies(self) -> Modifies:
         """
@@ -129,7 +147,7 @@ class Pass:
 
         # Ignore abstract classes.
         result = subclasses | subsubclasses
-        result = set(sc for sc in result if not getattr(sc, '__abstractmethods__', False))
+        result = set(sc for sc in result if not inspect.isabstract(sc))
 
         return result
 
@@ -482,11 +500,8 @@ class Pipeline(Pass):
     def should_reapply(self, modified: Modifies) -> bool:
         return any(p.should_reapply(modified) for p in self.passes)
 
-    def depends_on(self) -> Set[Type[Pass]]:
-        result = set()
-        for p in self.passes:
-            result.update(p.depends_on())
-        return result
+    def depends_on(self) -> List[Union[Type[Pass], Pass]]:
+        return unique_dependencies(self.passes)
 
     def _make_dependency_graph(self) -> gr.OrderedDiGraph:
         """

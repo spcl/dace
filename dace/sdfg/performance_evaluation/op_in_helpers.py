@@ -7,6 +7,7 @@ from dace.data import Array
 import sympy as sp
 from scipy.optimize import curve_fit
 import numpy as np
+from dace import symbol, symbolic
 from dace.symbolic import symbol, pystr_to_symbolic
 
 
@@ -25,7 +26,7 @@ class CacheLineTracker:
             self.array_info[name] = a
             self.start_lines[name] = self.next_free_line
             # increase next_free_line
-            self.next_free_line += (a.total_size.subs(mapping) * a.dtype.bytes + self.L - 1) // self.L  # ceil division
+            self.next_free_line += symbolic.int_ceil(a.total_size.subs(mapping) * a.dtype.bytes, self.L)
 
     def cache_line_id(self, name: str, access: [int], mapping):
         arr = self.array_info[name]
@@ -36,7 +37,7 @@ class CacheLineTracker:
                 arr.strides[dim]).subs(mapping)
 
         # divide by L to get the cache line id
-        return self.start_lines[name] + (one_d_index * arr.dtype.bytes) // self.L
+        return self.start_lines[name] + symbolic.int_floor(one_d_index * arr.dtype.bytes, self.L)
 
 
 class Node:

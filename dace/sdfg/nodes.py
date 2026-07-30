@@ -380,6 +380,10 @@ class CodeNode(Node):
     def free_symbols(self) -> Set[str]:
         return set().union(*[v.free_symbols for v in self.location.values()])
 
+    def has_side_effects(self, sdfg) -> bool:
+        """True if running this node may do more than write its outputs."""
+        return False
+
 
 @make_properties
 class Tasklet(CodeNode):
@@ -670,6 +674,12 @@ class NestedSDFG(CodeNode):
             ret.sdfg.update_cfg_list([])
 
         return ret
+
+    def has_side_effects(self, sdfg) -> bool:
+        """True if any nested node has side effects. ``sdfg`` unused: inner ones apply."""
+        return any(
+            isinstance(node, CodeNode) and not isinstance(node, NestedSDFG) and node.has_side_effects(parent.sdfg)
+            for node, parent in self.sdfg.all_nodes_recursive())
 
     def used_symbols(self, all_symbols: bool) -> Set[str]:
         free_syms = set().union(*(map(str, pystr_to_symbolic(v).free_symbols) for v in self.location.values()))
@@ -1354,12 +1364,10 @@ class LibraryNode(CodeNode):
     def __jsontype__(self):
         return 'LibraryNode'
 
-    @property
-    def has_side_effects(self) -> bool:
+    def has_side_effects(self, sdfg) -> bool:
         """
         Returns True if this library node has other side effects (e.g., calling stateful libraries, communicating)
-        when expanded.
-        This method is meant to be extended by subclasses.
+        when expanded. ``sdfg`` is unused; taken to match :class:`CodeNode`.
         """
         return False
 
