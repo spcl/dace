@@ -837,6 +837,15 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
     state_field_appends = '\n            '.join(f'fields.append("{f}");' for f in _pointer_field_names(statestruct))
 
+    # The pre-codegen content hash of the SOURCE SDFG, threaded in by
+    # compile() (absent in standalone bindings generation): baked as a module
+    # attribute so a later compile() of an unchanged SDFG can mint a fresh
+    # handle from the loaded module instead of rename-and-recompile (see
+    # compiler.nanobind_reuse_loaded). The post-codegen hash would never
+    # match - codegen mutates the SDFG - hence the threading.
+    source_hash = getattr(sdfg, '_source_sdfg_hash', None)
+    source_hash_attr = f'\n    m.attr("source_sdfg_hash") = "{source_hash}";' if source_hash else ''
+
     # Forward declarations for structs passed by pointer (Structure arguments).
     struct_decls = _structure_forward_decls(arglist)
     struct_fwd_block = f'\n{struct_decls}' if struct_decls else ''
@@ -1017,6 +1026,6 @@ NB_MODULE({name}, m) {{
             h.require_state();
             return reinterpret_cast<std::uintptr_t>(h.m_state);
         }});
-    m.def("make_compiled_sdfg", []() {{ return new DaceHandle_{name}(); }});
+    m.def("make_compiled_sdfg", []() {{ return new DaceHandle_{name}(); }});{source_hash_attr}
 }}
 '''

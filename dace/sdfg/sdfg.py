@@ -2603,9 +2603,41 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
+        # Content-verified module reuse (nanobind; compiler.nanobind_reuse_loaded,
+        # default on): if THIS identity (build folder, name) is already loaded and
+        # the loaded module was built from an SDFG with the same pre-codegen
+        # content hash, mint a fresh handle from it - no rename, no rebuild.
+        # hash_sdfg() instability can only produce a false MISmatch (a redundant
+        # rename-and-rebuild below), never a wrong reuse; only an actual hash
+        # collision between different contents could, which we accept everywhere.
+        source_hash = None
+        if Config.get('compiler', 'interface') == 'nanobind' and \
+                Config.get_bool('compiler', 'nanobind_reuse_loaded'):
+            # hash_sdfg() deliberately strips 'instrument' at every level (it
+            # is a semantic content hash) - but instrumentation CHANGES the
+            # generated code, so the full instrumentation state is folded back
+            # into the reuse key (every element's value, in traversal order,
+            # so any toggle anywhere changes the key).
+            instr_sig = ','.join([self.instrument.name] + [
+                n.instrument.name for n, _ in self.all_nodes_recursive() if getattr(n, 'instrument', None) is not None
+            ])
+            source_hash = f'{self.hash_sdfg()}:{md5(instr_sig.encode("utf-8")).hexdigest()}'
+            module = sys.modules.get(compiler.nanobind_qualified_module_name(build_folder, self.name))
+            if (module is not None and getattr(module, 'source_sdfg_hash', None) == source_hash
+                    and os.path.isdir(build_folder)):
+                if return_program_handle:
+                    # NOTE: Passes `self` like the cached-binary path above (and
+                    #   with the same deepcopy caveat).
+                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self)
+                return
+
         if self.regenerate_code or not os.path.isdir(build_folder):
             # Clone SDFG as the other modules may modify its contents
             sdfg = copy.deepcopy(self)
+            # Bake the pre-codegen content hash into the generated module (the
+            # copy is mutated by codegen, so its later hash would never match a
+            # future compile of the unchanged original).
+            sdfg._source_sdfg_hash = source_hash
 
             # Fix the build folder name on the copied SDFG to avoid it changing if the
             #  codegen modifies the SDFG (thereby changing its hash). This must happen

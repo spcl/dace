@@ -139,6 +139,20 @@ required:
                     taken name, for pipelines that consider a silent rename a bug.
                     Only consulted when ``compiler.interface`` is "nanobind".
 
+            nanobind_reuse_loaded:
+                type: bool
+                default: true
+                title: Reuse a loaded, content-identical module on recompile
+                description: >
+                    When compiling an SDFG whose (build folder, name) identity is
+                    already loaded AND whose content hash matches the hash the
+                    loaded module was built from, return a fresh handle to that
+                    module instead of rename-and-recompile. Content changes still
+                    rename and rebuild (extension modules cannot be reloaded).
+                    Hash instability can only cause a redundant rebuild, never a
+                    wrong reuse. Only consulted when ``compiler.interface`` is
+                    "nanobind".
+
             nanobind_strict_scalar_cast:
                 type: bool
                 default: false

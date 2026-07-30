@@ -61,7 +61,8 @@ def test_nanobind_interface_wrong_dtype_raises():
 
 def test_nanobind_interface_same_name_recompile():
     """Recompiling under an already-imported module name silently renames (sys.modules increment)."""
-    with set_temporary('compiler', 'interface', value='nanobind'):
+    with set_temporary('compiler', 'interface', value='nanobind'), \
+            set_temporary('compiler', 'nanobind_reuse_loaded', value=False):  # pins the rename machinery; reuse has its own test
         N = dace.symbol('N')
 
         @dace.program
@@ -254,7 +255,8 @@ def test_nanobind_interface_rename_own_build_folder():
     """A collision-renamed program is compiled into its own build folder, not in-place."""
     import os
 
-    with set_temporary('compiler', 'interface', value='nanobind'):
+    with set_temporary('compiler', 'interface', value='nanobind'), \
+            set_temporary('compiler', 'nanobind_reuse_loaded', value=False):  # pins the rename machinery; reuse has its own test
         N = dace.symbol('N')
 
         @dace.program
@@ -280,13 +282,60 @@ def test_nanobind_interface_rename_own_build_folder():
         assert not os.path.isfile(os.path.join(original_folder, 'build', f'lib{renamed}.so'))
 
 
+def test_nanobind_interface_reuse_unchanged_module():
+    """Recompiling an UNCHANGED SDFG whose identity is already loaded reuses
+    the loaded module - no rename, no rebuild: the module bakes the source
+    SDFG's pre-codegen content hash (`source_sdfg_hash`) and compile()
+    compares against it before entering the rename loop. A CHANGED SDFG
+    still renames-and-rebuilds (the module cannot be reloaded). Gated by
+    ``compiler.nanobind_reuse_loaded`` (default: enabled)."""
+    import sympy
+
+    from dace import symbolic
+
+    # The comparison rides on hash_sdfg(); clear the known cross-test sympy
+    # cache pollution so an unrelated prior test cannot flip a hash bit
+    # (see the symbolic-serialization flake).
+    sympy.core.cache.clear_cache()
+    symbolic.deserialize_symbolic.cache_clear()
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_reuse(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        sdfg = axpy_nanobind_reuse.to_sdfg()
+        base_name = sdfg.name
+        c1 = sdfg.compile()
+        assert hasattr(c1.module, 'source_sdfg_hash')
+
+        c2 = sdfg.compile()
+        assert c2.sdfg.name == base_name  # not renamed...
+        assert c2.module is c1.module  # ...the very same loaded module
+
+        n = 16
+        a = np.random.rand(n)
+        b = np.random.rand(n)
+        expected = 2.0 * a + b
+        c2(A=a, B=b, alpha=np.float64(2.0), N=np.int32(n))
+        assert np.allclose(b, expected)
+
+        # A changed SDFG must still rename-and-rebuild.
+        sdfg.instrument = dace.InstrumentationType.Timer
+        c3 = sdfg.compile()
+        assert c3.sdfg.name == f'{base_name}_0'
+
+
 def test_nanobind_interface_rename_explicit_folder_stays(tmp_path):
     """An explicitly-set build folder is the user's contract: a collision-renamed
     program builds in place inside it (the fixed-folder regime, same behaviour
     as cache mode 'single') instead of re-deriving its own folder."""
     import os
 
-    with set_temporary('compiler', 'interface', value='nanobind'):
+    with set_temporary('compiler', 'interface', value='nanobind'), \
+            set_temporary('compiler', 'nanobind_reuse_loaded', value=False):  # pins the rename machinery; reuse has its own test
         N = dace.symbol('N')
 
         @dace.program
@@ -325,7 +374,8 @@ def test_nanobind_interface_rename_third_compile_consistent():
     """Three same-named compiles yield base, _0, _1 - the collision probe must
     track the folder each candidate actually builds into, or the third compile
     would silently reuse the stale _0 module."""
-    with set_temporary('compiler', 'interface', value='nanobind'):
+    with set_temporary('compiler', 'interface', value='nanobind'), \
+            set_temporary('compiler', 'nanobind_reuse_loaded', value=False):  # pins the rename machinery; reuse has its own test
         N = dace.symbol('N')
 
         @dace.program
@@ -446,7 +496,8 @@ def test_nanobind_interface_name_collision_error():
     """With compiler.nanobind_name_collision=error, a taken name refuses to compile."""
     import pytest
 
-    with set_temporary('compiler', 'interface', value='nanobind'):
+    with set_temporary('compiler', 'interface', value='nanobind'), \
+            set_temporary('compiler', 'nanobind_reuse_loaded', value=False):  # pins the rename machinery; reuse has its own test
         with set_temporary('compiler', 'nanobind_name_collision', value='error'):
             N = dace.symbol('N')
 
