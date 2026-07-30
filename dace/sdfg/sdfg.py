@@ -2593,11 +2593,12 @@ class SDFG(ControlFlowRegion):
                                                 folder_mode=folder_mode)
             if lib_path.is_file():
                 if return_program_handle:
-                    # NOTE: We should not pass `self` as `sdfg` argument, but instead deepcopy it.
-                    #   The reason is that if code is generated the `CompiledSDFG.sdfg` attribute
-                    #   of the returned handle is deepcopied. This means that changes to `self`
-                    #   will not affect the attribute. But currently this is the case.
-                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self)
+                    # The handle's `sdfg` is a frozen-folder deepcopy on EVERY
+                    #  return path (matching the codegen path): later changes
+                    #  to `self` must never leak into the handle.
+                    handle_sdfg = copy.deepcopy(self)
+                    handle_sdfg.build_folder = build_folder
+                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=handle_sdfg)
                 return
 
         ############################
@@ -2626,9 +2627,10 @@ class SDFG(ControlFlowRegion):
             if (module is not None and getattr(module, 'source_sdfg_hash', None) == source_hash
                     and os.path.isdir(build_folder)):
                 if return_program_handle:
-                    # NOTE: Passes `self` like the cached-binary path above (and
-                    #   with the same deepcopy caveat).
-                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=self)
+                    # Frozen-folder deepcopy: see the cached-binary path above.
+                    handle_sdfg = copy.deepcopy(self)
+                    handle_sdfg.build_folder = build_folder
+                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=handle_sdfg)
                 return
 
         if self.regenerate_code or not os.path.isdir(build_folder):
@@ -2724,8 +2726,10 @@ class SDFG(ControlFlowRegion):
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
-            # NOTE: See the note above about deepcopying.
-            sdfg = self
+            # Frozen-folder deepcopy: the handle's `sdfg` is isolated from
+            #  `self` on this path too (see the cached-binary path above).
+            sdfg = copy.deepcopy(self)
+            sdfg.build_folder = build_folder
 
         # Compile the code and get the shared library path
         shared_library = compiler.configure_and_compile(program_folder, sdfg.name, folder_mode=folder_mode)

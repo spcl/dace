@@ -328,6 +328,59 @@ def test_nanobind_interface_reuse_unchanged_module():
         assert c3.sdfg.name == f'{base_name}_0'
 
 
+def test_nanobind_interface_handle_sdfg_isolated():
+    """The handle's ``sdfg`` is isolated from the caller's object on EVERY
+    compile() return path - freshly built, content-reuse, use_cache
+    cached-binary, and the regenerate_code=False branch. Passing ``self``
+    (the old behavior of the non-codegen paths) leaked later mutations of
+    the original into the handle."""
+    with pytest.MonkeyPatch.context() as mp, \
+            set_temporary('compiler', 'interface', value='nanobind'), \
+            set_temporary('compiler', 'build_folder_mode', value='development'):
+        # The else-branch leg (c4) rebuilds from the generated sources, which
+        # only exist in development folder mode (production trims them) - and
+        # an existing folder's FOLDER_MODE marker overrides the config, so the
+        # WHOLE test pins development mode. The env var must be dropped first
+        # (it overrides set_temporary, see the CI-env gotcha).
+        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
+        N = dace.symbol('N')
+
+        @dace.program
+        def axpy_nanobind_isolated(A: dace.float64[N], B: dace.float64[N], alpha: dace.float64):
+            B[:] = alpha * A + B
+
+        sdfg = axpy_nanobind_isolated.to_sdfg()
+        base_name = sdfg.name
+
+        c1 = sdfg.compile()  # freshly built (codegen deepcopy)
+        assert c1.sdfg is not sdfg
+
+        c2 = sdfg.compile()  # content-reuse path
+        assert c2.sdfg is not sdfg
+
+        with set_temporary('compiler', 'use_cache', value=True):
+            c3 = sdfg.compile()  # cached-binary path
+            assert c3.sdfg is not sdfg
+
+        # regenerate_code=False + existing folder: the else branch. Reuse
+        # must be off, or it would win first.
+        with set_temporary('compiler', 'nanobind_reuse_loaded', value=False):
+            sdfg.regenerate_code = False
+            try:
+                c4 = sdfg.compile()
+            finally:
+                sdfg.regenerate_code = True
+            assert c4.sdfg is not sdfg
+
+        # Mutating the original afterwards does not leak into any handle.
+        sdfg.name = f'{base_name}_mutation_probe'
+        try:
+            for c in (c1, c2, c3, c4):
+                assert c.sdfg.name != sdfg.name
+        finally:
+            sdfg.name = base_name
+
+
 def test_nanobind_interface_rename_explicit_folder_stays(tmp_path):
     """An explicitly-set build folder is the user's contract: a collision-renamed
     program builds in place inside it (the fixed-folder regime, same behaviour
