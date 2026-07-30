@@ -1,0 +1,58 @@
+name: Integration Tests
+
+# The CloudSC corpus tests parse a multi-thousand-block SDFG and compile it, which is far too
+# slow for the per-push ``General Tests`` matrix -- they carry the ``long`` marker that matrix
+# excludes, so without this workflow nothing runs them. Kept to a single Python version: the
+# job is bound by the parse and the C++ compile, not by anything version-specific.
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  cloudsc-e2e:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.14']
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v6
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        # Make dependency setup faster
+        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
+        sudo dpkg-reconfigure man-db
+        # Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+        pip install -e ".[testing]"
+
+    - name: CloudSC corpus tests
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # The tests build with ``simplify=False`` and apply simplification as an explicit step,
+        # so the automatic heuristic must not have run first.
+        export DACE_optimizer_automatic_simplification=0
+        # Sequential on purpose: the SDFG is parsed once per process and memoized, so xdist
+        # workers would each pay the multi-minute parse instead of sharing one.
+        pytest -n 1 --tb=short --timeout_method thread --timeout=3600 \
+          tests/corpus/cloudsc_regression_test.py \
+          tests/passes/constant_propagation_on_cloudsc_test.py
