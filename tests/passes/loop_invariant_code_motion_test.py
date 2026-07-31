@@ -392,6 +392,74 @@ def test_tsvc2_s000_inner_loop_hoisted_leaves_hull():
 
 
 # ---------------------------------------------------------------------------
+# 6b. Hoisting from the MIDDLE of a body chain must splice, not cut.
+# ---------------------------------------------------------------------------
+
+
+def test_middle_child_hoist_keeps_body_chain_connected():
+    """A child lifted out of the middle of a loop body leaves its neighbours connected.
+
+    CloudSC hit this: the lifted region's edges were dropped without reconnecting its predecessor
+    to its successor, so the whole tail of the body became unreachable -- silently dropped from
+    codegen, and a ``KeyError`` out of ``block_parent_tree``, which indexes a dominator map that
+    only covers blocks reachable from the region's start block.
+    """
+    sdfg = dace.SDFG("licm_middle_child")
+    sdfg.add_array("a", [N], dace.float64)
+    sdfg.add_array("b", [N], dace.float64)
+    sdfg.add_array("c", [K], dace.float64)
+    sdfg.add_array("d", [K], dace.float64)
+
+    outer = LoopRegion("outer", "nl < K", "nl", "nl = 0", "nl = nl + 1")
+    sdfg.add_node(outer, is_start_block=True)
+
+    pre = outer.add_state("pre", is_start_block=True)
+    tc = pre.add_tasklet("setc", {}, {"y"}, "y = 1.0")
+    pre.add_edge(tc, "y", pre.add_write("c"), None, mm.Memlet("c[nl]"))
+
+    # Invariant of ``outer``: nothing in it mentions ``nl``, and it neither reads nor writes
+    # anything ``pre`` or ``post`` touch.
+    inner = LoopRegion("inner", "i < N", "i", "i = 0", "i = i + 1")
+    outer.add_node(inner)
+    body = inner.add_state("ib", is_start_block=True)
+    t = body.add_tasklet("add1", {"xb"}, {"y"}, "y = xb + 1.0")
+    body.add_edge(body.add_read("b"), None, t, "xb", mm.Memlet("b[i]"))
+    body.add_edge(t, "y", body.add_write("a"), None, mm.Memlet("a[i]"))
+
+    post = outer.add_state("post")
+    td = post.add_tasklet("setd", {}, {"y"}, "y = 2.0")
+    post.add_edge(td, "y", post.add_write("d"), None, mm.Memlet("d[nl]"))
+
+    outer.add_edge(pre, inner, dace.InterstateEdge())
+    outer.add_edge(inner, post, dace.InterstateEdge())
+    sdfg.validate()
+
+    assert LoopInvariantCodeMotion().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+
+    assert set(outer.nodes()) == {pre, post}
+    assert [e.dst for e in outer.out_edges(pre)] == [post]
+    assert outer.start_block is pre
+    assert [e.dst for e in sdfg.out_edges(inner)] == [outer]
+
+    def py_ref(a, b, c, d, N, K):
+        for nl in range(K):
+            c[nl] = 1.0
+            for i in range(N):
+                a[i] = b[i] + 1.0
+            d[nl] = 2.0
+
+    _run_and_check(sdfg,
+                   py_ref,
+                   a=np.zeros(4),
+                   b=np.arange(4, dtype=np.float64),
+                   c=np.zeros(3),
+                   d=np.zeros(3),
+                   N=4,
+                   K=3)
+
+
+# ---------------------------------------------------------------------------
 # 7. WCR output: never hoisted (observable side effect).
 # ---------------------------------------------------------------------------
 

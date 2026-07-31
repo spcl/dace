@@ -205,29 +205,58 @@ def _hoist_invariant_child_regions(loop: LoopRegion) -> int:
     }
     hoistable.sort(key=lambda n: order_map.get(n, 0))
 
-    # Surgery: remove each hoistable child from ``loop`` and insert it as a
+    # Surgery: splice each hoistable child out of ``loop`` and insert it as a
     # new node in ``parent`` before ``loop``. The chain becomes:
     #   ... -> h1 -> h2 -> ... -> loop -> ...
+    moved = 0
     for child in hoistable:
-        _move_region_before(parent, loop, child)
+        moved += _move_region_before(parent, loop, child)
 
-    return len(hoistable)
+    return moved
 
 
-def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> None:
-    """Relocate ``child`` from inside ``loop`` to ``parent``, chained right
-    before ``loop``. Incoming edges to ``loop`` now go to ``child`` first,
-    and a new unconditional edge ``child -> loop`` is added.
+def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> int:
+    """Splice ``child`` out of ``loop``'s body and re-insert it in ``parent``, chained right
+    before ``loop``. Incoming edges to ``loop`` now go to ``child`` first, and a new
+    unconditional edge ``child -> loop`` is added.
+
+    :returns: 1 if the child was moved, 0 if the hoist was refused.
     """
-    # Detach internal edges touching child inside loop.
-    for e in list(loop.in_edges(child)) + list(loop.out_edges(child)):
+    in_edges = loop.in_edges(child)
+    out_edges = loop.out_edges(child)
+    successor = out_edges[0].dst if out_edges else None
+    start_before = loop.start_block
+    was_start = (start_before is child)
+
+    # Only a child on a plain unconditional chain can be lifted out. Branching predecessors or
+    # successors have no single replacement edge; a condition means the child does not run every
+    # iteration (so hoisting changes semantics anyway); and an assignment on either edge would be
+    # lost with the edge that carries it.
+    if len(in_edges) > 1 or len(out_edges) > 1:
+        return 0
+    if any(not e.data.is_unconditional() or e.data.assignments for e in in_edges + out_edges):
+        return 0
+    # A self-looping child is its own cycle, so it does not run exactly once per iteration.
+    if successor is child:
+        return 0
+    # An entry-less child is already dead code; leave it to dead-state elimination.
+    if not in_edges and not was_start:
+        return 0
+    # Removing the body's entry with nothing to take its place orphans everything after it.
+    if was_start and successor is None and loop.number_of_nodes() > 1:
+        return 0
+
+    for e in in_edges + out_edges:
         loop.remove_edge(e)
-    was_start = (loop.start_block is child)
+    # Close the gap the child leaves behind, or the rest of the body becomes unreachable.
+    if in_edges and successor is not None:
+        loop.add_edge(in_edges[0].src, successor, InterstateEdge())
+    new_start = successor if was_start else start_before
     loop.remove_node(child)
-    if was_start and loop.nodes():
-        # Pick any remaining node as the new start_block; if none remains,
-        # the caller will add an empty hull state. The setter takes a node ID.
-        loop.start_block = loop.node_id(loop.nodes()[0])
+    # ``_start_block`` is a node INDEX and ``remove_node`` shifts every index above it, so re-pin it
+    # on the block object instead of leaving a stale index (and stale cache) behind.
+    if loop.number_of_nodes() > 0:
+        loop.start_block = loop.node_id(new_start)
 
     parent.add_node(child, ensure_unique_name=True)  # reparented into shared CFG; wired by object ref
     # Reroute parent's incoming edges into loop through child.
@@ -235,6 +264,7 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> Non
         parent.remove_edge(e)
         parent.add_edge(e.src, child, e.data)
     parent.add_edge(child, loop, InterstateEdge())
+    return 1
 
 
 def _region_free_symbols(region: Any) -> Set[str]:
