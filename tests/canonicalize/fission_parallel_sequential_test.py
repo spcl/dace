@@ -30,6 +30,7 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
+from dace.libraries.standard.nodes.scan import Scan
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -49,6 +50,11 @@ def _loop_regions(sdfg: dace.SDFG) -> int:
     return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion))
 
 
+def _carried_sequentially(sdfg: dace.SDFG) -> int:
+    """Places the recurrence can legally end up: a sequential loop, or the Scan it lifts to."""
+    return _loop_regions(sdfg) + sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
+
+
 @pytest.mark.parametrize("kernel", ["fission_dep_then_indep", "fission_dep_const_offset"])
 def test_fission_splits_recurrence_from_parallel_body(kernel):
     program = _program(kernel)
@@ -63,7 +69,7 @@ def test_fission_splits_recurrence_from_parallel_body(kernel):
     with contextlib.redirect_stdout(io.StringIO()):
         canonicalize(canon, validate=True, peel_limit=4, break_anti_dependence=True, unroll_limit=4)
     assert _top_maps(canon) >= 1, "fission must lift the independent statement to a parallel map"
-    assert _loop_regions(canon) >= 1, "the recurrence must survive as a sequential loop"
+    assert _carried_sequentially(canon) >= 1, "the recurrence must survive as a sequential loop or a Scan"
 
     # Value-preserving vs the numpy oracle.
     arrays, scalars = tsvc_2_5.make_inputs(program)

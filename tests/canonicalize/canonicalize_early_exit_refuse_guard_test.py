@@ -24,7 +24,7 @@ from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Reduce
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.interstate import LoopToMap
-from tests.corpus.tsvc_2_5.tsvc_2_5 import (ext_break_find_first, ext_break_post_body, ext_break_capture, LEN_1D, K)
+from tests.corpus.tsvc_2_5.tsvc_2_5 import (ext_break_find_first, ext_break_post_body, ext_break_capture)
 
 N = dace.symbol('N')
 
@@ -278,7 +278,7 @@ def test_tsvc_ext_break_capture_still_lifts():
                 break
         out_index = np.zeros(1, dtype=np.int64)
         out_value = np.zeros(1)
-        sdfg(a=a.copy(), out_index=out_index, out_value=out_value, LEN_1D=n, K=kthr)
+        sdfg(a=a.copy(), out_index=out_index, out_value=out_value, LEN_1D=n, KFIND=kthr)
         assert out_index[0] == idx_ref, f'index got {out_index[0]} ref {idx_ref}'
         assert np.allclose(out_value[0], val_ref, equal_nan=True), f'value got {out_value[0]} ref {val_ref}'
 
