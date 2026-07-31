@@ -308,6 +308,22 @@ def test_loop_inlining_invalid_update_statement():
     assert len(nodes) == 3
 
 
+def test_unique_block_name_after_in_place_rename():
+    """A block renamed in place must not have its old name handed out again."""
+    sdfg = dace.SDFG('unique_block_name_after_rename')
+    first = sdfg.add_state('s', is_start_block=True)
+    second = sdfg.add_state('s')  # -> 's_0'; cache and node count agree from here on
+
+    first.label = 'renamed'  # in-place rename: node count is unchanged
+    third = sdfg.add_state('renamed')
+    sdfg.add_edge(first, second, dace.InterstateEdge())
+    sdfg.add_edge(second, third, dace.InterstateEdge())
+
+    labels = [b.label for b in sdfg.nodes()]
+    assert len(labels) == len(set(labels)), f'stale label cache reissued a taken name: {labels}'
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     test_loop_inlining_regular_for()
     test_loop_inlining_regular_while()
@@ -317,3 +333,4 @@ if __name__ == '__main__':
     test_loop_inlining_for_continue_break()
     test_loop_inlining_multi_assignments()
     test_loop_inlining_invalid_update_statement()
+    test_unique_block_name_after_in_place_rename()
