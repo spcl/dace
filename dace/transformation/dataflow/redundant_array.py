@@ -758,7 +758,6 @@ class RedundantArray(pm.SingleStateTransformation):
                     compose_and_push_back(bset, aset, b_dims_to_pop, popped)
         except (ValueError, NotImplementedError):
             self._make_view(sdfg, graph, in_array, out_array, e1, b_subset, b_dims_to_pop)
-            print(f"CREATED VIEW(2): {in_array}")
             return in_array
 
         # 2. Iterate over the e2 edges and traverse the memlet tree
@@ -1065,12 +1064,20 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             # (should not be needed for valid SDGs)
             path = graph.memlet_tree(e2)
             for e3 in path:
-                if e3 is not e2:
-                    try:
-                        _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
-                    except (NotImplementedError, ValueError) as ex:
-                        warnings.warn(f'validate_subsets failed: {ex}')
+                if e3 is e2:
+                    continue
+                if not path.downwards and e3.src is not out_array:
+                    # Above the scope exit the memlet is in the destination array's terms and the scope
+                    # supplies the dimensions out_array lacks, so ``apply`` leaves it alone -- but only
+                    # if it does not still name the array being deleted.
+                    if e3.data.data == out_array.data:
                         return False
+                    continue
+                try:
+                    _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
+                except (NotImplementedError, ValueError) as ex:
+                    warnings.warn(f'validate_subsets failed: {ex}')
+                    return False
 
             # 2-d. If array is connected to a nested SDFG or view and strides are unequal, skip
             if in_desc.strides != out_desc.strides:
@@ -1194,12 +1201,15 @@ class RedundantSecondArray(pm.SingleStateTransformation):
             wcr = e1.data.wcr
             wcr_nonatomic = e1.data.wcr_nonatomic
             for e3 in path:
+                if not path.downwards and e3.src is not out_array:
+                    # Says nothing about out_array (can_be_applied refuses otherwise), so redirecting
+                    # the innermost edge to A leaves it correct as it stands.
+                    continue
                 # 2-a. Extract subsets for array B and others
                 b3_subset, other_subset = _validate_subsets(e3, sdfg.arrays, src_name=out_array.data)
                 # 2-b. Modify memlet to match array A. Example:
                 # A -- (0, a:b)/(c:c+b) --> B -- (c+d)/None --> others
                 # A -- (0, a+d)/None --> others
-                e3.data.data = in_array.data
                 # (c+d) - (c:c+b) = (d)
                 b3_subset.offset(b1_subset, negative=True)
                 # (0, a:b)(d) = (0, a+d) (or offset for indices)
@@ -1208,15 +1218,24 @@ class RedundantSecondArray(pm.SingleStateTransformation):
                     bset, _ = pop_dims(b3_subset, b_dims_to_pop)
                 else:
                     bset = b3_subset
+                a3_subset = compose_and_push_back(aset, bset, a_dims_to_pop, popped)
 
-                e3.data.subset = compose_and_push_back(aset, bset, a_dims_to_pop, popped)
-                # NOTE: This fixes the following case:
-                # A ----> A[subset] ----> ... -----> Tasklet
-                # Tasklet is not data, so it doesn't have an other subset.
-                if isinstance(e3.dst, nodes.AccessNode):
-                    e3.data.other_subset = other_subset
+                if path.downwards:
+                    e3.data.data = in_array.data
+                    e3.data.subset = a3_subset
+                    # NOTE: This fixes the following case:
+                    # A ----> A[subset] ----> ... -----> Tasklet
+                    # Tasklet is not data, so it doesn't have an other subset.
+                    if isinstance(e3.dst, nodes.AccessNode):
+                        e3.data.other_subset = other_subset
+                    else:
+                        e3.data.other_subset = None
                 else:
-                    e3.data.other_subset = None
+                    # out_array is a leaf of an upward tree: only the side of the memlet that reads it
+                    # moves to A. The other side is the index the scope writes and must survive.
+                    if e3.data.data == out_array.data:
+                        e3.data.data = in_array.data
+                    e3.data.src_subset = a3_subset
                 wcr = wcr or e3.data.wcr
                 wcr_nonatomic = wcr_nonatomic or e3.data.wcr_nonatomic
                 e3.data.wcr = wcr

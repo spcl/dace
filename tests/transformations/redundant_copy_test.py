@@ -7,8 +7,9 @@ from typing import Tuple
 import dace
 from dace import nodes, data as dace_data
 from dace.libraries.linalg import Transpose
-from dace.transformation.dataflow import (RedundantArray, RedundantSecondArray, RedundantArrayCopying,
-                                          RedundantArrayCopyingIn)
+from dace.transformation.dataflow import (MapFusionVertical, RedundantArray, RedundantSecondArray,
+                                          RedundantArrayCopying, RedundantArrayCopyingIn)
+from dace.transformation.interstate import LoopToMap
 
 from . import utility
 
@@ -644,6 +645,76 @@ def test_reshaping_not_zero_started_input(a_has_larger_rank_than_b: bool):
     assert all(np.allclose(ref[name], res[name]) for name in ref.keys())
 
 
+def test_redundant_second_array_across_map_exit():
+    """A map-body transient whose consumer is the enclosing map exit must still be removable.
+
+    ``MapExit -> B`` is written in ``B``'s terms and the map range supplies the dimensions the
+    ``(1, 1, 1)`` transient does not have, so that edge is not part of the redirection.
+    """
+    N, tsteps = dace.symbol('N'), dace.symbol('tsteps')
+
+    @dace.program
+    def heat3d(A: dace.float64[N, N, N], B: dace.float64[N, N, N]):
+        for _ in range(1, tsteps):
+            B[1:-1, 1:-1,
+              1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
+                       (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
+                       (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
+            A[1:-1, 1:-1,
+              1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
+                       (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
+                       (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+
+    def is_unit_transient(sd, name):
+        desc = sd.arrays[name]
+        return desc.transient and all(str(size) == '1' for size in desc.shape)
+
+    def unit_transients(sdfg):
+        return [(sd.label, name) for sd in sdfg.all_sdfgs_recursive() for name in sd.arrays
+                if is_unit_transient(sd, name)]
+
+    def unit_transient_copies(sdfg):
+        return [(e.src.data, e.dst.data) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
+                if isinstance(e.src, nodes.AccessNode) and isinstance(e.dst, nodes.AccessNode)
+                and is_unit_transient(sd, e.src.data) and is_unit_transient(sd, e.dst.data)]
+
+    sdfg = heat3d.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated(LoopToMap)
+    sdfg.apply_transformations_repeated(MapFusionVertical)
+
+    before = unit_transients(sdfg)
+    assert len(unit_transient_copies(sdfg)) == 1
+
+    sdfg.simplify()
+    sdfg.validate()
+
+    assert unit_transient_copies(sdfg) == []
+    assert len(unit_transients(sdfg)) == len(before) - 1
+
+    n, steps = 10, 20
+    idx = np.arange(n, dtype=np.float64)
+    ref_a = ((idx[:, None, None] + idx[None, :, None] + (n - idx[None, None, :])) * 10) / n
+    ref_b = ref_a.copy()
+    for _ in range(1, steps):
+        ref_b[1:-1, 1:-1,
+              1:-1] = (0.125 * (ref_a[2:, 1:-1, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[:-2, 1:-1, 1:-1]) +
+                       0.125 * (ref_a[1:-1, 2:, 1:-1] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, :-2, 1:-1]) +
+                       0.125 * (ref_a[1:-1, 1:-1, 2:] - 2.0 * ref_a[1:-1, 1:-1, 1:-1] + ref_a[1:-1, 1:-1, :-2]) +
+                       ref_a[1:-1, 1:-1, 1:-1])
+        ref_a[1:-1, 1:-1,
+              1:-1] = (0.125 * (ref_b[2:, 1:-1, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[:-2, 1:-1, 1:-1]) +
+                       0.125 * (ref_b[1:-1, 2:, 1:-1] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, :-2, 1:-1]) +
+                       0.125 * (ref_b[1:-1, 1:-1, 2:] - 2.0 * ref_b[1:-1, 1:-1, 1:-1] + ref_b[1:-1, 1:-1, :-2]) +
+                       ref_b[1:-1, 1:-1, 1:-1])
+
+    a = ((idx[:, None, None] + idx[None, :, None] + (n - idx[None, None, :])) * 10) / n
+    b = a.copy()
+    utility.compile_and_run_sdfg(sdfg, A=a, B=b, N=n, tsteps=steps)
+
+    assert np.array_equal(a, ref_a)
+    assert np.array_equal(b, ref_b)
+
+
 if __name__ == '__main__':
     test_in()
     test_out()
@@ -661,3 +732,4 @@ if __name__ == '__main__':
     test_invalid_redundant_array_strided('F')
     test_reshaping_not_zero_started_input(True)
     test_reshaping_not_zero_started_input(False)
+    test_redundant_second_array_across_map_exit()
