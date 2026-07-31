@@ -370,69 +370,18 @@ class LoopToScan(ppl.Pass):
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
         """Lift carried-dependence loops to ``Scan`` library nodes.
 
-        :returns: The number of scans lifted; ``0`` when no scan was lifted but the
-                  normalization preprocess below still edited the graph; ``None`` only when
-                  the SDFG was left untouched.
+        :returns: The number of scans lifted, or ``None`` when none was -- in which case the
+                  SDFG is left untouched.
 
         ``apply_pass`` returning ``None`` means "did not modify the SDFG", and callers act
         on it: the pipeline skips its per-stage ``validate()`` and leaves ``self._modified``
         alone, so cached analyses are reused and a ``FixedPointPipeline`` stops iterating.
-        Deriving the return from the lift count alone would report ``None`` for a run that
-        converted every WCR edge, stripped every copy tasklet, flipped every
-        backward-iterating loop and fused body states -- all of which happen unconditionally
-        below, whether or not a scan is then found. ``0`` is the "modified, but nothing of my
-        own kind matched" report (as ``AccumulatorToMapAndReduce`` uses an empty dict); it
-        keeps the lift count itself meaningful instead of inflating it with preprocess edits.
+        The body normalization the matcher needs (WCR-to-augassign, copy-tasklet folding,
+        negative-stride flipping, body-state fusion) therefore does NOT live here -- it is
+        :class:`~dace.transformation.passes.lift_preprocess.LiftPreprocess`, which the
+        canonicalization pipeline runs immediately before this pass and which a direct
+        caller must run itself.
         """
-        # Whole-SDFG preprocess: strip frontend ``__out = __inp`` copy tasklets so the
-        # matcher sees the bare ``out[i+1] = out[i] + delta[i]`` shape. Without this the
-        # carry hides behind an ``assign_NN`` copy node on the write side.
-        from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
-        from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
-        from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
-        # Normalise reductions written as WCR edges back to in-body augmented
-        # assignment so the matcher sees a uniform tasklet shape. No-op on SDFGs
-        # whose pre-existing reductions are already in augassign form (the
-        # common case for canonicalised Fortran frontends).
-        normalized = 0
-        applied = PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
-        normalized += sum(len(v) for v in applied.values()) if applied else 0
-        applied = PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
-        normalized += sum(len(v) for v in applied.values()) if applied else 0
-
-        # NOTE: D4 (CleanAccessNode + CleanTasklet) is deliberately NOT applied
-        # here. LoopToScan's matcher already handles the frontend's scalar-
-        # slice intermediates via ``_chase_forward_to_accum`` and friends;
-        # the existing WCR/TrivialTasklet preprocess above is sufficient.
-        # Running the clean folds in addition (in either order vs WCR) is
-        # redundant work and previously regressed the
-        # ``for_1133_shape_reverse_engineered`` case by stripping
-        # intermediates the matcher relies on.
-
-        # Normalise backward-iterating loops (``range(N, 0, -1)`` shape; cloudsc
-        # ``for_1079`` is the canonical case) to forward iteration. ``LoopToScan``'s
-        # matcher only handles ``stride == 1``; rather than build sign-flip handling
-        # into every gate, delegate to the dedicated canonicalisation pass once up
-        # front so subsequent analysis sees only positive-stride loops.
-        # ``NormalizeNegativeStride`` rebinds the old iterator on the body entry
-        # iedge (``jm = N - _loop_pos_X``) rather than rewriting body memlets;
-        # follow up with ``SymbolPropagation`` so the body's subsets are expressed
-        # in the new positive-stride iterator and the matcher recognises them.
-        from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
-        from dace.transformation.passes.symbol_propagation import SymbolPropagation
-        flipped = NormalizeNegativeStride().apply_pass(sdfg, {})
-        if flipped:
-            normalized += flipped
-            propagated = SymbolPropagation().apply_pass(sdfg, {})
-            normalized += len(propagated) if propagated else 0
-
-        # Per-loop preprocess: fold adjacent content SDFGStates inside the body when the
-        # iedge between them is trivial (v5 -- the cloudsc ``pfsqrf`` shape). Whole-SDFG
-        # ``StateFusion`` doesn't reach into LoopRegion bodies via ``MatchPatterns``, so
-        # do a targeted body-local merge.
-        for loop, _ in _collect_loops(sdfg):
-            normalized += _fuse_body_states(loop)
-
         count = 0
         # Optional first pass: interchange the Map-wrapped carry shape.
         # Done up-front so the carry loop runs sequentially per-thread INSIDE
@@ -538,9 +487,7 @@ class LoopToScan(ppl.Pass):
             # tight subset rather than the conservative one.
             from dace.sdfg.propagation import propagate_memlets_sdfg
             propagate_memlets_sdfg(sdfg)
-        if count:
-            return count
-        return 0 if normalized else None
+        return count or None
 
 
 def _collect_loops(sdfg: SDFG):

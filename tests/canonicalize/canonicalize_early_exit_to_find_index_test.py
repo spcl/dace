@@ -15,7 +15,6 @@ import dace
 from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Reduce
 from dace.sdfg import nodes as nd
-from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.interstate import LoopToMap
@@ -558,7 +557,11 @@ def test_doesnt_lift_argmax_loop():
 
 
 def test_loop_to_scan_doesnt_lift_break_loop():
-    """And the reverse: LoopToScan must not pick up a break-loop."""
+    """And the reverse: LoopToScan must not pick up a break-loop.
+
+    Also pins the project rule -- a pass that does not apply must not mutate. The body
+    here HAS a foldable copy tasklet, so a lifter that ran its own normalization
+    preprocess would edit the graph and report ``0`` instead of ``None``."""
     from dace.transformation.passes.loop_to_scan import LoopToScan
 
     @dace.program
@@ -568,12 +571,16 @@ def test_loop_to_scan_doesnt_lift_break_loop():
                 break
             a[i] = a[i] + b[i] * c[i]
 
-    res = LoopToScan().apply_pass(s481.to_sdfg(simplify=True), {})
+    sdfg = s481.to_sdfg(simplify=True)
+    before = sdfg.to_json()
+    res = LoopToScan().apply_pass(sdfg, {})
     assert res is None
+    assert sdfg.to_json() == before, 'LoopToScan refused the loop but still mutated the SDFG'
 
 
 def test_loop_to_reduce_doesnt_lift_break_loop():
-    """LoopToReduce must not pick up a break-loop either."""
+    """LoopToReduce must not pick up a break-loop either -- in either emit mode, and
+    without mutating (same rule as the LoopToScan case above)."""
     from dace.transformation.passes.loop_to_reduce import LoopToReduce
 
     @dace.program
@@ -583,8 +590,12 @@ def test_loop_to_reduce_doesnt_lift_break_loop():
                 break
             a[i] = a[i] + b[i] * c[i]
 
-    res = LoopToReduce().apply_pass(s481.to_sdfg(simplify=True), {})
-    assert res is None
+    for prefer in ('reduce-libnode', 'wcr-scalar'):
+        sdfg = s481.to_sdfg(simplify=True)
+        before = sdfg.to_json()
+        res = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
+        assert res is None
+        assert sdfg.to_json() == before, f'LoopToReduce({prefer}) refused the loop but still mutated the SDFG'
 
 
 def test_arg_max_lift_doesnt_lift_break_loop():

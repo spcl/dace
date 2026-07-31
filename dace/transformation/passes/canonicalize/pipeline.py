@@ -23,7 +23,9 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from dace.transformation.passes.loop_invariant_code_motion import LoopInvariantCodeMotion
-from dace.transformation.passes.loop_to_reduce import LoopToReduce
+from dace.transformation.passes.lift_preprocess import LiftPreprocess
+from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce,
+                                                       PinNestedSequentialLoops, RetargetWCRAccumulator)
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.constant_propagation import ConstantPropagation
@@ -920,7 +922,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # schedule. It must also precede ``reduction_to_wcr_map``, whose ``LoopToReduce('wcr-scalar')``
     # pins every loop nested in a sequential loop -- the s343 inner compaction loop is exactly that,
     # and a pinned loop is refused here (correctly: the pin is a directive, not an obstacle).
-    s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', LoopToReduce()),
+    # ``LoopToReduce`` / ``LoopToScan`` are pure matchers -- they touch nothing when they lift
+    # nothing -- so the body normalization each one needs is spelled out here: WCR-to-augassign
+    # for the reduction matcher, the full ``LiftPreprocess`` (which adds copy-tasklet folding,
+    # negative-stride flipping and body-state fusion) for the scan matcher. Order matters: the
+    # extra folds must NOT precede ``LoopToReduce``, whose single-tasklet matcher claims the
+    # un-folded augassign shape.
+    s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', PatternMatchAndApplyRepeated([WCRToAugAssign()])),
+          ('loop_to_x', LoopToReduce()), ('loop_to_x', LiftPreprocess()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
           ('loop_to_x', LoopToConditionalReduce()), ('loop_to_x', LoopToStreamCompaction())]
 
@@ -947,7 +956,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # LoopToScan handles single-statement scan bodies that don't need fission
     # (``s242``, ``s1221``); running it again here also lifts the post-fission
     # ones without harming the already-lifted shapes.
-    s += [('loop_to_scan', LoopToScan(interchange_carry_with_map=interchange_carry_with_map))]
+    s += [('loop_to_scan', LiftPreprocess()),
+          ('loop_to_scan', LoopToScan(interchange_carry_with_map=interchange_carry_with_map))]
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
@@ -985,7 +995,16 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # (sound by associativity of +/*) exposes the single accumulation that
     # ``LoopToReduce(wcr-scalar)`` then lifts to a parallel WCR-map.
     s += [('reduction_to_wcr_map', FuseChainedScalarReductions())]
+    # The normalization steps ``LoopToReduce(wcr-scalar)`` used to run itself, now explicit so
+    # the lifter stays side-effect free on a no-match. Order is load-bearing:
+    # ``AccumulatorCopyChainToWCR`` destroys the augassign shape ``LoopToReduce`` claims and
+    # creates the WCR shape ``RetargetWCRAccumulator`` claims, so it sits strictly between
+    # them and ``LoopToReduce`` must not run again after it.
+    s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
+    s += [('reduction_to_wcr_map', PinNestedSequentialLoops())]
     s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
+    s += [('reduction_to_wcr_map', AccumulatorCopyChainToWCR())]
+    s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
     # ``LoopToMap`` splits the loop body into per-iteration NestedSDFG
     # states whose intermediate transients share names across siblings --

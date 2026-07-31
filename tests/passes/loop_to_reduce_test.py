@@ -14,7 +14,8 @@ from dace import memlet as mm
 from dace.libraries.standard.nodes.reduce import Reduce
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.loop_to_reduce import LoopToReduce
+from dace.transformation.passes.loop_to_reduce import (AccumulatorCopyChainToWCR, LoopToReduce,
+                                                       PinNestedSequentialLoops, RetargetWCRAccumulator)
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -510,14 +511,23 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
 import pytest
 
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
+from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 
 
 def _prep_and_lift(sdfg: dace.SDFG, prefer: str) -> int:
-    """Run the canonicalize prelude (``TrivialTaskletElimination``) then
-    ``LoopToReduce``, returning the lifted count."""
+    """Run the canonicalize prelude then ``LoopToReduce``, returning the lifted count.
+
+    ``LoopToReduce`` is a pure matcher, so the caller owns every normalization step -- the
+    same ones the pipeline's ``reduction_to_wcr_map`` stage spells out around it."""
     PatternMatchAndApplyRepeated([TrivialTaskletElimination()]).apply_pass(sdfg, {})
-    return LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
+    PatternMatchAndApplyRepeated([WCRToAugAssign()]).apply_pass(sdfg, {})
+    if prefer != 'wcr-scalar':
+        return LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
+    PinNestedSequentialLoops().apply_pass(sdfg, {})
+    lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {}) or 0
+    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+    return lifted + (RetargetWCRAccumulator().apply_pass(sdfg, {}) or 0)
 
 
 # ---- s311 family: array-slot accumulator (sum) ---------------------------
@@ -978,12 +988,12 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
     (``b[i] = b[i+1] + a[i]``) to a WCR write, even after ``LoopToScan`` rewrote the body
     into a scan shape with a similar ``out = in_carry + in_value`` tasklet.
 
-    Regression: a previous version called ``AugAssignToWCR(permissive=True)`` from inside
-    ``LoopToReduce.apply_pass`` to catch multi-tasklet compute-then-accumulate shapes
-    (s313/s4115). The permissive matcher couldn't tell a scan from a reduction and
-    rewrote the recurrence into a WCR write; downstream parallelisation then lost the
-    carried dependence -> off-by-one answer (``b[0]`` = ``sum(a)`` not ``1.0 + sum(a)``).
-    Pins the matcher strict (``permissive=False``) for the inner ``AugAssignToWCR``.
+    Regression: a previous version called ``AugAssignToWCR(permissive=True)`` to catch
+    multi-tasklet compute-then-accumulate shapes (s313/s4115). The permissive matcher
+    couldn't tell a scan from a reduction and rewrote the recurrence into a WCR write;
+    downstream parallelisation then lost the carried dependence -> off-by-one answer
+    (``b[0]`` = ``sum(a)`` not ``1.0 + sum(a)``). Pins ``permissive=False`` for the
+    ``AugAssignToWCR`` inside ``AccumulatorCopyChainToWCR``.
     """
     import numpy as np
     from dace.transformation.passes.canonicalize.pipeline import _build_stages
@@ -1007,9 +1017,12 @@ def test_wcr_scalar_refuses_scan_shape_recurrence():
             except Exception:
                 pass
 
-    # Now run LoopToReduce(wcr-scalar). It must NOT create any WCR-bearing
+    # Now run the wcr-scalar lift with its full prelude. It must NOT create any WCR-bearing
     # write on ``b`` (the recurrence target).
+    PinNestedSequentialLoops().apply_pass(sdfg, {})
     LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+    RetargetWCRAccumulator().apply_pass(sdfg, {})
     sdfg.validate()
     bad_wcr = [
         e for st in sdfg.all_states() for e in st.edges()
@@ -1122,7 +1135,10 @@ def _build_transient_scan_writeback(n_sym=N):
     sdfg.add_scalar("c", dace.float64, transient=True)
     pre = sdfg.add_state("pre", is_start_block=True)
     pre.add_edge(pre.add_read("A"), None, pre.add_write("c"), None, mm.Memlet("A[0]"))
-    loop = LoopRegion("loop", condition_expr="i < N - 1", loop_var="i", initialize_expr="i = 0",
+    loop = LoopRegion("loop",
+                      condition_expr="i < N - 1",
+                      loop_var="i",
+                      initialize_expr="i = 0",
                       update_expr="i = i + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())
@@ -1152,7 +1168,10 @@ def _build_double_buffer_scan_writeback(n_sym=N):
     sdfg.add_scalar("c", dace.float64, transient=True)
     pre = sdfg.add_state("pre", is_start_block=True)
     pre.add_edge(pre.add_read("A"), None, pre.add_write("c"), None, mm.Memlet("A[0]"))
-    loop = LoopRegion("loop", condition_expr="i < N - 1", loop_var="i", initialize_expr="i = 0",
+    loop = LoopRegion("loop",
+                      condition_expr="i < N - 1",
+                      loop_var="i",
+                      initialize_expr="i = 0",
                       update_expr="i = i + 1")
     sdfg.add_node(loop)
     sdfg.add_edge(pre, loop, dace.InterstateEdge())

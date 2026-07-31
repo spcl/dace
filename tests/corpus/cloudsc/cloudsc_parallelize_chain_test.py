@@ -63,6 +63,7 @@ from dace.sdfg.propagation import propagate_memlets_sdfg
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
+from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 from dace.transformation.passes.parallelization_prep import ShortLoopUnroll
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -71,8 +72,8 @@ from dace.transformation.passes.scalar_fission import PrivatizeScalars
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.symbol_propagation import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
-from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, O3_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
-                                                    generate_cloudsc_inputs, make_sequential)
+from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, O3_CPU_ARGS, build_cloudsc_sdfg,
+                                                            compare_outputs, generate_cloudsc_inputs, make_sequential)
 
 #: (cpu_args, sequential, strict_tol, relaxed_tol) per regime. ``strict_tol``
 #: gates the value-preserving steps; ``relaxed_tol`` gates the reassociating
@@ -315,6 +316,7 @@ def _chain():
         # recurrences, multi-carrier prefix sums, etc.), and the composite-
         # body matcher descends through the inner ``Map[jl]``'s NestedSDFG
         # to find the per-(jk, jl) carrier-update tasklet.
+        ('lift_preprocess', lambda sdfg: LiftPreprocess().apply_pass(sdfg, {})),
         ('loop_to_scan', lambda sdfg: LoopToScan().apply_pass(sdfg, {})),
     ]
 

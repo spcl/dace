@@ -12,6 +12,7 @@ from dace.sdfg.state import LoopRegion, ConditionalBlock
 from dace.libraries.standard.nodes import Reduce
 from dace.transformation.passes.canonicalize.arg_max_lift import ArgMaxLift
 from dace.libraries.standard.nodes.scan import Scan
+from dace.transformation.passes.lift_preprocess import LiftPreprocess
 
 
 def _num_scan_nodes(sdfg) -> int:
@@ -396,12 +397,8 @@ def test_loop_to_reduce_doesnt_lift_an_argmax_loop():
     res = LoopToReduce().apply_pass(sdfg, {})
     assert res is None, "LoopToReduce must not lift conditional argmax loops (two accumulators in the branch)"
 
-    # ``wcr-scalar`` mode normalizes before matching (TrivialTaskletElimination +
-    # AugAssignToWCR), and those rewrites are real modifications the pass must report -- so
-    # assert what this test is actually about, that NO reduction was lifted, rather than that
-    # the pass returned None. See the ``apply_pass`` docstring in loop_to_reduce.py.
     reduces_before = _num_reduces(sdfg)
-    LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    assert LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {}) is None
     assert _num_reduces(sdfg) == reduces_before, \
         "LoopToReduce(wcr-scalar) must also refuse argmax: branch body has two accumulator writes"
 
@@ -419,11 +416,8 @@ def test_loop_to_scan_doesnt_lift_an_argmax_loop():
         result[0] = x
 
     sdfg = s314.to_sdfg(simplify=True)
-    LoopToScan().apply_pass(sdfg, {})
-    # The refusal is "no Scan was emitted", not the return value: ``apply_pass``
-    # reports whether the SDFG was MODIFIED, and its normalization preprocess
-    # (WCR -> augassign, trivial-tasklet strip, negative-stride flip) edits the
-    # graph unconditionally, so a refusing run still legitimately returns 0.
+    LiftPreprocess().apply_pass(sdfg, {})
+    assert LoopToScan().apply_pass(sdfg, {}) is None
     assert _num_scan_nodes(sdfg) == 0, "LoopToScan must not lift conditional argmax loops"
 
 
@@ -453,6 +447,7 @@ def test_loop_to_scan_doesnt_lift_a_reduction_loop():
         result[0] = s
 
     sdfg = reduce_loop.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
     assert _num_scan_nodes(sdfg) == 0, "LoopToScan must not lift plain reductions"
 

@@ -47,6 +47,7 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
 from tests.ab_perf._harness import (ensure_gpu_heap, ensure_relaxed_constexpr_nvcc, time_cpu, time_gpu)
@@ -107,6 +108,7 @@ def _build(variant: str, layout: str, name_suffix: str, dtype_name: str) -> dace
         xf.expr_index = 0
         assert xf.can_be_applied(inner.parent_graph, 0, sdfg, permissive=False)
         xf.apply(inner.parent_graph, sdfg)
+        LiftPreprocess().apply_pass(sdfg, {})
         res = LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
         assert res is not None and res >= 1, 'interchange path must lift'
     elif variant == 'C':
@@ -126,6 +128,7 @@ def _build(variant: str, layout: str, name_suffix: str, dtype_name: str) -> dace
         # the correct choice. A future L2S enhancement that lifts the
         # outer loop body to a Map alongside the Scan emission would
         # close the gap.
+        LiftPreprocess().apply_pass(sdfg, {})
         res = LoopToScan().apply_pass(sdfg, {})
         assert res is not None and res >= 1, 'Scan libnode path must lift'
     else:

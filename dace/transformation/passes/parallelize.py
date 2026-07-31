@@ -92,7 +92,7 @@ class ParallelizePipeline(ppl.Pass):
         return set()
 
     def _stages(self) -> List[ppl.Pass]:
-        from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
+        from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR, WCRToAugAssign
         from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
         from dace.transformation.interstate.loop_to_map import LoopToMap
         from dace.transformation.passes.constant_propagation import ConstantPropagation
@@ -154,6 +154,10 @@ class ParallelizePipeline(ppl.Pass):
             PrivatizeScalars(),
             PatternMatchAndApplyRepeated([TrivialTaskletElimination()]),
             PatternMatchAndApplyRepeated([AugAssignToWCR()]),
+            # Closes the AugAssignToWCR round-trip: the WCR write goes back to an in-body
+            # augassign, now without the frontend copy chain -- the shape ``LoopToReduce``'s
+            # matcher claims. ``LoopToReduce`` no longer normalizes on its own behalf.
+            PatternMatchAndApplyRepeated([WCRToAugAssign()]),
             LoopToReduce(),
             PatternMatchAndApplyRepeated([LoopToMap()]),
         ]

@@ -37,6 +37,7 @@ import pytest
 import dace
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate.loop_to_map import LoopToMap
+from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
 from tests.ab_perf._harness import format_ab, time_cpu, time_gpu, to_gpu
@@ -91,6 +92,7 @@ def _build_variant_a(name_suffix: str = 'A_off', dtype_name: str = 'fp64') -> da
 def _build_variant_b(name_suffix: str = 'B_on', dtype_name: str = 'fp64') -> dace.SDFG:
     """Variant B: knob ON -- interchange path applied."""
     sdfg = _build_post_l2m_sdfg(name_suffix, dtype_name)
+    LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan(interchange_carry_with_map=True).apply_pass(sdfg, {})
     assert res is not None and res >= 1, 'interchange path must lift exactly one shape'
     sdfg.validate()

@@ -17,6 +17,7 @@ import numpy as np
 
 import dace
 from dace.libraries.standard.nodes.scan import Scan
+from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
 N = dace.symbol('N')
@@ -27,12 +28,14 @@ def _num_scan_nodes(sdfg):
 
 
 def test_reverse_stride2_residue_class_scan():
+
     @dace.program
     def backward_stride2(acc: dace.float64[N + 1], delta: dace.float64[N + 1]):
         for jm in range(N, 1, -1):
             acc[jm - 2] = acc[jm] + delta[jm]
 
     sdfg = backward_stride2.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
 
@@ -69,6 +72,7 @@ def test_reverse_stride3_residue_class_scan_odd_trip():
             acc[jm - 3] = acc[jm] + delta[jm]
 
     sdfg = backward_stride3.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res, 'reverse stride-3 scan must lift'

@@ -18,6 +18,7 @@ from dace.libraries.standard.nodes.scan import Scan, ScanOp
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
+from dace.transformation.passes.lift_preprocess import LiftPreprocess
 from dace.transformation.passes.loop_to_scan import LoopToScan
 
 N = dace.symbol('N')
@@ -45,6 +46,7 @@ def test_loop_lifts_to_scan_libnode_not_just_simd():
             out[i + 1] = out[i] + delta[i]
 
     sdfg = prefix_sum.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1, 'Prefix sum should lift to one Scan libnode.'
@@ -70,6 +72,7 @@ def test_residue_class_scan_with_stride_LLVM_cannot_vectorize():
             out[i + 2] = out[i] + delta[i]
 
     sdfg = stride2_demo.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
     res = LoopToScan().apply_pass(sdfg, {})
     assert res == 1, f'stride-2 scan should match the matcher; got {res}'
     scans = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan)]
@@ -145,6 +148,7 @@ def test_symbolic_loop_bound_no_specialization_needed():
             out[i + 1] = out[i] + delta[i]
 
     sdfg = scan_sym.to_sdfg(simplify=True)
+    LiftPreprocess().apply_pass(sdfg, {})
     LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
 
