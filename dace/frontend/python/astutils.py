@@ -12,6 +12,15 @@ from typing import Any, Dict, List, Optional, Set, Union
 
 from dace import symbolic
 
+# Optional dace annotations stamped onto stdlib ``ast`` nodes by frontend passes and read back in
+# ``newast``. Declared as class-level defaults so readers use plain attribute access instead of
+# ``getattr(node, name, default)`` -- ``ast`` nodes cannot take an ``__init__`` default. The defaults
+# are immutable and only ever overridden per-instance (never mutated in place), so sharing them across
+# every node of the class is safe.
+ast.AST.toplevel = False
+ast.Call.skip_args = ()
+ast.Call.skip_keywords = ()
+
 
 def _remove_outer_indentation(src: str):
     """ Removes extra indentation from a source Python function.
