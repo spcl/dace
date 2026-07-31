@@ -22,7 +22,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
-from dace.frontend.python.nextgen.common import UnsupportedFeatureError
+from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
 from dace.frontend.python.nextgen.lowering.access import resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
@@ -42,6 +42,40 @@ def lower_return(statement: ast.Return, state: LoweringState) -> None:
         names.append(_materialize_return_value(f'{prefix}{base_name}', value, statement, state))
     state.context.return_names.extend(names)
     state.emitter.emit(tn.ReturnNode(values=names))
+
+
+def _reject_deferred_size(shape, value: ast.expr, statement: ast.Return, state: LoweringState) -> None:
+    """
+    Refuse to return a container whose size is only known while the program
+    runs (the result of a boolean-mask gather, ``B = A[mask]``).
+
+    A compiled SDFG's calling convention needs every argument's memory --
+    including the return value's -- to exist before the call, so a size
+    computed mid-call cannot cross the boundary however it is produced. That is
+    a property of the boundary, not of the gather: the same ``B`` is fully
+    usable inside the program (``np.sum(A[mask])`` lowers and runs).
+
+    Raised as a hard :class:`FrontendError` rather than an
+    :class:`UnsupportedFeatureError`, deliberately: the usual degradation to a
+    Python callback cannot help here either, since the callback would still
+    have to write a ``__return`` of a size the caller could not allocate. What
+    this replaces is a ``TypeError`` about an unevaluatable shape, raised from
+    the runtime argument marshalling long after any connection to the source
+    was lost. Supporting the form needs a count-then-fill two-kernel dispatch,
+    which is future work.
+    """
+    deferred = sorted({
+        symbol.name
+        for size in shape if hasattr(size, 'free_symbols') for symbol in size.free_symbols
+        if symbol.name in state.context.deferred_symbols
+    })
+    if not deferred:
+        return
+    raise FrontendError(
+        f'Cannot return "{astutils.unparse(value)}": its size ({", ".join(deferred)}) is only known while the '
+        "program runs, and a compiled program's caller must allocate the return value before the call. "
+        'Reduce it inside the program (``return np.sum(A[mask])``), or write into a caller-allocated output.',
+        state.context.filename, statement)
 
 
 def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.Return, state: LoweringState) -> str:
@@ -74,6 +108,8 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
         # hands back shape (1, N), as NumPy does) and a ``newaxis`` is not
         # dropped on the way out.
         shape = access.numpy_shape or [1]
+        if not transient:
+            _reject_deferred_size(shape, value, statement, state)
         if return_name not in state.context.containers:
             source = access.descriptor
             if isinstance(source, data.Array) and list(source.shape) == list(shape):

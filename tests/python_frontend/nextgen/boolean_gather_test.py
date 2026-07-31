@@ -49,6 +49,7 @@ import pytest
 import dace
 from dace.config import Config
 from dace.frontend.python import nextgen
+from dace.frontend.python.nextgen.common import FrontendError
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 N = dace.symbol('N')
@@ -151,20 +152,106 @@ def test_boolean_gather_unused_result_is_eliminated_cleanly(strategy):
     compiled(A=A, mask=mask, N=30)  # must not raise
 
 
-# --- Cases outside the narrow bare-top-level-assignment scope: unchanged,
-# still fall back to a callback exactly as before this feature.
+# --- A mask read outside the bare top-level assignment: gathered into a
+# container first, after which the rest of the statement is ordinary.
 
 
-def test_boolean_gather_nested_in_expression_still_falls_back():
+@pytest.mark.parametrize('strategy', ['view', 'exact'])
+def test_mask_read_nested_in_an_expression(strategy):
+    """``A[mask] + 1.0`` in operand position: the gather happens first, and the
+    computation runs over its (symbolically sized) result."""
+    Config.set('frontend', 'boolean_index_strategy', value=strategy)
 
     @dace.program
     def program(A: dace.float64[N], mask: dace.bool[N]):
-        return A[mask] + 1.0
+        return np.sum(A[mask] + 1.0)
+
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    A, mask = _rng_case(11, 137, 0.4)
+    result = tree.as_sdfg()(A=A, mask=mask, N=137)
+    assert np.allclose(result, np.sum(A[mask] + 1.0))
+
+
+def test_mask_read_as_a_call_argument():
+
+    @dace.program
+    def program(A: dace.float64[N], mask: dace.bool[N]):
+        return np.sum(A[mask])
+
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    A, mask = _rng_case(12, 90, 0.6)
+    assert np.allclose(tree.as_sdfg()(A=A, mask=mask, N=90), np.sum(A[mask]))
+
+
+# --- Sources of rank > 1: NumPy reads the selected elements in C order, which
+# is what the filter's flat counter walks.
+
+
+def test_mask_over_a_two_dimensional_source():
+
+    @dace.program
+    def program(A: dace.float64[4, 5], mask: dace.bool[4, 5]):
+        B = A[mask]
+        return np.sum(B)
+
+    A = np.arange(20, dtype=np.float64).reshape(4, 5).copy()
+    mask = (A > 7.0).copy()
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    assert np.allclose(tree.as_sdfg()(A=A, mask=mask), np.sum(A[mask]))
+
+
+# --- A mask covering a single DIMENSION rather than the whole array. The
+# shared memlet parser reports this only for callers that opt in
+# (``ParseMemlet(..., partial_boolean_index=True)``), because a caller that
+# parses it must also be able to lower it.
+
+
+def test_mask_on_one_dimension_of_a_pinned_row():
+
+    @dace.program
+    def program(A: dace.float64[4, 5], mask: dace.bool[5]):
+        B = A[1, mask]
+        return np.sum(B)
+
+    A = np.arange(20, dtype=np.float64).reshape(4, 5).copy()
+    mask = (A[1] > 7.0).copy()
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    assert np.allclose(tree.as_sdfg()(A=A, mask=mask), np.sum(A[1, mask]))
+
+
+def test_mask_on_one_dimension_written_as_an_expression():
+    """``A[0, mask[0]]`` -- the mask is a row of a 2-D mask array, which is
+    materialized before the coverage check sees it."""
+
+    @dace.program
+    def program(A: dace.float64[4, 5], mask: dace.bool[4, 5]):
+        B = A[0, mask[0]]
+        return np.sum(B)
+
+    A = np.arange(20, dtype=np.float64).reshape(4, 5).copy()
+    mask = (A > 7.0).copy()
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    assert np.allclose(tree.as_sdfg()(A=A, mask=mask), np.sum(A[0, mask[0]]))
+
+
+def test_mask_covering_only_part_of_the_selected_region_falls_back():
+    """``A[:, mask]`` selects a 2-D result (one row per surviving row), which
+    the flat filter cannot express. Refused, not guessed at."""
+
+    @dace.program
+    def program(A: dace.float64[4, 5], mask: dace.bool[5]):
+        B = A[:, mask]
+        return np.sum(B)
 
     tree = nextgen.parse_program(program)
     callbacks = _callbacks(tree)
     assert callbacks
-    assert any('advanced-indexing' in node.reason for node in callbacks)
+    assert any('does not cover' in node.reason for node in callbacks)
 
 
 def test_boolean_gather_combined_with_integer_index_still_falls_back():
@@ -177,6 +264,23 @@ def test_boolean_gather_combined_with_integer_index_still_falls_back():
     assert _callbacks(tree)
 
 
+def test_returning_a_mask_gather_is_refused_with_the_reason():
+    """
+    A compiled program's caller allocates the return value before the call, so
+    a size only known mid-call cannot cross that boundary. Refused as a hard
+    error rather than a callback: a callback would have to write the same
+    unallocatable ``__return``.
+    """
+
+    @dace.program
+    def program(A: dace.float64[N], mask: dace.bool[N]):
+        B = A[mask]
+        return B
+
+    with pytest.raises(FrontendError, match='only known while the program runs'):
+        nextgen.parse_program(program)
+
+
 if __name__ == '__main__':
     test_boolean_gather_no_callback('view')
     test_boolean_gather_no_callback('exact')
@@ -184,5 +288,12 @@ if __name__ == '__main__':
         for case in [(1, 137, 0.4), (2, 137, 0.0), (3, 137, 1.0), (4, 1, 1.0), (5, 1, 0.0), (6, 500, 0.9)]:
             test_boolean_gather_matches_numpy(strategy, *case)
         test_boolean_gather_unused_result_is_eliminated_cleanly(strategy)
-    test_boolean_gather_nested_in_expression_still_falls_back()
+    for strategy in ('view', 'exact'):
+        test_mask_read_nested_in_an_expression(strategy)
+    test_mask_read_as_a_call_argument()
+    test_mask_over_a_two_dimensional_source()
+    test_mask_on_one_dimension_of_a_pinned_row()
+    test_mask_on_one_dimension_written_as_an_expression()
+    test_mask_covering_only_part_of_the_selected_region_falls_back()
     test_boolean_gather_combined_with_integer_index_still_falls_back()
+    test_returning_a_mask_gather_is_refused_with_the_reason()

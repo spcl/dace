@@ -113,11 +113,16 @@ def index_arrays(expr: MemletExpr) -> Dict[int, Any]:
     return expr.arrdims or {}
 
 
-def has_boolean_index(expr: MemletExpr, context) -> bool:
+def has_boolean_index(expr: MemletExpr, context, index_types: Optional[Dict[str, data.Data]] = None) -> bool:
     """Whether any index array is a boolean mask, which selects elements by
-    predicate and therefore has a data-dependent result size."""
+    predicate and therefore has a data-dependent result size.
+
+    :param index_types: Descriptors of index-expression placeholders, for a
+                        parse that has not been materialized yet (see
+                        :meth:`InferenceService.parse_access_typed`).
+    """
     for index in index_arrays(expr).values():
-        if _index_dtype(index, context) == dtypes.bool:
+        if _index_dtype(index, context, index_types) == dtypes.bool:
             return True
     return False
 
@@ -141,14 +146,18 @@ def _plan_for(expr: MemletExpr, node: ast.expr) -> IndexPlan:
     return plan
 
 
-def output_shape(expr: MemletExpr, context, inference, node: ast.expr) -> List[Any]:
+def output_shape(expr: MemletExpr,
+                 context,
+                 inference,
+                 node: ast.expr,
+                 index_types: Optional[Dict[str, data.Data]] = None) -> List[Any]:
     """
     The NumPy result shape of an advanced-indexing access.
 
     Kept separate from :func:`analyze` because inference needs the shape to
     allocate the result container before any node is emitted.
     """
-    broadcast = _broadcast_index_shape(expr, context, inference, node)
+    broadcast = _broadcast_index_shape(expr, context, inference, node, index_types)
     return _plan_for(expr, node).result_shape(expr.subset.size(), broadcast)
 
 
@@ -401,7 +410,12 @@ def resolve_single_boolean_mask(node: ast.Subscript, expr: MemletExpr, container
     mask_container = _index_container(masks[0], next(iter(index_map)), container, context, inference, node)
     mask_shape = list(context.containers[mask_container].shape)
     target_shape = list(expr.subset.size())
-    if mask_shape != target_shape:
+    # Dimensions the subscript pinned to one element (``A[0, mask]``) select a
+    # region the mask still covers exactly, element for element; what must
+    # agree is the region the mask spans, not the rank of the subscript. A mask
+    # that covers only PART of the selected region (a 1-D mask against
+    # ``A[:, mask]``, whose NumPy result is 2-D) does not, and is still refused.
+    if [size for size in mask_shape if size != 1] != [size for size in target_shape if size != 1]:
         raise UnsupportedFeatureError(
             f'Boolean mask of shape {tuple(mask_shape)} does not cover the indexed '
             f'region of shape {tuple(target_shape)}',
@@ -411,8 +425,13 @@ def resolve_single_boolean_mask(node: ast.Subscript, expr: MemletExpr, container
     return mask_container
 
 
-def emit_boolean_gather(target_name: str, base_container: str, base_descriptor: data.Data, mask_container: str,
-                        statement: ast.stmt, state: LoweringState) -> DataAccess:
+def emit_boolean_gather(target_name: str,
+                        base_container: str,
+                        base_descriptor: data.Data,
+                        mask_container: str,
+                        statement: ast.stmt,
+                        state: LoweringState,
+                        base_subset: Optional[subsets.Range] = None) -> DataAccess:
     """
     Lower ``B = A[mask]`` (a full-coverage boolean-mask read): a
     data-dependent-size gather.
@@ -463,7 +482,11 @@ def emit_boolean_gather(target_name: str, base_container: str, base_descriptor: 
     from dace.config import Config
 
     dtype = base_descriptor.dtype
-    source_size = data._prod(base_descriptor.shape)
+    # The region the mask selects from: the whole container by default, or the
+    # sub-region a partially-indexed subscript pinned (``A[0, mask]``).
+    base_region = base_subset if base_subset is not None else subsets.Range.from_array(base_descriptor)
+    mask_region = subsets.Range.from_array(state.context.containers[mask_container])
+    source_size = data._prod(base_region.size())
     strategy = Config.get('frontend', 'boolean_index_strategy')
     line = getattr(statement, 'lineno', 0)
 
@@ -471,14 +494,16 @@ def emit_boolean_gather(target_name: str, base_container: str, base_descriptor: 
     _emit_zero_init(nnz_container, state)
 
     if strategy == 'exact':
-        _emit_boolean_count(base_container, mask_container, nnz_container, source_size, line, state)
+        _emit_boolean_count(base_container, mask_container, nnz_container, base_region, mask_region, source_size, line,
+                            state)
         count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', state)
         result_container = state.context.add_container(target_name, data.Array(dtype, [count_symbol]))
-        _emit_boolean_compact(base_container, mask_container, result_container, source_size, count_symbol, line, state)
+        _emit_boolean_compact(base_container, mask_container, result_container, base_region, mask_region, source_size,
+                              count_symbol, line, state)
     else:
         buf_container = state.context.add_container(f'__buf_{line}', data.Array(dtype, [source_size]), transient=True)
-        _emit_boolean_count_and_fill(base_container, mask_container, buf_container, nnz_container, source_size, line,
-                                     state)
+        _emit_boolean_count_and_fill(base_container, mask_container, buf_container, nnz_container, base_region,
+                                     mask_region, source_size, line, state)
         count_symbol = _resolve_symbol_from_scalar(nnz_container, f'nnz{line}', state)
         result_container = state.context.add_container(target_name,
                                                        data.ArrayView(dtype, [count_symbol]),
@@ -524,35 +549,74 @@ def _resolve_symbol_from_scalar(scalar_container: str, hint: str, state: Lowerin
     name = state.context.fresh_name(f'__{hint}')
     symbol = symbolic.symbol(name, dtypes.int64)
     state.context.symbols[name] = symbol
+    # Its value exists only once the program is running, which is what makes a
+    # container sized by it unusable across the program boundary.
+    state.context.deferred_symbols.add(name)
     assignment = f'{scalar_container}[0]'
     state.emitter.emit(
         tn.AssignNode(name=name, value=CodeBlock(assignment), edge=InterstateEdge(assignments={name: assignment})))
     return symbol
 
 
-def _boolean_filter_map(base_container: str, mask_container: str, source_size, name: str):
-    """The shared map header (index ``i`` over ``[0, source_size)``) and its
-    two source-read memlets, for both the count-only and count+fill maps."""
+def _flat_index_subset(region: subsets.Range, parameter: symbolic.symbol) -> subsets.Range:
+    """
+    Index a region of any rank by a single FLAT counter, in C order.
+
+    ``A[mask]`` reads the selected elements in C order regardless of ``A``'s
+    rank, so the filter below walks one counter over the region's element count
+    and unravels it here. Keeping the map one-dimensional whatever the rank
+    means the traversal -- and therefore the order elements reach the stream,
+    which IS the result order -- is the same for every input.
+
+    Unravelling against a REGION rather than a whole container is what lets a
+    mask cover a sub-region (``A[0, mask]``): each pinned dimension contributes
+    its fixed offset and a single position.
+
+    The slowest axis needs no modulus (the counter never reaches the region's
+    element count), which makes this exactly ``[(i, i, 1)]`` again for a whole
+    1-D source.
+    """
+    sizes = list(region.size())
+    ranges: List[Tuple[Any, Any, int]] = []
+    stride = 1
+    for position, (size, (start, _, step)) in enumerate(zip(reversed(sizes), reversed(list(region.ranges)))):
+        index = parameter if stride == 1 else symbolic.int_floor(parameter, stride)
+        if position < len(sizes) - 1:
+            index = index % size
+        offset = start + index * step
+        ranges.append((offset, offset, 1))
+        stride = stride * size
+    ranges.reverse()
+    return subsets.Range(ranges)
+
+
+def _boolean_filter_map(base_container: str, mask_container: str, base_region: subsets.Range,
+                        mask_region: subsets.Range, source_size, name: str):
+    """The shared map header (a flat index ``i`` over ``[0, source_size)``) and
+    its two source-read memlets, for both the count-only and count+fill maps."""
     parameter = symbolic.symbol('i')
     # Two distinct subset objects -- SDFG validation rejects two memlets
     # sharing one (same footgun documented on ``emit_masked_write``'s ``__in``
     # memlet above).
+    # Underscore-prefixed connector names: a bare ``a``/``m`` collides with a
+    # program parameter of the same name, which SDFG validation rejects.
     in_memlets = {
-        'a': Memlet(data=base_container, subset=subsets.Range([(parameter, parameter, 1)]), volume=1),
-        'm': Memlet(data=mask_container, subset=subsets.Range([(parameter, parameter, 1)]), volume=1),
+        '__a': Memlet(data=base_container, subset=_flat_index_subset(base_region, parameter), volume=1),
+        '__m': Memlet(data=mask_container, subset=_flat_index_subset(mask_region, parameter), volume=1),
     }
     map_node = nodes.MapEntry(nodes.Map(name, ['i'], subsets.Range([(0, source_size - 1, 1)])))
     return map_node, in_memlets
 
 
-def _emit_boolean_count(base_container: str, mask_container: str, nnz_container: str, source_size, line: int,
-                        state: LoweringState) -> None:
+def _emit_boolean_count(base_container: str, mask_container: str, nnz_container: str, base_region: subsets.Range,
+                        mask_region: subsets.Range, source_size, line: int, state: LoweringState) -> None:
     """'exact' strategy, pass 1: a pure count, no per-element writes at all."""
-    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, source_size, f'boolean_count_{line}')
-    in_memlets = {'m': in_memlets['m']}  # the count doesn't need to read A at all
-    tasklet = nodes.Tasklet(f'boolean_count_{line}', {'m'}, {'osz'}, 'osz = 1 if m else 0')
+    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, base_region, mask_region, source_size,
+                                               f'boolean_count_{line}')
+    in_memlets = {'__m': in_memlets['__m']}  # the count doesn't need to read A at all
+    tasklet = nodes.Tasklet(f'boolean_count_{line}', {'__m'}, {'__osz'}, '__osz = 1 if __m else 0')
     out_memlets = {
-        'osz':
+        '__osz':
         Memlet(data=nnz_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0, wcr='lambda x, y: x + y')
     }
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
@@ -560,17 +624,20 @@ def _emit_boolean_count(base_container: str, mask_container: str, nnz_container:
 
 
 def _emit_boolean_count_and_fill(base_container: str, mask_container: str, buf_container: str, nnz_container: str,
-                                 source_size, line: int, state: LoweringState) -> None:
+                                 base_region: subsets.Range, mask_region: subsets.Range, source_size, line: int,
+                                 state: LoweringState) -> None:
     """'view' strategy: one pass, fused count + compaction push into an
     upper-bound-sized backing buffer."""
     dtype = state.context.containers[base_container].dtype
     stream_container = state.context.add_container(f'__stream_{line}', data.Stream(dtype, 1), transient=True)
-    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, source_size, f'boolean_filter_{line}')
-    tasklet = nodes.Tasklet(f'boolean_filter_{line}', {'a', 'm'}, {'b', 'osz'}, 'if m:\n    b = a\nosz = 1 if m else 0')
+    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, base_region, mask_region, source_size,
+                                               f'boolean_filter_{line}')
+    tasklet = nodes.Tasklet(f'boolean_filter_{line}', {'__a', '__m'}, {'__b', '__osz'},
+                            'if __m:\n    __b = __a\n__osz = 1 if __m else 0')
     out_memlets = {
-        'b':
+        '__b':
         Memlet(data=stream_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0),
-        'osz':
+        '__osz':
         Memlet(data=nnz_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0, wcr='lambda x, y: x + y'),
     }
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
@@ -582,16 +649,18 @@ def _emit_boolean_count_and_fill(base_container: str, mask_container: str, buf_c
                                   other_subset=subsets.Range([(0, source_size - 1, 1)]))))
 
 
-def _emit_boolean_compact(base_container: str, mask_container: str, result_container: str, source_size,
-                          count_symbol: symbolic.symbol, line: int, state: LoweringState) -> None:
+def _emit_boolean_compact(base_container: str, mask_container: str, result_container: str, base_region: subsets.Range,
+                          mask_region: subsets.Range, source_size, count_symbol: symbolic.symbol, line: int,
+                          state: LoweringState) -> None:
     """'exact' strategy, pass 2: compact directly into the exactly-sized
     result array (its stream never needs to hold more than ``count_symbol``
     elements, since that many is exactly how many the mask selects)."""
     dtype = state.context.containers[base_container].dtype
     stream_container = state.context.add_container(f'__stream_{line}', data.Stream(dtype, 1), transient=True)
-    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, source_size, f'boolean_compact_{line}')
-    tasklet = nodes.Tasklet(f'boolean_compact_{line}', {'a', 'm'}, {'b'}, 'if m:\n    b = a')
-    out_memlets = {'b': Memlet(data=stream_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0)}
+    map_node, in_memlets = _boolean_filter_map(base_container, mask_container, base_region, mask_region, source_size,
+                                               f'boolean_compact_{line}')
+    tasklet = nodes.Tasklet(f'boolean_compact_{line}', {'__a', '__m'}, {'__b'}, 'if __m:\n    __b = __a')
+    out_memlets = {'__b': Memlet(data=stream_container, subset=subsets.Range([(0, 0, 1)]), dynamic=True, volume=0)}
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
     state.emitter.emit(
@@ -676,14 +745,18 @@ def _target_subset(target: DataAccess, access: AdvancedIndex) -> subsets.Range:
     return subsets.Range(ranges)
 
 
-def _broadcast_index_shape(expr: MemletExpr, context, inference, node: ast.expr) -> Tuple[Any, ...]:
+def _broadcast_index_shape(expr: MemletExpr,
+                           context,
+                           inference,
+                           node: ast.expr,
+                           index_types: Optional[Dict[str, data.Data]] = None) -> Tuple[Any, ...]:
     """The shape all index arrays broadcast to, which becomes the advanced
     chunk of the result."""
     from dace.frontend.python.replacements.utils import broadcast_together
 
     result: Optional[Tuple[Any, ...]] = None
     for index in index_arrays(expr).values():
-        shape = _index_shape(index, context, inference, node)
+        shape = _index_shape(index, context, inference, node, index_types)
         result = tuple(shape) if result is None else broadcast_together(shape, result)[0]
     if result is None:
         raise UnsupportedFeatureError('Advanced indexing with no index arrays',
@@ -710,11 +783,15 @@ def _broadcast_subset(shape: Sequence[Any], parameters: Sequence[str]) -> subset
     return subsets.Range(ranges)
 
 
-def _index_shape(index: Any, context, inference, node: ast.expr) -> Sequence[Any]:
+def _index_shape(index: Any,
+                 context,
+                 inference,
+                 node: ast.expr,
+                 index_types: Optional[Dict[str, data.Data]] = None) -> Sequence[Any]:
     """The shape of an index array, whether it is a registered container or a
     literal sequence in the subscript."""
     if isinstance(index, str):
-        descriptor = _index_descriptor(index, context)
+        descriptor = _index_descriptor(index, context, index_types)
         if descriptor is not None:
             return descriptor.shape
         static = _static_index_sequence(index, context, inference, node)
@@ -727,9 +804,9 @@ def _index_shape(index: Any, context, inference, node: ast.expr) -> Sequence[Any
     return _literal_index_array(index, inference, node).shape
 
 
-def _index_dtype(index: Any, context) -> Optional[dtypes.typeclass]:
+def _index_dtype(index: Any, context, index_types: Optional[Dict[str, data.Data]] = None) -> Optional[dtypes.typeclass]:
     if isinstance(index, str):
-        descriptor = _index_descriptor(index, context)
+        descriptor = _index_descriptor(index, context, index_types)
         return None if descriptor is None else descriptor.dtype
     try:
         values = [value for value in index]
@@ -738,17 +815,18 @@ def _index_dtype(index: Any, context) -> Optional[dtypes.typeclass]:
     return dtypes.bool if values and all(isinstance(value, (bool, numpy.bool_)) for value in values) else None
 
 
-def _index_descriptor(name: str, context) -> Optional[data.Data]:
+def _index_descriptor(name: str, context, index_types: Optional[Dict[str, data.Data]] = None) -> Optional[data.Data]:
     binding = context.resolve(name)
     if binding is not None and binding.kind == 'container':
         return context.containers.get(binding.container)
     if name in context.containers:
         return context.containers[name]
-    # An array-valued index EXPRESSION inference gave a name to for typing
-    # (``ProgramContext.index_expression_types``). It has a shape and a dtype
-    # but no storage, which is all the shape rules here need; the emitting
-    # paths only ever see the real container lowering materializes for it.
-    return context.index_expression_types.get(name)
+    # An array-valued index EXPRESSION inference gave a placeholder name for
+    # typing. It has a shape and a dtype but no storage, which is all the shape
+    # rules here need; the emitting paths only ever see the real container
+    # lowering materializes for it. The placeholders belong to the single parse
+    # that introduced them and are passed in, not held on the context.
+    return (index_types or {}).get(name)
 
 
 def _index_container(index: Any, dimension: int, container: str, context, inference, node: ast.expr) -> str:

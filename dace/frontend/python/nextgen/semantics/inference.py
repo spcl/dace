@@ -24,6 +24,7 @@ from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
 from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
 from dace.frontend.python.nextgen.semantics import values
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
+from dace.frontend.python.nextgen.semantics.indexing import array_index_slots, reverse_normalized, substitute_slots
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
 
 #: Comparison and boolean operators always produce booleans.
@@ -648,11 +649,28 @@ class InferenceService:
             indexing (advanced indexing, ``.flat``, long index tuples, ...);
             every failure at this boundary is a feature gap, not a crash.
         """
+        return self.parse_access_typed(node)[0]
+
+    def parse_access_typed(self, node: Union[ast.Name, ast.Subscript]) -> Tuple[MemletExpr, Dict[str, data.Data]]:
+        """
+        :func:`parse_access`, additionally reporting the descriptors of the
+        placeholder names it introduced for array-valued index EXPRESSIONS.
+
+        Those placeholders are types without storage and belong to this parse
+        alone, so they travel with its result rather than accumulating on the
+        program context. Only the shape rules need them, and only until
+        lowering materializes the same expressions into real containers.
+
+        :raises UnsupportedFeatureError: As :func:`parse_access`.
+        """
         try:
             defined = self.context.defined_view()
             node = self._forward_reversed_slices(node)
-            parsed = self._name_array_index_expressions(self._restore_index_sequences(node), defined)
-            return ParseMemlet(self._shim, defined, parsed)
+            node, index_types = self._name_array_index_expressions(self._restore_index_sequences(node), defined)
+            # ``partial_boolean_index``: this frontend can lower a mask over a
+            # single dimension (``A[0, mask]``), so it asks the shared parser
+            # to report one instead of refusing it.
+            return ParseMemlet(self._shim, defined, node, partial_boolean_index=True), index_types
         except UnsupportedFeatureError:
             raise
         except Exception as error:
@@ -672,8 +690,6 @@ class InferenceService:
         rewrite and additionally keeps the direction; here only the extent
         matters, since a result shape is the same either way round.
         """
-        from dace.frontend.python.nextgen.semantics.indexing import reverse_normalized
-
         if not isinstance(node, ast.Subscript):
             return node
         shape = self._subscript_base_shape(node)
@@ -693,8 +709,9 @@ class InferenceService:
             return None
         return self.context.containers[binding.container].shape
 
-    def _name_array_index_expressions(self, node: Union[ast.Name, ast.Subscript],
-                                      defined: Dict[str, Any]) -> Union[ast.Name, ast.Subscript]:
+    def _name_array_index_expressions(
+            self, node: Union[ast.Name, ast.Subscript],
+            defined: Dict[str, Any]) -> Tuple[Union[ast.Name, ast.Subscript], Dict[str, data.Data]]:
         """
         Give every array-valued index EXPRESSION a name the memlet parser can
         look up, so the access types as the advanced indexing it is.
@@ -708,44 +725,33 @@ class InferenceService:
         error surfaces later as a broadcast-rank complaint about an unrelated
         statement.
 
-        The names introduced here are for typing only -- they carry a
-        descriptor, not storage. Lowering materializes the same expressions
-        into real containers
-        (``lowering.dispatch.materialize_array_indices``), which is why this
-        may add entries to ``defined`` without touching the repository.
+        Which slots need this is decided once, by
+        :func:`~dace.frontend.python.nextgen.semantics.indexing.array_index_slots`,
+        the same classification lowering uses to materialize the very same
+        expressions (``lowering.dispatch.materialize_array_indices``) -- the
+        two must agree exactly, so they no longer derive it separately. The
+        substitution is positional for the same reason.
+
+        The names introduced here are for typing only: they carry a descriptor,
+        not storage, never reach the tree, and are scoped to this parse, which
+        is why they are returned rather than recorded on the context. They are
+        added to ``defined`` (a per-parse view) so the parser can look them up.
         """
         if not isinstance(node, ast.Subscript):
-            return node
-        elements = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
-        replacements: Dict[str, str] = {}
-        for element in elements:
-            if isinstance(element, (ast.Slice, ast.Name, ast.Constant)):
-                continue
-            descriptor = self._array_index_descriptor(element)
-            if descriptor is None:
-                continue
-            source = astutils.unparse(element)
-            name = self.context.index_expression_names.get(source)
-            if name is None:
-                name = f'__idxexpr{len(self.context.index_expression_names)}'
-                self.context.index_expression_names[source] = name
-            self.context.index_expression_types[name] = descriptor
+            return node, {}
+        described = array_index_slots(node.slice, self._array_index_descriptor)
+        if not described:
+            return node, {}
+        replacements: Dict[int, ast.expr] = {}
+        index_types: Dict[str, data.Data] = {}
+        for position, descriptor in described.items():
+            # Named after the slot it occupies, which is unique within the
+            # access and needs no counter shared across accesses.
+            name = f'__idxexpr{position}'
+            index_types[name] = descriptor
             defined[name] = descriptor
-            replacements[source] = name
-        if not replacements:
-            return node
-
-        class _Substituter(ast.NodeTransformer):
-
-            def visit(self, visited: ast.AST) -> ast.AST:
-                key = astutils.unparse(visited) if isinstance(visited, ast.expr) else None
-                if key in replacements:
-                    return ast.copy_location(ast.Name(id=replacements[key], ctx=ast.Load()), visited)
-                return super().visit(visited)
-
-        named = copy.deepcopy(node)
-        named.slice = _Substituter().visit(named.slice)
-        return ast.fix_missing_locations(ast.copy_location(named, node))
+            replacements[position] = ast.Name(id=name, ctx=ast.Load())
+        return substitute_slots(node, replacements), index_types
 
     def _array_index_descriptor(self, element: ast.expr) -> Optional[data.Data]:
         """The descriptor of an index expression that is an integer or boolean
@@ -1095,7 +1101,7 @@ class InferenceService:
                                           self.context.filename,
                                           node,
                                           category='type-inference')
-        expr = self.parse_access(node)
+        expr, index_types = self.parse_access_typed(node)
         # Array-read indices (``x[A_col[j]]``) are NOT rejected here: the
         # shared memlet parser represents them as applied sympy functions,
         # whose ``.size()`` still computes a definite shape, and the
@@ -1109,7 +1115,7 @@ class InferenceService:
             # own rules, not the subset's -- index arrays broadcast together and
             # collapse the indexed dimensions into one chunk.
             from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
-            if advanced_indexing.has_boolean_index(expr, self.context):
+            if advanced_indexing.has_boolean_index(expr, self.context, index_types):
                 # A boolean mask's result size depends on how many elements it
                 # selects, which is not known until it is actually read --
                 # genuinely undefined at this (pure, side-effect-free) point,
@@ -1121,7 +1127,7 @@ class InferenceService:
                 # combined with another index), which still cannot lower and
                 # will fall back to a callback downstream.
                 return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, [symbolic.UndefinedSymbol()]))
-            shape = advanced_indexing.output_shape(expr, self.context, self, node)
+            shape = advanced_indexing.output_shape(expr, self.context, self, node, index_types)
             if not shape:
                 return Inferred(kind='data', descriptor=data.Scalar(base.descriptor.dtype))
             return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, shape))

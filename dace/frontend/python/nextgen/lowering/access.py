@@ -17,8 +17,8 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
-from dace.frontend.python.nextgen.semantics.indexing import (SOURCE, IndexPlan, build_plan, reverse_normalized,
-                                                             whole_container_plan)
+from dace.frontend.python.nextgen.semantics.indexing import (SOURCE, IndexPlan, build_plan, index_slots,
+                                                             reverse_normalized, whole_container_plan)
 
 
 @dataclass
@@ -503,8 +503,12 @@ def scalar_data_reads(expression: ast.expr, state: LoweringState) -> List[ast.ex
 
 
 def index_elements(slice_node: ast.expr) -> List[ast.expr]:
-    """The per-dimension elements of a subscript index, as a flat list."""
-    return list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
+    """The per-dimension elements of a subscript index, as a flat list.
+
+    Kept as the lowering-side spelling of
+    :func:`~dace.frontend.python.nextgen.semantics.indexing.index_slots`, which
+    owns the definition."""
+    return index_slots(slice_node)
 
 
 def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:

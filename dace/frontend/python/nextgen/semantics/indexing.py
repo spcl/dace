@@ -33,7 +33,7 @@ import ast
 import copy
 import enum
 from dataclasses import dataclass
-from typing import Any, Callable, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 
 class AxisKind(enum.Enum):
@@ -206,6 +206,73 @@ class IndexPlan:
         return positions
 
 
+def index_slots(slice_node: ast.expr) -> List[ast.expr]:
+    """
+    The per-dimension elements of a subscript index, as a flat list.
+
+    The one place the "is this a tuple index or a single one" question is
+    answered: every consumer that classifies, substitutes or counts index
+    elements reads this, so they cannot disagree about what a slot is.
+    """
+    return list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
+
+
+def substitute_slots(node: ast.Subscript, replacements: Dict[int, ast.expr]) -> ast.Subscript:
+    """
+    Replace whole index slots of a subscript, addressed by POSITION.
+
+    Positional replacement is what makes the two rewrites that feed the shared
+    memlet parser -- inference's typing placeholders and lowering's
+    materialized index containers -- exact. Both previously matched on
+    ``astutils.unparse`` of the element and walked the whole index looking for
+    that text, which replaces any nested occurrence as readily as the slot
+    itself and cannot distinguish two slots that happen to unparse alike.
+    """
+    if not replacements:
+        return node
+    rewritten = copy.deepcopy(node)
+    slots = index_slots(rewritten.slice)
+    for position, replacement in replacements.items():
+        slots[position] = replacement
+    if isinstance(rewritten.slice, ast.Tuple):
+        rewritten.slice.elts = slots
+    else:
+        rewritten.slice = slots[0]
+    return ast.fix_missing_locations(ast.copy_location(rewritten, node))
+
+
+def array_index_slots(slice_node: ast.expr, describe: Callable[[ast.expr], Optional[Any]]) -> Dict[int, Any]:
+    """
+    The index slots holding an array-valued *expression*, with whatever
+    ``describe`` reports about each.
+
+    This is the single classification both stages share. The shared memlet
+    parser recognizes an advanced (array-valued) index only when it is spelled
+    as a bare name it can look up; written any other way -- ``A[ind[0]]``,
+    ``A[2:4, ind[1], 3]``, ``A[ind + 1]`` -- the index becomes an applied
+    symbolic function and the access types as a single ELEMENT, which is a
+    wrong shape rather than a refusal. Both inference (which substitutes a
+    typing placeholder) and lowering (which substitutes a materialized
+    container) therefore have to find these slots, and they must agree
+    exactly; deriving the answer twice is what let them drift.
+
+    Slices, bare names and constants are skipped: a slice is not an index
+    array, and a name or constant is already a spelling the parser accepts.
+
+    :param describe: Reports an array-valued index's descriptor, or None for
+                     anything that does not index as an array (a scalar, a
+                     symbol, an untypable expression).
+    """
+    described: Dict[int, Any] = {}
+    for position, element in enumerate(index_slots(slice_node)):
+        if isinstance(element, (ast.Slice, ast.Name, ast.Constant)):
+            continue
+        description = describe(element)
+        if description is not None:
+            described[position] = description
+    return described
+
+
 def reverse_normalized(
         node: ast.Subscript, shape: Sequence[Any],
         constant_of: Callable[[Optional[ast.expr]], Optional[int]]) -> Tuple[ast.Subscript, FrozenSet[int]]:
@@ -231,7 +298,7 @@ def reverse_normalized(
     :return: The rewritten subscript and the source axes now read in reverse.
     """
     ndim = len(shape)
-    elements = list(node.slice.elts) if isinstance(node.slice, ast.Tuple) else [node.slice]
+    elements = index_slots(node.slice)
     explicit = len([element for element in elements if not _is_newaxis(element) and not _is_ellipsis(element)])
 
     replacements: dict = {}
@@ -254,14 +321,7 @@ def reverse_normalized(
 
     if not replacements:
         return node, frozenset()
-
-    rewritten = copy.deepcopy(node)
-    target = rewritten.slice.elts if isinstance(rewritten.slice, ast.Tuple) else [rewritten.slice]
-    for position, forward in replacements.items():
-        target[position] = forward
-    if not isinstance(rewritten.slice, ast.Tuple):
-        rewritten.slice = target[0]
-    return ast.fix_missing_locations(ast.copy_location(rewritten, node)), frozenset(reversed_axes)
+    return substitute_slots(node, replacements), frozenset(reversed_axes)
 
 
 def _forward_slice(element: ast.Slice, step: int, extent: Any,
@@ -319,7 +379,7 @@ def build_plan(slice_node: ast.expr, ndim: int, advanced_axes: FrozenSet[int] = 
              ``ndim`` (more elements than axes, or several ``Ellipsis``) --
              callers must fall back rather than guess a shape.
     """
-    raw = list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
+    raw = index_slots(slice_node)
 
     # ``newaxis`` consumes no source axis, so it plays no part in matching the
     # element count against the rank.

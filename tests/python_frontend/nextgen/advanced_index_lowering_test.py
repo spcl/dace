@@ -17,9 +17,11 @@ compiled program segfaults. Every test here therefore checks the *value*
 produced, not just that something lowered.
 """
 import numpy as np
+import pytest
 
 import dace
 from dace.frontend.python import nextgen
+from dace.frontend.python.nextgen.common import FrontendError
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
 M = dace.symbol('M')
@@ -367,16 +369,22 @@ def test_masked_accumulation():
     np.testing.assert_allclose(A, expected)
 
 
-def test_masked_read_falls_back():
-    """``b = A[mask]`` has a result length known only at runtime, so it cannot
-    be allocated at build time. Matches the classic frontend, which rejects
-    boolean indexing outside assignment targets outright."""
+def test_masked_read_lowers_but_cannot_be_returned():
+    """
+    ``A[mask] + 1.0`` has a result length known only at runtime. It lowers --
+    the mask is gathered into a symbolically sized container first, and the
+    computation runs over that -- but the result cannot cross the program
+    boundary, because a compiled program's caller allocates the return value
+    before the call. Refused by name; see ``boolean_gather_test.py`` for the
+    forms that do work (consuming it inside the same program).
+    """
 
     @dace.program
     def program(A: dace.float64[20, 30], mask: dace.bool[20, 30]):
         return A[mask] + 1.0
 
-    assert _callbacks(nextgen.parse_program(program))
+    with pytest.raises(FrontendError, match='only known while the program runs'):
+        nextgen.parse_program(program)
 
 
 # --- The boundary with scalar indirection
@@ -429,6 +437,6 @@ if __name__ == '__main__':
     test_write_broadcasts_the_value()
     test_masked_write()
     test_masked_accumulation()
-    test_masked_read_falls_back()
+    test_masked_read_lowers_but_cannot_be_returned()
     test_scalar_indirection_still_lowers()
     test_mixed_indexing_does_not_raise_syntaxerror()

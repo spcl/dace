@@ -130,7 +130,7 @@ def _wrap_slice_bound(index_expr, extent, *, inclusive_stop: bool):
     return wrapped
 
 
-def _fill_missing_slices(das, ast_ndslice, shape):
+def _fill_missing_slices(das, ast_ndslice, shape, partial_boolean_index: bool = False):
     # Filling ndslice with default values from array dimensions
     # if ranges not specified (e.g., of the form "A[:]")
     ndslice = [None] * len(shape)
@@ -232,12 +232,23 @@ def _fill_missing_slices(das, ast_ndslice, shape):
             # Accessing an array with another
             desc = das[dim.id]
             if desc.dtype == dtypes.bool:
-                # Boolean array indexing
-                if len(ast_ndslice) > 1:
+                # Boolean array indexing. Two accepted forms: a mask covering
+                # the WHOLE array, which must then be the only index; and --
+                # only for callers that opt in via ``partial_boolean_index``,
+                # since they must also be able to LOWER it -- a 1-D mask over a
+                # SINGLE dimension (``A[0, mask]``), which may be combined with
+                # other indices the way an integer index array can. Both are
+                # NumPy spellings; only the first used to parse, and the second
+                # failed as a dimensionality error rather than as the feature
+                # gap it was.
+                whole_array = tuple(desc.shape) == tuple(shape)
+                one_dimension = (partial_boolean_index and len(desc.shape) == 1 and idx < len(shape)
+                                 and desc.shape[0] == shape[idx])
+                if whole_array and len(ast_ndslice) > 1:
                     raise IndexError(f'Invalid indexing into array "{dim.id}". Only one boolean array is allowed.')
-                if tuple(desc.shape) != tuple(shape):
-                    raise IndexError(f'Invalid indexing into array "{dim.id}". '
-                                     'Shape of boolean index must match original array.')
+                if not whole_array and not one_dimension:
+                    raise IndexError(f'Invalid indexing into array "{dim.id}". Shape of boolean index must match '
+                                     'the original array, or a single dimension of it.')
             elif desc.dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16,
                                 dtypes.uint32, dtypes.uint64):
                 # Integer array indexing
@@ -283,7 +294,8 @@ def _fill_missing_slices(das, ast_ndslice, shape):
 def parse_memlet_subset(array: data.Data,
                         node: Union[ast.Name, ast.Subscript],
                         das: Dict[str, Any],
-                        parsed_slice: Any = None) -> Tuple[subsets.Range, List[int], List[int]]:
+                        parsed_slice: Any = None,
+                        partial_boolean_index: bool = False) -> Tuple[subsets.Range, List[int], List[int]]:
     """
     Parses an AST subset and returns access range, as well as new dimensions to
     add.
@@ -292,6 +304,12 @@ def parse_memlet_subset(array: data.Data,
                   e.g., negative indices or empty shapes).
     :param node: AST node representing whole array or subset thereof.
     :param das: Dictionary of defined arrays and symbols mapped to their values.
+    :param partial_boolean_index: Accept a boolean mask that covers a single
+                                  DIMENSION (``A[0, mask]``) rather than the
+                                  whole array. Opt-in, because a caller that
+                                  parses this form must also be able to lower
+                                  it; the classic frontend cannot, and keeps
+                                  rejecting it at parse time.
     :return: A 3-tuple of (subset, list of new axis indices, list of index-to-array-dimension correspondence).
     """
     # Get memlet range
@@ -317,7 +335,8 @@ def parse_memlet_subset(array: data.Data,
             current_offsets = offsets
 
             # Loop over the N dimensions
-            ndslice, local_offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, current_shape)
+            ndslice, local_offsets, new_extra_dims, arrdims = _fill_missing_slices(das, ast_ndslice, current_shape,
+                                                                                   partial_boolean_index)
             local_subset = _ndslice_to_subset(ndslice)
             offsets = [current_offsets[i] for i in local_offsets]
             current_shape = [local_subset.size()[i] for i in local_offsets]
@@ -345,7 +364,8 @@ def ParseMemlet(visitor,
                 defined_arrays_and_symbols: Dict[str, Any],
                 node: MemletType,
                 parsed_slice: Any = None,
-                arrname: Optional[str] = None) -> MemletExpr:
+                arrname: Optional[str] = None,
+                partial_boolean_index: bool = False) -> MemletExpr:
     das = defined_arrays_and_symbols
     arrname = arrname or rname(node)
     if arrname not in das:
@@ -374,7 +394,7 @@ def ParseMemlet(visitor,
             write_conflict_resolution = node.value.args[1]
 
     try:
-        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice)
+        subset, new_axes, arrdims = parse_memlet_subset(array, node, das, parsed_slice, partial_boolean_index)
     except IndexError:
         raise DaceSyntaxError(
             visitor, node, 'Failed to parse memlet expression due to dimensionality. '

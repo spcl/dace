@@ -54,10 +54,10 @@ from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
-from dace.frontend.python.nextgen.lowering import access as access_module
 from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values, streams
+from dace.frontend.python.nextgen.semantics.indexing import array_index_slots, index_slots, substitute_slots
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
 
 #: Full-reduction calls by registry-qualified name, mapped to their WCR ufunc.
@@ -384,30 +384,22 @@ def materialize_array_indices(node: ast.Subscript, state: LoweringState) -> ast.
     That is a spelling restriction, not a feature boundary: the same access
     written through a temporary already lowered.
 
-    Materializing here reduces every spelling to the one that works. The
-    container is cached for the statement (``LoweringState.index_arrays``), so
-    an index named twice in one statement -- as an accumulation's read and
-    write sides always do -- is evaluated once.
+    Materializing here reduces every spelling to the one that works. Which
+    slots need it is decided by the shared classification
+    (:func:`~dace.frontend.python.nextgen.semantics.indexing.array_index_slots`),
+    the same one inference uses to give those slots typing placeholders, so
+    the two stages cannot disagree about what an index array is.
 
     :raises UnsupportedFeatureError: If an index expression is array-valued but
         of a dtype advanced indexing does not take (only integer and boolean
         arrays index; a float array is a user error the parser reports).
     """
-    elements = access_module.index_elements(node.slice)
-    replacements: dict = {}
-    for element in elements:
-        # A plain name is what the parser already accepts, and a slice or
-        # constant is not an array index at all.
-        if isinstance(element, (ast.Slice, ast.Name, ast.Constant)):
-            continue
-        container = _array_index_container(element, node, state)
-        if container is not None:
-            replacements[astutils.unparse(element)] = container
-    if not replacements:
-        return node
-    rewritten = copy.deepcopy(node)
-    rewritten.slice = access_module.substitute_index_reads(rewritten.slice, replacements)
-    return ast.fix_missing_locations(ast.copy_location(rewritten, node))
+    replacements = array_index_slots(node.slice, lambda element: _array_index_container(element, node, state))
+    return substitute_slots(
+        node, {
+            position: ast.copy_location(ast.Name(id=container, ctx=ast.Load()), node)
+            for position, container in replacements.items()
+        })
 
 
 def _array_index_container(element: ast.expr, node: ast.Subscript, state: LoweringState) -> Optional[str]:
@@ -447,6 +439,10 @@ def _array_index_container(element: ast.expr, node: ast.Subscript, state: Loweri
             node,
             category='advanced-index')
 
+    # A value-numbering key, not a classification one: within a single
+    # statement ANF guarantees that the same source text denotes the same
+    # value, so an index written twice -- as an accumulation's read and write
+    # sides always do -- is evaluated once.
     key = astutils.unparse(element)
     cached = state.index_arrays.get(key)
     if cached is not None:
@@ -466,7 +462,140 @@ def _array_index_container(element: ast.expr, node: ast.Subscript, state: Loweri
     return container
 
 
-def _materialize_advanced_indices(value: ast.expr, statement: ast.stmt, state: LoweringState) -> ast.expr:
+def materialize_boolean_gathers(value: ast.expr, statement: ast.stmt, state: LoweringState) -> ast.expr:
+    """
+    Gather every boolean-mask read inside an expression into its own container,
+    returning the expression rewritten to read those containers.
+
+    A mask read has a data-dependent result size, which is why it cannot simply
+    be typed and then lowered like any other access: inference has no correct
+    answer for it before the selected element count is computed. The bare
+    top-level form (``B = A[mask]``) solves that by typing and lowering
+    together (``rules.assign._lower_boolean_gather_assign``); this does the
+    same for every OTHER position -- nested in a computation (``A[mask] +
+    1.0``), passed to a call (``np.sum(A[mask])``), written into a subset --
+    by performing the gather FIRST. What the rest of the statement then sees is
+    an ordinary container whose shape is the symbol the gather minted, so
+    inference and lowering proceed from there with nothing special about it.
+
+    Returns the expression unchanged when it contains no mask read, which is
+    the overwhelmingly common case.
+    """
+    replacements: List[Tuple[ast.Subscript, ast.Name]] = []
+    for node in ast.walk(value):
+        if not isinstance(node, ast.Subscript):
+            continue
+        container = _boolean_gather_container(node, statement, state)
+        if container is not None:
+            replacements.append((node, ast.copy_location(ast.Name(id=container, ctx=ast.Load()), node)))
+    if not replacements:
+        return value
+    return _substitute_subscripts(value, replacements)
+
+
+def _mentions_a_boolean_container(slice_node: ast.expr, state: LoweringState) -> bool:
+    """
+    Whether any index slot reads a boolean container -- a necessary condition
+    for the subscript to be a mask read.
+
+    Purely a cheap pre-filter, and deliberately so: it is dictionary lookups
+    only, and it runs on every subscript of every assignment. Confirming an
+    actual mask read costs a ``resolve_access`` plus a parse, which is far too
+    much to spend on the ``A[i]`` that most subscripts are.
+    """
+    for element in index_slots(slice_node):
+        base = element
+        while isinstance(base, (ast.Subscript, ast.Attribute)):
+            base = base.value
+        if not isinstance(base, ast.Name):
+            continue
+        binding = state.context.resolve(base.id)
+        if binding is None or binding.kind != 'container':
+            continue
+        descriptor = state.context.containers.get(binding.container)
+        if descriptor is not None and descriptor.dtype in (dtypes.bool, dtypes.bool_):
+            return True
+    return False
+
+
+def _boolean_gather_container(node: ast.Subscript, statement: ast.stmt, state: LoweringState) -> Optional[str]:
+    """
+    Emit the gather for one boolean-mask read and return the container holding
+    its result, or None when the subscript is not a mask read at all.
+
+    A mask this frontend cannot express (combined with an integer index array,
+    more than one mask, partial coverage) is left alone rather than reported
+    here: the ordinary paths reach the same refusal with the message that fits
+    the position the access is used in.
+    """
+    from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
+
+    if not isinstance(node.value, (ast.Name, ast.Attribute)):
+        return None
+    if not _mentions_a_boolean_container(node.slice, state):
+        return None
+    try:
+        base = resolve_access(node.value, state)
+        if base is None:
+            return None
+        expr = state.inference.parse_access(materialize_array_indices(node, state))
+        if not expr.arrdims or not advanced_indexing.has_boolean_index(expr, state.context):
+            return None
+        mask_container = advanced_indexing.resolve_single_boolean_mask(node, expr, base.container, state.context,
+                                                                       state.inference)
+    except UnsupportedFeatureError:
+        return None
+    access = advanced_indexing.emit_boolean_gather('__maskread',
+                                                   base.container,
+                                                   base.descriptor,
+                                                   mask_container,
+                                                   statement,
+                                                   state,
+                                                   base_subset=expr.subset)
+    # Bound to itself so the substituted name resolves as an ordinary container
+    # read when the enclosing expression is lowered.
+    state.context.bind(access.container, access.container)
+    return access.container
+
+
+def _substitute_subscripts(value: ast.expr, replacements: List[Tuple[ast.Subscript, ast.Name]]) -> ast.expr:
+    """Replace specific subscript NODES (matched by identity, not by text) with
+    the names of the containers they were gathered into."""
+
+    class _Substituter(ast.NodeTransformer):
+
+        def visit_Subscript(self, subscript: ast.Subscript) -> ast.AST:
+            for original, replacement in replacements:
+                if original is subscript:
+                    return replacement
+            return self.generic_visit(subscript)
+
+    return _Substituter().visit(value)
+
+
+def materialize_advanced_index_reads(value: ast.expr, statement: ast.stmt, state: LoweringState) -> ast.expr:
+    """
+    Gather EVERY advanced-indexing read in an expression into a temporary,
+    including a top-level one, returning the expression rewritten to read the
+    temporaries.
+
+    Used where the value cannot be written straight into the target because the
+    target is itself an advanced index (``A[i1] = A[i2]``, a gather and a
+    scatter in one statement). Both halves already lower on their own; what
+    does not work is doing them at once, because the scatter emits the value
+    inside its own map, whose index space is the target's -- not the source's.
+    Gathering first is exactly the ``t = A[i2]; A[i1] = t`` spelling that
+    always worked, and it also gives NumPy's evaluation order for free: the
+    right-hand side is fully read before any element of the target is written,
+    which matters when the two overlap.
+    """
+    return _materialize_advanced_indices(value, statement, state, include_top_level=True)
+
+
+def _materialize_advanced_indices(value: ast.expr,
+                                  statement: ast.stmt,
+                                  state: LoweringState,
+                                  include_top_level: bool = False) -> ast.expr:
     """
     Gather every advanced-indexing subscript nested inside an expression into a
     temporary container, returning the expression rewritten to read the
@@ -476,10 +605,16 @@ def _materialize_advanced_indices(value: ast.expr, statement: ast.stmt, state: L
     and canonicalization has no type information with which to tell
     ``A[scalar_i]`` from ``A[index_array]`` -- so the split has to happen here,
     where the index's descriptor is known.
+
+    :param include_top_level: Also gather the expression when it is ITSELF such
+                              an access. Off by default: an ordinary assignment
+                              writes a top-level access straight into its
+                              target, and staging it through a temporary would
+                              be a pointless copy.
     """
     from dace.frontend.python.nextgen.lowering.mechanisms import advanced_indexing
 
-    if isinstance(value, ast.Subscript):
+    if isinstance(value, ast.Subscript) and not include_top_level:
         return value  # A top-level access writes the real target directly
 
     replacements: List[Tuple[ast.Subscript, ast.Name]] = []
@@ -501,16 +636,7 @@ def _materialize_advanced_indices(value: ast.expr, statement: ast.stmt, state: L
 
     if not replacements:
         return value
-
-    class _Substituter(ast.NodeTransformer):
-
-        def visit_Subscript(self, subscript: ast.Subscript) -> ast.AST:
-            for original, replacement in replacements:
-                if original is subscript:
-                    return replacement
-            return self.generic_visit(subscript)
-
-    return _Substituter().visit(value)
+    return _substitute_subscripts(value, replacements)
 
 
 def lower_call(target: Optional[ast.expr], call: ast.Call, statement: ast.stmt, state: LoweringState) -> None:

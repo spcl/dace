@@ -525,6 +525,79 @@ def test_negative_index_array_wraps_on_a_scatter():
     assert np.allclose(A, expected)
 
 
+# --- A gather and a scatter in the same statement. The scatter's map iterates
+# the TARGET's index space, so the source read cannot be emitted inside it; the
+# read is gathered into a temporary first, which also gives NumPy's evaluation
+# order (the whole right-hand side is read before the target is touched).
+
+
+def test_gather_and_scatter_in_one_statement():
+
+    @dace.program
+    def program(A: dace.float64[20], i1: dace.int32[3], i2: dace.int32[3]):
+        A[i1] = A[i2]
+
+    A = A1.copy()
+    expected = A1.copy()
+    expected[IND] = expected[JND]
+
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    tree.as_sdfg()(A=A, i1=IND.copy(), i2=JND.copy())
+    assert np.allclose(A, expected)
+
+
+def test_gather_and_scatter_with_overlapping_indices():
+    """The source and target index the SAME elements. NumPy reads the whole
+    right-hand side first, so the result must not depend on write order."""
+
+    @dace.program
+    def program(A: dace.float64[20], ind: dace.int32[3]):
+        A[ind] = A[ind] + 1.0
+
+    A = A1.copy()
+    expected = A1.copy()
+    expected[IND] = expected[IND] + 1.0
+
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    tree.as_sdfg()(A=A, ind=IND.copy())
+    assert np.allclose(A, expected)
+
+
+def test_gather_and_scatter_across_two_containers():
+
+    @dace.program
+    def program(A: dace.float64[20], B: dace.float64[20], i1: dace.int32[3], i2: dace.int32[3]):
+        A[i1] = B[i2] + 1.0
+
+    A = A1.copy()
+    B = np.arange(100, 120, dtype=np.float64).copy()
+    expected = A1.copy()
+    expected[IND] = B[JND] + 1.0
+
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    tree.as_sdfg()(A=A, B=B, i1=IND.copy(), i2=JND.copy())
+    assert np.allclose(A, expected)
+
+
+def test_gather_and_scatter_on_a_two_dimensional_target():
+
+    @dace.program
+    def program(A: dace.float64[20, 10], i1: dace.int32[3], i2: dace.int32[3]):
+        A[i1, 4] = A[i2, 5]
+
+    A = A2.copy()
+    expected = A2.copy()
+    expected[IND, 4] = expected[JND, 5]
+
+    tree = nextgen.parse_program(program)
+    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
+    tree.as_sdfg()(A=A, i1=IND.copy(), i2=JND.copy())
+    assert np.allclose(A, expected)
+
+
 if __name__ == '__main__':
     test_slice_keeps_size_one_leading()
     test_slice_keeps_size_one_trailing()
@@ -566,3 +639,7 @@ if __name__ == '__main__':
     test_negative_index_array_wraps_when_enabled()
     test_negative_index_array_wrap_is_off_by_default()
     test_negative_index_array_wraps_on_a_scatter()
+    test_gather_and_scatter_in_one_statement()
+    test_gather_and_scatter_with_overlapping_indices()
+    test_gather_and_scatter_across_two_containers()
+    test_gather_and_scatter_on_a_two_dimensional_target()

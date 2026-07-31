@@ -10,7 +10,7 @@ never cloned), the name-binding table, and the demand-driven inference service.
 import ast
 from contextlib import contextmanager
 from dataclasses import dataclass
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Set, Tuple
 
 from dace import data, dtypes, symbolic
 from dace.sdfg.sdfg import NestedDict
@@ -78,6 +78,15 @@ class ProgramContext:
         #: resolve through the base Structure, matching ``SDFG.arrays``.
         self.containers: Dict[str, data.Data] = NestedDict()
         self.symbols: Dict[str, Any] = {}
+        #: Symbols whose value is only computed while the program RUNS (the
+        #: element count of a boolean-mask gather, see
+        #: ``mechanisms.advanced_indexing._resolve_symbol_from_scalar``). A
+        #: container sized by one of these is perfectly usable inside the
+        #: program and unusable at its boundary, where the caller has to
+        #: allocate before the call; :mod:`~...lowering.rules.returns` checks
+        #: this to refuse such a return with the real reason instead of letting
+        #: it fail as an unevaluatable shape at call time.
+        self.deferred_symbols: Set[str] = set()
         #: Source name -> repository symbol name, for the rare symbol whose
         #: repository name differs (see :meth:`bind_symbol`). The repository
         #: itself is keyed by the symbol's own name, since it IS the tree's
@@ -124,20 +133,6 @@ class ProgramContext:
         #: container. Only ANF temps are recorded: they are written exactly
         #: once and used immediately, so the alias can never go stale.
         self.symbolic_scalar_values: Dict[str, Any] = {}
-
-        #: Descriptors of array-valued index EXPRESSIONS, under the synthetic
-        #: names inference gives them so the shared memlet parser recognizes
-        #: them as advanced indices (``InferenceService`` names ``A[ind[0]]``'s
-        #: index ``__idxexpr0``). These are types WITHOUT storage: they never
-        #: reach the tree, and lowering materializes the same expressions into
-        #: real containers. Kept here only so the advanced-indexing shape rules
-        #: can look up a descriptor for a name that is deliberately not in the
-        #: repository. Keyed by placeholder name.
-        self.index_expression_types: Dict[str, data.Data] = {}
-
-        #: Index expression source text -> its placeholder name, so one
-        #: expression keeps one name however often it is re-inferred.
-        self.index_expression_names: Dict[str, str] = {}
 
         #: Per-parse cache of preprocessed+canonicalized callees, shared by
         #: all call sites (including nested inline scopes, which reuse this

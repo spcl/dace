@@ -73,6 +73,12 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
         if isinstance(value, ast.Subscript) and _lower_boolean_gather_assign(target, value, statement, state):
             return
 
+    # A boolean-mask read in any OTHER position (nested in a computation, a
+    # call argument, written into a subset) gathers into a container first, so
+    # that everything downstream sees an ordinary symbolically-sized access
+    # rather than a size nothing can type yet.
+    value = statement.value = dispatch.materialize_boolean_gathers(value, statement, state)
+
     if isinstance(value, ast.Call):
         from dace.frontend.python.nextgen.lowering.rules import calls
         calls.lower_call_assign(statement, state)
@@ -378,8 +384,13 @@ def _lower_boolean_gather_assign(target: ast.Name, value: ast.Subscript, stateme
             return False
         mask_container = advanced_indexing.resolve_single_boolean_mask(value, expr, base.container, state.context,
                                                                        state.inference)
-        access = advanced_indexing.emit_boolean_gather(target.id, base.container, base.descriptor, mask_container,
-                                                       statement, state)
+        access = advanced_indexing.emit_boolean_gather(target.id,
+                                                       base.container,
+                                                       base.descriptor,
+                                                       mask_container,
+                                                       statement,
+                                                       state,
+                                                       base_subset=expr.subset)
         state.context.bind(target.id, access.container)
         return True
     except UnsupportedFeatureError as reason:
@@ -576,6 +587,12 @@ def _lower_advanced_index_write(target: ast.Subscript, value: ast.expr, statemen
         accumulated = value
         if symbol is not None and isinstance(value, ast.BinOp):
             accumulated = (value.left if getattr(statement, 'accumulator_side', 'left') == 'right' else value.right)
+
+        # A value that is itself an advanced-index READ (``A[i1] = A[i2]``)
+        # cannot be emitted inside the scatter's map: that map iterates the
+        # TARGET's index space, not the source's. Gathering it first reduces
+        # the statement to the split spelling that already lowered.
+        accumulated = dispatch.materialize_advanced_index_reads(accumulated, statement, state)
 
         if advanced_indexing.has_boolean_index(expr, state.context):
             # A mask writes in place through a guarded update, so it needs
