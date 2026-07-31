@@ -721,12 +721,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         if nodedesc.pool:
             gpu_stream = self._gpu_stream_manager.get_stream_node(node)
             allocation_stream.write(
-                f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {gpu_stream}));\n',
-                cfg, state_id, node)
+                cpp.gpu_alloc_check(f'{self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {gpu_stream})',
+                                    nodedesc), cfg, state_id, node)
             allocation_stream.write(generate_sync_debug_call())
         else:
-            allocation_stream.write(f'DACE_GPU_CHECK({self.backend}Malloc((void**)&{dataname}, {arrsize_malloc}));\n',
-                                    cfg, state_id, node)
+            allocation_stream.write(
+                cpp.gpu_alloc_check(f'{self.backend}Malloc((void**)&{dataname}, {arrsize_malloc})', nodedesc), cfg,
+                state_id, node)
 
         if node.setzero:
             allocation_stream.write(f'DACE_GPU_CHECK({self.backend}Memset({dataname}, 0, {arrsize_malloc}));\n', cfg,
@@ -740,8 +741,9 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         dataname = self._declare_pointer_if_needed(sdfg, cfg, state_id, node, nodedesc, declaration_stream)
         arrsize_malloc = f'{sym2cpp(nodedesc.total_size)} * sizeof({nodedesc.dtype.ctype})'
 
-        allocation_stream.write(f'DACE_GPU_CHECK({self.backend}MallocHost(&{dataname}, {arrsize_malloc}));\n', cfg,
-                                state_id, node)
+        allocation_stream.write(
+            cpp.gpu_alloc_check(f'{self.backend}MallocHost(&{dataname}, {arrsize_malloc})', nodedesc), cfg, state_id,
+            node)
         if node.setzero:
             allocation_stream.write(f'memset({dataname}, 0, {arrsize_malloc});\n', cfg, state_id, node)
         if nodedesc.start_offset != 0:

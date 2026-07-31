@@ -1487,6 +1487,20 @@ def presynchronize_streams(sdfg: SDFG, cfg: ControlFlowRegion, dfg: StateSubgrap
             )
 
 
+def gpu_alloc_check(call: str, nodedesc: data.Data) -> str:
+    """
+    Wraps a GPU allocation call in the error check that stops at the failure instead of running on.
+
+    :param call: The backend allocation call, without a trailing semicolon.
+    :param nodedesc: Descriptor of the data being allocated.
+    :return: A C++ statement, newline-terminated.
+    """
+    # Persistent allocations are emitted into ``__dace_init_<name>``, which hands back the state pointer.
+    if nodedesc.lifetime == dtypes.AllocationLifetime.Persistent:
+        return f'DACE_GPU_CHECK_RETURN_VAL({call}, nullptr);\n'
+    return f'DACE_GPU_CHECK_RETURN({call});\n'
+
+
 # TODO: This should be in the CUDA code generator. Add appropriate conditions to node dispatch predicate
 def synchronize_streams(sdfg, cfg, dfg, state_id, node, scope_exit, callsite_stream, codegen):
     # Post-kernel stream synchronization (with host or other streams)

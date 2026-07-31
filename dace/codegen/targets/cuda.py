@@ -653,13 +653,13 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
                 if cudastream != 'nullptr':
                     cudastream = f'__state->gpu_context->streams[{cudastream}]'
                 result_alloc.write(
-                    f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
-                )
+                    cpp.gpu_alloc_check(
+                        f'{self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream})', nodedesc))
                 self._emit_sync(result_alloc)
             else:
                 # Strides are left to the user's discretion
-                result_alloc.write('DACE_GPU_CHECK(%sMalloc((void**)&%s, %s));\n' %
-                                   (self.backend, dataname, arrsize_malloc))
+                result_alloc.write(
+                    cpp.gpu_alloc_check(f'{self.backend}Malloc((void**)&{dataname}, {arrsize_malloc})', nodedesc))
 
             if node.setzero:
                 result_alloc.write('DACE_GPU_CHECK(%sMemset(%s, 0, %s));\n' % (self.backend, dataname, arrsize_malloc))
@@ -671,7 +671,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             # Strides are left to the user's discretion
-            result_alloc.write('DACE_GPU_CHECK(%sMallocHost(&%s, %s));\n' % (self.backend, dataname, arrsize_malloc))
+            result_alloc.write(cpp.gpu_alloc_check(f'{self.backend}MallocHost(&{dataname}, {arrsize_malloc})',
+                                                   nodedesc))
             if node.setzero:
                 result_alloc.write('memset(%s, 0, %s);\n' % (dataname, arrsize_malloc))
             if nodedesc.start_offset != 0:
@@ -1177,7 +1178,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
 
                             length = node_dtype._typeclass._length[field_name]
                             size = 'sizeof({})*{}[__idx].{}'.format(dtypes._CTYPES[tclass], str(src_node), length)
-                            callsite_stream.write('DACE_GPU_CHECK({backend}Malloc(&{dst}[__idx].{fname}, '
+                            callsite_stream.write('DACE_GPU_CHECK_RETURN({backend}Malloc(&{dst}[__idx].{fname}, '
                                                   '{sz}));'.format(dst=str(dst_node),
                                                                    fname=field_name,
                                                                    sz=size,
