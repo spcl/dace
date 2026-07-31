@@ -21,16 +21,26 @@ sequential loop. No ``Scan`` libnode is needed and the inner map's loads/stores
 are unit-stride.
 
 Soundness (no hand-rolled dependence analysis -- user direction 2026-06-18):
-a fully data-parallel (DOALL) loop carries no loop-carried dependence and may be
-moved to any position in a perfect nest. DOALL-ness is a property of the loop's
-body, independent of its nest depth, so checking it *after* a speculative
-interchange proves the interchange was legal. The check reuses the existing,
-proven ``LoopToMap.can_be_applied_to`` oracle (it accepts exactly the DOALL,
-single-state-body loops). The pass therefore only interchanges to move a
-unit-stride loop inward when that loop is DOALL once innermost; otherwise it
-reverts and leaves a TODO. This also implements the "do not reduce the number of
-parallelizable maps" guard -- a reverted candidate keeps whatever mappable inner
-loop existed before.
+a loop that carries no dependence *at its own level* may be swapped with the loop
+directly inside it. Every dependence is then either carried outside the pair (its
+leading ``<`` is untouched by the swap) or ``=`` at that level (so the swap moves
+a ``=`` inward and the leading ``<`` outward), and neither case can turn a
+lexicographically positive direction vector negative. The moved loop still
+carries nothing at its new level, so the argument re-applies and the whole bubble
+to innermost is legal by induction.
+
+The DOALL judgement must therefore be taken **before** the bubble, on the loop at
+its ORIGINAL position: "DOALL once innermost" is a strictly weaker property and
+does NOT imply the interchange was legal. The classic ``(<, >)`` counter-example
+is ``a[j, i] = a[j + 1, i - 1] + b[j, i]`` with ``i`` outermost -- moving ``i``
+innermost makes it parallel *there* while reversing the dependence.
+
+The check reuses the existing, proven ``LoopToMap.can_be_applied_to`` oracle (it
+accepts exactly the DOALL loops). The pass only interchanges to move a unit-stride
+loop inward when that loop is DOALL where it stands *and* still DOALL once
+innermost; otherwise it reverts and leaves a TODO. The second half also
+implements the "do not reduce the number of parallelizable maps" guard -- a
+reverted candidate keeps whatever mappable inner loop existed before.
 
 The interchange itself is a swap of the two regions' loop control metadata
 (``loop_variable`` / ``init_statement`` / ``loop_condition`` /
@@ -161,10 +171,17 @@ class LoopStridePermutation(ppl.Pass):
         metadata swaps, verify, and revert the whole bubble on failure.
 
         Each adjacent interchange must keep a rectangular iteration space
-        (``_bounds_independent``). A DOALL loop is freely interchangeable, so it
-        suffices to prove the moved loop is DOALL *once innermost* (via the
-        ``LoopToMap`` oracle) -- that certifies every adjacent swap along the way.
+        (``_bounds_independent``). Legality comes from the moved loop being DOALL
+        at its ORIGINAL level (via the ``LoopToMap`` oracle): a loop carrying
+        nothing at its own level may be swapped inward, and stays that way, so the
+        whole bubble is certified. The post-bubble DOALL re-check is the benefit
+        guard, not the legality one.
         """
+        # "DOALL once innermost" does not imply the swap was legal -- a (<, >)
+        # dependence is parallel innermost yet its interchange reverses it.
+        if not self._is_doall(sdfg, chain[pos]):
+            return False
+
         done: List[Tuple[LoopRegion, LoopRegion]] = []
 
         def revert() -> None:
