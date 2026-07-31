@@ -9,9 +9,10 @@ def customprog(A: dace.float64[20]):
     return A + 1
 
 
-def test_default_build_folder():
+def test_default_build_folder(monkeypatch):
     """Tests if the `default_build_folder` configuration key is respected.
     """
+    monkeypatch.delenv("DACE_cache", raising=False)
     with tempfile.TemporaryDirectory() as tmpdir:
         with dace.config.set_temporary('default_build_folder', value=tmpdir), dace.config.set_temporary('cache',
                                                                                                         value='single'):
@@ -46,7 +47,8 @@ def test_default_build_folder():
             del csdfg
 
 
-def test_explicitly_set_build_folder():
+def test_explicitly_set_build_folder(monkeypatch):
+    monkeypatch.delenv("DACE_cache", raising=False)
     with tempfile.TemporaryDirectory() as tmpdir_def, tempfile.TemporaryDirectory() as tmpdir_used:
         with dace.config.set_temporary('default_build_folder',
                                        value=tmpdir_def), dace.config.set_temporary('cache', value='single'):
@@ -68,5 +70,4 @@ def test_explicitly_set_build_folder():
 
 
 if __name__ == '__main__':
-    test_custom_build_folder()
-    test_custom_build_folder_2()
+    print("Must be called using `pytest`.")
