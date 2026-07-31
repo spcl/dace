@@ -48,14 +48,17 @@ def collapse_shape_and_strides(
     Surviving strides are scaled by the subset step (``stride * s``) to describe the access as a
     view into the parent array.
 
+    Lengths come from ``subset.size()``, which CEILS the step division. Flooring it instead
+    under-counts every strided range whose extent is not a multiple of the step -- ``1:2*H:2``
+    holds ``H`` elements but floors to ``H - 1``.
+
     :param subset: The access range, one ``(begin, end, step)`` per dimension.
     :param strides: The parent array strides, aligned with ``subset``.
     :returns: ``(collapsed_shape, collapsed_strides)`` with singletons removed.
     """
     collapsed_shape = []
     collapsed_strides = []
-    for (b, e, s), stride in zip(subset, strides):
-        length = (e + 1 - b) // s
+    for length, (_b, _e, s), stride in zip(subset.size(), subset, strides):
         if length != 1:
             collapsed_shape.append(length)
             collapsed_strides.append(stride * s)
