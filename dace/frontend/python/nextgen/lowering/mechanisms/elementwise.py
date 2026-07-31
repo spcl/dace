@@ -12,13 +12,13 @@ import ast
 import re
 from typing import List, Optional, Tuple
 
-from dace import dtypes, subsets, symbolic
+from dace import dtypes, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
-from dace.frontend.python.nextgen.lowering.access import (DataAccess, indexed_subset, nondegenerate_shape,
-                                                          resolve_access, substitute_data_operands)
+from dace.frontend.python.nextgen.lowering.access import (DataAccess, indexed_subset, resolve_access,
+                                                          substitute_data_operands)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.semantics.inference import broadcast_shapes
 
@@ -39,13 +39,19 @@ def iteration_shape(target: DataAccess, operands: List[Tuple[str, DataAccess]], 
                                      target rank (the result cannot fit the
                                      write subset elementwise).
     """
-    target_shape = nondegenerate_shape(target.subset)
+    target_shape = target.numpy_shape
     operand_shape: Tuple = ()
     for _, access in operands:
         if access.indirect:
             continue  # Full-array pointer connectors do not participate in broadcasting
-        operand_shape = broadcast_shapes(operand_shape, tuple(nondegenerate_shape(access.subset)))
-    if len(operand_shape) > len(target_shape):
+        operand_shape = broadcast_shapes(operand_shape, tuple(access.numpy_shape))
+    excess = len(operand_shape) - len(target_shape)
+    if excess > 0 and any(size != 1 for size in operand_shape[:excess]):
+        # Leading SINGLETON dimensions beyond the target rank are fine -- NumPy
+        # assigns a (1, 3) value into a (3,) target -- but a real extent has
+        # nowhere to go. A dace ``Scalar``-valued result carried as an
+        # ``Array(dtype, [1])`` (a callee's scalar return) is the common case
+        # of the former.
         raise UnsupportedFeatureError(
             f'Broadcast operand shape {operand_shape} has higher rank than the write '
             f'target shape {tuple(target_shape)}',
@@ -171,7 +177,15 @@ def emit_elementwise(target: DataAccess,
     line = getattr(statement, 'lineno', 0)
     result_shape = iteration_shape(target, operands, statement, state)
 
-    if not result_shape:
+    # A size-1 result dimension is part of the SHAPE but not of the iteration
+    # space: it is pinned in every subset, so giving it a map parameter emits a
+    # one-iteration map dimension that no write depends on -- which then reads
+    # as a race to the write-conflict pass. ``None`` marks such a dimension for
+    # ``indexed_subset``, which pins it.
+    params: List[Optional[str]] = [f'__i{i}' if size != 1 else None for i, size in enumerate(result_shape)]
+    iterating = [(param, size) for param, size in zip(params, result_shape) if param is not None]
+
+    if not iterating:
         # Scalar result: single tasklet
         tasklet = nodes.Tasklet(f'assign_{line}', {connector
                                                    for connector, _ in operands}, {'__out'}, f'__out = {code}')
@@ -180,10 +194,9 @@ def emit_elementwise(target: DataAccess,
         state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
         return
 
-    # Array result: elementwise map
-    params = [f'__i{i}' for i in range(len(result_shape))]
-    map_range = subsets.Range([(0, size - 1, 1) for size in result_shape])
-    map_node = nodes.MapEntry(nodes.Map(f'map_{line}', params, map_range))
+    # Array result: elementwise map over the dimensions that actually iterate
+    map_range = subsets.Range([(0, size - 1, 1) for _, size in iterating])
+    map_node = nodes.MapEntry(nodes.Map(f'map_{line}', [param for param, _ in iterating], map_range))
     tasklet = nodes.Tasklet(f'assign_{line}', {connector for connector, _ in operands}, {'__out'}, f'__out = {code}')
 
     in_memlets = {}
@@ -192,24 +205,7 @@ def emit_elementwise(target: DataAccess,
             in_memlets[connector] = Memlet(data=access.container, subset=access.subset)
         else:
             in_memlets[connector] = Memlet(data=access.container, subset=indexed_subset(access, params, result_shape))
-    out_memlets = {'__out': Memlet(data=target.container, subset=target_indexed_subset(target.subset, params), wcr=wcr)}
+    out_memlets = {'__out': Memlet(data=target.container, subset=indexed_subset(target, params, result_shape), wcr=wcr)}
 
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
-
-
-def target_indexed_subset(subset: subsets.Range, params: List[str]) -> subsets.Range:
-    """
-    Index the non-degenerate dimensions of a write subset with map parameters,
-    keeping degenerate dimensions pinned to their start.
-    """
-    ranges = []
-    param_iterator = iter(params)
-    for size, (start, _, step) in zip(subset.size(), subset.ranges):
-        if size == 1:
-            ranges.append((start, start, 1))
-        else:
-            param = symbolic.pystr_to_symbolic(next(param_iterator))
-            index = start + param * step
-            ranges.append((index, index, 1))
-    return subsets.Range(ranges)

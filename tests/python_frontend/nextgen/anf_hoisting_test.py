@@ -82,8 +82,74 @@ def test_indirect_range_bound_is_not_hoisted():
     assert any(isinstance(node, tn.MapScope) for node in tree.preorder_traversal())
 
 
+def _helper(value):
+    return value * 2.0
+
+
+def _undefined_temporaries(tree) -> set:
+    """
+    Names a callback reads that no statement in the tree ever assigns, and that
+    are not program containers either -- i.e. temporaries left behind by a
+    rewrite whose defining assignment was dropped.
+    """
+    assigned = set(tree.containers)
+    for node in tree.preorder_traversal():
+        assigned.update(getattr(node, 'outputs', None) or ())
+    reads = set()
+    for node in _callbacks(tree):
+        reads.update(getattr(node, 'inputs', None) or ())
+    return {name for name in reads - assigned if name.startswith('__anf')}
+
+
+def test_abandoned_flattening_leaves_no_dangling_temporary():
+    """
+    A statement ANF starts flattening and then abandons (a short-circuit
+    position it cannot hoist through) must be handed to the interpreter
+    EXACTLY as written.
+
+    Flattening rewrites subexpressions in place while collecting the hoisted
+    assignments; abandoning it drops those assignments, so the rewrites must be
+    undone with them. Left in, the callback body read a ``__anf`` temporary
+    that nothing ever assigned.
+    """
+
+    @dace.program
+    def short_circuit(A: dace.float64[10], c: dace.bool):
+        b = 1.0
+        d = 2.0
+        A[1] = _helper(A[0]) + (b if c else d)
+
+    tree = nextgen.parse_program(short_circuit)
+    callbacks = _callbacks(tree)
+    assert callbacks, 'the conditional expression is expected to stay opaque'
+    assert not any('__anf' in node.reason for node in callbacks), [node.reason for node in callbacks]
+    assert not _undefined_temporaries(tree)
+
+
+def test_abandoned_target_flattening_leaves_no_dangling_temporary():
+    """
+    The same, abandoned on the assignment TARGET rather than the value.
+
+    A chained target hoists its base first (``__anf0 = A[:, 1:5]``) and only
+    then flattens the index, so a hazard in the index leaves the base rewrite
+    behind unless it is rolled back.
+    """
+
+    @dace.program
+    def short_circuit_target(A: dace.float64[10, 10], c: dace.bool):
+        A[:, 1:5][1 if c else 2] = 5.0
+
+    tree = nextgen.parse_program(short_circuit_target)
+    callbacks = _callbacks(tree)
+    assert callbacks, 'the conditional index is expected to stay opaque'
+    assert not any('__anf' in node.reason for node in callbacks), [node.reason for node in callbacks]
+    assert not _undefined_temporaries(tree)
+
+
 if __name__ == '__main__':
     test_attribute_of_a_computed_value()
     test_method_call_on_a_computed_receiver()
     test_doubly_nested_index()
     test_indirect_range_bound_is_not_hoisted()
+    test_abandoned_flattening_leaves_no_dangling_temporary()
+    test_abandoned_target_flattening_leaves_no_dangling_temporary()

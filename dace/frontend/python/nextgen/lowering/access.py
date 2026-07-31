@@ -6,7 +6,7 @@ containers, subsets, and connector-substituted tasklet code.
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, FrozenSet, List, Optional, Tuple
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -17,6 +17,8 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
+from dace.frontend.python.nextgen.semantics.indexing import (SOURCE, IndexPlan, build_plan, reverse_normalized,
+                                                             whole_container_plan)
 
 
 @dataclass
@@ -25,22 +27,36 @@ class DataAccess:
     container: str  #: Repository container name
     subset: subsets.Range  #: Accessed subset (in container index space)
     descriptor: data.Data
-    #: Per-subset-dimension flags: True when the source index was slice-formed
-    #: (the dimension survives in the NumPy result shape even at size 1),
-    #: False when integer-indexed (dropped). None when the index form could
-    #: not be analyzed (fall back to squeezing all size-1 dimensions).
-    kept_dims: Optional[List[bool]] = None
+    #: The resolved NumPy index model of the subscript this access came from
+    #: (see :mod:`~dace.frontend.python.nextgen.semantics.indexing`). Left off
+    #: for a whole-container access, where :meth:`__post_init__` fills in the
+    #: plan that says so -- every axis survives.
+    plan: Optional[IndexPlan] = None
     #: True when this access is a full-array pointer connector synthesized for
     #: an indirect (data-dependent-index) read: its subset must not be
     #: broadcast/indexed against an iteration space — the tasklet code indexes
     #: it directly (e.g. ``__in0[__ind1]``).
     indirect: bool = False
-    #: ``newaxis``/``None`` insertion positions in the NumPy result shape
-    #: (see ``MemletExpr.new_axes``), applied by :attr:`numpy_shape` AFTER
-    #: dropping/keeping subset dimensions -- a newaxis position does not
-    #: correspond to any subset dimension at all, so it cannot be modeled by
-    #: :attr:`kept_dims`, which only ever filters existing subset entries.
-    new_axes: Tuple[int, ...] = ()
+    #: Source axes the subscript traverses from the top down (``A[::-1]``). A
+    #: memlet subset cannot express a reversal, so the subset stays forward and
+    #: the direction is applied where the index is formed
+    #: (:func:`indexed_subset`).
+    reversed_axes: FrozenSet[int] = frozenset()
+    #: True when the index form could not be modeled against the container's
+    #: rank (more elements than axes, several ``Ellipsis``). Shape questions
+    #: then fall back to squeezing every size-1 dimension, which is a guess --
+    #: hence :attr:`unmodeled_new_axes`.
+    unmodeled: bool = False
+    #: True when the shared parser reported ``newaxis`` insertions on an
+    #: :attr:`unmodeled` index. Squeezing and inserting against the same
+    #: assumed shape can silently produce a wrong result, so consumers must
+    #: refuse rather than guess (see ``rules.assign._lower_name_assign``).
+    unmodeled_new_axes: bool = False
+
+    def __post_init__(self) -> None:
+        if self.plan is None and not self.unmodeled:
+            # A whole-container access: every axis of the descriptor survives.
+            self.plan = container_plan(self.descriptor)
 
     @property
     def is_scalar_access(self) -> bool:
@@ -50,22 +66,39 @@ class DataAccess:
     def numpy_shape(self) -> List:
         """
         The NumPy-semantic result shape of this access: slice-formed
-        dimensions are kept (``a[0:20, 1:2]`` → (20, 1)), integer-indexed
-        dimensions are dropped (``a[0:20, 1]`` → (20,)), and any
-        ``newaxis``/``None`` positions are inserted as size-1 dimensions.
-        Empty for scalar element accesses with no newaxes.
+        dimensions survive at their size **including size 1** (``a[0:1, :]``
+        is ``(1, 10)``), integer-indexed dimensions are dropped (``a[0:20, 1]``
+        is ``(20,)``), and ``newaxis`` positions are inserted as size-1
+        dimensions. Empty for scalar element accesses with no newaxes.
         """
-        if self.kept_dims is None:
-            shape = nondegenerate_shape(self.subset)
-        else:
-            shape = [size for size, kept in zip(self.subset.size(), self.kept_dims) if kept]
-        for position in sorted(self.new_axes, reverse=True):
-            shape.insert(position, 1)
-        return shape
+        if self.plan is None or self.plan.ndim != len(self.subset.ranges):
+            # Unmodeled, or a subset whose rank does not line up with the plan:
+            # all that can be said is which dimensions are degenerate.
+            return nondegenerate_shape(self.subset)
+        return self.plan.result_shape(self.subset.size())
+
+
+def container_plan(descriptor: data.Data) -> IndexPlan:
+    """
+    The index plan of a whole-container access.
+
+    A dace ``Scalar`` is a rank-0 value in NumPy terms even though its
+    descriptor carries a ``(1,)`` shape, so it contributes no result axis --
+    otherwise assigning a scalar into an element target reads as a rank-1
+    operand broadcast into a rank-0 result.
+    """
+    return whole_container_plan(0 if isinstance(descriptor, data.Scalar) else len(descriptor.shape))
 
 
 def nondegenerate_shape(subset: subsets.Range) -> List:
-    """The shape of a subset with size-1 dimensions squeezed out."""
+    """
+    The shape of a subset with size-1 dimensions squeezed out.
+
+    This is the *fallback* for an index form that could not be modeled, and
+    the rank-matching helper for broadcasting — not the NumPy result shape.
+    For that, use :attr:`DataAccess.numpy_shape`, which keeps a size-1
+    dimension that the subscript wrote as a slice.
+    """
     return [s for s in subset.size() if s != 1]
 
 
@@ -75,41 +108,12 @@ def kept_dimensions(slice_node: ast.expr, ndim: int) -> Optional[List[bool]]:
     slice-formed indices keep their dimension, integer indices drop it, and
     unindexed trailing dimensions are kept.
 
-    ``newaxis``/``None`` elements are excluded before this analysis runs --
-    they don't consume or correspond to a source dimension at all, so they
-    play no part in deciding which SUBSET dimensions survive (see
-    ``DataAccess.new_axes`` for how they're reinserted afterward). A single
-    ``Ellipsis`` element expands in place to however many implicit full
-    slices are needed to cover the remaining real dimensions (Python itself
-    rejects a slice with more than one ``Ellipsis``, so more than one here
-    always means the index list is otherwise malformed).
-
-    Returns None (unknown -- caller must not blindly squeeze) when the
-    element count doesn't add up against ``ndim`` (a malformed or
-    not-yet-canonicalized index).
+    A thin view over :class:`~...semantics.indexing.IndexPlan` for callers that
+    only need the per-dimension flags. Returns None (unknown -- caller must not
+    blindly squeeze) when the index cannot be modeled against ``ndim``.
     """
-    raw_elements = list(slice_node.elts) if isinstance(slice_node, ast.Tuple) else [slice_node]
-    elements = [
-        element for element in raw_elements if not (isinstance(element, ast.Constant) and element.value is None)
-    ]
-    ellipsis_positions = [
-        i for i, element in enumerate(elements) if isinstance(element, ast.Constant) and element.value is Ellipsis
-    ]
-    if len(ellipsis_positions) > 1:
-        return None
-    if ellipsis_positions:
-        position = ellipsis_positions[0]
-        explicit_count = len(elements) - 1
-        fill = ndim - explicit_count
-        if fill < 0:
-            return None
-        filler = [ast.Slice(lower=None, upper=None, step=None)] * fill
-        elements = elements[:position] + filler + elements[position + 1:]
-    if len(elements) > ndim:
-        return None
-    kept: List[bool] = [isinstance(element, ast.Slice) for element in elements]
-    kept.extend([True] * (ndim - len(kept)))
-    return kept
+    plan = build_plan(slice_node, ndim)
+    return None if plan is None else plan.kept_dims
 
 
 def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]:
@@ -124,7 +128,10 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
         if binding is None or binding.kind != 'container':
             return None
         descriptor = state.context.containers[binding.container]
-        return DataAccess(binding.container, subsets.Range.from_array(descriptor), descriptor)
+        return DataAccess(binding.container,
+                          subsets.Range.from_array(descriptor),
+                          descriptor,
+                          plan=container_plan(descriptor))
     if isinstance(node, ast.Attribute):
         return _member_access(node, state)
     if isinstance(node, ast.Subscript):
@@ -143,6 +150,7 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
         else:
             return None
         node = promote_index_reads(node, state, ndim=len(base_descriptor.shape))
+        node, reversed_axes = reverse_normalized(node, base_descriptor.shape, state.inference.constant_int)
         expr = state.inference.parse_access(node)
         subset = substitute_symbolic_scalars(expr.subset, state.context)
         if isinstance(subset, subsets.Indices):
@@ -162,8 +170,14 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
                 state.context.filename,
                 node,
                 category='data-dependent-subscript')
-        kept = kept_dimensions(node.slice, len(subset.ranges))
-        return DataAccess(base_container, subset, base_descriptor, kept_dims=kept, new_axes=tuple(expr.new_axes or ()))
+        plan = build_plan(node.slice, len(subset.ranges))
+        return DataAccess(base_container,
+                          subset,
+                          base_descriptor,
+                          plan=plan,
+                          reversed_axes=reversed_axes,
+                          unmodeled=plan is None,
+                          unmodeled_new_axes=plan is None and bool(expr.new_axes))
     return None
 
 
@@ -395,7 +409,7 @@ def _member_access(node: ast.Attribute, state: LoweringState) -> Optional[DataAc
     if member is None:
         return None
     path, descriptor = member
-    return DataAccess(path, subsets.Range.from_array(descriptor), descriptor)
+    return DataAccess(path, subsets.Range.from_array(descriptor), descriptor, plan=container_plan(descriptor))
 
 
 def indirect_index_reads(array_expression: ast.expr, state: LoweringState) -> List[ast.expr]:
@@ -705,35 +719,58 @@ def lower_indirect_write(target: ast.Subscript,
 
 def indexed_subset(access: DataAccess, params: List[str], result_shape: List) -> subsets.Range:
     """
-    Compute the per-element subset of an operand access inside a map with the
-    given parameters, applying NumPy-style broadcasting: dimensions of size 1
-    are pinned, and missing leading dimensions are dropped (right-aligned).
+    Compute the per-element subset of an access inside a map over the broadcast
+    result, applying NumPy broadcasting: the access's NumPy shape is
+    right-aligned against the result, a size-1 dimension is pinned (the same
+    element is read across the broadcast extent), and a dimension the subscript
+    dropped is pinned at its own start.
 
-    :param access: The operand access (its subset defines extents and offsets).
+    Alignment goes through the access's :class:`~...semantics.indexing.IndexPlan`
+    rather than through its subset, because the subset cannot express a
+    ``newaxis``: ``A[:, None]`` and ``A[None, :]`` have the *same* rank-1
+    subset over ``A`` and differ only in where their axes land in the result.
+    Aligning by subset shape made both read ``A[__i1]``, which produced the
+    wrong values for every outer-product-shaped expression.
+
+    :param access: The access (its subset defines extents and offsets).
     :param params: Map parameter names, one per result dimension.
     :param result_shape: The broadcast result shape.
     """
-    operand_size = access.subset.size()
-    nondegenerate = [dim for dim, size in enumerate(operand_size) if size != 1]
-    if len(nondegenerate) > len(params):
+    shape = access.numpy_shape
+    excess = len(shape) - len(params)
+    if excess > 0 and any(size != 1 for size in shape[:excess]):
         raise UnsupportedFeatureError(
-            'Operand has more nondegenerate dimensions than the broadcast result '
-            f'({len(nondegenerate)} > {len(params)})',
+            f'Operand shape {tuple(shape)} has higher rank than the broadcast result '
+            f'({len(shape)} > {len(params)})',
             category='broadcast')
-    # Right-align operand dims against result dims. When the operand carries
-    # more raw dimensions than the result (integer-indexed dimensions kept as
-    # size-1 subset entries), align its nondegenerate dims instead.
-    param_offset = len(result_shape) - len(operand_size)
-    if param_offset < 0:
-        aligned_params = {dim: len(params) - 1 - position for position, dim in enumerate(reversed(nondegenerate))}
+
+    ranges: List[Optional[Tuple]] = [None] * len(access.subset.ranges)
+    offset = len(params) - len(shape)  # Right-alignment against the result
+    if access.plan is None:
+        # Unmodeled index form: fall back to aligning nondegenerate dimensions,
+        # which is what the squeezed shape supports.
+        nondegenerate = [dim for dim, size in enumerate(access.subset.size()) if size != 1]
+        placement = {dim: offset + position for position, dim in enumerate(nondegenerate)}
     else:
-        aligned_params = {dim: dim + param_offset for dim in nondegenerate}
-    ranges = []
-    for dim_index, (dim_size, (start, _, step)) in enumerate(zip(operand_size, access.subset.ranges)):
-        if dim_size == 1:
+        placement = {
+            entry.axis: offset + position
+            for position, entry in enumerate(access.plan.result_layout()) if entry.kind == SOURCE
+        }
+
+    sizes = access.subset.size()
+    for axis, (start, end, step) in enumerate(access.subset.ranges):
+        slot = placement.get(axis)
+        if slot is None or slot < 0 or sizes[axis] == 1 or params[slot] is None:
+            # Dropped by the subscript, a leading singleton beyond the result
+            # rank, a broadcast singleton, or a result dimension that does not
+            # iterate (``params`` entry is None): pinned.
             index = start
+        elif axis in access.reversed_axes:
+            # ``A[::-1]``: the subset is the forward range, walked from the top.
+            param = symbolic.pystr_to_symbolic(params[slot])
+            index = end - param * step
         else:
-            param = symbolic.pystr_to_symbolic(params[aligned_params[dim_index]])
+            param = symbolic.pystr_to_symbolic(params[slot])
             index = start + param * step
-        ranges.append((index, index, 1))
+        ranges[axis] = (index, index, 1)
     return subsets.Range(ranges)

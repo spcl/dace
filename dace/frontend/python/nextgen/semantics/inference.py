@@ -650,6 +650,7 @@ class InferenceService:
         """
         try:
             defined = self.context.defined_view()
+            node = self._forward_reversed_slices(node)
             parsed = self._name_array_index_expressions(self._restore_index_sequences(node), defined)
             return ParseMemlet(self._shim, defined, parsed)
         except UnsupportedFeatureError:
@@ -659,6 +660,38 @@ class InferenceService:
                                           self.context.filename,
                                           node,
                                           category='memlet-parse')
+
+    def _forward_reversed_slices(self, node: Union[ast.Name, ast.Subscript]) -> Union[ast.Name, ast.Subscript]:
+        """
+        Rewrite a negative-step slice into the equivalent forward slice before
+        parsing (see ``semantics.indexing.reverse_normalized``).
+
+        The shared parser applies forward conventions to a negative step, so
+        ``A[::-1]`` parsed as written yields a NEGATIVE extent and the shape
+        derived from it fails descriptor validation. Lowering applies the same
+        rewrite and additionally keeps the direction; here only the extent
+        matters, since a result shape is the same either way round.
+        """
+        from dace.frontend.python.nextgen.semantics.indexing import reverse_normalized
+
+        if not isinstance(node, ast.Subscript):
+            return node
+        shape = self._subscript_base_shape(node)
+        if shape is None:
+            return node
+        rewritten, _ = reverse_normalized(node, shape, self.constant_int)
+        return rewritten
+
+    def _subscript_base_shape(self, node: ast.Subscript):
+        """The shape of the container a subscript reads, or None when its base
+        is not a plain registered container."""
+        base = node.value
+        if not isinstance(base, ast.Name):
+            return None
+        binding = self.context.resolve(base.id)
+        if binding is None or binding.kind != 'container':
+            return None
+        return self.context.containers[binding.container].shape
 
     def _name_array_index_expressions(self, node: Union[ast.Name, ast.Subscript],
                                       defined: Dict[str, Any]) -> Union[ast.Name, ast.Subscript]:
@@ -1025,6 +1058,24 @@ class InferenceService:
             return Inferred(kind='symbolic', value=element)
         return Inferred(kind='constant', value=element)
 
+    def _basic_result_shape(self, node: ast.Subscript, expr) -> List:
+        """
+        The NumPy result shape of a basic-indexing access, from the shared
+        index model.
+
+        The model keeps a slice-formed dimension at size 1 (``A[0:1, :]`` is
+        ``(1, 10)``) and inserts ``newaxis`` dimensions -- both of which the
+        previous ``[s for s in expr.subset.size() if s != 1]`` got wrong,
+        silently, wherever a value was consumed as an operand rather than
+        bound to a name.
+        """
+        from dace.frontend.python.nextgen.semantics.indexing import build_plan
+
+        plan = build_plan(node.slice, len(expr.subset.ranges))
+        if plan is None:
+            return [size for size in expr.subset.size() if size != 1]
+        return plan.result_shape(expr.subset.size())
+
     def _infer_subscript(self, node: ast.Subscript) -> Inferred:
         base = self.infer(node.value)
         if base.kind == 'static':
@@ -1070,12 +1121,12 @@ class InferenceService:
                 # combined with another index), which still cannot lower and
                 # will fall back to a callback downstream.
                 return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, [symbolic.UndefinedSymbol()]))
-            shape = [s for s in advanced_indexing.output_shape(expr, self.context, self, node) if s != 1]
+            shape = advanced_indexing.output_shape(expr, self.context, self, node)
             if not shape:
                 return Inferred(kind='data', descriptor=data.Scalar(base.descriptor.dtype))
             return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, shape))
         try:
-            shape = [s for s in expr.subset.size() if s != 1]
+            shape = self._basic_result_shape(node, expr)
             if not shape:
                 return Inferred(kind='data', descriptor=data.Scalar(base.descriptor.dtype))
             return Inferred(kind='data', descriptor=data.Array(base.descriptor.dtype, shape))

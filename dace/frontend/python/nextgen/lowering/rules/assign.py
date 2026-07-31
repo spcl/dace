@@ -299,22 +299,25 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
             # ``x[A_col[j]]``): falls through to the computation path below,
             # which lowers indirection through the elementwise mechanism.
             access = None
-        if access is not None and access.kept_dims is None and access.subset.size() and access.new_axes:
+        if access is not None and access.unmodeled_new_axes and access.subset.size():
             # ``DataAccess.numpy_shape``'s fallback for a genuinely unmodeled
             # index form (more elements than dimensions, more than one
             # ``Ellipsis``, ...) blindly squeezes every size-1 subset
             # dimension via ``nondegenerate_shape`` -- fine on its own since
-            # there is nothing to disambiguate, but combined with ``new_axes``
+            # there is nothing to disambiguate, but combined with newaxis
             # insertions (positions computed against the SAME assumed shape)
-            # it can silently produce a wrong result. ``kept_dimensions``
-            # already handles the ordinary Ellipsis/newaxis cases correctly
-            # (see its docstring); this only remains reachable for whatever
-            # it still can't model, so fail loudly instead of guessing.
+            # it can silently produce a wrong result. ``IndexPlan`` already
+            # handles the ordinary Ellipsis/newaxis cases correctly; this only
+            # remains reachable for whatever it still can't model, so fail
+            # loudly instead of guessing.
             raise UnsupportedFeatureError('Cannot determine the exact NumPy result shape of this subscript',
                                           state.context.filename,
                                           value,
                                           category='data-dependent-subscript')
-        if access is not None and access.numpy_shape:
+        if access is not None and access.numpy_shape and not access.reversed_axes:
+            # A reversed traversal (``A[::-1]``) is not a view: the subset is
+            # forward and the direction lives in the index expression, so it
+            # has to go through the copying map below.
             _lower_view_binding(target, access, state)
             return
 
@@ -523,7 +526,10 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
             # probe in ``_lower_name_assign``.
             source_access = None
         if (source_access is not None and not source_access.is_scalar_access and not target_access.is_scalar_access
+                and not source_access.reversed_axes and not target_access.reversed_axes
                 and nondegenerate_shape(source_access.subset) == nondegenerate_shape(target_access.subset)):
+            # A plain memlet copy cannot reverse a traversal, so a reversed
+            # access on either side falls through to the elementwise map.
             state.emitter.emit(
                 tn.CopyNode(target=target_access.container,
                             memlet=Memlet(data=source_access.container,
@@ -590,17 +596,22 @@ def _lower_advanced_index_write(target: ast.Subscript, value: ast.expr, statemen
 def _lower_view_binding(target: ast.Name, access: DataAccess, state: LoweringState) -> None:
     """Bind a slice read as a view container with its NumPy result shape."""
     shape = access.numpy_shape
-    selected = access.kept_dims if access.kept_dims is not None else [size != 1 for size in access.subset.size()]
-    strides = [
-        access.descriptor.strides[i] * step
-        for i, (keep, (_, _, step)) in enumerate(zip(selected, access.subset.ranges)) if keep
-    ] if isinstance(access.descriptor, data.Array) else None
-    if strides is not None:
-        # A newaxis-inserted dimension has no corresponding source stride --
-        # it only ever has one valid index (0), so any value is safe; 0
-        # matches NumPy's own convention for a size-1 broadcast/newaxis axis.
-        for position in sorted(access.new_axes):
-            strides.insert(position, 0)
+    strides = None
+    if isinstance(access.descriptor, data.Array):
+        if access.plan is None:
+            selected = [size != 1 for size in access.subset.size()]
+            strides = [
+                access.descriptor.strides[i] * step
+                for i, (keep, (_, _, step)) in enumerate(zip(selected, access.subset.ranges)) if keep
+            ]
+        else:
+            # Shape and strides come off the SAME layout, so a newaxis lands at
+            # the same position in both. A newaxis-inserted dimension has no
+            # corresponding source stride -- it only ever has one valid index
+            # (0), so any value is safe; 0 matches NumPy's own convention for a
+            # size-1 broadcast/newaxis axis.
+            per_axis = [stride * step for stride, (_, _, step) in zip(access.descriptor.strides, access.subset.ranges)]
+            strides = access.plan.place(per_axis, newaxis=0)
     view_descriptor = data.ArrayView(access.descriptor.dtype, shape, strides=strides)
     view_name = state.context.add_container(target.id, view_descriptor)
     state.context.bind(target.id, view_name)

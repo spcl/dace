@@ -69,7 +69,11 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
         if base is not None:
             access = dispatch.resolve_attribute_data(base, value.attr, state)
     if access is not None:
-        shape = [s for s in access.subset.size() if s != 1] or [1]
+        # The returned container takes the access's NumPy result shape, so a
+        # size-1 dimension the subscript asked for survives (``return A[0:1]``
+        # hands back shape (1, N), as NumPy does) and a ``newaxis`` is not
+        # dropped on the way out.
+        shape = access.numpy_shape or [1]
         if return_name not in state.context.containers:
             source = access.descriptor
             if isinstance(source, data.Array) and list(source.shape) == list(shape):

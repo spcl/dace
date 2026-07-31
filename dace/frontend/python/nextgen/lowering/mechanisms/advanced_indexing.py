@@ -62,15 +62,18 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 import numpy
 
 from dace import data, dtypes, subsets, symbolic
+from dace.config import Config
 from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg import InterstateEdge, nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import MemletExpr
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess
 from dace.frontend.python.nextgen.lowering.mechanisms.conflict import WCR_OPERATORS
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
+from dace.frontend.python.nextgen.semantics.indexing import SOURCE, IndexPlan, build_plan
 
 
 @dataclass(frozen=True)
@@ -89,6 +92,10 @@ class AdvancedIndex:
     :param output_subset: The matching subset of the result container.
     :param index_memlets: One element-read memlet per index array, in the order
                           their connectors appear in the tasklet code.
+    :param index_extents: The extent of the base dimension each index array
+                          indexes into, in the same order -- what a negative
+                          index entry wraps against (see
+                          :func:`index_expressions`).
     """
     container: str
     descriptor: data.Data
@@ -97,6 +104,7 @@ class AdvancedIndex:
     base_subset: subsets.Range
     output_subset: subsets.Range
     index_memlets: Tuple[Memlet, ...]
+    index_extents: Tuple[Any, ...] = ()
 
 
 def index_arrays(expr: MemletExpr) -> Dict[int, Any]:
@@ -114,6 +122,25 @@ def has_boolean_index(expr: MemletExpr, context) -> bool:
     return False
 
 
+def _plan_for(expr: MemletExpr, node: ast.expr) -> IndexPlan:
+    """
+    The index model of an advanced-indexing access.
+
+    :raises UnsupportedFeatureError: If the index cannot be modeled against the
+        base rank -- previously this fell back to a range-based heuristic that
+        could not tell a naturally size-1 dimension from an integer-indexed
+        one, and silently produced the wrong shape.
+    """
+    plan = build_plan(node.slice, len(expr.subset.ranges), frozenset(index_arrays(expr)))
+    if plan is None:
+        raise UnsupportedFeatureError(
+            f'Cannot model the index form of "{astutils.unparse(node)}" '
+            'against the indexed container',
+            node=node,
+            category='advanced-indexing')
+    return plan
+
+
 def output_shape(expr: MemletExpr, context, inference, node: ast.expr) -> List[Any]:
     """
     The NumPy result shape of an advanced-indexing access.
@@ -121,10 +148,8 @@ def output_shape(expr: MemletExpr, context, inference, node: ast.expr) -> List[A
     Kept separate from :func:`analyze` because inference needs the shape to
     allocate the result container before any node is emitted.
     """
-    shape = _basic_shape_marks(expr, node)
-    shape, position = _place_advanced_chunk(shape, expr.new_axes)
     broadcast = _broadcast_index_shape(expr, context, inference, node)
-    return shape[:position] + list(broadcast) + shape[position + 1:]
+    return _plan_for(expr, node).result_shape(expr.subset.size(), broadcast)
 
 
 def analyze(node: ast.Subscript, expr: MemletExpr, container: str, descriptor: data.Data, context,
@@ -156,34 +181,64 @@ def analyze(node: ast.Subscript, expr: MemletExpr, container: str, descriptor: d
         for i, (size, (start, end, _)) in enumerate(zip(expr.subset.size(), ndrange)) if start != end
     }
 
-    shape_marks = _basic_shape_marks(expr, node)
-    output_ndrange: List[Optional[Tuple[Any, Any, Any]]] = [
-        None if shape_marks[i] is None else rng for i, rng in enumerate(iteration)
-    ]
-    shape_marks, output_ndrange, position = _place_advanced_chunk(shape_marks, expr.new_axes, output_ndrange)
-
+    plan = _plan_for(expr, node)
     broadcast = _broadcast_index_shape(expr, context, inference, node)
     parameters = [f'__ind{i}' for i in range(len(broadcast))]
     for parameter, size in zip(parameters, broadcast):
         map_ranges[parameter] = (0, size - 1, 1)
     advanced_ndrange = [(symbolic.symbol(parameter), symbolic.symbol(parameter), 1) for parameter in parameters]
 
+    # Result shape and result subset are laid out from the SAME plan, so the
+    # subset written into the result cannot disagree with the shape allocated
+    # for it -- the class of mismatch that made ``A[ind, None, 4]`` crash.
+    result_shape = plan.result_shape(expr.subset.size(), broadcast)
+    output_ndrange = plan.place(iteration, advanced_ndrange, newaxis=(0, 0, 1))
+
     index_memlets: List[Memlet] = []
+    index_extents: List[Any] = []
+    sizes = expr.subset.size()
     for dimension, index in index_arrays(expr).items():
         index_container = _index_container(index, dimension, container, context, inference, node)
         index_shape = context.containers[index_container].shape
         index_memlets.append(Memlet(data=index_container, subset=_broadcast_subset(index_shape, parameters), volume=1))
+        index_extents.append(sizes[dimension])
         map_ranges.pop(f'__i{dimension}', None)
         base_subset[dimension] = ndrange[dimension]
 
     return AdvancedIndex(container=container,
                          descriptor=descriptor,
-                         output_shape=shape_marks[:position] + list(broadcast) + shape_marks[position + 1:],
+                         output_shape=result_shape,
                          map_ranges=map_ranges,
                          base_subset=base_subset,
-                         output_subset=subsets.Range(output_ndrange[:position] + advanced_ndrange +
-                                                     output_ndrange[position + 1:]),
-                         index_memlets=tuple(index_memlets))
+                         output_subset=subsets.Range(output_ndrange),
+                         index_memlets=tuple(index_memlets),
+                         index_extents=tuple(index_extents))
+
+
+def index_expressions(access: AdvancedIndex) -> List[str]:
+    """
+    The tasklet index expression per index connector.
+
+    NumPy wraps a negative index entry (``ind = [-1]`` reads the last element);
+    the emitted tasklet indexes the base pointer directly, so without a wrap a
+    negative entry reads out of bounds. Whether to pay for the wrap follows the
+    same configuration entry scalar indices already use
+    (``frontend.runtime_negative_indices``, default off), so the default path
+    stays byte-identical.
+
+    An index array's entries are runtime data, so unlike
+    ``memlet_parser._wrap_scalar_index`` there is no sign to prove and no
+    symbolic form to emit: the wrap goes into the tasklet body, written as a
+    conditional expression because ``%`` in tasklet code becomes C++'s
+    truncating modulo rather than Python's.
+    """
+    connectors = [f'__inp{position}' for position in range(len(access.index_memlets))]
+    if not Config.get_bool('frontend', 'runtime_negative_indices'):
+        return connectors
+    return [
+        f'({connector} + {extent} if {connector} < 0 else {connector})'
+        for connector, extent in zip(connectors, access.index_extents)
+    ]
 
 
 def emit_gather(target: DataAccess, access: AdvancedIndex, statement: ast.stmt, state: LoweringState) -> None:
@@ -191,7 +246,7 @@ def emit_gather(target: DataAccess, access: AdvancedIndex, statement: ast.stmt, 
     target container."""
     line = getattr(statement, 'lineno', 0)
     connectors = [f'__inp{i}' for i in range(len(access.index_memlets))]
-    code = f'__out = __arr[{", ".join(connectors)}]'
+    code = f'__out = __arr[{", ".join(index_expressions(access))}]'
 
     in_memlets = {'__arr': Memlet(data=access.container, subset=access.base_subset, volume=1)}
     for connector, memlet in zip(connectors, access.index_memlets):
@@ -238,7 +293,7 @@ def emit_scatter(access: AdvancedIndex,
         in_memlets[connector] = Memlet(data=operand.container, subset=_value_subset(operand, access), volume=1)
 
     out_memlets = {'__arr': Memlet(data=access.container, subset=access.base_subset, volume=1, wcr=wcr)}
-    tasklet_code = f'__arr[{", ".join(index_connectors)}] = {code}'
+    tasklet_code = f'__arr[{", ".join(index_expressions(access))}] = {code}'
 
     parameters = list(access.map_ranges)
     map_node = nodes.MapEntry(
@@ -575,114 +630,50 @@ def _target_subset(target: DataAccess, access: AdvancedIndex) -> subsets.Range:
 
     The target's own subset is authoritative for placement (``B[0:3] = A[ind]``
     writes into ``B`` at an offset), so the result ranges are offset by the
-    target's start in each non-degenerate dimension.
+    target's start in each surviving dimension.
+
+    Both sides are laid out by an :class:`~...semantics.indexing.IndexPlan`, so
+    result axis *i* of the access lands on result axis *i* of the target.
+    Matching them by walking the target's subset and skipping degenerate
+    dimensions instead got this wrong as soon as the result contained a
+    ``newaxis``: the size-1 entry was skipped on the target side but still
+    consumed a position on the access side, shifting every axis after it.
     """
     result = list(access.output_subset.ranges)
-    ranges = []
-    result_index = 0
-    for start, end, step in target.subset.ranges:
-        if start == end:
-            ranges.append((start, end, 1))
+    if target.plan is None:
+        # Unmodeled target: the previous positional matching over
+        # non-degenerate dimensions is all that is available.
+        ranges, result_index = [], 0
+        for start, end, step in target.subset.ranges:
+            if start == end:
+                ranges.append((start, end, 1))
+            elif result_index >= len(result):
+                ranges.append((start, end, step))
+            else:
+                offset = result[result_index][0]
+                ranges.append((start + offset * step, start + offset * step, 1))
+                result_index += 1
+        return subsets.Range(ranges)
+
+    layout = target.plan.result_layout()
+    # Right-align, as NumPy does when the value has fewer axes than the target.
+    alignment = len(layout) - len(result)
+    ranges: List[Optional[Tuple]] = [None] * len(target.subset.ranges)
+    for position, entry in enumerate(layout):
+        if entry.kind != SOURCE:
             continue
-        if result_index >= len(result):
-            ranges.append((start, end, step))
+        start, end, step = target.subset.ranges[entry.axis]
+        source = position - alignment
+        if source < 0:
+            ranges[entry.axis] = (start, end, step)  # Broadcast across this axis
             continue
-        offset, _, _ = result[result_index]
-        ranges.append((start + offset * step, start + offset * step, 1))
-        result_index += 1
+        offset = result[source][0]
+        index = start + offset * step
+        ranges[entry.axis] = (index, index, 1)
+    for axis, (start, _, _) in enumerate(target.subset.ranges):
+        if ranges[axis] is None:
+            ranges[axis] = (start, start, 1)  # Dropped by the target's subscript
     return subsets.Range(ranges)
-
-
-def _basic_shape_marks(expr: MemletExpr, node: ast.expr) -> List[Optional[Any]]:
-    """
-    The result shape with every advanced-indexed dimension marked ``None``.
-
-    Once any advanced index is present, a *scalar*-indexed dimension is marked
-    too: NumPy drops it from the result, which is why ``A[ind, 4]`` has one
-    fewer dimension than ``A[ind, 4:5]``.
-
-    Which non-advanced dimensions count as "scalar-indexed" is decided from
-    the ORIGINAL subscript's AST (:func:`~...access.kept_dimensions`, shared
-    with basic indexing's own view-binding shape computation) rather than
-    from whether the resolved subset happens to have a size-1 extent: a
-    dimension that is naturally size 1 (e.g. left over from an earlier
-    slice on the base array) but was never explicitly given an integer
-    index in THIS subscript must stay kept, and a plain ``start == end``
-    check on the resolved range cannot tell the two apart. Verified wrong
-    the range-based way: ``A[:, 1:2][indarr]`` silently dropped the size-1
-    slice dimension instead of keeping it.
-    """
-    from dace.frontend.python.nextgen.lowering.access import kept_dimensions
-
-    marks: List[Optional[Any]] = [
-        size if dimension not in index_arrays(expr) else None for dimension, size in enumerate(expr.subset.size())
-    ]
-    if index_arrays(expr):
-        kept = kept_dimensions(node.slice, len(marks))
-        if kept is not None:
-            marks = [mark if kept[dimension] else None for dimension, mark in enumerate(marks)]
-        else:
-            # Not AST-modelable (should not normally be reachable here):
-            # fall back to the previous, imprecise range-based heuristic
-            # rather than raising, matching this function's total contract.
-            marks = [None if start == end else size for size, (start, end, _) in zip(marks, expr.subset.ndrange())]
-    return marks
-
-
-def _place_advanced_chunk(shape_marks: List[Optional[Any]],
-                          new_axes: Sequence[int],
-                          output_ndrange: Optional[List[Optional[Tuple[Any, Any, Any]]]] = None):
-    """
-    Decide where the broadcast index shape lands in the result and collapse the
-    marked dimensions down to a single placeholder.
-
-    NumPy keeps the advanced result in place when the advanced indices form one
-    contiguous run, and moves it to the front otherwise -- the rule that makes
-    ``A[:, ind, :]`` differ from ``A[ind, :, ind]``.
-
-    :return: ``(shape_marks, position)``, or ``(shape_marks, output_ndrange,
-             position)`` when an output range list is threaded through.
-    """
-    chunks = [
-        dimension for dimension, size in enumerate(shape_marks)
-        if size is None and (dimension == 0 or shape_marks[dimension - 1] is not None)
-    ]
-    if not chunks:
-        raise ValueError('advanced chunk placement requires at least one array-indexed dimension')
-    prefix = len(chunks) > 1
-    if prefix:
-        shape_marks = [None] + [size for size in shape_marks if size is not None]
-        if output_ndrange is not None:
-            output_ndrange = [None] + [rng for rng in output_ndrange if rng is not None]
-        position = 0
-    else:
-        position = chunks[0]
-
-    for new_axis in reversed(list(new_axes)):
-        if prefix:
-            shape_marks.insert(new_axis + 1, 1)
-            if output_ndrange is not None:
-                output_ndrange.insert(new_axis + 1, (0, 0, 1))
-        else:
-            shape_marks.insert(new_axis, 1)
-            if output_ndrange is not None:
-                output_ndrange.insert(new_axis, (0, 0, 1))
-            if new_axis <= position:
-                position += 1
-
-    # Contract a run of marked dimensions into the single placeholder the
-    # broadcast shape replaces.
-    kept = [
-        dimension for dimension, size in enumerate(shape_marks)
-        if size is not None or dimension == 0 or shape_marks[dimension - 1] is not None
-    ]
-    if output_ndrange is not None:
-        output_ndrange = [output_ndrange[dimension] for dimension in kept]
-    shape_marks = [shape_marks[dimension] for dimension in kept]
-
-    if output_ndrange is not None:
-        return shape_marks, output_ndrange, position
-    return shape_marks, position
 
 
 def _broadcast_index_shape(expr: MemletExpr, context, inference, node: ast.expr) -> Tuple[Any, ...]:
