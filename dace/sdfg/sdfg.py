@@ -2604,6 +2604,13 @@ class SDFG(ControlFlowRegion):
         ############################
         # DaCe Compilation Process #
 
+        # This is the SDFG instance that we will generate code for and will be returned
+        #  as the `sdfg` attribute of the compiled SDFG. All mutating operations must
+        #  be performed on it, not on `self`. If it is `None` then it means it was not
+        #  yet created, i.e. deepcopied from `self`. Note if it is not `None` then client
+        #  code can expect `load_external_nsdfgs()` was called on it.
+        sdfg: Optional[SDFG] = None
+
         # Content-verified module reuse (nanobind; compiler.nanobind_reuse_loaded,
         # default on): if THIS identity (build folder, name) is already loaded and
         # the loaded module was built from an SDFG with the same pre-codegen
@@ -2612,52 +2619,51 @@ class SDFG(ControlFlowRegion):
         # rename-and-rebuild below), never a wrong reuse; only an actual hash
         # collision between different contents could, which we accept everywhere.
         source_hash = None
-        if Config.get('compiler', 'interface') == 'nanobind' and \
-                Config.get_bool('compiler', 'nanobind_reuse_loaded'):
-            # hash_sdfg() deliberately strips 'instrument' at every level (it
-            # is a semantic content hash) - but instrumentation CHANGES the
-            # generated code, so the full instrumentation state is folded back
-            # into the reuse key (every element's value, in traversal order,
-            # so any toggle anywhere changes the key).
-            instr_sig = ','.join([self.instrument.name] + [
-                n.instrument.name for n, _ in self.all_nodes_recursive() if getattr(n, 'instrument', None) is not None
+        if Config.get('compiler', 'interface') == 'nanobind' and Config.get_bool('compiler', 'nanobind_reuse_loaded'):
+
+            # `hash_sdfg()` does not consider the instrumentation (at any level), but
+            #  we have to, because it leads to different code. However, for that we
+            #  have to make sure that all external nested SDFGs are loaded.
+            if sdfg is None:
+                sdfg = copy.deepcopy(self)
+                sdfg.load_external_nsdfgs()
+
+            instr_sig = ','.join([sdfg.instrument.name] + [
+                n.instrument.name for n, _ in sdfg.all_nodes_recursive() if getattr(n, 'instrument', None) is not None
             ])
-            source_hash = f'{self.hash_sdfg()}:{md5(instr_sig.encode("utf-8")).hexdigest()}'
+            source_hash = f'{sdfg.hash_sdfg()}:{md5(instr_sig.encode("utf-8")).hexdigest()}'
             module = sys.modules.get(compiler.nanobind_qualified_module_name(build_folder, self.name))
             if (module is not None and getattr(module, 'source_sdfg_hash', None) == source_hash
                     and os.path.isdir(build_folder)):
                 if return_program_handle:
-                    # Frozen-folder deepcopy: see the cached-binary path above.
-                    handle_sdfg = copy.deepcopy(self)
-                    handle_sdfg.build_folder = build_folder
-                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=handle_sdfg)
+                    sdfg.build_folder = build_folder  # See compile loop below.
+                    return compiler.load_precompiled_sdfg(folder=build_folder, sdfg=sdfg)
                 return
 
         if self.regenerate_code or not os.path.isdir(build_folder):
+
             # Clone SDFG as the other modules may modify its contents
-            sdfg = copy.deepcopy(self)
-            # Bake the pre-codegen content hash into the generated module (the
-            # copy is mutated by codegen, so its later hash would never match a
-            # future compile of the unchanged original).
-            sdfg._source_sdfg_hash = source_hash
+            if sdfg is None:
+                sdfg = copy.deepcopy(self)
+                sdfg.load_external_nsdfgs()
+
+            # Attach the original sdfg hash to the SDFG, such that the nanobind bindings
+            #  generator can include it in the bindings.
+            # TODO(phimuell): It should not be a property, but we should come up with a
+            #   better way to pass the value to the generator.
+            nanobind_interface = Config.get('compiler', 'interface') == 'nanobind'
+            if nanobind_interface and source_hash is not None:
+                sdfg._source_sdfg_hash = source_hash
 
             # Fix the build folder name on the copied SDFG to avoid it changing if the
-            #  codegen modifies the SDFG (thereby changing its hash). This must happen
-            #  HERE, not after the rename loop: `build_folder` was derived from `self`
-            #  and already used by the cached-binary check above, and `to_json()` is
-            #  NOT fully deterministic, so re-deriving it from the copy could split
-            #  the cache probe from the compile destination under `cache=hash`; and
-            #  the loop's first collision probe must check this original folder. The loop then un-freezes it per rename
-            #  candidate - that is not undoing this line, it changes WHICH folder each
-            #  candidate probes - and the result is frozen again after the loop.
+            #  codegen modifies the SDFG (thereby changing its hash, only relevant for
+            #  `cache=hash` mode; note due to indeterminism in `hash_sdfg()` this might
+            #  not be guaranteed). This must happen here, not after the rename loop, to
+            #  ensure that `self.build_folder` and `compiled_sdfg.sdfg.build_folder`
+            #  are the same.
             sdfg.build_folder = build_folder
 
-            # Ensure external nested SDFGs are loaded.
-            for _ in sdfg.all_sdfgs_recursive(load_ext=True):
-                pass
-
             # Rename SDFG to avoid runtime issues with clashing names
-            nanobind_interface = Config.get('compiler', 'interface') == 'nanobind'
             if nanobind_interface and sdfg.is_loaded(folder_mode=folder_mode):
                 collision_mode = Config.get('compiler', 'nanobind_name_collision')
                 assert collision_mode in ('rename', 'error'), \
@@ -2666,12 +2672,12 @@ class SDFG(ControlFlowRegion):
                     raise ValueError(f"SDFG name '{sdfg.name}' is already loaded in this process and "
                                      "compiler.nanobind_name_collision is set to 'error'.")
 
-            # An explicitly set build folder behaves like `cache` set to `single`,
-            #  pinned to a path: a collision-renamed program builds in place inside it.
-            #  The rename keeps the name-carrying files apart (the sources and the
-            #  compiled extension), but the folder-level metadata - `program.sdfgz`,
-            #  `include/hash.h`, the `dace_files.csv`/`dace_environments.csv` lists
-            #  and the CMake state - is overwritten by the renamed program.
+            # An explicitly set build folder behaves like `cache` set to `single` and
+            #  an explicitly set `default_build_folder`. Thus a collision renamed
+            #  program builds _in place_ inside the build folder.
+            #  The rename just keeps the name-carrying files, sources and the compiled
+            #  extension, apart. However, the folder-level metadata, most importantly
+            #  `program.sdfgz`, `include/hash.h` and the CMake state, are overwritten!
 
             folder_was_explicit = self._build_folder is not None
             index = 0
@@ -2679,16 +2685,12 @@ class SDFG(ControlFlowRegion):
                 sdfg.name = f'{self.name}_{index}'
                 index += 1
                 if nanobind_interface and not folder_was_explicit:
-                    # Re-derive the folder from the candidate name and freeze it
-                    #  immediately, so the probe checks the folder this candidate
-                    #  would actually build into (probe == destination; a probe of
-                    #  the original folder could exit the loop at a name whose own
-                    #  folder holds a loaded, now-stale module). Deriving exactly
-                    #  ONCE per candidate matters: `to_json()` is not fully
-                    #  deterministic, so under `cache=hash` repeated derivation
-                    #  could probe one folder and later build into another. The
-                    #  ctypes path keeps the upstream in-place semantics, hence
-                    #  the interface guard.
+                    # If `self` has an explicitly set `build_folder` then it will build
+                    #  inplace inside the folder and preserve the ctypes behaviour. We
+                    #  do this because we assume that a user who does this knows what
+                    #  they do. In case it was not explicitly set (on `self`) we must
+                    #  now rederive it. This is to account for the fact that it depends
+                    #  on the name. However for that we need to first clear it.
                     sdfg._build_folder = None
                     sdfg.build_folder = sdfg.build_folder
 
@@ -2726,9 +2728,9 @@ class SDFG(ControlFlowRegion):
         else:
             # The code was already generated, just load the program folder
             program_folder = build_folder
-            # Frozen-folder deepcopy: the handle's `sdfg` is isolated from
-            #  `self` on this path too (see the cached-binary path above).
-            sdfg = copy.deepcopy(self)
+            if sdfg is None:
+                sdfg = copy.deepcopy(self)
+                sdfg.load_external_nsdfgs()
             sdfg.build_folder = build_folder
 
         # Compile the code and get the shared library path
@@ -3186,6 +3188,11 @@ class SDFG(ControlFlowRegion):
                         expanded_something = True
             if expanded_something:
                 states.append(state)  # Nodes have changed. Check state again
+
+    def load_external_nsdfgs(self) -> "SDFG":
+        for _ in self.all_sdfgs_recursive(load_ext=True):
+            pass
+        return self
 
     def generate_code(self):
         """ Generates code from this SDFG and returns it.

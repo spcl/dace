@@ -641,6 +641,37 @@ def test_dependency_change_same_edge(extra_state):
 
     a = np.zeros([1], np.int64)
     sdfg(a=a)
+    if a[0] != ref:
+        # Second-stage diagnostic: in every observed CI failure the structure
+        # above was byte-identical to a passing run, so the pass is exonerated
+        # and the fault lies in code generation or execution. Capture what
+        # codegen emits in THIS (failing) process state, then clear the
+        # expression caches (sympy's and dace.symbolic's lru_caches; several
+        # are keyed by sympy hash/eq, which ignores DaCe symbol dtype
+        # metadata) and re-emit: a non-empty diff proves cross-test cache
+        # poisoning of code generation and shows the poisoned lines.
+        import copy as _copy
+        import sympy as _sympy
+        from dace import symbolic as _symbolic
+
+        def _codegen_excerpt():
+            try:
+                code = _copy.deepcopy(sdfg).generate_code()[0].clean_code
+                return sorted({
+                    ln.strip()
+                    for ln in code.splitlines() if any(s in ln for s in ('i17', 'i18', 'i60', 'i61', 'cont'))
+                })
+            except Exception as exc:
+                return [f'<codegen failed: {exc!r}>']
+
+        before = _codegen_excerpt()
+        _sympy.core.cache.clear_cache()
+        for fn in (_symbolic.deserialize_symbolic, _symbolic._pystr_to_symbolic_cached, _symbolic.symstr,
+                   _symbolic.simplify, _symbolic._spickle, _symbolic._overapproximate):
+            fn.cache_clear()
+        after = _codegen_excerpt()
+        diag += (' ||| codegen excerpt (poisoned?): ' + ' ; '.join(before) + ' ||| lines changed by cache clear: ' +
+                 (' ; '.join(sorted(set(before) ^ set(after))) or '<none - codegen unaffected by cache state>'))
     assert a[0] == ref, diag
 
 

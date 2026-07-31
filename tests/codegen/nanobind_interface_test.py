@@ -328,6 +328,64 @@ def test_nanobind_interface_reuse_unchanged_module():
         assert c3.sdfg.name == f'{base_name}_0'
 
 
+def test_nanobind_interface_external_nested_sdfg():
+    """An SDFG that still carries an UNRESOLVED external nested SDFG
+    (``NestedSDFG.sdfg is None``; the content is only loaded from
+    ``ext_sdfg_path``) compiles, runs, and takes part in content reuse:
+    the reuse key is computed on a resolved deepcopy - ``to_json()``
+    cannot recurse into a missing nested SDFG, and ``self`` must stay
+    unresolved."""
+    import os
+    import tempfile
+
+    import sympy
+
+    from dace import symbolic
+
+    # The reuse assertions ride on hash_sdfg(); clear the known cross-test
+    # sympy cache pollution (see test_nanobind_interface_reuse_unchanged_module).
+    sympy.core.cache.clear_cache()
+    symbolic.deserialize_symbolic.cache_clear()
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        inner = dace.SDFG('nb_ext_inner')
+        inner.add_array('xin', [1], dace.float64)
+        inner.add_array('xout', [1], dace.float64)
+        istate = inner.add_state()
+        itask = istate.add_tasklet('inc', {'a'}, {'b'}, 'b = a + 1')
+        istate.add_edge(istate.add_read('xin'), None, itask, 'a', dace.Memlet('xin[0]'))
+        istate.add_edge(itask, 'b', istate.add_write('xout'), None, dace.Memlet('xout[0]'))
+
+        fd, filename = tempfile.mkstemp(suffix='.sdfg')
+        try:
+            inner.save(filename)
+
+            outer = dace.SDFG('nb_ext_outer')
+            outer.add_array('A', [1], dace.float64)
+            outer.add_array('B', [1], dace.float64)
+            state = outer.add_state()
+            nsdfg = state.add_nested_sdfg(None, {'xin'}, {'xout'}, name='nb_ext_inner', external_path=filename)
+            state.add_edge(state.add_read('A'), None, nsdfg, 'xin', dace.Memlet('A[0]'))
+            state.add_edge(nsdfg, 'xout', state.add_write('B'), None, dace.Memlet('B[0]'))
+
+            a = np.array([2.0])
+            b = np.zeros(1)
+            outer(A=a, B=b)
+            assert b[0] == 3.0
+            # The caller's object stays unresolved (only copies are loaded).
+            assert nsdfg.sdfg is None
+
+            # The hash rides on the resolved copy, so an unchanged external
+            # SDFG reuses the loaded module (no rename, no rebuild).
+            c1 = outer.compile()
+            c2 = outer.compile()
+            assert c2.sdfg.name == outer.name
+            assert c2.module is c1.module
+        finally:
+            os.close(fd)
+            os.unlink(filename)
+
+
 def test_nanobind_interface_handle_sdfg_isolated():
     """The handle's ``sdfg`` is isolated from the caller's object on EVERY
     compile() return path - freshly built, content-reuse, use_cache
