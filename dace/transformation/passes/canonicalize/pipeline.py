@@ -592,7 +592,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # statements -- replicate a conditional / gather-scatter NestedSDFG per
     # independent output so it can fission later (SplitStatements subsumes the
     # former ConditionalComponentFission and also handles forward-read anti-deps).
-    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', SplitStatements())]
+    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])),
+          ('prep', SplitStatements(break_anti_dependence=break_anti_dependence))]
 
     # lift_reduce (GPU only): rewrite an accumulator loop into the "per-iteration
     # deltas into a buffer + Reduce libnode" form (while the reduction is still a Map --

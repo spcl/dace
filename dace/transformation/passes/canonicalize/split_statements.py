@@ -96,9 +96,13 @@ class SplitStatements(ppl.Pass):
     split_maps = properties.Property(
         dtype=bool, default=False, desc="Also fission a straight-line multi-global-output map into one map per output.")
 
-    def __init__(self, split_maps: bool = False) -> None:
+    break_anti_dependence = properties.Property(
+        dtype=bool, default=True, desc="Snapshot-rename a forward-read anti-dependence to unbind the statements.")
+
+    def __init__(self, split_maps: bool = False, break_anti_dependence: bool = True) -> None:
         super().__init__()
         self.split_maps = split_maps
+        self.break_anti_dependence = break_anti_dependence
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -119,10 +123,13 @@ class SplitStatements(ppl.Pass):
         if self.split_maps:
             count += self._split_map_bodies(sdfg)
         # (2) Forward-read anti-dependences: snapshot-rename the read-ahead so
-        #     LoopFission can distribute the loop into independent statements.
-        loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
-        for loop in loops:
-            count += self._snapshot_forward_reads(loop, sdfg)
+        #     LoopFission can distribute the loop into independent statements. Same
+        #     rewrite (and same whole-array copy cost) as BreakAntiDependence, so it
+        #     answers to the same knob -- otherwise turning the knob off still snapshots.
+        if self.break_anti_dependence:
+            loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+            for loop in loops:
+                count += self._snapshot_forward_reads(loop, sdfg)
         return count or None
 
     # ------------------------------------------------------------------
