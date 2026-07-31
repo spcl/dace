@@ -10,8 +10,6 @@ def iter_fields(node: ast_internal_classes.FNode):
     Yield a tuple of ``(fieldname, value)`` for each field in ``node._fields``
     that is present on *node*.
     """
-    if not hasattr(node, "_fields"):
-        a = 1
     for field in node._fields:
         try:
             yield field, getattr(node, field)
@@ -257,10 +255,7 @@ class CallExtractor(NodeTransformer):
         if hasattr(node, "subroutine"):
             if node.subroutine is True:
                 return self.generic_visit(node)
-        if not hasattr(self, "count"):
-            self.count = 0
-        else:
-            self.count = self.count + 1
+        self.count = self.count + 1
         tmp = self.count
 
         for i, arg in enumerate(node.args):

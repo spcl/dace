@@ -9,6 +9,7 @@ import functools
 import itertools
 import math
 import numbers
+import re
 import warnings
 
 import sympy as sp
@@ -369,9 +370,11 @@ def emit_memlet_reference(dispatcher: 'TargetDispatcher',
     # Register defined variable
     dispatcher.defined_vars.add(pointer_name, defined_type, typedef, allow_shadowing=True)
 
-    # NOTE: `expr` may only be a name or a sequence of names and dots. The latter indicates nested data and structures.
-    # NOTE: Since structures are implemented as pointers, we replace dots with arrows.
-    expr = expr.replace('.', '->')
+    # NOTE: A dot separating names indicates nested data and structures, and structures are
+    # implemented as pointers, so it becomes an arrow. Only a dot BETWEEN NAMES qualifies: `expr`
+    # ends in an index expression, so a decimal literal there was rewritten too, e.g.
+    # `&A[(0.5 * j)]` -> `&A[(0->5 * j)]`, which does not compile.
+    expr = re.sub(r'\.(?=[A-Za-z_])', '->', expr)
 
     return (typedef + ref, pointer_name, expr)
 
@@ -430,8 +433,7 @@ def ndcopy_to_strided_copy(
     """
 
     # Cannot degenerate tiled copies
-    # In the case where subset is of type Indices, there are no tile_sizes
-    if hasattr(subset, 'tile_sizes') and any(ts != 1 for ts in subset.tile_sizes):
+    if isinstance(subset, subsets.Range) and any(ts != 1 for ts in subset.tile_sizes):
         return None
 
     # If the copy is contiguous, the difference between the first and last
@@ -1304,7 +1306,7 @@ class StructInitializer(ExtNodeTransformer):
 
         # Find all struct types in SDFG
         for array in sdfg.arrays.values():
-            if array is None or not hasattr(array, "dtype"):
+            if array is None:
                 continue
             if isinstance(array.dtype, dace.dtypes.struct):
                 self._structs[array.dtype.name] = array.dtype

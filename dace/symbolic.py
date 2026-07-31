@@ -1061,8 +1061,14 @@ class int_floor(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return x // y
-        if y.is_Number and y == 1:
-            return x
+        if y.is_Number:
+            if y == 1:
+                return x
+            # Exact division is not a rounding operation at all -- return the quotient itself, so the
+            # expression stays comparable and simplifiable instead of hiding behind an int_floor node.
+            quotient = x / y
+            if quotient.is_integer:
+                return quotient
 
     def _eval_is_integer(self):
         return True
@@ -1088,6 +1094,15 @@ class int_ceil(sympy.Function):
         """
         if x.is_Number and y.is_Number:
             return sympy.ceiling(x / y)
+        if y.is_Number:
+            # Mirrors int_floor: dividing by 1 is a no-op. Without this an unpadded (alignment == 1)
+            # descriptor keeps an int_ceil(N, 1) that never folds back to N.
+            if y == 1:
+                return x
+            # Exact division has nothing to round up, so it is just the quotient.
+            quotient = x / y
+            if quotient.is_integer:
+                return quotient
 
     def _eval_is_integer(self):
         return True
@@ -1639,6 +1654,23 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         if len(node.ops) > 1 or len(node.comparators) > 1:
             raise NotImplementedError
         op = node.ops[0]
+
+        # `X == True/False` and `X != True/False` against a boolean literal. SymPy folds such a
+        # comparison to a constant whenever the other operand is not a Symbol -- e.g. an array access
+        # `A[i] != True` collapses to `True` (relational.py: "only Booleans can equal Booleans"),
+        # silently dropping the guard on serialization/re-parse. Rewrite to pure boolean logic
+        # instead: the operand is boolean here (a comparison to a truth literal implies it), so
+        # `X == True`/`X != False` -> `X` and `X != True`/`X == False` -> `Not(X)`. This never folds
+        # and survives round-tripping. Only fires for a literal True/False operand; ordinary
+        # comparisons (`A[i] < rlmin`, `x == 1`) are untouched.
+        if isinstance(op, (ast.Eq, ast.NotEq)):
+            for literal, other in ((node.left, node.comparators[0]), (node.comparators[0], node.left)):
+                if isinstance(literal, ast.Constant) and isinstance(literal.value, bool):
+                    visited = self.visit(other)
+                    if isinstance(op, ast.NotEq) == bool(literal.value):  # X != True or X == False
+                        visited = ast.Call(func=ast.Name(id='Not', ctx=ast.Load()), args=[visited], keywords=[])
+                    return ast.copy_location(visited, node)
+
         arguments = [node.left, node.comparators[0]]
 
         # Ensure constant values in boolean comparisons are interpreted als booleans.
