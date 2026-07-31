@@ -5,20 +5,26 @@ Python AST (CPA) subset defined in :mod:`~dace.frontend.python.nextgen.canonical
 
 Pass order matters and is fixed by :func:`default_passes`:
 
-1. :class:`DetectAccumulations` — annotate self-referential writes (``b = b + x``,
+1. :class:`RecognizeExplicitDataflow` — explicit-dataflow syntax (``with
+   dace.tasklet``, ``@dace.map``/``mapscope``/``consume``, ``with
+   dace.named``) to the corresponding canonical leaves. Runs first so tasklet
+   bodies are never rewritten by a later pass.
+2. :class:`DetectAccumulations` — annotate self-referential writes (``b = b + x``,
    ``b = x + b``) so conflict resolution has one marker to key off. Must
    precede ANF, which hoists the self-reference out of reach.
-2. :class:`DesugarStatements` — multi-target/chained assignments, ``AugAssign``,
+3. :class:`DesugarStatements` — multi-target/chained assignments, ``AugAssign``,
    ``AnnAssign``, loop ``else`` clauses, docstring removal.
-3. :class:`NormalizeLoops` — ``range`` calls to 3-argument form; complex
+4. :class:`NormalizeLoops` — ``range`` calls to 3-argument form; complex
    ``while`` tests to ``while True`` + conditional ``break`` (correct under
    ``break``/``continue`` because the test re-evaluates at the loop head).
-4. :class:`ANFTransform` — A-normal form: every compound subexpression is
+5. :class:`ANFTransform` — A-normal form: every compound subexpression is
    hoisted into a fresh single-assignment temporary, so all remaining
    expressions are at most depth-1 ("flat").
-5. :class:`MarkOpaque` — any statement still outside the CPA subset becomes an
+6. :class:`MarkOpaque` — any statement still outside the CPA subset becomes an
    explicit :class:`~dace.frontend.python.nextgen.canonical.cpa.OpaqueStmt`
    with precomputed input/output sets. This pass makes the stage total.
+7. :class:`BatchOpaque` — coalesce maximal runs of adjacent opaque markers into
+   one callback, chaining their input/output sets.
 """
 import ast
 import copy
@@ -703,6 +709,32 @@ class NormalizeLoops(_BodyTransformer):
         return self._recurse(statement)
 
 
+#: The expression fields :class:`ANFTransform` rewrites in place, per statement
+#: type. Used to restore a statement whose flattening is abandoned partway (see
+#: :func:`_expression_snapshot`). Statement bodies are deliberately absent: the
+#: hazard is always raised before ``_recurse`` runs, so nested statements are
+#: still untouched at that point.
+_ANF_REWRITTEN_FIELDS = {
+    ast.Assign: ('value', 'targets'),
+    ast.Expr: ('value', ),
+    ast.If: ('test', ),
+    ast.For: ('iter', ),
+    ast.Return: ('value', ),
+}
+
+
+def _expression_snapshot(statement: ast.stmt) -> List[Tuple[str, ast.AST]]:
+    """Deep-copy the expression fields ANF is about to rewrite in place."""
+    return [(field, copy.deepcopy(getattr(statement, field)))
+            for field in _ANF_REWRITTEN_FIELDS.get(type(statement), ()) if getattr(statement, field, None) is not None]
+
+
+def _restore_expressions(statement: ast.stmt, snapshot: List[Tuple[str, ast.AST]]) -> None:
+    """Undo the in-place rewrites recorded by :func:`_expression_snapshot`."""
+    for field, original in snapshot:
+        setattr(statement, field, original)
+
+
 class ANFTransform(_BodyTransformer):
     """
     Convert expressions to A-normal form: compound subexpressions are hoisted
@@ -720,6 +752,7 @@ class ANFTransform(_BodyTransformer):
         if isinstance(statement, CANONICAL_LEAVES) or isinstance(statement, _TERMINAL_STMTS):
             return statement
         hoisted: List[ast.stmt] = []
+        snapshot = _expression_snapshot(statement)
         try:
             if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
                 statement.value = self._flatten(statement.value, hoisted, level='flat')
@@ -751,6 +784,13 @@ class ANFTransform(_BodyTransformer):
             else:
                 self._recurse(statement)
         except _ShortCircuitHazard:
+            # Flattening rewrites subexpressions IN PLACE while accumulating
+            # ``hoisted``. Abandoning it here drops those assignments, so the
+            # rewrites that reference them must be undone as well -- otherwise
+            # the statement MarkOpaque wraps reads a temporary that nothing
+            # ever assigns (``x = f(a) + (b if c else d)`` left a callback
+            # body over an undefined ``__anf0``).
+            _restore_expressions(statement, snapshot)
             return statement  # Left non-canonical on purpose; MarkOpaque handles it
         return hoisted + [statement] if hoisted else statement
 
