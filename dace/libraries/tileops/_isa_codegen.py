@@ -498,6 +498,145 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
     )
 
 
+# Byte alignment the allocator guarantees for the base of an array, per storage class. The GPU
+# figure is the cudaMalloc/cudaMallocAsync contract (256 B); Register tiles are declared
+# DACE_ALIGN(64) by the CPU codegen that emits the device-function body. Anything else is unknown
+# and gets no assumption.
+_BASE_ALIGN_BYTES = {
+    dace.dtypes.StorageType.GPU_Global: 256,
+    dace.dtypes.StorageType.CPU_Pinned: 256,
+    dace.dtypes.StorageType.Register: 64,
+}
+
+
+def _enclosing_param_ranges(node, parent_state, parent_sdfg) -> dict:
+    """Map ``param -> (start, step)`` for every map scope enclosing ``node``.
+
+    Walks out through nested-SDFG boundaries, rewriting each level's params through the
+    ``symbol_mapping`` that connects them, so a param of an OUTER map is reported under the name
+    the INNER offset expression uses. A param whose range cannot be followed is simply absent,
+    which leaves it un-substituted and therefore not provably divisible.
+    """
+    from dace.sdfg.sdfg import SDFG
+
+    ranges, cur_node, state, sdfg = {}, node, parent_state, parent_sdfg
+    while state is not None:
+        entry = state.entry_node(cur_node)
+        while entry is not None:
+            for param, rng in zip(entry.map.params, entry.map.range):
+                ranges.setdefault(str(param), (rng[0], rng[2]))
+            entry = state.entry_node(entry)
+        nsdfg_node = sdfg.parent_nsdfg_node
+        if nsdfg_node is None:
+            break
+        # Names change across the boundary: an inner symbol equal to a bare outer symbol can keep
+        # that outer map's range, anything richer is not followed.
+        renamed = {}
+        for inner, outer in nsdfg_node.symbol_mapping.items():
+            outer_sym = str(dace.symbolic.pystr_to_symbolic(outer))
+            if outer_sym in ranges and str(inner) != outer_sym:
+                renamed[str(inner)] = ranges[outer_sym]
+        ranges.update(renamed)
+        cur_node, state = nsdfg_node, sdfg.parent
+        sdfg = sdfg.parent_sdfg
+        if not isinstance(sdfg, SDFG):
+            break
+    return ranges
+
+
+def _base_offset_is_visible(sdfg, name: str) -> bool:
+    """True if the memlet offset seen INSIDE ``sdfg`` is the whole offset from the allocation.
+
+    A nested SDFG is handed a pointer that its enclosing memlet may already have shifted -- the
+    body gets ``&A[N*i]`` and then indexes it by ``j`` alone. Reading only the inner subset would
+    then miss the ``N*i`` and claim an alignment the pointer does not have, so every enclosing
+    connection for this array has to start at element 0 for the inner view to be the whole story.
+    """
+    cur_sdfg, cur_name = sdfg, name
+    while cur_sdfg is not None:
+        nsdfg_node = cur_sdfg.parent_nsdfg_node
+        state = cur_sdfg.parent
+        if nsdfg_node is None or state is None:
+            return True
+        edges = ([e for e in state.in_edges(nsdfg_node) if e.dst_conn == cur_name] +
+                 [e for e in state.out_edges(nsdfg_node) if e.src_conn == cur_name])
+        if not edges:
+            return False
+        outer_names = set()
+        for e in edges:
+            if e.data.subset is None:
+                return False
+            if any(dace.symbolic.simplify(s) != 0 for s in e.data.subset.min_element()):
+                return False
+            outer_names.add(e.data.data)
+        if len(outer_names) != 1:
+            return False
+        cur_sdfg, cur_name = cur_sdfg.parent_sdfg, outer_names.pop()
+    return True
+
+
+def _array_align_bytes(node, parent_state, parent_sdfg, edge) -> int:
+    """Byte alignment of the ARRAY-side pointer on ``edge`` that the backend may ASSUME.
+
+    The tile side of a load/store is always DACE_ALIGN(64); the array side is a base pointer plus
+    the memlet's linear element offset, so it is only as aligned as that offset is divisible. Each
+    enclosing map param is replaced by ``start + step*k`` (``k`` a fresh non-negative symbol) and
+    the offset is tested for divisibility by the chunk element count.
+
+    A symbolic row stride is exactly what blocks this: ``A[i, j]`` on an ``N``-column array offsets
+    by ``N*i + j``, whose parity is unknown, so it correctly yields the element alignment and the
+    caller keeps the scalar path. Returns the element size when nothing wider is provable.
+    """
+    arr = parent_sdfg.arrays[edge.data.data]
+    elem_bytes = arr.dtype.bytes
+    # A view starts wherever its source says, and a start_offset shifts the base out from under
+    # the allocator's guarantee.
+    if isinstance(arr, dace.data.View) or arr.start_offset != 0:
+        return elem_bytes
+    if not _base_offset_is_visible(parent_sdfg, edge.data.data):
+        return elem_bytes
+    base_bytes = _BASE_ALIGN_BYTES.get(arr.storage, 0)
+    if base_bytes < elem_bytes:
+        return elem_bytes
+    subset = edge.data.subset
+    if subset is None:
+        return elem_bytes
+    offset = sum(s * st for s, st in zip(subset.min_element(), arr.strides))
+    offset = dace.symbolic.pystr_to_symbolic(offset)
+    ranges = _enclosing_param_ranges(node, parent_state, parent_sdfg)
+    for idx, (param, (start, step)) in enumerate(ranges.items()):
+        sym = dace.symbolic.pystr_to_symbolic(param)
+        if sym not in offset.free_symbols:
+            continue
+        k = dace.symbolic.symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
+        offset = offset.subs(sym, dace.symbolic.pystr_to_symbolic(start) + dace.symbolic.pystr_to_symbolic(step) * k)
+    for chunk in (8, 4, 2):
+        if chunk * elem_bytes > base_bytes:
+            continue
+        if dace.symbolic.simplify(offset % chunk) == 0:
+            return chunk * elem_bytes
+    return elem_bytes
+
+
+def _align_template_arg(node, parent_state, parent_sdfg, edge, backend: str) -> str:
+    """``", <bytes>"`` to append to a tile_load/tile_store template list, or ``""``.
+
+    Only the CUDA header takes the trailing ``Align`` parameter, and only fp16 has a widened path
+    behind it, so every other backend and dtype keeps the exact 3-argument call it emitted before.
+
+    ``cuda_warp`` is excluded even though it reuses this header: there a tile is split across the
+    lanes of a warp and each lane loads its own fragment, so the per-lane base is not the memlet
+    offset this analysis reads and its alignment has not been established.
+    """
+    if backend != "cuda":
+        return ""
+    arr = parent_sdfg.arrays[edge.data.data]
+    if arr.dtype != dace.float16:
+        return ""
+    align = _array_align_bytes(node, parent_state, parent_sdfg, edge)
+    return f", {align}" if align > arr.dtype.bytes else ""
+
+
 def _k1_array_stride(node, parent_sdfg, edge, dims_prop) -> str:
     """Return the linear element stride of the K=1 tile dim into the array on
     ``edge`` (``dim_strides`` coefficient * the array's own stride along the
@@ -653,7 +792,8 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     stride = _k1_array_stride(node, parent_sdfg, src_edge, node.src_dims)
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
-    call = f"dace::tileops::tile_load<{dst_dtype}, {vlen}, {masked}>(_dst, _src, {mask_arg}, {stride});"
+    align = _align_template_arg(node, parent_state, parent_sdfg, src_edge, suffix)
+    call = f"dace::tileops::tile_load<{dst_dtype}, {vlen}, {masked}{align}>(_dst, _src, {mask_arg}, {stride});"
     inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
     return nodes.Tasklet(
         label=f"{node.label}_{suffix}",
@@ -728,7 +868,8 @@ def make_store_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
     stride = _k1_array_stride(node, parent_sdfg, dst_edge, node.dst_dims)
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
-    call = f"dace::tileops::tile_store<{dst_dtype}, {vlen}, {masked}>(_dst, _src, {mask_arg}, {stride});"
+    align = _align_template_arg(node, parent_state, parent_sdfg, dst_edge, suffix)
+    call = f"dace::tileops::tile_store<{dst_dtype}, {vlen}, {masked}{align}>(_dst, _src, {mask_arg}, {stride});"
     inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
     return nodes.Tasklet(
         label=f"{node.label}_{suffix}",
