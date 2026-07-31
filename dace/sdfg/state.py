@@ -2698,7 +2698,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         ControlFlowBlock.__init__(self, label, sdfg, parent)
 
         self._labels: Set[str] = set()
-        self._start_block: Optional[int] = None
+        # Held as the block itself, not its position: removing a node shifts every position after it,
+        # which would silently re-point the start block at a different block.
+        self._start_block: Optional[ControlFlowBlock] = None
         self._cached_start_block: Optional[ControlFlowBlock] = None
         self._cfg_list: List['ControlFlowRegion'] = [self]
 
@@ -2957,8 +2959,16 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             start_block = is_start_state
 
         if start_block:
-            self.start_block = len(self.nodes()) - 1
+            self._start_block = node
             self._cached_start_block = node
+
+    def remove_node(self, node: ControlFlowBlock):
+        # The region owns this invariant, so callers never have to re-pin the start block by hand.
+        if node is self._start_block:
+            self._start_block = None
+        if node is self._cached_start_block:
+            self._cached_start_block = None
+        super().remove_node(node)
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
@@ -3151,7 +3161,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         graph_json.update(block_json)
 
         graph_json['cfg_list_id'] = int(self.cfg_id)
-        graph_json['start_block'] = self._start_block
+        graph_json['start_block'] = self.node_id(self._start_block) if self._start_block is not None else None
 
         return graph_json
 
@@ -3182,8 +3192,8 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             e = dace.serialize.from_json(e, context=context)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
-        if 'start_block' in json_obj:
-            ret._start_block = json_obj['start_block']
+        if json_obj.get('start_block') is not None:
+            ret._start_block = nodelist[int(json_obj['start_block'])]
 
         return ret
 
@@ -3220,7 +3230,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             return source_nodes[0]
         # If the starting block is ambiguous allow manual override.
         if self._start_block is not None:
-            self._cached_start_block = self.node(self._start_block)
+            self._cached_start_block = self._start_block
             return self._cached_start_block
         raise ValueError('Ambiguous or undefined starting block for ControlFlowGraph, '
                          'please use "is_start_block=True" when adding the '
@@ -3234,7 +3244,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         """
         if block_id < 0 or block_id >= self.number_of_nodes():
             raise ValueError('Invalid state ID')
-        self._start_block = block_id
+        self._start_block = self.node(block_id)
         self._cached_start_block = None
 
 

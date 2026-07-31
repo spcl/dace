@@ -565,13 +565,15 @@ class SDFG(ControlFlowRegion):
         memo[id(self)] = result
         for k, v in self.__dict__.items():
             # Skip derivative attributes and GUID
-            if k in ('_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg', '_parent_nsdfg_node',
-                     '_cfg_list', '_transformation_hist', 'guid'):
+            if k in ('_start_block', '_cached_start_block', '_edges', '_nodes', '_parent', '_parent_sdfg',
+                     '_parent_nsdfg_node', '_cfg_list', '_transformation_hist', 'guid'):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
         # Copy edges and nodes
         result._edges = copy.deepcopy(self._edges, memo)
         result._nodes = copy.deepcopy(self._nodes, memo)
+        # Both name a block, so they are copied with the nodes to land on the copies rather than the originals.
+        result._start_block = copy.deepcopy(self._start_block, memo)
         result._cached_start_block = copy.deepcopy(self._cached_start_block, memo)
         # Copy parent attributes
         result._parent = memo.get(id(self._parent))
@@ -745,8 +747,8 @@ class SDFG(ControlFlowRegion):
             e = dace.serialize.from_json(e, context=context)
             ret.add_edge(nodelist[int(e.src)], nodelist[int(e.dst)], e.data)
 
-        if 'start_block' in json_obj:
-            ret._start_block = json_obj['start_block']
+        if json_obj.get('start_block') is not None:
+            ret._start_block = nodelist[int(json_obj['start_block'])]
 
         if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj['source_files'])
@@ -1391,11 +1393,6 @@ class SDFG(ControlFlowRegion):
     @parent_nsdfg_node.setter
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
-
-    def remove_node(self, node: SDFGState):
-        if node is self._cached_start_block:
-            self._cached_start_block = None
-        return super().remove_node(node)
 
     def states(self):
         """ Returns the states in this SDFG, recursing into state scope blocks. """

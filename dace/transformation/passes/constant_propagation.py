@@ -500,7 +500,9 @@ class ConstantPropagation(ppl.Pass):
         # resulting overlap forms the 'post constants' of this CFG.
         post_consts = {}
         post_consts_intersection = None
-        sinks = cfg.sink_nodes()
+        # Only the sinks the block order actually reached: control can never leave this CFG through a
+        # sink nothing reaches, so it is not an exit path and contributes nothing to what holds on exit.
+        sinks = [s for s in cfg.sink_nodes() if s in out_const_dict]
         for sink in sinks:
             if post_consts_intersection is None:
                 post_consts_intersection = set(out_const_dict[sink].keys())

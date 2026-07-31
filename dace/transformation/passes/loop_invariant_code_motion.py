@@ -253,8 +253,7 @@ def _move_region_before(parent: ControlFlowRegion, loop: Any, child: Any) -> int
         loop.add_edge(in_edges[0].src, successor, InterstateEdge())
     new_start = successor if was_start else start_before
     loop.remove_node(child)
-    # ``_start_block`` is a node INDEX and ``remove_node`` shifts every index above it, so re-pin it
-    # on the block object instead of leaving a stale index (and stale cache) behind.
+    # Removing the body's entry clears the region's start block, so name its replacement.
     if loop.number_of_nodes() > 0:
         loop.start_block = loop.node_id(new_start)
 
