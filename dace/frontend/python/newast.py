@@ -4421,8 +4421,8 @@ class ProgramVisitor(ExtNodeVisitor):
         func: Callable[..., Any]
         _, func, _ = self.closure.callbacks[funcname]
 
-        skip_args = getattr(node, 'skip_args', [])
-        skip_kwargs = getattr(node, 'skip_keywords', [])
+        skip_args = node.skip_args
+        skip_kwargs = node.skip_keywords
 
         # Infer the type of the function arguments and return value
         argtypes = []
@@ -4481,19 +4481,19 @@ class ProgramVisitor(ExtNodeVisitor):
             for child in ast.iter_child_nodes(anode):
                 if child is node:
                     parent = anode
-                    parent_is_toplevel = getattr(anode, 'toplevel', False)
+                    parent_is_toplevel = anode.toplevel
                     break
                 if hasattr(child, 'func') and hasattr(child.func, 'oldnode'):
                     # Check if the AST node is part of a failed parse
                     if child.func.oldnode is node:
                         parent = anode
-                        parent_is_toplevel = getattr(anode, 'toplevel', False)
+                        parent_is_toplevel = anode.toplevel
                         break
                 if hasattr(child, 'elts'):  # Tuples, e.g., in multiple return values
                     for subchild in child.elts:
                         if subchild is node:
                             parent = anode
-                            parent_is_toplevel = getattr(anode, 'toplevel', False)
+                            parent_is_toplevel = anode.toplevel
                             break
                     if parent is not None:
                         break
