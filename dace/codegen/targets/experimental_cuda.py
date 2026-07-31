@@ -884,6 +884,7 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
 DACE_EXPORTED int __dace_init_experimental_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_experimental_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
 
 {other_globalcode}
 
@@ -942,6 +943,15 @@ int __dace_exit_experimental_cuda({sdfg_state_name} *__state) {{
     }}
 
     delete __state->gpu_context;
+    return __err;
+}}
+
+// The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
+// process, so it is not a reliable carrier for this SDFG's failures. Hand back what the generated
+// code recorded instead, and clear it so a failure is delivered exactly once.
+int __dace_gpu_last_error({sdfg_state_name} *__state) {{
+    int __err = static_cast<int>(__state->gpu_context->lasterror);
+    __state->gpu_context->lasterror = (gpuError_t)0;
     return __err;
 }}
 
