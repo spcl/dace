@@ -247,20 +247,17 @@ def scope_misses(state: SDFGState,
 
             update_map(op_in_map, get_uuid(node, state), map_misses)
             scope_misses += map_misses
+        elif isinstance(node, nd.AccessNode):
+            # A copy between two access nodes moves data without a tasklet, so the tasklet case below
+            # does not see it, yet it still touches memory. Only element-wise copies are accounted:
+            # _edge_miss models a single cache line touch, which says nothing about a bulk copy.
+            for e in state.out_edges(node):
+                if isinstance(e.dst, nd.AccessNode) and not e.data.is_empty() and e.data.subset.num_elements() == 1:
+                    scope_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
         elif isinstance(node, nd.Tasklet):
             tasklet_misses = 0
-            # Account each tasklet memory access. If a connected node is a transient written/read by a
-            # single access node, follow that edge so the access maps to the correct cache line.
-            for e in state.in_edges(node):
-                src_in = state.in_edges(e.src)
-                if len(src_in) == 1 and isinstance(src_in[0].src, nd.AccessNode):
-                    e = src_in[0]
-                tasklet_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
-
-            for e in state.out_edges(node):
-                dst_out = state.out_edges(e.dst)
-                if len(dst_out) == 1 and isinstance(dst_out[0].src, nd.AccessNode):
-                    e = dst_out[0]
+            # Account each tasklet memory access.
+            for e in state.in_edges(node) + state.out_edges(node):
                 tasklet_misses += _edge_miss(e, clt, array_names, mapping, symbols, stack, C)
 
             scope_misses += tasklet_misses
