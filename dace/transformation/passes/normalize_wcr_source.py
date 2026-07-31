@@ -168,8 +168,7 @@ class NormalizeWCRSource(ppl.Pass):
             return False
         return bool(self._enclosing_map_params(state, e, scope) & subsyms)
 
-    def _folds_into_multi_element_connector(self, src: nodes.NestedSDFG, src_conn: str,
-                                            priv_desc: data.Data) -> bool:
+    def _folds_into_multi_element_connector(self, src: nodes.NestedSDFG, src_conn: str, priv_desc: data.Data) -> bool:
         """True if ``src``'s body WCR-accumulates into a MULTI-ELEMENT output connector
         ``src_conn`` instead of plain-writing it -- i.e. the connector is itself an array
         accumulator that the body only partially folds into.
@@ -192,14 +191,54 @@ class NormalizeWCRSource(ppl.Pass):
         writes ``oc``). Subsets are deliberately not consulted: propagation reports MAY-write
         over-approximations (the ``MapExit -> AccessNode(oc)`` edge covers ``0:N`` even when
         the body only touches ``beg:end``), so the presence of the WCR is the decisive fact.
+
+        A WCR is not the only way to fold: once the ``+=`` has been lowered to an explicit
+        ``augassign`` tasklet the accumulation is a plain read-modify-write of the connector
+        (``oc[k] = oc[k] + v``) with no WCR anywhere in the body. Reading the connector is
+        therefore decisive on its own -- the ``_wcr_priv`` buffer is never seeded with the live
+        value, so re-homing such a connector onto it reads uninitialized memory.
+
+        The search descends into nested SDFGs (:meth:`_accumulates_into`), following the
+        connector binding down: once the body is a loop, the accumulation sits one level
+        further in the ``loop_body`` NestedSDFG and ``src.sdfg``'s own states may carry
+        neither the WCR nor the read.
         """
         if isinstance(priv_desc, data.Scalar):
             return False
-        for ist in src.sdfg.all_states():
+        return self._accumulates_into(src.sdfg, {src_conn})
+
+    @classmethod
+    def _accumulates_into(cls, sd: SDFG, targets: Set[str]) -> bool:
+        """True if ``sd`` -- or a NestedSDFG below it, reached by following the connector
+        binding -- folds into one of ``targets`` instead of plain-writing it: either a WCR
+        edge accumulating onto the name, or any read of it (an in-place read-modify-write).
+
+        Membership-only: the answer is an order-independent OR over the subtree.
+        """
+        for ist in sd.all_states():
             for e in ist.edges():
-                if e.data is None or e.data.wcr is None:
+                if e.data is None or e.data.is_empty():
                     continue
-                if e.data.data == src_conn or (isinstance(e.dst, nodes.AccessNode) and e.dst.data == src_conn):
+                if e.data.wcr is not None and (e.data.data in targets or
+                                               (isinstance(e.dst, nodes.AccessNode) and e.dst.data in targets)):
+                    return True
+                if isinstance(e.src, nodes.AccessNode) and e.src.data in targets:
+                    return True
+            for node in ist.nodes():
+                if not isinstance(node, nodes.NestedSDFG):
+                    continue
+                inner: Set[str] = set()
+                for oe in ist.out_edges(node):
+                    if oe.src_conn and oe.data is not None and (oe.data.data in targets or
+                                                                (isinstance(oe.dst, nodes.AccessNode)
+                                                                 and oe.dst.data in targets)):
+                        inner.add(oe.src_conn)
+                for ie in ist.in_edges(node):
+                    if ie.dst_conn and ie.data is not None and (ie.data.data in targets or
+                                                                (isinstance(ie.src, nodes.AccessNode)
+                                                                 and ie.src.data in targets)):
+                        inner.add(ie.dst_conn)
+                if inner and cls._accumulates_into(node.sdfg, inner):
                     return True
         return False
 
