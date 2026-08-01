@@ -1592,10 +1592,7 @@ def propagate_memlet(dfg_state,
 
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
-    defined_vars = [
-        s for s in (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys())
-        if s not in scope_node_symbols
-    ]
+    defined_vars = (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys()) - scope_node_symbols
 
     # Find other adjacent edges within the connected to the scope node
     # and union their subsets
