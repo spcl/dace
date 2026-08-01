@@ -1031,6 +1031,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # post_l2m: insert assign tasklets at map boundary, then structural
     # cleanup (state fusion + inline SDFG) -- after LoopToMap.
+    #
+    # Load-bearing, measured: dropping it leaves tsvc ``va`` (``a[i] = b[i]``) as a plain
+    # Map (0L/0M -> 0L/1M over the corpus) instead of the Memcpy library node
+    # ``AssignmentAndCopyKernelToMemsetAndMemcpy`` lifts it to -- that recogniser matches the
+    # assign tasklet this pass plants on the boundary copy.
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _structural_cleanup('post_l2m')
 
