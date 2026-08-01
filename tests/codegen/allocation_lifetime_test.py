@@ -605,6 +605,47 @@ def test_multisize():
     assert np.allclose(res2, 6)
 
 
+def test_dynamic_write_to_separately_declared_array():
+    """
+    A transient sized by a symbol the program itself assigns has its
+    declaration separated from its allocation: declared at SDFG scope,
+    allocated in the state that first uses it. A DYNAMIC output memlet in a
+    LATER state therefore finds only the declaration, and looking the array up
+    among the allocated variables alone used to fail outright.
+    """
+    sdfg = dace.SDFG('dynamic_write_to_separately_declared_array')
+    sdfg.add_array('counts', [2], dace.int64)
+    sdfg.add_array('__return', [1], dace.float64)
+    sdfg.add_symbol('n', dace.int64)
+    sdfg.add_transient('A', ['n'], dace.float64)
+
+    init = sdfg.add_state('init', is_start_block=True)
+    first = sdfg.add_state('first')
+    later = sdfg.add_state('later')
+    sdfg.add_edge(init, first, dace.InterstateEdge(assignments=dict(n='counts[0]')))
+    sdfg.add_edge(first, later, dace.InterstateEdge())
+
+    # First use of ``A``, so this is where it gets allocated.
+    t = first.add_tasklet('zero', {}, {'o'}, 'o = 0.0')
+    first.add_edge(t, 'o', first.add_write('A'), None, dace.Memlet('A[0]'))
+
+    # A later state writing an element chosen at runtime: the whole array is
+    # the destination, with the position coming from data.
+    indirect = dace.Memlet('A[0:n]')
+    indirect.dynamic = True
+    scattered = later.add_access('A')
+    t = later.add_tasklet('scatter', {'idx'}, {'o'}, 'o[idx] = 7.0')
+    later.add_edge(later.add_read('counts'), None, t, 'idx', dace.Memlet('counts[1]'))
+    later.add_edge(t, 'o', scattered, None, indirect)
+
+    out = later.add_tasklet('writeout', {'a'}, {'b'}, 'b = a')
+    later.add_edge(scattered, None, out, 'a', dace.Memlet('A[1]'))
+    later.add_edge(out, 'b', later.add_write('__return'), None, dace.Memlet('__return[0]'))
+
+    sdfg.validate()
+    assert np.allclose(sdfg(counts=np.array([4, 1], dtype=np.int64)), 7.0)
+
+
 if __name__ == '__main__':
     test_determine_alloc_scope()
     test_determine_alloc_state()
@@ -629,3 +670,4 @@ if __name__ == '__main__':
     # test_branched_allocation('multivalue')
     # test_scope_multisize()
     test_multisize()
+    test_dynamic_write_to_separately_declared_array()

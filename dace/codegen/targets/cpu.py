@@ -1666,7 +1666,16 @@ class CPUCodeGen(TargetCodeGenerator):
                 ptrname = self.ptr(edge.data.data, desc, sdfg)
                 is_global = desc.lifetime in (dtypes.AllocationLifetime.Global, dtypes.AllocationLifetime.Persistent,
                                               dtypes.AllocationLifetime.External)
-                defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                try:
+                    defined_type, _ = self._dispatcher.defined_vars.get(ptrname, is_global=is_global)
+                except KeyError:
+                    # A transient whose SHAPE depends on a symbol the program
+                    # itself assigns has its declaration separated from its
+                    # allocation (see `determine_allocation_lifetime`): it is
+                    # declared at SDFG scope and allocated in the state that
+                    # first uses it, so any later state sees the declaration
+                    # alone. Same lookup order as `cpp.cpp_ptr_expr`.
+                    defined_type, _ = self._dispatcher.declared_arrays.get(ptrname, is_global=is_global)
                 base_ptr = cpp.cpp_ptr_expr(sdfg, edge.data, defined_type, codegen=self)
                 callsite_stream.write(f'{cdtype.ctype} {edge.src_conn} = {base_ptr};', cfg, state_id, src_node)
             else:

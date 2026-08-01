@@ -10,9 +10,11 @@ across the whole test suite, pinned here per gap so a regression names its own
 cause instead of surfacing as a discrepancy count somewhere else.
 """
 import numpy as np
+import pytest
 
 import dace
 from dace.frontend.python import nextgen
+from dace.frontend.python.nextgen.common import FrontendError
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import from_schedule_tree
 
@@ -92,6 +94,41 @@ def test_runtime_shape_element_is_promoted_to_a_symbol():
 
     from_schedule_tree(tree)(counts, out)
     assert np.allclose(out, [0.0, 2.0, 4.0, 6.0, 8.0, 0.0, 0.0, 0.0])
+
+
+def test_runtime_shape_written_at_a_data_dependent_position():
+    """The promoted size splits the program into states, which separates the
+    array's declaration from its allocation. A write whose POSITION is chosen
+    at runtime lands in a later state than the allocation, and has to find the
+    array there anyway."""
+
+    @dace.program
+    def scattered(counts: dace.int64[4], out: dace.float64[8]):
+        b = np.zeros((counts[0] + 1, ))
+        b[counts[1]] = 7.0
+        out[0] = b[counts[1]]
+
+    counts, out = np.array([4, 3, 0, 0]), np.zeros(8)
+    tree = nextgen.parse_program(scattered, counts, out)
+    _assert_no_callbacks(tree)
+    from_schedule_tree(tree)(counts, out)
+    assert out[0] == 7.0
+
+
+def test_returning_a_data_dependent_shape_is_refused():
+    """A size the program computes cannot cross the program boundary: the
+    caller allocates the return value before the call. Refused as a hard error
+    -- degrading to a callback cannot help, since the callback would still have
+    to write a ``__return`` the caller could not allocate."""
+
+    @dace.program
+    def returns_computed_size(counts: dace.int64[4]):
+        b = np.zeros((counts[0] + 1, ))
+        b[0] = 1.0
+        return b
+
+    with pytest.raises(FrontendError, match='data-dependent-shaped return values are not supported'):
+        nextgen.parse_program(returns_computed_size, np.array([3, 0, 0, 0]))
 
 
 def test_runtime_arange_bound_defines_the_symbol_it_is_sized_by():
@@ -245,6 +282,8 @@ if __name__ == '__main__':
     test_map_index_dimension_is_a_single_iteration_range()
     test_hoisted_shape_element_keeps_its_compile_time_value()
     test_runtime_shape_element_is_promoted_to_a_symbol()
+    test_runtime_shape_written_at_a_data_dependent_position()
+    test_returning_a_data_dependent_shape_is_refused()
     test_runtime_arange_bound_defines_the_symbol_it_is_sized_by()
     test_descriptor_attribute_argument_of_a_registry_call()
     test_compound_operand_of_a_registry_operator()

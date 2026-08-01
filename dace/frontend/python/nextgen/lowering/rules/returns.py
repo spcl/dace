@@ -47,13 +47,15 @@ def lower_return(statement: ast.Return, state: LoweringState) -> None:
 def _reject_deferred_size(shape, value: ast.expr, statement: ast.Return, state: LoweringState) -> None:
     """
     Refuse to return a container whose size is only known while the program
-    runs (the result of a boolean-mask gather, ``B = A[mask]``).
+    runs -- the result of a boolean-mask gather (``B = A[mask]``), or a shape
+    the program computed from data (``np.zeros((counts[0] + 1, ))``, whose size
+    is read back into a symbol by ``dispatch._promote_scalar_arguments``).
 
     A compiled SDFG's calling convention needs every argument's memory --
     including the return value's -- to exist before the call, so a size
     computed mid-call cannot cross the boundary however it is produced. That is
-    a property of the boundary, not of the gather: the same ``B`` is fully
-    usable inside the program (``np.sum(A[mask])`` lowers and runs).
+    a property of the boundary, not of the producer: the same container is
+    fully usable inside the program (``np.sum(A[mask])`` lowers and runs).
 
     Raised as a hard :class:`FrontendError` rather than an
     :class:`UnsupportedFeatureError`, deliberately: the usual degradation to a
@@ -72,10 +74,10 @@ def _reject_deferred_size(shape, value: ast.expr, statement: ast.Return, state: 
     if not deferred:
         return
     raise FrontendError(
-        f'Cannot return "{astutils.unparse(value)}": its size ({", ".join(deferred)}) is only known while the '
-        "program runs, and a compiled program's caller must allocate the return value before the call. "
-        'Reduce it inside the program (``return np.sum(A[mask])``), or write into a caller-allocated output.',
-        state.context.filename, statement)
+        f'Cannot return "{astutils.unparse(value)}": data-dependent-shaped return values are not supported. Its '
+        f'size ({", ".join(deferred)}) is only known while the program runs, and a compiled program\'s caller must '
+        'allocate the return value before the call. Reduce it inside the program (``return np.sum(A[mask])``), or '
+        'write into a caller-allocated output.', state.context.filename, statement)
 
 
 def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.Return, state: LoweringState) -> str:

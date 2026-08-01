@@ -1420,6 +1420,10 @@ def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional[
         if symbol_name is None:
             symbol_name = state.context.fresh_name(f'__sym_{name.lstrip("_")}_')
             state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
+            # Its value is read out of a container while the program runs, so a
+            # container sized by it cannot cross the program boundary -- see
+            # ``rules.returns._reject_deferred_size``.
+            state.context.deferred_symbols.add(symbol_name)
             state.emitter.emit(
                 tn.AssignNode(name=symbol_name,
                               value=CodeBlock(read),
@@ -1440,6 +1444,7 @@ def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional[
         state.index_symbols.pop(read, None)
         state.context.symbols.pop(symbol_name, None)
         state.context.symbol_aliases.pop(symbol_name, None)
+        state.context.deferred_symbols.discard(symbol_name)
     return None
 
 
