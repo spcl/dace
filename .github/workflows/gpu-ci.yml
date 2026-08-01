@@ -1,13 +1,9 @@
 name: Pauli GPU Legacy
 
 on:
+  # Disabled: the self-hosted Pauli runner does not serve CI. Manual dispatch only --
+  # GPU coverage comes from the external CSCS pipeline, which is unaffected.
   workflow_dispatch:
-  push:
-    branches: [ main, ci-fix ]
-  pull_request:
-    branches: [ main, ci-fix ]
-  merge_group:
-    branches: [ main, ci-fix ]
 
 env:
   CUDACXX: /usr/local/cuda/bin/nvcc
