@@ -746,6 +746,21 @@ def resolve_symbol(name: Union[str, sympy.Basic, None], pool: Dict[str, 'symbol'
     return pystr_to_symbolic(name) if resolved is None else resolved
 
 
+def same_value(a: Any, b: Any) -> bool:
+    """
+    Compares symbolic expressions, or sequences of them, without looking at symbol dtypes.
+
+    Symbol identity includes the dtype, but the value a symbol stands for does not change with the width of the
+    integer carrying it. Comparisons that are about values -- shapes, strides, extents -- must use this, since the
+    same name routinely carries different dtypes on the two sides of a nested SDFG boundary.
+    """
+    if a is b or a == b:
+        return True
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(same_value(x, y) for x, y in zip(a, b))
+    return str(a) == str(b)
+
+
 def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
                                                                  Union[int, float]]) -> Union[int, float, numpy.number]:
     """
