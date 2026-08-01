@@ -17,7 +17,6 @@ from dace.transformation.passes.canonicalize.absorb_state import AbsorbState
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
-from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.vectorization.lower_ite_to_fp_factor import LowerITEToFpFactor
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import RewriteModuloToPyMod
 from dace.transformation.passes.canonicalize.cascade_iedge_assignments_up import CascadeInterstateEdgeAssignmentsUp
@@ -566,9 +565,8 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # cannot handle it. Lift the early exit to a find-first index + clipped range HERE --
     # before those stages -- so they only ever see the resulting break-free, clipped loop.
     s += [('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()), ('clean', _uniq),
-          ('clean', SplitTasklets()), ('clean', LowerITEToFpFactor()), ('clean', ContinueToCondition()),
-          ('clean', EarlyExitToFindIndex()), ('clean', SimplifyPass()),
-          ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
+          ('clean', LowerITEToFpFactor()), ('clean', ContinueToCondition()), ('clean', EarlyExitToFindIndex()),
+          ('clean', SimplifyPass()), ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
 
     # loop_to_syrk / loop_to_syr2k (semantic lift, gated like loop_to_symm): the
     # hand-written symmetric rank-k / rank-2k update nests (polybench syrk / syr2k) are
