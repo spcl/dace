@@ -778,10 +778,12 @@ def _hoist_branch_uniform_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
                 assigns = dict(e.data.assignments)
                 assigns.pop(sym, None)
                 e.data.assignments = assigns
+            # Ask BEFORE adding the hoist state: the fresh state is a second, isolated source
+            # node, which makes ``start_block`` ambiguous until it is wired in below.
+            was_start = loop.start_block is cb
             hoist = loop.add_state(cb.label + '_iv_hoist')
             new_rhs = symbolic.symstr(symbolic.pystr_to_symbolic(sym) + step)
             if side == 'after':
-                was_start = loop.start_block is cb
                 for ie in list(loop.in_edges(cb)):
                     loop.add_edge(ie.src, hoist, ie.data)
                     loop.remove_edge(ie)
