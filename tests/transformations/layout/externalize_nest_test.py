@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A1 externalize_nest (GLOBAL_LAYOUT_DESIGN.md): each nest of a multi-nest program, cut out into a
+"""A1 externalize_nest: each nest of a multi-nest program, cut out into a
 standalone SDFG, is bit-exact against its PER-NEST numpy oracle -- inputs produced by earlier nests
 are provided (promoted to non-transient by the cutout), outputs start as deterministic noise and
 must be fully overwritten. The argument-fill invariants (complex dtypes, and integer fills capped by

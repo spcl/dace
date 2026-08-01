@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Multi-nest fixture programs for the GLOBAL layout assignment (GLOBAL_LAYOUT_DESIGN.md, task D1).
+"""Multi-nest fixture programs for the GLOBAL layout assignment.
 
 Each program is a flat line of loop nests over shared arrays. Two properties are load-bearing and
 deliberately engineered:
@@ -45,8 +45,12 @@ def conflict2_oracle(A):
 
 
 CONFLICT2_NEST_ORACLES = (
-    lambda A, **_: {"B": 2.0 * A},
-    lambda A, B, **_: {"C": B.T + A},
+    lambda A, **_: {
+        "B": 2.0 * A
+    },
+    lambda A, B, **_: {
+        "C": B.T + A
+    },
 )
 
 
@@ -67,9 +71,15 @@ def conflict3_oracle(A):
 
 
 CONFLICT3_NEST_ORACLES = (
-    lambda A, **_: {"B": 2.0 * A},
-    lambda A, B, **_: {"C": B.T + A},
-    lambda A, B, C, **_: {"D": 0.5 * B.T + C[:, ::-1] + A},
+    lambda A, **_: {
+        "B": 2.0 * A
+    },
+    lambda A, B, **_: {
+        "C": B.T + A
+    },
+    lambda A, B, C, **_: {
+        "D": 0.5 * B.T + C[:, ::-1] + A
+    },
 )
 
 
@@ -87,8 +97,12 @@ def agree2_oracle(A):
 
 
 AGREE2_NEST_ORACLES = (
-    lambda A, **_: {"B": 2.0 * A},
-    lambda A, B, **_: {"C": B[:, :-1] + B[:, 1:]},
+    lambda A, **_: {
+        "B": 2.0 * A
+    },
+    lambda A, B, **_: {
+        "C": B[:, :-1] + B[:, 1:]
+    },
 )
 
 PROGRAMS = {
@@ -107,8 +121,18 @@ def make_inputs(n, seed=0):
 def output_arrays(program_name, n):
     """Zero-initialized output buffers matching each fixture's descriptor shapes."""
     shapes = {
-        "conflict2": {"B": (n, n), "C": (n, n)},
-        "conflict3": {"B": (n, n), "C": (n, n), "D": (n, n)},
-        "agree2": {"B": (n, n), "C": (n, n - 1)},
+        "conflict2": {
+            "B": (n, n),
+            "C": (n, n)
+        },
+        "conflict3": {
+            "B": (n, n),
+            "C": (n, n),
+            "D": (n, n)
+        },
+        "agree2": {
+            "B": (n, n),
+            "C": (n, n - 1)
+        },
     }
     return {name: numpy.zeros(shape) for name, shape in shapes[program_name].items()}

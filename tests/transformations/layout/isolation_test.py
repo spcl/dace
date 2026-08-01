@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Fork isolation for the layout sweep (GLOBAL_LAYOUT_DESIGN.md): a segfault or runaway in
+"""Fork isolation for the layout sweep: a segfault or runaway in
 generated code must be a non-viable candidate, not a dead campaign -- and the OpenMP pool the
 parent's parallel kernels spun up must be torn down before the fork, or the child deadlocks on its
 first parallel region (libgomp, gcc's default, installs no pthread_atfork handler)."""

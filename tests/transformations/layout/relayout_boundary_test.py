@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A4 relayout_on_boundary (GLOBAL_LAYOUT_DESIGN.md): relayout states inserted on line-graph
+"""A4 relayout_on_boundary: relayout states inserted on line-graph
 boundaries hold parallel LayoutChange nodes, are recognized (not kernels) by line_graph, and a
 permute-there-and-back round trip through two boundaries reproduces the input bit-exactly while the
 program stays correct."""

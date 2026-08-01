@@ -1,5 +1,5 @@
 // heat_3d "readable-codegen 1.30x regression" -- REFUTED as a source-form lever; it is the
-// LAYOUT CONFOUND (CODEGEN_STYLE_PERFORMANCE.md section 3). NOT a leverN: kept as a documented
+// LAYOUT CONFOUND. NOT a leverN: kept as a documented
 // negative result, in the spirit of divisor_spellings.cpp and lever2's "REFUTED here" row.
 //
 // heat_3d runs ~1.30x slower under the experimental readable CPU codegen than legacy at

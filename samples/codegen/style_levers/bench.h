@@ -1,6 +1,6 @@
 // Shared timing harness for the codegen-pessimization reproducers.
 //
-// Rules it enforces (CODEGEN_STYLE_PERFORMANCE.md sections 1 and 3):
+// Rules it enforces:
 //   * median of >= 15 reps, never a single shot
 //   * every reproducer carries a TWIN: a byte-identical copy of the FAST form under a
 //     different symbol name. twin-vs-fast is the intra-binary noise+layout floor. Any

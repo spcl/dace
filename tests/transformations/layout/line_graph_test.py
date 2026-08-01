@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A2 kernel_per_state + A3 line_graph + the A6 invariant guard (GLOBAL_LAYOUT_DESIGN.md): the
+"""A2 kernel_per_state + A3 line_graph + the A6 invariant guard: the
 fixture programs split into one kernel per state and stay bit-exact, the line graph comes back in
 dependency order, and every v1 refusal (multi-kernel state, branch, LoopRegion) is loud."""
 import pytest
@@ -268,8 +268,7 @@ def test_data_moving_state_in_loop_body_is_refused():
     b2 = next(b for b in loop.nodes() if b.label == "b2")
     mover = loop.add_state("mover")
     loop.add_edge(b2, mover, dace.InterstateEdge())
-    mover.add_nedge(mover.add_read("B"), mover.add_write("C"),
-                    dace.Memlet(data="B", subset="0:N", other_subset="0:N"))
+    mover.add_nedge(mover.add_read("B"), mover.add_write("C"), dace.Memlet(data="B", subset="0:N", other_subset="0:N"))
     with pytest.raises(NotImplementedError, match="non-map work"):
         line_graph(sdfg)
 

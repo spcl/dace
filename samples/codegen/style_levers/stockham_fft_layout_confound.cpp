@@ -1,5 +1,5 @@
 // stockham_fft "readable-codegen ~1.3x regression" -- REFUTED as a source-form lever; it is the
-// LAYOUT CONFOUND (CODEGEN_STYLE_PERFORMANCE.md section 3), same verdict as heat3d_layout_confound.cpp.
+// LAYOUT CONFOUND, same verdict as heat3d_layout_confound.cpp.
 // NOT a leverN: a documented negative result, in the spirit of heat3d_layout_confound.cpp and lever2.
 //
 // stockham_fft is reported ~1.3x slower under the experimental readable CPU codegen at single core.

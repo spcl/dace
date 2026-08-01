@@ -6,7 +6,7 @@
 //   SLOW (idiom): the inner element loop is written canonically. clang's LoopIdiomRecognize
 //     turns each row into a memcpy. To force it to a REAL glibc CALL (not inline expansion)
 //     the length W*8 is made opaque (runtime, unknown to the backend), so per-call dispatch
-//     overhead is paid once per row. This is the shape from CODEGEN_STYLE_PERFORMANCE.md 5.
+//     overhead is paid once per row.
 //   FAST (inline): identical copy done with an explicit fixed-width vector store, which the
 //     idiom matcher does not touch -> inlined loads/stores, no call.
 //

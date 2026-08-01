@@ -14,7 +14,7 @@ illustrative CPU and A100-class parameter sets in each memory regime:
          count (messages), which binds only in the LATENCY regime (messages * L / concurrency) -- i.e.
          under finite MLP. There it is far larger than CPU.
 
-Takeaway (RELAYOUT_AUDIT.md): to make the LogGP model value a GPU relayout correctly, feed it GPU
+Takeaway: to make the LogGP model value a GPU relayout correctly, feed it GPU
 params AND a FINITE concurrency (n_cores * core_mlp), never the parallel-schedule ``inf`` default --
 otherwise it prices only bytes and UNDER-values the transpose, missing the coalescing win entirely.
 """

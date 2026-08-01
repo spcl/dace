@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Externalize one loop nest into a standalone runnable SDFG (GLOBAL_LAYOUT_DESIGN.md, task A1); a thin wrapper over ``SDFGCutout`` that cuts the nest's scope subgraph out and gives it a stable unique name."""
+"""Externalize one loop nest into a standalone runnable SDFG; a thin wrapper over ``SDFGCutout`` that cuts the nest's scope subgraph out and gives it a stable unique name."""
 import math
 import re
 from typing import Dict, Optional

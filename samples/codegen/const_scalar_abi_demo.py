@@ -6,7 +6,7 @@
     The two are SEMANTICALLY IDENTICAL. Which one is faster is a backend artifact, not a rule, and
     the sign is not fixed (LLVM #121262 has the reference winning; Lemire measured by-reference 4.5x
     slower on an aliasing-bound loop) -- which is exactly why this is a flag to sweep rather than a
-    hardcoded choice. See CODEGEN_STYLE_PERFORMANCE.md.
+    hardcoded choice.
 
     The binding is emitted by ``cpp.emit_memlet_reference`` for a NESTED-SDFG argument -- the only
     caller that passes an authoritative ``is_write=False`` -- so the fixture below is a nested SDFG

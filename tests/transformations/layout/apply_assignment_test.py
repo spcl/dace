@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""A5 apply_assignment (GLOBAL_LAYOUT_DESIGN.md): layout trajectories applied end to end -- segment
+"""A5 apply_assignment: layout trajectories applied end to end -- segment
 clones, boundary conversions, exit conversion back to the logical interface -- stay bit-exact
 against the fixture oracles, and the v1 refusals (Block trajectories) are loud."""
 import pytest

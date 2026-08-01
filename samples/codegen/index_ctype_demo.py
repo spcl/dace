@@ -12,7 +12,7 @@
     inside a 0.5-6% noise floor, and the deltas that clear it disagree on sign. Templating the helpers
     to let each call site pick was measured and rejected -- GCC's identical-code folding collapses the
     instantiations onto one body, and C++ deduction would pick 32-bit math off the generated
-    ``for (auto i = 0; ...)`` call sites with no diagnostic. See CODEGEN_STYLE_PERFORMANCE.md section 5.
+    ``for (auto i = 0; ...)`` call sites with no diagnostic.
 
     The legacy generator inlines its offset arithmetic instead of emitting helpers, so it has no index
     type to pick, ignores the key, and stays byte-identical.

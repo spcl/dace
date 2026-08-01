@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""C1/C2/C3 solver tests (GLOBAL_LAYOUT_DESIGN.md) on synthetic cost tables: the DP matches the
+"""C1/C2/C3 solver tests on synthetic cost tables: the DP matches the
 brute-force oracle everywhere, the greedy baseline loses exactly where it should (edge-blind), both
 edge regimes work, ties resolve toward identity, and every refusal is loud."""
 import random

@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
@@ -123,8 +122,7 @@ NM = dace.symbol('NM')
 def _specialize(sdfg, **subs):
     """Substitute concrete integer sizes for the kernel's size symbols.
     ``LiftLoopCarriedReduction`` refuses SYMBOLIC extents (the lift's cost is undecidable
-    without knowing the inner-map size -- see the pass docstring and
-    ``samples/optimization/maximal_parallelism.md``), so the lift-expected tests specialize."""
+    without knowing the inner-map size -- see the pass docstring), so the lift-expected tests specialize."""
     for name, val in subs.items():
         sdfg.replace(name, str(val))
     return sdfg
@@ -149,9 +147,9 @@ def _contour_sum(B: dace.float64[KK, NR, NM], P: dace.float64[NR, NM]):
     for idx in range(KK):
         X = np.zeros((NR, NM), dtype=np.float64)
         for i, j in dace.map[0:NR, 0:NM]:
-            X[i, j] = B[idx, i, j] * B[idx, i, j]   # per-iteration computed increment
+            X[i, j] = B[idx, i, j] * B[idx, i, j]  # per-iteration computed increment
         for i, j in dace.map[0:NR, 0:NM]:
-            P[i, j] = P[i, j] + X[i, j]             # reduction over idx (invariant subset)
+            P[i, j] = P[i, j] + X[i, j]  # reduction over idx (invariant subset)
 
 
 @dace.program
@@ -164,7 +162,7 @@ def _contour_two(B: dace.float64[KK, NR, NM], P0: dace.float64[NR, NM], P1: dace
             X[i, j] = B[idx, i, j] + 1.0
         for i, j in dace.map[0:NR, 0:NM]:
             P0[i, j] = P0[i, j] + X[i, j]
-            P1[i, j] = P1[i, j] + 2.0 * X[i, j]     # fused multi-output reduction (contour P0/P1)
+            P1[i, j] = P1[i, j] + 2.0 * X[i, j]  # fused multi-output reduction (contour P0/P1)
 
 
 @dace.program
@@ -172,7 +170,7 @@ def _contour_max(B: dace.float64[KK, NR, NM], M: dace.float64[NR, NM]):
     M[:] = -1.0e30
     for idx in range(KK):
         for i, j in dace.map[0:NR, 0:NM]:
-            M[i, j] = max(M[i, j], B[idx, i, j])    # max reduction over idx
+            M[i, j] = max(M[i, j], B[idx, i, j])  # max reduction over idx
 
 
 @dace.program
@@ -180,14 +178,14 @@ def _contour_prod(B: dace.float64[KK, NR, NM], P: dace.float64[NR, NM]):
     P[:] = 1.0
     for idx in range(KK):
         for i, j in dace.map[0:NR, 0:NM]:
-            P[i, j] = P[i, j] * B[idx, i, j]        # product reduction over idx
+            P[i, j] = P[i, j] * B[idx, i, j]  # product reduction over idx
 
 
 @dace.program
 def _contour_indexed_injective(B: dace.float64[KK, NM], Q: dace.float64[KK, NM]):
     for idx in range(KK):
         for j in dace.map[0:NM]:
-            Q[idx, j] = Q[idx, j] + B[idx, j]       # write index USES idx -> injective, NOT a reduction
+            Q[idx, j] = Q[idx, j] + B[idx, j]  # write index USES idx -> injective, NOT a reduction
 
 
 def test_contour_pattern_sum_reduction():
@@ -250,7 +248,7 @@ def test_contour_pattern_product_reduction():
 def test_refuses_symbolic_sizes():
     """The lift's payoff depends on the inner-map size vs the machine -- undecidable for a
     SYMBOLIC extent, where lifting usually regresses (measured 3-4x slower past the crossover;
-    see the pass docstring and ``samples/optimization/maximal_parallelism.md``). With symbolic
+    see the pass docstring). With symbolic
     ``KK/NR/NM`` the reduction axis must stay SEQUENTIAL (parallel inner map only). The concrete
     counterpart ``test_contour_pattern_sum_reduction`` -- same kernel, sizes substituted --
     confirms it fully parallelizes once the sizes are known, so the residual loop here is the
@@ -296,9 +294,8 @@ def test_contour_pattern_indexed_write_is_injective_not_reduction():
     LiftLoopCarriedReduction must NOT add a WCR (the invariant-subset gate fails);
     LoopToMap parallelizes it directly. Value-preserving."""
     sdfg = _contour_indexed_injective.to_sdfg(simplify=True)
-    assert _apply(sdfg) == 0          # not lifted
+    assert _apply(sdfg) == 0  # not lifted
     assert _num_wcr(sdfg) == 0
-    from dace.transformation.passes.canonicalize import canonicalize
     csdfg = _canon_full(_contour_indexed_injective)
     kk, nm = 5, 6
     rng = np.random.default_rng(5)

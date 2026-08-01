@@ -499,8 +499,7 @@ def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
 
 
 # ---------------------------------------------------------------------------
-# Reduction patterns from the TSVC corpus (see
-# ``tests/corpus/parallelization_report.md`` group B).
+# Reduction patterns from the TSVC corpus (group B).
 #
 # Each test mirrors a real TSVC kernel body and runs the same prelude
 # (``TrivialTaskletElimination``) before ``LoopToReduce`` so the entry shape matches

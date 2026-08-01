@@ -1,11 +1,10 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""D1 fixture validation (GLOBAL_LAYOUT_DESIGN.md): the multi-nest programs are bit-exact against
+"""D1 fixture validation: the multi-nest programs are bit-exact against
 their numpy oracles, and -- the load-bearing property -- their nests SURVIVE canonicalize + maximal
 fusion, so the line graph the global-layout machinery is tested on is genuine."""
 import numpy
 import pytest
 
-import dace
 from dace.sdfg import nodes
 from dace.transformation.layout.prepare import prepare_for_layout
 
