@@ -18,7 +18,9 @@ toolchain exists the header MUST compile. On the ARM-cross dev box all five
 Compiling is not computing, so the second gate here BUILDS AND RUNS
 :file:`tile_ops_numeric_driver.cpp` for every backend the host can execute and
 demands a bit-for-bit match against the scalar reference. That is what caught
-the AVX min/max operand order, where NaN and signed zero went the wrong way.
+the AVX min/max operand order (NaN and signed zero went the wrong way) and the
+AVX-512 one-shot horizontal reduce (a different association than the pairwise
+tree every other backend uses).
 """
 import os
 import platform

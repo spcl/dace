@@ -483,68 +483,16 @@ inline void tile_mask_gen(bool* __restrict__ out, IdxT base, IdxT ub) {
 // vector. Full reduction only -- a masked / single-axis / K>=2 reduce keeps the
 // ``pure`` per-lane expansion (the selector never routes those here).
 //
-// fp32 (W=16) / fp64 (W=8): accumulate the W-lane groups then collapse with the
-// AVX-512 one-shot ``_mm512_reduce_<op>_p{s,d}``; a scalar tail folds the
-// non-W-multiple remainder. Seeded from the first full group so no identity
-// constant is needed. Every other element type / a tile narrower than one group
-// uses the portable balanced log-depth tree (reducing in the same order as the
-// vectorized ``Reduce`` node). Self-contained -- no cross-ISA dispatch header.
+// Balanced log-depth pairwise fold (consecutive pairs (0,1)(2,3)...; an odd
+// trailing lane forwards unchanged), the SAME association as every sibling
+// backend and as the vectorized ``Reduce`` node's ``_dace_horizontal_tree``.
+// The AVX-512 one-shot ``_mm512_reduce_<op>_p{s,d}`` folds halves instead of
+// adjacent pairs; for ``+`` / ``*`` that is a different rounding order, so a
+// tile reduced on this backend stopped matching the scalar oracle bit-for-bit.
+// Over a compile-time-constant ``VLEN`` the loops unroll and the compiler
+// re-vectorises the partials, so the tree costs nothing here.
 template <typename T, int VLEN, char Op>
 inline T tile_reduce(const T* __restrict__ src) {
-#if defined(__AVX512F__)
-  if constexpr (std::is_same<T, double>::value && VLEN >= 8) {
-    __m512d acc = _mm512_loadu_pd(src);
-    int i = 8;
-    for (; i + 8 <= VLEN; i += 8) {
-      __m512d v = _mm512_loadu_pd(src + i);
-      if constexpr (Op == '+')
-        acc = _mm512_add_pd(acc, v);
-      else if constexpr (Op == '*')
-        acc = _mm512_mul_pd(acc, v);
-      else if constexpr (Op == 'm')
-        acc = _mm512_min_pd(acc, v);
-      else
-        acc = _mm512_max_pd(acc, v);
-    }
-    T s;
-    if constexpr (Op == '+')
-      s = _mm512_reduce_add_pd(acc);
-    else if constexpr (Op == '*')
-      s = _mm512_reduce_mul_pd(acc);
-    else if constexpr (Op == 'm')
-      s = _mm512_reduce_min_pd(acc);
-    else
-      s = _mm512_reduce_max_pd(acc);
-    for (; i < VLEN; ++i) s = tile_apply<T, Op>(s, src[i]);
-    return s;
-  }
-  if constexpr (std::is_same<T, float>::value && VLEN >= 16) {
-    __m512 acc = _mm512_loadu_ps(src);
-    int i = 16;
-    for (; i + 16 <= VLEN; i += 16) {
-      __m512 v = _mm512_loadu_ps(src + i);
-      if constexpr (Op == '+')
-        acc = _mm512_add_ps(acc, v);
-      else if constexpr (Op == '*')
-        acc = _mm512_mul_ps(acc, v);
-      else if constexpr (Op == 'm')
-        acc = _mm512_min_ps(acc, v);
-      else
-        acc = _mm512_max_ps(acc, v);
-    }
-    T s;
-    if constexpr (Op == '+')
-      s = _mm512_reduce_add_ps(acc);
-    else if constexpr (Op == '*')
-      s = _mm512_reduce_mul_ps(acc);
-    else if constexpr (Op == 'm')
-      s = _mm512_reduce_min_ps(acc);
-    else
-      s = _mm512_reduce_max_ps(acc);
-    for (; i < VLEN; ++i) s = tile_apply<T, Op>(s, src[i]);
-    return s;
-  }
-#endif
   T buf[VLEN];
   for (int i = 0; i < VLEN; ++i) buf[i] = src[i];
   int n = VLEN;
