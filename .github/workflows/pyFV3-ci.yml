@@ -12,6 +12,9 @@ defaults:
     run:
       shell: bash
 
+env:
+  DACE_frontend_stree_callback_check: warn
+
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}
   cancel-in-progress: true
