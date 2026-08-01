@@ -41,7 +41,7 @@ from typing import List, Optional
 import sympy
 
 from dace import SDFG, dtypes, symbolic
-from dace.sdfg import SDFGState
+from dace.sdfg import SDFGState, nodes
 from dace.codegen.common import sym2cpp
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
@@ -124,8 +124,8 @@ class SetSymbolNonnegativeAssumptions(ppl.Pass):
         return set_symbol_nonnegative_assumptions(sdfg)
 
 
-#: Label of the guard state; also the idempotence marker (re-running is a no-op
-#: once a state with this label exists).
+#: Label of the guard state. NOT the idempotence marker -- state fusion absorbs the guard state
+#: into its successor, so re-running dedups on the emitted trap code instead.
 _GUARD_STATE_LABEL = '_assume_nonneg_syms'
 
 #: Symbols with these dtypes can be negative and so are worth guarding. Unsigned
@@ -152,7 +152,7 @@ class AssumeSymbolConstraints(ppl.Pass):
         return ppl.Modifies.CFG | ppl.Modifies.Nodes
 
     def should_reapply(self, _modified: ppl.Modifies) -> bool:
-        # Single-shot: the state-label marker below makes a re-run a no-op anyway.
+        # Single-shot: the emitted-trap dedup below makes a re-run a no-op anyway.
         return False
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results) -> Optional[int]:
@@ -223,10 +223,20 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     block. ``sym2cpp`` prints the negation of a sympy relational directly
     (``Not(K < N)`` -> ``(K >= N)``, ``Not(s >= 0)`` -> ``(s < 0)``).
     """
-    if any(b.label == _GUARD_STATE_LABEL for b in sdfg.nodes()):
-        return None
-    assumptions = collect_assumptions(sdfg)
-    if not assumptions:
+    # Dedup on the emitted TRAP CODE, not on the guard state's label: re-canonicalizing an
+    # already-canonicalized SDFG (the vectorizer canonicalizes at its own entry) fuses the guard
+    # state into its successor, so the label is gone and a label check re-emits every trap -- they
+    # accumulate one full copy per run. The code string is the assumption, so this is exact.
+    guards = {
+        node.code.as_string
+        for state in sdfg.states()
+        for node in state.nodes() if isinstance(node, nodes.Tasklet) and '__builtin_trap' in node.code.as_string
+    }
+    checks = [
+        c for c in (f'if ({sym2cpp(sympy.Not(a))}) {{ __builtin_trap(); }}' for a in collect_assumptions(sdfg))
+        if c not in guards
+    ]
+    if not checks:
         return None
 
     # ``add_state_before`` prepends the guard before the current start and
@@ -237,12 +247,12 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     # start, leaving the guard a disconnected source that dominator analyses
     # KeyError on. Running last -- nothing reshapes the start after -- is safe.
     guard_state = sdfg.add_state_before(sdfg.start_block, _GUARD_STATE_LABEL, is_start_block=True)
-    for i, assumption in enumerate(assumptions):
+    for i, code in enumerate(checks):
         guard = guard_state.add_tasklet(
             f'check_assumption_{i}',
             {},
             {},
-            f'if ({sym2cpp(sympy.Not(assumption))}) {{ __builtin_trap(); }}',
+            code,
             language=dtypes.Language.CPP,
         )
         # ``__builtin_trap()`` is a real side effect with no data output, so
