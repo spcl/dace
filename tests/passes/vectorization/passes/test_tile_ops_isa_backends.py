@@ -29,6 +29,11 @@ _DRIVER = os.path.join(_HERE, "tile_ops_all_ops_driver.cpp")
 _DACE_INCLUDE = os.path.join(os.path.dirname(os.path.abspath(dace.__file__)), "runtime", "include")
 
 _HOST_CXX = os.environ.get("CXX", "g++")
+#: The standard DaCe actually builds generated code with. Hardcoding one here
+#: silently un-gates every backend the day the runtime headers start using a
+#: newer feature (``dace/types.h`` moved to ``std::bit_cast``, so a pinned
+#: ``c++17`` failed on ``<dace/dace.h>`` before reaching any tile-op header).
+_CPP_STANDARD = dace.Config.get("compiler", "cpp_standard")
 _HOST_MACHINE = platform.machine().lower()
 _HOST_IS_X86 = _HOST_MACHINE in ("x86_64", "amd64", "x64")
 _HOST_IS_ARM64 = _HOST_MACHINE in ("aarch64", "arm64")
@@ -75,8 +80,8 @@ def test_tile_ops_backend_header_compiles(isa: str) -> None:
         pytest.skip(f"compiler {cxx!r} not found")
 
     cmd = [
-        cxx, "-std=c++17", "-fsyntax-only", "-I", _DACE_INCLUDE, *isa_flags, f"-DTILE_OPS_BACKEND_HEADER=<{header}>",
-        _DRIVER
+        cxx, f"-std=c++{_CPP_STANDARD}", "-fsyntax-only", "-I", _DACE_INCLUDE, *isa_flags,
+        f"-DTILE_OPS_BACKEND_HEADER=<{header}>", _DRIVER
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     assert proc.returncode == 0, (f"{isa} backend header {header} failed to compile with "
