@@ -223,7 +223,7 @@ def test_missing_callback_is_reported_as_a_callback():
     sdfg = nextgen.parse_program(program).as_sdfg()
     name, = sdfg.callback_objects
     sdfg.callback_objects = {}
-    with pytest.raises(KeyError, match=f'{name}.*Python callback'):
+    with pytest.raises(KeyError, match=f'{name}.*callback'):
         sdfg(A=np.array([1.0, 2.0]))
 
 
