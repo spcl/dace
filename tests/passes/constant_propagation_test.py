@@ -640,24 +640,22 @@ def test_dependency_change_same_edge(extra_state):
         ref += i17
 
     a = np.zeros([1], np.int64)
-    # Compile and execute on the CTYPES interface in a fresh, explicitly-set
-    # build folder: the CI-only failure survived pass- and codegen-exoneration
-    # (post-pass structure AND regenerated code byte-identical to passing
-    # runs; expression-cache clear changes nothing), leaving the module
-    # loading/identity machinery as the remaining suspect - under
-    # ``cache=unique`` the build folder derives from name+pid only, so every
-    # SDFG named 'tester' in one process shares ONE module identity. This
-    # pins the classic interface and a private folder; if the failure STILL
-    # reproduces, it lies beneath the interface (toolchain/execution).
-    # The env var overrides set_temporary, so it must be dropped first.
+    # Compile and execute in a fresh, explicitly-set build folder (the
+    # configured interface stays in effect): the CI-only failure survived
+    # pass- and codegen-exoneration (post-pass structure AND regenerated code
+    # byte-identical to passing runs; expression-cache clear changes
+    # nothing), and it VANISHED on ctypes + private folder - two variables at
+    # once. The private folder alone gives this compilation a unique module
+    # identity (under ``cache=unique`` the derived folder is name+pid only,
+    # so every SDFG named 'tester' in one process shares ONE identity),
+    # keeping the nanobind collision/rename/reuse machinery idle while the
+    # nanobind bindings and loading stay under test: passing here indicts the
+    # shared folder identity; failing indicts the interface itself.
     import os
     import tempfile
-    from dace.config import set_temporary
-    with tempfile.TemporaryDirectory() as tmp_folder, pytest.MonkeyPatch.context() as mp:
-        mp.delenv('DACE_compiler_interface', raising=False)
-        with set_temporary('compiler', 'interface', value='ctypes'):
-            sdfg.build_folder = os.path.join(tmp_folder, 'build')
-            sdfg(a=a)
+    with tempfile.TemporaryDirectory() as tmp_folder:
+        sdfg.build_folder = os.path.join(tmp_folder, 'build')
+        sdfg(a=a)
     if a[0] != ref:
         # Second-stage diagnostic: in every observed CI failure the structure
         # above was byte-identical to a passing run, so the pass is exonerated
