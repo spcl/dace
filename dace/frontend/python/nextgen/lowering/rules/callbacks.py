@@ -179,12 +179,19 @@ def _register_free_globals(statements: list, bound: set, state: LoweringState) -
             if (name in bound or name in assigned or name in state.context.constants or name in state.context.containers
                     or name in state.context.symbols or hasattr(builtins, name)):
                 continue
-            if name not in state.context.globals:
+            if name in state.context.globals:
+                value = state.context.globals[name]
+            elif name in state.context.callback_callables:
+                # A callback preprocessing detected: the call was rewritten to
+                # a sanitized name that is a global of no scope, so the
+                # callable only exists in the closure it came from.
+                value = state.context.callback_callables[name]
+            else:
                 continue
             # Always opaque: these constants exist only for the callback
             # execution namespace and never reach generated code (typed
             # constants of supported code go through closure_constants).
-            state.context.constants[name] = (data.Scalar(dtypes.pyobject()), state.context.globals[name])
+            state.context.constants[name] = (data.Scalar(dtypes.pyobject()), value)
 
 
 def _constant_reference(value: object, state: LoweringState) -> str:

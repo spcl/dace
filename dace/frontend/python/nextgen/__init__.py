@@ -35,6 +35,7 @@ def build_schedule_tree(name: str,
                         *,
                         constants: Optional[Dict[str, Tuple[data.Data, Any]]] = None,
                         callback_mapping: Optional[Dict[str, str]] = None,
+                        callbacks: Optional[Dict[str, Any]] = None,
                         arg_names: Optional[Sequence[str]] = None,
                         closure_arrays: Optional[Dict[str, Tuple[str, data.Data]]] = None,
                         debug: bool = False) -> tn.ScheduleTreeRoot:
@@ -49,6 +50,10 @@ def build_schedule_tree(name: str,
     :param constants: Compile-time constants as (descriptor, value) tuples.
     :param callback_mapping: Mapping from callback symbol names to original
                              function names.
+    :param callbacks: Python callables of the callbacks preprocessing detected,
+                      keyed by the same names as ``callback_mapping``. Needed
+                      by statements that end up executing in the interpreter,
+                      which reference the callable by that name.
     :param arg_names: Ordered argument names.
     :param closure_arrays: External arrays referenced by the program, as a
                            mapping from the preprocessed reference name to
@@ -66,6 +71,7 @@ def build_schedule_tree(name: str,
 
     # Stage 2: semantic context (single repository, shared with the tree root)
     context = ProgramContext(name, parsed_ast.filename, argtypes, parsed_ast.program_globals, constants or {})
+    context.callback_callables.update(callbacks or {})
     for reference_name, (qualified_name, descriptor) in (closure_arrays or {}).items():
         container = context.register_closure_array(reference_name, qualified_name, descriptor)
         context.bind(reference_name, container)
@@ -95,6 +101,11 @@ def build_schedule_tree(name: str,
 
     # Stage 4: verification of the output contract
     verify_tree(root)
+
+    # The tree carries the source of every callback it emitted; turning that
+    # into live callables here is what makes the tree (and the SDFG converted
+    # from it) callable without the caller reconstructing them.
+    root.materialize_callbacks()
     return root
 
 
@@ -167,6 +178,7 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
         constants[constant_name] = (descriptor, value)
 
     callback_mapping = {key: original for key, (original, _, _) in closure.callbacks.items()}
+    callbacks = {key: function for key, (_, function, _) in closure.callbacks.items()}
     arg_names = [argument_name for argument_name in program.argnames if argument_name in argtypes]
     closure_arrays = {
         reference_name: (qualified_name, descriptor)
@@ -179,6 +191,7 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
                                argtypes,
                                constants=constants,
                                callback_mapping=callback_mapping,
+                               callbacks=callbacks,
                                arg_names=arg_names,
                                closure_arrays=closure_arrays,
                                debug=debug)

@@ -107,20 +107,3 @@ def execution_gap(root: tn.ScheduleTreeRoot) -> str:
                     return 'ReturnNode inside FunctionCallScope'
                 ancestor = ancestor.parent
     return ''
-
-
-def callback_arguments(root: tn.ScheduleTreeRoot) -> Dict[str, object]:
-    """
-    Materialize Python callables for a tree's callback nodes by executing
-    their outlined function scaffolding, keyed by the callback symbol name
-    (i.e., ready to pass as SDFG call arguments).
-    """
-    result: Dict[str, object] = {}
-    for node in root.preorder_traversal():
-        if isinstance(node, tn.PythonCallbackNode) and node.outlined_function_name is not None:
-            # The tree's constants carry every free global the callback code
-            # references (detected callables, modules, objects).
-            environment: Dict[str, object] = {name: value for name, (_, value) in root.constants.items()}
-            exec(node.outlined_function_code.as_string, environment)
-            result[node.outlined_function_name] = environment[node.outlined_function_name]
-    return result

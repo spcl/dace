@@ -463,7 +463,8 @@ def test_execution_comparison(program, make_inputs, reference):
     except NotImplementedError as gap_error:
         pytest.xfail(f'tree_to_sdfg gap: {gap_error}')
 
-    result = sdfg(**arrays, **symbols, **interop.callback_arguments(new_root))
+    # No callback arguments: the SDFG carries the tree's callbacks itself.
+    result = sdfg(**arrays, **symbols)
 
     for name, expected_value in expected.items():
         if name == '__return':

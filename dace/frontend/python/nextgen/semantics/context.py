@@ -95,6 +95,14 @@ class ProgramContext:
         #: Compile-time constants as (descriptor, value) tuples, shared with the tree root.
         self.constants: Dict[str, Tuple[data.Data, Any]] = dict(constants)
 
+        #: Python callables of the callbacks preprocessing DETECTED, keyed by
+        #: the sanitized name it rewrote the call to (``LOG.append`` becomes
+        #: ``LOG_append``). Statements that end up in the interpreter reference
+        #: these names, so a callback node's execution namespace has to contain
+        #: them; they are not program globals under that name, and no other
+        #: stage can recover the callable from the name alone.
+        self.callback_callables: Dict[str, Any] = {}
+
         #: Source-name binding table.
         self.bindings: Dict[str, Binding] = {}
 

@@ -506,8 +506,11 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         # Add closure arguments to the call
         result.update(self.__sdfg_closure__())
 
-        # Update closure with respect to callback mapping
-        result.update({k: result[v] for k, v in sdfg.callback_mapping.items()})
+        # Update closure with respect to callback mapping. A callback whose
+        # original is not in the closure is one the frontend synthesized rather
+        # than detected in the program's globals; it carries its own callable in
+        # ``sdfg.callback_objects``, which the compiled SDFG fills in.
+        result.update({k: result[v] for k, v in sdfg.callback_mapping.items() if v in result})
 
         def _try_create_datadescriptor(key: str, val: Any) -> data.Data:
             """

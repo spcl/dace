@@ -195,8 +195,9 @@ def _prepare_callee(
     # sites: closure-array descriptor identity drives qualified-name
     # deduplication.
     closure = parse.closure
-    for callback_name, (original, _, _) in closure.callbacks.items():
+    for callback_name, (original, function, _) in closure.callbacks.items():
         state.emitter.root.callback_mapping.setdefault(callback_name, original)
+        state.context.callback_callables.setdefault(callback_name, function)
     for constant_name, value in closure.closure_constants.items():
         try:
             descriptor = data.create_datadescriptor(value)

@@ -307,6 +307,12 @@ class ScheduleTreeRoot(ScheduleTreeScope):
     constants: dict[str, tuple[data.Data, Any]]
     callback_mapping: dict[str, str]
     arg_names: list[str]
+    #: Live Python objects implementing the tree's callbacks, keyed by callback
+    #: symbol name. Populated by :meth:`materialize_callbacks` for callbacks the
+    #: tree carries the source of, or by a frontend for callbacks whose callable
+    #: comes from the program's closure. Not serializable: these are runtime
+    #: objects, and a tree read back from disk has to materialize them again.
+    callback_objects: dict[str, Any]
 
     def __init__(
         self,
@@ -318,6 +324,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         constants: dict[str, tuple[data.Data, Any]] | None = None,
         callback_mapping: dict[str, str] | None = None,
         arg_names: list[str] | None = None,
+        callback_objects: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(children=children, parent=None)
 
@@ -327,6 +334,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         self.constants = constants if constants is not None else dict()
         self.callback_mapping = callback_mapping if callback_mapping is not None else dict()
         self.arg_names = arg_names if arg_names is not None else list()
+        self.callback_objects = callback_objects if callback_objects is not None else dict()
 
     def as_sdfg(self,
                 validate: bool = True,
@@ -358,6 +366,41 @@ class ScheduleTreeRoot(ScheduleTreeScope):
             sdfg.simplify(validate=validate, validate_all=validate_all, verbose=verbose, skip=skip)
 
         return sdfg
+
+    def materialize_callbacks(self, force: bool = False) -> dict[str, Any]:
+        """
+        Build the Python callables of this tree's :class:`PythonCallbackNode`\\ s
+        from their outlined scaffolding and record them in
+        :attr:`callback_objects`, ready to be passed as call arguments of the
+        converted SDFG (``SDFG.callback_objects`` does exactly that).
+
+        A callback node carries its own source; the namespace it executes in is
+        the tree's constant repository, which holds every free global the
+        callback code references. Callbacks that already have an object are
+        left alone unless ``force`` is given, so a callable supplied by a
+        frontend (the original function it detected, rather than a synthesized
+        wrapper) always wins.
+
+        :param force: If True, re-materialize callbacks that already have an
+                      object.
+        :return: The tree's callback objects, keyed by callback symbol name.
+        """
+        namespace = {name: value for name, (_, value) in self.constants.items()}
+        for node in self.preorder_traversal():
+            if not isinstance(node, PythonCallbackNode):
+                continue
+            name = node.outlined_function_name
+            if name is None or node.outlined_function_code is None:
+                continue
+            if name in self.callback_objects and not force:
+                continue
+            # Each callback gets its own globals mapping: the outlined runs are
+            # independent, and they chain through their I/O containers, not
+            # through a shared namespace.
+            environment = dict(namespace)
+            exec(node.outlined_function_code.as_string, environment)
+            self.callback_objects[name] = environment[name]
+        return self.callback_objects
 
     def get_root(self) -> 'ScheduleTreeRoot':
         return self

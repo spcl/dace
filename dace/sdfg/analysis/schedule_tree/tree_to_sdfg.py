@@ -1518,6 +1518,10 @@ def from_schedule_tree(
                                         and isinstance(entry[0].dtype, dtypes.pyobject))
     })
     result.callback_mapping = copy.deepcopy(stree.callback_mapping)
+    # Callbacks the tree carries the source of become live callables here, so
+    # the converted SDFG is callable without the caller re-deriving them. Live
+    # objects, hence shared rather than copied.
+    result.callback_objects = dict(stree.materialize_callbacks())
     # Frontend-produced trees store symbol *objects*; the SDFG symbol
     # repository stores their dtypes.
     result.symbols = {
