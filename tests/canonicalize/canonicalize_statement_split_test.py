@@ -409,6 +409,41 @@ def test_split_statements_same_index_only_is_noop():
     assert not _split_snaps(sdfg)
 
 
+def test_split_statements_reverse_stride_forward_read_is_not_snapshotted():
+    """Reverse stride flips what ``a[i + 1]`` means: with ``i`` decreasing it is the value
+    the PREVIOUS iteration wrote (RAW), not a read-ahead. Snapshotting it silently computes
+    the wrong ``D`` -- so the split must refuse, and the values must match the un-split run."""
+
+    def build(name):
+        sdfg = dace.SDFG(name)
+        loop = LoopRegion('loop', 'i > 0', 'i', 'i = N - 2', 'i = i - 1')
+        sdfg.add_node(loop, is_start_block=True)
+        body = loop.add_state('body', is_start_block=True)
+        for nm in ('A', 'B', 'D'):
+            sdfg.add_array(nm, [N], dace.float64)
+        tw = body.add_tasklet('w', {'b'}, {'a'}, 'a = b + 1.0')
+        wA = body.add_access('A')
+        body.add_edge(body.add_read('B'), None, tw, 'b', dace.Memlet('B[i]'))
+        body.add_edge(tw, 'a', wA, None, dace.Memlet('A[i]'))
+        tr = body.add_tasklet('r', {'a0', 'a1'}, {'d'}, 'd = a0 + a1')
+        body.add_edge(wA, None, tr, 'a0', dace.Memlet('A[i]'))
+        body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + 1]'))
+        body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
+        return sdfg
+
+    n = 16
+    a0, b0 = _rand(n, seed=31), _rand(n, seed=32)
+    ref = {'A': a0.copy(), 'B': b0.copy(), 'D': np.zeros(n)}
+    build('rev_stride_ref').compile()(**ref, N=n)
+
+    cand_sdfg = build('rev_stride_cand')
+    assert SplitStatements().apply_pass(cand_sdfg, {}) is None
+    got = {'A': a0.copy(), 'B': b0.copy(), 'D': np.zeros(n)}
+    cand_sdfg.compile()(**got, N=n)
+    for k in ref:
+        assert np.allclose(ref[k], got[k]), f"reverse-stride split diverged on '{k}'"
+
+
 def test_split_statements_transient_write_not_snapshotted():
     """Only non-transient (global) arrays are snapshot candidates."""
     sdfg, _loop, body = _mixed_loop('split_mixed_transient')

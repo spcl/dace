@@ -346,6 +346,12 @@ class SplitStatements(ppl.Pass):
             return 0
         ivar = loop.loop_variable
         oracle = BreakAntiDependence()
+        # Forward stride only. ``_dep_class`` reads direction off the sign of the carried
+        # offset alone, so under a reverse stride it calls ``a[i + 1]`` read-ahead when it is
+        # really the value the PREVIOUS iteration wrote -- redirecting it to the pre-loop
+        # snapshot then silently computes the wrong thing.
+        if not oracle._safe_stride(loop, sdfg):
+            return 0
         internal_syms = oracle._loop_internal_symbols(loop)
         applied = 0
 
