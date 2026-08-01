@@ -78,12 +78,17 @@ build_cscs_gh200:
     -   echo "Codecov.io is unreachable"
     - fi
 
+# The two codegens are paired on purpose: an experimental GPU kernel is emitted into
+# a frame the experimental CPU generator produced, so testing them apart leaves the
+# combination that actually ships untested.
 test_cscs_gh200_legacy:
   extends: .test_cscs_gh200_base
   variables:
     DACE_compiler_cuda_implementation: legacy
+    DACE_compiler_cpu_implementation: legacy
 
 test_cscs_gh200_experimental:
   extends: .test_cscs_gh200_base
   variables:
     DACE_compiler_cuda_implementation: experimental
+    DACE_compiler_cpu_implementation: experimental_readable
