@@ -350,9 +350,16 @@ def _index_symbol(read: ast.expr, node: ast.AST, state: LoweringState) -> str:
 
 def scalar_read_expression(access: DataAccess) -> Optional[str]:
     """A single-element access rendered for an interstate assignment
-    (``bounds[0]``), or None if the access is not one element."""
+    (``bounds[0]``), or None if the access is not one element.
+
+    A :class:`~dace.data.Scalar` is named on its own: it generates as a value,
+    not as a pointer, so subscripting it does not compile (the same
+    array-versus-scalar distinction the classic frontend draws when it defines
+    a symbol from a container -- see ``newast.ProgramVisitor.
+    _parse_sdfg_call``).
+    """
     if isinstance(access.descriptor, data.Scalar):
-        return f'{access.container}[0]'
+        return access.container
     try:
         if data._prod(access.subset.size()) != 1:
             return None

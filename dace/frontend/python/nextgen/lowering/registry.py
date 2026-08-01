@@ -8,7 +8,7 @@ failure is a frontend bug (a canonical node type without a rule), never a user
 error.
 """
 import ast
-from typing import Callable, Dict, Type
+from typing import Any, Callable, Dict, List, Tuple, Type
 
 from dace.frontend.python.nextgen.common import CanonicalViolationError, UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.emitter import TreeEmitter
@@ -44,6 +44,13 @@ class LoweringState:
         #: current statement only, so an array-valued index named on both sides
         #: of an accumulation is evaluated once.
         self.index_arrays: Dict[str, str] = {}
+        #: Source names bound to a symbol for the current statement only
+        #: (``lowering.dispatch._promote_scalar_arguments``), with the binding
+        #: to put back afterwards. The symbol keeps the value the scalar had
+        #: when the statement ran, which is what the statement needed; leaving
+        #: the name pointing at it would make a LATER read miss a write that
+        #: no assignment statement performed (a callee writing the scalar).
+        self.promoted_scalars: List[Tuple[str, Any]] = []
 
     def lower_body(self, body) -> None:
         """Lower a list of canonical statements into the current scope."""
@@ -88,8 +95,14 @@ def lower_statement(statement: ast.stmt, state: LoweringState) -> None:
     saved_bindings = state.context.snapshot()
     state.index_symbols = {}
     state.index_arrays = {}
+    state.promoted_scalars = []
     try:
         handler(statement, state)
+        for source_name, previous in state.promoted_scalars:
+            if previous is None:
+                state.context.bindings.pop(source_name, None)
+            else:
+                state.context.bindings[source_name] = previous
     except UnsupportedFeatureError as reason:
         from dace.frontend.python.nextgen.lowering import dispatch  # Deferred: dispatch imports this module
         state.emitter.rollback(mark)

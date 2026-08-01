@@ -1386,9 +1386,11 @@ def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional[
     uses (``newast.ProgramVisitor._add_state`` plus a symbol assignment) and
     the one already used for dynamic map bounds and hoisted indices.
 
-    Restricted to ANF temporaries: they are single-assignment, so the symbol
-    cannot go stale, whereas a source-level name may be written again after
-    this call and would then read back a value it no longer has.
+    The binding lasts for this statement only (``LoweringState.
+    promoted_scalars``), which is exactly what the definition claims: the
+    symbol holds the value the scalar had HERE. The per-statement cache the
+    range bounds use (``access._index_symbol``) is shared, so a scalar named by
+    both an argument and a subset in one statement defines one symbol.
 
     Attempted only after the un-promoted call fails to type, and rolled back
     (bindings, symbols, and emitted nodes) when promotion does not make it
@@ -1407,41 +1409,77 @@ def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional[
 
     mark = state.emitter.checkpoint()
     before = state.context.snapshot()
-    promoted: List[str] = []
+    restore_from = len(state.promoted_scalars)
+    defined: List[Tuple[str, str]] = []
+    promoted = False
     for name, access in candidates:
         read = scalar_read_expression(access)
         if read is None:
             continue
-        symbol_name = state.context.fresh_name(f'__sym_{name.lstrip("_")}_')
-        state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
-        state.emitter.emit(
-            tn.AssignNode(name=symbol_name, value=CodeBlock(read),
-                          edge=InterstateEdge(assignments={symbol_name: read})))
+        symbol_name = state.index_symbols.get(read)
+        if symbol_name is None:
+            symbol_name = state.context.fresh_name(f'__sym_{name.lstrip("_")}_')
+            state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
+            state.emitter.emit(
+                tn.AssignNode(name=symbol_name,
+                              value=CodeBlock(read),
+                              edge=InterstateEdge(assignments={symbol_name: read})))
+            state.index_symbols[read] = symbol_name
+            defined.append((read, symbol_name))
+        state.promoted_scalars.append((name, state.context.bindings.get(name)))
         state.context.bind_symbol(name, access.descriptor.dtype, symbol_name=symbol_name)
-        promoted.append(symbol_name)
+        promoted = True
 
     inferred = state.inference.infer_call(call) if promoted else None
-    if inferred is not None:
+    if inferred is not None and not _undefined_result_symbols(inferred, state):
         return inferred
     state.emitter.rollback(mark)
     state.context.restore(before)
-    for symbol_name in promoted:
+    del state.promoted_scalars[restore_from:]
+    for read, symbol_name in defined:
+        state.index_symbols.pop(read, None)
         state.context.symbols.pop(symbol_name, None)
         state.context.symbol_aliases.pop(symbol_name, None)
     return None
 
 
+def _undefined_result_symbols(inferred: 'Inferred', state: LoweringState) -> Set[str]:
+    """
+    The symbols a call's result descriptors are sized by that NOTHING defines.
+
+    A registry implementation may invent a symbol for a scalar argument it
+    needs as a number — ``numpy.arange(stop)`` names its result's single
+    dimension after the container holding ``stop``
+    (``array_creation.arange_promoted_symbol_name``). Inventing the name is
+    only half of it: unless the program also assigns the symbol, the result is
+    sized by a symbol the SDFG can only ask its caller for, and a shape the
+    program itself computed becomes a required program argument. Treated
+    exactly like a failure to type, so :func:`_promote_scalar_arguments`
+    defines the symbols for real and the same inference is asked again.
+    """
+    descriptors: Tuple[data.Data, ...] = ()
+    if inferred.is_data_tuple:
+        descriptors = inferred.descriptors or ()
+    elif inferred.is_data and inferred.descriptor is not None:
+        descriptors = (inferred.descriptor, )
+    undefined: Set[str] = set()
+    for descriptor in descriptors:
+        for size in descriptor.shape:
+            undefined |= {name for name in symbolic.symlist(size) if name not in state.context.symbols}
+    return undefined
+
+
 def _promotable_scalar_arguments(call: ast.Call, state: LoweringState) -> List[Tuple[str, DataAccess]]:
     """
-    The ANF temporaries among a call's arguments that name an integer scalar
-    container, as (source name, access) pairs, deduplicated and in argument
-    order. Static-sequence arguments are looked through, since a hoisted shape
-    tuple is exactly where these appear.
+    The names among a call's arguments that hold an integer scalar container,
+    as (source name, access) pairs, deduplicated and in argument order.
+    Static-sequence arguments are looked through, since a hoisted shape tuple is
+    exactly where these appear.
     """
     found: Dict[str, DataAccess] = {}
 
     def collect(expression: ast.expr) -> None:
-        if not isinstance(expression, ast.Name) or not expression.id.startswith('__anf'):
+        if not isinstance(expression, ast.Name):
             return
         binding = state.context.resolve(expression.id)
         if binding is None:
@@ -1482,10 +1520,12 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     falls back to a callback).
     """
     inferred = state.inference.infer_call(call)
-    if inferred is None:
+    if inferred is None or _undefined_result_symbols(inferred, state):
         # An argument the registry reads as a NUMBER but the program holds in a
         # container is a spelling problem, not a missing feature: promote it to
-        # a symbol and ask again.
+        # a symbol and ask again. A result sized by a symbol nothing defines
+        # counts as untyped here — the promotion is what makes such a symbol
+        # real, and without it the size would be unanswerable at run time.
         inferred = _promote_scalar_arguments(call, state)
     if inferred is None:
         return False  # No registry entry: the interpreter fallback preserves semantics.

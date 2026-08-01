@@ -353,16 +353,43 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
         return
 
     target_access = prepare_name_target(target, inferred, state, statement)
-    # Pure-symbolic values of ANF temporaries stay visible to inference (e.g.
-    # as computed shape arguments) alongside the materialized scalar. ANF
-    # temps are single-assignment, so the recorded value cannot go stale.
-    # A temporary that is NOT symbolic here but turns out to sit in a
-    # symbol-side position is promoted at the consuming call instead
-    # (``dispatch._promote_scalar_arguments``), which covers a run-time value
-    # as well as a compile-time one.
-    if inferred.kind == 'symbolic' and target.id.startswith('__anf'):
-        state.context.symbolic_scalar_values[target_access.container] = inferred.value
+    # Compile-time values of ANF temporaries stay visible to inference (e.g. as
+    # computed shape arguments) alongside the materialized scalar. ANF temps are
+    # single-assignment, so the recorded value cannot go stale.
+    #
+    # Both a symbolic expression and a plain integer count, and the integer case
+    # matters: hoisting ``numpy.zeros((a.shape[0], ...))`` leaves the STATIC
+    # size 2 in a temporary, and without it recorded the size is only
+    # recoverable by reading the scalar back at run time
+    # (``dispatch._promote_scalar_arguments``) -- which is the right repair for
+    # a size the program computes, but for a static one it would needlessly turn
+    # a shape the caller can evaluate into one it cannot. A temporary whose
+    # value is neither is promoted at the consuming call instead.
+    if target.id.startswith('__anf'):
+        value_of_temporary = _compile_time_scalar_value(inferred)
+        if value_of_temporary is not None:
+            state.context.symbolic_scalar_values[target_access.container] = value_of_temporary
     dispatch.lower_computation(target_access, value, statement, state)
+
+
+def _compile_time_scalar_value(inferred: Inferred) -> Optional[Any]:
+    """
+    The symbol-side value an inference result carries, or None if it has none.
+
+    A symbol-side quantity is a symbolic expression or an integer (the same test
+    :func:`_bind_index_symbol` applies to an index): sizes, bounds and axes are
+    the positions these values reach. A ``bool`` is deliberately not one of them
+    -- Python makes it an integer, but nothing that reads a size wants
+    ``True``.
+    """
+    if inferred.kind not in ('symbolic', 'constant'):
+        return None
+    value = inferred.value
+    if symbolic.issymbolic(value):
+        return value
+    if isinstance(value, numbers.Integral) and not isinstance(value, (bool, numpy.bool_)):
+        return value
+    return None
 
 
 def _lower_boolean_gather_assign(target: ast.Name, value: ast.Subscript, statement: ast.Assign,

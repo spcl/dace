@@ -226,7 +226,8 @@ def test_a_bound_read_through_a_scalar_index():
     assert not _callbacks(tree)
     assigns = [node for node in tree.preorder_traversal() if isinstance(node, tn.AssignNode)]
     assert len(assigns) == 2
-    assert assigns[0].name.startswith('__idx_k') and assigns[0].value.as_string == 'k[0]'
+    # A scalar is named on its own -- it generates as a value, not a pointer.
+    assert assigns[0].name.startswith('__idx_k') and assigns[0].value.as_string == 'k'
     assert assigns[1].value.as_string == f'ends[{assigns[0].name}]'
 
     tree.as_sdfg().compile()(idx=idx, ends=ends, A=A, O=O)
