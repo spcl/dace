@@ -603,7 +603,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # whereas a WCR scalar on GPU lowers to a contended per-thread ``atomicAdd``.
     #
     # On CPU we deliberately do NOT lift to buffer+Reduce: the WCR-on-map form produced
-    # later by ``reduction_to_wcr_map`` (``LoopToReduce(prefer='wcr-scalar')``) lowers to
+    # later by ``reduction_to_wcr_map`` (``AccumulatorCopyChainToWCR`` + ``LoopToMap``) lowers to
     # an OpenMP ``reduction(op:var)`` clause (per-thread privatization + tree-reduce),
     # which is the CPU-efficient form and needs no intermediate buffer.
     #
@@ -927,7 +927,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # It must precede ``parallelize``: it emits three loops -- mask, scan, scatter -- and force-lifts
     # the two parallel ones itself (it owns the disjointness proof for the cursor-indexed writes;
     # LoopToMap cannot reconstruct it), leaving the residue for the later stages to fuse and
-    # schedule. It must also precede ``reduction_to_wcr_map``, whose ``LoopToReduce('wcr-scalar')``
+    # schedule. It must also precede ``reduction_to_wcr_map``, whose ``PinNestedSequentialLoops``
     # pins every loop nested in a sequential loop -- the s343 inner compaction loop is exactly that,
     # and a pinned loop is refused here (correctly: the pin is a directive, not an obstacle).
     # ``LoopToReduce`` / ``LoopToScan`` are pure matchers -- they touch nothing when they lift
@@ -1001,7 +1001,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # intermediate read-back defeats the single-accumulation matcher below, leaving the
     # reduction loop sequential. Re-associating the chain into one ``acc += (incA + incB)``
     # (sound by associativity of +/*) exposes the single accumulation that
-    # ``LoopToReduce(wcr-scalar)`` then lifts to a parallel WCR-map.
+    # ``AccumulatorCopyChainToWCR`` + ``LoopToMap`` then lift to a parallel WCR-map.
     s += [('reduction_to_wcr_map', FuseChainedScalarReductions())]
     # The normalization steps ``LoopToReduce(wcr-scalar)`` used to run itself, now explicit so
     # the lifter stays side-effect free on a no-match. Order is load-bearing:
