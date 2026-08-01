@@ -30,10 +30,11 @@ NumPy's own rules, as implemented here (each verified against NumPy):
   ``(3, 8, 4)``).
 """
 import ast
-import copy
 import enum
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
+
+from dace.frontend.python import astutils
 
 
 class AxisKind(enum.Enum):
@@ -230,7 +231,7 @@ def substitute_slots(node: ast.Subscript, replacements: Dict[int, ast.expr]) -> 
     """
     if not replacements:
         return node
-    rewritten = copy.deepcopy(node)
+    rewritten = astutils.copy_tree(node)
     slots = index_slots(rewritten.slice)
     for position, replacement in replacements.items():
         slots[position] = replacement

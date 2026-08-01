@@ -8,13 +8,13 @@ world; this module performs that conversion by registering a constant
 container in the repository.
 """
 import ast
-import copy
 from numbers import Number
 from typing import Optional
 
 import numpy
 
 from dace import data, dtypes, subsets
+from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
@@ -59,13 +59,13 @@ def fold_static_subscripts(value: ast.expr, state: LoweringState) -> ast.expr:
                 if sequence is not None:
                     folded = values.fold_subscript(sequence, subscript_node, state.inference.constant_int)
                     if isinstance(folded, ast.expr):
-                        return ast.copy_location(copy.deepcopy(folded), subscript_node)
+                        return ast.copy_location(astutils.copy_tree(folded), subscript_node)
                     # Sliced sequences stay static; leave the name reference
                     # for materialization to handle.
                     return subscript_node
             return self.generic_visit(subscript_node)
 
-    return ast.fix_missing_locations(_Folder().visit(copy.deepcopy(value)))
+    return ast.fix_missing_locations(_Folder().visit(astutils.copy_tree(value)))
 
 
 def fold_descriptor_properties(value: ast.expr, state: LoweringState) -> ast.expr:
@@ -115,7 +115,7 @@ def fold_descriptor_properties(value: ast.expr, state: LoweringState) -> ast.exp
 
     if not any(isinstance(node, ast.Attribute) for node in ast.walk(value)):
         return value
-    return _Folder().visit(copy.deepcopy(value))
+    return _Folder().visit(astutils.copy_tree(value))
 
 
 def materialize_operands(value: ast.expr, state: LoweringState) -> ast.expr:
@@ -135,4 +135,4 @@ def materialize_operands(value: ast.expr, state: LoweringState) -> ast.expr:
                     return ast.copy_location(ast.Name(id=access.container, ctx=ast.Load()), name_node)
             return name_node
 
-    return ast.fix_missing_locations(_Materializer().visit(copy.deepcopy(value)))
+    return ast.fix_missing_locations(_Materializer().visit(astutils.copy_tree(value)))

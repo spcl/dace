@@ -27,7 +27,6 @@ Pass order matters and is fixed by :func:`default_passes`:
    one callback, chaining their input/output sets.
 """
 import ast
-import copy
 from typing import List, Optional, Tuple, Union
 
 from dace.frontend.python import astutils, iterators
@@ -292,7 +291,7 @@ class RecognizeExplicitDataflow(_BodyTransformer):
         if not isinstance(decorator, ast.Call) or len(decorator.args) < 2 or len(function.args.args) != 2:
             return function
         element, pe_index = (argument.arg for argument in function.args.args)
-        original = copy.deepcopy(function)
+        original = astutils.copy_tree(function)
         body = self._transform_body(function.body) if scope_body else function.body
         return ExplicitConsume(label=function.name,
                                stream=decorator.args[0],
@@ -406,12 +405,12 @@ class DesugarStatements(_BodyTransformer):
             statements: List[ast.stmt] = [
                 _located(ast.Assign(targets=[first], value=statement.value), statement),
             ]
-            source = copy.deepcopy(first)
+            source = astutils.copy_tree(first)
             for node in ast.walk(source):
                 if hasattr(node, 'ctx'):
                     node.ctx = ast.Load()
             for target in rest:
-                statements.append(_located(ast.Assign(targets=[target], value=copy.deepcopy(source)), statement))
+                statements.append(_located(ast.Assign(targets=[target], value=astutils.copy_tree(source)), statement))
             return self._transform_body(statements)
         if isinstance(statement, ast.Assign) and len(statement.targets) == 1:
             unpacked = self._desugar_tuple_swap(statement)
@@ -420,7 +419,7 @@ class DesugarStatements(_BodyTransformer):
             if unpacked is not None:
                 return self._transform_body(unpacked)
         if isinstance(statement, ast.AugAssign):
-            read_target = copy.deepcopy(statement.target)
+            read_target = astutils.copy_tree(statement.target)
             for node in ast.walk(read_target):
                 if hasattr(node, 'ctx'):
                     node.ctx = ast.Load()
@@ -517,7 +516,7 @@ class DesugarStatements(_BodyTransformer):
             source = _name_load(temp, statement)
         for index, element in enumerate(target.elts):
             item = _located(
-                ast.Subscript(value=_located(copy.deepcopy(source), statement),
+                ast.Subscript(value=_located(astutils.copy_tree(source), statement),
                               slice=_located(ast.Constant(value=index), statement),
                               ctx=ast.Load()), statement)
             statements.append(_located(ast.Assign(targets=[element], value=item), statement))
@@ -641,7 +640,7 @@ def _reference_key(expression: ast.AST) -> Optional[str]:
     """
     if not isinstance(expression, (ast.Name, ast.Subscript, ast.Attribute)):
         return None
-    clone = copy.deepcopy(expression)
+    clone = astutils.copy_tree(expression)
     for node in ast.walk(clone):
         if hasattr(node, 'ctx'):
             node.ctx = ast.Load()
@@ -724,8 +723,8 @@ _ANF_REWRITTEN_FIELDS = {
 
 
 def _expression_snapshot(statement: ast.stmt) -> List[Tuple[str, ast.AST]]:
-    """Deep-copy the expression fields ANF is about to rewrite in place."""
-    return [(field, copy.deepcopy(getattr(statement, field)))
+    """Copy the expression fields ANF is about to rewrite in place."""
+    return [(field, astutils.copy_tree(getattr(statement, field)))
             for field in _ANF_REWRITTEN_FIELDS.get(type(statement), ()) if getattr(statement, field, None) is not None]
 
 

@@ -819,7 +819,7 @@ class InferenceService:
                     return name_node
                 return ast.Name(id=list(replacements[name_node.id]), ctx=ast.Load())
 
-        restored = copy.deepcopy(node)
+        restored = astutils.copy_tree(node)
         restored.slice = _Substituter().visit(restored.slice)
         return ast.copy_location(restored, node)
 
@@ -865,7 +865,7 @@ class InferenceService:
             def visit_Name(self, name_node: ast.Name) -> ast.AST:
                 if name_node.id not in replacements:
                     return name_node
-                return copy.deepcopy(replacements[name_node.id])
+                return astutils.copy_tree(replacements[name_node.id])
 
             def visit_Constant(self, constant_node: ast.Constant) -> ast.AST:
                 # Preprocessing embeds a resolved compile-time argument as a
@@ -882,7 +882,7 @@ class InferenceService:
                     return tuple_node.elts[0]
                 return tuple_node
 
-        restored = copy.deepcopy(node)
+        restored = astutils.copy_tree(node)
         restored.slice = _SliceSubstituter().visit(restored.slice)
         return ast.fix_missing_locations(ast.copy_location(restored, node))
 

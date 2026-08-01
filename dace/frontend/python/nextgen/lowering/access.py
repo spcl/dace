@@ -273,7 +273,7 @@ def promote_index_reads(node: ast.Subscript,
                 replacements[key] = _index_symbol(read, node, state)
     if not replacements:
         return node
-    promoted = copy.deepcopy(node)
+    promoted = astutils.copy_tree(node)
     promoted.slice = substitute_index_reads(promoted.slice, replacements)
     return ast.fix_missing_locations(ast.copy_location(promoted, node))
 
@@ -517,7 +517,7 @@ def resolve_symbol_names(node: ast.expr, state: LoweringState) -> ast.expr:
     repository names, so emitted code blocks reference tree containers and
     symbols directly.
     """
-    result = copy.deepcopy(node)
+    result = astutils.copy_tree(node)
 
     class _Renamer(ast.NodeTransformer):
 
@@ -553,7 +553,7 @@ def substitute_data_operands(expr: ast.expr,
     """
     operands: List[Tuple[str, DataAccess]] = []
     seen: dict = {}
-    rewritten = copy.deepcopy(expr)
+    rewritten = astutils.copy_tree(expr)
 
     class _Substituter(ast.NodeTransformer):
 
@@ -601,7 +601,7 @@ def substitute_data_operands(expr: ast.expr,
                                             indirect=True)))
                 seen[base_key] = connector
             connector = seen[base_key]
-            index_node = self.visit(copy.deepcopy(node.slice))
+            index_node = self.visit(astutils.copy_tree(node.slice))
             # Built as an AST rather than round-tripped through source: an
             # unparsed index tuple carries parentheses, and ``base[(i, 1:3)]``
             # is not valid Python even though ``base[i, 1:3]`` is.
@@ -629,7 +629,7 @@ def substitute_index_reads(index_expression: ast.expr, index_names: Dict[str, st
     and :func:`lower_indirect_write` below -- both move a data-dependent
     index's element access into tasklet code the same way.
     """
-    result = copy.deepcopy(index_expression)
+    result = astutils.copy_tree(index_expression)
 
     class _Replacer(ast.NodeTransformer):
 

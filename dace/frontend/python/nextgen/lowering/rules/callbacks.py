@@ -17,10 +17,10 @@ The callback contract:
 """
 import ast
 import builtins
-import copy
 from typing import Optional
 
 from dace import data, dtypes
+from dace.frontend.python import astutils
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt
@@ -215,7 +215,7 @@ def _rename_to_repository(statements: list, source_to_repository: dict) -> list:
             node.id = source_to_repository.get(node.id, node.id)
             return node
 
-    return [ast.fix_missing_locations(_Renamer().visit(copy.deepcopy(statement))) for statement in statements]
+    return [ast.fix_missing_locations(_Renamer().visit(astutils.copy_tree(statement))) for statement in statements]
 
 
 def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
@@ -291,4 +291,4 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
             # body).
             return self.visit(node.original)
 
-    return ast.fix_missing_locations(_Restorer().visit(copy.deepcopy(statement)))
+    return ast.fix_missing_locations(_Restorer().visit(astutils.copy_tree(statement)))

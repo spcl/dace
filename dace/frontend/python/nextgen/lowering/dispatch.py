@@ -208,7 +208,7 @@ def _materialize_attribute_reads(value: ast.expr, state: LoweringState) -> ast.e
                 return self.generic_visit(attribute_node)
             return ast.copy_location(ast.Name(id=container, ctx=ast.Load()), attribute_node)
 
-    return ast.fix_missing_locations(_Substituter().visit(copy.deepcopy(value)))
+    return ast.fix_missing_locations(_Substituter().visit(astutils.copy_tree(value)))
 
 
 def _lower_registry_operator(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> bool:
@@ -828,7 +828,7 @@ def _run_view_trial(function, arguments: List, keywords: dict, data_arguments: s
     """
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
-        result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
+        result = function(shim, scratch, scratch_state, *arguments, **keywords)
     except Exception:
         return None
     result = _unwrap_nested_call(result)
@@ -1597,13 +1597,12 @@ def _multi_output_viable(name: Optional[str], ufunc_name: Optional[str], receive
             function = oprepo.Replacements.get_ufunc(None)
             if function is None:
                 return False
-            result = function(shim, None, scratch, scratch_state, ufunc_name, copy.deepcopy(list(arguments)),
-                              copy.deepcopy(dict(keywords)))
+            result = function(shim, None, scratch, scratch_state, ufunc_name, list(arguments), dict(keywords))
         else:
             function = oprepo.Replacements.get(name)
             if function is None:
                 return False
-            result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
+            result = function(shim, scratch, scratch_state, *arguments, **keywords)
     except Exception:
         return False
     result = _unwrap_nested_call(result)
@@ -1755,7 +1754,7 @@ def _bind_compile_time_result(target: Optional[ast.expr], name: str, arguments: 
         function = oprepo.Replacements.get(name)
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
-        result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
+        result = function(shim, scratch, scratch_state, *arguments, **keywords)
     except Exception:
         return False
     if not _is_compile_time_value(result) or shim.views or scratch_state.nodes():
@@ -1824,7 +1823,7 @@ def _expansion_viable(name: str,
     function = _replacement_implementation(name, receiver, arguments, data_arguments, state)
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
-        result = function(shim, scratch, scratch_state, *copy.deepcopy(arguments), **copy.deepcopy(keywords))
+        result = function(shim, scratch, scratch_state, *arguments, **keywords)
     except Exception:
         return False
     result = _unwrap_nested_call(result)
@@ -1920,8 +1919,7 @@ def _ufunc_expansion_viable(ufunc_name: str, ufunc_method: Optional[str], argume
     function = oprepo.Replacements.get_ufunc(ufunc_method)
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
-        result = function(shim, None, scratch, scratch_state, ufunc_name, copy.deepcopy(list(arguments)),
-                          copy.deepcopy(dict(keywords)))
+        result = function(shim, None, scratch, scratch_state, ufunc_name, list(arguments), dict(keywords))
     except Exception:
         return False
     result = _unwrap_nested_call(result)
