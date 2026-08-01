@@ -794,20 +794,23 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # free-state path: the bare sibling is wrapped in a trivial single-iteration
     # loop, spliced out again by 'untrivialize' before LoopToMap.
     #
-    # Load-bearing, measured: removing this standalone run is invisible on the tsvc
-    # scorecard (223 kernels, 35L/226M unchanged) but breaks polybench floyd-warshall's
-    # single-nest lift and the coexisting-index-guards collapse. PerfectLoopNesting does
-    # not subsume it -- it never runs MoveIfIntoLoop.
+    # Removal probed, NOT proven safe: dropping this standalone run leaves the tsvc
+    # scorecard identical (223 kernels, 35 loops / 226 maps, per-kernel) and adds no
+    # failure to the guard / branchy-polybench suites -- but those already carry two reds
+    # at d2be1fde4 (floyd-warshall's single-nest lift, the coexisting-index-guards
+    # collapse), so they cannot witness a regression here. PerfectLoopNesting does not
+    # subsume it: that pass never runs MoveIfIntoLoop.
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
     # cascade_iedges_up (post-move-if): MoveIfIntoLoop may bury an invariant
     # iedge assignment inside the loop it pushed the guard into; lift it back out.
     #
-    # Load-bearing, measured: dropping this run and the post-reduce one (keeping only the
-    # pre-parallelize run) leaves the tsvc scorecard untouched (35L/226M, per-kernel
-    # identical) and the npbench + polybench numerical corpus green, but breaks polybench
-    # floyd-warshall's single-nest lift and the coexisting-index-guards collapse. Three runs,
-    # not one.
+    # Collapse to one run probed, NOT proven safe: dropping this and the post-reduce run
+    # (keeping only the pre-parallelize one) leaves the tsvc scorecard untouched
+    # (35 loops / 226 maps, per-kernel identical) and the npbench + polybench numerical
+    # corpus green. Kept anyway: the post-reduce run exists for the body-assigns-range-symbol
+    # refuse-check that runs between it and parallelize, and both comments cite cloudsc
+    # shapes that no gate here covers.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
     # fission: loop distribution + block-level perfect-loop-nesting. Fission clones
