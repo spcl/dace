@@ -193,6 +193,10 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         if sliced is None:
             return None
         tasklets, sources = sliced
+        # The chain may not be fed by the temporary itself: that array, and the consumer read that
+        # reaches it, are exactly what this rewrite deletes, so the clone would read a dead container.
+        if any(container == name for container, _, _ in sources.values()):
+            return None
 
         reads: List[Dict[str, Any]] = []
         for outer_read in state.out_edges(tnode):
