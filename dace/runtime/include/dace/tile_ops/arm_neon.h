@@ -145,9 +145,13 @@ inline float32x4_t neon_binop_f32(float32x4_t a, float32x4_t b) {
   else if constexpr (Op == '/')
     return vdivq_f32(a, b);
   else if constexpr (Op == 'm')
-    return vminq_f32(a, b);
+    // FMIN/FMAX propagate NaN and pick -0 over +0; ``std::min(a,b)`` is
+    // (b < a) ? b : a and ``std::max(a,b)`` is (a < b) ? b : a. Only a
+    // compare-select reproduces that (operand swap does not: FMIN is
+    // commutative on NaN).
+    return vbslq_f32(vcltq_f32(b, a), b, a);
   else if constexpr (Op == 'M')
-    return vmaxq_f32(a, b);
+    return vbslq_f32(vcltq_f32(a, b), b, a);
   else if constexpr (Op == '<')
     return neon_select_0_1_f32(vcltq_f32(a, b));
   else if constexpr (Op == 'l')
@@ -173,9 +177,13 @@ inline float64x2_t neon_binop_f64(float64x2_t a, float64x2_t b) {
   else if constexpr (Op == '/')
     return vdivq_f64(a, b);
   else if constexpr (Op == 'm')
-    return vminq_f64(a, b);
+    // FMIN/FMAX propagate NaN and pick -0 over +0; ``std::min(a,b)`` is
+    // (b < a) ? b : a and ``std::max(a,b)`` is (a < b) ? b : a. Only a
+    // compare-select reproduces that (operand swap does not: FMIN is
+    // commutative on NaN).
+    return vbslq_f64(vcltq_f64(b, a), b, a);
   else if constexpr (Op == 'M')
-    return vmaxq_f64(a, b);
+    return vbslq_f64(vcltq_f64(a, b), b, a);
   else if constexpr (Op == '<')
     return neon_select_0_1_f64(vcltq_f64(a, b));
   else if constexpr (Op == 'l')

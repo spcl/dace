@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Syntax-only compile gate for the per-ISA K=1 tile-op backend headers.
+"""Compile + numeric gates for the per-ISA K=1 tile-op backend headers.
 
 Each ``dace/tile_ops/<isa>.h`` exposes the SAME ``dace::tileops`` signatures but
 lowers to that ISA's intrinsics. Only the host's own ISA is ever *run* by the
@@ -14,11 +14,17 @@ A backend is skipped only when its target toolchain is genuinely unavailable on
 this host (e.g. no ``aarch64-linux-gnu-g++`` for the ARM headers); where the
 toolchain exists the header MUST compile. On the ARM-cross dev box all five
 (scalar / avx2 / avx512 / arm_neon / arm_sve) run.
+
+Compiling is not computing, so the second gate here BUILDS AND RUNS
+:file:`tile_ops_numeric_driver.cpp` for every backend the host can execute and
+demands a bit-for-bit match against the scalar reference. That is what caught
+the AVX min/max operand order, where NaN and signed zero went the wrong way.
 """
 import os
 import platform
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -26,6 +32,7 @@ import dace
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _DRIVER = os.path.join(_HERE, "tile_ops_all_ops_driver.cpp")
+_NUMERIC_DRIVER = os.path.join(_HERE, "tile_ops_numeric_driver.cpp")
 _DACE_INCLUDE = os.path.join(os.path.dirname(os.path.abspath(dace.__file__)), "runtime", "include")
 
 _HOST_CXX = os.environ.get("CXX", "g++")
@@ -88,10 +95,66 @@ def test_tile_ops_backend_header_compiles(isa: str) -> None:
                                   f"{cxx} {' '.join(isa_flags)}:\n{proc.stderr}")
 
 
+def _build_and_run(tmpdir: str, isa: str) -> str:
+    """Compile the numeric driver against ``isa`` and return its stdout dump."""
+    case = _CASES[isa]
+    if case is None:
+        pytest.skip(f"no target compiler for {isa} on {_HOST_MACHINE}")
+    cxx, isa_flags, header = case
+    if cxx != _HOST_CXX:
+        pytest.skip(f"{isa} targets a foreign architecture; cannot execute on {_HOST_MACHINE}")
+    if shutil.which(cxx) is None:
+        pytest.skip(f"compiler {cxx!r} not found")
+
+    binary = os.path.join(tmpdir, f"tile_ops_numeric_{isa}")
+    build = subprocess.run([
+        cxx, f"-std=c++{_CPP_STANDARD}", "-O2", "-I", _DACE_INCLUDE, *isa_flags,
+        f"-DTILE_OPS_BACKEND_HEADER=<{header}>", _NUMERIC_DRIVER, "-o", binary
+    ],
+                           capture_output=True,
+                           text=True)
+    assert build.returncode == 0, f"{isa} numeric driver failed to build:\n{build.stderr}"
+
+    run = subprocess.run([binary], capture_output=True, text=True)
+    if run.returncode == -4:  # SIGILL: the host CPU does not implement this ISA
+        pytest.skip(f"host CPU cannot execute {isa}")
+    assert run.returncode == 0, f"{isa} numeric driver exited {run.returncode}:\n{run.stderr}"
+    return run.stdout
+
+
+@pytest.mark.parametrize("isa", [i for i in _CASES if i != "scalar"])
+def test_tile_ops_backend_matches_scalar_bit_for_bit(isa: str) -> None:
+    """An ISA backend must reproduce the scalar reference EXACTLY, every op.
+
+    The sibling syntax gate only proves a header compiles. This one runs it:
+    :file:`tile_ops_numeric_driver.cpp` is built once per backend and dumps the
+    raw bytes of every tile-op result over random operands, mask / broadcast /
+    stride / index-sign edge cases, and the adversarial values (NaN, signed
+    zero, infinities, integer extremes) where a SIMD instruction and the scalar
+    contract are most likely to part ways. The headers promise bit-for-bit
+    agreement -- ``std::fma`` on every backend, one shared reduce association,
+    py_mod for ``%`` -- so the comparison is exact, not a tolerance.
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        reference = _build_and_run(tmpdir, "scalar")
+        actual = _build_and_run(tmpdir, isa)
+
+    ref_rows = dict(line.split() for line in reference.splitlines())
+    isa_rows = dict(line.split() for line in actual.splitlines())
+    assert ref_rows.keys() == isa_rows.keys(), "backend dumps cover different cases"
+    mismatched = [k for k, v in ref_rows.items() if isa_rows[k] != v]
+    detail = "\n".join(f"  {k}\n    scalar {ref_rows[k]}\n    {isa:<6} {isa_rows[k]}" for k in mismatched[:12])
+    assert not mismatched, (f"{isa} differs from the scalar reference in {len(mismatched)} of "
+                            f"{len(ref_rows)} cases:\n{detail}")
+
+
 if __name__ == "__main__":
     for _isa in _CASES:
-        try:
-            test_tile_ops_backend_header_compiles(_isa)
-            print(f"{_isa}: OK")
-        except Exception as exc:  # noqa: BLE001 -- CLI summary only
-            print(f"{_isa}: {exc}")
+        for _gate in (test_tile_ops_backend_header_compiles, test_tile_ops_backend_matches_scalar_bit_for_bit):
+            if _isa == "scalar" and _gate is test_tile_ops_backend_matches_scalar_bit_for_bit:
+                continue
+            try:
+                _gate(_isa)
+                print(f"{_isa} {_gate.__name__}: OK")
+            except Exception as exc:  # noqa: BLE001 -- CLI summary only
+                print(f"{_isa} {_gate.__name__}: {exc}")

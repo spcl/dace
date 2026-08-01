@@ -115,9 +115,11 @@ inline __m256 binop_ps(__m256 a, __m256 b) {
   else if constexpr (Op == '/')
     return _mm256_div_ps(a, b);
   else if constexpr (Op == 'm')
-    return _mm256_min_ps(a, b);
+    // MINPS/MINPD is (x < y) ? x : y, so the SECOND operand wins on NaN and on
+    // (+0,-0). ``std::min(a,b)`` is (b < a) ? b : a -- swap to match exactly.
+    return _mm256_min_ps(b, a);
   else if constexpr (Op == 'M')
-    return _mm256_max_ps(a, b);
+    return _mm256_max_ps(b, a);
   else {
     const __m256 one = _mm256_set1_ps(1.0f);
     if constexpr (Op == '<')
@@ -157,9 +159,11 @@ inline __m256d binop_pd(__m256d a, __m256d b) {
   else if constexpr (Op == '/')
     return _mm256_div_pd(a, b);
   else if constexpr (Op == 'm')
-    return _mm256_min_pd(a, b);
+    // MINPS/MINPD is (x < y) ? x : y, so the SECOND operand wins on NaN and on
+    // (+0,-0). ``std::min(a,b)`` is (b < a) ? b : a -- swap to match exactly.
+    return _mm256_min_pd(b, a);
   else if constexpr (Op == 'M')
-    return _mm256_max_pd(a, b);
+    return _mm256_max_pd(b, a);
   else {
     const __m256d one = _mm256_set1_pd(1.0);
     if constexpr (Op == '<')

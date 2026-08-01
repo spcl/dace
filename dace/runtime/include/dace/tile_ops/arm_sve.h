@@ -37,12 +37,11 @@
 //     compare each operand ``!= 0`` to a predicate, combine with the PREDICATE
 //     logicals ``svand_b_z`` / ``svorr_b_z`` (NOT the bitwise lane ops
 //     ``svand_s32`` / ``svorr_s32``), then ``svsel`` to ``T(1)`` / ``T(0)``.
-//   * Min / Max use ``svmin`` / ``svmax`` (FMIN / FMAX for fp), which follow
-//     IEEE-754 NaN propagation. This differs from the scalar header's
-//     ``std::min`` / ``std::max`` (a ``<``-based pick that returns the first
-//     arg on a NaN comparison). On NaN inputs the two backends can diverge;
-//     ``svminnm`` / ``svmaxnm`` are the NaN-quiet variants if exact parity is
-//     ever required.
+//   * Min / Max are a compare-select (``svcmplt`` + ``svsel``), NOT ``svmin`` /
+//     ``svmax``: FMIN / FMAX follow IEEE-754 NaN propagation and pick -0 over
+//     +0, whereas the scalar header's ``std::min`` / ``std::max`` are a
+//     ``<``-based pick that keeps the FIRST argument on an unordered or equal
+//     comparison. Integer SMIN / SMAX already match (total order).
 //   * Integer divide uses ``svdiv_s32`` / ``svdiv_s64`` (base-SVE SDIV). On
 //     AArch64 integer divide-by-zero yields 0 (no trap), vs. C's UB.
 //   * Gather / scatter use the element-scaled ``*index*`` forms (NOT the byte
@@ -148,20 +147,28 @@ inline svint32_t sve_div(svbool_t pg, svint32_t a, svint32_t b) { return svdiv_s
 inline svfloat64_t sve_div(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svdiv_f64_x(pg, a, b); }
 inline svint64_t sve_div(svbool_t pg, svint64_t a, svint64_t b) { return svdiv_s64_x(pg, a, b); }
 
-inline svfloat32_t sve_min(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svmin_f32_x(pg, a, b); }
+// FMIN/FMAX propagate NaN and pick -0 over +0; ``std::min(a,b)`` is
+// (b < a) ? b : a and ``std::max(a,b)`` is (a < b) ? b : a. Only a
+// compare-select reproduces that for fp (an operand swap does not: FMIN is
+// commutative on NaN). Integer SMIN/SMAX are already exact.
+inline svfloat32_t sve_min(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svsel_f32(svcmplt_f32(pg, b, a), b, a); }
 inline svint32_t sve_min(svbool_t pg, svint32_t a, svint32_t b) { return svmin_s32_x(pg, a, b); }
-inline svfloat64_t sve_min(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svmin_f64_x(pg, a, b); }
+inline svfloat64_t sve_min(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svsel_f64(svcmplt_f64(pg, b, a), b, a); }
 inline svint64_t sve_min(svbool_t pg, svint64_t a, svint64_t b) { return svmin_s64_x(pg, a, b); }
 
-inline svfloat32_t sve_max(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svmax_f32_x(pg, a, b); }
+inline svfloat32_t sve_max(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svsel_f32(svcmplt_f32(pg, a, b), b, a); }
 inline svint32_t sve_max(svbool_t pg, svint32_t a, svint32_t b) { return svmax_s32_x(pg, a, b); }
-inline svfloat64_t sve_max(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svmax_f64_x(pg, a, b); }
+inline svfloat64_t sve_max(svbool_t pg, svfloat64_t a, svfloat64_t b) { return svsel_f64(svcmplt_f64(pg, a, b), b, a); }
 inline svint64_t sve_max(svbool_t pg, svint64_t a, svint64_t b) { return svmax_s64_x(pg, a, b); }
 
 // ---- fused multiply-add: svmla_x(pg, c, a, b) == c + a*b (single rounding) ----
 // fp only -- the integer tile_fma path uses scalar ``std::fma`` (see tile_fma).
-inline svfloat32_t sve_mla(svbool_t pg, svfloat32_t c, svfloat32_t a, svfloat32_t b) { return svmla_f32_x(pg, c, a, b); }
-inline svfloat64_t sve_mla(svbool_t pg, svfloat64_t c, svfloat64_t a, svfloat64_t b) { return svmla_f64_x(pg, c, a, b); }
+inline svfloat32_t sve_mla(svbool_t pg, svfloat32_t c, svfloat32_t a, svfloat32_t b) {
+  return svmla_f32_x(pg, c, a, b);
+}
+inline svfloat64_t sve_mla(svbool_t pg, svfloat64_t c, svfloat64_t a, svfloat64_t b) {
+  return svmla_f64_x(pg, c, a, b);
+}
 
 // ---- comparisons -> svbool_t (active set = ``pg`` AND (a OP b)) ----
 inline svbool_t sve_cmplt(svbool_t pg, svfloat32_t a, svfloat32_t b) { return svcmplt_f32(pg, a, b); }

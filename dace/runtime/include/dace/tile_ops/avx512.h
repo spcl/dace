@@ -92,9 +92,11 @@ inline void avx512_arith_ps(float* out, __m512 va, __m512 vb, __mmask16 k) {
   else if constexpr (Op == '/')
     r = _mm512_div_ps(va, vb);
   else if constexpr (Op == 'm')
-    r = _mm512_min_ps(va, vb);
+    // VMINPS/VMINPD is (x < y) ? x : y, so the SECOND operand wins on NaN and on
+    // (+0,-0). ``std::min(a,b)`` is (b < a) ? b : a -- swap to match exactly.
+    r = _mm512_min_ps(vb, va);
   else
-    r = _mm512_max_ps(va, vb);
+    r = _mm512_max_ps(vb, va);
   _mm512_storeu_ps(out, _mm512_maskz_mov_ps(k, r));  // zero-fill inactive
 }
 template <char Op>
@@ -109,9 +111,11 @@ inline void avx512_arith_pd(double* out, __m512d va, __m512d vb, __mmask8 k) {
   else if constexpr (Op == '/')
     r = _mm512_div_pd(va, vb);
   else if constexpr (Op == 'm')
-    r = _mm512_min_pd(va, vb);
+    // VMINPS/VMINPD is (x < y) ? x : y, so the SECOND operand wins on NaN and on
+    // (+0,-0). ``std::min(a,b)`` is (b < a) ? b : a -- swap to match exactly.
+    r = _mm512_min_pd(vb, va);
   else
-    r = _mm512_max_pd(va, vb);
+    r = _mm512_max_pd(vb, va);
   _mm512_storeu_pd(out, _mm512_maskz_mov_pd(k, r));
 }
 }  // namespace detail
