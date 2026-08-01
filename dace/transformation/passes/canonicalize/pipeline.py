@@ -1000,7 +1000,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # them and ``LoopToReduce`` must not run again after it.
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([WCRToAugAssign()]))]
     s += [('reduction_to_wcr_map', PinNestedSequentialLoops())]
-    s += [('reduction_to_wcr_map', LoopToReduce(prefer='wcr-scalar'))]
     s += [('reduction_to_wcr_map', AccumulatorCopyChainToWCR())]
     s += [('reduction_to_wcr_map', RetargetWCRAccumulator())]
     s += [('reduction_to_wcr_map', PatternMatchAndApplyRepeated([LoopToMap()]))]
