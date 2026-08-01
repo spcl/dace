@@ -68,6 +68,7 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
     RewriteModuloToPyMod,
     StripPowerExponentCast,
 )
+from dace.transformation.passes.canonicalize.pipeline import canonicalize
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
@@ -104,6 +105,12 @@ from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsup
 
 #: Tile lib-node types -- all of them, used by the implementation selector.
 _TILE_NODE_TYPES = (TileBinop, TileFMA, TileLoad, TileMaskGen, TileITE, TileReduce, TileStore, TileUnop)
+
+#: ``canonicalize()`` knobs for the vectorizer's own entry normalization (see
+#: :meth:`VectorizeMultiDim.apply_pass`). ``semantic_lifting=False`` is the whole point: canon's
+#: map -> library-node lifts (Einsum / Copy / Memset) would hand the tiler an opaque node with no
+#: per-lane body to widen, so the vectorizer needs the residual left as raw maps.
+ENTRY_CANONICALIZE_KWARGS = {'semantic_lifting': False}
 
 
 def restore_sdfg_in_place(target: dace.SDFG, source: dace.SDFG) -> None:
@@ -972,6 +979,18 @@ class VectorizeMultiDim(ppl.Pipeline):
         # correct input and leave it un-tiled -- a clean refusal instead of a crash or a
         # half-transformed SDFG. Cheap relative to the compile that follows; taken once per call.
         snapshot = copy.deepcopy(sdfg)
+        # Canonicalize at the vectorizer's OWN entry (user direction). Every prep pass below
+        # assumes the canonical shape -- unit-step maps, parallelized DOALL loops, no branchy
+        # scaffolding -- which until now arrived only when the CALLER happened to run
+        # ``canonicalize`` first: caller discipline nothing enforced. Skipped on an
+        # already-GPU-offloaded SDFG: there the documented order is canonicalize -> offload ->
+        # vectorize, so re-running the recipe on device-resident maps would invert it.
+        if not _has_gpu_device_map(sdfg):
+            canonicalize(sdfg,
+                         validate=self._validate,
+                         validate_all=self._validate_all,
+                         target='gpu' if self._device == DeviceType.GPU else 'cpu',
+                         **ENTRY_CANONICALIZE_KWARGS)
         # Always simplify first (user direction): callers may hand us an un-simplified SDFG
         # (``to_sdfg(simplify=False)``) with FunctionCallRegions / redundant states / un-inlined
         # wrappers. Up-front simplify gives every downstream pass a canonical flat-state body;
