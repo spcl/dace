@@ -692,7 +692,7 @@ with open(r"{temp_path}", "wb") as f:
         is normally filled in from the SDFG itself."""
         descriptor = self._typedict.get(name)
         if isinstance(getattr(descriptor, 'dtype', descriptor), dtypes.callback):
-            return (f'Missing program argument "{name}": it is a callback, so its value is a callable. '
+            return (f'Missing program argument "{name}": it is a Python callback, so its value is a callable. '
                     'Frontends record the callables they synthesize in "SDFG.callback_objects", which is filled '
                     'in here automatically -- but those are runtime objects and do not survive serialization, '
                     'so an SDFG loaded from a file needs them passed explicitly or restored into '
