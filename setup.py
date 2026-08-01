@@ -41,9 +41,6 @@ except (subprocess.CalledProcessError, OSError, IndexError, ValueError):
 # Ninja generates the build for generated code (see dace/codegen/compiler.py). Any version will do.
 ninja_requires = [] if shutil.which('ninja') else ['ninja']
 
-with open("README.md", "r") as fp:
-    long_description = fp.read()
-
 with open(os.path.join(dace_path, "version.py"), "r") as fp:
     version = fp.read().strip().split(' ')[-1][1:-1]
 
@@ -54,8 +51,6 @@ setup(
     author='SPCL @ ETH Zurich',
     author_email='talbn@inf.ethz.ch',
     description='Data-Centric Parallel Programming Framework',
-    long_description=long_description,
-    long_description_content_type='text/markdown',
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: BSD License",
