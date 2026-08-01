@@ -424,5 +424,47 @@ def test_split_statements_transient_write_not_snapshotted():
     assert not _split_snaps(sdfg)
 
 
+# ===========================================================================
+# Black-box (opaque) map bodies: statement splitting clones a body once per
+# output, so a node whose effect is not just its out-memlets must block the split.
+# ===========================================================================
+def _two_output_map(name, second_tasklet):
+    """``for i: A[i] = B[i] + 1; C[i] = <second_tasklet>`` as one straight-line map."""
+    sdfg = dace.SDFG(name)
+    for nm in ('A', 'B', 'C'):
+        sdfg.add_array(nm, [N], dace.float64)
+    state = sdfg.add_state('main', is_start_block=True)
+    entry, xit = state.add_map('m', {'i': '0:N'})
+    rB = state.add_read('B')
+    t1 = state.add_tasklet('t1', {'b'}, {'a'}, 'a = b + 1.0')
+    state.add_memlet_path(rB, entry, t1, dst_conn='b', memlet=dace.Memlet('B[i]'))
+    state.add_memlet_path(t1, xit, state.add_write('A'), src_conn='a', memlet=dace.Memlet('A[i]'))
+    t2 = second_tasklet(state)
+    state.add_memlet_path(rB, entry, t2, dst_conn='b', memlet=dace.Memlet('B[i]'))
+    state.add_memlet_path(t2, xit, state.add_write('C'), src_conn='c', memlet=dace.Memlet('C[i]'))
+    return sdfg
+
+
+def test_split_maps_splits_a_transparent_two_output_map():
+    """Baseline for the two guards below: an all-Python, effect-free body does split."""
+    sdfg = _two_output_map('split_map_plain', lambda st: st.add_tasklet('t2', {'b'}, {'c'}, 'c = b * 2.0'))
+    assert SplitStatements(split_maps=True).apply_pass(sdfg, {}) == 1
+
+
+def test_split_maps_refuses_a_cpp_tasklet_body():
+    """A non-Python tasklet is a black box -- the Python-AST side-effect scan has nothing to
+    read, so ``has_side_effects`` answering False proves nothing and the body must not be cloned."""
+    sdfg = _two_output_map('split_map_cpp',
+                           lambda st: st.add_tasklet('t2', {'b'}, {'c'}, 'c = b * 2.0;', dace.Language.CPP))
+    assert SplitStatements(split_maps=True).apply_pass(sdfg, {}) is None
+
+
+def test_split_maps_refuses_a_side_effecting_body():
+    """A declared side effect would run once per clone."""
+    sdfg = _two_output_map('split_map_sideeffect',
+                           lambda st: st.add_tasklet('t2', {'b'}, {'c'}, 'c = b * 2.0', side_effects=True))
+    assert SplitStatements(split_maps=True).apply_pass(sdfg, {}) is None
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-q'])

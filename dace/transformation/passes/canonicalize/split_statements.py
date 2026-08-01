@@ -31,12 +31,36 @@ whatever should recombine.
 import copy
 from typing import Any, Dict, List, Optional
 
-from dace import SDFG, Memlet, properties, symbolic
+from dace import SDFG, Memlet, dtypes, properties, symbolic
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.loop_fission import _single_compute_state
+
+
+def is_opaque_code(node, sdfg: SDFG) -> bool:
+    """Whether ``node``'s effects are invisible to statement splitting.
+
+    Splitting clones a body once per independent output group, so anything a node does
+    beyond writing its out-memlets happens once per clone. Two black boxes qualify: a node
+    that declares (or is detected to have) side effects, and a non-Python tasklet -- the
+    detection behind :meth:`Tasklet.has_side_effects` walks a Python AST, so a C++ / MLIR
+    body answers ``False`` for lack of anything to look at, not for lack of effects.
+
+    :param node: The node to classify.
+    :param sdfg: The SDFG owning ``node`` (for the side-effect query).
+    """
+    if not isinstance(node, nodes.CodeNode) or isinstance(node, nodes.NestedSDFG):
+        return False
+    if isinstance(node, nodes.Tasklet) and node.language != dtypes.Language.Python:
+        return True
+    return node.has_side_effects(sdfg)
+
+
+def has_opaque_code(sdfg: SDFG) -> bool:
+    """Whether any node anywhere in ``sdfg`` is opaque to splitting (:func:`is_opaque_code`)."""
+    return any(is_opaque_code(node, parent.sdfg) for node, parent in sdfg.all_nodes_recursive())
 
 
 def _has_conditional(sdfg: SDFG) -> bool:
@@ -155,6 +179,10 @@ class SplitStatements(ppl.Pass):
     def _independent_output_groups(state, node: nodes.NestedSDFG):
         """Partition ``node``'s output connectors into independent groups."""
         if not _has_conditional(node.sdfg) and not _has_interstate_assignments(node.sdfg):
+            return None
+        # A black-box body is not analyzable: ``_output_dependency`` reads the memlets, which
+        # do not describe an opaque node's effects, and ``_split`` would then duplicate them.
+        if has_opaque_code(node.sdfg):
             return None
         out_conns = [c for c in node.out_connectors]
         if len(out_conns) < 2:
@@ -293,6 +321,10 @@ class SplitStatements(ppl.Pass):
             inner = [n for n in scope.nodes() if n not in (entry, xit)]
         # PLAIN leaf map only: no nested map / NestedSDFG in the body (those go to _replicate_components).
         if not inner or any(isinstance(n, (nodes.NestedSDFG, nodes.MapEntry, nodes.MapExit)) for n in inner):
+            return False
+        # Same black-box refusal as the NestedSDFG path: the clones below recompute the whole
+        # body per output, which is only sound while every node's effect is its out-memlets.
+        if any(is_opaque_code(n, cfg) for n in inner):
             return False
         before = dict.fromkeys(n for n in state.nodes() if isinstance(n, nodes.NestedSDFG))
         nsdfg_node = helpers.nest_state_subgraph(cfg, state, subgraph_cls(state, list(scope.nodes())))
