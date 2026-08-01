@@ -763,12 +763,13 @@ def same_value(a: Any, b: Any) -> bool:
         return all(same_value(x, y) for x, y in zip(a, b))
     if not isinstance(a, sympy.Basic) or not isinstance(b, sympy.Basic):
         return False
-    # Retype both sides to one dtype and compare structurally, so only the dtype is ignored.
-    retype = {
-        sym: symbol(sym.name)
-        for sym in (a.free_symbols | b.free_symbols) if isinstance(sym, symbol) and sym.dtype != DEFAULT_SYMBOL_TYPE
-    }
-    return bool(a.subs(retype) == b.subs(retype))
+    # Structural comparison with every symbol stripped down to its name and assumptions: the dtype, and
+    # only the dtype, drops out.
+    plain = [
+        expr.subs({s: sympy.Symbol(s.name, **s.assumptions0)
+                   for s in expr.free_symbols if isinstance(s, symbol)}) for expr in (a, b)
+    ]
+    return bool(plain[0] == plain[1])
 
 
 def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
