@@ -817,17 +817,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # a loop into siblings that keep the same ``_loop_it_<N>`` name; re-running
     # UniqueLoopIterators disambiguates those duplicates so the later LoopToMap is
     # not blocked by a sibling appearing to read the shared iterator.
-    # break_antidep (before fission): a forward-read anti-dependence -- a body that
-    # reads ``a[i+1]`` off the same array a sibling statement writes at ``a[i]`` (s1244
-    # ``d[i] = a[i] + a[i+1]``) -- is a cross-iteration bridge LoopFission cannot sever,
-    # so the whole body stays one sequential loop. BreakAntiDependence's per-edge mixed
-    # break (arrays its whole-array rename skips because a sibling read is RAW)
-    # snapshots the array and redirects ONLY the read-ahead access to the snapshot
-    # (same-index / read-behind reads keep their live-array RAW value), leaving just
-    # per-iteration bridges for LoopFission to distribute into siblings. It runs here,
-    # on the now single-compute-state body, in addition to the earlier 'break_antidep'
-    # stage (which sees the loop before its slice states fuse and so only breaks the
-    # whole-array pure-WAR loops). Gated on the same knob as that stage.
+    # break_antidep (before fission): a second whole-array pure-WAR rename, on the now
+    # single-compute-state body. It runs in addition to the earlier 'break_antidep'
+    # stage, which sees the loop before its slice states fuse. The per-edge MIXED shape
+    # -- a body that reads ``a[i+1]`` off the same array a sibling writes at ``a[i]``
+    # (s1244 ``d[i] = a[i] + a[i+1]``), which the whole-array rename skips because that
+    # sibling read is RAW -- is handled earlier, by SplitStatements in 'prep'. Gated on
+    # the same knob as that stage.
     if break_anti_dependence:
         s += [('fission', BreakAntiDependence())]
     s += [('fission', PerfectLoopNesting()), ('fission', _uniq_fis)]

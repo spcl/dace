@@ -281,12 +281,12 @@ def test_forward_read_anti_dependence_snapshots_and_stays_bit_exact():
 
 
 # ===========================================================================
-# Structural cover for the LIVE per-edge forward-read break inside
-# ``SplitStatements``. The equivalent shapes are exercised white-box against the
-# disabled ``BreakAntiDependence._break_mixed_forward_reads`` in
-# ``tests/passes/break_anti_dependence_test.py``; these pin the same behaviour on
-# the path the canonicalize pipeline actually runs. Hand-built single-compute-state
-# loops -- the frontend leaves slice states, which yield no single compute state.
+# The per-edge forward-read break inside ``SplitStatements`` -- one fixture per shape.
+# These shapes used to be pinned white-box against
+# ``BreakAntiDependence._break_mixed_forward_reads``; that duplicate implementation was
+# deleted and the fixtures retargeted here, onto the path the canonicalize pipeline
+# actually runs. Hand-built single-compute-state loops -- the frontend leaves slice
+# states, which yield no single compute state.
 # ===========================================================================
 def _mixed_loop(name):
     """A ``for i in range(N - 1)`` loop with one (empty) body state."""
@@ -363,7 +363,13 @@ def test_split_statements_copy_forward_read_preserves_destination_subset():
 
 def test_split_statements_symbolic_forward_offset_snapshots_with_guard():
     """``d[i] = a[i] + a[i + K]`` with symbolic ``K``: snapshot AND plant the runtime
-    positivity guard that makes the rename sound."""
+    positivity guard that makes the rename sound.
+
+    The guard must be STRICT (``K >= 1``), not the ``>= 0`` the whole-array pure-WAR
+    rename in ``BreakAntiDependence`` uses. Here a sibling statement writes ``A[i]``
+    earlier in the SAME iteration, so ``K == 0`` makes ``A[i + K]`` alias that
+    just-written value -- reading the stale pre-loop snapshot instead would be a silent
+    miscompile, and the guard is what turns it into a loud runtime fault."""
     sdfg, loop, body = _mixed_loop('split_mixed_symK')
     for nm in ('A', 'B', 'D'):
         sdfg.add_array(nm, [N], dace.float64)
@@ -380,7 +386,17 @@ def test_split_statements_symbolic_forward_offset_snapshots_with_guard():
     snap, = _split_snaps(sdfg)
     assert next(e for e in body.in_edges(tr) if e.dst_conn == 'a1').src.data == snap
     pre = _pre_state(sdfg, loop)
-    assert any(isinstance(n, nodes.Tasklet) and 'guard' in n.label for n in pre.nodes())
+    guards = [n for n in pre.nodes() if isinstance(n, nodes.Tasklet) and 'guard' in n.label]
+    assert len(guards) == 1
+    code = guards[0].code.as_string
+    # ``K - 1 >= 0`` is exactly the strict ``K > 0`` for integer offsets; a bare ``K >= 0``
+    # here would admit the aliasing K == 0 case.
+    assert 'K - 1' in code and '>= 0' in code, code
+    assert '__builtin_trap' in code, code
+    # The guard carries no connectors, so only ``side_effects`` keeps dead-code elimination
+    # from pruning it -- pruning would silently restore the unsound assume-positive path.
+    assert guards[0].side_effects
+    assert not guards[0].in_connectors and not guards[0].out_connectors
 
 
 def test_split_statements_symbolic_behind_offset_is_recurrence_noop():
