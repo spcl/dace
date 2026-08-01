@@ -1,0 +1,72 @@
+name: Order-Dependence Tests
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: 'Test-order seed to reproduce a failure (default: derived from the commit SHA)'
+        required: false
+        default: ''
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  shuffled-order:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    name: Shuffled test-file order
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - name: Set up Python
+      uses: actions/setup-python@v6
+      with:
+        python-version: '3.13'
+    - name: Install dependencies
+      run: |
+        # Make dependency setup faster
+        echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
+        sudo dpkg-reconfigure man-db
+        # Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+        pip install pytest-xdist
+        pip install -e ".[testing]"
+
+    - name: Pick the order seed
+      id: order
+      run: |
+        SEED='${{ github.event.inputs.seed }}'
+        # Derived from the commit, so one commit always runs one order: the order varies across
+        # commits but a failure reproduces exactly. A per-run random seed would be flaky by design.
+        [ -n "$SEED" ] || SEED=$((0x$(git rev-parse HEAD | cut -c1-8)))
+        echo "seed=$SEED" >> $GITHUB_OUTPUT
+        echo "::notice title=Test-order seed::$SEED"
+
+    - name: Test with a shuffled test-file order
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        # Process-global caches (SymPy's @cacheit, functools LRUs) carry over between tests, so what a
+        # test sees depends on what ran before it. Shuffling whole files, with '--dist loadfile' keeping
+        # each file in one worker process, walks a different interleaving on every commit; the fixed
+        # alphabetical order the other workflows use hides this class of bug entirely.
+        FILES=$(python .github/workflows/shuffle_test_files.py ${{steps.order.outputs.seed}})
+        pytest $FILES -n auto --dist loadfile --tb=short --timeout_method thread --timeout=300 \
+          -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential" \
+          || {
+            echo "::error title=Order-dependent test failure::Seed ${{steps.order.outputs.seed}} -- reproduce with: pytest \$(python .github/workflows/shuffle_test_files.py ${{steps.order.outputs.seed}}) -n auto --dist loadfile"
+            exit 1
+          }
