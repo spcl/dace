@@ -250,3 +250,10 @@ dace/transformation/layout/cost_model/build/
 
 # cloudsc_variants perf job: cached Phase-A parallelized SDFG (expensive to rebuild)
 performance_regression_jobs/cloudsc_variants/cache/
+
+# Local perf-job trees. These are working files for cluster runs, not repo content --
+# they live outside the checkout so `git add -A` cannot pull them back in.
+/performance_regression_jobs/
+/codegen_buildperf_jobs/
+/cpu_codegen_perf_jobs/
+/local/
