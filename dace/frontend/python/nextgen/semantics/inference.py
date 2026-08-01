@@ -14,6 +14,7 @@ the operator core.
 """
 import ast
 import copy
+import numbers
 import types
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
@@ -194,6 +195,14 @@ def _qualified_object_name(obj: Any, fallback: Optional[str]) -> Optional[str]:
 _WEAK_SCALAR_RANKS = {bool: 0, int: 1, float: 2, complex: 3}
 _WEAK_KIND_DEFAULTS = {0: dtypes.bool_, 1: dtypes.int64, 2: dtypes.float64, 3: dtypes.complex128}
 _DTYPE_KIND_RANKS = {'b': 0, 'i': 1, 'u': 1, 'f': 2, 'c': 3}
+
+#: Function names the SYMBOLIC parser resolves on its own
+#: (``dace.symbolic.pystr_to_symbolic``), which a program may therefore call
+#: without ever defining them (``dace.mapscope(_[0:ceiling(N / 32)])``). Over
+#: compile-time operands such a call is a symbolic expression rather than a
+#: function call — see :meth:`InferenceService._symbolic_intrinsic`.
+SYMBOLIC_INTRINSICS = frozenset(
+    {'ceiling', 'ceil', 'floor', 'int_ceil', 'int_floor', 'sqrt', 'Min', 'Max', 'Abs', 'Mod', 'round'})
 
 
 def _weak_scalar_rank(operand: 'Inferred') -> Optional[int]:
@@ -480,8 +489,25 @@ class InferenceService:
                 # than hard-aborting the whole call (the base being data
                 # doesn't rule out `node.func` resolving some other way, e.g.
                 # a qualified free function embedded via a constant callee).
+            receiver_object = self.constant_object(node.func.value)
+            if receiver_object is not None:
+                infer_fn = oprepo.Replacements.get_method_descriptor_inference(type(receiver_object), node.func.attr)
+                if infer_fn is not None:
+                    return self._registry_inference(infer_fn, receiver_object, *args, **kwargs)
 
         qualname, callee = self.resolve_callee(node.func)
+
+        # Symbolic intrinsics (``ceiling(N / 32)`` as a map bound). These names
+        # are resolved by the symbolic parser, not by the program: nothing
+        # defines them, so the callee is unresolvable and no registry entry
+        # exists. Over purely symbolic arguments such a call IS a symbolic
+        # expression, and typing it as one is what keeps it out of the
+        # interpreter -- canonicalization hoists a compound map bound into its
+        # own statement, which would otherwise become a callback and poison
+        # the loop it bounds.
+        symbolic_intrinsic = self._symbolic_intrinsic(node, qualname, callee)
+        if symbolic_intrinsic is not None:
+            return symbolic_intrinsic
 
         # NumPy universal functions (np.add, np.sin, ...), direct or through
         # one of their reduce/accumulate/outer methods (np.add.reduce(...)).
@@ -504,6 +530,83 @@ class InferenceService:
         if infer_fn is None:
             return None
         return self._registry_inference(infer_fn, input_descs, *args, **kwargs)
+
+    def _is_replacement_handle(self, node: ast.expr) -> bool:
+        """Whether an argument names a container holding an opaque handle a
+        registry replacement produced (see
+        :attr:`ProgramContext.replacement_handles`), which the next replacement
+        consumes by name even though it is Python-object-typed."""
+        if not isinstance(node, ast.Name):
+            return False
+        binding = self.context.resolve(node.id)
+        return binding is not None and binding.container in self.context.replacement_handles
+
+    def constant_object(self, node: ast.expr) -> Optional[Any]:
+        """
+        The compile-time Python OBJECT a name refers to (an MPI communicator
+        from the closure, ``commworld`` in ``commworld.Bcast(A)``), or None
+        when the expression is not a name bound to one.
+
+        Numbers, strings and symbols are excluded: what this identifies is a
+        receiver whose *class* the replacement registry may have method
+        entries for (``replaces_method('Intracomm', 'Bcast')``), which the
+        value domains handle themselves.
+        """
+        if not isinstance(node, ast.Name):
+            return None
+        try:
+            inferred = self.infer(node)
+        except UnsupportedFeatureError:
+            return None
+        if inferred.kind != 'constant':
+            return None
+        value = inferred.value
+        if value is None or isinstance(value, (numbers.Number, str, bytes, bool, type, tuple, list, dict, set)):
+            return None
+        return value
+
+    def symbolic_intrinsic_value(self, node: ast.Call) -> Optional[Any]:
+        """
+        The compile-time symbolic value of a call to a symbolic intrinsic
+        (:data:`SYMBOLIC_INTRINSICS`), or None when the call is not one.
+
+        Lowering asks this before treating a call as dataflow: such a call has
+        no runtime implementation to emit — the symbolic parser is what
+        resolves it — so it binds as a value instead.
+        """
+        qualname, callee = self.resolve_callee(node.func)
+        inferred = self._symbolic_intrinsic(node, qualname, callee)
+        return None if inferred is None else inferred.value
+
+    def _symbolic_intrinsic(self, node: ast.Call, qualname: str, callee: Optional[Any]) -> Optional[Inferred]:
+        """
+        The symbolic value of a call to a symbolic intrinsic
+        (:data:`SYMBOLIC_INTRINSICS`) over compile-time operands, or None when
+        the call is not one.
+
+        Restricted to an UNRESOLVABLE callee: a name the program actually
+        binds (``numpy.floor``, the builtin ``min``) is a real function with
+        its own registry lowering, and only the names left for the symbolic
+        parser to resolve belong here.
+        """
+        if callee is not None or qualname not in SYMBOLIC_INTRINSICS or node.keywords:
+            return None
+        try:
+            operands = [self.infer(argument) for argument in node.args]
+        except UnsupportedFeatureError:
+            return None
+        if not operands or any(operand.kind not in ('constant', 'symbolic') for operand in operands):
+            return None
+        # Built from the operands' VALUES rather than by re-parsing the source
+        # text: an argument hoisted into an ANF temporary (``__anf0 = N / 32``)
+        # is a name the symbolic parser would take for an integer symbol, and
+        # ``ceiling`` of an integer folds away before anything substitutes the
+        # value back.
+        arguments = ', '.join(str(operand.value) for operand in operands)
+        try:
+            return Inferred(kind='symbolic', value=symbolic.pystr_to_symbolic(f'{qualname}({arguments})'))
+        except Exception:
+            return None
 
     def call_arguments(self, node: ast.Call) -> Optional[Tuple[Dict[str, data.Data], List[Any], Dict[str, Any]]]:
         """
@@ -531,7 +634,7 @@ class InferenceService:
                 inferred = self.infer(argument)
             except UnsupportedFeatureError:
                 return False, None
-            if inferred.is_pyobject:
+            if inferred.is_pyobject and not self._is_replacement_handle(argument):
                 return False, None
             if inferred.is_data:
                 try:

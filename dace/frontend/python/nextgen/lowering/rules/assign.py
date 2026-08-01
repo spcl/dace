@@ -80,6 +80,14 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     value = statement.value = dispatch.materialize_boolean_gathers(value, statement, state)
 
     if isinstance(value, ast.Call):
+        # A symbolic intrinsic (``ceiling(N / 32)``) is a compile-time value,
+        # not dataflow: nothing implements it at runtime, so it binds as the
+        # value it denotes and never becomes a container.
+        if isinstance(target, ast.Name):
+            intrinsic = state.inference.symbolic_intrinsic_value(value)
+            if intrinsic is not None:
+                state.context.bind_constant(target.id, intrinsic)
+                return
         from dace.frontend.python.nextgen.lowering.rules import calls
         calls.lower_call_assign(statement, state)
         return
@@ -348,6 +356,10 @@ def _lower_name_assign(target: ast.Name, value: ast.expr, inferred: Inferred, st
     # Pure-symbolic values of ANF temporaries stay visible to inference (e.g.
     # as computed shape arguments) alongside the materialized scalar. ANF
     # temps are single-assignment, so the recorded value cannot go stale.
+    # A temporary that is NOT symbolic here but turns out to sit in a
+    # symbol-side position is promoted at the consuming call instead
+    # (``dispatch._promote_scalar_arguments``), which covers a run-time value
+    # as well as a compile-time one.
     if inferred.kind == 'symbolic' and target.id.startswith('__anf'):
         state.context.symbolic_scalar_values[target_access.container] = inferred.value
     dispatch.lower_computation(target_access, value, statement, state)
@@ -577,8 +589,16 @@ def _lower_advanced_index_write(target: ast.Subscript, value: ast.expr, statemen
         # forms match the read forms.
         target = dispatch.materialize_array_indices(target, state)
         expr = state.inference.parse_access(target)
-        if not expr.arrdims:
-            return False
+    except UnsupportedFeatureError:
+        # Still only a PROBE: a target this parser cannot express
+        # (``B[i, A.indices[idx]] = ...``, whose index reads a structure
+        # member) is not an advanced-index write. Committing the statement to
+        # a callback here would pre-empt the ordinary subscript path, which
+        # re-resolves the same target and lowers it as indirection.
+        return False
+    if not expr.arrdims:
+        return False
+    try:
         # An accumulation reaches lowering desugared into ``t = <t read> op v``;
         # both write paths re-apply the operator themselves, so strip the
         # self-read down to the accumulated operand first.

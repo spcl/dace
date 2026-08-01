@@ -1262,9 +1262,20 @@ class ReplacementCallNode(ScheduleTreeNode):
     :param keyword_arguments: Keyword arguments, same convention.
     :param data_arguments: The container-name argument values (includes the
                            receiver, when set).
-    :param receiver: For a bound-method call (``obj.method(...)``), the
-                     repository container ``obj`` resolves to. ``None`` for a
+    :param receiver: For a bound-method call (``obj.method(...)``), the name
+                     the replacement receives as its first argument: the
+                     repository container ``obj`` resolves to, or — when
+                     ``receiver_object`` is set — the closure name under which
+                     the replacement looks the object up. ``None`` for a
                      free-function or ufunc replacement.
+    :param receiver_object: The compile-time Python object a method call's
+                            receiver is, when it is NOT a repository container
+                            (an ``mpi4py`` communicator from the program's
+                            closure). The registry entry is then looked up
+                            against this object's class, and the object is
+                            published to the expansion under ``receiver`` so
+                            the replacement can resolve it (the classic
+                            frontend's ``pv.globals[comm]`` convention).
     :param ufunc_name: When set, this is a NumPy universal function call
                        (``numpy.<ufunc_name>(...)`` or one of its
                        ``reduce``/``accumulate``/``outer`` methods) instead of
@@ -1293,6 +1304,7 @@ class ReplacementCallNode(ScheduleTreeNode):
     keyword_arguments: Dict[str, Any] = field(default_factory=dict)
     data_arguments: Set[str] = field(default_factory=set)
     receiver: Optional[str] = None
+    receiver_object: Optional[Any] = None
     ufunc_name: Optional[str] = None
     ufunc_method: Optional[str] = None
     extra_targets: List[str] = field(default_factory=list)

@@ -68,7 +68,12 @@ def emit_reduction(target: DataAccess,
         return
 
     line = getattr(statement, 'lineno', 0)
-    source_shape = nondegenerate_shape(source.subset)
+    # The operand's NumPy shape, not its squeezed one: :func:`indexed_subset`
+    # right-aligns the map parameters against exactly that, so squeezing here
+    # dropped a LEADING dimension instead of the size-1 one it meant to
+    # (``numpy.sum(a)`` over a ``(20, 1)`` array aligned ``__i0`` with the
+    # size-1 axis and rejected the rank it was left with).
+    source_shape = list(source.numpy_shape)
     if not source_shape:
         # Scalar source: the reduction is the identity copy
         _emit_scalar_tasklet(f'reduce_init_{line}', '__in0', source, target, state)

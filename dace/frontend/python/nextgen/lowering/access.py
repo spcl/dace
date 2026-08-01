@@ -151,6 +151,21 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
             return None
         node = promote_index_reads(node, state, ndim=len(base_descriptor.shape))
         node, reversed_axes = reverse_normalized(node, base_descriptor.shape, state.inference.constant_int)
+        member_reads = _member_index_reads(node, state)
+        if member_reads:
+            # ``B[i, A.indices[idx]]``: indirection through a STRUCTURE MEMBER.
+            # The plain-array spelling reaches the same conclusion below (the
+            # parser renders ``indices[idx]`` as an applied function and
+            # ``data_dependent_container_names`` recognizes it), but a member
+            # read parses as an attribute of a symbol, which sympy then cannot
+            # apply at all. Reporting it here keeps both spellings on the
+            # tasklet indirection path instead of ending one of them in a
+            # memlet-parse failure.
+            raise UnsupportedFeatureError(
+                f'Data-dependent subscript index (reads {", ".join(sorted(member_reads))}) is not supported here',
+                state.context.filename,
+                node,
+                category='data-dependent-subscript')
         expr = state.inference.parse_access(node)
         subset = substitute_symbolic_scalars(expr.subset, state.context)
         if isinstance(subset, subsets.Indices):
@@ -179,6 +194,21 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
                           unmodeled=plan is None,
                           unmodeled_new_axes=plan is None and bool(expr.new_axes))
     return None
+
+
+def _member_index_reads(node: ast.Subscript, state: LoweringState) -> List[str]:
+    """
+    The source texts of structure-member data reads sitting in this
+    subscript's index (the ``A.indices[idx]`` in ``B[i, A.indices[idx]]``).
+
+    Detection is AST-based and deliberately runs before the memlet parse: a
+    member read reaches sympy as an attribute of a symbol, which raises rather
+    than producing the applied function a plain array read would.
+    """
+    return [
+        astutils.unparse(read) for read in indirect_index_reads(node, state) if any(
+            isinstance(inner, ast.Attribute) for inner in ast.walk(read))
+    ]
 
 
 def keeps_range(node: ast.Subscript, state: LoweringState, ndim: Optional[int] = None) -> bool:

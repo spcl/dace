@@ -4,6 +4,7 @@ import ast
 import inspect
 import copy
 import os
+import re
 import sympy
 import sys
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
@@ -1164,11 +1165,36 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                           stacklevel=4)
 
     def _classic_callback_count(self, sdfg: SDFG) -> int:
-        """The number of Python callbacks the classic frontend recorded in the
-        generated SDFG (``callback_mapping``, cross-checked against
-        callback-typed symbols)."""
-        callback_symbols = [name for name, stype in sdfg.symbols.items() if isinstance(stype, dtypes.callback)]
-        return max(len(sdfg.callback_mapping), len(callback_symbols))
+        """
+        The number of Python callback CALL SITES the classic frontend emitted
+        into the generated SDFG.
+
+        Sites, not distinct callbacks: the nextgen side is counted in schedule
+        tree nodes, and one callback called twice (``call(arr); ...;
+        call(arr)``) is two nodes there but a single ``callback_mapping`` entry
+        and a single callback-typed symbol here. Counting the invoking tasklets
+        puts both sides on the same footing.
+
+        Falls back to the number of distinct callbacks when no invoking tasklet
+        is found, so a callback invoked in a form this does not recognize can
+        never make the comparison under-count.
+        """
+        names: Set[str] = set()
+        for nested in sdfg.all_sdfgs_recursive():
+            names.update(name for name, stype in nested.symbols.items() if isinstance(stype, dtypes.callback))
+            names.update(nested.callback_mapping)
+            names.update(nested.callback_mapping.values())
+        if not names:
+            return 0
+        invocation = re.compile(r'\b(?:%s)\s*\(' % '|'.join(re.escape(name) for name in names))
+        sites = 0
+        for nested in sdfg.all_sdfgs_recursive():
+            for state in nested.states():
+                for node in state.nodes():
+                    code = getattr(getattr(node, 'code', None), 'as_string', None)
+                    if code:
+                        sites += len(invocation.findall(code))
+        return max(sites, len(names))
 
     def _check_callback_discrepancy(self, callback_nodes: List['tn.PythonCallbackNode'], classic_count: int,
                                     discrepancy: bool) -> None:

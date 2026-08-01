@@ -319,10 +319,12 @@ def _parse_map_ranges(rng: ast.expr, location: ast.expr, state: LoweringState,
     ranges = []
     for dimension in dimensions:
         if not isinstance(dimension, ast.Slice):
-            raise UnsupportedFeatureError('dace.map dimensions must be slices',
-                                          state.context.filename,
-                                          location,
-                                          category='explicit-map')
+            # A non-slice dimension (``dace.map[10]``) is an index, which the
+            # classic frontend reads as the single-iteration range ``10:10:1``
+            # (see ``newast.ProgramVisitor._parse_index_as_range``).
+            index = _bound(dimension, None, state, dynamic_inputs)
+            ranges.append((index, index, 1))
+            continue
         start = _bound(dimension.lower, 0, state, dynamic_inputs)
         stop = _bound(dimension.upper, None, state, dynamic_inputs)
         step = _bound(dimension.step, 1, state, dynamic_inputs)
@@ -353,6 +355,14 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
     # it before anything resolves ``A.shape`` as the container ``A``.
     node = static_values.fold_descriptor_properties(node, state)
     if isinstance(node, (ast.Name, ast.Attribute, ast.Subscript)):
+        # An ANF temporary that HOLDS a compile-time value (``__anf0 =
+        # ceiling(N / 32)``) is a symbolic bound, not a data-dependent one:
+        # its materialized scalar is an artifact of hoisting the expression
+        # out of the header, and reading it back at runtime would turn a
+        # static range into a dynamic one.
+        inferred = state.inference.infer(node)
+        if inferred.kind == 'symbolic':
+            return inferred.value
         # May raise UnsupportedFeatureError (e.g. a data-dependent index
         # inside the bound itself), falling the whole loop back to a callback.
         access = resolve_access(node, state)

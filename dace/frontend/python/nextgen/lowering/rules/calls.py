@@ -327,6 +327,7 @@ def _map_arguments(
     argument_labels: Dict[str, str] = {}
     pending_views: List[Tuple[str, str, data.Data, data.Data]] = []
     specialization = []
+    shape_symbols: Dict[str, Any] = {}
     for parameter in parameter_names:
         if parameter not in provided:
             if parameter not in callee.default_args:
@@ -366,6 +367,8 @@ def _map_arguments(
                 argtypes[parameter] = caller_descriptor
             parameter_bindings[parameter] = container
             specialization.append((parameter, 'descriptor', repr(argtypes[parameter])))
+            _collect_shape_symbols(_declared_parameter_descriptor(callee, parameter), argtypes[parameter], callee,
+                                   shape_symbols)
         elif inferred.kind in ('constant', 'symbolic'):
             callee_globals[parameter] = inferred.value
             specialization.append((parameter, type(inferred.value).__name__, repr(inferred.value)))
@@ -378,9 +381,61 @@ def _map_arguments(
                                           state.context.filename,
                                           argument,
                                           category='inline-fallback:arguments')
+    # Applied before the explicit ``SYMBOL=value`` keywords below, which name
+    # the same symbols deliberately and must win.
+    for name, value in shape_symbols.items():
+        if value is _CONFLICTING:
+            continue
+        callee_globals[name] = value
+        specialization.append((name, 'symbol', repr(value)))
     pending_symbols = _map_symbol_keywords(symbol_keywords, callee, callee_globals, specialization, call, state)
     return (argtypes, callee_globals, parameter_bindings, argument_labels, injected_defaults, tuple(specialization),
             pending_views, pending_symbols)
+
+
+#: Marker for a callee symbol two arguments pin to different sizes; it stays
+#: free rather than taking either.
+_CONFLICTING = object()
+
+
+def _collect_shape_symbols(declared: Optional[data.Data], actual: data.Data, callee: Any, collected: Dict[str,
+                                                                                                          Any]) -> None:
+    """
+    Collect the callee free symbols an argument's actual shape pins down: a
+    parameter declared ``A: dace.float64[M]`` bound to a length-``k`` array
+    means the callee's ``M`` IS the caller's ``k`` — everywhere in its body,
+    including the shapes it allocates from it (``B = numpy.ndarray((M,))``).
+
+    This is the inlining counterpart of the symbol mapping the classic
+    frontend puts on a nested SDFG. Without it the callee's allocations keep
+    the callee's own symbols, and a caller-side consumer of the result sees a
+    shape unrelated to what it passed in (``numpy.dot`` of an ``(M,)`` result
+    with a ``(k,)`` operand types as a mismatch, and the whole statement —
+    then the whole enclosing loop — degrades to a callback).
+
+    Only a dimension written as a BARE symbol is unified; a compound one
+    (``M + 1``) would need real equation solving. Symbols are keyed by the
+    name they have in the CALLEE's namespace, which is what its parse
+    resolves; a symbol two parameters pin to different sizes is marked
+    :data:`_CONFLICTING` and left free.
+    """
+    if declared is None or not isinstance(declared, data.Array) or not isinstance(actual, data.Array):
+        return
+    if len(declared.shape) != len(actual.shape):
+        return
+    callee_names: Dict[str, List[str]] = {}
+    for name, value in getattr(callee, 'global_vars', {}).items():
+        if isinstance(value, symbolic.symbol):
+            callee_names.setdefault(value.name, []).append(name)
+    for declared_size, actual_size in zip(declared.shape, actual.shape):
+        if not isinstance(declared_size, symbolic.symbol):
+            continue
+        for name in callee_names.get(declared_size.name, ()):
+            existing = collected.get(name)
+            if existing is not None and existing != actual_size:
+                collected[name] = _CONFLICTING
+            elif existing is None:
+                collected[name] = actual_size
 
 
 def _names_callee_symbol(callee: Any, name: str) -> bool:
@@ -700,23 +755,50 @@ def _lower_sdfg_call(target: Optional[ast.expr], call: ast.Call, sdfg: Any, stat
             arguments[keyword.arg] = astutils.unparse(keyword.value)
 
     return_targets: List[str] = []
+    result_copy: Optional[tn.CopyNode] = None
     if target is not None:
+        from dace.frontend.python.nextgen.lowering.access import resolve_access
+
         return_descriptors = {
             name: descriptor
             for name, descriptor in sdfg.arrays.items() if name.startswith('__return')
         }
-        if not isinstance(target, ast.Name) or len(return_descriptors) != 1:
+        if len(return_descriptors) != 1:
             fallback_to_callback(statement,
                                  state,
                                  'unsupported result binding for an SDFG call',
                                  category='inline-fallback:result-binding')
             return
         descriptor = copy.deepcopy(next(iter(return_descriptors.values())))
-        container = state.context.add_container(target.id, descriptor)
-        state.context.bind(target.id, container)
+        if isinstance(target, ast.Name):
+            container = state.context.add_container(target.id, descriptor)
+            state.context.bind(target.id, container)
+        elif isinstance(target, ast.Subscript):
+            # ``B[:] = sdfg(...)``: the SDFG still writes its own return
+            # container, which is then copied into the target subset.
+            target_access = resolve_access(target, state)
+            if target_access is None:
+                fallback_to_callback(statement,
+                                     state,
+                                     'unsupported result binding for an SDFG call',
+                                     category='inline-fallback:result-binding')
+                return
+            container = state.context.add_container(f'__{sdfg.name}_result', descriptor)
+            result_copy = tn.CopyNode(target=target_access.container,
+                                      memlet=Memlet(data=container,
+                                                    subset=subsets.Range.from_array(descriptor),
+                                                    other_subset=target_access.subset))
+        else:
+            fallback_to_callback(statement,
+                                 state,
+                                 'unsupported result binding for an SDFG call',
+                                 category='inline-fallback:result-binding')
+            return
         return_targets.append(container)
 
     state.emitter.emit(
         tn.SDFGCallNode(sdfg=sdfg,
                         call=tn.FrontendFunctionCall(callee_name=sdfg.name, arguments=arguments),
                         return_targets=return_targets))
+    if result_copy is not None:
+        state.emitter.emit(result_copy)

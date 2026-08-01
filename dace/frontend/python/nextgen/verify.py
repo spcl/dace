@@ -76,7 +76,11 @@ def verify_tree(root: tn.ScheduleTreeRoot) -> None:
                 for name in child.data_arguments:
                     if not _known_container(name):
                         problems.append(f'{where}: replacement call references unknown container "{name}"')
-                if child.receiver is not None and child.receiver not in child.data_arguments:
+                if (child.receiver is not None and child.receiver_object is None
+                        and child.receiver not in child.data_arguments):
+                    # An OBJECT receiver names a closure object rather than a
+                    # container, so it is deliberately absent from the data
+                    # arguments (see ``ReplacementCallNode.receiver_object``).
                     problems.append(f'{where}: replacement receiver "{child.receiver}" is not a registered data '
                                     'argument')
             elif isinstance(child, tn.ReturnNode):

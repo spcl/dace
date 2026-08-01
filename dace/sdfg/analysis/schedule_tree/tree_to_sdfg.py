@@ -1221,7 +1221,19 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # can be materialized in exactly the states it creates (below).
         states_before = set(sdfg.all_states()) - {self._current_state}
         shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
-        if node.receiver is not None:
+        if node.receiver_object is not None:
+            # METHOD-family replacement on a compile-time OBJECT receiver
+            # (``commworld.Bcast(A)``): keyed on the object's class, and the
+            # implementation resolves the object back through the visitor's
+            # globals under the name it was recorded with.
+            shim.globals[node.receiver] = node.receiver_object
+            receiver_type = type(node.receiver_object)
+            function = oprepo.Replacements.get_method(receiver_type, node.qualname)
+            if function is None:
+                raise NotImplementedError(
+                    f"No method replacement registered for '{node.qualname}' on '{receiver_type.__name__}'.")
+            result = function(shim, sdfg, self._current_state, *node.arguments, **node.keyword_arguments)
+        elif node.receiver is not None:
             # METHOD-family replacement (e.g. ``A.copy()``, see
             # ``lowering.dispatch._lower_replacement_call``'s method-call arm).
             receiver_type = type(sdfg.arrays[node.receiver])
@@ -1349,8 +1361,8 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
     def _release_declared_descriptor(self, target: Optional[str], sdfg: SDFG) -> None:
         """
-        Free a DECLARED distributed descriptor's name before its replacement
-        runs, so the replacement installs the real one under that name.
+        Free a DECLARED descriptor's name before its replacement runs, so the
+        replacement installs the real one under that name.
 
         A communicator (``ProcessGrid``, from ``MPI.COMM_WORLD.Create_cart``)
         is not storage a frontend can allocate: ``SDFG.add_pgrid`` is what
@@ -1364,11 +1376,21 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         A descriptor whose ``name`` is set was installed by a replacement, or
         came from a real SDFG through ``sdfg_to_tree``, and is left alone.
+
+        An opaque Python-object SCALAR is the same situation one step further
+        out: it is how a frontend declares "a handle this replacement creates"
+        when the real descriptor is not even a data descriptor
+        (``dace.comm.Subarray``, whose result lives in ``sdfg.subarrays``).
+        Leaving it in place made ``add_subarray`` find the name taken and
+        install the subarray beside it, after which the ``Redistribute`` that
+        consumes the handle by name could not find it.
         """
         if target is None or target not in sdfg.arrays:
             return
         descriptor = sdfg.arrays[target]
         if isinstance(descriptor, data.DistributedDescriptor) and not descriptor.name:
+            sdfg.remove_data(target, validate=False)
+        elif isinstance(descriptor, data.Scalar) and isinstance(descriptor.dtype, dtypes.pyobject):
             sdfg.remove_data(target, validate=False)
 
     def _import_replacement_data(self, node: tn.ReplacementCallNode, sdfg: SDFG) -> None:
@@ -1933,8 +1955,10 @@ class ReplacementVisitorShim:
         #: View bindings a replacement may record; must stay empty (checked
         #: by the caller after expansion).
         self.views: dict = {}
-        #: Program globals; empty — replacements resolving global objects
-        #: (e.g. MPI communicators) fail loudly on lookup.
+        #: Program globals a replacement may resolve by name (an MPI
+        #: communicator receiver, see ``ReplacementCallNode.receiver_object``).
+        #: Populated per expansion with exactly the objects that call records;
+        #: any other lookup fails loudly.
         self.globals: dict = {}
         self.current_lineinfo = None
 

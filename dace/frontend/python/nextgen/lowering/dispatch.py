@@ -46,15 +46,21 @@ cause. The taxonomy in use:
 import ast
 import copy
 import numbers
-from typing import Any, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set, Tuple, Union
+
+import numpy
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
+from dace.properties import CodeBlock
+from dace.sdfg.sdfg import InterstateEdge
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
-from dace.frontend.python.nextgen.lowering.access import DataAccess, nondegenerate_shape, resolve_access
+from dace.frontend.python.nextgen.lowering.access import (DataAccess, nondegenerate_shape, resolve_access,
+                                                          scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values, streams
 from dace.frontend.python.nextgen.semantics.indexing import array_index_slots, index_slots, substitute_slots
@@ -105,18 +111,42 @@ def _replacement_registered(name: str, require_descriptor_inference: bool = True
     return not require_descriptor_inference or oprepo.Replacements.get_descriptor_inference(name) is not None
 
 
-def _method_registered(descriptor: data.Data, method_name: str, require_descriptor_inference: bool = True) -> bool:
+@dataclass
+class _HandleProducer:
+    """
+    The replacement call that produced an opaque handle container (see
+    :attr:`ProgramContext.replacement_handles`), recorded so a later trial
+    expansion consuming the handle can replay it into its scratch SDFG —
+    the handle's meaning lives in registry state the producer installs
+    (``sdfg.subarrays``), which a copied descriptor does not carry.
+    """
+    target: str
+    name: str
+    arguments: List[Any]
+    keyword_arguments: Dict[str, Any]
+    data_arguments: Set[str]
+    receiver: Optional[str]
+    receiver_object: Any
+    #: Creation order, so a replay runs producers in the order the program did.
+    order: int
+
+
+def _method_registered(receiver: Any, method_name: str, require_descriptor_inference: bool = True) -> bool:
     """
     Whether a bound-method call is eligible for deferred replacement
     expansion, mirroring :func:`_replacement_registered` for the ``_method_rep``
     keyspace (:meth:`Replacements.get_method` /
     :meth:`Replacements.get_method_descriptor_inference`).
+
+    :param receiver: The receiver the method is called on — a data descriptor,
+        or the compile-time object itself for an object receiver. Either way
+        the registry is keyed on its CLASS.
     """
     from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
-    if oprepo.Replacements.get_method(type(descriptor), method_name) is None:
+    if oprepo.Replacements.get_method(type(receiver), method_name) is None:
         return False
     return (not require_descriptor_inference
-            or oprepo.Replacements.get_method_descriptor_inference(type(descriptor), method_name) is not None)
+            or oprepo.Replacements.get_method_descriptor_inference(type(receiver), method_name) is not None)
 
 
 def lower_computation(target: DataAccess,
@@ -304,10 +334,11 @@ def _whole_container_operand(operand: ast.expr, statement: ast.stmt, state: Lowe
     the only thing the registry implementations accept (they take container
     names and read ``sdfg.arrays[name]``).
 
-    Three forms get there: a plain name, a registry attribute that produces
-    data (``a.T``), and a partial access (``A[i]``, a view), which is copied
+    Four forms get there: a plain name, a registry attribute that produces
+    data (``a.T``), a partial access (``A[i]``, a view), which is copied
     into a temporary first — passing its base container instead would silently
-    operate on all of ``A``.
+    operate on all of ``A`` — and a compound data-valued expression
+    (``-tmp[i] @ B``), which is computed into a temporary.
 
     :return: The access, or None when the operand is not data at all.
     """
@@ -319,7 +350,7 @@ def _whole_container_operand(operand: ast.expr, statement: ast.stmt, state: Lowe
         if base is not None:
             access = resolve_attribute_data(base, operand.attr, state)
     if access is None:
-        return None
+        return _materialize_data_operand(operand, statement, state)
     descriptor = state.context.containers.get(access.container)
     if descriptor is not None and str(access.subset) == str(
             subsets.Range.from_array(descriptor)) and not isinstance(descriptor, data.View):
@@ -334,6 +365,35 @@ def _whole_container_operand(operand: ast.expr, statement: ast.stmt, state: Lowe
                                   subset=access.subset,
                                   other_subset=subsets.Range.from_array(staged_descriptor))))
     return DataAccess(staged, subsets.Range.from_array(staged_descriptor), staged_descriptor)
+
+
+def _materialize_data_operand(operand: ast.expr, statement: ast.stmt, state: LoweringState) -> Optional[DataAccess]:
+    """
+    Compute a compound data-valued operand of a registry operator (``-tmp[i]``
+    in ``-tmp[i] @ A.upper[i]``) into a whole container of its own.
+
+    Canonicalization only hoists what it must, so an operand can still be an
+    expression rather than an access; the registry implementations take
+    container NAMES, so an expression has to become one here.
+
+    :return: The access holding the computed operand, or None when the operand
+             is not data-valued at all.
+    """
+    inferred = state.inference.infer(operand)
+    if not inferred.is_data:
+        return None
+    descriptor = copy.deepcopy(inferred.descriptor)
+    container = state.context.add_container('__operand', descriptor)
+    access = DataAccess(container, subsets.Range.from_array(descriptor), descriptor)
+    # Mirrors the tail of :func:`lower_computation` (minus its callback
+    # fallback, which belongs to the whole statement): a nested registry
+    # operator (``-(a @ b)``) lowers through the registry too, and recursion
+    # terminates because each operand is strictly smaller.
+    if not _lower_registry_operator(access, operand, statement, state):
+        rewritten = _materialize_attribute_reads(operand, state)
+        rewritten = static_values.materialize_operands(rewritten, state)
+        elementwise.emit_computation(access, rewritten, statement, state)
+    return access
 
 
 def _lower_advanced_index(target: DataAccess, value: ast.expr, statement: ast.stmt, state: LoweringState) -> bool:
@@ -767,8 +827,12 @@ def _lower_view_call(target: ast.expr, call: ast.Call, qualname: str, state: Low
     """
     # No descriptor-inference entry is required: the view descriptor comes
     # from the trial run below, not from the frontend typing the result first.
-    name, receiver = _resolve_replacement_name(call, qualname, state, require_descriptor_inference=False)
-    if name is None:
+    name, receiver, receiver_object = _resolve_replacement_name(call,
+                                                                qualname,
+                                                                state,
+                                                                require_descriptor_inference=False)
+    if name is None or receiver_object is not None:
+        # An object receiver produces a view of nothing this path can bind.
         return False
     converted = _replacement_arguments(call, state)
     if converted is None:
@@ -872,41 +936,66 @@ def _view_matches_window(view_descriptor: data.Data, source_descriptor: data.Dat
 def _resolve_replacement_name(call: ast.Call,
                               qualname: str,
                               state: LoweringState,
-                              require_descriptor_inference: bool = True) -> Tuple[Optional[str], Optional[str]]:
+                              require_descriptor_inference: bool = True) -> Tuple[Optional[str], Optional[str], Any]:
     """
-    The registry key a call lowers through, as (name, receiver container).
+    The registry key a call lowers through, as (name, receiver, receiver
+    object).
 
     A free function is keyed by its registry-normalized qualname; a method
     (``A.copy()``, ``A.view(dtype)``) by its bare method name plus the
     container its receiver resolves to, which is also the replacement's first
     positional argument (the classic frontend's convention, ``newast.py``'s
-    Call visitor). Returns (None, None) when the call is registered under
-    neither.
+    Call visitor). A method on a compile-time OBJECT (``commworld.Bcast(A)``,
+    where the receiver is an ``mpi4py`` communicator from the closure rather
+    than a container) is keyed the same way but against the object's class,
+    and the object travels alongside so the expansion can publish it under the
+    receiver name. Returns (None, None, None) when the call is registered
+    under none of them.
 
     :param require_descriptor_inference: See :func:`_replacement_registered`.
     """
     if _replacement_registered(qualname, require_descriptor_inference):
-        return qualname, None
+        return qualname, None, None
     fallback = normalize_qualname(getattr(call.func, 'qualname', None) or astutils.rname(call.func))
     if _replacement_registered(fallback, require_descriptor_inference):
-        return fallback, None
+        return fallback, None, None
     receiver_access = _method_call_receiver(call, state)
     if (receiver_access is not None
             and _method_registered(receiver_access.descriptor, call.func.attr, require_descriptor_inference)):
-        return call.func.attr, receiver_access.container
-    return None, None
+        return call.func.attr, receiver_access.container, None
+    receiver_object = _object_method_receiver(call, state)
+    if (receiver_object is not None
+            and _method_registered(receiver_object, call.func.attr, require_descriptor_inference)):
+        return call.func.attr, astutils.rname(call.func.value), receiver_object
+    return None, None, None
 
 
-def _replacement_implementation(name: str, receiver: Optional[str], arguments: List, data_arguments: set,
-                                state: LoweringState):
+def _object_method_receiver(call: ast.Call, state: LoweringState) -> Optional[Any]:
+    """
+    The compile-time Python object a method call's receiver is, when it is not
+    a repository container (``commworld.Bcast(A)``), or None.
+    """
+    if not isinstance(call.func, ast.Attribute) or not isinstance(call.func.value, ast.Name):
+        return None
+    return state.inference.constant_object(call.func.value)
+
+
+def _replacement_implementation(name: str,
+                                receiver: Optional[str],
+                                arguments: List,
+                                data_arguments: set,
+                                state: LoweringState,
+                                receiver_object: Any = None):
     """
     The registry implementation a resolved replacement name refers to: a bound
-    method on the receiver's descriptor class, an operator resolved from its
-    operand classes (which keeps ``getop``'s class-hierarchy resolution), or a
-    free function.
+    method on the receiver's descriptor (or object) class, an operator resolved
+    from its operand classes (which keeps ``getop``'s class-hierarchy
+    resolution), or a free function.
     """
     from dace.frontend.common import op_repository as oprepo
 
+    if receiver_object is not None:
+        return oprepo.Replacements.get_method(type(receiver_object), name)
     if receiver is not None:
         return oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
     if name.startswith(oprepo.OPERATOR_QUALNAME_MARKER):
@@ -1277,6 +1366,114 @@ def _call_gap_category(call: ast.Call, qualname: str, state: LoweringState) -> s
     return f'unknown-call:{qualname}'
 
 
+def _promote_scalar_arguments(call: ast.Call, state: LoweringState) -> Optional['Inferred']:
+    """
+    Bind the integer-SCALAR temporaries a call's arguments name as SYMBOLS,
+    defined from their containers by an injected interstate assignment
+    (:class:`~...treenodes.AssignNode`), and re-run the call's descriptor
+    inference against them.
+
+    Shapes, bounds and axes are symbol-side quantities (see
+    ``doc/extensions/symbolic.rst``, "Symbolic types vs. scalars"): the
+    registry's descriptor inference reads such an argument as a number, and a
+    container name is not one. Canonicalization is what puts a container
+    there — hoisting ``numpy.zeros((A.shape[0], A.shape[1] + 2))`` leaves each
+    element in a temporary of its own, and a temporary whose value is not
+    *already* symbolic materializes as a scalar. Promoting it here is the
+    general repair, and unlike folding a known value it works just as well
+    when the scalar is only known at run time (``n = counts[0]`` …
+    ``numpy.zeros((n, ))``), which is the same mechanism the classic frontend
+    uses (``newast.ProgramVisitor._add_state`` plus a symbol assignment) and
+    the one already used for dynamic map bounds and hoisted indices.
+
+    Restricted to ANF temporaries: they are single-assignment, so the symbol
+    cannot go stale, whereas a source-level name may be written again after
+    this call and would then read back a value it no longer has.
+
+    Attempted only after the un-promoted call fails to type, and rolled back
+    (bindings, symbols, and emitted nodes) when promotion does not make it
+    type — so an argument the registry is happy to take as a container is
+    never disturbed.
+
+    :return: The now-successful inference result, or None if promotion did not
+             apply or did not help (nothing is left emitted in that case).
+    """
+    if state.emitter.in_dataflow_scope:
+        # An interstate assignment is not a legal node inside a dataflow scope.
+        return None
+    candidates = _promotable_scalar_arguments(call, state)
+    if not candidates:
+        return None
+
+    mark = state.emitter.checkpoint()
+    before = state.context.snapshot()
+    promoted: List[str] = []
+    for name, access in candidates:
+        read = scalar_read_expression(access)
+        if read is None:
+            continue
+        symbol_name = state.context.fresh_name(f'__sym_{name.lstrip("_")}_')
+        state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
+        state.emitter.emit(
+            tn.AssignNode(name=symbol_name, value=CodeBlock(read),
+                          edge=InterstateEdge(assignments={symbol_name: read})))
+        state.context.bind_symbol(name, access.descriptor.dtype, symbol_name=symbol_name)
+        promoted.append(symbol_name)
+
+    inferred = state.inference.infer_call(call) if promoted else None
+    if inferred is not None:
+        return inferred
+    state.emitter.rollback(mark)
+    state.context.restore(before)
+    for symbol_name in promoted:
+        state.context.symbols.pop(symbol_name, None)
+        state.context.symbol_aliases.pop(symbol_name, None)
+    return None
+
+
+def _promotable_scalar_arguments(call: ast.Call, state: LoweringState) -> List[Tuple[str, DataAccess]]:
+    """
+    The ANF temporaries among a call's arguments that name an integer scalar
+    container, as (source name, access) pairs, deduplicated and in argument
+    order. Static-sequence arguments are looked through, since a hoisted shape
+    tuple is exactly where these appear.
+    """
+    found: Dict[str, DataAccess] = {}
+
+    def collect(expression: ast.expr) -> None:
+        if not isinstance(expression, ast.Name) or not expression.id.startswith('__anf'):
+            return
+        binding = state.context.resolve(expression.id)
+        if binding is None:
+            return
+        if binding.kind == 'static':
+            for element in state.context.static_values[expression.id].elements:
+                collect(element)
+            return
+        if binding.kind != 'container' or expression.id in found:
+            return
+        if binding.container in state.context.symbolic_scalar_values:
+            # Already resolvable as a compile-time expression; inference reads
+            # the value straight off the name, so there is nothing to promote.
+            return
+        descriptor = state.context.containers[binding.container]
+        if not isinstance(descriptor, data.Scalar):
+            return
+        try:
+            integral = numpy.issubdtype(descriptor.dtype.type, numpy.integer)
+        except TypeError:
+            return
+        if not integral:
+            return  # A non-integer scalar is not a symbol; the ordinary paths report it
+        found[expression.id] = DataAccess(binding.container, subsets.Range.from_array(descriptor), descriptor)
+
+    for argument in call.args:
+        collect(argument)
+    for keyword in call.keywords:
+        collect(keyword.value)
+    return list(found.items())
+
+
 def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: str, callee: object, statement: ast.stmt,
                          state: LoweringState) -> bool:
     """
@@ -1285,6 +1482,11 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     falls back to a callback).
     """
     inferred = state.inference.infer_call(call)
+    if inferred is None:
+        # An argument the registry reads as a NUMBER but the program holds in a
+        # container is a spelling problem, not a missing feature: promote it to
+        # a symbol and ask again.
+        inferred = _promote_scalar_arguments(call, state)
     if inferred is None:
         return False  # No registry entry: the interpreter fallback preserves semantics.
     out_access: Optional[DataAccess] = None
@@ -1418,7 +1620,6 @@ def _lower_registry_call(target: Optional[ast.expr], call: ast.Call, qualname: s
     # tree_to_sdfg expands through the classic replacement implementation.
     if _lower_replacement_call(target, call, qualname, inferred, statement, state, target_access=out_access):
         return True
-
     return False
 
 
@@ -1639,7 +1840,7 @@ def _lower_replacement_call(target: Optional[ast.expr],
     # ``inferred.is_none_output`` because the caller's own gates above already
     # guarantee the two are paired correctly (targeted only when data-valued,
     # untargeted only when zero-output) before execution ever reaches here.
-    name, receiver = _resolve_replacement_name(call, qualname, state)
+    name, receiver, receiver_object = _resolve_replacement_name(call, qualname, state)
     if name is None:
         return False
     # NOTE: expansion inside a dataflow scope is allowed. The expansion adds
@@ -1655,12 +1856,16 @@ def _lower_replacement_call(target: Optional[ast.expr],
     if receiver is not None:
         # Mirror the classic frontend's convention (newast.py's Call
         # visitor): the receiver is the replacement's first positional
-        # argument.
+        # argument. An OBJECT receiver passes by name only -- it names no
+        # container, so it is not a data argument; the implementation resolves
+        # it through the visitor's globals.
         arguments = [receiver] + arguments
-        data_arguments = data_arguments | {receiver}
-    if _bind_compile_time_result(target, name, arguments, keywords, data_arguments, state, receiver):
+        if receiver_object is None:
+            data_arguments = data_arguments | {receiver}
+    if _bind_compile_time_result(target, name, arguments, keywords, data_arguments, state, receiver, receiver_object):
         return True
-    if not _expansion_viable(name, arguments, keywords, data_arguments, state, receiver=receiver):
+    if not _expansion_viable(
+            name, arguments, keywords, data_arguments, state, receiver=receiver, receiver_object=receiver_object):
         return False
     written: Optional[DataAccess] = target_access
     if target_access is None and target is None:
@@ -1678,7 +1883,7 @@ def _lower_replacement_call(target: Optional[ast.expr],
         # axis=1)``), so restricting the search to positional arguments left
         # those calls with no stand-in and dropped them to a callback.
         operands = list(arguments) + list(keywords.values())
-        target_container = receiver or next(
+        target_container = (receiver if receiver_object is None else None) or next(
             (value for value in operands if isinstance(value, str) and value in data_arguments), None)
         if target_container is None:
             return False
@@ -1692,7 +1897,22 @@ def _lower_replacement_call(target: Optional[ast.expr],
                                arguments=arguments,
                                keyword_arguments=keywords,
                                data_arguments=data_arguments,
-                               receiver=receiver))
+                               receiver=receiver,
+                               receiver_object=receiver_object))
+    if target_container in state.context.containers and isinstance(state.context.containers[target_container].dtype,
+                                                                   dtypes.pyobject):
+        # An opaque HANDLE this replacement produced, which the next one
+        # consumes by name (``dace.comm.Subarray`` into
+        # ``dace.comm.Redistribute``): see ``ProgramContext.replacement_handles``.
+        state.context.replacement_handles[target_container] = _HandleProducer(target=target_container,
+                                                                              name=name,
+                                                                              arguments=list(arguments),
+                                                                              keyword_arguments=dict(keywords),
+                                                                              data_arguments=set(data_arguments),
+                                                                              receiver=receiver,
+                                                                              receiver_object=receiver_object,
+                                                                              order=len(
+                                                                                  state.context.replacement_handles))
     if written is not None and copy_out:
         _emit_replacement_copy_out(target_container, written, state)
     return True
@@ -1728,8 +1948,14 @@ def _emit_replacement_copy_out(source: str, target: DataAccess, state: LoweringS
                                   other_subset=target.subset)))
 
 
-def _bind_compile_time_result(target: Optional[ast.expr], name: str, arguments: List, keywords: dict,
-                              data_arguments: set, state: LoweringState, receiver: Optional[str]) -> bool:
+def _bind_compile_time_result(target: Optional[ast.expr],
+                              name: str,
+                              arguments: List,
+                              keywords: dict,
+                              data_arguments: set,
+                              state: LoweringState,
+                              receiver: Optional[str],
+                              receiver_object: Any = None) -> bool:
     """
     Bind the target name to a replacement's COMPILE-TIME result, for
     replacements that return a Python value rather than a container: ``len(A)``
@@ -1744,15 +1970,14 @@ def _bind_compile_time_result(target: Optional[ast.expr], name: str, arguments: 
 
     :return: True when the target was bound to a compile-time value.
     """
-    from dace.frontend.common import op_repository as oprepo
 
     if not isinstance(target, ast.Name):
         return False
-    if receiver is not None:
-        function = oprepo.Replacements.get_method(type(state.context.containers[receiver]), name)
-    else:
-        function = oprepo.Replacements.get(name)
-    scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
+    function = _replacement_implementation(name, receiver, arguments, data_arguments, state, receiver_object)
+    if function is None:
+        return False
+    scratch, scratch_state, shim = _replacement_trial_scratch(
+        data_arguments, state, {receiver: receiver_object} if receiver_object is not None else None)
     try:
         result = function(shim, scratch, scratch_state, *arguments, **keywords)
     except Exception:
@@ -1777,7 +2002,7 @@ def _is_compile_time_value(result: Any) -> bool:
     return False
 
 
-def _replacement_trial_scratch(data_arguments: set, state: LoweringState):
+def _replacement_trial_scratch(data_arguments: set, state: LoweringState, globals_: Optional[dict] = None):
     """
     Build the scratch SDFG/state/shim triple shared by the build-time
     replacement-viability trials (:func:`_expansion_viable` and
@@ -1788,8 +2013,18 @@ def _replacement_trial_scratch(data_arguments: set, state: LoweringState):
     from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import ReplacementVisitorShim
     from dace.sdfg.sdfg import SDFG
 
+    producers = _handle_producers(data_arguments, state)
     scratch = SDFG('__replacement_viability')
-    for data_name in data_arguments:
+    needed = set(data_arguments)
+    for producer in producers:
+        needed |= {name for name in producer.data_arguments if name in state.context.containers}
+    # A replayed producer installs its handle's real descriptor under the
+    # handle's own name; pre-declaring the frontend's placeholder there would
+    # take the name and force the replay to uniquify away from it (the real
+    # expansion releases the same declaration, see
+    # ``tree_to_sdfg._release_declared_descriptor``).
+    needed -= {producer.target for producer in producers}
+    for data_name in needed:
         descriptor = copy.deepcopy(state.context.containers[data_name])
         descriptor.transient = False
         if isinstance(descriptor, data.DistributedDescriptor) and not descriptor.name:
@@ -1803,7 +2038,54 @@ def _replacement_trial_scratch(data_arguments: set, state: LoweringState):
         scratch.add_datadesc(data_name, descriptor)
     scratch_state = scratch.add_state()
     shim = ReplacementVisitorShim(scratch, scratch_state, '__viability_target')
+    shim.globals.update(globals_ or {})
+    _replay_handle_producers(producers, scratch, scratch_state, shim, state)
     return scratch, scratch_state, shim
+
+
+def _handle_producers(data_arguments: set, state: LoweringState) -> List['_HandleProducer']:
+    """
+    The recorded producer calls of every opaque HANDLE among ``data_arguments``,
+    transitively (a subarray's producer needs its process grid), in creation
+    order.
+    """
+    producers: Dict[str, '_HandleProducer'] = {}
+    pending = list(data_arguments)
+    while pending:
+        name = pending.pop()
+        producer = state.context.replacement_handles.get(name)
+        if producer is None or name in producers:
+            continue
+        producers[name] = producer
+        pending.extend(producer.data_arguments)
+    return sorted(producers.values(), key=lambda producer: producer.order)
+
+
+def _replay_handle_producers(producers: List['_HandleProducer'], scratch, scratch_state, shim,
+                             state: LoweringState) -> None:
+    """
+    Re-run the producers of the opaque handles a trial's arguments name, so the
+    scratch SDFG carries the registry state they install (``sdfg.subarrays``
+    for ``dace.comm.Subarray``) and not merely a descriptor for the name.
+
+    Their own viability was already established when they were lowered, so a
+    failure here can only mean the scratch is missing something the real
+    program has; the trial then simply reports the consumer as non-viable,
+    which is the same conservative answer as before this replay existed.
+    """
+    for producer in producers:
+        function = _replacement_implementation(producer.name, producer.receiver, producer.arguments,
+                                               producer.data_arguments, state, producer.receiver_object)
+        if function is None:
+            continue
+        shim._target_name = producer.target
+        if producer.receiver_object is not None:
+            shim.globals[producer.receiver] = producer.receiver_object
+        try:
+            function(shim, scratch, scratch_state, *producer.arguments, **producer.keyword_arguments)
+        except Exception:
+            pass  # The consumer's own trial reports the shortfall
+    shim._target_name = '__viability_target'
 
 
 def _expansion_viable(name: str,
@@ -1811,7 +2093,8 @@ def _expansion_viable(name: str,
                       keywords: dict,
                       data_arguments: set,
                       state: LoweringState,
-                      receiver: Optional[str] = None) -> bool:
+                      receiver: Optional[str] = None,
+                      receiver_object: Any = None) -> bool:
     """
     Trial-run a replacement on a scratch SDFG to decide, at tree-build time
     (where the graceful fallback is a callback), whether deferred expansion
@@ -1820,8 +2103,9 @@ def _expansion_viable(name: str,
     non-viable outcomes are exceptions, recorded view bindings, and
     unsupported return forms.
     """
-    function = _replacement_implementation(name, receiver, arguments, data_arguments, state)
-    scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
+    function = _replacement_implementation(name, receiver, arguments, data_arguments, state, receiver_object)
+    scratch, scratch_state, shim = _replacement_trial_scratch(
+        data_arguments, state, {receiver: receiver_object} if receiver_object is not None else None)
     try:
         result = function(shim, scratch, scratch_state, *arguments, **keywords)
     except Exception:
@@ -1928,6 +2212,41 @@ def _ufunc_expansion_viable(ufunc_name: str, ufunc_method: Optional[str], argume
     return isinstance(result, list) and len(result) == 1 and isinstance(result[0], str) and result[0] in scratch.arrays
 
 
+def _replacement_attribute_argument(expression: ast.expr, state: LoweringState) -> Optional[str]:
+    """
+    The repository container an ATTRIBUTE argument of a replacement call names
+    — a structure member (``numpy.dot(A.left, A.right)``) outright, or a
+    descriptor attribute (``numpy.dot(x, w.T)``) once materialized.
+
+    Registry implementations take container NAMES, so an attribute read left
+    as written has no way through them; the same read bound to a name first
+    (``t = w.T; numpy.dot(x, t)``) already lowered.
+
+    :return: The container name, or None when the expression is not an
+             attribute that names one.
+    """
+    if not isinstance(expression, ast.Attribute):
+        return None
+    access = resolve_access(expression, state)
+    if access is None and expression.attr in SUPPORTED_DATA_ATTRIBUTES:
+        if state.emitter.in_dataflow_scope:
+            # Materializing the read is a deferred replacement call, which is
+            # not a legal node inside a scope (see
+            # :func:`_materialize_attribute_reads`).
+            return None
+        base = resolve_access(expression.value, state)
+        if base is not None:
+            access = resolve_attribute_data(base, expression.attr, state)
+    if access is None:
+        return None
+    descriptor = state.context.containers.get(access.container)
+    if descriptor is None or isinstance(descriptor.dtype, dtypes.pyobject):
+        return None
+    if str(access.subset) != str(subsets.Range.from_array(descriptor)):
+        return None  # A partial access is not the container the registry would read
+    return access.container
+
+
 def _replacement_arguments(call: ast.Call, state: LoweringState) -> Optional[Tuple[List, dict, set]]:
     """
     Resolve call arguments to the replacement invocation convention: data
@@ -1952,10 +2271,15 @@ def _replacement_arguments(call: ast.Call, state: LoweringState) -> Optional[Tup
                 if symbolic_value is not None:
                     return True, symbolic_value
                 descriptor = state.context.containers[binding.container]
-                if isinstance(descriptor.dtype, dtypes.pyobject):
+                if (isinstance(descriptor.dtype, dtypes.pyobject)
+                        and binding.container not in state.context.replacement_handles):
                     return False, None
                 data_arguments.add(binding.container)
                 return True, binding.container
+        container = _replacement_attribute_argument(expression, state)
+        if container is not None:
+            data_arguments.add(container)
+            return True, container
         try:
             value = state.inference.infer(expression)
         except UnsupportedFeatureError:
@@ -2065,8 +2389,24 @@ def _fallback_return(statement: ast.Return, state: LoweringState, reason: str) -
 
 def _consumes_pyobject(value: ast.expr, state: LoweringState) -> bool:
     """Check whether any operand of a flat expression is an opaque Python object."""
+    # A pyobject name that only appears as the BASE of a member read whose
+    # member is real data (``holder.data[i]`` on a ``PythonClass``) is not an
+    # operand: the member resolves to an ordinary container, and the object
+    # itself is never read as a value. Flagging it here sent every access to
+    # an analyzable Python object's fields to the interpreter.
+    typed_member_bases = set()
     for node in ast.walk(value):
-        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+        if not isinstance(node, ast.Attribute) or not isinstance(node.value, ast.Name):
+            continue
+        try:
+            access = resolve_access(node, state)
+        except UnsupportedFeatureError:
+            continue
+        if access is not None and not isinstance(access.descriptor.dtype, dtypes.pyobject):
+            typed_member_bases.add(id(node.value))
+
+    for node in ast.walk(value):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and id(node) not in typed_member_bases:
             binding = state.context.resolve(node.id)
             if binding is not None and binding.kind == 'container':
                 descriptor = state.context.containers[binding.container]

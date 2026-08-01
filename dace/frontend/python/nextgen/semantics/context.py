@@ -142,6 +142,16 @@ class ProgramContext:
         #: once and used immediately, so the alias can never go stale.
         self.symbolic_scalar_values: Dict[str, Any] = {}
 
+        #: Containers holding an opaque HANDLE a registry replacement produced
+        #: (an MPI subarray from ``dace.comm.Subarray``, a redistribution from
+        #: ``dace.comm.Redistribute``). These are Python-object-typed like an
+        #: interpreter fallback's result, but unlike one they are exactly what
+        #: other replacements consume by name, so argument resolution passes
+        #: them through instead of refusing them. Keyed by repository container
+        #: name (the value records how to replay the producing call); never
+        #: rolled back, since a container name is never reused.
+        self.replacement_handles: Dict[str, Any] = {}
+
         #: Per-parse cache of preprocessed+canonicalized callees, shared by
         #: all call sites (including nested inline scopes, which reuse this
         #: context object).
