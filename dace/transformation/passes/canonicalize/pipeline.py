@@ -54,6 +54,7 @@ from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
+from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pattern import (
     CleanAccessNodeToScalarSliceToTaskletPattern)
@@ -1318,6 +1319,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
                                                 MapFusionVertical(),
                                                 MapFusionHorizontal()]))]
+
+    # remat: vertical fusion pulls a consumer sub-expression UP into the producer, because the value it
+    # is built from is a register there; when a THIRD map still consumes the result, fusion cannot delete
+    # it and it crosses the map boundary as a full transient array. Recompute it in the consumer instead.
+    # Legal only when every input of the recomputed chain is already on an existing consumer read, so the
+    # rewrite adds no memory traffic and deletes an array outright. Runs AFTER the terminal fuse -- that
+    # is the last stage that can create the shape -- and cleans up after itself, so no simplify is needed.
+    s += [('end', RematerializeDerivedTemporaries())]
 
     # Terminal symbol cleanup: after fusion, a fused gather-map body carries
     # duplicate index symbols that map fusion introduced -- ``idx_index`` and
