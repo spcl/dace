@@ -793,6 +793,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # inner imperfect nest (a bare tasklet beside an inner loop) takes the
     # free-state path: the bare sibling is wrapped in a trivial single-iteration
     # loop, spliced out again by 'untrivialize' before LoopToMap.
+    #
+    # Load-bearing, measured: removing this standalone run is invisible on the tsvc
+    # scorecard (223 kernels, 35L/226M unchanged) but breaks polybench floyd-warshall's
+    # single-nest lift and the coexisting-index-guards collapse. PerfectLoopNesting does
+    # not subsume it -- it never runs MoveIfIntoLoop.
     s += [('move_if_into_loop', MoveIfIntoLoop())]
 
     # cascade_iedges_up (post-move-if): MoveIfIntoLoop may bury an invariant
