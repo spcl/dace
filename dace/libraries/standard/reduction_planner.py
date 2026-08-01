@@ -198,6 +198,15 @@ def get_reduction_schedule(in_array: Array,
             if axes[j] > i:
                 axes[j] -= 1
 
+    # Nothing left to reduce: either the node reduces over no axes at all (a copy, which autodiff
+    # emits when reversing a reduction over a single-element input), or every dimension was
+    # degenerate and removed above. There is no device schedule to plan for that, and the code
+    # below assumes at least one axis, so report it and let the caller use the pure expansion.
+    if not axes or not shape:
+        schedule.error = ('Reduction has no non-degenerate axes to reduce. '
+                          'Falling back to pure expansion.')
+        return schedule
+
     # simplify the input
     shape, strides, axes, out_shape, out_strides = simplify_input(shape, strides, axes)
 

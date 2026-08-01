@@ -199,12 +199,25 @@ class DefaultDropoutBackward(BackwardImplementation):
     def backward(forward_node: nd.Node, context: BackwardContext, given_gradients: List[Optional[str]],
                  required_gradients: List[Optional[str]]) -> Tuple[Union[nd.Node, dace.SDFG], BackwardResult]:
 
+        data_desc = butils.forward_in_desc_with_name(forward_node, context, "data")
+
+        # ``mask`` is an optional forward output; when nothing consumes it, the connector may
+        # have been pruned (e.g. by simplification) before the backward pass is generated. The
+        # backward needs the sampled mask -- it cannot be regenerated -- so restore the output
+        # and materialize it into a transient in the forward state.
+        if "mask" not in forward_node.out_connectors:
+            fwd_sdfg = context.forward_sdfg
+            fwd_state = context.forward_state
+            mask_name, mask_desc = fwd_sdfg.add_temp_transient(data_desc.shape, dace.bool_)
+            forward_node.add_out_connector("mask")
+            fwd_state.add_edge(forward_node, "mask", fwd_state.add_access(mask_name), None,
+                               dace.Memlet.from_array(mask_name, mask_desc))
+
         result_node, result = butils.add_empty_sdfg_for_node(forward_node,
                                                              ["data_grad", "output_grad", "mask", "ratio"], context)
 
         nstate = result_node.sdfg.add_state()
 
-        data_desc = butils.forward_in_desc_with_name(forward_node, context, "data")
         shape = data_desc.shape
         dtype = data_desc.dtype
         dtype_str = dtype.to_string()

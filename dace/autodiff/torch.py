@@ -32,9 +32,12 @@ def make_backward_function(
     if not ONNX_AVAILABLE:
         raise ImportError("make_backward_function requires ONNX. Install with: pip install dace[ml]")
 
-    if len(model.sdfg.nodes()) != 1:
-        raise AutoDiffException("Expected to find exactly one SDFGState, found {}".format(len(model.sdfg.nodes())))
-
+    # NOTE: the backward pass generator (``BackwardPassGenerator``) handles multi-state and
+    # control-flow SDFGs (it iterates ``state_order`` and reverses ``LoopRegion``s), so we no longer
+    # require a single forward state here. This matters when the forward has already been
+    # ``apply_gpu_transformations``-ed (which splits it into copy-in / compute / copy-out states);
+    # forcing a single state previously required simplifying the forward first, which inlined
+    # reshape copies into views and silently zeroed their backward gradients.
     forward_sdfg = model.sdfg
 
     backward_sdfg = dace.SDFG(forward_sdfg.name + "_backward")
@@ -48,19 +51,18 @@ def make_backward_function(
 
     replaced_scalars = {}
 
-    # get the forward state
-    forward_state = forward_sdfg.nodes()
-    # A loaded pytorch model should only have one state
-    if len(forward_state) != 1:
-        raise AutoDiffException(f"Expected forward SDFG to have exactly one state, found {len(forward_state)}")
-    forward_state = forward_state[0]
-
-    # get the backward state
-    backward_state = backward_sdfg.nodes()
-    # A loaded pytorch model should only have one state
-    if len(backward_state) != 1:
-        raise AutoDiffException(f"Expected backward SDFG to have exactly one state, found {len(backward_state)}")
-    backward_state = backward_state[0]
+    # Boundary state for attaching the scalar-copy plumbing below. A forwarded/gradient scalar
+    # copy must sit at the very end of the forward (a sink, to ``add_state_after``) or the very
+    # start/end of the backward (a source to ``add_state_before``, a sink to ``add_state_after``).
+    # With a single state these coincide; with multiple states (e.g. GPU copy-in/out) they don't,
+    # so pick the correct boundary. Computed lazily -- only needed when a scalar is forwarded.
+    def _boundary(sdfg: dace.SDFG, kind: str) -> dace.SDFGState:
+        states = sdfg.sink_nodes() if kind == "sink" else sdfg.source_nodes()
+        if len(states) != 1:
+            raise AutoDiffException(
+                f"make_backward_function: expected a single {kind} state in SDFG '{sdfg.name}' to "
+                f"attach scalar-copy plumbing, found {len(states)}")
+        return states[0]
 
     for name, desc in backward_input_arrays.items():
         if name not in forward_sdfg.arrays:
@@ -90,8 +92,10 @@ def make_backward_function(
                                                              find_new_name=True)
             backward_sdfg.arrays[name].transient = True
 
-            fwd_copy_state = forward_sdfg.add_state_after(forward_state, label="copy_out_" + fwd_arr_name)
-            bwd_copy_state = backward_sdfg.add_state_before(backward_state, label="copy_in_" + bwd_arr_name)
+            fwd_copy_state = forward_sdfg.add_state_after(_boundary(forward_sdfg, "sink"),
+                                                          label="copy_out_" + fwd_arr_name)
+            bwd_copy_state = backward_sdfg.add_state_before(_boundary(backward_sdfg, "source"),
+                                                           label="copy_in_" + bwd_arr_name)
             fwd_copy_state.add_edge(fwd_copy_state.add_read(name), None, fwd_copy_state.add_write(fwd_arr_name), None,
                                     dace.Memlet(name + "[0]"))
 
@@ -114,7 +118,8 @@ def make_backward_function(
                                                          storage=desc.storage,
                                                          find_new_name=True)
             desc.transient = True
-            bwd_copy_state = backward_sdfg.add_state_after(backward_state, label="copy_out_" + bwd_name)
+            bwd_copy_state = backward_sdfg.add_state_after(_boundary(backward_sdfg, "sink"),
+                                                           label="copy_out_" + bwd_name)
             bwd_copy_state.add_edge(bwd_copy_state.add_read(bwd_name), None, bwd_copy_state.add_write(arr_name), None,
                                     dace.Memlet(bwd_name + "[0]"))
             backward_result.required_grad_names[fwd_name] = arr_name

@@ -1412,6 +1412,16 @@ class LibraryNode(CodeNode):
                             default=dtypes.ScheduleType.Default)
     debuginfo = DebugInfoProperty(allow_none=True)
 
+    #: Whether this node must be expanded before other library nodes in the same state.
+    #: Set on nodes whose expansion *reads* neighbouring library nodes and therefore needs
+    #: to see them un-expanded -- e.g. ``BackwardPass``, which differentiates the forward
+    #: subgraph and has per-library-node backward rules (a ``Reduce`` it can differentiate
+    #: directly becomes an opaque C++ tasklet once expanded). ``SDFG.expand_library_nodes``
+    #: honours this ordering. Class-level attribute rather than a Property: it describes the
+    #: node type, is not part of the serialised SDFG, and lets the core stay unaware of the
+    #: libraries that set it.
+    expand_before_peers: bool = False
+
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name

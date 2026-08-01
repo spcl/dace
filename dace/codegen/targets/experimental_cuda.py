@@ -117,6 +117,13 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
         # the framecode's symbol/constant cache so lookups succeed for them.
         self._rebuild_frame_symbol_cache(sdfg)
 
+        # Descriptor-mutating pipeline passes (e.g. ``PromoteGPUScalarsToArrays`` widening a
+        # Scalar argument to a length-1 Array) invalidate the frame's arglist snapshot and the
+        # CPU codegen's argument registrations, both taken at construction time -- emitters
+        # would still treat the promoted argument as a value-typed scalar (``&arg`` -> ``T**``).
+        # Refresh both to the post-pipeline descriptors.
+        self._refresh_frame_arglist(sdfg)
+
         # Stream assignment is persisted per node via ``Node.gpu_stream_id``
         # (set by ``GPUStreamSchedulingStrategy``); the manager reads it
         # directly so a deserialised SDFG round-trips without re-scheduling.
@@ -129,11 +136,43 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
 
         shared_transients = {}
         for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(sdfg, recursive=True):
-            if (isinstance(node, nodes.MapEntry) and node.map.schedule == dtypes.ScheduleType.GPU_Device):
+            # Match the schedules this target registers as a map dispatcher for (see __init__):
+            # any of these can reach ``generate_scope`` as a top-level kernel scope, and
+            # ``KernelSpec`` will look its arglist up here.
+            if (isinstance(node, nodes.MapEntry)
+                    and node.map.schedule in dtypes.GPU_SCHEDULES_EXPERIMENTAL_CUDACODEGEN):
                 if state.parent not in shared_transients:
                     shared_transients[state.parent] = state.parent.shared_transients()
                 self._kernel_arglists[node] = state.scope_subgraph(node).arglist(defined_syms,
                                                                                  shared_transients[state.parent])
+
+    def kernel_arglist(self, kernel_map_entry: nodes.MapEntry) -> Dict[str, dt.Data]:
+        """Arglist for one kernel scope, rebuilt exactly as :meth:`preprocess` builds the cache.
+
+        Re-walks the *current* graph so that ``defined_syms`` carries the same interstate/nested-SDFG
+        symbol context the cached entries were built with -- passing ``None`` instead would fall back to
+        ``defined_symbols()`` of the subgraph alone, admitting a different set of symbol arguments and
+        desynchronising the ``__global__`` signature from its ``__dace_runkernel_`` wrapper.
+        """
+        for state, node, defined_syms in sdutil.traverse_sdfg_with_defined_symbols(self._global_sdfg, recursive=True):
+            if node is kernel_map_entry:
+                return state.scope_subgraph(node).arglist(defined_syms, state.parent.shared_transients())
+        raise KeyError(f'Kernel scope {kernel_map_entry} not reachable from {self._global_sdfg.name}')
+
+    def _refresh_frame_arglist(self, sdfg: SDFG):
+        """Recompute the frame's arglist and re-register argument defined-types whose
+        descriptor class changed during preprocessing (Scalar -> Array promotions)."""
+        frame = self._frame
+        fsyms = frame.free_symbols(sdfg)
+        frame.arglist = sdfg.arglist(scalars_only=False, free_symbols=fsyms)
+        defined_vars = self._dispatcher.defined_vars
+        for name, desc in frame.arglist.items():
+            if not (isinstance(desc, dt.Array) and defined_vars.has(name)):
+                continue
+            old_type, _ = defined_vars.get(name)
+            if old_type == DefinedType.Scalar:
+                defined_vars.remove(name)
+                defined_vars.add(name, DefinedType.Pointer, dtypes.pointer(desc.dtype).ctype)
 
     def _rebuild_frame_symbol_cache(self, sdfg: SDFG):
         """Re-seed the framecode's symbol/constant cache for the current SDFG hierarchy.
@@ -873,6 +912,10 @@ class ExperimentalCUDACodeGen(TargetCodeGenerator):
             assert self._gpu_stream_manager.num_gpu_streams == 1
             assert self._gpu_stream_manager.num_gpu_events == 0
         else:
+            # NOTE: these strings are interpolated into the code template below via a single
+            # ``.format()`` call, which does not recursively expand ``{backend}``. Substitute the
+            # backend here (``self.backend`` is 'cuda'/'hip') so the emitted code is valid instead
+            # of containing a literal ``{backend}StreamDestroy`` that fails to compile.
             stream_alloc_call = f"DACE_GPU_CHECK({self.backend}StreamCreateWithFlags(&__state->gpu_context->internal_streams[i], {self.backend}StreamNonBlocking))"
             stream_free_call = f"DACE_GPU_CHECK({self.backend}StreamDestroy(__state->gpu_context->internal_streams[i]))"
 
@@ -1030,9 +1073,28 @@ class KernelSpec:
 
         self.kernel_map_entry: nodes.MapEntry = kernel_map_entry
         self.kernel_map: nodes.Map = kernel_map_entry.map
-        self.kernel_name: str = f'{kernel_map_entry.map.label}_{cfg.cfg_id}_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}'
+        # The map label plus the cfg/block/node ids are unique only *within* one SDFG. The launch
+        # wrapper is emitted as ``extern "C" __dace_runkernel_<kernel_name>`` (and the ``__global__``
+        # stub whose address is passed to ``cudaLaunchKernel`` is named after it too), so two
+        # separately-compiled SDFGs that happen to produce the same label and ids export the same
+        # symbols. Linking both into one scope -- which the PyTorch C++ extension dispatcher does
+        # with a model's forward and backward libraries -- makes one program's launches bind to the
+        # other's identically-named kernel. That launches successfully and reports no CUDA error, it
+        # just runs the wrong kernel with mismatched argument roles (an output parameter silently
+        # becomes an input), so gradients come back as zeros. Qualify with the top-level SDFG name,
+        # which is what distinguishes the two compiled programs.
+        self.kernel_name: str = (f'{cudaCodeGen._global_sdfg.name}_{kernel_map_entry.map.label}_{cfg.cfg_id}'
+                                 f'_{kernel_parent_state.block_id}_{kernel_parent_state.node_id(kernel_map_entry)}')
 
-        self.arglist: Dict[str, dt.Data] = cudaCodeGen._kernel_arglists[kernel_map_entry]
+        # The arglist cache is populated once in ``preprocess``; graphs restructured between
+        # preprocessing and generation (e.g. library-expansion init states such as ``gemm_init``)
+        # can surface kernel scopes that were not visible then. Compute the arglist on miss with
+        # the same construction ``preprocess`` uses, so the cache is a cache and not a snapshot.
+        arglist = cudaCodeGen._kernel_arglists.get(kernel_map_entry)
+        if arglist is None:
+            arglist = cudaCodeGen.kernel_arglist(kernel_map_entry)
+            cudaCodeGen._kernel_arglists[kernel_map_entry] = arglist
+        self.arglist: Dict[str, dt.Data] = arglist
 
         kernel_const_data = sdutil.get_constant_data(kernel_map_entry, kernel_parent_state)
         kernel_const_symbols = sdutil.get_constant_symbols(kernel_map_entry, kernel_parent_state)
@@ -1100,6 +1162,17 @@ class KernelSpec:
 
         cudaCodeGen._in_device_code = restore_in_device_code
 
+        # Launch dimensions are precomputed by ``AddThreadBlockMaps`` in ``preprocess``; like the
+        # arglist above, fall back to on-the-spot inference for kernel scopes that surfaced after
+        # that snapshot was taken (raises a descriptive error if the kernel is unconfigurable,
+        # instead of an opaque KeyError).
+        if kernel_map_entry not in cudaCodeGen._kernel_dimensions_map:
+            from dace.transformation.passes.analysis.infer_gpu_grid_and_block_size import InferGPUGridAndBlockSize
+            inferred = InferGPUGridAndBlockSize().apply_pass(kernel_parent_state.parent, set())
+            if kernel_map_entry in inferred:
+                # Only fill the missing entry; entries computed in ``preprocess`` (with
+                # knowledge of which thread-block maps were inserted) take precedence.
+                cudaCodeGen._kernel_dimensions_map[kernel_map_entry] = inferred[kernel_map_entry]
         self.grid_dims, self.block_dims = cudaCodeGen._kernel_dimensions_map[kernel_map_entry]
         self.gpu_index_ctype: str = self.get_gpu_index_ctype()
 

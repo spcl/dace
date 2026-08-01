@@ -211,6 +211,22 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
                     accesses = self._get_marked_inputs_and_outputs(state, node)
                     self.host_data.extend(accesses)
 
+        # Data read on interstate edges or control-flow meta-expressions is evaluated on the
+        # host; promoting it to GPU_Global would make the generated host code dereference a
+        # device pointer (caught by validation as "stored as GPU_Global but accessed on host").
+        # Keep such containers host-side unless they already live on the GPU (the copy-out
+        # machinery below handles that case).
+        interstate_read_memlets: List[memlet.Memlet] = []
+        for edge in sdfg.all_interstate_edges():
+            interstate_read_memlets.extend(edge.data.get_read_memlets(sdfg.arrays))
+        for blk in sdfg.all_control_flow_blocks():
+            if isinstance(blk, AbstractControlFlowRegion):
+                interstate_read_memlets.extend(blk.get_meta_read_memlets())
+        for mem in interstate_read_memlets:
+            if (mem.data not in self.host_data
+                    and sdfg.arrays[mem.data].storage not in [dtypes.StorageType.GPU_Global]):
+                self.host_data.append(mem.data)
+
         for state in sdfg.states():
             sdict = state.scope_dict()
             for node in state.nodes():
@@ -232,7 +248,7 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
 
             # Input nodes may also be nodes with WCR memlets and no identity
             for e in state.edges():
-                if e.data.wcr is not None:
+                if e.data.wcr is not None and not e.data.is_empty():
                     if (e.data.data not in input_nodes and sdfg.arrays[e.data.data].transient == False):
                         input_nodes.append((e.data.data, sdfg.arrays[e.data.data]))
 
@@ -436,12 +452,17 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
         for node, state in nsdfgs:
             excl_copyin = set()
             for e in state.in_edges(node):
+                # Empty dependency edges carry no data and map to no inner connector
+                if e.dst_conn is None or e.data.is_empty():
+                    continue
                 src = state.memlet_path(e)[0].src
                 if isinstance(src, nodes.AccessNode) and sdfg.arrays[src.data].storage in gpu_storage:
                     excl_copyin.add(e.dst_conn)
                     node.sdfg.arrays[e.dst_conn].storage = sdfg.arrays[src.data].storage
             excl_copyout = set()
             for e in state.out_edges(node):
+                if e.src_conn is None or e.data.is_empty():
+                    continue
                 dst = state.memlet_path(e)[-1].dst
                 if isinstance(dst, nodes.AccessNode) and sdfg.arrays[dst.data].storage in gpu_storage:
                     excl_copyout.add(e.src_conn)
@@ -517,50 +538,8 @@ class GPUTransformSDFG(transformation.MultiStateTransformation):
             for gcode in gcodes:
                 if gcode.label in self.exclude_tasklets.split(','):
                     continue
-                # Create map and connectors
-                me, mx = state.add_map(gcode.label + '_gmap', {gcode.label + '__gmapi': '0:1'},
-                                       schedule=dtypes.ScheduleType.GPU_Device)
-                # Store in/out edges in lists so that they don't get corrupted when they are removed from the graph.
-                in_edges = list(state.in_edges(gcode))
-                out_edges = list(state.out_edges(gcode))
-                # A connector-less edge (``dst_conn`` / ``src_conn`` is None -- an
-                # empty-memlet dependency edge, e.g. sequencing a reduction-init
-                # tasklet) passes through the wrapping map as a dependency edge with
-                # no connector; only named edges get IN_/OUT_ connectors (``'IN_' +
-                # None`` would crash).
-                me.in_connectors = {('IN_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
-                me.out_connectors = {('OUT_' + e.dst_conn): None for e in in_edges if e.dst_conn is not None}
-                mx.in_connectors = {('IN_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
-                mx.out_connectors = {('OUT_' + e.src_conn): None for e in out_edges if e.src_conn is not None}
-
-                # Create memlets through map. A connector-less edge must be an empty-memlet
-                # dependency edge -- a data edge to/from the wrapped tasklet/nested SDFG always
-                # carries a named connector, so routing a non-empty memlet with no IN_/OUT_
-                # connector would silently drop its data path; assert the invariant to fail loud.
-                for e in in_edges:
-                    state.remove_edge(e)
-                    if e.dst_conn is None:
-                        assert e.data is None or e.data.is_empty(), \
-                            f'connector-less in-edge into {gcode.label} carries a non-empty memlet {e.data}'
-                        state.add_edge(e.src, e.src_conn, me, None, e.data)
-                        state.add_edge(me, None, e.dst, e.dst_conn, dc(e.data))
-                    else:
-                        state.add_edge(e.src, e.src_conn, me, 'IN_' + e.dst_conn, e.data)
-                        state.add_edge(me, 'OUT_' + e.dst_conn, e.dst, e.dst_conn, dc(e.data))
-                for e in out_edges:
-                    state.remove_edge(e)
-                    if e.src_conn is None:
-                        assert e.data is None or e.data.is_empty(), \
-                            f'connector-less out-edge from {gcode.label} carries a non-empty memlet {e.data}'
-                        state.add_edge(e.src, e.src_conn, mx, None, e.data)
-                        state.add_edge(mx, None, e.dst, e.dst_conn, dc(e.data))
-                    else:
-                        state.add_edge(e.src, e.src_conn, mx, 'IN_' + e.src_conn, e.data)
-                        state.add_edge(mx, 'OUT_' + e.src_conn, e.dst, e.dst_conn, dc(e.data))
-
-                # Map without inputs
-                if len(in_edges) == 0:
-                    state.add_nedge(me, gcode, memlet.Memlet())
+                # Wrap in a unit GPU map (robust to connector-less dependency edges)
+                xfh.wrap_code_node_in_unit_gpu_map(state, gcode)
 
         #######################################################
         # Step 8: Introduce copy-out if data used in outgoing interstate edges

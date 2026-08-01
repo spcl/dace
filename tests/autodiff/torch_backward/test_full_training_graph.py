@@ -12,32 +12,37 @@ import dace
 
 from dace.ml import DaceModule
 from tests.utils import torch_tensors_close, tensors_close
+from tests.ml_gpu_utils import DEVICES, experimental_cuda, is_gpu, torch_device, run_sdfg
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_module():
-    gpu = False
-    module = torch.nn.Sequential(torch.nn.Linear(12, 2, bias=False))
+@pytest.mark.parametrize("device", DEVICES)
+def test_module(device):
+    dev = torch_device(device)
+    module = torch.nn.Sequential(torch.nn.Linear(12, 2, bias=False)).to(dev)
 
     torch_module = copy.deepcopy(module)
     dace_module = copy.deepcopy(module)
 
     dace_module = DaceModule(dace_module,
-                             sdfg_name="test_full_training_graph_module",
+                             sdfg_name=f"test_full_training_graph_module_{device}",
                              simplify=False,
                              backward=True,
                              training=True,
-                             auto_optimize=False)
+                             auto_optimize=False,
+                             cuda=is_gpu(device))
 
-    x = torch.randn(8, 12)
+    x = torch.randn(8, 12, device=dev)
 
     expected_output = torch_module(x)
-    result = dace_module(x)
+    with experimental_cuda():
+        result = dace_module(x)
     torch_tensors_close('output', expected_output, result)
 
-    dc_loss = dace_module(x).sum()
-    dc_loss.backward()
+    with experimental_cuda():
+        dc_loss = dace_module(x).sum()
+        dc_loss.backward()
 
     pt_loss = torch_module(x).sum()
     pt_loss.backward()
@@ -52,7 +57,8 @@ def test_module():
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_parse_backward_simple():
+@pytest.mark.parametrize("device", DEVICES)
+def test_parse_backward_simple(device):
     x = torch.randn(10, 5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
 
@@ -64,16 +70,18 @@ def test_parse_backward_simple():
         return x.grad
 
     sdfg = train_step.to_sdfg()
+    sdfg.name = f"{sdfg.name}_parse_backward_simple_{device}"
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    result = sdfg(x.clone(), dy.clone())
+    result = run_sdfg(sdfg, device, x=x.clone(), dy=dy.clone())
     tensors_close('x.grad', dy.reshape(10, 1).expand(10, 5), result)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_parse_backward_scalar():
+@pytest.mark.parametrize("device", DEVICES)
+def test_parse_backward_scalar(device):
     x = torch.randn(10, 5, dtype=torch.float64)
 
     @dace.program
@@ -84,16 +92,18 @@ def test_parse_backward_scalar():
         return x.grad
 
     sdfg = train_step.to_sdfg()
+    sdfg.name = f"{sdfg.name}_parse_backward_scalar_{device}"
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    result = sdfg(x.clone())
+    result = run_sdfg(sdfg, device, x=x.clone())
     tensors_close('x.grad', 1, result)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_parse_backward_with_forwarding():
+@pytest.mark.parametrize("device", DEVICES)
+def test_parse_backward_with_forwarding(device):
     x = torch.randn(10, 5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
 
@@ -117,17 +127,19 @@ def test_parse_backward_with_forwarding():
         return x.grad
 
     sdfg = train_step.to_sdfg()
+    sdfg.name = f"{sdfg.name}_parse_backward_with_forwarding_{device}"
     sdfg.expand_library_nodes()
     sdfg.validate()
 
-    result = sdfg(x.clone())
+    result = run_sdfg(sdfg, device, x=x.clone())
     expected = torch_fn(x.clone())
     tensors_close('x.grad', expected, result)
 
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_two_backward_passes():
+@pytest.mark.parametrize("device", DEVICES)
+def test_two_backward_passes(device):
 
     @dace.program
     def train_step(x1: dace.float64[10, 5], x2: dace.float64[5], dy: dace.float64[10]):
@@ -159,6 +171,7 @@ def test_two_backward_passes():
         return x1.grad, x2.grad
 
     sdfg = train_step.to_sdfg()
+    sdfg.name = f"{sdfg.name}_two_backward_passes_{device}"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -167,7 +180,7 @@ def test_two_backward_passes():
     x2 = torch.randn(5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
 
-    r1, r2 = sdfg(x1.clone(), x2.clone(), dy.clone())
+    r1, r2 = run_sdfg(sdfg, device, x1=x1.clone(), x2=x2.clone(), dy=dy.clone())
     ex_1, ex_2 = torch_fn(x1.clone(), x2.clone(), dy.clone())
     tensors_close('x2.grad', ex_2, r2)
     tensors_close('x1.grad', ex_1, r1)
@@ -175,7 +188,8 @@ def test_two_backward_passes():
 
 @pytest.mark.torch
 @pytest.mark.autodiff
-def test_two_backward_passes_accumulate():
+@pytest.mark.parametrize("device", DEVICES)
+def test_two_backward_passes_accumulate(device):
 
     @dace.program
     def train_step(x: dace.float64[10, 5], dy: dace.float64[10]):
@@ -205,6 +219,7 @@ def test_two_backward_passes_accumulate():
         return x.grad
 
     sdfg = train_step.to_sdfg()
+    sdfg.name = f"{sdfg.name}_two_backward_passes_accumulate_{device}"
     sdfg.validate()
     sdfg.expand_library_nodes()
     sdfg.validate()
@@ -212,16 +227,16 @@ def test_two_backward_passes_accumulate():
     x1 = torch.randn(10, 5, dtype=torch.float64)
     dy = torch.randn(10, dtype=torch.float64)
 
-    result = sdfg(x1.clone(), dy.clone())
+    result = run_sdfg(sdfg, device, x=x1.clone(), dy=dy.clone())
     expected = torch_fn(x1.clone(), dy.clone())
 
     tensors_close('x.grad', expected, result)
 
 
 if __name__ == "__main__":
-    test_module()
-    test_parse_backward_simple()
-    test_parse_backward_scalar()
-    test_parse_backward_with_forwarding()
-    test_two_backward_passes()
-    test_two_backward_passes_accumulate()
+    test_module(device="cpu")
+    test_parse_backward_simple(device="cpu")
+    test_parse_backward_scalar(device="cpu")
+    test_parse_backward_with_forwarding(device="cpu")
+    test_two_backward_passes(device="cpu")
+    test_two_backward_passes_accumulate(device="cpu")
