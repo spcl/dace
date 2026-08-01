@@ -26,21 +26,16 @@ jobs:
     - uses: actions/checkout@v7
       with:
         submodules: 'recursive'
-    - name: Install dependencies
+    - uses: ./.github/actions/setup-dace-venv
+      with:
+        pip-packages: flake8 pytest-xdist coverage mpi4py pytest-mpi
+        codecov: 'true'
+
+    - name: Check mpi4py
       run: |
-        rm -f ~/.dace.conf
-        rm -rf .dacecache tests/.dacecache
-        python -m venv ~/.venv      # create venv so we can use pip
         source ~/.venv/bin/activate # activate venv
-        python -m pip install --upgrade pip
-        pip install flake8 pytest-xdist coverage
-        pip install mpi4py pytest-mpi
         # The wheel dlopens libmpi on first use; without one it fails at every import, not here.
         MPI4PY_RC_INITIALIZE=0 python -c "from mpi4py import MPI; print(MPI.Get_library_version())"
-        pip uninstall -y dace
-        pip install -e ".[testing]"
-        curl -Os https://uploader.codecov.io/latest/linux/codecov
-        chmod +x codecov
 
     - name: Test dependencies
       run: |
@@ -85,14 +80,4 @@ jobs:
         done
 
     - name: Report overall coverage
-      run: |
-        export COVERAGE_RCFILE=`pwd`/.coveragerc
-        source ~/.venv/bin/activate # activate venv
-        coverage combine . */; coverage report; coverage xml
-        reachable=0
-        ping -W 2 -c 1 codecov.io || reachable=$?
-        if [ $reachable -eq 0 ]; then
-          ./codecov
-        else
-          echo "Codecov.io is unreachable"
-        fi
+      uses: ./.github/actions/report-coverage
