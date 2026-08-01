@@ -138,11 +138,142 @@ def test_multi_tasklet_chain():
     check_values(deep_chain, 128)
 
 
-def test_two_reads_share_one_clone():
+def test_two_reads_of_the_same_temporary():
     sdfg = fused(two_reads)
     assert RematerializeDerivedTemporaries().apply_pass(sdfg, {})
     sdfg.validate()
     check_values(two_reads, 128)
+
+
+def second_read_of_the_temporary(sdfg: dace.SDFG):
+    """Give the temporary a SECOND consumer read at the same point, feeding a fresh output array.
+
+    Fusion strands each temporary behind exactly one read, so the multi-read shape -- where the pass has
+    to pair each inner read with its OWN outer edge and share one clone between reads at the same point
+    -- has to be built on a fused SDFG rather than found in one.
+    """
+    state, tnode = candidate(sdfg)
+    outer = state.out_edges(tnode)[0]
+    entry2 = outer.dst
+    inner = next(iter(state.out_edges_by_connector(entry2, outer.dst_conn.replace('IN_', 'OUT_', 1))))
+    exit2 = state.exit_node(entry2)
+    desc = sdfg.arrays[tnode.data]
+    probe, _ = sdfg.add_array('probe', desc.shape, desc.dtype)
+    point = ', '.join(entry2.map.params)
+
+    tasklet = state.add_tasklet('probe_read', {'__in': None}, {'__out': None}, '__out = __in * 3.0')
+    state.add_edge(entry2, inner.src_conn, tasklet, '__in', dace.Memlet(data=tnode.data, subset=str(inner.data.subset)))
+    exit2.add_in_connector('IN_probe')
+    exit2.add_out_connector('OUT_probe')
+    state.add_edge(tasklet, '__out', exit2, 'IN_probe', dace.Memlet(data=probe, subset=point))
+    state.add_edge(exit2, 'OUT_probe', state.add_access(probe), None,
+                   dace.Memlet(data=probe, subset='0:%s' % desc.shape[0]))
+    sdfg.validate()
+    return state
+
+
+def test_two_reads_at_the_same_point_share_one_clone():
+    """The trade is flops for bytes, so a value two reads want at the SAME index is recomputed ONCE and
+    both reads take it from the one register."""
+    sdfg = fused(heat1d)
+    state = second_read_of_the_temporary(sdfg)
+    _, tnode = candidate(sdfg)
+    entry2 = state.out_edges(tnode)[0].dst
+    consumers = [(e.dst, e.dst_conn) for e in state.out_edges(entry2) if e.data.data == tnode.data]
+    assert len(consumers) == 2, consumers
+
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    feeders = {next(iter(state.in_edges_by_connector(dst, conn))).src for dst, conn in consumers}
+    assert len(feeders) == 1, 'each read got its own clone'
+
+
+def test_two_reads_of_one_temporary_are_bit_exact():
+    """Both reads have to end up on the recomputed value, not one of them on a stale register."""
+    size = 128
+    rng = np.random.default_rng(4711)
+    base = {'A': rng.random(size), 'B': rng.random(size), 'probe': np.zeros(size - 2)}
+
+    outputs = []
+    for apply_pass in (False, True):
+        sdfg = fused(heat1d)
+        second_read_of_the_temporary(sdfg)
+        if apply_pass:
+            assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 1
+        sdfg.name = 'heat1d_second_read' + ('_remat' if apply_pass else '_ref')
+        args = {name: value.copy() for name, value in base.items()}
+        sdfg.compile()(**args, M=size)
+        outputs.append(args)
+
+    for name in base:
+        assert np.array_equal(outputs[0][name].view(np.uint64), outputs[1][name].view(np.uint64)), name
+
+
+def test_refuses_a_chain_fed_by_the_temporary_itself():
+    """Route the write through a scope-local register -- the shape fusion leaves when it renames a value
+    before storing it. The only container that register is stored to is then the temporary, so the
+    "recompute it from a read the consumer already has" rule would recompute it from the array this
+    rewrite is about to delete."""
+    sdfg = fused(heat1d)
+    state, tnode = candidate(sdfg)
+    exit1 = state.in_edges(tnode)[0].src
+    write = next(e for e in state.in_edges(exit1) if e.data.data == tnode.data)
+    reg, _ = sdfg.add_scalar('carry',
+                             sdfg.arrays[tnode.data].dtype,
+                             transient=True,
+                             storage=dace.dtypes.StorageType.Register,
+                             find_new_name=True)
+    node = state.add_access(reg)
+    state.add_edge(write.src, write.src_conn, node, None, dace.Memlet(data=reg, subset='0'))
+    state.add_edge(node, None, exit1, write.dst_conn, dace.Memlet(data=tnode.data, subset=str(write.data.subset)))
+    state.remove_edge(write)
+    sdfg.validate()
+
+    before = arrays(sdfg)
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) is None
+    assert arrays(sdfg) == before
+    sdfg.validate()
+
+
+def test_a_chain_longer_than_the_budget_is_refused():
+    """The bound is cloned tasklets times distinct reads. At 1 the multi-tasklet chain is over it, and a
+    pass that does not apply must leave the SDFG exactly as it found it."""
+    sdfg = fused(deep_chain)
+    before = arrays(sdfg)
+    bounded = RematerializeDerivedTemporaries()
+    bounded.max_recompute_tasklets = 1
+    assert bounded.apply_pass(sdfg, {}) is None
+    assert arrays(sdfg) == before
+    sdfg.validate()
+    # ... and the same SDFG at the default bound does fire, so the refusal above is the bound talking.
+    assert RematerializeDerivedTemporaries().apply_pass(fused(deep_chain), {}) == 1
+
+
+def test_nothing_still_names_the_deleted_temporary():
+    """Whatever the rewrite rewires, no memlet and no access node may still name the container it
+    deleted: such a reference points at a descriptor that is gone, and it surfaces in codegen rather
+    than here."""
+    sdfg = heat3d_after_loop_to_map_and_fusion()
+    before = arrays(sdfg)
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 2
+    gone = before - arrays(sdfg)
+    assert len(gone) == 2
+    named = {e.data.data for state in sdfg.states() for e in state.edges()}
+    named |= {node.data for state in sdfg.states() for node in state.data_nodes()}
+    assert not (named & gone), named & gone
+    sdfg.validate()
+
+
+@pytest.mark.parametrize('build', [lambda: fused(deep_chain), lambda: heat3d_after_loop_to_map_and_fusion()])
+def test_every_rematerialized_register_is_written(build):
+    """A clone whose sink is never filled is SILENT garbage -- the consumer reads an uninitialised
+    register, validation has nothing to object to, and the wrong values come out of a passing test."""
+    sdfg = build()
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {})
+    for state in sdfg.states():
+        for node in state.data_nodes():
+            if node.data.startswith('remat_'):
+                assert state.in_degree(node) == 1, node.data
 
 
 @pytest.mark.parametrize('program', [consumer_reads_wrong_index, consumer_reads_far_index])
@@ -270,7 +401,14 @@ if __name__ == '__main__':
     test_removes_stencil_temporary_bit_exactly()
     test_multidimensional()
     test_multi_tasklet_chain()
-    test_two_reads_share_one_clone()
+    test_two_reads_of_the_same_temporary()
+    test_two_reads_at_the_same_point_share_one_clone()
+    test_two_reads_of_one_temporary_are_bit_exact()
+    test_refuses_a_chain_fed_by_the_temporary_itself()
+    test_a_chain_longer_than_the_budget_is_refused()
+    test_nothing_still_names_the_deleted_temporary()
+    test_every_rematerialized_register_is_written(lambda: fused(deep_chain))
+    test_every_rematerialized_register_is_written(heat3d_after_loop_to_map_and_fusion)
     test_refuses_when_the_needed_index_is_not_already_read(consumer_reads_wrong_index)
     test_refuses_when_the_needed_index_is_not_already_read(consumer_reads_far_index)
     test_refuses_when_the_consumer_writes_the_container()

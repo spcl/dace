@@ -69,9 +69,14 @@ def point_memlet(container: str, point: List[symbolic.SymbolicType]) -> Memlet:
 
 
 def symbolic_references(sdfg: SDFG) -> OrderedSet:
-    """Every name referenced by control flow (interstate edges, loop headers, branch conditions).
+    """Every name referenced by something other than a memlet.
 
     A container named here is read outside dataflow, so its access nodes do not tell the whole story.
+    The slots are the ones ``length_one_array_scalar_conversion.rewrite_code_slots`` enumerates --
+    interstate assignments and conditions, ``ConditionalBlock`` guards, ``LoopRegion`` init/update/
+    condition, and ``NestedSDFG.symbol_mapping``; keep the two in step when a slot is added. (That
+    helper REWRITES source text and this one only reads free symbols, which is why it is not called
+    here: a rewriter cannot answer "which names are referenced" without re-parsing every slot twice.)
 
     :param sdfg: The SDFG to scan (this level only; a nested SDFG uses its own names).
     :returns: The referenced names.
@@ -88,6 +93,13 @@ def symbolic_references(sdfg: SDFG) -> OrderedSet:
             for cond, _ in block.branches:
                 if cond is not None:
                     names |= OrderedSet(cond.get_free_symbols())
+    for state in sdfg.states():
+        for node in state.nodes():
+            # A nested SDFG can bind one of its symbols to an outer container's value; that reference
+            # lives in the mapping and on no edge at all.
+            if isinstance(node, nodes.NestedSDFG):
+                for value in node.symbol_mapping.values():
+                    names |= OrderedSet(symbolic.free_symbols_and_functions(value))
     return names
 
 
@@ -111,28 +123,43 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         # Fresh instances appear only when maps fuse, which reshapes access nodes and memlets.
         return bool(modified & (ppl.Modifies.AccessNodes | ppl.Modifies.Memlets))
 
-    def depends_on(self):
-        return {}
-
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
         removed = 0
         for nested in sdfg.all_sdfgs_recursive():
             controlled = symbolic_references(nested)
-            arglist = OrderedSet(nested.arglist().keys())
+            index = self.access_index(nested)
             for name in list(nested.arrays.keys()):
-                if name in controlled or name in arglist:
+                # An earlier rewrite may have deleted this one already, as the dead register of a slice.
+                if name in controlled or name not in nested.arrays:
                     continue
-                if self.rematerialize(nested, name):
+                if self.rematerialize(nested, name, index):
                     removed += 1
+                    # The rewrite deleted nodes, so every later candidate needs a fresh index.
+                    index = self.access_index(nested)
         return removed or None
 
     # ------------------------------------------------------------------ matching
 
-    def temporary_node(self, sdfg: SDFG, name: str) -> Optional[Tuple[SDFGState, nodes.AccessNode]]:
+    def access_index(self, sdfg: SDFG) -> Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]:
+        """``{container: [(state, access node)]}`` for the whole SDFG.
+
+        Built once per sweep rather than per candidate: this pass is the terminal canonicalization
+        stage of every compiled program, and rescanning every state per array makes it quadratic.
+        """
+        index: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]] = {}
+        for state in sdfg.states():
+            for node in state.data_nodes():
+                index.setdefault(node.data, []).append((state, node))
+        return index
+
+    def temporary_node(
+            self, sdfg: SDFG, name: str,
+            index: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]) -> Optional[Tuple[SDFGState, nodes.AccessNode]]:
         """The unique access node of ``name``, if it has exactly one and is a real in-memory array.
 
         :param sdfg: The SDFG owning ``name``.
         :param name: Candidate container.
+        :param index: Access nodes of the whole SDFG, from :meth:`access_index`.
         :returns: ``(state, node)`` or None.
         """
         desc = sdfg.arrays[name]
@@ -141,24 +168,18 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         # A register or a single element is not worth rematerializing; the win is deleting an array.
         if desc.storage == dtypes.StorageType.Register or desc.total_size == 1:
             return None
-        found = None
-        for state in sdfg.states():
-            for node in state.data_nodes():
-                if node.data != name:
-                    continue
-                if found is not None:
-                    return None
-                found = (state, node)
-        return found
+        found = index.get(name, ())
+        return found[0] if len(found) == 1 else None
 
-    def match(self, sdfg: SDFG, name: str) -> Optional[Dict[str, Any]]:
+    def match(self, sdfg: SDFG, name: str, index: Dict[str, List[Tuple[SDFGState,
+                                                                       nodes.AccessNode]]]) -> Optional[Dict[str, Any]]:
         """Recognize the rematerialization shape around temporary ``name``.
 
         :param sdfg: The SDFG owning ``name``.
         :param name: Candidate container.
         :returns: A plan, or None when any condition refuses.
         """
-        located = self.temporary_node(sdfg, name)
+        located = self.temporary_node(sdfg, name, index)
         if located is None:
             return None
         state, tnode = located
@@ -173,6 +194,10 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         exit1 = outer_write.src
         if not isinstance(exit1, nodes.MapExit) or outer_write.data.wcr is not None:
             return None
+        # The covers() test below is in the temporary's index space, so the memlet has to be spelled in
+        # it: a copy edge carrying the OTHER container's name compares two unrelated spaces.
+        if outer_write.data.data != name:
+            return None
         entry1 = state.entry_node(exit1)
 
         produced = [e for e in state.in_edges(exit1) if e.data.data == name]
@@ -180,6 +205,10 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             return None
         write = produced[0]
         if write.data.wcr is not None or write.data.dynamic or not str(write.dst_conn).startswith('IN_'):
+            return None
+        # A second edge off the same map-exit connector carries the produced value somewhere the
+        # temporary is not, and that consumer survives the deletion.
+        if len(list(state.out_edges_by_connector(exit1, write.dst_conn.replace('IN_', 'OUT_', 1)))) != 1:
             return None
         wpoint = point_of(write.data.dst_subset if write.data.dst_subset is not None else write.data.subset)
         if wpoint is None:
@@ -203,16 +232,25 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             entry2 = outer_read.dst
             if not isinstance(entry2, nodes.MapEntry) or entry2 is entry1:
                 return None
-            if not str(outer_read.dst_conn).startswith('IN_'):
+            if not str(outer_read.dst_conn).startswith('IN_') or outer_read.data.data != name:
                 return None
             # Every element the consumer spans must have been written by this producer, else the value
             # rematerialization reproduces was never in the temporary to begin with.
             if not outer_write.data.subset.covers(outer_read.data.subset):
                 return None
-            inner = [e for e in state.out_edges(entry2) if e.data.data == name]
+            # Pair the inner reads with THIS outer edge by connector. Filtering by container name alone
+            # collects the same inner edge once per outer edge when the entry carries two of them, and
+            # the rewrite then tries to remove one edge twice.
+            inner = list(state.out_edges_by_connector(entry2, outer_read.dst_conn.replace('IN_', 'OUT_', 1)))
             if not inner:
                 return None
             for edge in inner:
+                if edge.data.data != name:
+                    return None
+                # A read consumed by a deeper scope leaves memlets naming the temporary BELOW the node
+                # this rewrite rewires, and the descriptor is about to be deleted under them.
+                if isinstance(edge.dst, (nodes.EntryNode, nodes.ExitNode)):
+                    return None
                 plan = self.plan_read(sdfg, state, entry2, edge, inverse, sources)
                 if plan is None:
                     return None
@@ -222,7 +260,15 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         if len(tasklets) * distinct > self.max_recompute_tasklets:
             return None
 
-        return {'state': state, 'tnode': tnode, 'exit1': exit1, 'write': write, 'tasklets': tasklets, 'reads': reads}
+        return {
+            'state': state,
+            'tnode': tnode,
+            'exit1': exit1,
+            'write': write,
+            'tasklets': tasklets,
+            'sources': sources,
+            'reads': reads
+        }
 
     def invert(self, params: List[str], wpoint: List[symbolic.SymbolicType]) -> Optional[Dict[str, Any]]:
         """Invert the producer's write index ``t(i)``, requiring a per-dimension shifted bijection.
@@ -308,6 +354,11 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 return None
             if node in tasklets:
                 continue
+            # Every other output of a cloned tasklet is mirrored into a private register inside the
+            # consumer. One that leaves the producer's scope is a STORE, and repeating it in the clone
+            # would add exactly the memory traffic this pass promises not to add.
+            if any(e is not write and not isinstance(e.dst, nodes.AccessNode) for e in state.out_edges(node)):
+                return None
             tasklets.append(node)
             for inedge in state.in_edges(node):
                 if point_of(inedge.data.subset) is None:
@@ -415,9 +466,13 @@ class RematerializeDerivedTemporaries(ppl.Pass):
             if pt is None:
                 continue
             src = None
-            for outer in state.in_edges(entry2):
-                if outer.data.data == edge.data.data and isinstance(outer.src, nodes.AccessNode):
-                    src = outer.src
+            # Pair by CONNECTOR, not by container name: an entry that reads two VERSIONS of the same
+            # container has two in-edges for it, and only one of them feeds this connector. Matching by
+            # name validates the read against whichever version happens to come last.
+            if edge.src_conn is not None:
+                for outer in state.in_edges_by_connector(entry2, edge.src_conn.replace('OUT_', 'IN_', 1)):
+                    if isinstance(outer.src, nodes.AccessNode):
+                        src = outer.src
             out.setdefault(edge.data.data, []).append((edge.src_conn, pt, src))
         return out
 
@@ -458,12 +513,12 @@ class RematerializeDerivedTemporaries(ppl.Pass):
 
     # ------------------------------------------------------------------- rewrite
 
-    def rematerialize(self, sdfg: SDFG, name: str) -> bool:
+    def rematerialize(self, sdfg: SDFG, name: str, index: Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]) -> bool:
         """Apply the rewrite for ``name`` if it matches.
 
         :returns: Whether the temporary was removed.
         """
-        plan = self.match(sdfg, name)
+        plan = self.match(sdfg, name, index)
         if plan is None:
             return False
         state: SDFGState = plan['state']
@@ -472,30 +527,44 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         for read in plan['reads']:
             edge = read['edge']
             dst, dst_conn = edge.dst, edge.dst_conn
-            state.remove_edge(edge)
             if read['key'] not in built:
                 built[read['key']] = self.clone_into(sdfg, state, plan, read)
             sink = built[read['key']]
+            # The read is a whole memlet path -- inner edge, both connectors of the consumer entry, the
+            # outer edge -- and it goes as one; removing the inner edge alone leaves the entry with an
+            # edgeless connector. ``remove_memlet_path`` stops at a connector another read still uses.
+            state.remove_memlet_path(edge, remove_orphans=False)
+            if dst_conn is not None:
+                dst.add_in_connector(dst_conn)  # the path removal took it with the edge
             state.add_edge(sink, None, dst, dst_conn, Memlet(data=sink.data, subset='0'))
             touched.add(read['entry'])
 
-        for outer_read in list(state.out_edges(plan['tnode'])):
-            entry2, conn = outer_read.dst, outer_read.dst_conn
-            state.remove_edge(outer_read)
-            entry2.remove_in_connector(conn)
-            entry2.remove_out_connector(conn.replace('IN_', 'OUT_', 1))
-        state.remove_edge(state.in_edges(plan['tnode'])[0])
+        state.remove_memlet_path(plan['write'], remove_orphans=False)
         state.remove_node(plan['tnode'])
-        write, exit1 = plan['write'], plan['exit1']
-        state.remove_edge(write)
-        exit1.remove_in_connector(write.dst_conn)
-        exit1.remove_out_connector(write.dst_conn.replace('IN_', 'OUT_', 1))
-        self.prune_dead(sdfg, state, plan['tasklets'])
+        pruned = self.prune_dead(sdfg, state, plan['tasklets'])
         sdfg.remove_data(name, validate=False)
+        # The pruned registers' descriptors go too: the pipeline schedules this pass last on the
+        # promise that it leaves nothing for a following simplify.
+        if pruned:
+            live = OrderedSet(node.data for block in sdfg.states() for node in block.data_nodes())
+            for gone in pruned:
+                if gone not in live and gone in sdfg.arrays and sdfg.arrays[gone].transient:
+                    sdfg.remove_data(gone, validate=False)
 
         for entry2 in touched:
             propagate_memlets_map_scope(sdfg, state, entry2)
         return True
+
+    def value_edge(self, state: SDFGState, write, sources: Dict[Any, SourceRead]):
+        """The edge that carries the temporary's value out of the producer slice.
+
+        ``write`` itself, unless the value reaches the map exit through a pass-through register: that
+        register is not part of the clone, so the clone has to be wired from the edge that FILLS it.
+        """
+        edge = write
+        while edge not in sources and isinstance(edge.src, nodes.AccessNode):
+            edge = state.in_edges(edge.src)[0]  # slice_back accepted it only with a single writer
+        return edge
 
     def clone_into(self, sdfg: SDFG, state: SDFGState, plan: Dict[str, Any], read: Dict[str, Any]) -> nodes.AccessNode:
         """Clone the producer slice into the consumer scope.
@@ -510,11 +579,11 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                                        find_new_name=True)
         sink = state.add_access(sink_name)
 
-        write = plan['write']
+        value = self.value_edge(state, plan['write'], plan['sources'])
         if not plan['tasklets']:
             # Degenerate chain: the temporary was a plain copy of the value, so the consumer's existing
             # read of the container IS the value. Route it straight through a private register.
-            conn, point, container = wiring[write]
+            conn, point, container = wiring[value]
             state.add_edge(entry2, conn, sink, None, point_memlet(container, point))
             return sink
 
@@ -540,10 +609,13 @@ class RematerializeDerivedTemporaries(ppl.Pass):
                 state.add_edge(entry2, None, clone, None, Memlet())
         for tasklet, clone in clones.items():
             for edge in state.out_edges(tasklet):
-                if edge is write:
+                if edge is value:
                     state.add_edge(clone, edge.src_conn, sink, None, Memlet(data=sink_name, subset='0'))
-                elif edge.dst in carriers:
-                    carrier = carriers[edge.dst]
+                else:
+                    # Every other output gets its own private register: the clone's code still writes
+                    # that connector, and a connector with no edge is an invalid SDFG. ``slice_back``
+                    # already refused a tasklet whose other output leaves the producer's scope.
+                    carrier = self.carrier(sdfg, state, edge.dst, carriers)
                     state.add_edge(clone, edge.src_conn, carrier, None, Memlet(data=carrier.data, subset='0'))
         return sink
 
@@ -561,17 +633,36 @@ class RematerializeDerivedTemporaries(ppl.Pass):
         carriers[origin] = node
         return node
 
-    def prune_dead(self, sdfg: SDFG, state: SDFGState, tasklets: List[nodes.Tasklet]) -> None:
-        """Remove producer-slice nodes whose only consumer was the deleted temporary."""
+    def prune_dead(self, sdfg: SDFG, state: SDFGState, tasklets: List[nodes.Tasklet]) -> OrderedSet:
+        """Remove producer-slice nodes whose only consumer was the deleted temporary.
+
+        :returns: The transient containers whose last access node this removed.
+        """
         queue = list(tasklets)
+        alive: OrderedSet = OrderedSet(state.nodes())
+        dropped: OrderedSet = OrderedSet()
         while queue:
             node = queue.pop()
-            if node not in state.nodes() or state.out_degree(node) != 0:
+            if node not in alive or state.out_degree(node) != 0:
                 continue
             preds = [e.src for e in state.in_edges(node)]
+            # A read that entered through a map entry owns a whole memlet path; dropping its inner edge
+            # alone leaves the entry with an edgeless connector, which validation refuses.
+            for edge in list(state.in_edges(node)):
+                if isinstance(edge.src, nodes.EntryNode):
+                    state.remove_memlet_path(edge, remove_orphans=False)
+            if isinstance(node, nodes.AccessNode):
+                dropped.add(node.data)
             state.remove_node(node)
+            # Rebuilt only when something was actually removed, so membership above stays O(1) per pop.
+            alive = OrderedSet(state.nodes())
             for pred in preds:
                 if isinstance(pred, nodes.Tasklet):
                     queue.append(pred)
                 elif isinstance(pred, nodes.AccessNode) and sdfg.arrays[pred.data].transient:
                     queue.append(pred)
+                elif isinstance(pred, nodes.EntryNode) and state.out_degree(pred) == 0:
+                    # An empty scope is spelled entry -> exit with an ordering edge, never a scope node
+                    # with no edges at all.
+                    state.add_nedge(pred, state.exit_node(pred), Memlet())
+        return dropped
