@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Numpy oracles for ``tsvc_2_5_core``.
+"""Numpy oracles for the TSVC 2.5 corpus kernels.
 
 One function per kernel, taking the same arguments as the DaCe / C++
 counterpart (input arrays in, output arrays in-place). Used by the
