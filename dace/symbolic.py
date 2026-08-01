@@ -179,9 +179,11 @@ class symbol(sympy.Symbol):
         return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
     def _hashable_content(self):
-        # SymPy's global @cacheit LRUs key on this; without dtype they alias same-name symbols of
+        # SymPy's global @cacheit LRUs key on this; without the dtype they alias same-name symbols of
         # different types and hand back an expression rebuilt around the foreign one (cf. TypedConstant).
-        return super()._hashable_content() + (self.dtype, )
+        # ``ctype`` rather than the typeclass itself: SymPy orders expressions by comparing these tuples
+        # element-wise, and typeclasses define equality but no ordering.
+        return super()._hashable_content() + (self.dtype.ctype, )
 
     def _eval_subs(self, old, new):
         """
