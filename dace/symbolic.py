@@ -756,9 +756,19 @@ def same_value(a: Any, b: Any) -> bool:
     """
     if a is b or a == b:
         return True
-    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
-        return len(a) == len(b) and all(same_value(x, y) for x, y in zip(a, b))
-    return str(a) == str(b)
+    if isinstance(a, (list, tuple)) or isinstance(b, (list, tuple)):
+        # Sequence type is part of the comparison, as it is for ``==``: a list never equals a tuple.
+        if type(a) is not type(b) or len(a) != len(b):
+            return False
+        return all(same_value(x, y) for x, y in zip(a, b))
+    if not isinstance(a, sympy.Basic) or not isinstance(b, sympy.Basic):
+        return False
+    # Retype both sides to one dtype and compare structurally, so only the dtype is ignored.
+    retype = {
+        sym: symbol(sym.name)
+        for sym in (a.free_symbols | b.free_symbols) if isinstance(sym, symbol) and sym.dtype != DEFAULT_SYMBOL_TYPE
+    }
+    return bool(a.subs(retype) == b.subs(retype))
 
 
 def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
