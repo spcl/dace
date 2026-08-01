@@ -7,6 +7,7 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
+from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
 
 M = dace.symbol('M')
@@ -182,6 +183,88 @@ def test_refuses_a_temporary_named_by_control_flow():
     assert arrays(sdfg) == before
 
 
+# ------------------------------------------------------------------ heat3d, on the real transformation path
+
+
+@dace.program
+def heat3d(TSTEPS: dace.int64, A: dace.float64[N, N, N], B: dace.float64[N, N, N]):
+    """The npbench/polybench formulation, verbatim -- see ``tests/corpus/polybench/stencils/heat_3d.py``."""
+    for _ in range(1, TSTEPS):
+        B[1:-1, 1:-1,
+          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
+                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
+                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
+        A[1:-1, 1:-1,
+          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
+                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
+                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+
+
+def heat3d_numpy(tsteps: int, A: np.ndarray, B: np.ndarray) -> None:
+    """Independent oracle: plain numpy, same operand order, updated in place."""
+    for _ in range(1, tsteps):
+        B[1:-1, 1:-1,
+          1:-1] = (0.125 * (A[2:, 1:-1, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + 0.125 *
+                   (A[1:-1, 2:, 1:-1] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + 0.125 *
+                   (A[1:-1, 1:-1, 2:] - 2.0 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
+        A[1:-1, 1:-1,
+          1:-1] = (0.125 * (B[2:, 1:-1, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + 0.125 *
+                   (B[1:-1, 2:, 1:-1] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + 0.125 *
+                   (B[1:-1, 1:-1, 2:] - 2.0 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+
+
+def heat3d_after_loop_to_map_and_fusion() -> dace.SDFG:
+    """heat3d driven down the pipeline's real path: LoopToMap, then vertical+horizontal map fusion.
+
+    This is where the redundant transient is manufactured, so it is where the pass has to be exercised --
+    a hand-built SDFG would not prove the shape ever occurs. LoopToMap is part of the path and runs here
+    even though this formulation gives it nothing to lift (the slice assignments are already maps out of
+    the frontend); fusion is what pulls the sub-expression up and strands it in a transient.
+    """
+    sdfg = heat3d.to_sdfg(simplify=True)
+    sdfg.apply_transformations_repeated([LoopToMap], validate_all=False)
+    sdfg.simplify()
+    sdfg.apply_transformations_repeated([MapFusionVertical, MapFusionHorizontal], validate_all=False)
+    sdfg.simplify()
+    return sdfg
+
+
+def test_heat3d_after_loop_to_map_and_fusion_drops_transients():
+    sdfg = heat3d_after_loop_to_map_and_fusion()
+    before = arrays(sdfg)
+    # Guard against a vacuous test: fusion must actually have stranded the two temporaries.
+    assert len(before) == 3, before
+    assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 2
+    assert len(arrays(sdfg)) == 1
+    sdfg.validate()
+
+
+def test_heat3d_after_loop_to_map_and_fusion_is_bit_exact():
+    """Bit-exact against the same SDFG without the pass, and against an independent numpy oracle."""
+    size, tsteps = 24, 5
+    rng = np.random.default_rng(4711)
+    base_a = rng.random((size, ) * 3)
+    base_b = rng.random((size, ) * 3)
+
+    results = []
+    for apply_pass in (False, True):
+        sdfg = heat3d_after_loop_to_map_and_fusion()
+        if apply_pass:
+            assert RematerializeDerivedTemporaries().apply_pass(sdfg, {}) == 2
+        sdfg.name = 'heat3d_remat' if apply_pass else 'heat3d_fused_ref'
+        a, b = base_a.copy(), base_b.copy()
+        sdfg.compile()(TSTEPS=tsteps, A=a, B=b, N=size)
+        results.append((a, b))
+
+    oracle_a, oracle_b = base_a.copy(), base_b.copy()
+    heat3d_numpy(tsteps, oracle_a, oracle_b)
+
+    for got, want, name in ((results[1][0], results[0][0], 'A'), (results[1][1], results[0][1], 'B')):
+        assert np.array_equal(got.view(np.uint64), want.view(np.uint64)), 'vs the same SDFG without the pass: ' + name
+    for got, want, name in ((results[1][0], oracle_a, 'A'), (results[1][1], oracle_b, 'B')):
+        assert np.array_equal(got.view(np.uint64), want.view(np.uint64)), 'vs numpy oracle: ' + name
+
+
 if __name__ == '__main__':
     test_removes_stencil_temporary()
     test_removes_stencil_temporary_bit_exactly()
@@ -193,3 +276,5 @@ if __name__ == '__main__':
     test_refuses_when_the_consumer_writes_the_container()
     test_refuses_a_temporary_with_a_second_reader()
     test_refuses_a_temporary_named_by_control_flow()
+    test_heat3d_after_loop_to_map_and_fusion_drops_transients()
+    test_heat3d_after_loop_to_map_and_fusion_is_bit_exact()
