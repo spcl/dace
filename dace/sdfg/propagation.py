@@ -125,7 +125,7 @@ class AffineSMemlet(SeparableMemletPattern):
     def can_be_applied(self, dim_exprs, variable_context, node_range, orig_edges, dim_index, total_dims):
 
         params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        defined_names = set(map(str, variable_context[-2]))
         # Create wildcards for multiplication and addition
         a = sympy.Wild('a', exclude=params)
         b = sympy.Wild('b', exclude=params)
@@ -212,8 +212,8 @@ class AffineSMemlet(SeparableMemletPattern):
                     # Map ranges where the last index is not known
                     # exactly are not supported by this pattern.
                     return False
-            if (any(s not in defined_vars for s in node_rb.free_symbols)
-                    or any(s not in defined_vars for s in node_re.free_symbols)):
+            if (any(str(s) not in defined_names for s in node_rb.free_symbols)
+                    or any(str(s) not in defined_names for s in node_re.free_symbols)):
                 # Cannot propagate variables only defined in this scope (e.g.,
                 # dynamic map ranges)
                 return False
@@ -417,15 +417,14 @@ class GenericSMemlet(SeparableMemletPattern):
                 dims.append(dim)
 
         self.params = variable_context[-1]
-        defined_vars = variable_context[-2]
+        defined_names = set(map(str, variable_context[-2]))
 
         used_symbols = set()
         for dim in dims:
             if symbolic.issymbolic(dim):
                 used_symbols.update(dim.free_symbols)
 
-        if (used_symbols & set(self.params)
-                and any(symbolic.pystr_to_symbolic(s) not in defined_vars for s in node_range.free_symbols)):
+        if used_symbols & set(self.params) and any(s not in defined_names for s in node_range.free_symbols):
             # Cannot propagate symbols that are undefined in the outer range
             # (e.g., dynamic map ranges).
             return False
@@ -1594,8 +1593,8 @@ def propagate_memlet(dfg_state,
     sdfg = dfg_state.parent
     scope_node_symbols = set(conn for conn in entry_node.in_connectors if not conn.startswith('IN_'))
     defined_vars = [
-        symbolic.pystr_to_symbolic(s) for s in (dfg_state.symbols_defined_at(entry_node).keys()
-                                                | sdfg.constants.keys()) if s not in scope_node_symbols
+        s for s in (dfg_state.symbols_defined_at(entry_node).keys() | sdfg.constants.keys())
+        if s not in scope_node_symbols
     ]
 
     # Find other adjacent edges within the connected to the scope node
@@ -1674,7 +1673,8 @@ def propagate_subset(memlets: List[Memlet],
                         src instead, depending on propagation direction.
         :return: Memlet with propagated subset and volume.
     """
-    # Argument handling
+    # Argument handling. Defined variables are only ever membership-tested, so keep them as bare names:
+    # symbol identity includes the dtype, which a name reparsed out of its scope cannot know.
     if defined_variables is None:
         # Default defined variables is "everything but params"
         defined_variables = set()
@@ -1682,17 +1682,18 @@ def propagate_subset(memlets: List[Memlet],
         for memlet in memlets:
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
-        defined_variables = set(symbolic.pystr_to_symbolic(p) for p in defined_variables)
-    else:
-        defined_variables = set(defined_variables)
+    defined_variables = set(map(str, defined_variables))
 
     if undefined_variables is not None:
-        defined_variables = defined_variables - set(symbolic.pystr_to_symbolic(p) for p in undefined_variables)
+        defined_variables -= set(map(str, undefined_variables))
     else:
         undefined_variables = set()
 
+    # Scope parameters are matched against the subsets, so they must be the very instances those carry.
+    scope_symbols = symbolic.symbols_in([md.subset for md in memlets] + [md.other_subset for md in memlets] + [rng])
+
     # Propagate subset
-    variable_context = [defined_variables, [symbolic.pystr_to_symbolic(p) for p in params]]
+    variable_context = [defined_variables, [symbolic.resolve_symbol(p, scope_symbols) for p in params]]
 
     new_subset = None
     for md in memlets:
@@ -1774,8 +1775,8 @@ def propagate_subset(memlets: List[Memlet],
     new_memlet.volume = simplify(sum(m.volume for m in memlets) * functools.reduce(lambda a, b: a * b, rng.size(), 1))
     if any(m.dynamic for m in memlets):
         new_memlet.dynamic = True
-    if symbolic.issymbolic(new_memlet.volume) and any(s not in defined_variables
-                                                      for s in new_memlet.volume.free_symbols):
+    if symbolic.issymbolic(new_memlet.volume) and any(
+            str(s) not in defined_variables for s in new_memlet.volume.free_symbols):
         new_memlet.dynamic = True
         new_memlet.volume = 0
 

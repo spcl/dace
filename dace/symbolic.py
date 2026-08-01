@@ -178,6 +178,11 @@ class symbol(sympy.Symbol):
     def __getstate__(self):
         return dict(self.assumptions0, **{'dtype': self.dtype, '_constraints': self._constraints})
 
+    def _hashable_content(self):
+        # SymPy's global @cacheit LRUs key on this; without dtype they alias same-name symbols of
+        # different types and hand back an expression rebuilt around the foreign one (cf. TypedConstant).
+        return super()._hashable_content() + (self.dtype, )
+
     def _eval_subs(self, old, new):
         """
         From sympy: Override this stub if you want to do anything more than
@@ -704,6 +709,39 @@ def symlist(values):
             if isinstance(atom, symbol):
                 result[atom.name] = atom
     return result
+
+
+def symbols_in(values: Iterable[Any]) -> Dict[str, 'symbol']:
+    """
+    Maps symbol names to the symbol instances that occur in ``values``.
+
+    A symbol's identity includes its dtype, so an instance minted from a bare name need not match the equally-named
+    one an expression already carries. Resolving names through this map keeps both sides on a single instance,
+    whatever the dtype. Earlier values win, so pass the authoritative ones first.
+
+    :param values: Subsets or symbolic expressions.
+    :return: Mapping from symbol name to the instance found for it.
+    """
+    pool: Dict[str, symbol] = {}
+    for value in values:
+        try:
+            found = value.symbols
+        except AttributeError:
+            found = symlist(value)
+        for name, sym in found.items():
+            pool.setdefault(name, sym)
+    return pool
+
+
+def resolve_symbol(name: Union[str, sympy.Basic, None], pool: Dict[str, 'symbol']) -> sympy.Basic:
+    """
+    Resolves a symbol name to the instance ``pool`` holds for it, parsing it as usual when the pool has none.
+
+    :param name: A symbol name, or anything :func:`pystr_to_symbolic` accepts.
+    :param pool: Name-to-instance mapping, as returned by :func:`symbols_in`.
+    """
+    resolved = pool.get(str(name))
+    return pystr_to_symbolic(name) if resolved is None else resolved
 
 
 def evaluate(expr: Union[sympy.Basic, int, float], symbols: Dict[Union[symbol, str],
