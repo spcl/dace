@@ -194,8 +194,18 @@ def generate_program_folder(
 
     # Generate the parts of the folder that are exclusive to the development folder mode.
     if folder_mode in ["development"]:
-        # Copy a full snapshot of configuration script
+        # NOTE: There is a bug here, as this only saves they keys inside the configuration
+        #   `dict`. It ignores the configuration values set through environment variables.
+        #   instead it will store the ones in the `dict`.
         Config.save(os.path.join(out_path, "dace.conf"), all=True)
+
+    # The runtime's `report.save()` uses `std::ofstream` to open `<folder>/perf/report-*.json`.
+    #  If `perf/` does not exist it will fail, thus we have to create it if it is needed.
+    #  Technically we only need to create it if the SDFG is instrumented. But we will also
+    #  create it in development mode. Furthermore, if there is no SDFG given, we also create
+    #  it to be on the safe side.
+    if (folder_mode in ["development"]) or (sdfg is None) or sdfg.is_instrumented():
+        os.makedirs(os.path.join(out_path, 'perf'), exist_ok=True)
 
     # The folder mode file is always generated. In case it is missing we assume the old version.
     with open(os.path.join(out_path, "FOLDER_MODE"), "w") as version_file:
@@ -339,13 +349,10 @@ def configure_and_compile(
     build_folder = os.path.join(program_folder, "build")
     os.makedirs(build_folder, exist_ok=True)
 
-    # NOTE: The instrumentation-report folder (`perf/`) is NOT created here:
-    #   this function only knows the program folder, but whether reports can
-    #   exist at all is a property of the SDFG (`SDFG.is_instrumented()`), so
-    #   `generate_program_folder()` creates it - for instrumented SDFGs only,
-    #   in BOTH folder modes. It must exist before the program runs, because
-    #   the runtime's report.save() neither creates directories nor reports a
-    #   failed open (reports would be dropped silently).
+    # NOTE: We do not create the instrumentation-report folder (`perf/`) here.
+    #   The reason is that this folder is only needed when the SDFG is instrumented,
+    #   and to determine this we need the SDFG and we do not have that. Thus the
+    #   folder is generated (if needed) by `generate_program_folder()`.
 
     # Read list of DaCe files to compile.
     # We do this instead of iterating over source files in the directory to
