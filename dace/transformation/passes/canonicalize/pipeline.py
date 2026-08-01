@@ -802,6 +802,12 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # cascade_iedges_up (post-move-if): MoveIfIntoLoop may bury an invariant
     # iedge assignment inside the loop it pushed the guard into; lift it back out.
+    #
+    # Load-bearing, measured: dropping this run and the post-reduce one (keeping only the
+    # pre-parallelize run) leaves the tsvc scorecard untouched (35L/226M, per-kernel
+    # identical) and the npbench + polybench numerical corpus green, but breaks polybench
+    # floyd-warshall's single-nest lift and the coexisting-index-guards collapse. Three runs,
+    # not one.
     s += [('cascade_iedges_up', CascadeInterstateEdgeAssignmentsUp())]
 
     # fission: loop distribution + block-level perfect-loop-nesting. Fission clones
