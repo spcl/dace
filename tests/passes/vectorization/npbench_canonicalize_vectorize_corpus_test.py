@@ -39,8 +39,7 @@ _PHASES = ("canon", "canon_vec")
 # Genuine per-(kernel, phase) gaps, marked xfail(strict) with the tracking reason -- NOT a blanket skip:
 # a case that starts passing flips the suite red so the entry is removed. Populated from the full sweep.
 # Two classes: canon-phase = real canon/codegen bugs (dace lane); canon_vec-phase = multidim-vectorize gaps.
-_XFAIL: dict = {
-}
+_XFAIL: dict = {}
 
 
 def _cases():
