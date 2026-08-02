@@ -6,7 +6,7 @@ K boundary slabs) for every K in {1, 2, 3} with non-divisible bounds.
 This is the load-bearing region-count invariant; a Cartesian split
 would produce 2^K regions which is wrong (section 8.2 algorithm).
 """
-import os
+import signal
 
 import numpy as np
 
@@ -16,6 +16,7 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
     SplitMapForTileRemainder,
     TILE_MAIN_MARKER,
 )
+from tests.passes.vectorization.helpers.isolation import exit_code
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -168,27 +169,20 @@ def test_assume_even_range_check_disabled_no_trap():
 def test_assume_even_range_check_aborts_at_runtime():
     """The emitted host-side guard actually traps: a non-divisible extent aborts (SIGABRT) before
     the map runs; a divisible extent completes. CPU-only (the guard is device-agnostic host code),
-    and forked so ``abort`` does not kill pytest."""
+    and run in a throwaway process so ``abort`` does not kill pytest.
+
+    Spawned, not forked -- an ``os.fork()`` child deadlocks on the OpenMP team this process already
+    holds, see :mod:`tests.passes.vectorization.helpers.isolation`."""
     sdfg, _, _ = _build_kernel(K=1, bounds=(N, ), widths=(4, ), kernel_label="rt")
     SplitMapForTileRemainder(widths=(4, ), assume_even=True).apply_pass(sdfg, {})
-    csdfg = sdfg.compile()
 
-    def forked(n):
-        pid = os.fork()
-        if pid == 0:
-            try:
-                csdfg(A=np.zeros(n, np.float64), N=n)
-                os._exit(0)  # reached only if the guard did not trap
-            except BaseException:
-                os._exit(1)
-        _, status = os.waitpid(pid, 0)
-        return status
+    def isolated(n):
+        return exit_code(sdfg, dict(A=np.zeros(n, np.float64), N=n))
 
-    st_ok = forked(16)  # 16 % 4 == 0 -> guard passes, map runs
-    assert os.WIFEXITED(st_ok) and os.WEXITSTATUS(st_ok) == 0, "a divisible extent must run cleanly"
-    st_bad = forked(15)  # 15 % 4 != 0 -> guard aborts (SIGABRT = 6)
-    assert os.WIFSIGNALED(st_bad) and os.WTERMSIG(st_bad) == 6, \
-        f"a non-divisible extent must trap via abort (SIGABRT); got status {st_bad}"
+    assert isolated(16) == 0, "a divisible extent must run cleanly"  # 16 % 4 == 0 -> guard passes
+    code = isolated(15)  # 15 % 4 != 0 -> guard aborts (SIGABRT = 6)
+    assert code == -signal.SIGABRT, \
+        f"a non-divisible extent must trap via abort (SIGABRT); got child exit code {code}"
 
 
 if __name__ == "__main__":

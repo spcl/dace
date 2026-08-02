@@ -22,11 +22,9 @@ read lands on a sentinel rather than faulting) the flattened kernel still return
 ``b``; and a genuinely one-past read of a small heap buffer does not reliably segfault either.
 So no wrong output value and no reliable crash can distinguish the bug -- only the surviving
 ``ConditionalBlock`` can. Each test therefore asserts the refusal AND runs the refused SDFG
-end-to-end (forked, bit-exact vs numpy) to prove the left-in-place conditional still compiles
+end-to-end (in-process, bit-exact vs numpy) to prove the left-in-place conditional still compiles
 and computes correctly.
 """
-import os
-
 import numpy as np
 
 import dace
@@ -90,29 +88,24 @@ def build_loop_with_cb(extra_arrays=()) -> tuple:
     return sdfg, cb
 
 
-def fork_run_bit_exact(sdfg: dace.SDFG, kwargs: dict, outputs) -> None:
-    """Compile + run ``sdfg`` in a forked child; assert every output is bit-exact vs its ref.
+def run_bit_exact(sdfg: dace.SDFG, kwargs: dict, outputs) -> None:
+    """Compile + run ``sdfg`` in-process; assert every output is bit-exact vs its ref.
 
-    Forked so a would-be out-of-bounds access cannot take the test process down, and because
-    the child mutates the output buffers in its own (copy-on-write) address space -- the
-    comparison therefore happens IN the child, which signals the verdict through its exit code.
+    In-process, not forked. This file has nothing to contain -- as the module docstring records,
+    ``a`` is deliberately allocated one element past ``N``, so the read a flattened guard would
+    fabricate lands on a sentinel and cannot fault. And ``os.fork()`` around ``sdfg.compile()``
+    deadlocks the child once any earlier test in the process has run an OpenMP kernel, which is a
+    worse failure mode than the crash it would be guarding against; see
+    :mod:`tests.passes.vectorization.helpers.isolation` for the mechanism and for the spawn-based
+    escape hatch the cases that DO need containment use.
 
     :param sdfg: SDFG to compile and run.
     :param kwargs: call arguments (arrays + symbols); output buffers are mutated in place.
     :param outputs: sequence of ``(buffer, reference_ndarray)`` compared bit-exact after the run.
     """
-    pid = os.fork()
-    if pid == 0:
-        code = 0
-        try:
-            sdfg.compile()(**kwargs)
-            code = 0 if all(np.array_equal(buf, ref) for buf, ref in outputs) else 3
-        except BaseException:  # noqa: BLE001 -- child reports any failure via exit code
-            code = 4
-        os._exit(code)
-    _, status = os.waitpid(pid, 0)
-    assert not os.WIFSIGNALED(status), f"kernel crashed (signal {os.WTERMSIG(status)})"
-    assert os.WEXITSTATUS(status) == 0, f"kernel mismatch or error (child exit {os.WEXITSTATUS(status)})"
+    sdfg.compile()(**kwargs)
+    for index, (buffer, reference) in enumerate(outputs):
+        assert np.array_equal(buffer, reference), f'output {index} is not bit-exact vs its reference'
 
 
 def test_branch_normalization_refuses_direct_iteration_guard():
@@ -139,7 +132,7 @@ def test_branch_normalization_refuses_direct_iteration_guard():
     for i in range(nval):
         if i < nval - 1:
             ref[i] = a[i + 1]
-    fork_run_bit_exact(sdfg, dict(a=a.copy(), b=b, N=nval), [(b, ref)])
+    run_bit_exact(sdfg, dict(a=a.copy(), b=b, N=nval), [(b, ref)])
 
 
 def test_branch_normalization_refuses_two_arm_iteration_guard():
@@ -152,7 +145,7 @@ def test_branch_normalization_refuses_two_arm_iteration_guard():
     """
     sdfg, cb = build_loop_with_cb(extra_arrays=("c", ))
     add_copy_arm(sdfg, cb, "i < N - 1", "i + 1", "b", "i")  # if-arm (has the OOB read)
-    add_copy_arm(sdfg, cb, None, "i", "c", "i")             # bare else-arm (disjoint write)
+    add_copy_arm(sdfg, cb, None, "i", "c", "i")  # bare else-arm (disjoint write)
     assert len(conditional_blocks(sdfg)) == 1
 
     # SameWriteSet only handles SAME-element two-arm writes; disjoint b vs c is not its case.
@@ -173,7 +166,7 @@ def test_branch_normalization_refuses_two_arm_iteration_guard():
             ref_b[i] = a[i + 1]
         else:
             ref_c[i] = a[i]
-    fork_run_bit_exact(sdfg, dict(a=a.copy(), b=b, c=c, N=nval), [(b, ref_b), (c, ref_c)])
+    run_bit_exact(sdfg, dict(a=a.copy(), b=b, c=c, N=nval), [(b, ref_b), (c, ref_c)])
 
 
 def test_branch_normalization_refuses_transitive_iteration_guard():

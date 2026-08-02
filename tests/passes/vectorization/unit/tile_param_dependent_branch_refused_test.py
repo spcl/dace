@@ -29,6 +29,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
+from tests.passes.vectorization.helpers.isolation import run_isolated
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -67,31 +68,6 @@ def outer_param_guard_kernel(a: dace.float64[M, N], b: dace.float64[M, N], c: da
         for i in range(N):
             if j > 0:
                 a[j, i] = a[j, i] + b[j, i] * c[j, i]
-
-
-def fork_run(sdfg, kwargs, outputs) -> None:
-    """Compile + run in a forked child; assert every output matches its ref. Forked so a
-    would-be out-of-bounds access (the N=61 masked tail reads a full 8-lane tile off a
-    61-element buffer) cannot take the pytest process down, and because the child mutates the
-    buffers in its own copy-on-write space -- so the comparison happens IN the child and the
-    verdict travels back as an exit code.
-
-    ``allclose``, not ``array_equal``: g++ defaults to ``-ffp-contract=fast``, so the compiled
-    ``a[i] + b[i]*c[i]`` contracts to one FMA while the numpy oracle rounds twice -- a ~1 ulp
-    delta that is correct lowering, not a bug.
-    """
-    pid = os.fork()
-    if pid == 0:
-        code = 0
-        try:
-            sdfg.compile()(**kwargs)
-            code = 0 if all(np.allclose(buf, ref, rtol=1e-12, atol=1e-12) for buf, ref in outputs) else 3
-        except BaseException:  # noqa: BLE001 -- child reports any failure via exit code
-            code = 4
-        os._exit(code)
-    _, status = os.waitpid(pid, 0)
-    assert os.WIFEXITED(status), f'kernel died on signal {os.WTERMSIG(status) if os.WIFSIGNALED(status) else "?"}'
-    assert os.WEXITSTATUS(status) == 0, f'forked kernel failed with exit code {os.WEXITSTATUS(status)}'
 
 
 def vectorized(prog, tag):
@@ -142,13 +118,16 @@ def test_index_guard_kernel_matches_numpy(n):
     """The flip point (i = n//2 - 1) is deliberately NOT tile-aligned, so a per-tile predicate
     mis-predicates. n=64 -> mid=32, flip at i=31, the last lane of tile [24:32) -> exactly one
     wrong index. n=61 -> mid=30, flip at i=29, mid-tile -> lanes 29..31 wrong, and 61 = 7*8+5
-    also exercises the 5-element masked remainder."""
+    also exercises the 5-element masked remainder.
+
+    Isolated because that remainder is where a dropped mask would read a full 8-lane tile off a
+    61-element buffer -- a fault that must fail this test, not take the pytest process down."""
     a, b, c, d = inputs_1d(n)
     ref = index_guard_reference(a, b, c, d, n)
     sdfg = vectorized(index_guard_kernel, f'index_guard_{n}')
-    fork_run(sdfg, dict(a=a.copy(), b=b, c=c, d=d, N=n), [])
+    run_isolated(sdfg, dict(a=a.copy(), b=b, c=c, d=d, N=n), [])
     work = a.copy()
-    fork_run(sdfg, dict(a=work, b=b, c=c, d=d, N=n), [(work, ref)])
+    run_isolated(sdfg, dict(a=work, b=b, c=c, d=d, N=n), [(work, ref)])
 
 
 def test_range_protecting_guard_leaves_the_map_scalar():
@@ -194,7 +173,7 @@ def test_outer_param_guard_still_tiles():
     assert step_of(sole_map(sdfg, 2)) == str(W), 'lane-uniform outer guard wrongly refused the tiled dim'
 
     work = a.copy()
-    fork_run(sdfg, dict(a=work, b=b, c=c, M=mm, N=nn), [(work, ref)])
+    run_isolated(sdfg, dict(a=work, b=b, c=c, M=mm, N=nn), [(work, ref)])
 
 
 if __name__ == '__main__':
