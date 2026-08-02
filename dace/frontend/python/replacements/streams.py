@@ -87,22 +87,57 @@ def _stream_push(pv: ProgramVisitor,
     return stream
 
 
+def _drain_destination(pv: ProgramVisitor, sdfg: SDFG, desc: data.Stream, num_elements: Any) -> Optional[str]:
+    """
+    The container a ``pop`` should drain into instead of allocating one, or
+    None when it has to produce its own buffer.
+
+    This is the array of a whole-container write (``out[:] = stream.pop()``),
+    which the visitor reports through ``get_assignment_destination``. It has
+    to hold exactly what the pop produces -- same element type, and a single
+    dimension of exactly the popped length -- since the drain replaces the
+    write the program spelled, rather than feeding it.
+    """
+    getter = getattr(pv, 'get_assignment_destination', None)
+    if getter is None:
+        return None
+    name = getter()
+    if name is None:
+        return None
+    destination = sdfg.arrays.get(name)
+    # An exact Array only: a view or a reference names storage indirectly, and
+    # the drain writes through the access node it is given.
+    if type(destination) is not data.Array or destination.dtype != desc.dtype:
+        return None
+    if len(destination.shape) != 1 or symbolic.equal(destination.shape[0], num_elements) is not True:
+        return None
+    return name
+
+
 @oprepo.replaces_method('Stream', 'pop')
 def _stream_pop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str, count: Any = None) -> str:
     """
-    Drain a stream into a new transient array.
+    Drain a stream into an array.
 
-    A stream holds a runtime-determined number of elements, so the result is
-    zero-padded: elements past the drained prefix read as zero. Without that
-    the returned value would be partly uninitialized, and unlike the legacy
-    ``ostream >> oarray`` shift -- which drained into a container the program
-    could pre-initialize itself -- a caller of ``pop`` has no opportunity to
-    initialize the buffer it is handed.
+    Draining into an array the program named (``out[:] = stream.pop()``)
+    writes exactly the elements the stream held and leaves the rest of the
+    target as the program left it -- the semantics of the legacy ``ostream >>
+    oarray`` shift, and the shape the code generator recognizes as a
+    zero-copy stream-array view (``dace::ArrayStreamView``): nothing may write
+    the target between the pushes and the drain, which is why this path emits
+    no initialization of its own.
+
+    A stream holds a runtime-determined number of elements, so a pop that has
+    to produce its OWN buffer zero-pads it instead: elements past the drained
+    prefix read as zero. Without that the returned value would be partly
+    uninitialized, and unlike the named-destination form, its caller never had
+    the buffer in hand to initialize it.
 
     :param stream: Name of the stream to pop from.
     :param count: Maximum number of popped elements. Defaults to the stream's
                   buffer size, i.e. the whole stream.
-    :return: Name of the transient holding the popped elements.
+    :return: Name of the array holding the popped elements -- the destination
+             itself when the program named one.
     """
     desc = _stream_descriptor(sdfg, stream, 'pop')
     num_elements = _resolve_count(count, f'{stream}.pop')
@@ -113,17 +148,31 @@ def _stream_pop(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, stream: str, c
             None, None, f"'{stream}.pop' cannot infer how many elements to pop from a stream with no "
             'buffer size; pass an explicit count.')
 
+    destination = _drain_destination(pv, sdfg, desc, num_elements)
+    if destination is not None:
+        # Still its own state: the pushes may leave the stream as both an
+        # input and an output of the scope that wrote it, and two access nodes
+        # for one stream in a single state put no order between the drain and
+        # the writes. State fusion merges the two afterwards where that is
+        # safe, which is what leaves the view pattern for the code generator.
+        _drain(pv._add_state(f'_pop_{stream}_'), stream, desc, destination, sdfg.arrays[destination])
+        return destination
+
     name, result = pv.add_temp_transient([num_elements], desc.dtype)
     state.add_mapped_tasklet(f'_pop_init_{stream}_', {'__i0': f'0:{num_elements}'}, {},
                              '__out = 0', {'__out': Memlet.simple(name, '__i0')},
                              external_edges=True)
 
     # The drain goes into its own state so it orders after the zero-fill.
-    state = pv._add_state(f'_pop_{stream}_')
+    _drain(pv._add_state(f'_pop_{stream}_'), stream, desc, name, result)
+    return name
+
+
+def _drain(state: SDFGState, stream: str, desc: data.Stream, name: str, destination: data.Array) -> None:
+    """Emit the stream-to-array bulk pop."""
     state.add_nedge(
         state.add_read(stream), state.add_write(name),
-        Memlet(data=stream, subset=subsets.Range.from_array(desc), other_subset=subsets.Range.from_array(result)))
-    return name
+        Memlet(data=stream, subset=subsets.Range.from_array(desc), other_subset=subsets.Range.from_array(destination)))
 
 
 # -------------------------------------------------------------------- #

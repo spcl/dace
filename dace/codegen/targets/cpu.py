@@ -804,14 +804,28 @@ class CPUCodeGen(TargetCodeGenerator):
                 )
                 return
 
-            # Writing from/to a stream
-            if isinstance(sdfg.arrays[memlet.data], data.Stream) or (isinstance(src_node, nodes.AccessNode)
-                                                                     and isinstance(src_nodedesc, data.Stream)):
+            # Writing from/to a stream. The memlet may be anchored at either
+            # end, so the descriptors of both access nodes decide, not just
+            # the one the memlet happens to name: a source-anchored
+            # array-to-stream copy (what ``sdfg_to_tree`` normalizes every
+            # such copy to) reaches the array-copy path below otherwise, which
+            # cannot compute strides for a stream.
+            if (isinstance(sdfg.arrays[memlet.data], data.Stream)
+                    or (isinstance(src_node, nodes.AccessNode) and isinstance(src_nodedesc, data.Stream))
+                    or (isinstance(dst_node, nodes.AccessNode) and isinstance(dst_nodedesc, data.Stream))):
                 # Identify whether a stream is writing to an array
                 if isinstance(dst_nodedesc, (data.Scalar, data.Array)) and isinstance(src_nodedesc, data.Stream):
                     # Stream -> Array - pop bulk
-                    if is_array_stream_view(sdfg, dfg, src_node):
-                        return  # Do nothing (handled by ArrayStreamView)
+                    if getattr(src_nodedesc, 'sink', None) == dst_node.data:
+                        # Do nothing: the pushes wrote the array directly
+                        # through the view ``allocate_array`` declared. That
+                        # decision is the one that counts, so this reads its
+                        # record (``sink``, set by ``is_array_stream_view``)
+                        # rather than re-deciding: the check is per access
+                        # NODE, and a stream that is also an input of the
+                        # scope writing it has two of them, so asking again
+                        # here could skip a copy no view was ever emitted for.
+                        return
 
                     array_subset = (memlet.subset if memlet.data == dst_node.data else memlet.other_subset)
                     if array_subset is None:  # Need to use entire array

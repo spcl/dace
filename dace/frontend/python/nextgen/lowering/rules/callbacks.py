@@ -230,11 +230,9 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
       statement) are replaced by their original statements,
     - nested :class:`ExplicitTasklet` markers are restored to their original
       statement (interpreter-executable ``with dace.tasklet:`` blocks), or a
-      synthesized equivalent with-block when no original exists,
-    - nested :class:`ExplicitMemlet` markers are replaced by the original
-      memlet expression statement.
+      synthesized equivalent with-block when no original exists.
     """
-    from dace.frontend.python.nextgen.canonical.cpa import ExplicitMemlet, ExplicitTasklet, OpaqueStmt
+    from dace.frontend.python.nextgen.canonical.cpa import ExplicitTasklet, OpaqueStmt
     from dace.frontend.python.nextgen.semantics.inference import is_literal_constant
 
     class _Restorer(ast.NodeTransformer):
@@ -286,10 +284,6 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
             with_block = ast.With(items=[ast.withitem(context_expr=context, optional_vars=None)],
                                   body=[self.visit(child) for child in node.statements])
             return ast.copy_location(with_block, node)
-
-        def visit_ExplicitMemlet(self, node: ExplicitMemlet) -> ast.stmt:
-            # Memlet markers always carry their original expression statement.
-            return self.visit(node.original)
 
         def visit_ExplicitConsume(self, node) -> ast.stmt:
             # Consume markers always carry their original decorated

@@ -1220,7 +1220,7 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         # States existing before the expansion, so the view bindings it records
         # can be materialized in exactly the states it creates (below).
         states_before = set(sdfg.all_states()) - {self._current_state}
-        shim = ReplacementVisitorShim(sdfg, self._current_state, node.target)
+        shim = ReplacementVisitorShim(sdfg, self._current_state, node.target, node.target_preexisting)
         if node.receiver_object is not None:
             # METHOD-family replacement on a compile-time OBJECT receiver
             # (``commworld.Bcast(A)``): keyed on the object's class, and the
@@ -1943,9 +1943,13 @@ class ReplacementVisitorShim:
     replacements fail loudly instead of miscompiling.
     """
 
-    def __init__(self, sdfg: SDFG, state: SDFGState, target_name: str):
+    def __init__(self, sdfg: SDFG, state: SDFGState, target_name: str, target_preexisting: bool = False):
         self.sdfg = sdfg
         self._target_name = target_name
+        #: Whether the target is a container the program already had, which a
+        #: replacement may write into directly (see
+        #: :meth:`get_assignment_destination`).
+        self._target_preexisting = target_preexisting
         #: Most recently added control flow block (replacements chain states
         #: through ``_add_state``/``last_block``).
         self.last_block = state
@@ -1968,6 +1972,20 @@ class ReplacementVisitorShim:
 
     def get_target_name(self, output_index=None, default=None) -> str:
         return self._target_name or default or self.sdfg.temp_data_name()
+
+    def get_assignment_destination(self) -> Optional[str]:
+        """
+        The existing container the call's result is written into, or None when
+        the result needs a container of its own -- the same distinction
+        ``ProgramVisitor.get_assignment_destination`` draws from the
+        assignment's syntax, carried here by the frontend on
+        :attr:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode.target_preexisting`
+        (every target exists by the time a tree is expanded, so the
+        descriptor alone cannot tell the two apart).
+        """
+        if not self._target_preexisting or self._target_name not in self.sdfg.arrays:
+            return None
+        return self._target_name
 
     def add_temp_transient(self, *args, output_index=None, **kwargs):
         kwargs['find_new_name'] = True

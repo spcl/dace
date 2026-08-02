@@ -174,6 +174,18 @@ def _add_transient_data(pv: 'ProgramVisitor', sdfg: SDFG, sample_data: data.Data
         return func(pv, sdfg, sample_data, dtype)
 
 
+def _is_whole_container_slice(slice_node: ast.expr) -> bool:
+    """
+    Whether a subscript index covers its container entirely: ``A[:]`` (which
+    takes every element of an array of any rank) or an all-bare-slice tuple
+    such as ``A[:, :]``.
+    """
+    elements = slice_node.elts if isinstance(slice_node, ast.Tuple) else [slice_node]
+    return all(
+        isinstance(element, ast.Slice) and element.lower is None and element.upper is None and element.step is None
+        for element in elements)
+
+
 def _is_equivalent(first: data.Data, second: data.Data):
     if not first.is_equivalent(second):
         if any(not isinstance(d, data.Scalar) and not (isinstance(d, data.Array) and d.shape == (1, ))
@@ -1520,6 +1532,37 @@ class ProgramVisitor(ExtNodeVisitor):
             except:
                 pass
             return 'expr'
+
+    def get_assignment_destination(self) -> Optional[str]:
+        """
+        The existing container that the expression currently being parsed is
+        assigned into IN FULL (``out[:] = stream.pop()``), or None when its
+        result needs a container of its own.
+
+        Unlike :meth:`get_target_name`, which names a container to CREATE,
+        this reports one to write: a replacement that can produce its result
+        directly in the destination uses it to skip the intermediate buffer
+        and the copy out of it. Only the whole-container subscript form
+        qualifies -- a bare name is a rebinding rather than a write, and a
+        partial subscript is not the same write at all.
+
+        THIS METHOD IS ONLY VALID WHEN CALLED DURING PARSING.
+        """
+        if len(self.current_ast_stack) < 2:
+            return None
+        assignment = self.current_ast_stack[-2]
+        # The expression must be the whole right-hand side: a nested call
+        # (``out[:] = f(s.pop())``) produces a value for its caller, not for
+        # the assignment.
+        if not isinstance(assignment, ast.Assign) or self.current_ast_stack[-1] is not assignment.value:
+            return None
+        if len(assignment.targets) != 1 or not isinstance(assignment.targets[0], ast.Subscript):
+            return None
+        target = assignment.targets[0]
+        if not _is_whole_container_slice(target.slice) or not isinstance(target.value, ast.Name):
+            return None
+        name = {**self.variables, **self.scope_vars}.get(target.value.id)
+        return name if name in self.sdfg.arrays else None
 
     def add_temp_transient(self, *args, output_index=None, **kwargs) -> Tuple[str, data.Data]:
         """

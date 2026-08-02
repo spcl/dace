@@ -1297,6 +1297,16 @@ class ReplacementCallNode(ScheduleTreeNode):
                           for a replacement that produces several
                           (``numpy.split``, ``numpy.divmod``). Empty for the
                           ordinary single-result call.
+    :param target_preexisting: Whether ``target`` is a container the program
+                               already had and this call writes into
+                               (``out[:] = stream.pop()``), rather than one
+                               introduced to hold the call's result (``r =
+                               stream.pop()``). A replacement that can produce
+                               its result directly in its destination reads
+                               this through the expansion visitor's
+                               ``get_assignment_destination``, which is the
+                               same distinction the classic frontend draws
+                               from the assignment's own syntax.
     """
     qualname: str = ''
     target: str = ''
@@ -1308,6 +1318,7 @@ class ReplacementCallNode(ScheduleTreeNode):
     ufunc_name: Optional[str] = None
     ufunc_method: Optional[str] = None
     extra_targets: List[str] = field(default_factory=list)
+    target_preexisting: bool = False
 
     @property
     def targets(self) -> List[str]:

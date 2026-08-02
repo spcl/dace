@@ -1950,6 +1950,7 @@ def _lower_replacement_call(target: Optional[ast.expr],
             name, arguments, keywords, data_arguments, state, receiver=receiver, receiver_object=receiver_object):
         return False
     written: Optional[DataAccess] = target_access
+    copy_out = False
     if target_access is None and target is None:
         # No frontend-declared target container to write into (a bare
         # statement): the schedule tree still requires a registered
@@ -1980,7 +1981,8 @@ def _lower_replacement_call(target: Optional[ast.expr],
                                keyword_arguments=keywords,
                                data_arguments=data_arguments,
                                receiver=receiver,
-                               receiver_object=receiver_object))
+                               receiver_object=receiver_object,
+                               target_preexisting=_writes_a_preexisting_target(target, copy_out)))
     _apply_self_descriptor_side_effect(name, receiver, receiver_object, arguments, keywords, state)
     if target_container in state.context.containers and isinstance(state.context.containers[target_container].dtype,
                                                                    dtypes.pyobject):
@@ -2057,6 +2059,23 @@ def _fills_subset(descriptor: Optional[data.Data], subset: subsets.Range) -> boo
         return True
     result_shape = [size for size in getattr(descriptor, 'shape', ()) if size != 1]
     return [str(size) for size in result_shape] == [str(size) for size in nondegenerate_shape(subset)]
+
+
+def _writes_a_preexisting_target(target: Optional[ast.expr], copy_out: bool) -> bool:
+    """
+    Whether a replacement call writes its result into a container the program
+    already had, rather than into one introduced to hold the result.
+
+    A subscript or member target (``out[:] = stream.pop()``) names storage
+    that existed before the statement; a bare name (``r = stream.pop()``)
+    binds the result itself, so the container is the call's own. A result
+    routed through a temporary (``copy_out``) never writes the target
+    directly at all.
+
+    See :attr:`~dace.sdfg.analysis.schedule_tree.treenodes.ReplacementCallNode.target_preexisting`,
+    which carries this to the expansion.
+    """
+    return not copy_out and isinstance(target, (ast.Subscript, ast.Attribute))
 
 
 def _replacement_write_target(access: DataAccess, inferred, state: LoweringState) -> Tuple[str, bool]:
@@ -2355,7 +2374,8 @@ def _lower_ufunc_replacement_call(target: Optional[ast.expr],
                                keyword_arguments=keywords,
                                data_arguments=data_arguments,
                                ufunc_name=ufunc_name,
-                               ufunc_method=ufunc_method))
+                               ufunc_method=ufunc_method,
+                               target_preexisting=_writes_a_preexisting_target(target, copy_out)))
     if copy_out:
         _emit_replacement_copy_out(target_container, target_access, statement, state)
     return True
