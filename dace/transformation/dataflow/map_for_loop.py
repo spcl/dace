@@ -6,7 +6,7 @@ import copy
 
 import dace
 from dace import properties, symbolic
-from dace.data import View
+from dace.data import Scalar, View
 from dace.memlet import Memlet
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg import nodes
@@ -14,6 +14,30 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import LoopRegion
 from dace.transformation import transformation
 from typing import Tuple, Optional
+
+
+def dynamic_range_ref(sdfg: SDFG, memlet: Memlet) -> str:
+    """SDFG-level expression that reads the single value a dynamic map range carries on ``memlet``.
+
+    The result is spliced into a ``LoopRegion``'s init / condition / update statement, which is
+    PYTHON source over SDFG names -- not C++. A ``Scalar`` has no indexable dimension there: its
+    value is the bare name (this is what ``InterstateEdgeUnparser._Name`` lowers, and what the
+    frontend itself emits for ``for i in range(n1 - 1, N, n3)`` with a scalar ``n1``). Subscripting
+    it instead (``n1[0]``) breaks TWICE -- the emitted C++ indexes a by-value ``int64_t n1``, and
+    any later pass that re-reads the statement into a symbolic map range carries a
+    ``Subscript(n1, 0)`` term into every expression derived from it, including array shapes.
+
+    An ``Array`` keeps the ``cpp_array_expr`` form: a single element of one is genuinely a
+    subscript, and it is what ``InterstateEdgeUnparser._Subscript`` expects.
+
+    :param sdfg: SDFG owning ``memlet``'s descriptor.
+    :param memlet: Memlet on the dynamic map range's input edge.
+    :return: Source text reading that value.
+    """
+    from dace.codegen.targets.cpp import cpp_array_expr
+    if isinstance(sdfg.arrays[memlet.data], Scalar):
+        return memlet.data
+    return cpp_array_expr(sdfg, memlet)
 
 
 def _wcr_index_is_data_dependent(subset, containing_sdfg: SDFG) -> bool:
@@ -222,14 +246,10 @@ class MapToForLoop(transformation.SingleStateTransformation):
                 loop_to = loop_to.subs(repldict)
                 loop_step = loop_step.subs(repldict)
 
-        # Avoiding import loop
-        from dace.codegen.targets.cpp import cpp_array_expr
-
         def replace_param(param):
             param = symbolic.symstr(param, cpp_mode=False)
             for p, pval in param_to_edge.items():
-                # TODO: Correct w.r.t. connector type
-                param = param.replace(p, cpp_array_expr(nsdfg, pval.data))
+                param = param.replace(p, dynamic_range_ref(nsdfg, pval.data))
             return param
 
         # End of dynamic input range
