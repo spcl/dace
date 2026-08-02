@@ -11,6 +11,7 @@ import sympy
 
 import dace
 from dace import library, properties
+from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -168,7 +169,7 @@ class ExpandTileLoadPure(ExpandTransformation):
         dst_dtype = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node)
                                             if e.src_conn == "_dst").data.data].dtype.ctype
         if node.src_kind == "Symbol":
-            src_ref = f"({dst_dtype})({node.src_expr})"
+            src_ref = f"({dst_dtype})({pyexpr2cpp(node.src_expr)})"
         elif node.src_kind == "Scalar":
             # A volume-1 source (a true ``dace.data.Scalar``, a length-1 Array,
             # or a single-element access) is passed by value (``T _src``) and

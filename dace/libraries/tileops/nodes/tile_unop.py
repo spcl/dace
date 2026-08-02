@@ -18,6 +18,7 @@ import numpy as np
 
 import dace
 from dace import library, properties
+from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -148,7 +149,7 @@ class ExpandTileUnopPure(ExpandTransformation):
         if node.kind_a == _SYMBOL:
             # Cast to out_dtype so a literal / symbolic int operand resolves
             # cleanly against a typed unop call (mirrors the binop fix).
-            operand = f"{_cast}({node.expr_a})"
+            operand = f"{_cast}({pyexpr2cpp(node.expr_a)})"
         elif node.kind_a == _TILE:
             operand = f"_a[{off}]"
         else:  # Scalar: descriptor-aware reference.
@@ -169,7 +170,7 @@ class ExpandTileUnopPure(ExpandTransformation):
             # codegen lowers a bare ``float64(x)`` to), not an incidental C cast. The
             # operand is read raw -- the cast function performs the conversion.
             if node.kind_a == _SYMBOL:
-                cast_src = f"({node.expr_a})"
+                cast_src = f"({pyexpr2cpp(node.expr_a)})"
             elif node.kind_a == _TILE:
                 cast_src = f"_a[{off}]"
             else:  # Scalar: the descriptor-aware reference (uncast).

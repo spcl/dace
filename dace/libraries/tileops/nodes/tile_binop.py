@@ -16,6 +16,7 @@ import numpy as np
 
 import dace
 from dace import library, properties
+from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -243,7 +244,7 @@ class ExpandTileBinopPure(ExpandTransformation):
             the operand dtype is bool (logical ops; no ``(bool)X`` is emitted).
             """
             if kind == _SYMBOL:
-                return f"{_cast}({expr})"
+                return f"{_cast}({pyexpr2cpp(expr)})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
             # Scalar operand. A tile-shape Array widened upstream is a pointer

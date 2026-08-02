@@ -164,6 +164,18 @@ def test_tile_binop_kind_b_symbol_with_literal(widths):
     np.testing.assert_allclose(C, A + 2.5, rtol=0, atol=0)
 
 
+def test_tile_binop_kind_b_symbol_with_complex_literal():
+    """``expr_*`` is PYTHON source: an imaginary literal (npbench ``mandelbrot1``'s
+    ``Y * 1j``) must lower to ``dace::complex128(0.0, 1.0)``, not the uncompilable ``1j``."""
+    widths = (8, )
+    sdfg = _build_binop_symbol_rhs_sdfg(widths, expr_b="1j", tag="cplx", dtype=dace.complex128)
+    rng = np.random.default_rng(seed=53)
+    A = rng.random(widths) + 1j * rng.random(widths)
+    C = np.zeros(widths, dtype=np.complex128)
+    sdfg(A=A, C=C)
+    np.testing.assert_allclose(C, A + 1j, rtol=0, atol=0)
+
+
 def test_tile_binop_kind_b_symbol_with_free_symbol():
     """Symbol-kind RHS resolves a free symbol at runtime."""
     widths = (4, 8)

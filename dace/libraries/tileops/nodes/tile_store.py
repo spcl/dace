@@ -10,6 +10,7 @@ import sympy
 
 import dace
 from dace import library, properties
+from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -88,7 +89,7 @@ class ExpandTileStorePure(ExpandTransformation):
         #     lane (or a tile-shape source widened upstream, read per lane).
         out_dtype = dst_arr.dtype.ctype
         if node.src_kind == "Symbol":
-            src_ref = f"({out_dtype})({node.src_expr})"
+            src_ref = f"({out_dtype})({pyexpr2cpp(node.src_expr)})"
         elif node.src_kind == "Scalar":
             # A volume-1 source is passed by value (bare ``_src``); a tile-shape
             # source widened upstream is a pointer read per lane (``_src[off]``).

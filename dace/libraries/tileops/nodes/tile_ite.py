@@ -26,6 +26,7 @@ from typing import Optional, Tuple
 
 import dace
 from dace import library, properties
+from dace.codegen.cppunparse import pyexpr2cpp
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
@@ -84,7 +85,8 @@ class ExpandTileITEPure(ExpandTransformation):
             ``? :`` context so its ``cast`` is ``None``.
             """
             if kind == _SYMBOL:
-                return f"({cast})({expr})" if cast else f"({expr})"
+                cpp = pyexpr2cpp(expr)
+                return f"({cast})({cpp})" if cast else f"({cpp})"
             if kind == _TILE:
                 return f"{conn}[{off}]"
             # Scalar operand: descriptor-aware reference (a tile-shape Array
