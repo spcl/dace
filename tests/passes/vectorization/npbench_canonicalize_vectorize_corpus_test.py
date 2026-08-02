@@ -42,8 +42,6 @@ _PHASES = ("canon", "canon_vec")
 _XFAIL: dict = {
     ("azimint_naive", "canon_vec"): "multidim-vectorize: output diverges from reference",
     ("nbody", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
-    ("mandelbrot2", "canon_vec"): "multidim-vectorize WidenAccesses invariant: lane-dep transients",
-    ("stockham_fft", "canon_vec"): "multidim-vectorize: worker crash (segfault) during vectorize",
 }
 
 

@@ -491,7 +491,10 @@ def _promote_read_output_connectors_to_inout(sdfg: dace.SDFG) -> int:
                             None)
             if template is None:
                 continue
-            node.add_in_connector(oc)
+            # ``force``: the name already exists as an OUT connector -- that is the point. An
+            # inout connector IS the same name on both sides, and the un-forced call refuses it
+            # (nodes.py:129) and would leave the in-edge below dangling.
+            node.add_in_connector(oc, force=True)
             parent.add_edge(template.src, template.src_conn, node, oc, copy.deepcopy(out_edge.data))
             promoted += 1
     return promoted
