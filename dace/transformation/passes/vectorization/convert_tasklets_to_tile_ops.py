@@ -19,6 +19,7 @@ from dace.sdfg import SDFG
 from dace.sdfg.nodes import CodeBlock, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
 from dace.transformation import pass_pipeline as ppl, transformation
+from dace.transformation.passes.vectorization.utils.errors import VectorizeUnsupported
 from dace.transformation.passes.vectorization.utils.map_predicates import is_vectorizable_map
 from dace.transformation.passes.vectorization.utils.pass_invariants import (assert_invariant, logical_binops_are_bool,
                                                                             mask_connectors_are_bool,
@@ -224,6 +225,45 @@ def _normalize_python_tasklet_body(body: str) -> Optional[str]:
     return out
 
 
+def free_symbol_names(expr: str) -> set:
+    """Free-symbol names of ``expr``, empty when it does not parse."""
+    try:
+        return {str(s) for s in dace.symbolic.pystr_to_symbolic(expr).free_symbols}
+    except Exception:  # noqa: BLE001
+        return set()
+
+
+def lane_dependent_through_interstate_assignment(inner_state: SDFGState, expr: str,
+                                                 iter_vars: Tuple[str, ...]) -> Optional[str]:
+    """Name of the symbol in ``expr`` whose interstate definition ties it to a tile iter_var,
+    or ``None`` when every symbol in ``expr`` is genuinely tile-invariant.
+
+    :meth:`ConvertTaskletsToTileOps._is_lane_id_dependent` only sees the names SPELLED in
+    ``expr``. The frontend routes an array element into a tasklet through an interstate
+    assignment (``b_index = b[i]``), so the body reads a bare ``b_index`` that names no
+    iter_var yet holds a different value in every lane. "Does not mention an iter_var" is
+    not "is loop-invariant": resolve the assignment chain before believing it.
+    """
+    assignments = {
+        sym: rhs
+        for edge in inner_state.sdfg.all_interstate_edges()
+        for sym, rhs in edge.data.assignments.items()
+    }
+    pending = [s for s in free_symbol_names(expr) if s in assignments]
+    seen = set()
+    while pending:
+        name = pending.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        for sym in free_symbol_names(assignments[name]):
+            if sym in iter_vars:
+                return name
+            if sym in assignments:
+                pending.append(sym)
+    return None
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class ConvertTaskletsToTileOps(ppl.Pass):
@@ -293,6 +333,12 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         ``idx[...]`` into an index tile (lane offset IS ``__l``). Do not conflate.
         """
         if not iter_vars or not self._is_lane_id_dependent(expr, iter_vars):
+            if iter_vars:
+                hidden = lane_dependent_through_interstate_assignment(inner_state, expr, iter_vars)
+                if hidden is not None:
+                    raise VectorizeUnsupported(f"symbol operand {expr!r} varies per lane through the interstate "
+                                               f"assignment defining {hidden!r}; inlining it as an invariant Symbol "
+                                               f"would broadcast lane 0 across the tile")
             return "Symbol", expr, None
         an_name = self._materialise_lane_id_tile(inner_state, expr, iter_vars)
         return "Tile", None, an_name
@@ -647,11 +693,24 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         fill, no intermediate transient, no AN→AN copy (user 2026-06-15: const/symbol→tile
         broadcast is a tile op). Symbol-source ``TileLoad`` declares no ``_src``; the
         expansion embeds ``src_expr`` inline. A non-tile (true scalar) output stays a
-        single-statement python scalar tasklet — scalar→scalar needs no tile op."""
+        single-statement python scalar tasklet — scalar→scalar needs no tile op.
+
+        "0 in-connectors" does NOT imply "loop-invariant": the RHS can name a tile iter_var,
+        or a symbol an interstate assignment ties to one (``b_index = b[i]``). Broadcasting
+        either splats lane 0 across the tile, so refuse instead of assuming."""
         out_conn, expr = detected
         out_edges = data_out_edges(inner_state, tasklet)
         if not out_edges:
             return False
+        if iter_vars:
+            if self._is_lane_id_dependent(str(expr), iter_vars):
+                raise VectorizeUnsupported(f"broadcast source {expr!r} names a tile iter_var, so it differs per "
+                                           f"lane; splatting it across the tile would write lane 0's value")
+            hidden = lane_dependent_through_interstate_assignment(inner_state, str(expr), iter_vars)
+            if hidden is not None:
+                raise VectorizeUnsupported(f"broadcast source {expr!r} varies per lane through the interstate "
+                                           f"assignment defining {hidden!r}; splatting it across the tile would "
+                                           f"write lane 0's value")
         out_edge = out_edges[0]
         # A pure SAME-DOMAIN compile-time constant (fp literal into an fp scalar, int into an
         # int scalar) is a narrowed constant, not a produced per-lane value: keep it a Scalar
