@@ -13,6 +13,13 @@ from typing import Sequence
 
 import sympy
 
+import dace
+
+# Legal ``_idx_<d>`` gather/scatter index dtypes (design section 10.4). Unsigned widths are
+# accepted because CSR/COO index arrays are commonly ``uint32``; ``gather_lane_offset`` casts
+# the read to ``long long`` so an unsigned index cannot wrap the signed address sum.
+GATHER_INDEX_DTYPES = (dace.int32, dace.int64, dace.uint32, dace.uint64)
+
 
 def constant_trip_count(width) -> bool:
     """True iff ``width`` is a compile-time-constant integer loop bound.
@@ -352,17 +359,20 @@ def gather_lane_offset(deps, widths, conn):
 
     For the scalar case (``deps == ()``) returns ``conn[0]``.
 
+    The read is cast to ``long long``: callers sum it with affine terms that may
+    be negative, and an unsigned index dtype would make the whole sum wrap.
+
     :param deps: Sorted tuple of tile dim indices from :func:`resolve_gather_deps`.
     :param widths: Lib node's full tile widths.
     :param conn: The connector name (e.g. ``"_idx_0"``).
-    :returns: A CPP expression string of the form ``conn[<offset>]``.
+    :returns: A CPP expression string of the form ``(long long)conn[<offset>]``.
     """
     if not deps:
-        return f"{conn}[0]"
+        return f"(long long)({conn}[0])"
     parts = []
     for i, p in enumerate(deps):
         inner = 1
         for q in deps[i + 1:]:
             inner *= widths[q]
         parts.append(f"__l{p}" if inner == 1 else f"(__l{p} * {inner})")
-    return f"{conn}[{' + '.join(parts)}]"
+    return f"(long long)({conn}[{' + '.join(parts)}])"

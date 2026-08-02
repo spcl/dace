@@ -18,6 +18,7 @@ non-dependency dim carries the ``dace.symbolic.ONE`` broadcast marker:
 import pytest
 
 import dace
+from dace.libraries.tileops._pure_codegen import gather_lane_offset
 from dace.libraries.tileops.nodes.tile_load import TileLoad
 from dace.libraries.tileops.nodes.tile_store import TileStore
 from dace.memlet import Memlet
@@ -172,11 +173,20 @@ def test_icon_pattern_K2_vec_K3_src_gather_dims_0_and_2():
 
 
 def test_refuse_wrong_index_dtype():
-    """Index dtype must be int32 or int64 (design section 10.4). Uses a VALID
+    """Index dtype must be an integer one (design section 10.4). Uses a VALID
     full-K-dim shape so the dtype check (not the shape check) is the failure."""
     sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)], idx_dtype=dace.float64)
     with pytest.raises(ValueError, match="dtype.*not in"):
         node.validate(sdfg, state)
+
+
+@pytest.mark.parametrize("idx_dtype", [dace.uint32, dace.uint64])
+def test_accepts_unsigned_index_dtype(idx_dtype):
+    """CSR/COO index arrays are commonly unsigned (npbench ``spmv``): accepted, and the
+    emitted read is cast to ``long long`` so it cannot wrap the signed address sum."""
+    sdfg, state, node = _build_load(widths=(4, 8), gather_dims=(0, ), idx_shapes=[(4, ONE)], idx_dtype=idx_dtype)
+    node.validate(sdfg, state)
+    assert "(long long)(_idx_0[" in gather_lane_offset((0, ), (4, 8), "_idx_0")
 
 
 def test_tilestore_gather_dims_symmetric():

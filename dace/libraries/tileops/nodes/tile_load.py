@@ -14,7 +14,8 @@ from dace import library, properties
 from dace.sdfg import nodes
 from dace.transformation.transformation import ExpandTransformation
 
-from .._pure_codegen import (gather_lane_offset, nested_loops, offset_via_strides, resolve_gather_deps, tile_offset)
+from .._pure_codegen import (GATHER_INDEX_DTYPES, gather_lane_offset, nested_loops, offset_via_strides,
+                             resolve_gather_deps, tile_offset)
 from .. import _isa_codegen
 
 
@@ -503,7 +504,7 @@ class TileLoad(nodes.LibraryNode):
         :param state: State that owns ``self``.
         :raises ValueError: If a required connector is unconnected, an index
             tile's descriptor shape is not a Cartesian product of widths, or
-            the dtype is not in ``{int32, int64}``.
+            the dtype is not one of ``GATHER_INDEX_DTYPES``.
         """
         in_e = {e.dst_conn: e for e in state.in_edges(self) if e.dst_conn is not None}
         out_e = {e.src_conn: e for e in state.out_edges(self) if e.src_conn is not None}
@@ -524,7 +525,6 @@ class TileLoad(nodes.LibraryNode):
             validate_packed_layout(self.label, "_src", src_arr)
         # gather_dims source-dim upper bound + per-dim index-tile shape contract (design section 9.4).
         widths = tuple(self.widths)
-        allowed_dtypes = {dace.int32, dace.int64}
         if self.gather_dims and self.src_kind == "Tile":
             src_arr = sdfg.arrays[in_e["_src"].data.data]
             src_ndim = len(src_arr.shape)
@@ -542,6 +542,6 @@ class TileLoad(nodes.LibraryNode):
                 raise ValueError(f"{self.label}: '_idx_{d}' descriptor shape {shape} is not a Cartesian "
                                  f"product of widths {widths} for any sorted subset of tile dims "
                                  f"(design section 9.2)")
-            if desc.dtype not in allowed_dtypes:
+            if desc.dtype not in GATHER_INDEX_DTYPES:
                 raise ValueError(f"{self.label}: '_idx_{d}' dtype {desc.dtype} not in "
-                                 f"{{int32, int64}} (design section 10.4)")
+                                 f"{GATHER_INDEX_DTYPES} (design section 10.4)")
