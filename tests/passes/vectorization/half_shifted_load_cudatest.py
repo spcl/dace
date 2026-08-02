@@ -19,15 +19,14 @@ Covered:
   * the emitted SASS for a heat3d kernel has NO ``LDG.E.U16`` and does not grow;
   * bit-exact vs the NumPy fp16 oracle, boundary iterations included.
 
-GPU-executing tests fork before any CUDA use so a device fault cannot crash the pytest parent.
+GPU-executing tests run in a fresh interpreter so a device fault cannot crash the pytest parent.
 """
 import collections
 import glob
 import os
 import re
-import shutil
 import subprocess
-import traceback
+import sys
 
 import pytest
 
@@ -76,6 +75,19 @@ def _heat3d(A: H[NC, NC, NC], B: H[NC, NC, NC]):
                    (B[1:-1, 1:-1, 2:] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
 
 
+@dace.program
+def _heat3d_symbolic(A: H[N, N, N], B: H[N, N, N]):
+    for t in range(1, tsteps):
+        B[1:-1, 1:-1,
+          1:-1] = (C8 * (A[2:, 1:-1, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[:-2, 1:-1, 1:-1]) + C8 *
+                   (A[1:-1, 2:, 1:-1] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, :-2, 1:-1]) + C8 *
+                   (A[1:-1, 1:-1, 2:] - C2 * A[1:-1, 1:-1, 1:-1] + A[1:-1, 1:-1, 0:-2]) + A[1:-1, 1:-1, 1:-1])
+        A[1:-1, 1:-1,
+          1:-1] = (C8 * (B[2:, 1:-1, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[:-2, 1:-1, 1:-1]) + C8 *
+                   (B[1:-1, 2:, 1:-1] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, :-2, 1:-1]) + C8 *
+                   (B[1:-1, 1:-1, 2:] - C2 * B[1:-1, 1:-1, 1:-1] + B[1:-1, 1:-1, 0:-2]) + B[1:-1, 1:-1, 1:-1])
+
+
 def _heat3d_oracle(A, B, steps):
     """The same expression in the same fp16 op order on the host."""
     import numpy as np
@@ -93,12 +105,12 @@ def _heat3d_oracle(A, B, steps):
     return A, B
 
 
-def _vectorized(prog, name=None):
+def _vectorized(prog, name=None, assume_even=False):
     """@dace.program -> simplify -> GPU offload -> the half2 GPU vectorizer."""
     sdfg = prog.to_sdfg(simplify=True)
     sdfg.simplify()
     offload_to_gpu(sdfg)
-    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    VectorizeGPU(VectorizeConfig(widths=(2, ), assume_even=assume_even)).apply_pass(sdfg, {})
     if name:
         sdfg.name = name
     return sdfg
@@ -108,19 +120,16 @@ def _device_code(sdfg) -> str:
     return "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
 
 
-def _run_in_fork(work) -> int:
-    """Run ``work()`` in a child forked BEFORE any CUDA use; returns the exit status (0 == pass)."""
-    pid = os.fork()
-    if pid == 0:  # child
-        code = 0
-        try:
-            work()
-        except BaseException:  # noqa: BLE001 - report + non-zero exit, never raise past the fork
-            traceback.print_exc()
-            code = 1
-        os._exit(code)
-    _, status = os.waitpid(pid, 0)
-    return status
+def _run_isolated(body: str) -> int:
+    """Run the module-level ``body`` function in a FRESH interpreter; 0 == pass.
+
+    A fork is not enough: an earlier test in the same session may already have initialized CUDA in
+    the parent, and the inherited context is unusable in the child (``cudaErrorInitializationError``).
+    A new interpreter starts from a clean device state, and still keeps a device fault out of the
+    pytest parent. The parent's ``sys.path`` is handed down so the child imports the same dace.
+    """
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in sys.path if p))
+    return subprocess.run([sys.executable, __file__, body], env=env).returncode
 
 
 def _sass_ops(build_folder) -> collections.Counter:
@@ -162,65 +171,109 @@ def test_heat3d_widens_every_load():
 def test_symbolic_stride_declines():
     """An ``N``-column array leaves ``N*i + j`` with an unknown parity, so neither a divisibility
     nor a residue is decidable and the load stays per-element. Assuming otherwise would emit an
-    invalid unaligned 32-bit load."""
+    invalid unaligned 32-bit load. The default GPU path is ``branched_tail``, which guards the
+    partial tile at runtime instead of constraining the extent, so nothing pins ``N``."""
     cu = _device_code(_vectorized(_stencil3_2d_symbolic))
     loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
     assert loads, "no fp16 width-2 tile_load emitted"
     assert all(a == "" for a in loads), f"a symbolic row stride must not be claimed aligned, got {set(loads)}"
 
 
+def test_symbolic_stride_widens_under_assume_even():
+    """``assume_even`` turns the same symbolic stride usable: the tiled extent ``N - 2`` is then a
+    guaranteed multiple of 2 (raised on when provably violated, host-guarded otherwise), so
+    ``N = 2t + 2`` and every ``N*i`` term has a decidable parity. This is the precondition the
+    widening needs on a symbolic shape -- without it a multi-dim stencil never widens."""
+    cu = _device_code(_vectorized(_stencil3_2d_symbolic, assume_even=True))
+    loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
+    assert loads, "no fp16 width-2 tile_load emitted"
+    assert set(loads) == {", 4", ", 4, 1"}, \
+        f"expected the aligned +-1 neighbours and the shifted centre, got {set(loads)}"
+
+
 # --------------------------------------------------------------------------------------------------
-# GPU: the SASS gate and the numeric gate
+# GPU: the SASS gate and the numeric gate. Each body runs in a fresh interpreter (see
+# ``_run_isolated``); the pytest wrappers only check its exit status.
 # --------------------------------------------------------------------------------------------------
-@pytest.mark.gpu
-def test_heat3d_sass_has_no_16bit_load():
+def _body_heat3d_sass():
     """The stencil kernels must load 32 bits at a time. ``PRMT`` is not the metric -- an aligned
     load plus a register ``PRMT`` is the intended lowering -- ``LDG.E.U16`` is, plus the total
     instruction count, which must not grow paying for the extraction."""
+    sdfg = _vectorized(_heat3d, name="shifted_heat3d_sass")
+    sdfg.compile()
+    ops = _sass_ops(sdfg.build_folder)
+    assert sum(ops.values()) > 0, "no SASS found in the built object"
+    u16 = sum(v for k, v in ops.items() if k.startswith("LDG.E.U16"))
+    wide = sum(v for k, v in ops.items() if k.startswith("LDG.E") and not k.startswith("LDG.E.U16"))
+    # The scalar copy-in kernel keeps one 16-bit load; the two stencil kernels must have none.
+    assert u16 <= 1, f"stencil kernels still load fp16 element-by-element: {u16} LDG.E.U16"
+    assert wide >= 20, f"expected the widened aligned loads to appear, got {wide}"
 
-    def work():
-        sdfg = _vectorized(_heat3d, name="shifted_heat3d_sass")
-        shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
-        sdfg.compile()
-        ops = _sass_ops(sdfg.build_folder)
-        assert sum(ops.values()) > 0, "no SASS found in the built object"
-        u16 = sum(v for k, v in ops.items() if k.startswith("LDG.E.U16"))
-        wide = sum(v for k, v in ops.items() if k.startswith("LDG.E") and not k.startswith("LDG.E.U16"))
-        # The scalar copy-in kernel keeps one 16-bit load; the two stencil kernels must have none.
-        assert u16 <= 1, f"stencil kernels still load fp16 element-by-element: {u16} LDG.E.U16"
-        assert wide >= 20, f"expected the widened aligned loads to appear, got {wide}"
 
-    assert _run_in_fork(work) == 0
+def _body_heat3d_bitexact():
+    """Bit-exact vs the NumPy fp16 oracle over the WHOLE array, so the untouched boundary planes
+    and the widened window's overshoot element are both checked."""
+    import numpy as np
+    import cupy
+    steps = 3
+    rng = np.random.default_rng(0)
+    A0 = rng.integers(0, 8, size=(NC, NC, NC)).astype(np.float16)
+    B0 = rng.integers(0, 8, size=(NC, NC, NC)).astype(np.float16)
+    expA, expB = _heat3d_oracle(A0, B0, steps)
+    csr = _vectorized(_heat3d, name="shifted_heat3d_numeric").compile()
+    dA, dB = cupy.asarray(A0), cupy.asarray(B0)
+    csr(A=dA, B=dB, tsteps=steps)
+    assert np.array_equal(cupy.asnumpy(dA).view(np.uint16), expA.view(np.uint16)), "A not bit-exact vs numpy fp16"
+    assert np.array_equal(cupy.asnumpy(dB).view(np.uint16), expB.view(np.uint16)), "B not bit-exact vs numpy fp16"
+
+
+def _body_symbolic_heat3d():
+    """The shape heat3d is actually run in -- symbolic ``N`` under ``assume_even`` -- widens every
+    load and stays bit-exact at several extents."""
+    import numpy as np
+    import cupy
+    sdfg = _vectorized(_heat3d_symbolic, name="shifted_heat3d_sym", assume_even=True)
+    loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", _device_code(sdfg))
+    assert loads and not [a for a in loads if a == ""], "a symbolic-N heat3d load stayed per-element"
+    csr = sdfg.compile()
+    ops = _sass_ops(sdfg.build_folder)
+    u16 = sum(v for k, v in ops.items() if k.startswith("LDG.E.U16"))
+    assert u16 <= 1, f"stencil kernels still load fp16 element-by-element: {u16} LDG.E.U16"
+    steps = 3
+    for n in (64, 66):
+        rng = np.random.default_rng(n)
+        A0 = rng.integers(0, 8, size=(n, n, n)).astype(np.float16)
+        B0 = rng.integers(0, 8, size=(n, n, n)).astype(np.float16)
+        expA, expB = _heat3d_oracle(A0, B0, steps)
+        dA, dB = cupy.asarray(A0), cupy.asarray(B0)
+        csr(A=dA, B=dB, N=n, tsteps=steps)
+        assert np.array_equal(cupy.asnumpy(dA).view(np.uint16), expA.view(np.uint16)), f"N={n}: A not bit-exact"
+        assert np.array_equal(cupy.asnumpy(dB).view(np.uint16), expB.view(np.uint16)), f"N={n}: B not bit-exact"
+
+
+@pytest.mark.gpu
+def test_heat3d_sass_has_no_16bit_load():
+    assert _run_isolated("_body_heat3d_sass") == 0
 
 
 @pytest.mark.gpu
 def test_heat3d_bitexact_including_boundaries():
-    """Bit-exact vs the NumPy fp16 oracle over the WHOLE array, so the untouched boundary planes
-    and the widened window's overshoot element are both checked."""
+    assert _run_isolated("_body_heat3d_bitexact") == 0
 
-    def work():
-        import numpy as np
-        import cupy
-        steps = 3
-        rng = np.random.default_rng(0)
-        A0 = rng.integers(0, 8, size=(NC, NC, NC)).astype(np.float16)
-        B0 = rng.integers(0, 8, size=(NC, NC, NC)).astype(np.float16)
-        expA, expB = _heat3d_oracle(A0, B0, steps)
-        sdfg = _vectorized(_heat3d, name="shifted_heat3d_numeric")
-        shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
-        csr = sdfg.compile()
-        dA, dB = cupy.asarray(A0), cupy.asarray(B0)
-        csr(A=dA, B=dB, tsteps=steps)
-        got_a, got_b = cupy.asnumpy(dA), cupy.asnumpy(dB)
-        assert np.array_equal(got_a.view(np.uint16), expA.view(np.uint16)), "A not bit-exact vs numpy fp16"
-        assert np.array_equal(got_b.view(np.uint16), expB.view(np.uint16)), "B not bit-exact vs numpy fp16"
 
-    assert _run_in_fork(work) == 0
+@pytest.mark.gpu
+def test_symbolic_heat3d_bitexact_and_widened():
+    assert _run_isolated("_body_symbolic_heat3d") == 0
 
 
 if __name__ == "__main__":
-    test_odd_neighbour_load_is_shifted_even_is_plain()
-    test_heat3d_widens_every_load()
-    test_symbolic_stride_declines()
-    test_heat3d_sass_has_no_16bit_load()
-    test_heat3d_bitexact_including_boundaries()
+    if len(sys.argv) > 1:  # re-entry from _run_isolated: run the named body only
+        globals()[sys.argv[1]]()
+    else:
+        test_odd_neighbour_load_is_shifted_even_is_plain()
+        test_heat3d_widens_every_load()
+        test_symbolic_stride_declines()
+        test_symbolic_stride_widens_under_assume_even()
+        test_heat3d_sass_has_no_16bit_load()
+        test_heat3d_bitexact_including_boundaries()
+        test_symbolic_heat3d_bitexact_and_widened()

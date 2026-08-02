@@ -511,22 +511,34 @@ _BASE_ALIGN_BYTES = {
 }
 
 
-def _enclosing_param_ranges(node, parent_state, parent_sdfg) -> dict:
-    """Map ``param -> (start, end, step)`` for every map scope enclosing ``node``.
+def _enclosing_param_ranges(node, parent_state, parent_sdfg) -> Tuple[dict, list]:
+    """``({param: (start, end, step)}, [(extent, width)])`` for the map scopes enclosing ``node``.
 
     Walks out through nested-SDFG boundaries, rewriting each level's params through the
     ``symbol_mapping`` that connects them, so a param of an OUTER map is reported under the name
     the INNER offset expression uses. A param whose range cannot be followed is simply absent,
     which leaves it un-substituted and therefore not provably divisible.
+
+    The second list is the extents the vectorizer GUARANTEES divisible: a ``__tile_main`` map's
+    tiled dim either had its end tightened to a whole number of tiles (the peeled-remainder path)
+    or is the caller's ``assume_even`` promise, which that pass raises on when provably violated
+    and otherwise guards with a host-side abort. Nothing here re-derives the guarantee; it reads
+    the marker the guarantee is recorded under.
     """
     from dace.sdfg.sdfg import SDFG
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import TILE_MAIN_MARKER
 
-    ranges, cur_node, state, sdfg = {}, node, parent_state, parent_sdfg
+    ranges, even, cur_node, state, sdfg = {}, [], node, parent_state, parent_sdfg
     while state is not None:
         entry = state.entry_node(cur_node)
         while entry is not None:
             for param, rng in zip(entry.map.params, entry.map.range):
                 ranges.setdefault(str(param), (rng[0], rng[1], rng[2]))
+                step = dace.symbolic.simplify(rng[2])
+                # Only a TILED dim (step == its width > 1) carries a guarantee; a step-1 dim's
+                # extent divides 1 and says nothing.
+                if entry.map.label.endswith(TILE_MAIN_MARKER) and step.is_Integer and step > 1:
+                    even.append((rng[1] - rng[0] + 1, int(step)))
             entry = state.entry_node(entry)
         nsdfg_node = sdfg.parent_nsdfg_node
         if nsdfg_node is None:
@@ -543,7 +555,35 @@ def _enclosing_param_ranges(node, parent_state, parent_sdfg) -> dict:
         sdfg = sdfg.parent_sdfg
         if not isinstance(sdfg, SDFG):
             break
-    return ranges
+    return ranges, even
+
+
+def _even_extent_substitutions(even: list) -> dict:
+    """``{symbol: width*t - b}`` for every guaranteed-divisible extent of the form ``symbol + b``.
+
+    This is what makes a SYMBOLIC row stride usable. An ``N``-column array tiled over ``1:N-1``
+    has extent ``N - 2``, and a width-2 tile guarantees that is even, so ``N = 2t + 2`` -- which
+    makes ``N*i`` provably even and a ``A[i, j+1]`` offset provably ODD instead of unknown. Without
+    it every multi-dim access on a symbolic shape stays on the per-element path.
+
+    ``t`` is non-negative because a tiled map runs at least one full tile. Only a bare ``symbol +
+    constant`` extent is solved: a richer one (``N*M - 1``) has no single symbol to pin and is left
+    alone, which simply leaves the offset undecidable.
+    """
+    subs = {}
+    # Widest first: two tiled dims can constrain the same symbol, and the wider one is stronger.
+    for n, (extent, width) in enumerate(sorted(even, key=lambda ew: -ew[1])):
+        extent = dace.symbolic.simplify(extent)
+        free = list(extent.free_symbols)
+        if len(free) != 1 or free[0] in subs:
+            continue
+        sym = free[0]
+        rest = dace.symbolic.simplify(extent - sym)
+        if not rest.is_Integer:
+            continue
+        t = dace.symbolic.symbol(f"__dace_align_t{n}", nonnegative=True, integer=True)
+        subs[sym] = width * t - int(rest)
+    return subs
 
 
 def _base_offset_is_visible(sdfg, name: str) -> bool:
@@ -578,13 +618,17 @@ def _base_offset_is_visible(sdfg, name: str) -> bool:
 
 
 def _linear_base_offset(node, parent_state, parent_sdfg, edge):
-    """``(offset_at_tile_base, offset_at_param_ends)`` in elements, or ``None`` when unusable.
+    """``(offset_at_tile_base, offset_at_param_ends, allocated_elements)``, or ``None``.
 
     The first expression has every enclosing map param replaced by ``start + step*k`` (``k`` a
     fresh non-negative symbol), which is what makes a residue modulo a chunk decidable. The second
     puts every param at the END of its range, which upper-bounds the offset -- used to prove a
     widened window stays inside the allocation. A param whose coefficient is not provably
     non-negative makes the end substitution no bound at all, so the whole thing is refused.
+
+    All three carry the guaranteed-divisible-extent rewrite (:func:`_even_extent_substitutions`),
+    which is what a symbolic shape needs to decide anything at all -- and which the size has to
+    carry too, or the bound is compared against the wrong allocation.
     """
     arr = parent_sdfg.arrays[edge.data.data]
     # A view starts wherever its source says, and a start_offset shifts the base out from under
@@ -597,8 +641,8 @@ def _linear_base_offset(node, parent_state, parent_sdfg, edge):
     if subset is None:
         return None
     offset = dace.symbolic.pystr_to_symbolic(sum(s * st for s, st in zip(subset.min_element(), arr.strides)))
+    ranges, even = _enclosing_param_ranges(node, parent_state, parent_sdfg)
     at_base, at_end = offset, offset
-    ranges = _enclosing_param_ranges(node, parent_state, parent_sdfg)
     for idx, (param, (start, end, step)) in enumerate(ranges.items()):
         sym = dace.symbolic.pystr_to_symbolic(param)
         if sym not in offset.free_symbols:
@@ -609,7 +653,9 @@ def _linear_base_offset(node, parent_state, parent_sdfg, edge):
         start, end, step = (dace.symbolic.pystr_to_symbolic(x) for x in (start, end, step))
         at_base = at_base.subs(sym, start + step * k)
         at_end = at_end.subs(sym, end)
-    return at_base, at_end
+    size = dace.symbolic.pystr_to_symbolic(arr.total_size)
+    subs = _even_extent_substitutions(even)
+    return tuple(e.subs(subs) for e in (at_base, at_end, size))
 
 
 def _array_align_shift(node, parent_state, parent_sdfg, edge, vlen: int, allow_shift: bool) -> Tuple[int, int]:
@@ -641,7 +687,7 @@ def _array_align_shift(node, parent_state, parent_sdfg, edge, vlen: int, allow_s
     offsets = _linear_base_offset(node, parent_state, parent_sdfg, edge)
     if offsets is None:
         return elem_bytes, 0
-    at_base, at_end = offsets
+    at_base, at_end, size = offsets
     for chunk in (8, 4, 2):
         if chunk * elem_bytes > base_bytes:
             continue
@@ -656,7 +702,7 @@ def _array_align_shift(node, parent_state, parent_sdfg, edge, vlen: int, allow_s
     shift = dace.symbolic.simplify(at_base % chunk)
     if not shift.is_Integer:
         return elem_bytes, 0
-    if dace.symbolic.simplify(at_end + vlen + chunk - int(shift) - arr.total_size).is_nonpositive is not True:
+    if dace.symbolic.simplify(at_end + vlen + chunk - int(shift) - size).is_nonpositive is not True:
         return elem_bytes, 0
     return chunk * elem_bytes, int(shift)
 
