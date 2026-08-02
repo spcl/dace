@@ -620,18 +620,6 @@ def test_dependency_change_same_edge(extra_state):
 
     sdfg.validate()
 
-    # Diagnostic for the CI-only intermittent failure (a[0] == 0 instead of
-    # 540, i.e. the loop exited after iteration zero; unreproducible locally
-    # across standalone/file/directory/cache-poisoning/hash-seed sweeps).
-    # The post-pass structure in the failure message distinguishes a
-    # mis-propagation (wrong assignments/tasklet visible here) from a
-    # codegen or execution fault (structure correct, result still wrong).
-    diag = ' | '.join([
-        f'{e.src.label}->{e.dst.label}: cond={e.data.condition.as_string!r} '
-        f'asgn={dict(sorted(e.data.assignments.items()))}'
-        for e in sorted(sdfg.edges(), key=lambda e: (e.src.label, e.dst.label))
-    ] + [f'tasklet: {t.code.as_string!r}'])
-
     # Python code equivalent of the above SDFG
     ref = 0
     i60 = 0
@@ -640,88 +628,8 @@ def test_dependency_change_same_edge(extra_state):
         ref += i17
 
     a = np.zeros([1], np.int64)
-    # Compile and execute in a fresh, explicitly-set build folder (the
-    # configured interface stays in effect): the CI-only failure survived
-    # pass- and codegen-exoneration (post-pass structure AND regenerated code
-    # byte-identical to passing runs; expression-cache clear changes
-    # nothing), and it VANISHED on ctypes + private folder - two variables at
-    # once. The private folder alone gives this compilation a unique module
-    # identity (under ``cache=unique`` the derived folder is name+pid only,
-    # so every SDFG named 'tester' in one process shares ONE identity),
-    # keeping the nanobind collision/rename/reuse machinery idle while the
-    # nanobind bindings and loading stay under test: passing here indicts the
-    # shared folder identity; failing indicts the interface itself.
-    import os
-    import sys
-    import tempfile
-    retry_result = None
-    handle_module_info = None
-    with tempfile.TemporaryDirectory() as tmp_folder:
-        sdfg.build_folder = os.path.join(tmp_folder, 'build')
-        csdfg = sdfg.compile()
-        csdfg(a=a)
-        # Snapshot the generated-module registry INSIDE the with-block (the
-        # tmp folder name is part of the expected identity): consumed by the
-        # failure diagnostic below to discriminate a loader mixup (expected
-        # qualname absent / pointing at a foreign file) from a module that
-        # was loaded correctly yet computed the wrong result.
-        from dace.codegen.compiler import nanobind_qualified_module_name
-        expected_qualname = nanobind_qualified_module_name(sdfg.build_folder, sdfg.name)
-        expected_module = sys.modules.get(expected_qualname)
-        module_registry = {
-            name: (getattr(m, '__file__', None), getattr(m, 'source_sdfg_hash', None))
-            for name, m in sys.modules.items() if name.startswith('dace.generated.') and name.endswith('.tester')
-        }
-        if a[0] != ref:
-            # Call the SAME handle a second time: a persistent wrong module
-            # reproduces the wrong result, a one-shot corruption does not.
-            # Also record the module the handle ACTUALLY wraps (nanobind
-            # only; the ctypes handle has no `module`).
-            retry = np.zeros([1], np.int64)
-            csdfg(a=retry)
-            retry_result = retry[0]
-            handle_module = getattr(csdfg, 'module', None)
-            handle_module_info = (getattr(handle_module, '__file__',
-                                          None), getattr(handle_module, 'source_sdfg_hash', None))
-        del csdfg
-    if a[0] != ref:
-        # Second-stage diagnostic: in every observed CI failure the structure
-        # above was byte-identical to a passing run, so the pass is exonerated
-        # and the fault lies in code generation or execution. Capture what
-        # codegen emits in THIS (failing) process state, then clear the
-        # expression caches (sympy's and dace.symbolic's lru_caches; several
-        # are keyed by sympy hash/eq, which ignores DaCe symbol dtype
-        # metadata) and re-emit: a non-empty diff proves cross-test cache
-        # poisoning of code generation and shows the poisoned lines.
-        import copy as _copy
-        import sympy as _sympy
-        from dace import symbolic as _symbolic
-
-        def _codegen_excerpt():
-            try:
-                code = _copy.deepcopy(sdfg).generate_code()[0].clean_code
-                return sorted({
-                    ln.strip()
-                    for ln in code.splitlines() if any(s in ln for s in ('i17', 'i18', 'i60', 'i61', 'cont'))
-                })
-            except Exception as exc:
-                return [f'<codegen failed: {exc!r}>']
-
-        before = _codegen_excerpt()
-        _sympy.core.cache.clear_cache()
-        for fn in (_symbolic.deserialize_symbolic, _symbolic._pystr_to_symbolic_cached, _symbolic.symstr,
-                   _symbolic.simplify, _symbolic._spickle, _symbolic._overapproximate):
-            fn.cache_clear()
-        after = _codegen_excerpt()
-        diag += (' ||| codegen excerpt (poisoned?): ' + ' ; '.join(before) + ' ||| lines changed by cache clear: ' +
-                 (' ; '.join(sorted(set(before) ^ set(after))) or '<none - codegen unaffected by cache state>'))
-        diag += (f' ||| expected module: {expected_qualname} -> ' +
-                 (f'file={getattr(expected_module, "__file__", None)!r} '
-                  f'hash={getattr(expected_module, "source_sdfg_hash", None)!r}' if expected_module is not None else
-                  '<NOT IN sys.modules>') + f' ||| all loaded *.tester modules: {module_registry}' +
-                 f' ||| second call on the same handle: {retry_result!r} (expected {ref})' +
-                 f' ||| handle module (file, hash): {handle_module_info}')
-    assert a[0] == ref, diag
+    sdfg(a=a)
+    assert a[0] == ref
 
 
 if __name__ == '__main__':

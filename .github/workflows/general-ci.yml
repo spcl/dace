@@ -65,18 +65,10 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        # TEMPORARY (constant_propagation bisection): run ONLY the affected
-        # file to check whether file-local process state reproduces the
-        # 3.10-only failure. Restore the full-suite selection below when done:
-        # pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
-        # -v: each test line carries its [gwN] worker id, so a failing leg's
-        # log reveals the worker co-schedule (the failure is order-dependent).
-        pytest -n auto -v --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 tests/passes/constant_propagation_test.py
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
 
     - name: Test OpenBLAS LAPACK
-      # TEMPORARY: disabled during the constant_propagation bisection.
-      if: false
       run: |
         export DACE_compiler_interface=nanobind
         export DACE_compiler_build_folder_mode="production"
@@ -95,8 +87,6 @@ jobs:
         ./codecov
 
     - name: Run sequential tests
-      # TEMPORARY: disabled during the constant_propagation bisection.
-      if: false
       run: |
         export DACE_compiler_interface=nanobind
         export DACE_compiler_build_folder_mode="production"
@@ -115,8 +105,6 @@ jobs:
         ./codecov
 
     - name: Run other tests
-      # TEMPORARY: disabled during the constant_propagation bisection.
-      if: false
       run: |
         export DACE_compiler_interface=nanobind
         export DACE_compiler_build_folder_mode="production"
