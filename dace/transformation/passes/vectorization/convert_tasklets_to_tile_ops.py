@@ -225,12 +225,13 @@ def _normalize_python_tasklet_body(body: str) -> Optional[str]:
     return out
 
 
-def free_symbol_names(expr: str) -> set:
-    """Free-symbol names of ``expr``, empty when it does not parse."""
+def free_symbol_names(expr: str) -> list:
+    """Free-symbol names of ``expr``, empty when it does not parse. Sorted: the caller reports
+    the first hit in a message, and a set of strings iterates by ``PYTHONHASHSEED``."""
     try:
-        return {str(s) for s in dace.symbolic.pystr_to_symbolic(expr).free_symbols}
+        return sorted(str(s) for s in dace.symbolic.pystr_to_symbolic(expr).free_symbols)
     except Exception:  # noqa: BLE001
-        return set()
+        return []
 
 
 def lane_dependent_through_interstate_assignment(inner_state: SDFGState, expr: str,
@@ -244,15 +245,18 @@ def lane_dependent_through_interstate_assignment(inner_state: SDFGState, expr: s
     iter_var yet holds a different value in every lane. "Does not mention an iter_var" is
     not "is loop-invariant": resolve the assignment chain before believing it.
     """
+    names = free_symbol_names(expr)
+    if not names:
+        return None  # a literal operand -- no need to walk the edges
     assignments = {
         sym: rhs
         for edge in inner_state.sdfg.all_interstate_edges()
         for sym, rhs in edge.data.assignments.items()
     }
-    pending = [s for s in free_symbol_names(expr) if s in assignments]
+    pending = [s for s in names if s in assignments]
     seen = set()
     while pending:
-        name = pending.pop()
+        name = pending.pop(0)
         if name in seen:
             continue
         seen.add(name)
