@@ -12,6 +12,8 @@ Each ``make_<op>_tasklet`` returns the finished :class:`~dace.sdfg.nodes.Tasklet
 (its ``label`` carries the backend ``suffix`` for readability); the calling
 expansion class attaches the backend environment.
 """
+from typing import Tuple
+
 import dace
 from dace.sdfg import nodes
 from dace.symbolic import symstr
@@ -510,7 +512,7 @@ _BASE_ALIGN_BYTES = {
 
 
 def _enclosing_param_ranges(node, parent_state, parent_sdfg) -> dict:
-    """Map ``param -> (start, step)`` for every map scope enclosing ``node``.
+    """Map ``param -> (start, end, step)`` for every map scope enclosing ``node``.
 
     Walks out through nested-SDFG boundaries, rewriting each level's params through the
     ``symbol_mapping`` that connects them, so a param of an OUTER map is reported under the name
@@ -524,7 +526,7 @@ def _enclosing_param_ranges(node, parent_state, parent_sdfg) -> dict:
         entry = state.entry_node(cur_node)
         while entry is not None:
             for param, rng in zip(entry.map.params, entry.map.range):
-                ranges.setdefault(str(param), (rng[0], rng[2]))
+                ranges.setdefault(str(param), (rng[0], rng[1], rng[2]))
             entry = state.entry_node(entry)
         nsdfg_node = sdfg.parent_nsdfg_node
         if nsdfg_node is None:
@@ -575,54 +577,106 @@ def _base_offset_is_visible(sdfg, name: str) -> bool:
     return True
 
 
-def _array_align_bytes(node, parent_state, parent_sdfg, edge) -> int:
-    """Byte alignment of the ARRAY-side pointer on ``edge`` that the backend may ASSUME.
+def _linear_base_offset(node, parent_state, parent_sdfg, edge):
+    """``(offset_at_tile_base, offset_at_param_ends)`` in elements, or ``None`` when unusable.
 
-    The tile side of a load/store is always DACE_ALIGN(64); the array side is a base pointer plus
-    the memlet's linear element offset, so it is only as aligned as that offset is divisible. Each
-    enclosing map param is replaced by ``start + step*k`` (``k`` a fresh non-negative symbol) and
-    the offset is tested for divisibility by the chunk element count.
-
-    A symbolic row stride is exactly what blocks this: ``A[i, j]`` on an ``N``-column array offsets
-    by ``N*i + j``, whose parity is unknown, so it correctly yields the element alignment and the
-    caller keeps the scalar path. Returns the element size when nothing wider is provable.
+    The first expression has every enclosing map param replaced by ``start + step*k`` (``k`` a
+    fresh non-negative symbol), which is what makes a residue modulo a chunk decidable. The second
+    puts every param at the END of its range, which upper-bounds the offset -- used to prove a
+    widened window stays inside the allocation. A param whose coefficient is not provably
+    non-negative makes the end substitution no bound at all, so the whole thing is refused.
     """
     arr = parent_sdfg.arrays[edge.data.data]
-    elem_bytes = arr.dtype.bytes
     # A view starts wherever its source says, and a start_offset shifts the base out from under
     # the allocator's guarantee.
     if isinstance(arr, dace.data.View) or arr.start_offset != 0:
-        return elem_bytes
+        return None
     if not _base_offset_is_visible(parent_sdfg, edge.data.data):
-        return elem_bytes
-    base_bytes = _BASE_ALIGN_BYTES.get(arr.storage, 0)
-    if base_bytes < elem_bytes:
-        return elem_bytes
+        return None
     subset = edge.data.subset
     if subset is None:
-        return elem_bytes
-    offset = sum(s * st for s, st in zip(subset.min_element(), arr.strides))
-    offset = dace.symbolic.pystr_to_symbolic(offset)
+        return None
+    offset = dace.symbolic.pystr_to_symbolic(sum(s * st for s, st in zip(subset.min_element(), arr.strides)))
+    at_base, at_end = offset, offset
     ranges = _enclosing_param_ranges(node, parent_state, parent_sdfg)
-    for idx, (param, (start, step)) in enumerate(ranges.items()):
+    for idx, (param, (start, end, step)) in enumerate(ranges.items()):
         sym = dace.symbolic.pystr_to_symbolic(param)
         if sym not in offset.free_symbols:
             continue
+        if dace.symbolic.simplify(offset.diff(sym)).is_nonnegative is not True:
+            return None
         k = dace.symbolic.symbol(f"__dace_align_k{idx}", nonnegative=True, integer=True)
-        offset = offset.subs(sym, dace.symbolic.pystr_to_symbolic(start) + dace.symbolic.pystr_to_symbolic(step) * k)
+        start, end, step = (dace.symbolic.pystr_to_symbolic(x) for x in (start, end, step))
+        at_base = at_base.subs(sym, start + step * k)
+        at_end = at_end.subs(sym, end)
+    return at_base, at_end
+
+
+def _array_align_shift(node, parent_state, parent_sdfg, edge, vlen: int, allow_shift: bool) -> Tuple[int, int]:
+    """``(alignment bytes of the aligned base, element shift of the access from it)``.
+
+    The tile side of a load/store is always DACE_ALIGN(64); the array side is a base pointer plus
+    the memlet's linear element offset, so it is only as aligned as that offset is divisible.
+
+    When the offset IS divisible the access itself is aligned and the shift is 0 -- the case
+    ``c13a93c97`` already handles. When it is not, a ``±1`` stencil neighbour being the canonical
+    example, the residue is often still a compile-time constant: ``A[i, j, k+1]`` on a 128-column
+    array offsets by ``16384*i + 128*j + k + 16513`` with ``k`` even, which is odd for every
+    iteration. Reporting that residue lets the caller load the ALIGNED window below the access and
+    pick the elements out in registers, instead of declining to widen at all.
+
+    The window reads ``chunk - shift`` elements past the tile, so the access must not be the last
+    one in the allocation; ``at_end`` bounds that. It reads nothing BELOW element 0: the aligned
+    base is ``offset - shift`` with ``offset >= shift`` by construction of the residue.
+
+    A symbolic row stride is what defeats both: ``A[i, j]`` on an ``N``-column array offsets by
+    ``N*i + j``, whose parity is unknown, so neither a divisibility nor a residue is decidable and
+    the caller keeps the scalar path. Returns the element size and shift 0 when nothing is provable.
+    """
+    arr = parent_sdfg.arrays[edge.data.data]
+    elem_bytes = arr.dtype.bytes
+    base_bytes = _BASE_ALIGN_BYTES.get(arr.storage, 0)
+    if base_bytes < elem_bytes:
+        return elem_bytes, 0
+    offsets = _linear_base_offset(node, parent_state, parent_sdfg, edge)
+    if offsets is None:
+        return elem_bytes, 0
+    at_base, at_end = offsets
     for chunk in (8, 4, 2):
         if chunk * elem_bytes > base_bytes:
             continue
-        if dace.symbolic.simplify(offset % chunk) == 0:
-            return chunk * elem_bytes
-    return elem_bytes
+        if dace.symbolic.simplify(at_base % chunk) == 0:
+            return chunk * elem_bytes, 0
+    # One 32-bit word is the granularity the register extraction works at (__byte_perm), so the
+    # window is chunked at that width and the shift has to leave the used elements inside two
+    # consecutive words -- guaranteed by chunk | vlen.
+    chunk = 4 // elem_bytes
+    if not allow_shift or chunk < 2 or vlen % chunk != 0 or chunk * elem_bytes > base_bytes:
+        return elem_bytes, 0
+    shift = dace.symbolic.simplify(at_base % chunk)
+    if not shift.is_Integer:
+        return elem_bytes, 0
+    if dace.symbolic.simplify(at_end + vlen + chunk - int(shift) - arr.total_size).is_nonpositive is not True:
+        return elem_bytes, 0
+    return chunk * elem_bytes, int(shift)
 
 
-def _align_template_arg(node, parent_state, parent_sdfg, edge, backend: str) -> str:
-    """``", <bytes>"`` to append to a tile_load/tile_store template list, or ``""``.
+def _align_template_arg(node,
+                        parent_state,
+                        parent_sdfg,
+                        edge,
+                        backend: str,
+                        vlen: int,
+                        allow_shift: bool = False) -> str:
+    """``", <bytes>"`` or ``", <bytes>, <shift>"`` for a tile_load/tile_store template list.
 
-    Only the CUDA header takes the trailing ``Align`` parameter, and only fp16 has a widened path
-    behind it, so every other backend and dtype keeps the exact 3-argument call it emitted before.
+    Only the CUDA header takes the trailing ``Align`` / ``Shift`` parameters, and only fp16 has a
+    widened path behind them, so every other backend and dtype keeps the exact 3-argument call it
+    emitted before.
+
+    ``allow_shift`` is the load/store asymmetry: a load may read the aligned window around its
+    elements and discard the extras, a store may not write them -- that would clobber the
+    neighbours the widened word covers -- so a shifted store keeps the per-element loop.
 
     ``cuda_warp`` is excluded even though it reuses this header: there a tile is split across the
     lanes of a warp and each lane loads its own fragment, so the per-lane base is not the memlet
@@ -633,7 +687,9 @@ def _align_template_arg(node, parent_state, parent_sdfg, edge, backend: str) -> 
     arr = parent_sdfg.arrays[edge.data.data]
     if arr.dtype != dace.float16:
         return ""
-    align = _array_align_bytes(node, parent_state, parent_sdfg, edge)
+    align, shift = _array_align_shift(node, parent_state, parent_sdfg, edge, vlen, allow_shift)
+    if shift:
+        return f", {align}, {shift}"
     return f", {align}" if align > arr.dtype.bytes else ""
 
 
@@ -792,7 +848,7 @@ def make_load_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Tas
     stride = _k1_array_stride(node, parent_sdfg, src_edge, node.src_dims)
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
-    align = _align_template_arg(node, parent_state, parent_sdfg, src_edge, suffix)
+    align = _align_template_arg(node, parent_state, parent_sdfg, src_edge, suffix, vlen, allow_shift=True)
     call = f"dace::tileops::tile_load<{dst_dtype}, {vlen}, {masked}{align}>(_dst, _src, {mask_arg}, {stride});"
     inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
     return nodes.Tasklet(
@@ -868,7 +924,7 @@ def make_store_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Ta
     stride = _k1_array_stride(node, parent_sdfg, dst_edge, node.dst_dims)
     masked = "true" if node.has_mask else "false"
     mask_arg = "_mask" if node.has_mask else "nullptr"
-    align = _align_template_arg(node, parent_state, parent_sdfg, dst_edge, suffix)
+    align = _align_template_arg(node, parent_state, parent_sdfg, dst_edge, suffix, vlen)
     call = f"dace::tileops::tile_store<{dst_dtype}, {vlen}, {masked}{align}>(_dst, _src, {mask_arg}, {stride});"
     inputs = {"_src"} | ({"_mask"} if node.has_mask else set())
     return nodes.Tasklet(

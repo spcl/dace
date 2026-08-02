@@ -247,6 +247,30 @@ DACE_DFI void half_copy_aligned(__half* __restrict__ dst, const __half* __restri
     for (int i = 0; i < VLEN; ++i) dst[i] = src[i];
   }
 }
+
+// Contiguous ``__half`` block read whose FIRST element sits SHIFT elements above an aligned
+// 32-bit word -- a +-1 stencil neighbour is the whole motivation. A 32-bit load must start on a
+// 4-byte boundary (an unaligned LDG.E is invalid on NVIDIA, not merely slow), so the aligned
+// window BELOW the access is read instead and the wanted elements are cut out of the register
+// pair with PRMT. Two aligned words cover any SHIFT < 4/sizeof(__half) plus two elements.
+//
+// PRMT here is not the cost -- the per-element LDG.E.U16 swarm it replaces is. Neighbouring
+// accesses in the same row round DOWN to the same words, so the loads CSE away and a 3-point
+// stencil ends up reading each word once.
+//
+// Read-only: the window covers elements the caller does not own, which a store would clobber.
+// The caller has proven the window stays inside the allocation; below element 0 is impossible
+// because the base is ``src - SHIFT`` with the access offset >= SHIFT by construction.
+template <int VLEN, int SHIFT>
+DACE_DFI void half_read_shifted(__half* __restrict__ dst, const __half* __restrict__ src) {
+  static_assert(VLEN % 2 == 0 && SHIFT > 0 && SHIFT * sizeof(__half) < 4, "shifted half read needs 0 < SHIFT < 2");
+  // Byte selector picking bytes [SHIFT*2, SHIFT*2+4) out of the {hi,lo} 8-byte pair.
+  constexpr unsigned sel = 0x3210u + 0x1111u * (SHIFT * sizeof(__half));
+  const unsigned* base = reinterpret_cast<const unsigned*>(src - SHIFT);
+#pragma unroll
+  for (int i = 0; i < VLEN; i += 2)
+    *reinterpret_cast<unsigned*>(dst + i) = __byte_perm(base[i / 2], base[i / 2 + 1], sel);
+}
 #endif
 
 // ----------------------------- tile_binop -----------------------------
@@ -359,17 +383,22 @@ DACE_DFI void tile_ite(T* __restrict__ out, const CondT* __restrict__ cond, cons
 }
 
 // ----------------------------- tile_load ------------------------------
-// ``Align`` is the byte alignment of the ARRAY side (``src``) that the caller can prove; it
-// defaults to the element alignment, which selects the per-element loop below -- so a caller that
-// does not supply it gets exactly the code this template emitted before the parameter existed.
-template <typename T, int VLEN, bool Masked, int Align = alignof(T)>
+// ``Align`` is the byte alignment of the ARRAY side that the caller can prove; it defaults to the
+// element alignment, which selects the per-element loop below -- so a caller that does not supply
+// it gets exactly the code this template emitted before the parameter existed. ``Shift`` is how
+// many elements ``src`` sits ABOVE that aligned address: 0 means ``src`` itself is aligned,
+// nonzero routes to the aligned-window read (``half_read_shifted``).
+template <typename T, int VLEN, bool Masked, int Align = alignof(T), int Shift = 0>
 DACE_DFI void tile_load(T* __restrict__ dst, const T* __restrict__ src, const bool* __restrict__ mask,
                         std::int64_t stride = 1) {
 #if defined(__CUDACC__)
   // A mask makes the lanes divergent and a non-unit stride is not contiguous; both keep the loop.
   if constexpr (__is_same(T, __half) && !Masked && Align >= 4 && VLEN % 2 == 0) {
     if (stride == 1) {
-      half_copy_aligned<VLEN, Align>(dst, src);
+      if constexpr (Shift == 0)
+        half_copy_aligned<VLEN, Align>(dst, src);
+      else
+        half_read_shifted<VLEN, Shift>(dst, src);
       return;
     }
   }
