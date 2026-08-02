@@ -1132,6 +1132,39 @@ def _prune_dangling_read(state: SDFGState, read: MultiConnectorEdge[Memlet]) -> 
             # memlet propagation trips over ("no internal edge for this
             # external connector"). Keep unwinding outwards.
             _prune_dangling_read(state, in_edge)
+            _preserve_initialization_order(state, in_edge.src, source)
         return
     if isinstance(source, nodes.AccessNode) and state.degree(source) == 0:
         state.remove_node(source)
+
+
+def _preserve_initialization_order(state: SDFGState, source: nodes.Node, entry: nodes.EntryNode) -> None:
+    """
+    Keep an accumulator's initialization ordered before the conflict-resolved
+    write that now folds into it.
+
+    Dropping the self-read removes the only path from the write that produced
+    the element's starting value (``b[:] = 0`` before a ``+=`` map) to the scope
+    that updates it. Both writes then sit in the same state with nothing
+    ordering them, which is wrong twice over: the update may be scheduled before
+    the initialization, and dead-dataflow elimination sees an access node no one
+    reads and removes the initialization outright -- leaving the accumulation to
+    fold into uninitialized memory, which reads as a nondeterministic garbage
+    result rather than as a compile-time error.
+
+    An empty (control-only) edge re-establishes the dependency without
+    reintroducing the read: it carries no data, so the conflict resolution stays
+    the sole updater of the element.
+    """
+    if not isinstance(source, nodes.AccessNode) or source not in state.nodes():
+        return  # Already pruned as a node that only fed the self-read
+    if state.in_degree(source) == 0:
+        return  # Nothing wrote it here, so there is no order to preserve
+    if any(edge.dst is entry and edge.data.is_empty() for edge in state.out_edges(source)):
+        return  # Already ordered
+    if source in state.bfs_nodes(entry):
+        # The scope itself feeds this node (the conflict-resolved write lands on
+        # the very node holding the initial value). It is already ordered, and
+        # an edge back into the scope would close a cycle.
+        return
+    state.add_nedge(source, entry, Memlet())

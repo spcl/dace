@@ -23,6 +23,7 @@ import pytest
 
 import dace
 from dace.memlet import Memlet
+from dace.sdfg import nodes
 from dace.transformation.passes.write_conflict_resolution import ResolveWriteConflicts
 
 N = 16
@@ -40,6 +41,31 @@ def _accumulating_map(code: str) -> dace.SDFG:
     state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='__in', memlet=Memlet('a[i]'))
     state.add_memlet_path(state.add_read('b'), entry, tasklet, dst_conn='__acc', memlet=Memlet('b[0]'))
     state.add_memlet_path(tasklet, exit_node, state.add_write('b'), src_conn='__out', memlet=Memlet('b[0]'))
+    return sdfg
+
+
+def _initialized_accumulating_map() -> dace.SDFG:
+    """``b[0] = 0; for i in map: b[0] = b[0] + a[i]; out[0] = b[0]``, with the
+    initialization and the accumulation in ONE state — the shape a schedule
+    tree lowers an accumulator to, where the self-read is the only thing
+    ordering the two writes."""
+    sdfg = dace.SDFG('initialized_accumulating_map')
+    sdfg.add_array('a', [N], dace.float64)
+    sdfg.add_array('out', [1], dace.float64)
+    sdfg.add_transient('b', [1], dace.float64)
+    state = sdfg.add_state()
+
+    init = state.add_tasklet('init', {}, {'__out'}, '__out = 0')
+    initialized = state.add_access('b')
+    state.add_edge(init, '__out', initialized, None, Memlet('b[0]'))
+
+    entry, exit_node = state.add_map('m', dict(i=f'0:{N}'))
+    tasklet = state.add_tasklet('update', {'__acc', '__in'}, {'__out'}, '__out = __acc + __in')
+    state.add_memlet_path(state.add_read('a'), entry, tasklet, dst_conn='__in', memlet=Memlet('a[i]'))
+    state.add_memlet_path(initialized, entry, tasklet, dst_conn='__acc', memlet=Memlet('b[0]'))
+    accumulated = state.add_access('b')
+    state.add_memlet_path(tasklet, exit_node, accumulated, src_conn='__out', memlet=Memlet('b[0]'))
+    state.add_nedge(accumulated, state.add_write('out'), Memlet('b[0] -> [0]'))
     return sdfg
 
 
@@ -303,6 +329,41 @@ def test_reports_conflicting_overwrite():
     assert warned
 
 
+def test_accumulator_initialization_survives_resolution():
+    """Dropping the self-read must not orphan the write that produced the
+    accumulator's starting value.
+
+    That read is the only edge ordering ``b[0] = 0`` before the map that folds
+    into ``b[0]``. Removing it with nothing in its place leaves two unordered
+    writes to the same element in one state, and dead-dataflow elimination then
+    removes the initialization outright — the accumulation folds into
+    uninitialized memory, which surfaces as a nondeterministic garbage result
+    rather than as a compile-time error.
+    """
+    sdfg = _initialized_accumulating_map()
+    result, warned = _apply(sdfg)
+    assert len(result['resolved']) == 1 and not result['unresolved'] and not warned
+
+    state = sdfg.states()[0]
+    init = next(node for node in state.nodes() if isinstance(node, nodes.Tasklet) and node.label == 'init')
+    initialized = next(iter(state.successors(init)))
+    entry = next(node for node in state.nodes() if isinstance(node, nodes.MapEntry))
+    assert entry in state.successors(initialized), 'the initialization no longer precedes the accumulation'
+    sdfg.validate()
+
+    # The ordering is what keeps the initialization from looking dead.
+    sdfg.simplify()
+    assert any(
+        isinstance(node, nodes.Tasklet) and node.label == 'init' for state in sdfg.states()
+        for node in state.nodes()), 'the initialization was eliminated as dead'
+
+    rng = np.random.default_rng(0)
+    a = rng.random(N)
+    out = np.full(1, np.nan)
+    sdfg(a=a, out=out)
+    assert np.allclose(out[0], a.sum())
+
+
 def test_per_iteration_transient_is_not_a_conflict():
     """A transient used only inside the scope is allocated per scope instance
     (``AllocationLifetime.Scope``), so concurrent writes to it cannot collide.
@@ -467,6 +528,7 @@ if __name__ == '__main__':
     test_existing_conflict_resolution_is_left_alone()
     test_folds_an_existing_conflict_resolution_over_a_self_read()
     test_reports_conflicting_overwrite()
+    test_accumulator_initialization_survives_resolution()
     test_per_iteration_transient_is_not_a_conflict()
     for _program, _arguments in [(_augmented, _matrix), (_spelled_out, _matrix), (_combiner_call, _matrix),
                                  (_partitioned_replacement, (np.zeros((4, 8)), np.zeros(4)))]:
