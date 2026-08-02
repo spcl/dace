@@ -506,6 +506,8 @@ def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> 
                 continue
             if isinstance(desc, _dd.Scalar):
                 continue
+            if isinstance(desc, _dd.View):
+                continue  # alias of the viewed array: widened in place, never descriptor-swapped
             if not isinstance(desc, _dd.Array):
                 continue
             shape = tuple(desc.shape)

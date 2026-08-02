@@ -199,6 +199,9 @@ class WidenAccesses(ppl.Pass):
 
         SYMMETRIC: walks in-edges (writes) AND out-edges (reads); non-CONSTANT on
         either side marks the data lane-dep.
+
+        A View joins them: it is an ALIAS of the array it views, never a buffer of its own, so
+        its accesses widen in place (step 2) and it is never descriptor-swapped (step 4).
         """
         lane_dep: Set[str] = set()
         for state in inner_sdfg.states():
@@ -206,7 +209,7 @@ class WidenAccesses(ppl.Pass):
                 if not isinstance(an, AccessNode):
                     continue
                 desc = inner_sdfg.arrays.get(an.data)
-                if desc is None or desc.transient:
+                if desc is None or (desc.transient and not isinstance(desc, dd.View)):
                     continue
                 if an.data in lane_dep:
                     continue
@@ -420,7 +423,7 @@ class WidenAccesses(ppl.Pass):
                             and not self._edge_reads_lane_dependent(edge, state, inner_sdfg, iter_vars)):
                         continue
                     desc = inner_sdfg.arrays.get(dst_name)
-                    if desc is None or not desc.transient:
+                    if desc is None or not desc.transient or isinstance(desc, dd.View):
                         continue
                     if dst_name in index_symbols:
                         continue  # index/address symbol -> stays scalar
@@ -449,7 +452,7 @@ class WidenAccesses(ppl.Pass):
                     for e in state.out_edges(node):
                         for nm in self._data_names_of_edge(e, "dst"):
                             desc = inner_sdfg.arrays.get(nm)
-                            if desc is None or not desc.transient:
+                            if desc is None or not desc.transient or isinstance(desc, dd.View):
                                 continue
                             if nm in index_symbols:
                                 continue  # index/address symbol -> stays scalar

@@ -14,7 +14,8 @@ import numpy as np
 
 import dace
 from dace import properties
-from dace.libraries.tileops import TileBinop, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore, TileUnop
+from dace.libraries.tileops import (TileBinop, TileIota, TileITE, TileLoad, TileMaskGen, TileReduce, TileStore,
+                                    TileUnop)
 from dace.sdfg import SDFG
 from dace.sdfg.nodes import CodeBlock, MapEntry, NestedSDFG, Tasklet
 from dace.sdfg.state import SDFGState
@@ -346,6 +347,14 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return "Symbol", expr, None
         an_name = self._materialise_lane_id_tile(inner_state, expr, iter_vars)
         return "Tile", None, an_name
+
+    @staticmethod
+    def _per_lane_expr(expr: str, iter_vars: Tuple[str, ...]) -> str:
+        """C++ spelling of ``expr`` with each tile iter-var ``v`` expanded to ``v + __l<k>``."""
+        from dace import symbolic
+        from dace.codegen.common import sym2cpp
+        subs = {symbolic.symbol(v): symbolic.symbol(v) + symbolic.symbol(f"__l{k}") for k, v in enumerate(iter_vars)}
+        return sym2cpp(symbolic.pystr_to_symbolic(expr).subs(subs))
 
     def _materialise_lane_id_tile(self, inner_state: SDFGState, expr: str, iter_vars: Tuple[str, ...]) -> str:
         """Mint a per-lane int64 tile = ``expr`` at ``(iter_var_k -> iter_var_k + __l_k)``.
@@ -765,10 +774,18 @@ class ConvertTaskletsToTileOps(ppl.Pass):
                        and tuple(out_desc.shape) == tuple(self.widths))
         if not is_tile_out:
             return False  # scalar const store -- keep the single-statement python tasklet
-        tl = TileLoad(name=f"{tasklet.label}_const_bcast",
-                      widths=tuple(self.widths),
-                      src_kind="Symbol",
-                      src_expr=str(expr))
+        # A tile iter-var in the expression makes the value LANE-VARYING (``Yi[:, j] = j``,
+        # npbench mandelbrot2): broadcasting the tile base would write ``j`` to all W lanes.
+        # Expand ``v -> v + __l<k>`` per lane and fill with a TileIota instead.
+        if self._is_lane_id_dependent(str(expr), iter_vars):
+            tl = TileIota(name=f"{tasklet.label}_lane_iota",
+                          widths=tuple(self.widths),
+                          expr=self._per_lane_expr(str(expr), iter_vars))
+        else:
+            tl = TileLoad(name=f"{tasklet.label}_const_bcast",
+                          widths=tuple(self.widths),
+                          src_kind="Symbol",
+                          src_expr=str(expr))
         inner_state.add_node(tl)
         subset = ", ".join(f"0:{w}" for w in self.widths)
         inner_state.add_edge(tl, "_dst", out_edge.dst, out_edge.dst_conn, dace.Memlet(f"{out_edge.dst.data}[{subset}]"))
