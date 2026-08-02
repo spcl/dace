@@ -58,7 +58,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
-from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
+from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, supported_data_attribute)
 from dace.frontend.python.nextgen.lowering.access import (DataAccess, nondegenerate_shape, resolve_access,
                                                           scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
@@ -210,7 +210,7 @@ def _materialize_attribute_reads(value: ast.expr, state: LoweringState) -> ast.e
     """
     reads = [
         node for node in ast.walk(value) if isinstance(node, ast.Attribute)
-        and isinstance(getattr(node, 'ctx', ast.Load()), ast.Load) and node.attr in SUPPORTED_DATA_ATTRIBUTES
+        and isinstance(getattr(node, 'ctx', ast.Load()), ast.Load) and supported_data_attribute(node.attr)
     ]
     if not reads:
         return value
@@ -844,6 +844,12 @@ def _lower_view_call(target: ast.expr, call: ast.Call, qualname: str, state: Low
     function = _replacement_implementation(name, receiver, arguments, data_arguments, state)
     if function is None:
         return False
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    if oprepo.is_program_dependent(function):
+        # A replacement that reads the SDFG built so far is not a view producer,
+        # and running it on a scratch answers nothing (see
+        # :func:`_expansion_viable`): leave it to the deferred-call path.
+        return False
     trial = _run_view_trial(function, arguments, keywords, data_arguments, state)
     if trial is None:
         return False
@@ -1145,12 +1151,12 @@ def resolve_attribute_data(base: DataAccess, attr_name: str, state: LoweringStat
     through a :class:`~...treenodes.ReplacementCallNode` running the exact
     classic ATTRIBUTE registry implementation.
 
-    :return: The resolved access, or None when ``attr_name`` is not in
-             :data:`~dace.frontend.python.nextgen.common.SUPPORTED_DATA_ATTRIBUTES`,
+    :return: The resolved access, or None when ``attr_name`` has no lowering
+             path (:func:`~dace.frontend.python.nextgen.common.supported_data_attribute`),
              or the registry call is not viable here (the caller falls back
              to a callback).
     """
-    if attr_name not in SUPPORTED_DATA_ATTRIBUTES:
+    if not supported_data_attribute(attr_name):
         return None
     if attribute_aliases_source(base, attr_name):
         return _materialize_flat_view(base, state)
@@ -1194,13 +1200,22 @@ def _materialize_attribute_replacement(base: DataAccess, attr_name: str, state: 
     SDFG that the deferred expansion will actually succeed (the same
     trial-before-commit shape as ``_expansion_viable``, generalized in
     :func:`_run_attribute_trial` to look the implementation up by
-    ``(classname, attr_name)`` instead of a free-function qualname)."""
+    ``(classname, attr_name)`` instead of a free-function qualname).
+
+    A PROGRAM-DEPENDENT attribute skips the trial for the reason
+    :func:`_expansion_viable` documents, and takes its result descriptor from
+    the registry's own inference instead: ``ParameterArray.grad`` names the
+    gradient buffer an earlier ``torch.autograd.backward`` expansion created,
+    which no scratch SDFG holds."""
     from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
     typename = type(base.descriptor).__name__
     function = oprepo.Replacements.get_attribute(typename, attr_name)
     if function is None:
         return None
-    result_descriptor = _run_attribute_trial(function, base.container, state)
+    if oprepo.is_program_dependent(function):
+        result_descriptor = _inferred_attribute_descriptor(base.descriptor, attr_name)
+    else:
+        result_descriptor = _run_attribute_trial(function, base.container, state)
     if result_descriptor is None:
         return None
     descriptor = copy.deepcopy(result_descriptor)
@@ -1227,6 +1242,27 @@ def _unwrap_nested_call(result: Any) -> Any:
     if isinstance(result, tuple) and len(result) == 2 and isinstance(result[0], NestedCall):
         return result[1]
     return result
+
+
+def _inferred_attribute_descriptor(descriptor: data.Data, attr_name: str) -> Optional[data.Data]:
+    """
+    The result descriptor of an ATTRIBUTE-family replacement according to the
+    registry's own inference (``infers_attribute_descriptor``), for the
+    program-dependent attributes :func:`_run_attribute_trial` cannot answer
+    for. Returns None when the registry types no result, which leaves the
+    caller on the callback path.
+    """
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    infer_fn = oprepo.Replacements.get_attribute_descriptor_inference(type(descriptor), attr_name)
+    if infer_fn is None:
+        return None
+    try:
+        result = infer_fn(descriptor)
+    except Exception:
+        return None
+    if isinstance(result, (tuple, list)) and len(result) == 1:
+        result = result[0]
+    return result if isinstance(result, data.Data) else None
 
 
 def _run_attribute_trial(function, container: str, state: LoweringState) -> Optional[data.Data]:
@@ -1319,7 +1355,7 @@ def rewrite_attribute_subscript_base(subscript: ast.Subscript, state: LoweringSt
     Returns ``subscript`` unchanged when its base is not a rewritable
     attribute read.
     """
-    if not isinstance(subscript.value, ast.Attribute) or subscript.value.attr not in SUPPORTED_DATA_ATTRIBUTES:
+    if not isinstance(subscript.value, ast.Attribute) or not supported_data_attribute(subscript.value.attr):
         return subscript
     base = resolve_access(subscript.value.value, state)
     if base is None:
@@ -1944,6 +1980,7 @@ def _lower_replacement_call(target: Optional[ast.expr],
                                data_arguments=data_arguments,
                                receiver=receiver,
                                receiver_object=receiver_object))
+    _apply_self_descriptor_side_effect(name, receiver, receiver_object, arguments, keywords, state)
     if target_container in state.context.containers and isinstance(state.context.containers[target_container].dtype,
                                                                    dtypes.pyobject):
         # An opaque HANDLE this replacement produced, which the next one
@@ -1961,6 +1998,44 @@ def _lower_replacement_call(target: Optional[ast.expr],
     if written is not None and copy_out:
         _emit_replacement_copy_out(target_container, written, state)
     return True
+
+
+def _apply_self_descriptor_side_effect(name: str, receiver: Optional[str], receiver_object: Any, arguments: List,
+                                       keywords: dict, state: LoweringState) -> None:
+    """
+    Apply a method replacement's effect on its RECEIVER's descriptor, as the
+    registry reports it through ``infers_method_self_descriptor``.
+
+    Some method replacements change what their receiver *is* instead of
+    producing a result: ``x.requires_grad_()`` converts ``x`` into a
+    :class:`~dace.data.ml.ParameterArray`, and everything that follows depends
+    on the repository agreeing — ``x.grad`` is only typeable, and only
+    lowerable, against the converted descriptor. The classic frontend performs
+    the conversion inside the replacement itself (on ``sdfg.arrays``), which a
+    deferred expansion cannot do in time for the rest of the frontend to see
+    it; the inference entry exists precisely so the descriptor change can be
+    made here, at lowering time, on the container repository.
+
+    A no-op for a free function, an object receiver (no repository container to
+    retype), or a method the registry declares no self-inference for.
+    """
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    if receiver is None or receiver_object is not None or receiver not in state.context.containers:
+        return
+    descriptor = state.context.containers[receiver]
+    infer_fn = oprepo.Replacements.get_method_self_descriptor_inference(type(descriptor), name)
+    if infer_fn is None:
+        return
+    try:
+        # The receiver is the replacement's first positional argument (see the
+        # caller); the inference entry takes its DESCRIPTOR there instead.
+        updated = infer_fn(descriptor, *arguments[1:], **keywords)
+    except Exception:
+        return  # A registry entry that cannot type this call leaves the receiver alone
+    if isinstance(updated, (tuple, list)) and len(updated) == 1:
+        updated = updated[0]
+    if isinstance(updated, data.Data):
+        state.context.retype_container(receiver, updated)
 
 
 def _replacement_write_target(access: DataAccess, inferred, state: LoweringState) -> Tuple[str, bool]:
@@ -2147,8 +2222,17 @@ def _expansion_viable(name: str,
     Runs the exact code path of ``tree_to_sdfg.visit_ReplacementCallNode``:
     non-viable outcomes are exceptions, recorded view bindings, and
     unsupported return forms.
+
+    A PROGRAM-DEPENDENT replacement (``oprepo.is_program_dependent``) is
+    exempt: it reads the SDFG built so far — ``torch.autograd.backward``
+    differentiates everything parsed up to its call site — and the scratch
+    holds only the containers this one call names, so the trial would report
+    a failure the real expansion never has.
     """
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
     function = _replacement_implementation(name, receiver, arguments, data_arguments, state, receiver_object)
+    if oprepo.is_program_dependent(function):
+        return True
     scratch, scratch_state, shim = _replacement_trial_scratch(
         data_arguments, state, {receiver: receiver_object} if receiver_object is not None else None)
     try:
@@ -2273,7 +2357,7 @@ def _replacement_attribute_argument(expression: ast.expr, state: LoweringState) 
     if not isinstance(expression, ast.Attribute):
         return None
     access = resolve_access(expression, state)
-    if access is None and expression.attr in SUPPORTED_DATA_ATTRIBUTES:
+    if access is None and supported_data_attribute(expression.attr):
         if state.emitter.in_dataflow_scope:
             # Materializing the read is a deferred replacement call, which is
             # not a legal node inside a scope (see

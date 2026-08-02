@@ -24,6 +24,7 @@ TensorOrTensors = Union[str, Sequence[str]]
 
 
 @op_repository.replaces('torch.autograd.backward')
+@op_repository.program_dependent
 def backward(pv: newast.ProgramVisitor,
              sdfg: SDFG,
              state: SDFGState,
@@ -119,6 +120,7 @@ def _infer_backward(input_descs, tensors: TensorOrTensors, grads: Optional[Tenso
 
 
 @op_repository.replaces_attribute('ParameterArray', 'grad')
+@op_repository.program_dependent
 def grad(pv: 'ProgramVisitor', sdfg: SDFG, state: SDFGState, arr: str) -> str:
     """
     Returns the name of the gradient buffer of the given array.
@@ -176,6 +178,7 @@ def _infer_requires_grad_self(self_desc, **_kw):
 
 @op_repository.replaces_method('Array', 'backward')
 @op_repository.replaces_method('Scalar', 'backward')
+@op_repository.program_dependent
 def backward_method(pv: newast.ProgramVisitor, sdfg: SDFG, state: SDFGState, self: str, grad: Optional[str] = None):
     """
     Alias for ``torch.autograd.backward(self)``

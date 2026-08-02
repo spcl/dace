@@ -8,7 +8,7 @@ shared ufunc table.
 """
 import ast
 import copy
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from dace import data, subsets, symbolic
 from dace.memlet import Memlet
@@ -140,7 +140,8 @@ def _emit_axis_reduction(target: DataAccess, specification: dict, ufunc_name: st
     source_sizes = source.subset.size()
     rank = len(source_sizes)
     kept_dims = [dim for dim in range(rank) if dim != axis]
-    if len(target.subset.ranges) != len(kept_dims):
+    placement = _target_placement(target, source_sizes, kept_dims)
+    if placement is None:
         raise UnsupportedFeatureError('Per-axis reduction target rank does not match the reduced source',
                                       state.context.filename,
                                       statement,
@@ -157,8 +158,13 @@ def _emit_axis_reduction(target: DataAccess, specification: dict, ufunc_name: st
 
     def _target_subset() -> subsets.Range:
         ranges = []
-        for target_dim, source_dim in enumerate(kept_dims):
-            start, _, step = target.subset.ranges[target_dim]
+        for target_dim, (start, _, step) in enumerate(target.subset.ranges):
+            source_dim = placement.get(target_dim)
+            if source_dim is None:
+                # A size-1 target dimension the reduced source has no axis for
+                # (a keepdims target): it holds exactly one element, pinned.
+                ranges.append((start, start, 1))
+                continue
             index = start + symbolic.pystr_to_symbolic(f'__i{source_dim}') * step
             ranges.append((index, index, 1))
         return subsets.Range(ranges)
@@ -193,6 +199,38 @@ def _emit_axis_reduction(target: DataAccess, specification: dict, ufunc_name: st
     main_outputs = {'__out': Memlet(data=target.container, subset=_target_subset(), wcr=specification['reduce'])}
     with state.emitter.scope(tn.MapScope(node=main_map, children=[])):
         state.emitter.emit(tn.TaskletNode(node=main_tasklet, in_memlets=main_inputs, out_memlets=main_outputs))
+
+
+def _target_placement(target: DataAccess, source_sizes: List, kept_dims: List[int]) -> Optional[Dict[int, int]]:
+    """
+    Map each target dimension of a per-axis reduction onto the source
+    dimension that indexes it, or None when the two cannot be lined up.
+
+    The target need not have the reduced source's rank. NumPy assignment
+    squeezes size-1 dimensions on both sides, and the ``keepdims`` form of a
+    reduction relies on exactly that: ``reduced[:] = numpy.sum(data, axis=1)``
+    with ``data`` of shape ``(M, N)`` and ``reduced`` of shape ``(M, 1)`` is
+    how ONNX's ``ReduceSum`` expansion writes its result
+    (``dace/libraries/onnx/op_implementations/reduction_ops.py``), and the
+    classic frontend accepts it. So the alignment is between the
+    NON-degenerate dimensions of each side, in order; every other target
+    dimension holds a single element and is pinned by the caller.
+
+    :return: A dict of {target dimension: source dimension}, or None if the
+             sides carry a different number of non-degenerate dimensions
+             (a genuine broadcast, which this mechanism cannot express --
+             the extents would have to iterate the target rather than the
+             source).
+    """
+    target_sizes = target.subset.size()
+    if len(target_sizes) == len(kept_dims):
+        # Same rank: the kept dimensions correspond one-to-one, in order.
+        return dict(enumerate(kept_dims))
+    kept_extents = [dim for dim in kept_dims if source_sizes[dim] != 1]
+    target_extents = [dim for dim, size in enumerate(target_sizes) if size != 1]
+    if len(kept_extents) != len(target_extents):
+        return None
+    return dict(zip(target_extents, kept_extents))
 
 
 def _emit_scalar_tasklet(label: str, connector: str, source: DataAccess, target: DataAccess,

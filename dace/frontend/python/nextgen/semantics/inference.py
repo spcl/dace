@@ -22,7 +22,7 @@ import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
-from dace.frontend.python.nextgen.common import SUPPORTED_DATA_ATTRIBUTES, UnsupportedFeatureError, normalize_qualname
+from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, supported_data_attribute)
 from dace.frontend.python.nextgen.semantics import values
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
 from dace.frontend.python.nextgen.semantics.indexing import array_index_slots, reverse_normalized, substitute_slots
@@ -1116,11 +1116,12 @@ class InferenceService:
                 # ATTRIBUTE family of the replacement registry so
                 # ``lowering.dispatch``'s dedicated frontend paths (mirroring
                 # the reshape view precedent, ``dispatch._lower_reshape_call``)
-                # can materialize them. Scoped to ``SUPPORTED_DATA_ATTRIBUTES``
-                # -- see its docstring for why a registered attribute outside
-                # that set must keep failing inference here rather than typing
+                # can materialize them. Scoped to the attributes that HAVE
+                # such a path (``common.supported_data_attribute``) -- see its
+                # docstring for why a registered attribute outside that set
+                # must keep failing inference here rather than typing
                 # successfully with no matching lowering path.
-                if node.attr in SUPPORTED_DATA_ATTRIBUTES:
+                if supported_data_attribute(node.attr):
                     from dace.frontend.common import op_repository as oprepo  # Deferred: registry population
                     infer_fn = oprepo.Replacements.get_attribute_descriptor_inference(type(descriptor), node.attr)
                     if infer_fn is not None:

@@ -189,6 +189,48 @@ def test_full_reduction_of_a_trailing_singleton_array():
     _assert_no_callbacks(tree)
 
 
+@pytest.mark.parametrize('axis', [0, 1, -1])
+def test_per_axis_reduction_into_a_keepdims_target(axis):
+    """``reduced[:] = numpy.sum(data, axis=k)`` where ``reduced`` keeps the
+    reduced axis as a size-1 dimension. NumPy assignment squeezes size-1
+    dimensions on both sides, so the reduced ``(4,)`` result lands in a
+    ``(4, 1)`` target -- the shape ONNX's ``ReduceSum`` expansion writes
+    (``dace/libraries/onnx/op_implementations/reduction_ops.py``). Matching the
+    two by RANK rejected it, and every ONNX reduction fell back."""
+    shape = (1, 5) if axis == 0 else (4, 1)
+
+    @dace.program
+    def keepdims_sum(data: dace.float64[4, 5], reduced: dace.float64[shape[0], shape[1]]):
+        reduced[:] = np.sum(data, axis=axis)
+
+    data = np.random.rand(4, 5)
+    tree = nextgen.parse_program(keepdims_sum, data, np.zeros(shape))
+    _assert_no_callbacks(tree)
+
+    reduced = np.zeros(shape)
+    from_schedule_tree(tree)(data=data.copy(), reduced=reduced)
+    assert np.allclose(reduced, data.sum(axis=axis, keepdims=True))
+
+
+def test_per_axis_reduction_of_a_degenerate_kept_dimension():
+    """The kept dimensions may themselves be size 1 (``(4, 1, 5)`` reduced over
+    its last axis into a ``(4, 1)`` target). Aligning only the non-degenerate
+    dimensions must not leave the map parameter of a size-1 kept dimension out
+    of the write subset, which reads as a write conflict."""
+
+    @dace.program
+    def degenerate_sum(data: dace.float64[4, 1, 5], reduced: dace.float64[4, 1]):
+        reduced[:] = np.sum(data, axis=2)
+
+    data = np.random.rand(4, 1, 5)
+    tree = nextgen.parse_program(degenerate_sum, data, np.zeros((4, 1)))
+    _assert_no_callbacks(tree)
+
+    reduced = np.zeros((4, 1))
+    from_schedule_tree(tree)(data=data.copy(), reduced=reduced)
+    assert np.allclose(reduced, data.sum(axis=2))
+
+
 def test_symbolic_intrinsic_map_bound():
     """``ceiling(N / 32)`` is resolved by the symbolic parser, not by the
     program (nothing defines the name — the same spelling
@@ -288,6 +330,9 @@ if __name__ == '__main__':
     test_descriptor_attribute_argument_of_a_registry_call()
     test_compound_operand_of_a_registry_operator()
     test_full_reduction_of_a_trailing_singleton_array()
+    for _axis in (0, 1, -1):
+        test_per_axis_reduction_into_a_keepdims_target(_axis)
+    test_per_axis_reduction_of_a_degenerate_kept_dimension()
     test_symbolic_intrinsic_map_bound()
     test_nested_program_specializes_its_shape_symbols()
     test_sdfg_call_result_into_a_subscript_target()

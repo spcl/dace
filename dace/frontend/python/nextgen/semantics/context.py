@@ -196,6 +196,29 @@ class ProgramContext:
             self.symbols.setdefault(free_symbol.name, free_symbol)
         return actual_name
 
+    def retype_container(self, name: str, descriptor: data.Data) -> None:
+        """
+        Replace an existing container's descriptor in place, keeping the name,
+        every binding to it, and its ``transient`` flag.
+
+        Used for a method replacement that changes what its receiver IS rather
+        than producing a new container (``x.requires_grad_()`` turns ``x`` into
+        a :class:`~dace.data.ml.ParameterArray`), which the registry reports
+        through ``infers_method_self_descriptor``.
+
+        The ``transient`` flag is deliberately taken from the container that is
+        already registered rather than from the new descriptor: whether a
+        container is program-visible storage or a temporary is the frontend's
+        own bookkeeping — an argument that gains a gradient is still an
+        argument — and the classic frontend's in-place conversion
+        (``ParameterArray.make_parameter``) leaves it alone for the same reason.
+        """
+        existing = self.containers[name]
+        descriptor.transient = existing.transient
+        self.containers[name] = descriptor
+        for free_symbol in descriptor.free_symbols:
+            self.symbols.setdefault(free_symbol.name, free_symbol)
+
     def bind(self, source_name: str, container_name: str, declared: bool = False) -> None:
         """Bind (or rebind) a source-level name to a repository container.
 

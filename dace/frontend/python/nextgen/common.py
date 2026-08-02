@@ -74,6 +74,34 @@ class TreeVerificationError(FrontendError):
 #: tasklet code instead of degrading cleanly to a callback.
 SUPPORTED_DATA_ATTRIBUTES = frozenset({'T', 'real', 'imag', 'flat'})
 
+
+def supported_data_attribute(attr_name: str) -> bool:
+    """
+    Whether an attribute read on a data container has a lowering path, i.e.
+    whether inference may report a ``'data'`` result for it (see
+    :data:`SUPPORTED_DATA_ATTRIBUTES` for what rides on that agreement).
+
+    Beyond the fixed set, a registered attribute qualifies when its
+    implementation is marked PROGRAM-DEPENDENT
+    (``op_repository.is_program_dependent``): those take the deferred
+    :class:`~...treenodes.ReplacementCallNode` path in
+    ``lowering.dispatch._materialize_attribute_replacement`` unconditionally,
+    so the lowering path they need exists by construction and the library
+    registering them needs no change here (``ParameterArray.grad`` is the
+    motivating case).
+
+    The question is asked by NAME, ahead of resolving what the base is: a name
+    that gets this far but whose descriptor class has no registry entry
+    (``.grad`` on a plain ``Array``) is turned down by the class-keyed lookup
+    downstream and degrades to a callback, exactly as an unregistered
+    attribute does.
+    """
+    if attr_name in SUPPORTED_DATA_ATTRIBUTES:
+        return True
+    from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
+    return attr_name in oprepo.Replacements.program_dependent_attributes()
+
+
 #: Real module paths under which a registry-facing name is actually defined,
 #: rewritten to the shorter form used as replacement-registry keys (e.g. a
 #: callee resolved to its real module ``dace.frontend.python.wrappers.ndarray``

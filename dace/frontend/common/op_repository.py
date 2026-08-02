@@ -96,6 +96,21 @@ class Replacements(object):
         return None
 
     @staticmethod
+    def program_dependent_attributes() -> frozenset:
+        """
+        The ATTRIBUTE-family attribute names whose implementation is marked
+        PROGRAM-DEPENDENT (see :data:`PROGRAM_DEPENDENT_ATTRIBUTE`), across
+        every registered descriptor class.
+
+        Names only: a frontend gating attribute reads by name (rather than by
+        the base's descriptor class, which it may not have resolved yet) asks
+        this, then lets the class-keyed :meth:`get_attribute` lookup turn down
+        the ones that do not apply.
+        """
+        return frozenset(attr_name for (_, attr_name), function in Replacements._attr_rep.items()
+                         if is_program_dependent(function))
+
+    @staticmethod
     def get_descriptor_inference(name: str):
         """Returns a lightweight descriptor-inference function for a named call, or None."""
         return Replacements._dtype_rep.get(name, None)
@@ -224,6 +239,40 @@ def is_elementwise_operator(implementation: Optional[Callable]) -> bool:
     for anything unregistered or unmarked — see
     :data:`ELEMENTWISE_OPERATOR_ATTRIBUTE` for why that is the safe default."""
     return bool(getattr(implementation, ELEMENTWISE_OPERATOR_ATTRIBUTE, False))
+
+
+#: Attribute marking a replacement implementation as PROGRAM-DEPENDENT: it
+#: reads or rewrites the SDFG built so far, rather than only the containers
+#: named in its own call. The autodiff replacements are the motivating case —
+#: ``torch.autograd.backward`` runs a dependency analysis over everything
+#: parsed up to that point, and ``ParameterArray.grad`` names a buffer an
+#: earlier ``backward`` created.
+#:
+#: Frontends that decide whether a replacement can be deferred by TRIAL-RUNNING
+#: it on a scratch SDFG (see
+#: ``dace.frontend.python.nextgen.lowering.dispatch._expansion_viable``) must
+#: skip that trial for these: a scratch SDFG carries none of the program's
+#: history, so the trial answers a question the implementation was never asked.
+#: The registry's descriptor inference is the authority on their result instead.
+#:
+#: Unmarked is the conservative answer: an ordinary replacement stays subject
+#: to the trial, which is what keeps a build-time fallback (a callback) from
+#: becoming a hard error at SDFG-construction time.
+PROGRAM_DEPENDENT_ATTRIBUTE = '__dace_program_dependent__'
+
+
+def program_dependent(func: Callable) -> Callable:
+    """Mark a replacement implementation as program-dependent (see
+    :data:`PROGRAM_DEPENDENT_ATTRIBUTE`)."""
+    setattr(func, PROGRAM_DEPENDENT_ATTRIBUTE, True)
+    return func
+
+
+def is_program_dependent(implementation: Optional[Callable]) -> bool:
+    """Whether a replacement implementation depends on the surrounding program.
+    False for anything unregistered or unmarked — see
+    :data:`PROGRAM_DEPENDENT_ATTRIBUTE` for why that is the safe default."""
+    return bool(getattr(implementation, PROGRAM_DEPENDENT_ATTRIBUTE, False))
 
 
 def operand_lookup_key(operand: Any) -> Union[str, Type]:
