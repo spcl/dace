@@ -311,7 +311,7 @@ def _lower_registry_operator(target: DataAccess, value: ast.expr, statement: ast
                                keyword_arguments={},
                                data_arguments=data_arguments))
     if copy_out:
-        _emit_replacement_copy_out(target_container, target, state)
+        _emit_replacement_copy_out(target_container, target, statement, state)
     return True
 
 
@@ -1997,7 +1997,7 @@ def _lower_replacement_call(target: Optional[ast.expr],
                                                                               order=len(
                                                                                   state.context.replacement_handles))
     if written is not None and copy_out:
-        _emit_replacement_copy_out(target_container, written, state)
+        _emit_replacement_copy_out(target_container, written, statement, state)
     return True
 
 
@@ -2039,34 +2039,70 @@ def _apply_self_descriptor_side_effect(name: str, receiver: Optional[str], recei
         state.context.retype_container(receiver, updated)
 
 
+def _fills_subset(descriptor: Optional[data.Data], subset: subsets.Range) -> bool:
+    """
+    Whether a replacement's RESULT descriptor covers a write subset
+    elementwise — that is, whether an expansion filling the whole result
+    container performs exactly the write the statement asked for.
+
+    A result of a *different* shape is a broadcast (``a[:] = numpy.mean(b)``
+    fills ten elements from one), which no expansion can perform: it is handed
+    a container name and nothing else, so it writes element 0 and leaves the
+    rest of the target untouched.
+
+    An unknown descriptor answers True, leaving such a call on whatever path
+    it took before this check existed.
+    """
+    if descriptor is None:
+        return True
+    result_shape = [size for size in getattr(descriptor, 'shape', ()) if size != 1]
+    return [str(size) for size in result_shape] == [str(size) for size in nondegenerate_shape(subset)]
+
+
 def _replacement_write_target(access: DataAccess, inferred, state: LoweringState) -> Tuple[str, bool]:
     """
     The container a deferred replacement expansion should write into.
 
     ``ReplacementCallNode.target`` names a whole container — it carries no
-    subset — so a write into part of one (``out[i] = numpy.mean(...)`` inside a
-    map) has to go through a temporary that is copied into the target subset
-    afterwards. Without this the expansion writes the container's element 0 and
-    every map iteration silently overwrites the same element.
+    subset, and no shape of its own — so anything but a write that fills the
+    target container exactly has to go through a temporary that is copied into
+    the target subset afterwards: a write into PART of one (``out[i] =
+    numpy.mean(...)`` inside a map), or one that BROADCASTS a smaller result
+    across it (``out[:] = numpy.mean(...)``). Without this the expansion
+    writes the container's element 0 — silently overwritten by every map
+    iteration in the first case, and leaving the rest of the target at its
+    previous value in the second.
 
     :return: (container to expand into, whether a copy-out is needed).
     """
     descriptor = state.context.containers.get(access.container)
-    if descriptor is not None and str(access.subset) == str(subsets.Range.from_array(descriptor)):
+    if (descriptor is not None and str(access.subset) == str(subsets.Range.from_array(descriptor))
+            and _fills_subset(inferred.descriptor, access.subset)):
         return access.container, False
     result_descriptor = copy.deepcopy(inferred.descriptor)
     result_descriptor.transient = True
     return state.context.add_container('__replacement', result_descriptor), True
 
 
-def _emit_replacement_copy_out(source: str, target: DataAccess, state: LoweringState) -> None:
-    """Copy a replacement's whole-container result into the target subset it
-    was declared to write (see :func:`_replacement_write_target`)."""
+def _emit_replacement_copy_out(source: str, target: DataAccess, statement: ast.stmt, state: LoweringState) -> None:
+    """
+    Write a replacement's whole-container result into the target subset it was
+    declared to write (see :func:`_replacement_write_target`).
+
+    A result that fills the subset elementwise is a plain memlet copy. One that
+    does not is a broadcast, which a memlet cannot express (its two subsets
+    would cover different element counts), so it takes the elementwise
+    mechanism's map instead — the same lowering an ordinary ``a[:] = scalar``
+    assignment gets.
+    """
     descriptor = state.context.containers[source]
+    access = DataAccess(source, subsets.Range.from_array(descriptor), descriptor)
+    if not _fills_subset(descriptor, target.subset):
+        elementwise.emit_elementwise(target, '__in', [('__in', access)], statement, state)
+        return
     state.emitter.emit(
         tn.CopyNode(target=target.container,
-                    memlet=Memlet(data=source, subset=subsets.Range.from_array(descriptor),
-                                  other_subset=target.subset)))
+                    memlet=Memlet(data=source, subset=access.subset, other_subset=target.subset)))
 
 
 def _bind_compile_time_result(target: Optional[ast.expr],
@@ -2307,15 +2343,21 @@ def _lower_ufunc_replacement_call(target: Optional[ast.expr],
         return False
     if target_access is None:
         target_access = _call_target_access(target, inferred, statement, state)
+    # Same subset/broadcast routing as the free-function path
+    # (:func:`_lower_replacement_call`): the node's target is a bare container
+    # name, so a partial or broadcasting write expands into a temporary first.
+    target_container, copy_out = _replacement_write_target(target_access, inferred, state)
     display_name = f'numpy.{ufunc_name}' + (f'.{ufunc_method}' if ufunc_method else '')
     state.emitter.emit(
         tn.ReplacementCallNode(qualname=display_name,
-                               target=target_access.container,
+                               target=target_container,
                                arguments=arguments,
                                keyword_arguments=keywords,
                                data_arguments=data_arguments,
                                ufunc_name=ufunc_name,
                                ufunc_method=ufunc_method))
+    if copy_out:
+        _emit_replacement_copy_out(target_container, target_access, statement, state)
     return True
 
 

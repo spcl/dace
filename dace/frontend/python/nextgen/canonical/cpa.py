@@ -23,6 +23,7 @@ Canonical statement grammar::
           | Break | Continue | Pass
           | ExplicitTasklet              # explicit-dataflow tasklet (opaque body)
           | ExplicitConsume              # explicit consume scope (stream pop)
+          | ExplicitMemlet               # program-level memlet copy (``A >> B``)
           | NamedRegionStmt([stmt])      # labeled statement grouping (dace.named)
           | OpaqueStmt                   # explicit interpreter-fallback marker
 
@@ -241,8 +242,50 @@ class ExplicitConsume(ast.stmt):
             ast.copy_location(self, location)
 
 
+class ExplicitMemlet(ast.stmt):
+    """
+    Canonical marker for a *program-level* memlet expression (``ostream >>
+    out``, ``out << ostream``): a copy between two containers written in the
+    tasklet memlet syntax but outside any tasklet, as the classic frontend
+    reads it in ``newast.ProgramVisitor.visit_TopLevelExpr``.
+
+    Like a tasklet's memlet statements, the two sides are *memlet
+    expressions*, not program expressions — they carry volume and
+    write-conflict annotations (``B(-1, lambda x, y: x + y)[i]``) that no
+    canonicalization pass may desugar or hoist — so the marker is a canonical
+    leaf and both sides are parsed during lowering, when descriptors exist.
+
+    :param source: The side data flows out of (the left of ``>>``).
+    :param destination: The side data flows into (the right of ``>>``).
+    :param inputs: Names read by the statement.
+    :param outputs: Names written by the statement.
+    :param original: The original expression statement, restored when the
+                     statement or a surrounding region falls back to a
+                     callback.
+    """
+    _fields = ()
+
+    def __init__(self,
+                 source: Optional[ast.expr] = None,
+                 destination: Optional[ast.expr] = None,
+                 inputs: Optional[Set[str]] = None,
+                 outputs: Optional[Set[str]] = None,
+                 location: Optional[ast.AST] = None,
+                 original: Optional[ast.stmt] = None):
+        # All parameters default so ``copy.deepcopy`` can reconstruct the node
+        # (``ast.AST.__reduce__`` rebuilds with no arguments).
+        super().__init__()
+        self.source = source
+        self.destination = destination
+        self.inputs = inputs if inputs is not None else set()
+        self.outputs = outputs if outputs is not None else set()
+        self.original = original
+        if location is not None:
+            ast.copy_location(self, location)
+
+
 #: Canonical statement markers whose contents no canonicalization pass may touch.
-CANONICAL_LEAVES = (OpaqueStmt, ExplicitTasklet, ExplicitConsume)
+CANONICAL_LEAVES = (OpaqueStmt, ExplicitTasklet, ExplicitConsume, ExplicitMemlet)
 
 
 def statement_io_sets(node: ast.stmt) -> Tuple[Set[str], Set[str]]:
@@ -265,6 +308,12 @@ def statement_io_sets(node: ast.stmt) -> Tuple[Set[str], Set[str]]:
             # (_fields is empty) but carry precomputed I/O sets.
             reads.update(opaque_node.inputs)
             writes.update(opaque_node.outputs)
+
+        def visit_ExplicitMemlet(self, memlet_node: 'ExplicitMemlet') -> None:
+            # Same as OpaqueStmt: the sides are hidden from traversal, and the
+            # direction of the shift (not the syntax) says which is written.
+            reads.update(memlet_node.inputs)
+            writes.update(memlet_node.outputs)
 
         def visit_Name(self, name_node: ast.Name) -> None:
             if isinstance(name_node.ctx, ast.Load):

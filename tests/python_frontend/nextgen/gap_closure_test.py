@@ -363,6 +363,46 @@ def test_ufunc_keyword_form_over_a_constant_folded_closure_expression():
     assert np.allclose(a, 0.15**3)
 
 
+def test_replacement_result_broadcast_across_its_write_target():
+    """``a[:] = numpy.mean(b)``: a deferred expansion is handed a bare
+    container name and nothing else, so a result that does not FILL the write
+    target has to expand into a temporary and broadcast out of it. Writing the
+    target directly leaves everything but its element 0 untouched."""
+
+    @dace.program
+    def broadcast_out(a: dace.float64[10], b: dace.float64[4]):
+        a[:] = np.mean(b)
+
+    b = np.arange(4.0)
+    tree = nextgen.parse_program(broadcast_out, np.zeros(10), b.copy())
+    _assert_no_callbacks(tree)
+
+    a = np.zeros(10)
+    from_schedule_tree(tree)(a, b.copy())
+    assert np.allclose(a, np.mean(b))
+
+
+def test_ufunc_replacement_result_broadcast_into_a_write_subset():
+    """The same, on the ufunc keyspace and into a partial target: its lowering
+    took the write target verbatim instead of routing through the
+    subset/broadcast machinery the free-function path uses, so even a partial
+    write landed on element 0."""
+
+    @dace.program
+    def broadcast_out(a: dace.float64[10]):
+        a[2:5] = np.power(0.15, 3, dtype=np.float64)
+
+    tree = nextgen.parse_program(broadcast_out, np.zeros(10))
+    _assert_no_callbacks(tree)
+    assert any(isinstance(node, tn.ReplacementCallNode) for node in tree.preorder_traversal())
+
+    a = np.zeros(10)
+    from_schedule_tree(tree)(a)
+    expected = np.zeros(10)
+    expected[2:5] = 0.15**3
+    assert np.allclose(a, expected)
+
+
 if __name__ == '__main__':
     test_map_index_dimension_is_a_single_iteration_range()
     test_hoisted_shape_element_keeps_its_compile_time_value()
@@ -383,3 +423,5 @@ if __name__ == '__main__':
     test_python_object_array_field_is_not_opaque()
     test_ufunc_over_a_constant_folded_closure_expression()
     test_ufunc_keyword_form_over_a_constant_folded_closure_expression()
+    test_replacement_result_broadcast_across_its_write_target()
+    test_ufunc_replacement_result_broadcast_into_a_write_subset()

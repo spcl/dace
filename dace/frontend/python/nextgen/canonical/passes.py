@@ -31,8 +31,8 @@ from typing import List, Optional, Tuple, Union
 
 from dace.frontend.python import astutils, iterators
 from dace.frontend.python.nextgen.canonical import cpa
-from dace.frontend.python.nextgen.canonical.cpa import (CANONICAL_LEAVES, ExplicitConsume, ExplicitTasklet,
-                                                        NamedRegionStmt, OpaqueStmt)
+from dace.frontend.python.nextgen.canonical.cpa import (CANONICAL_LEAVES, ExplicitConsume, ExplicitMemlet,
+                                                        ExplicitTasklet, NamedRegionStmt, OpaqueStmt)
 
 _TERMINAL_STMTS = (ast.Break, ast.Continue, ast.Pass)
 
@@ -158,6 +158,11 @@ class RecognizeExplicitDataflow(_BodyTransformer):
     - ``with dace.named("label"):`` becomes a :class:`NamedRegionStmt`. It is
       recognized here only because that is where ``with`` statements are read;
       its body is ordinary program code and is canonicalized recursively.
+    - A memlet expression statement outside any tasklet (``ostream >> out``)
+      becomes an :class:`ExplicitMemlet` marker — a copy between containers,
+      as in the classic frontend's ``visit_TopLevelExpr``. Tasklet bodies
+      never reach this: they are already leaves by the time their statements
+      would be visited.
 
     Explicit-dataflow support matrix (frontend/tree level): with-tasklets,
     decorated tasklets/maps/mapscopes/consumes/consumescopes, dynamic-volume
@@ -173,6 +178,9 @@ class RecognizeExplicitDataflow(_BodyTransformer):
     def transform_statement(self, statement: ast.stmt) -> Union[ast.stmt, List[ast.stmt], None]:
         if isinstance(statement, CANONICAL_LEAVES):
             return statement
+        if (isinstance(statement, ast.Expr) and isinstance(statement.value, ast.BinOp)
+                and isinstance(statement.value.op, (ast.LShift, ast.RShift))):
+            return self._recognize_memlet(statement, statement.value)
         if isinstance(statement, ast.With) and len(statement.items) == 1:
             context_expr = statement.items[0].context_expr
             callee = context_expr.func if isinstance(context_expr, ast.Call) else context_expr
@@ -208,6 +216,32 @@ class RecognizeExplicitDataflow(_BodyTransformer):
             if _refers_to(decorator_callee, 'dace.consumescope', self.context.global_vars):
                 return self._desugar_consume_function(statement, decorator, scope_body=True)
         return self._recurse(statement)
+
+    def _recognize_memlet(self, statement: ast.Expr, binop: ast.BinOp) -> ast.stmt:
+        """
+        Turn a program-level memlet expression into an :class:`ExplicitMemlet`
+        marker. Which side is written follows the shift direction, exactly as
+        inside a tasklet: ``src >> dst``, ``dst << src``.
+
+        Recognition is syntactic — whether the two sides name containers is a
+        question for lowering, which has the descriptors and falls back to a
+        callback when they do not. A destination with no base name (``a >>
+        f(x)``) is not a memlet at all and is left for MarkOpaque.
+        """
+        if isinstance(binop.op, ast.RShift):
+            source, destination = binop.left, binop.right
+        else:
+            source, destination = binop.right, binop.left
+        written = _memlet_base_name(destination)
+        if written is None:
+            return statement
+        reads, _ = cpa.statement_io_sets(statement)
+        return ExplicitMemlet(source=source,
+                              destination=destination,
+                              inputs=reads,
+                              outputs={written},
+                              location=statement,
+                              original=statement)
 
     def _extract_map_ranges(self, function: ast.FunctionDef,
                             decorator: ast.expr) -> Optional[Tuple[List[str], List[ast.expr]]]:
@@ -304,6 +338,24 @@ class RecognizeExplicitDataflow(_BodyTransformer):
                                scope_body=scope_body,
                                location=function,
                                original=original)
+
+
+def _memlet_base_name(node: ast.expr) -> Optional[str]:
+    """
+    The name a memlet expression's data ultimately lives under, looking
+    through the subscript, the structure member, and the volume/write-conflict
+    call form (``B(-1, lambda x, y: x + y)[i]``), or None if the expression
+    has no such base. A member write names the structure, which is what a
+    binding lookup (and an interpreter fallback) needs.
+    """
+    while isinstance(node, (ast.Subscript, ast.Call, ast.Attribute)):
+        if isinstance(node, ast.Subscript):
+            node = node.value
+        elif isinstance(node, ast.Attribute):
+            node = node.value
+        else:
+            node = node.func
+    return node.id if isinstance(node, ast.Name) else None
 
 
 def _refers_to(node: ast.expr, qualified_name: str, global_vars: dict) -> bool:

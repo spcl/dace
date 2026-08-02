@@ -20,6 +20,11 @@ syntax, so a violation is a user error (matching the stable frontend's
 only because its producer fell back to an interpreter callback, and the
 replayed ``with dace.tasklet:`` block re-raises genuine syntax errors.
 
+The same memlet syntax written *outside* a tasklet is a copy between two
+containers (``ostream >> out``), recognized as an
+:class:`~dace.frontend.python.nextgen.canonical.cpa.ExplicitMemlet` marker and
+lowered here too, since it shares the memlet-expression parsing.
+
 Global-scope, initialization, and finalization code attach to the tasklet
 through ``with dace.tasklet(code_global=..., code_init=..., code_exit=...)``
 keyword arguments and land on the emitted :class:`~dace.sdfg.nodes.Tasklet`'s
@@ -35,11 +40,11 @@ from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
-from dace.frontend.python.memlet_parser import parse_memlet
-from dace.frontend.python.nextgen.canonical.cpa import ExplicitConsume, ExplicitTasklet
+from dace.frontend.python.memlet_parser import ParseMemlet, parse_memlet
+from dace.frontend.python.nextgen.canonical.cpa import ExplicitConsume, ExplicitMemlet, ExplicitTasklet
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
-from dace.frontend.python.nextgen.lowering.access import (indirect_index_reads, promote_index_reads, resolve_access,
-                                                          substitute_index_reads)
+from dace.frontend.python.nextgen.lowering.access import (indirect_index_reads, nondegenerate_shape,
+                                                          promote_index_reads, resolve_access, substitute_index_reads)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.inference import _LocationShim
 
@@ -246,21 +251,94 @@ def _check_connector(connector: Optional[str], in_memlets: Dict[str, Memlet], ou
 
 def _to_repository(memlet: Memlet, state: LoweringState, statement: ast.stmt) -> Memlet:
     """Rewrite a parsed memlet to reference the repository container name."""
-    binding = state.context.resolve(memlet.data)
+    memlet.data = _repository_container(memlet.data, state, statement, 'Tasklet memlet')
+    return memlet
+
+
+def _repository_container(name: str, state: LoweringState, statement: ast.stmt, subject: str) -> str:
+    """The repository container name a parsed memlet's data name is bound to."""
+    binding = state.context.resolve(name)
     if binding is None or binding.kind != 'container':
-        raise UnsupportedFeatureError(f'Tasklet memlet references unknown container "{memlet.data}"',
+        raise UnsupportedFeatureError(f'{subject} references unknown container "{name}"',
                                       state.context.filename,
                                       statement,
                                       category='memlet-parse')
     if isinstance(state.context.containers[binding.container].dtype, dtypes.pyobject):
         # The producer of this name fell back to the interpreter; its typed
-        # form is unavailable, so the tasklet must replay there too.
-        raise UnsupportedFeatureError(f'Tasklet memlet references interpreter-only container "{memlet.data}"',
+        # form is unavailable, so the statement must replay there too.
+        raise UnsupportedFeatureError(f'{subject} references interpreter-only container "{name}"',
                                       state.context.filename,
                                       statement,
                                       category='pyobject-propagation')
-    memlet.data = binding.container
-    return memlet
+    return binding.container
+
+
+@rule(ExplicitMemlet)
+def lower_explicit_memlet(statement: ExplicitMemlet, state: LoweringState) -> None:
+    """
+    Lower a program-level memlet expression (``ostream >> out``) to a
+    :class:`~dace.sdfg.analysis.schedule_tree.treenodes.CopyNode` between the
+    two containers, porting ``newast.ProgramVisitor.visit_TopLevelExpr``.
+
+    A copy node is anchored at its *source*: ``memlet.data`` names what is
+    read and ``target`` what is written, so both sides' annotations meet on
+    one memlet. The volume comes from whichever side declared one — a dynamic
+    write (``A >> ostream(-1)``) annotates the destination — and the
+    destination's subset is carried as ``other_subset`` only when the two
+    sides move the same shape. Copying a stream into an array is the
+    exception the syntax exists for: the stream is a single element with a
+    buffer behind it, so the sides' shapes differ by design and the
+    destination subset stays implicit (the whole target), which is what the
+    stream-pop code generator expects.
+    """
+    defined = state.context.defined_view()
+    source = _parse_program_memlet(statement.source, defined, state)
+    destination = _parse_program_memlet(statement.destination, defined, state)
+    if source.arrdims or destination.arrdims:
+        raise UnsupportedFeatureError('Memlet expressions cannot copy with array indices',
+                                      state.context.filename,
+                                      statement,
+                                      category='memlet-parse')
+    source_container = _repository_container(source.name, state, statement, 'Memlet expression')
+    target_container = _repository_container(destination.name, state, statement, 'Memlet expression')
+
+    source_subset = _as_range(source.subset)
+    target_subset = _as_range(destination.subset)
+    accesses = destination.accesses if _has_volume_annotation(statement.destination) else source.accesses
+    memlet = Memlet.simple(source_container, source_subset, num_accesses=accesses, wcr_str=destination.wcr)
+    if nondegenerate_shape(source_subset) == nondegenerate_shape(target_subset):
+        memlet.other_subset = target_subset
+    state.emitter.emit(tn.CopyNode(target=target_container, memlet=memlet))
+
+
+def _parse_program_memlet(expression: ast.expr, defined: Dict, state: LoweringState):
+    """
+    Parse one side of a program-level memlet expression. As with tasklet
+    memlets, a parse failure falls back to the interpreter rather than
+    erroring: the name may be missing only because its producer did.
+    """
+    try:
+        return ParseMemlet(_shim(state), defined, expression)
+    except UnsupportedFeatureError:
+        raise
+    except Exception as error:
+        raise UnsupportedFeatureError(f'Cannot parse memlet expression: {error}',
+                                      state.context.filename,
+                                      expression,
+                                      category='memlet-parse')
+
+
+def _as_range(subset: subsets.Subset) -> subsets.Range:
+    """A parsed subset as a range (an index form covers one element of it)."""
+    return subsets.Range.from_indices(subset) if isinstance(subset, subsets.Indices) else subset
+
+
+def _has_volume_annotation(expression: ast.expr) -> bool:
+    """Whether a memlet expression declares its own volume/write-conflict
+    resolution: ``B(-1)``, ``B(1, lambda x, y: x + y)[i]``."""
+    if isinstance(expression, ast.Subscript):
+        expression = expression.value
+    return isinstance(expression, ast.Call)
 
 
 @rule(ExplicitConsume)
