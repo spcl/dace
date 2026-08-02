@@ -49,7 +49,7 @@ def test_drain_into_an_argument_is_a_zero_copy_view():
     with no buffer and no initialization of its own in between -- which leaves
     the pattern the code generator emits as a zero-copy stream-array view
     (``samples/explicit/filter.py``)."""
-    sdfg = filtered.to_sdfg()
+    sdfg = filtered.to_sdfg(simplify=True)
     assert 'dace::ArrayStreamView' in sdfg.generate_code()[0].clean_code
 
     A = np.random.rand(n).astype(np.float32)
