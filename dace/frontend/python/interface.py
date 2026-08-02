@@ -390,6 +390,60 @@ def inline(expression):
     return expression
 
 
+#: Attribute set by :func:`always_inline` on the callables it marks.
+ALWAYS_INLINE_ATTRIBUTE = '__dace_always_inline__'
+
+
+def always_inline(func: F) -> F:
+    """
+    Marks a callable as compile-time evaluable, so that every call to it from within a ``@dace.program`` is
+    evaluated during parsing and replaced by its result.
+
+    This is the callee-side counterpart of :func:`inline`: instead of annotating every call site with
+    ``dace.inline(...)``, the callable itself is annotated once. It is also narrower than the
+    ``constant_functions=True`` argument of :func:`program`, which folds *every* external call in a program.
+
+    Example::
+
+        class TracerRegistry:
+            @dace.always_inline
+            def index(self, name: str) -> int:
+                return self._mapping[name]
+
+        tracers = TracerRegistry(...)
+
+        @dace.program
+        def prog(A: dace.float64[10]):
+            A[tracers.index('liquid')] = 1.0  # Parsed as ``A[1] = 1.0``
+
+    The callable keeps its normal Python behavior outside of ``@dace.program`` parsing.
+
+    :param func: The callable to mark.
+    :return: The same callable, marked for compile-time evaluation.
+    :note: Only use with stateless functions whose arguments are compile-time evaluable! A call whose arguments
+           cannot be evaluated at parse time is a parsing error rather than a fallback to a Python callback.
+    """
+    setattr(func, ALWAYS_INLINE_ATTRIBUTE, True)
+    return func
+
+
+def is_always_inline(value: Any) -> bool:
+    """
+    Tests whether a value is a callable marked with :func:`always_inline`.
+
+    :param value: The value to test.
+    :return: True if the value (or, for callable objects, its ``__call__`` method) is marked.
+    """
+    # ``value`` may be an arbitrary object with a custom ``__getattr__``, so attribute access can fail in any
+    # way. Compare against True explicitly as well: proxies may return arbitrary truthy values.
+    try:
+        if getattr(value, ALWAYS_INLINE_ATTRIBUTE, False) is True:
+            return True
+    except Exception:
+        pass
+    return getattr(getattr(type(value), '__call__', None), ALWAYS_INLINE_ATTRIBUTE, False) is True
+
+
 def in_program() -> bool:
     """
     Returns True if in a DaCe program parsing context. This function can be used to test whether the current
