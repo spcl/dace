@@ -78,6 +78,6 @@ class LiftPreprocess(ppl.Pass):
 
         # Fold adjacent content states inside a loop body: whole-SDFG ``StateFusion`` does not
         # reach into LoopRegion bodies via ``MatchPatterns``, and the matchers want one.
-        for loop, _ in _collect_loops(sdfg):
+        for loop, _, _ in _collect_loops(sdfg):
             count += _fuse_body_states(loop)
         return count or None

@@ -331,6 +331,10 @@ class LoopToScan(ppl.Pass):
         """Replace a symbolic-stride scan ``loop`` with ``if (guard) { scan } else
         { original sequential loop }`` via :func:`specialize_loop_under_condition`.
 
+        ``sdfg`` is the SDFG OWNING ``loop`` (see :func:`_collect_loops`), which is what
+        gets handed to the ``_lift`` callback -- the specialization keeps both clones in
+        ``parent``, so the owner is unchanged by the splice.
+
         The true-branch clone is re-matched and lifted to the ``Scan`` pipeline;
         the else-branch clone is pinned sequential (``LoopToMap`` / a re-run of
         this pass leave it alone). ``guard`` is the ``stride >= 1`` predicate from
@@ -353,15 +357,15 @@ class LoopToScan(ppl.Pass):
         """
         from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
 
-        def _lift(par_loop: LoopRegion, par_region: ControlFlowRegion, _owner: SDFG):
-            par_infos = _match_all(par_loop, sdfg)
+        def _lift(par_loop: LoopRegion, par_region: ControlFlowRegion, owner: SDFG):
+            par_infos = _match_all(par_loop, owner)
             if par_infos and not self.lift_nested_scan:
                 par_infos = [
                     info for info in par_infos
-                    if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, sdfg))
+                    if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, owner))
                 ]
             for info in par_infos:
-                _rewrite(par_region, par_loop, info, sdfg)
+                _rewrite(par_region, par_loop, info, owner)
 
         if _stride_guard_is_statically_dischargeable(infos) and _lift_proven_doall_to_map(parent, loop, sdfg):
             return
@@ -392,18 +396,20 @@ class LoopToScan(ppl.Pass):
         # sequential-per-thread form).
         interchanged_loop_ids = set()
         if self.interchange_carry_with_map:
-            for loop, parent in list(_collect_loops(sdfg)):
-                shape = _detect_carry_loop_with_inner_map(loop, sdfg)
+            for loop, parent, owner in list(_collect_loops(sdfg)):
+                shape = _detect_carry_loop_with_inner_map(loop, owner)
                 if shape is None:
                     continue
-                relocated = _rewrite_interchange_carry_with_map(shape, sdfg)
+                relocated = _rewrite_interchange_carry_with_map(shape, owner)
                 if relocated is None:
                     continue
                 if isinstance(relocated, LoopRegion):
                     interchanged_loop_ids.add(id(relocated))
                 count += 1
 
-        for loop, parent in _collect_loops(sdfg):
+        # ``owner`` -- NOT ``sdfg`` -- is what every matcher and rewrite below gets: a loop
+        # inside a NestedSDFG names ITS OWN SDFG's arrays. See :func:`_collect_loops`.
+        for loop, parent, owner in _collect_loops(sdfg):
             if id(loop) in interchanged_loop_ids:
                 continue
             if loop.pinned_sequential:
@@ -411,7 +417,7 @@ class LoopToScan(ppl.Pass):
                 # specialization (below); re-matching it would recurse into
                 # another if/else. Leave it as the original sequential loop.
                 continue
-            infos = _match_all(loop, sdfg, allow_multi_slot=True)
+            infos = _match_all(loop, owner, allow_multi_slot=True)
             # Multi-slot shape (several independent scans on distinct constant
             # slots of one carrier -- ``acc[0,i]``, ``acc[1,i]``, ...): the shared
             # body can't go through the per-info ``_rewrite`` path (ambiguous
@@ -419,7 +425,7 @@ class LoopToScan(ppl.Pass):
             # leave it sequential if it isn't a clean forward-flat slot set.
             if infos and _is_multi_slot(infos):
                 if _multi_slot_liftable(infos):
-                    _rewrite_multi_slot(parent, loop, infos, sdfg)
+                    _rewrite_multi_slot(parent, loop, infos, owner)
                     count += 1
                     continue
                 # Not a clean forward-flat slot set (e.g. the nested cloudsc
@@ -438,7 +444,7 @@ class LoopToScan(ppl.Pass):
             if infos and not self.lift_nested_scan:
                 infos = [
                     info for info in infos
-                    if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, sdfg))
+                    if not (info.inner_loop is not None and self._inner_loop_parallelizable(info.inner_loop, owner))
                 ]
             if infos:
                 guard = _symbolic_stride_guard(infos)
@@ -450,11 +456,11 @@ class LoopToScan(ppl.Pass):
                     # rather than lift unconditionally: a violating runtime value
                     # (stride 0 -> a degenerate in-place update) degrades to the
                     # sequential fallback and still computes correctly.
-                    self._specialize_scan_under_stride_guard(parent, loop, guard, sdfg, infos)
+                    self._specialize_scan_under_stride_guard(parent, loop, guard, owner, infos)
                     count += 1
                     continue
                 for info in infos:
-                    _rewrite(parent, loop, info, sdfg)
+                    _rewrite(parent, loop, info, owner)
                     count += 1
                 continue
             # The COMPOSITE-BODY shape (cloudsc ``for_1133``): outer body has
@@ -464,9 +470,9 @@ class LoopToScan(ppl.Pass):
             # AccessNodes at the chain endpoints, leaving intermediate
             # transients untouched) and emits the standard
             # ``Scan`` + seed-add via the nested-scan helpers.
-            comp = _match_composite_body(loop, sdfg)
+            comp = _match_composite_body(loop, owner)
             if comp is not None:
-                if _rewrite_composite_body(parent, loop, comp, sdfg):
+                if _rewrite_composite_body(parent, loop, comp, owner):
                     count += 1
                     continue
             # No array-carry match; try scalar-carry (TSVC s3112: scalar accumulator
@@ -474,9 +480,9 @@ class LoopToScan(ppl.Pass):
             # exclusive with array-carry by construction -- array-carry needs the
             # carrier read+written at offset (i + k_r) / (i + k_w), scalar-carry
             # needs a SCALAR carrier read+written at constant subset [0].
-            sc = _match_scalar_carry(loop, sdfg)
+            sc = _match_scalar_carry(loop, owner)
             if sc is not None:
-                _rewrite_scalar_carry(parent, loop, sc, sdfg)
+                _rewrite_scalar_carry(parent, loop, sc, owner)
                 count += 1
         if count > 0:
             # Narrow the freshly-emitted state-level memlets on the new
@@ -491,11 +497,20 @@ class LoopToScan(ppl.Pass):
 
 
 def _collect_loops(sdfg: SDFG):
+    """``(loop, parent_graph, owner_sdfg)`` for every named loop, nested SDFGs included.
+
+    ``owner_sdfg`` is the SDFG whose ``arrays`` the loop's memlets name -- for a loop
+    inside a NestedSDFG that is the INNER SDFG, not ``sdfg``. Every matcher and rewrite
+    below resolves descriptors and allocates its scan buffers there; handing them the
+    top-level ``sdfg`` instead allocates ``_scan_out_<out>`` in the wrong descriptor
+    repository and the states emitted next to the loop then reference a name their own
+    SDFG has never heard of.
+    """
     out: List = []
     for sd in sdfg.all_sdfgs_recursive():
         for region in sd.all_control_flow_regions():
             if isinstance(region, LoopRegion) and region.loop_variable:
-                out.append((region, region.parent_graph))
+                out.append((region, region.parent_graph, sd))
     return out
 
 
