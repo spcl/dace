@@ -8,8 +8,8 @@ on:
   merge_group:
     branches: [ main, ci-fix ]
 
-env:
-  DACE_frontend_stree_callback_check: warn
+# env:
+#   DACE_frontend_stree_callback_check: warn
 
 concurrency:
   group: ${{github.workflow}}-${{github.ref}}

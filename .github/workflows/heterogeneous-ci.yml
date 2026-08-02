@@ -9,7 +9,7 @@ on:
     branches: [ main, ci-fix ]
 
 env:
-  DACE_frontend_stree_callback_check: warn
+  # DACE_frontend_stree_callback_check: warn
   CUDA_HOME: /usr/local/cuda
   CUDACXX: nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
