@@ -193,8 +193,11 @@ def _has_gpu_code(sdfg) -> bool:
     return False
 
 
-def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], optional_symbols: Set[str],
-                      symbol_fallbacks: Dict[str, str]) -> Tuple[List[str], List[str], List[str], List[str]]:
+def _argument_binding(arglist: Dict[str, dt.Data],
+                      binding_order: List[str],
+                      optional_symbols: Set[str],
+                      symbol_fallbacks: Dict[str, str],
+                      sdfg=None) -> Tuple[List[str], List[str], List[str], List[str]]:
     """Generates the per-argument pieces of the bound ``call()``/``initialize()`` methods.
 
     Arrays are taken without implicit conversion: nanobind would otherwise
@@ -241,8 +244,15 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
     # deduction statement may reference an explicitly-passed symbol.
     setup_stmts = []
     must_pass_setup = []
+    # Return-array setup runs LAST: allocation sizes reference symbols, so the
+    # must-pass extractions and inference deductions must already have run.
+    return_setup = []
 
     strict_scalar = Config.get_bool('compiler', 'nanobind_strict_scalar_cast')
+    # Whether a caller-provided return buffer is accepted is decided AT CODE
+    # GENERATION TIME and baked into the module: the binding never consults the
+    # config at run time (changing the option requires a recompile).
+    allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
 
     for name, desc in arglist.items():
         # A pyobject is an opaque PyObject* (`typedef void *pyobject` in
@@ -282,6 +292,99 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
         if name.startswith('__return') and not isinstance(desc, dt.Array):
             raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                       f'{type(desc).__name__} is not supported; returns are arrays only.')
+
+        if name.startswith('__return'):
+            # Return arrays bind as DEFAULTED nb::object parameters and are
+            # allocated INSIDE the binding when omitted (None) - after the
+            # compiled symbol inference ran, so inferred symbols may size them.
+            # The allocation deliberately goes through NumPy/CuPy via the
+            # Python API (in setup, GIL held): ownership, alignment and dtype
+            # semantics stay exactly those of the former Python-side
+            # allocation. The binding returns the array object(s) at the end
+            # of call().
+            if isinstance(desc, dt.ContainerArray) or isinstance(desc.dtype, dtypes.vector):
+                raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
+                                          f'{type(desc).__name__}[{desc.dtype}] is not supported; '
+                                          f'returns are plain arrays only.')
+            if desc.dtype.base_type in _LOWP_TYPES:
+                raise NotImplementedError(f'Nanobind interface: return value "{name}" of low-precision type '
+                                          f'{desc.dtype} is not supported.')
+            if any(str(o) != '0' for o in desc.offset):
+                raise NotImplementedError(f'Nanobind interface: return value "{name}" has a non-zero offset; '
+                                          f'in-binding allocation assumes offset 0.')
+
+            is_struct_ret = isinstance(desc.dtype, dtypes.struct)
+            gpu = desc.storage == dtypes.StorageType.GPU_Global
+            if is_struct_ret:
+                # A record dtype is rebuilt from its field descriptor list; the
+                # array itself cannot go through nb::ndarray (DLPack has no
+                # compound dtype), so the data pointer comes from the buffer
+                # protocol, like struct-array input arguments.
+                descr = desc.dtype.as_numpy_dtype().descr
+                fields = ''.join(f'__d.append(nb::make_tuple("{n}", "{t}")); ' for n, t in descr)
+                dtype_expr = f'__mod.attr("dtype")([&]() {{ nb::list __d; {fields}return __d; }}())'
+            else:
+                nb_scalar = _ndarray_scalar_ctype(desc.dtype)
+                device = _ndarray_device(desc)
+                dtype_expr = f'__mod.attr("dtype")("{desc.dtype.as_numpy_dtype().name}")'
+            constants = sdfg.constants if sdfg is not None else {}
+
+            def _cx(v):
+                e = symbolic.pystr_to_symbolic(str(v))
+                if constants:
+                    e = e.subs(constants)
+                return sym2cpp(e)
+
+            dims = ', '.join(_cx(s) for s in desc.shape)
+            total = _cx(desc.total_size)
+            strides_b = ', '.join(f'({_cx(s)}) * {desc.dtype.bytes}' for s in desc.strides)
+            # Mirrors the former Python allocation: a zeroed flat buffer
+            # wrapped with the descriptor's shape and (byte) strides.
+            # cupy.ndarray takes memptr/strides positionally after dtype.
+            if gpu:
+                alloc = (f'[&]() {{ nb::object __mod = nb::module_::import_("cupy");\n'
+                         f'            nb::object __dt = {dtype_expr};\n'
+                         f'            return __mod.attr("ndarray")(nb::make_tuple({dims}), __dt, '
+                         f'__mod.attr("zeros")({total}, __dt).attr("data"), nb::make_tuple({strides_b})); }}()')
+            else:
+                alloc = (f'[&]() {{ nb::object __mod = nb::module_::import_("numpy");\n'
+                         f'            nb::object __dt = {dtype_expr};\n'
+                         f'            return __mod.attr("ndarray")(nb::make_tuple({dims}), __dt, '
+                         f'__mod.attr("zeros")({total}, __dt), 0, nb::make_tuple({strides_b})); }}()')
+
+            if not allow_return_override:
+                obtain = (f'if (!{name}.is_none())\n'
+                          f'            throw std::invalid_argument("SDFG argument error: the implicit output '
+                          f'\'{name}\' cannot be passed explicitly: this module was compiled with '
+                          f'compiler.nanobind_allow_return_override=false; enable the option and recompile.");\n'
+                          f'        nb::object {name}__obj = {alloc};')
+            else:
+                obtain = (f'nb::object {name}__obj = {name};\n'
+                          f'        if ({name}__obj.is_none()) {{\n'
+                          f'            {name}__obj = {alloc};\n'
+                          f'        }}')
+            if is_struct_ret:
+                # Buffer-protocol pointer; a provided buffer is accepted as-is
+                # (no nb::ndarray view exists to validate a record array with).
+                return_setup.append(f'{obtain}\n'
+                                    f'        _DacePyBuffer {name}__buf({name}__obj.ptr());')
+                call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__buf.data())')
+            else:
+                extract = f'auto {name}__nd = nb::cast<nb::ndarray<{nb_scalar}, {device}>>({name}__obj, false);'
+                if allow_return_override:
+                    # ndim is checked first, so the short-circuit keeps
+                    # shape(i) from being read on a wrong-rank buffer.
+                    shape_checks = ' || '.join(
+                        [f'{name}__nd.ndim() != {len(desc.shape)}'] +
+                        [f'{name}__nd.shape({i}) != static_cast<size_t>({_cx(s)})' for i, s in enumerate(desc.shape)])
+                    extract += (f'\n        if (!{name}.is_none() && ({shape_checks}))\n'
+                                f'            throw std::invalid_argument("SDFG argument error: return buffer '
+                                f'\'{name}\' has a wrong shape (it must match the symbol-derived return shape).");')
+                return_setup.append(f'{obtain}\n        {extract}')
+                call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__nd.data())')
+            params_by_name[name] = f'nb::object {name}'
+            nb_args_by_name[name] = f'nb::arg("{name}").none() = nb::none()'
+            continue
 
         # bfloat16 / float8 (ml_dtypes-backed): numpy cannot export such
         # arrays via DLPack (BufferError) or the buffer protocol ("cannot
@@ -436,7 +539,7 @@ def _argument_binding(arglist: Dict[str, dt.Data], binding_order: List[str], opt
                                       f'(argument "{name}") is not supported yet.')
     params = [params_by_name[n] for n in binding_order]
     nb_args = [nb_args_by_name[n] for n in binding_order]
-    return params, call_args, nb_args, must_pass_setup + setup_stmts
+    return params, call_args, nb_args, must_pass_setup + setup_stmts + return_setup
 
 
 def _referenced_struct_name(desc):
@@ -760,12 +863,21 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # with the omittable symbols last, since defaulted parameters must follow
     # the required ones.
     arg_names = [n for n in (sdfg.arg_names or []) if n in arglist]
+    if any(n.startswith('__return') for n in arg_names):
+        raise ValueError(f"SDFG '{sdfg.name}': return values cannot be listed in arg_names "
+                         f"(they are defaulted keyword-only parameters of the binding).")
     optional_symbols, symbol_fallbacks = _symbol_fallbacks(arglist, arg_names, sdfg.symbols)
     rest = [n for n in arglist.keys() if n not in set(arg_names)]
-    binding_order = (arg_names + [n for n in rest if n not in optional_symbols] +
-                     [n for n in rest if n in optional_symbols])
-    params, call_args, nb_args, setup_stmts = _argument_binding(arglist, binding_order, optional_symbols,
-                                                                symbol_fallbacks)
+    return_params = [n for n in rest if n.startswith('__return')]
+    # Returns go last: they are defaulted (None -> in-binding allocation), and
+    # defaulted parameters must follow the required ones.
+    binding_order = (arg_names + [n for n in rest if n not in optional_symbols and n not in return_params] +
+                     [n for n in rest if n in optional_symbols] + return_params)
+    params, call_args, nb_args, setup_stmts = _argument_binding(arglist,
+                                                                binding_order,
+                                                                optional_symbols,
+                                                                symbol_fallbacks,
+                                                                sdfg=sdfg)
 
     free_symbols = sorted(k for k in sdfg.used_symbols(all_symbols=False) if not k.startswith('__dace'))
     init_arglist = {k: v for k, v in arglist.items() if k in free_symbols}
@@ -787,13 +899,15 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # detection live in one place).
     if '__return' in sdfg.arrays:
         return_names = ('__return', )
-        is_single_ret = 'true'
+        # The single-value convention returns the bare array, not a 1-tuple.
+        ret_expr = '__return__obj'
     else:
         found_returns = {n for n in sdfg.arrays if n.startswith('__return_')}
         return_names = tuple(f'__return_{i}' for i in range(len(found_returns)))
         if found_returns != set(return_names):
             raise ValueError(f"SDFG '{sdfg.name}': non-contiguous return-array numbering: {sorted(found_returns)}")
-        is_single_ret = 'false'
+        ret_expr = ('nb::make_tuple(' + ', '.join(f'{n}__obj'
+                                                  for n in return_names) + ')') if return_names else 'nb::none()'
     return_names_def = ', '.join(f'"{n}"' for n in return_names)
     callback_names_def = ', '.join(f'"{n}"' for n in arglist if isinstance(arglist[n].dtype, dtypes.callback))
 
@@ -874,13 +988,17 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
                      f'            nb::gil_scoped_release _nogil;\n'
                      f'            init_impl({init_call});\n'
                      f'            __program_{name}({program_args});\n'
-                     f'        }}')
+                     f'        }}\n'
+                     f'        return {ret_expr};')
     else:
         call_body = (f'// Reading ndarray fields (.data()) needs no Python API, so the whole\n'
                      f'        // init + program call runs with the GIL released, as ctypes did.\n'
-                     f'        nb::gil_scoped_release _nogil;\n'
-                     f'        init_impl({init_call});\n'
-                     f'        __program_{name}({program_args});')
+                     f'        {{\n'
+                     f'            nb::gil_scoped_release _nogil;\n'
+                     f'            init_impl({init_call});\n'
+                     f'            __program_{name}({program_args});\n'
+                     f'        }}\n'
+                     f'        return nb::none();')
 
     if init_setup:
         init_setup_block = '\n        '.join(init_setup)
@@ -996,7 +1114,7 @@ struct DaceHandle_{name} {{
         return exit_impl();
     }}
 
-    void call({call_param_list}) {{
+    nb::object call({call_param_list}) {{
         {call_body}
     }}
 {user_call_method}}};
@@ -1020,7 +1138,6 @@ NB_MODULE({name}, m) {{
         }})
         .def_prop_ro("has_gpu_code", [](DaceHandle_{name} &) {{ return {has_gpu}; }})
         .def_prop_ro("return_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({return_names_def}); }})
-        .def_prop_ro("is_single_value_ret", [](DaceHandle_{name} &) {{ return {is_single_ret}; }})
         .def_prop_ro("callback_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({callback_names_def}); }})
         .def_prop_ro("state_pointer", [](DaceHandle_{name} &h) {{
             h.require_state();

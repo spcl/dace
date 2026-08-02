@@ -10,19 +10,11 @@ from types import ModuleType
 import pathlib
 import warnings
 
-import numpy as np
 import ctypes
 
 import dace
-from dace import data as dt, dtypes, hooks, symbolic
+from dace import dtypes, hooks
 from dace.codegen import compiler
-from dace.config import Config
-
-# Try importing CuPy once (avoid hot path).
-try:
-    import cupy
-except (ImportError, ModuleNotFoundError):
-    cupy = None
 
 
 class NanobindCompiledSDFG:
@@ -106,9 +98,10 @@ class NanobindCompiledSDFG:
 
         # Codegen-time call metadata comes from the handle: the `__return*`
         # naming convention and the callback detection live in the bindings
-        # generator, not here.
+        # generator, not here. Return allocation, the single-value-vs-tuple
+        # convention and buffer-override validation all live in the binding
+        # too; the names remain exposed for introspection.
         self._return_values: Tuple[str, ...] = tuple(self._handle.return_names)
-        self._is_single_value_ret: bool = self._handle.is_single_value_ret
 
         # Callback arguments; each call wraps the passed callable in a ctypes `CFUNCTYPE` (see _process_callbacks).
         arglist = sdfg.arglist()
@@ -116,9 +109,9 @@ class NanobindCompiledSDFG:
         self._callback_keepalive: List[Any] = []
         self._callback_refs: List[Any] = []
 
-        # No return arrays to allocate and no callbacks to wrap: unless hooks
-        # are registered, a call needs no Python-side processing at all.
-        self._simple_call: bool = not (self._return_values or self._callback_args)
+        # No callbacks to wrap: unless hooks are registered, a call needs no
+        # Python-side processing at all (returns are handled in the binding).
+        self._simple_call: bool = not self._callback_args
 
         # Structured fast-path entry point; present only when the SDFG was
         # compiled with a non-empty ``user_args`` (see user_bind_call).
@@ -201,22 +194,27 @@ class NanobindCompiledSDFG:
         example with ``A[a + b]`` and ``b`` in ``arg_names``, an omitted ``a`` is
         computed as ``A.shape(0) - b``. An explicitly passed value always takes
         precedence over the deduction, and a symbol that can not be deduced must be
-        passed - omitting it raises an error naming the symbol. Furthermore, symbols
-        that are needed to compute the size of the return values, must be explicitly
-        passed.
+        passed - omitting it raises an error naming the symbol.
 
-        Passing a ``__return*`` buffer explicitly is refused unless
-        ``compiler.nanobind_allow_return_override`` is enabled.
+        Return arrays are allocated and returned by the compiled binding itself
+        (after symbol inference, so inferred symbols may size them). Passing a
+        ``__return*`` buffer explicitly is refused unless the module was
+        COMPILED with ``compiler.nanobind_allow_return_override`` enabled (the
+        decision is baked in at code generation); an accepted buffer is
+        validated against the symbol-derived return shape. When
+        :attr:`do_not_execute` suppresses the program run, ``None`` is
+        returned.
         """
-        # Fast path - no return arrays, no callbacks, no hooks: hand the
-        # arguments straight to the compiled dispatcher.
+        # Fast path - no callbacks, no hooks: hand the arguments straight to
+        # the compiled dispatcher (returns are handled inside the binding).
         hooks_active = bool(hooks._COMPILED_SDFG_CALL_HOOKS)
         if self._simple_call and not hooks_active:
+            result = None
             if self.do_not_execute is False:
-                self._handle(*args, **kwargs)
+                result = self._handle(*args, **kwargs)
                 if self._has_gpu_code and self._gpu_error_check:
                     self._check_gpu_error()
-            return None
+            return result
 
         # Handle positional arguments and move them into `kwargs`.
         if args:
@@ -232,36 +230,15 @@ class NanobindCompiledSDFG:
         if self._callback_args:
             self._process_callbacks(kwargs)
 
-        # No return value given.
-        if not self._return_values:
-            if hooks_active:
-                self._call_handle_with_hooks(kwargs)
-            elif self.do_not_execute is False:
-                self._handle(**kwargs)
-            if self._has_gpu_code and self._gpu_error_check:
-                self._check_gpu_error()
-            return None
-
-        # NOTE: Return shapes are evaluated here in Python, so symbols they
-        # depend on must be passed explicitly - the compiled shape inference
-        # only serves the kernel call, and running the (sympy-based) Python
-        # inference per call would be slow.
-
-        # Will add the return arrays also to `kwargs`.
-        return_arrays = self._allocate_return_arrays(kwargs)
-
         # Perform the call to the compiled extension.
+        result = None
         if hooks_active:
-            self._call_handle_with_hooks(kwargs)
+            result = self._call_handle_with_hooks(kwargs)
         elif self.do_not_execute is False:
-            self._handle(**kwargs)
+            result = self._handle(**kwargs)
         if self._has_gpu_code and self._gpu_error_check:
             self._check_gpu_error()
-
-        # Process the return value.
-        if self._is_single_value_ret:
-            return return_arrays[0]
-        return tuple(return_arrays)
+        return result
 
     def _check_gpu_error(self) -> None:
         """Raises if the GPU runtime recorded an error during the last call.
@@ -280,19 +257,24 @@ class NanobindCompiledSDFG:
                                'Consider enabling synchronous debugging mode (environment variable: '
                                'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
 
-    def _call_handle_with_hooks(self, kwargs: Dict[str, Any]) -> None:
+    def _call_handle_with_hooks(self, kwargs: Dict[str, Any]) -> Any:
         """Runs the handle inside the registered compiled-SDFG call hooks.
 
         On this interface a hook's ``args`` parameter is a 1-tuple holding the
         processed keyword arguments (marshalling happens in compiled code, so
         there is no ctypes-style C-argument tuple to hand out); re-invoking the
         program from a hook is ``compiled_sdfg._handle(**args[0])``.
+
+        :return: The binding's return value (the return array(s)), or ``None``
+                 when the program run was suppressed.
         """
+        result = None
         with hooks.invoke_compiled_sdfg_call_hooks(self, (kwargs, )):
             # Checked inside the hook context: a hook may toggle the flag
             # (dace.profile does) before the program call would run.
             if self.do_not_execute is False:
-                self._handle(**kwargs)
+                result = self._handle(**kwargs)
+        return result
 
     def _process_callbacks(self, kwargs: Dict[str, Any]) -> None:
         """Replaces callback callables in ``kwargs`` with C function-pointer addresses.
@@ -317,54 +299,6 @@ class NanobindCompiledSDFG:
             cfunc = cbtype.as_ctypes()(trampoline)
             self._callback_keepalive.append(cfunc)
             kwargs[name] = ctypes.cast(cfunc, ctypes.c_void_p).value
-
-    def _allocate_return_arrays(self, kwargs: Dict[str, Any]) -> List[Any]:
-        """Allocates the ``__return*`` arrays.
-
-        The function will return them _and_ add them to ``kwargs``.
-        It is important that a caller-provided return buffer is accepted only when
-        ``compiler.nanobind_allow_return_override`` is enabled and all layout related
-        symbols must be provided.
-        """
-        arrays = self._sdfg.arrays
-        syms = {k: v for k, v in kwargs.items() if k not in arrays}
-        syms.update(self._sdfg.constants)
-
-        # Config lookups are not free; resolve lazily, at most once per call.
-        nanobind_allow_return_override: Optional[bool] = None
-
-        return_arrays = []
-        for name in self._return_values:
-            desc = arrays[name]
-            assert isinstance(desc, dt.Array)  # Non-array returns are refused by the bindings generator at codegen
-
-            if name in kwargs:
-                # Caller-provided output buffer (opt-in): the kernel writes into
-                # and returns it. No shape/dtype validation - the caller owns
-                # correctness; the binding rejects what it cannot accept.
-                if nanobind_allow_return_override is None:
-                    nanobind_allow_return_override = Config.get_bool('compiler', 'nanobind_allow_return_override')
-
-                if not nanobind_allow_return_override:
-                    raise ValueError(f'The implicit output argument `{name}` can not be passed as an explicit '
-                                     f'input argument; set compiler.nanobind_allow_return_override=true to allow '
-                                     f'reusing a caller-provided output buffer.')
-                arr = kwargs[name]
-            else:
-                shape = tuple(int(symbolic.evaluate(s, syms)) for s in desc.shape)
-                dtype = desc.dtype.as_numpy_dtype()
-                total_size = int(symbolic.evaluate(desc.total_size, syms))
-                strides = tuple(int(symbolic.evaluate(s, syms)) * desc.dtype.bytes for s in desc.strides)
-                if desc.storage is dtypes.StorageType.GPU_Global:
-                    if cupy is None:
-                        raise NotImplementedError('GPU return values are unsupported if cupy is not installed')
-                    arr = cupy.ndarray(shape, dtype, memptr=cupy.zeros(total_size, dtype).data, strides=strides)
-                else:
-                    arr = np.ndarray(shape, dtype, buffer=np.zeros(total_size, dtype), strides=strides)
-            kwargs[name] = arr
-            return_arrays.append(arr)
-
-        return return_arrays
 
     def initialize(self, *args: Any, **kwargs: Any) -> None:
         """Initializes the SDFG state eagerly, without running it.

@@ -162,6 +162,26 @@ def test_nanobind_interface_return_override_wrong_dtype_rejected_by_binding():
                 csdfg(A=a, __return=wrong)
 
 
+def test_nanobind_interface_return_override_wrong_shape_rejected():
+    """With the option on, a caller-provided buffer whose shape does not match
+    the (symbol-derived) return shape is rejected instead of being written out
+    of bounds or partially."""
+    import pytest
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        with set_temporary('compiler', 'nanobind_allow_return_override', value=True):
+
+            @dace.program
+            def double_ret_shape(A: dace.float64[20]):
+                return A * 2
+
+            csdfg = double_ret_shape.to_sdfg().compile()
+            a = np.random.rand(20)
+            with pytest.raises(Exception, match='shape'):
+                csdfg(A=a, __return=np.zeros(25, dtype=np.float64))  # too large
+            with pytest.raises(Exception, match='shape'):
+                csdfg(A=a, __return=np.zeros((4, 5), dtype=np.float64))  # wrong rank
+
+
 def test_nanobind_interface_positional_and_extra_kwargs():
     """Positional calls work, and extra keyword arguments are absorbed (old-interface behavior)."""
     with set_temporary('compiler', 'interface', value='nanobind'):
@@ -783,7 +803,7 @@ def test_nanobind_interface_lowp_array_binding():
     sdfg.add_array('A', [4], dace.bfloat16)
     sdfg.add_array('B', [4], dace.float8_e4m3fn)
     code = generate_bindings_code(sdfg)
-    sig = code.split('void call(')[1].split(') {')[0]
+    sig = code.split('nb::object call(')[1].split(') {')[0]
     assert 'nb::object A' in sig
     assert '__array_interface__' in code
     # Itemsize-only guard: the typestr kind letter varies across ml_dtypes.
@@ -826,20 +846,21 @@ def test_nanobind_interface_callback_binding():
 
 
 def test_nanobind_interface_handle_metadata_binding():
-    """The handle exposes the codegen-time call metadata - return-array names,
-    the single-value-return convention, and callback names - so the Python
-    wrapper does not re-derive them from naming conventions."""
+    """The handle exposes the codegen-time call metadata - return-array names
+    and callback names - so the Python wrapper does not re-derive them from
+    naming conventions. The single-vs-tuple return convention is compiled into
+    call()'s return statement, not exposed."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    # Multi-value returns: names in order, not the single-value convention.
+    # Multi-value returns: names in order, returned as a tuple by call().
     sdfg = dace.SDFG('metadata_probe_rets')
     sdfg.add_array('__return_0', [4], dace.float64)
     sdfg.add_array('__return_1', [4], dace.float64)
     code = generate_bindings_code(sdfg)
     assert 'nb::make_tuple("__return_0", "__return_1")' in code
-    assert '"is_single_value_ret", [](DaceHandle_metadata_probe_rets &) { return false; }' in code
+    assert 'return nb::make_tuple(__return_0__obj, __return_1__obj);' in code
 
-    # Single-value return plus a callback.
+    # Single-value return plus a callback: the bare array is returned.
     sdfg = dace.SDFG('metadata_probe_single')
     sdfg.add_array('__return', [4], dace.float64)
     sdfg.add_array('A', [10], dace.float64)
@@ -849,7 +870,7 @@ def test_nanobind_interface_handle_metadata_binding():
     state.add_edge(t, 'o', state.add_write('A'), None, dace.Memlet('A[0]'))
     code = generate_bindings_code(sdfg)
     assert 'nb::make_tuple("__return")' in code
-    assert '"is_single_value_ret", [](DaceHandle_metadata_probe_single &) { return true; }' in code
+    assert 'return __return__obj;' in code
     assert '"callback_names", [](DaceHandle_metadata_probe_single &) { return nb::make_tuple("cb"); }' in code
 
     # No returns, no callbacks: empty tuples.
@@ -986,11 +1007,11 @@ def test_nanobind_interface_symbol_inference_stride():
         assert np.allclose(b, base[::3])
 
 
-def test_nanobind_interface_symbol_inference_return_requires_symbol():
-    """Symbolic-shaped returns require the symbol explicitly: their shapes are
-    evaluated in Python, and inference happens only in compiled code (a
-    per-call sympy inference in Python would be slow - by choice)."""
-    import pytest
+def test_nanobind_interface_return_shape_from_inferred_symbol():
+    """A symbolic-shaped return no longer requires its symbols explicitly:
+    allocation happens in the binding AFTER compiled symbol inference, so an
+    inferred symbol can size the return array (previously the Python-side
+    allocation demanded the symbol per call)."""
     with set_temporary('compiler', 'interface', value='nanobind'):
         N = dace.symbol('N')
 
@@ -1000,9 +1021,7 @@ def test_nanobind_interface_symbol_inference_return_requires_symbol():
 
         csdfg = infer_ret_nanobind.to_sdfg().compile()
         a = np.random.rand(16)
-        with pytest.raises(Exception, match='N'):
-            csdfg(A=a)  # the return shape needs N in Python
-        result = csdfg(A=a, N=np.int32(16))
+        result = csdfg(A=a)  # N inferred from A's shape sizes the return
         assert result.shape == (16, )
         assert np.allclose(result, a + 1.0)
 
@@ -1143,7 +1162,7 @@ def test_nanobind_interface_bool_scalar_binds_as_uint8():
     # asserts the binding param specifically, not the whole TU.
     assert 'uint8_t flag' in code
     assert 'static_cast<bool>(flag)' in code
-    assert 'bool flag' not in code.split('void call(')[1].split(') {')[0]
+    assert 'bool flag' not in code.split('nb::object call(')[1].split(') {')[0]
 
 
 def test_nanobind_interface_bool_scalar_numpy_input():
@@ -1265,7 +1284,7 @@ def test_nanobind_interface_must_pass_symbols_extracted_first():
         B[0] = A[0] * a + z
 
     code = generate_bindings_code(must_pass_first_probe.to_sdfg(simplify=True))
-    call_body = code.split('void call(')[1]
+    call_body = code.split('nb::object call(')[1]
     # 'z' (must-pass) is unwrapped before 'a' (deduced) - plain arglist order
     # would put 'a' first.
     assert "missing argument 'z'" in call_body
@@ -2079,29 +2098,30 @@ def test_nanobind_interface_gpu_return_binding():
 
     with set_temporary('compiler', 'cuda', 'backend', value='cuda'):
         code = generate_bindings_code(sdfg)
-    assert 'nb::ndarray<double, nb::device::cuda> __return' in code
+    # The return binds as a defaulted nb::object; the setup casts it (or the
+    # in-binding allocation) to a DEVICE ndarray view for the pointer.
+    assert 'nb::arg("__return").none() = nb::none()' in code
+    assert 'nb::cast<nb::ndarray<double, nb::device::cuda>>(__return__obj, false)' in code
 
 
-def test_nanobind_interface_gpu_return_allocation_requires_cupy():
-    """Allocating a GPU_Global return without CuPy raises NotImplementedError
-    instead of silently handing the device binding a host array."""
-    import importlib.util
-    import types
-    from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
+def test_nanobind_interface_return_allocation_module_choice():
+    """The in-binding allocation imports CuPy only for GPU_Global returns and
+    NumPy for host returns - a CPU-only module must never touch cupy (its
+    absence then surfaces naturally as an import error at call time)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
 
-    if importlib.util.find_spec('cupy') is not None:
-        pytest.skip('cupy is installed; the missing-cupy error path cannot trigger')
+    cpu = dace.SDFG('ret_alloc_cpu_probe')
+    cpu.add_array('__return', [10], dace.float64)
+    cpu_code = generate_bindings_code(cpu)
+    assert 'nb::module_::import_("numpy")' in cpu_code
+    assert '"cupy"' not in cpu_code
 
-    sdfg = dace.SDFG('gpu_return_alloc_probe')
-    sdfg.add_array('__return', [10], dace.float64, storage=dace.StorageType.GPU_Global)
-    stub_handle = types.SimpleNamespace(has_gpu_code=True,
-                                        return_names=('__return', ),
-                                        is_single_value_ret=True,
-                                        callback_names=())
-    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: stub_handle, __file__='<stub>')
-    wrapper = NanobindCompiledSDFG(sdfg, stub_module, [])
-    with pytest.raises(NotImplementedError, match='cupy'):
-        wrapper._allocate_return_arrays({})
+    gpu = dace.SDFG('ret_alloc_gpu_probe')
+    gpu.add_array('__return', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+    gpu.arrays['__return'].optional = False
+    with set_temporary('compiler', 'cuda', 'backend', value='cuda'):
+        gpu_code = generate_bindings_code(gpu)
+    assert 'nb::module_::import_("cupy")' in gpu_code
 
 
 @pytest.mark.gpu
@@ -2460,7 +2480,7 @@ def test_nanobind_interface_user_args_binding():
     # N is unlisted and inferable: a plain const local, no std::optional dance.
     assert 'const int N = ' in body
     assert 'A.shape(0)' in body
-    assert 'N__opt' not in body.split('void call(')[0]
+    assert 'N__opt' not in body.split('nb::object call(')[0]
 
 
 def test_nanobind_interface_user_args_not_generated_when_empty():
