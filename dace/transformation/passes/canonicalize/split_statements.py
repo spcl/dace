@@ -177,7 +177,17 @@ class SplitStatements(ppl.Pass):
 
     @staticmethod
     def _independent_output_groups(state, node: nodes.NestedSDFG):
-        """Partition ``node``'s output connectors into independent groups."""
+        """Partition ``node``'s output connectors into independent groups, or ``None`` to refuse."""
+        # In-place read-modify-write: an output array that is ALSO an input connector. Cloning the
+        # body per group re-evaluates every branch guard and re-reads that array in EVERY clone,
+        # while one clone writes it -- so the arms stop being mutually exclusive and a guard is
+        # tested against already-updated data. Measured on TSVC s2710: ``a[i] = a[i] + b[i]*d[i]``
+        # flips ``a[i] > b[i]``, and the else-arm's store to ``b`` then fires on if-arm lanes.
+        # ``_output_dependency`` cannot see it either -- an RMW output's writer IS an input name, so
+        # it stops before traversing and reports no dependency at all. Mirror the RMW refusal
+        # :meth:`_split_one_map` already carries (split_statements.py) and leave the body alone.
+        if any(c in node.in_connectors for c in node.out_connectors):
+            return None
         if not _has_conditional(node.sdfg) and not _has_interstate_assignments(node.sdfg):
             return None
         # A black-box body is not analyzable: ``_output_dependency`` reads the memlets, which
