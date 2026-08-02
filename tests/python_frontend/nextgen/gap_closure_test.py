@@ -320,6 +320,49 @@ def test_python_object_array_field_is_not_opaque():
     _assert_no_callbacks(nextgen.parse_program(prog))
 
 
+def test_ufunc_over_a_constant_folded_closure_expression():
+    """``numpy.power(x, nord + 1)`` over closure constants: the exponent folds
+    to a SYMBOL-FREE symbolic value, which is a sympy number and not the
+    Python one the registry's operand typing expects
+    (``ufunc._sample_operand_value`` samples it into an object-dtype NumPy
+    result with no typeclass, so descriptor inference returns None)."""
+    d4_bg = 0.15
+    nord = 2
+
+    @dace.program
+    def damping(a: dace.float64[10]):
+        a[:] = np.power(d4_bg, nord + 1)
+
+    tree = nextgen.parse_program(damping, np.zeros(10))
+    _assert_no_callbacks(tree)
+
+    a = np.zeros(10)
+    from_schedule_tree(tree)(a)
+    assert np.allclose(a, 0.15**3)
+
+
+def test_ufunc_keyword_form_over_a_constant_folded_closure_expression():
+    """The same fold, in the keyword form that lowers through deferred
+    replacement expansion rather than the elementwise mechanism: the trial
+    expansion types its operands through ``operators.result_type``, which
+    rejects a sympy number outright."""
+    d4_bg = 0.15
+    nord = 2
+
+    @dace.program
+    def damping(a: dace.float64[10]):
+        dd8 = np.power(d4_bg, nord + 1, dtype=np.float64)
+        a[:] = dd8
+
+    tree = nextgen.parse_program(damping, np.zeros(10))
+    _assert_no_callbacks(tree)
+    assert any(isinstance(node, tn.ReplacementCallNode) for node in tree.preorder_traversal())
+
+    a = np.zeros(10)
+    from_schedule_tree(tree)(a)
+    assert np.allclose(a, 0.15**3)
+
+
 if __name__ == '__main__':
     test_map_index_dimension_is_a_single_iteration_range()
     test_hoisted_shape_element_keeps_its_compile_time_value()
@@ -338,3 +381,5 @@ if __name__ == '__main__':
     test_sdfg_call_result_into_a_subscript_target()
     test_indirection_through_a_structure_member()
     test_python_object_array_field_is_not_opaque()
+    test_ufunc_over_a_constant_folded_closure_expression()
+    test_ufunc_keyword_form_over_a_constant_folded_closure_expression()

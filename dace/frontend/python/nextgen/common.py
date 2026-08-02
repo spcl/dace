@@ -3,7 +3,9 @@
 Shared errors and helpers for the next-generation Python frontend.
 """
 import ast
-from typing import Optional
+from typing import Any, Optional
+
+import sympy
 
 
 class FrontendError(Exception):
@@ -139,3 +141,47 @@ def normalize_qualname(name: Optional[str]) -> Optional[str]:
         if name.startswith(prefix):
             return replacement + name[len(prefix):]
     return name
+
+
+def registry_argument_value(value: Any) -> Any:
+    """
+    A compile-time argument value in the form the replacement registry
+    expects, converting a symbol-free symbolic expression to the equivalent
+    Python number.
+
+    Inference evaluates compile-time arithmetic symbolically, so an argument
+    the user wrote as a constant expression over closure values
+    (``numpy.power(x, nord + 1)``) reaches the registry as a *sympy* number
+    rather than a Python one. The registry's helpers type an argument either
+    as a Python/NumPy number or as a symbolic expression -- and a sympy
+    number is neither, since ``dace.symbolic.issymbolic`` is False for it
+    (nothing in it is free) while it still registers as a ``numbers.Number``.
+    It therefore takes the plain-number path in
+    ``replacements.operators.result_type`` and
+    ``replacements.ufunc._sample_operand_value``, where NumPy evaluates it
+    into an object-dtype result that has no typeclass, failing descriptor
+    inference and the trial expansion -- and the call degrades to a callback.
+    The Python number handed over instead is exactly what the classic
+    frontend passes for the same source expression.
+
+    Symbolic expressions with free symbols (real shape/bound quantities) pass
+    through untouched: those the registry does handle.
+
+    :param value: A compile-time value from the ``'constant'``/``'symbolic'``
+                  value domains.
+    :return: ``value``, or its Python-number equivalent.
+    """
+    if not isinstance(value, sympy.Basic) or value.free_symbols:
+        return value
+    try:
+        if isinstance(value, sympy.logic.boolalg.BooleanAtom):
+            return bool(value)
+        if value.is_integer:
+            return int(value)
+        if value.is_real:
+            return float(value)
+        if value.is_complex:
+            return complex(value)
+    except (TypeError, ValueError, AttributeError):
+        return value
+    return value

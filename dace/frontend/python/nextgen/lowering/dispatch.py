@@ -58,7 +58,8 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.frontend.python import astutils
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
-from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, supported_data_attribute)
+from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, registry_argument_value,
+                                                 supported_data_attribute)
 from dace.frontend.python.nextgen.lowering.access import (DataAccess, nondegenerate_shape, resolve_access,
                                                           scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
@@ -2398,7 +2399,7 @@ def _replacement_arguments(call: ast.Call, state: LoweringState) -> Optional[Tup
                 # Compile-time-valued temps (symbolic aliases) pass by value
                 symbolic_value = state.context.symbolic_scalar_values.get(binding.container)
                 if symbolic_value is not None:
-                    return True, symbolic_value
+                    return True, registry_argument_value(symbolic_value)
                 descriptor = state.context.containers[binding.container]
                 if (isinstance(descriptor.dtype, dtypes.pyobject)
                         and binding.container not in state.context.replacement_handles):
@@ -2414,7 +2415,7 @@ def _replacement_arguments(call: ast.Call, state: LoweringState) -> Optional[Tup
         except UnsupportedFeatureError:
             return False, None
         if value.kind in ('constant', 'symbolic'):
-            return True, value.value
+            return True, registry_argument_value(value.value)
         if value.kind == 'static':
             # A static sequence's elements may themselves be data containers
             # (e.g. the ``(A, B)`` in ``numpy.concatenate((A, B))``): resolve

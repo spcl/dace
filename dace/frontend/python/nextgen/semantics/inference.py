@@ -22,7 +22,8 @@ import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
-from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, supported_data_attribute)
+from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, registry_argument_value,
+                                                 supported_data_attribute)
 from dace.frontend.python.nextgen.semantics import values
 from dace.frontend.python.nextgen.semantics.context import ProgramContext
 from dace.frontend.python.nextgen.semantics.indexing import array_index_slots, reverse_normalized, substitute_slots
@@ -646,7 +647,7 @@ class InferenceService:
                 input_descs[name] = inferred.descriptor
                 return True, name
             if inferred.kind in ('constant', 'symbolic'):
-                return True, inferred.value
+                return True, registry_argument_value(inferred.value)
             if inferred.kind == 'static':
                 # A static sequence's elements may themselves be data
                 # containers (e.g. the ``(A, B)`` in ``numpy.concatenate((A,
