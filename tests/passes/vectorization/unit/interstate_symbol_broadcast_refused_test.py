@@ -119,33 +119,31 @@ def map_steps(sdfg):
     return [str(m.map.range[-1][2]) for m, _ in sdfg.all_nodes_recursive() if isinstance(m, nd.MapEntry)]
 
 
-def fork_run(sdfg, kwargs, buf, ref):
-    """Compile + run in a forked child, comparing IN the child (it mutates its own copy-on-write
-    buffers) and returning the verdict as an exit code -- so a would-be out-of-bounds tile read
-    cannot take the pytest process down with it."""
-    pid = os.fork()
-    if pid == 0:
-        code = 0
-        try:
-            sdfg.compile()(**kwargs)
-            code = 0 if np.allclose(buf, ref, rtol=1e-12, atol=1e-12) else 3
-        except BaseException:  # noqa: BLE001 -- child reports any failure via its exit code
-            code = 4
-        os._exit(code)
-    _, status = os.waitpid(pid, 0)
-    assert os.WIFEXITED(status), f'kernel died on signal {os.WTERMSIG(status) if os.WIFSIGNALED(status) else "?"}'
-    assert os.WEXITSTATUS(status) == 0, f'forked kernel failed with exit code {os.WEXITSTATUS(status)}'
+def run(sdfg, kwargs, buf, ref, label):
+    """Compile + run in-process and compare.
+
+    The sibling ``tile_param_dependent_branch_refused_test`` forks first, to contain an
+    out-of-bounds masked-tail read. Not needed here and deliberately not copied: none of these
+    cases reads past an array (the refused kernels emit scalar code, and the control's n=64 is
+    tile-aligned, so no masked tail exists), and ``os.fork()`` around ``sdfg.compile()`` deadlocks
+    the child on an inherited lock once other tests in this directory have run -- a hang is a
+    worse failure mode than the crash it would be guarding against.
+    """
+    sdfg.compile()(**kwargs)
+    assert np.allclose(buf, ref, rtol=1e-12, atol=1e-12), \
+        f'{label}: max|diff|={np.nanmax(np.abs(np.asarray(buf) - np.asarray(ref))):.3e}'
 
 
 @pytest.mark.parametrize('n', [64, 61])
 def test_pack_matches_numpy(n):
-    """Numeric contract. ``n=61`` also exercises the 5-element masked remainder."""
+    """Numeric contract. ``n=61`` is deliberately NOT a multiple of ``W``: the tile base then walks
+    off the lane-0 element the broadcast used, so a regression drifts on the ragged case too."""
     rng = np.random.default_rng(1234)
     a, b = rng.random(n), rng.random(n) - 0.5
     ref = pack_reference(a, b, n)
     sdfg = vectorized(pack_kernel, f'pack_{n}')
     work = a.copy()
-    fork_run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref)
+    run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f'pack n={n}')
 
 
 @pytest.mark.parametrize('n', [64, 61])
@@ -155,7 +153,7 @@ def test_expand_matches_numpy(n):
     ref = expand_reference(a, b, n)
     sdfg = vectorized(expand_kernel, f'expand_{n}')
     work = a.copy()
-    fork_run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref)
+    run(sdfg, dict(a=work, b=b.copy(), N=n), work, ref, f'expand n={n}')
 
 
 def test_pack_is_refused_rather_than_broadcast():
@@ -179,7 +177,7 @@ def test_invariant_interstate_symbol_matches_numpy():
     ref = invariant_reference(a, b, c, n)
     sdfg = vectorized(invariant_symbol_kernel, 'invariant_sym_num')
     work = a.copy()
-    fork_run(sdfg, dict(a=work, b=b.copy(), c=c.copy(), N=n), work, ref)
+    run(sdfg, dict(a=work, b=b.copy(), c=c.copy(), N=n), work, ref, 'invariant symbol')
 
 
 if __name__ == '__main__':
