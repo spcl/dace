@@ -491,6 +491,45 @@ def no_widened_scalar_tasklets(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> O
     return None
 
 
+def no_lane_collapsing_nested_sdfgs(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> Optional[str]:
+    """No NestedSDFG inside a tile-tagged body may read/write a TILE through a single-element
+    connector.
+
+    A body NSDFG the branch front could not inline (npbench ``nbody``'s ``np.power(a, -1.5,
+    out=a, where=I)``) keeps scalar inner descriptors while the tile body around it holds
+    ``(W,)`` operands. Codegen then runs it ONCE at the tile base -- lane 0 decides for all W
+    lanes and the result is broadcast -- with no compile error and no other invariant tripped.
+    Refuse the kernel instead of handing back a silently wrong per-lane value.
+    """
+    import dace.data as _dd
+    for _state, nsdfg_node, _map_entry in _tile_tagged_bodies(sdfg, K):
+        inner_sdfg = nsdfg_node.sdfg
+        for state in inner_sdfg.states():
+            for node in state.nodes():
+                if not isinstance(node, NestedSDFG):
+                    continue
+                edges = [(e, e.dst_conn) for e in state.in_edges(node) if e.dst_conn]
+                edges += [(e, e.src_conn) for e in state.out_edges(node) if e.src_conn]
+                for edge, conn in edges:
+                    if edge.data is None or edge.data.data is None:
+                        continue
+                    outer = inner_sdfg.arrays.get(edge.data.data)
+                    if not isinstance(outer, _dd.Array) or tuple(outer.shape) != tuple(widths):
+                        continue
+                    inner = node.sdfg.arrays.get(conn)
+                    if inner is None:
+                        continue
+                    try:
+                        collapsed = int(inner.total_size) == 1
+                    except (TypeError, ValueError):
+                        collapsed = False
+                    if collapsed:
+                        return (f"{inner_sdfg.name}.{state.label}: nested SDFG ``{node.label}`` reads/writes "
+                                f"tile ``{edge.data.data}`` {tuple(widths)} through single-element connector "
+                                f"``{conn}`` -- it would run once at the tile base (lane 0 for all lanes)")
+    return None
+
+
 def lane_dep_transients_widened(sdfg: SDFG, K: int, widths: Tuple[int, ...]) -> Optional[str]:
     """Every lane-dependent transient in a tile-tagged body NSDFG is at tile shape ``widths`` OR an
     exempt bridge name (gather idx tile / ITE materialised tile / cond broadcast tile / Scalar

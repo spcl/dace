@@ -40,8 +40,6 @@ _PHASES = ("canon", "canon_vec")
 # a case that starts passing flips the suite red so the entry is removed. Populated from the full sweep.
 # Two classes: canon-phase = real canon/codegen bugs (dace lane); canon_vec-phase = multidim-vectorize gaps.
 _XFAIL: dict = {
-    ("azimint_naive", "canon_vec"): "multidim-vectorize: output diverges from reference",
-    ("nbody", "canon_vec"): "multidim-vectorize StrideMapByTileWidths invariant: TILE_MAIN last-K step != width",
 }
 
 
