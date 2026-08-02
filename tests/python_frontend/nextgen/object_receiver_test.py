@@ -16,6 +16,10 @@ consumes by name (``dace.comm.Subarray`` into ``dace.comm.Redistribute``).
 Those are Python-object-typed like a fallback result, but they are exactly
 what the next replacement takes, and the registry state they install
 (``sdfg.subarrays``) has to exist in the build-time viability trial too.
+
+``mpi4py`` is imported inside each test rather than at module scope: an
+environment can carry an ``mpi4py`` package whose ``MPI`` extension module is
+not importable, and at module scope that turns a skip into a collection error.
 """
 import numpy as np
 import pytest
@@ -25,11 +29,7 @@ from dace.frontend.python import nextgen
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.sdfg.analysis.schedule_tree.tree_to_sdfg import from_schedule_tree
 
-mpi4py = pytest.importorskip('mpi4py')
-from mpi4py import MPI  # noqa: E402 -- guarded by importorskip above
-
 P = dace.symbol('P', dace.int32)
-commworld = MPI.COMM_WORLD
 
 
 def _lowered(program, *args):
@@ -40,7 +40,11 @@ def _lowered(program, *args):
     return tree
 
 
+@pytest.mark.mpi
 def test_communicator_method_records_its_receiver_object():
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
 
     @dace.program
     def comm_bcast(A: dace.int32[10]):
@@ -58,8 +62,12 @@ def test_communicator_method_records_its_receiver_object():
     from_schedule_tree(tree).validate()
 
 
+@pytest.mark.mpi
 @pytest.mark.parametrize('collective', ['alltoall', 'send_recv'])
 def test_communicator_collectives_convert_to_an_sdfg(collective):
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
 
     @dace.program
     def alltoall(A: dace.int32[10], B: dace.int32[10]):
@@ -74,9 +82,13 @@ def test_communicator_collectives_convert_to_an_sdfg(collective):
     from_schedule_tree(_lowered(program)).validate()
 
 
+@pytest.mark.mpi
 def test_process_grid_from_a_communicator_method():
     """``Create_cart`` on the communicator produces a grid container, whose own
     methods then resolve through the ordinary container-receiver path."""
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
 
     @dace.program
     def sub_grid_bcast(A: dace.int32[10]):
@@ -92,7 +104,11 @@ def test_process_grid_from_a_communicator_method():
     from_schedule_tree(tree).validate()
 
 
+@pytest.mark.mpi
 def test_nonblocking_requests_through_a_communicator():
+
+    from mpi4py import MPI
+    commworld = MPI.COMM_WORLD
 
     @dace.program
     def isend_irecv(rank: dace.int32, size: dace.int32):
@@ -109,6 +125,7 @@ def test_nonblocking_requests_through_a_communicator():
     from_schedule_tree(_lowered(isend_irecv)).validate()
 
 
+@pytest.mark.mpi
 def test_replacement_handle_is_consumed_by_the_next_replacement():
     """``dace.comm.Subarray`` produces an opaque handle that
     ``dace.comm.Redistribute`` takes by name. The build-time viability trial
