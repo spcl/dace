@@ -69,7 +69,9 @@ jobs:
         # file to check whether file-local process state reproduces the
         # 3.10-only failure. Restore the full-suite selection below when done:
         # pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 tests/passes/constant_propagation_test.py
+        # -v: each test line carries its [gwN] worker id, so a failing leg's
+        # log reveals the worker co-schedule (the failure is order-dependent).
+        pytest -n auto -v --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 tests/passes/constant_propagation_test.py
         ./codecov
 
     - name: Test OpenBLAS LAPACK

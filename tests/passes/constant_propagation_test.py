@@ -652,10 +652,38 @@ def test_dependency_change_same_edge(extra_state):
     # nanobind bindings and loading stay under test: passing here indicts the
     # shared folder identity; failing indicts the interface itself.
     import os
+    import sys
     import tempfile
+    retry_result = None
+    handle_module_info = None
     with tempfile.TemporaryDirectory() as tmp_folder:
         sdfg.build_folder = os.path.join(tmp_folder, 'build')
-        sdfg(a=a)
+        csdfg = sdfg.compile()
+        csdfg(a=a)
+        # Snapshot the generated-module registry INSIDE the with-block (the
+        # tmp folder name is part of the expected identity): consumed by the
+        # failure diagnostic below to discriminate a loader mixup (expected
+        # qualname absent / pointing at a foreign file) from a module that
+        # was loaded correctly yet computed the wrong result.
+        from dace.codegen.compiler import nanobind_qualified_module_name
+        expected_qualname = nanobind_qualified_module_name(sdfg.build_folder, sdfg.name)
+        expected_module = sys.modules.get(expected_qualname)
+        module_registry = {
+            name: (getattr(m, '__file__', None), getattr(m, 'source_sdfg_hash', None))
+            for name, m in sys.modules.items() if name.startswith('dace.generated.') and name.endswith('.tester')
+        }
+        if a[0] != ref:
+            # Call the SAME handle a second time: a persistent wrong module
+            # reproduces the wrong result, a one-shot corruption does not.
+            # Also record the module the handle ACTUALLY wraps (nanobind
+            # only; the ctypes handle has no `module`).
+            retry = np.zeros([1], np.int64)
+            csdfg(a=retry)
+            retry_result = retry[0]
+            handle_module = getattr(csdfg, 'module', None)
+            handle_module_info = (getattr(handle_module, '__file__',
+                                          None), getattr(handle_module, 'source_sdfg_hash', None))
+        del csdfg
     if a[0] != ref:
         # Second-stage diagnostic: in every observed CI failure the structure
         # above was byte-identical to a passing run, so the pass is exonerated
@@ -687,6 +715,12 @@ def test_dependency_change_same_edge(extra_state):
         after = _codegen_excerpt()
         diag += (' ||| codegen excerpt (poisoned?): ' + ' ; '.join(before) + ' ||| lines changed by cache clear: ' +
                  (' ; '.join(sorted(set(before) ^ set(after))) or '<none - codegen unaffected by cache state>'))
+        diag += (f' ||| expected module: {expected_qualname} -> ' +
+                 (f'file={getattr(expected_module, "__file__", None)!r} '
+                  f'hash={getattr(expected_module, "source_sdfg_hash", None)!r}' if expected_module is not None else
+                  '<NOT IN sys.modules>') + f' ||| all loaded *.tester modules: {module_registry}' +
+                 f' ||| second call on the same handle: {retry_result!r} (expected {ref})' +
+                 f' ||| handle module (file, hash): {handle_module_info}')
     assert a[0] == ref, diag
 
 
