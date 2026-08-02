@@ -69,7 +69,7 @@ from dace.transformation.passes.vectorization.tasklet_preprocessing_passes impor
     RewriteModuloToPyMod,
     StripPowerExponentCast,
 )
-from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.canonicalize.pipeline import canonicalize, disable_openmp_sections
 from dace.transformation.passes.remove_views import RemoveViews
 from dace.transformation.passes.vectorization.utils.arrays import demote_connector_views
 from dace.transformation.passes.canonicalize.assume_symbols_nonnegative import (SetSymbolNonnegativeAssumptions,
@@ -986,6 +986,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # correct input and leave it un-tiled -- a clean refusal instead of a crash or a
         # half-transformed SDFG. Cheap relative to the compile that follows; taken once per call.
         snapshot = copy.deepcopy(sdfg)
+        # Opt out of omp sections here too, not just via the entry ``canonicalize`` below -- that
+        # call is skipped on an already-GPU-offloaded SDFG. Taken AFTER the snapshot so a
+        # ``VectorizeUnsupported`` refusal hands the caller back their input untouched.
+        disable_openmp_sections(sdfg)
         # Canonicalize at the vectorizer's OWN entry (user direction). Every prep pass below
         # assumes the canonical shape -- unit-step maps, parallelized DOALL loops, no branchy
         # scaffolding -- which until now arrived only when the CALLER happened to run
@@ -1183,6 +1187,10 @@ class VectorizeMultiDim(ppl.Pipeline):
         # (the same "runs last" rule the canonicalize guard follows to avoid orphaning its state).
         # No-op when the SDFG has no signed-integer free symbols (fixed-size kernels).
         insert_assumption_guards(sdfg)
+        # Exit sweep + postcondition: passes above mint nested SDFGs (Nest, LoopToMap, lib-node
+        # expansion) that take the property default, which follows the global config.
+        disable_openmp_sections(sdfg)
+        assert not any(nested.openmp_sections for nested in sdfg.all_sdfgs_recursive())
         # Final validate (gated on the ``validate`` knob, default on): the core passes
         # (WidenAccesses + tile-lib insertion) leave the SDFG transiently invalid, so the
         # per-subpass gate skips them; by here they've all completed (and, on the expand path,

@@ -110,6 +110,23 @@ from dace.transformation.interstate.multistate_inline import InlineMultistateSDF
 from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
 
 
+def disable_openmp_sections(sdfg: SDFG) -> None:
+    """Opt ``sdfg`` and every nested SDFG out of ``#pragma omp parallel sections``.
+
+    ``framecode.py`` wraps a state's independent components in sections whenever
+    ``sdfg.openmp_sections`` is on (the property defaults to
+    ``compiler.cpu.openmp_sections``), so a caller who flipped the knob globally would
+    otherwise get the construct in canonicalized/vectorized output too. It is a loss there:
+    the parallelism already lives in the maps, and a map inside a section re-enters OpenMP at
+    nesting level 2, where the default ``OMP_MAX_ACTIVE_LEVELS=1`` hands it a team of ONE.
+    Local opt-out only -- the generic codegen path stays available to every other caller.
+    Call at pipeline entry AND exit: a nested SDFG minted mid-pipeline takes the property
+    default, which follows the global config.
+    """
+    for nested in sdfg.all_sdfgs_recursive():
+        nested.openmp_sections = False
+
+
 def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     """Between-phase structural cleanup (never ``SimplifyPass`` mid-pipeline):
     fuse adjacent states, flatten nested SDFGs, then drop empty states, so each
@@ -1648,6 +1665,7 @@ class CanonicalizationPipeline(ppl.Pass):
         :param sdfg: The SDFG to canonicalize.
         :returns: The number of passes applied.
         """
+        disable_openmp_sections(sdfg)
         # Specialize chosen symbols to constants first (e.g. ``nclv = 5``), so the
         # otherwise-symbolic species-loop trip counts become concrete and unroll.
         # ``specialize_symbol`` descends into nested SDFGs (and strips their
@@ -1682,6 +1700,7 @@ class CanonicalizationPipeline(ppl.Pass):
             # re-validation -- that is what makes validate_all affordable by default.
             if self.validate_all and result is not None and not is_pipeline:
                 sdfg.validate()
+        disable_openmp_sections(sdfg)
         if self.validate:
             sdfg.validate()
         return len(stages)
@@ -1789,4 +1808,7 @@ def canonicalize(sdfg: SDFG,
     # contiguous cases take the clause, everything else still falls back to atomics.
     for nested in sdfg.all_sdfgs_recursive():
         nested.openmp_array_reductions = True
+    # Enforced, not hoped for: the pipeline opts out of omp sections at entry and exit, and a
+    # caller who flipped ``compiler.cpu.openmp_sections`` globally must not be able to undo it.
+    assert not any(nested.openmp_sections for nested in sdfg.all_sdfgs_recursive())
     return sdfg

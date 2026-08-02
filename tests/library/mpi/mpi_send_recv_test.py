@@ -113,6 +113,8 @@ def test_dace_send_recv():
     sdfg = None
     if rank == 0:
         sdfg = dace_send_recv.to_sdfg(simplify=True)
+        # Disable OpenMP section to allow blocking
+        sdfg.openmp_sections = False
     mpi_sdfg = utils.distributed_compile(sdfg, comm)
 
     val = mpi_sdfg(rank=rank, size=commsize)
