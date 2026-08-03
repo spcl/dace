@@ -266,14 +266,21 @@ class NanobindCompiledSDFG:
         program from a hook is ``compiled_sdfg._handle(**args[0])``.
 
         :return: The binding's return value (the return array(s)), or ``None``
-                 when the program run was suppressed.
+                 when the program run was suppressed and no hook supplied a
+                 result.
         """
+        # A hook that runs the program itself and then suppresses the hooked
+        # call (dace.profile) deposits its last invocation's return value
+        # here, since the binding allocates fresh return arrays per call.
+        self._hook_result: Any = None
         result = None
         with hooks.invoke_compiled_sdfg_call_hooks(self, (kwargs, )):
             # Checked inside the hook context: a hook may toggle the flag
             # (dace.profile does) before the program call would run.
             if self.do_not_execute is False:
                 result = self._handle(**kwargs)
+        if result is None:
+            result = self._hook_result
         return result
 
     def _process_callbacks(self, kwargs: Dict[str, Any]) -> None:

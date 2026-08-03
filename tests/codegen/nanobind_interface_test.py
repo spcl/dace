@@ -162,10 +162,13 @@ def test_nanobind_interface_return_override_wrong_dtype_rejected_by_binding():
                 csdfg(A=a, __return=wrong)
 
 
-def test_nanobind_interface_return_override_wrong_shape_rejected():
-    """With the option on, a caller-provided buffer whose shape does not match
-    the (symbol-derived) return shape is rejected instead of being written out
-    of bounds or partially."""
+def test_nanobind_interface_return_override_too_small_rejected():
+    """With the option on, a caller-provided buffer SMALLER than the
+    symbol-derived return size is rejected (the program writes through the
+    descriptor's shape and strides - a too-small buffer means out-of-bounds
+    writes). A LARGER buffer is a legitimate pattern and passes: the program
+    fills its prefix and the tail stays untouched (the contract
+    local_storage_test's test_uneven relies on)."""
     import pytest
     with set_temporary('compiler', 'interface', value='nanobind'):
         with set_temporary('compiler', 'nanobind_allow_return_override', value=True):
@@ -177,9 +180,12 @@ def test_nanobind_interface_return_override_wrong_shape_rejected():
             csdfg = double_ret_shape.to_sdfg().compile()
             a = np.random.rand(20)
             with pytest.raises(Exception, match='shape'):
-                csdfg(A=a, __return=np.zeros(25, dtype=np.float64))  # too large
-            with pytest.raises(Exception, match='shape'):
-                csdfg(A=a, __return=np.zeros((4, 5), dtype=np.float64))  # wrong rank
+                csdfg(A=a, __return=np.zeros(16, dtype=np.float64))  # too small
+            big = np.ones(25, dtype=np.float64)
+            result = csdfg(A=a, __return=big)
+            assert result is big
+            assert np.allclose(big[:20], a * 2)  # prefix written...
+            assert np.allclose(big[20:], 1.0)  # ...tail untouched
 
 
 def test_nanobind_interface_positional_and_extra_kwargs():

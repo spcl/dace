@@ -88,10 +88,17 @@ class CompiledSDFGProfiler:
             # Nanobind interface: hooks receive the processed keyword arguments
             # as a 1-tuple, and the handle is the hook-bypassing entry point.
             kw = args[0]
+            last_result = None
             for i in iterator:
-                compiled_sdfg._handle(**kw)
+                last_result = compiled_sdfg._handle(**kw)
 
                 times[i] = timer()
+            # The hooked call itself is suppressed below, but the caller still
+            # expects the program's results: the binding allocates and returns
+            # fresh arrays per invocation, so the last repetition's return
+            # value is handed to the wrapper (`_call_handle_with_hooks` falls
+            # back to it when the suppressed call produced nothing).
+            compiled_sdfg._hook_result = last_result
         else:
             for i in iterator:
                 # Call function

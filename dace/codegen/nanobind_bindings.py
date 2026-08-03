@@ -302,7 +302,7 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             # semantics stay exactly those of the former Python-side
             # allocation. The binding returns the array object(s) at the end
             # of call().
-            if isinstance(desc, dt.ContainerArray) or isinstance(desc.dtype, dtypes.vector):
+            if isinstance(desc, dt.ContainerArray):
                 raise NotImplementedError(f'Nanobind interface: return value "{name}" of type '
                                           f'{type(desc).__name__}[{desc.dtype}] is not supported; '
                                           f'returns are plain arrays only.')
@@ -314,6 +314,7 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                                           f'in-binding allocation assumes offset 0.')
 
             is_struct_ret = isinstance(desc.dtype, dtypes.struct)
+            is_vector_ret = isinstance(desc.dtype, dtypes.vector)
             gpu = desc.storage == dtypes.StorageType.GPU_Global
             if is_struct_ret:
                 # A record dtype is rebuilt from its field descriptor list; the
@@ -323,11 +324,26 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                 descr = desc.dtype.as_numpy_dtype().descr
                 fields = ''.join(f'__d.append(nb::make_tuple("{n}", "{t}")); ' for n, t in descr)
                 dtype_expr = f'__mod.attr("dtype")([&]() {{ nb::list __d; {fields}return __d; }}())'
+            elif is_vector_ret:
+                # A vector array allocates as its base scalar with a trailing
+                # veclen dimension - the exact layout numpy produced for the
+                # former subarray-dtype allocation (numpy auto-expands
+                # subarray dtypes into extra dimensions).
+                nb_scalar = _ndarray_scalar_ctype(desc.dtype)
+                device = _ndarray_device(desc)
+                dtype_expr = f'__mod.attr("dtype")("{desc.dtype.base_type.as_numpy_dtype().name}")'
             else:
                 nb_scalar = _ndarray_scalar_ctype(desc.dtype)
                 device = _ndarray_device(desc)
                 dtype_expr = f'__mod.attr("dtype")("{desc.dtype.as_numpy_dtype().name}")'
-            constants = sdfg.constants if sdfg is not None else {}
+            # Only scalar constants can appear in shape/stride/size
+            # expressions; array-valued compile-time constants must not reach
+            # sympy's subs (sympify rejects numpy arrays).
+            constants = {
+                k: v
+                for k, v in (sdfg.constants if sdfg is not None else {}).items()
+                if isinstance(v, (int, float, complex, numpy.number, numpy.bool_))
+            }
 
             def _cx(v):
                 e = symbolic.pystr_to_symbolic(str(v))
@@ -335,9 +351,16 @@ def _argument_binding(arglist: Dict[str, dt.Data],
                     e = e.subs(constants)
                 return sym2cpp(e)
 
-            dims = ', '.join(_cx(s) for s in desc.shape)
-            total = _cx(desc.total_size)
-            strides_b = ', '.join(f'({_cx(s)}) * {desc.dtype.bytes}' for s in desc.strides)
+            # Vector arrays: base-scalar layout with a trailing veclen
+            # dimension (contiguous inner); descriptor strides count VECTOR
+            # elements, so their byte strides use the full vector width.
+            shape_dims = list(desc.shape) + ([desc.dtype.veclen] if is_vector_ret else [])
+            dims = ', '.join(_cx(s) for s in shape_dims)
+            total = _cx(desc.total_size) + (f' * {desc.dtype.veclen}' if is_vector_ret else '')
+            stride_terms = [f'({_cx(s)}) * {desc.dtype.bytes}' for s in desc.strides]
+            if is_vector_ret:
+                stride_terms.append(str(desc.dtype.base_type.bytes))
+            strides_b = ', '.join(stride_terms)
             # Mirrors the former Python allocation: a zeroed flat buffer
             # wrapped with the descriptor's shape and (byte) strides.
             # cupy.ndarray takes memptr/strides positionally after dtype.
@@ -372,14 +395,16 @@ def _argument_binding(arglist: Dict[str, dt.Data],
             else:
                 extract = f'auto {name}__nd = nb::cast<nb::ndarray<{nb_scalar}, {device}>>({name}__obj, false);'
                 if allow_return_override:
-                    # ndim is checked first, so the short-circuit keeps
-                    # shape(i) from being read on a wrong-rank buffer.
-                    shape_checks = ' || '.join(
-                        [f'{name}__nd.ndim() != {len(desc.shape)}'] +
-                        [f'{name}__nd.shape({i}) != static_cast<size_t>({_cx(s)})' for i, s in enumerate(desc.shape)])
-                    extract += (f'\n        if (!{name}.is_none() && ({shape_checks}))\n'
+                    # The program writes through the DESCRIPTOR's shape and
+                    # strides regardless of the buffer's own: the guard is
+                    # against out-of-bounds writes, so a too-SMALL buffer is
+                    # rejected while a larger one is a legitimate pattern (a
+                    # caller may hand in a longer buffer whose tail must stay
+                    # untouched - see local_storage_test's test_uneven).
+                    extract += (f'\n        if (!{name}.is_none() && {name}__nd.size() < '
+                                f'static_cast<size_t>({total}))\n'
                                 f'            throw std::invalid_argument("SDFG argument error: return buffer '
-                                f'\'{name}\' has a wrong shape (it must match the symbol-derived return shape).");')
+                                f'\'{name}\' has a wrong shape (smaller than the symbol-derived return size).");')
                 return_setup.append(f'{obtain}\n        {extract}')
                 call_args.append(f'reinterpret_cast<{desc.dtype.ctype} *>({name}__nd.data())')
             params_by_name[name] = f'nb::object {name}'
