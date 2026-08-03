@@ -16,7 +16,7 @@ from dace.transformation.passes.vectorization.split_map_for_tile_remainder impor
     SplitMapForTileRemainder,
     TILE_MAIN_MARKER,
 )
-from tests.passes.vectorization.helpers.isolation import exit_code
+from tests.helpers.isolation import exit_code
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -172,7 +172,7 @@ def test_assume_even_range_check_aborts_at_runtime():
     and run in a throwaway process so ``abort`` does not kill pytest.
 
     Spawned, not forked -- an ``os.fork()`` child deadlocks on the OpenMP team this process already
-    holds, see :mod:`tests.passes.vectorization.helpers.isolation`."""
+    holds, see :mod:`tests.helpers.isolation`."""
     sdfg, _, _ = _build_kernel(K=1, bounds=(N, ), widths=(4, ), kernel_label="rt")
     SplitMapForTileRemainder(widths=(4, ), assume_even=True).apply_pass(sdfg, {})
 

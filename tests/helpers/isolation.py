@@ -17,10 +17,17 @@ compiler, and it arms itself as soon as any earlier test in the process runs a k
 interpreter start plus a re-import of dace per call, so spend it only where the containment is
 load-bearing: a would-be out-of-bounds access, or a kernel expected to ``abort``. Where it is not,
 run in-process and compare directly.
+
+Two shapes are offered. :func:`run_isolated` / :func:`exit_code` compile and call an SDFG and report
+a VERDICT, comparing in the child. :func:`call_in_child` evaluates an arbitrary picklable callable
+and hands its RESULT back, for the cases whose comparison is domain-specific and lives in the
+parent. ``spawn`` pickles the callable by qualified name, so it must be importable at module level
+-- a lambda or a closure cannot cross, which is the one API difference from the ``os.fork`` helpers
+this module replaces.
 """
 import multiprocessing as mp
 import sys
-from typing import Any, Dict, Sequence, Tuple
+from typing import Any, Callable, Dict, Sequence, Tuple
 
 import numpy as np
 
@@ -114,3 +121,45 @@ def run_isolated(sdfg: dace.SDFG,
     assert code >= 0, f'isolated kernel died on signal {-code}'
     assert code != MISMATCH, 'isolated kernel ran, but an output did not match its reference'
     assert code == 0, f'isolated kernel failed with exit code {code}'
+
+
+def send_result(connection: Any, target: Callable[..., Any], args: Tuple[Any, ...]) -> None:
+    """Child body for :func:`call_in_child`: evaluate ``target(*args)`` and ship the result home.
+
+    An exception is deliberately left to propagate: multiprocessing prints the child traceback and
+    exits non-zero, and the closed connection tells the parent there is no result coming.
+    """
+    try:
+        connection.send(target(*args))
+    finally:
+        connection.close()
+
+
+def call_in_child(target: Callable[..., Any], *args: Any, timeout: float = 900.0) -> Any:
+    """Value of picklable ``target(*args)`` evaluated in a spawned child.
+
+    For the callers whose comparison is domain-specific and stays in the parent. ``target`` is
+    pickled by qualified name, so it must be a module-level function; its arguments and its result
+    are pickled by value. A child that dies -- a segfault in generated code, or an exception, whose
+    traceback multiprocessing has already printed -- closes the connection without a result and is
+    reported as an ``AssertionError`` rather than a hang.
+
+    NB the child mutates its own copies of any array in ``args``; only the returned value comes
+    back. Anything the parent must inspect has to be part of that return value.
+    """
+    context = mp.get_context('spawn')
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(target=send_result, args=(sender, target, args))
+    process.start()
+    sender.close()  # drop the parent's copy, or the child's EOF is never observed
+    try:
+        if not receiver.poll(timeout):
+            process.kill()
+            raise AssertionError(f'isolated call did not finish within {timeout}s')
+        try:
+            return receiver.recv()
+        except EOFError:
+            raise AssertionError('isolated call died before producing a result') from None
+    finally:
+        receiver.close()
+        process.join(timeout)
