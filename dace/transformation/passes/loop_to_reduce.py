@@ -82,6 +82,24 @@ def _nested_in_sequential_loop(loop: LoopRegion) -> bool:
     return False
 
 
+def _owner_sdfg(region: ControlFlowRegion) -> SDFG:
+    """The SDFG whose ``arrays``/``symbols`` the blocks inside ``region`` name.
+
+    ``all_nodes_recursive`` descends into NestedSDFGs, so a ``LoopRegion`` it yields may
+    live in an INNER SDFG while the pass was handed the top-level one. Every matcher here
+    resolves descriptors by name -- a name the inner SDFG defines and the outer one does
+    not makes the matcher refuse a reduction it should lift, and a name BOTH define
+    silently answers from the wrong repository: the ``transient`` flag that decides
+    whether a per-iteration write is a live output flips (a local temp in the outer is a
+    non-transient connector in the inner), so the lift drops writes it had to preserve.
+    Resolve against the owner instead.
+    """
+    root = region
+    while not isinstance(root, SDFG):
+        root = root.parent_graph
+    return root
+
+
 class _Reduction(NamedTuple):
     wcr: str
     accum: str  # data-descriptor name, or DaCe symbol
@@ -147,7 +165,7 @@ class LoopToReduce(ppl.Pass):
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
                 continue
-            info = _extract(node, sdfg, permissive=self.permissive)
+            info = _extract(node, _owner_sdfg(parent), permissive=self.permissive)
             if info is None:
                 continue
             if self.prefer == 'wcr-scalar':
@@ -200,7 +218,7 @@ class RetargetWCRAccumulator(ppl.Pass):
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
                 continue
-            wcr_info = _extract_wcr_body(node, sdfg)
+            wcr_info = _extract_wcr_body(node, _owner_sdfg(parent))
             if wcr_info is None:
                 continue
             # Retarget reuses ``node`` in place, so a pinned loop keeps its flag.
@@ -215,7 +233,7 @@ class RetargetWCRAccumulator(ppl.Pass):
         for node, parent in list(sdfg.all_nodes_recursive()):
             if not isinstance(node, LoopRegion):
                 continue
-            chain_info = _extract_multi_state_chain(node, sdfg)
+            chain_info = _extract_multi_state_chain(node, _owner_sdfg(parent))
             if chain_info is None:
                 continue
             # Reuses ``node`` in place, so a pinned loop keeps its flag.
@@ -937,9 +955,8 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
     """Replace ``loop`` with a ``Reduce``. Data-descriptor accumulator -> write directly;
     symbol accumulator -> synthesize a transient scalar, seed from the symbol, assign back on exit."""
     import dace
-    root = parent
-    while not isinstance(root, SDFG):
-        root = root.parent_graph
+    root = _owner_sdfg(parent)
+    fsyms = set(root.free_symbols)
 
     was_start = parent.start_block is loop
     in_edges = list(parent.in_edges(loop))
@@ -974,6 +991,14 @@ def _lift(parent: ControlFlowRegion, loop: LoopRegion, info: _Reduction):
         cond = e.data.condition.as_string if e.data.condition is not None else "1"
         parent.add_edge(red_state, e.dst, dace.InterstateEdge(condition=cond, assignments=assigns))
     parent.remove_node(loop)
+    # The consumed LoopRegion was the only DEFINITION of its iteration variable; left declared
+    # in ``root.symbols`` the variable becomes a FREE symbol of ``root``. Harmless at the top
+    # level, fatal one level down: a NestedSDFG's ``symbol_mapping`` has no entry for it and
+    # validation reports ``Missing symbols on nested SDFG``. Same cleanup ``LoopToMap`` does
+    # when it consumes a loop; only newly-freed names are dropped.
+    for var in root.free_symbols - fsyms:
+        if var in root.symbols and (root.parent_nsdfg_node is None or var not in root.parent_nsdfg_node.symbol_mapping):
+            root.remove_symbol(var)
 
     arr = red_state.add_read(info.array)
     dst = red_state.add_write(dest_name)
@@ -996,9 +1021,7 @@ def _lift_wcr_scalar(parent: ControlFlowRegion, loop: LoopRegion, info: _Reducti
     post-loop scalar back (or assigns the symbol via an out-edge iedge).
     """
     import dace
-    root = parent
-    while not isinstance(root, SDFG):
-        root = root.parent_graph
+    root = _owner_sdfg(parent)
 
     was_start = parent.start_block is loop
     in_edges = list(parent.in_edges(loop))
@@ -1145,9 +1168,7 @@ def _lift_wcr_scalar_retarget(parent: ControlFlowRegion, loop: LoopRegion, wcr_s
     ``LoopToMap``) not here.
     """
     import dace
-    root = parent
-    while not isinstance(root, SDFG):
-        root = root.parent_graph
+    root = _owner_sdfg(parent)
 
     desc = root.arrays[accum_name]
     priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
@@ -1309,9 +1330,7 @@ def _lift_multi_state_chain(parent: ControlFlowRegion, loop: LoopRegion, info):
     (state, final_tasklet, carry_in_edge, value_in_edge, first_write_edge, last_write_edge, src_an, sink_an, wcr,
      accum_name, accum_subset) = info
 
-    root = parent
-    while not isinstance(root, SDFG):
-        root = root.parent_graph
+    root = _owner_sdfg(parent)
 
     desc = root.arrays[accum_name]
     priv_name, _ = root.add_scalar(f"_priv_{accum_name}", dtype=desc.dtype, transient=True, find_new_name=True)
