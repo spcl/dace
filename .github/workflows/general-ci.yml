@@ -41,8 +41,6 @@ jobs:
           libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
           libpapi-dev papi-tools g++-aarch64-linux-gnu
         pip-packages: flake8 pytest-xdist coverage
-        # islpy: without it WavefrontSkew is a no-op and its tests skip.
-        extras: testing,polyhedral
         codecov: 'true'
 
     - name: Install Intel oneAPI MKL

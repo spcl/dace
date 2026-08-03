@@ -34,7 +34,7 @@ jobs:
           libblas-dev libopenblas-dev liblapacke-dev
           g++-aarch64-linux-gnu
         pip-packages: pytest-xdist
-        extras: testing,polyhedral
+        extras: testing
 
     - name: Test with pytest
       run: |

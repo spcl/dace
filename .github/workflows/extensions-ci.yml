@@ -1,0 +1,56 @@
+name: Optional Extensions
+
+# The optional extras (fastgraph = rustworkx, polyhedral = islpy) and the tests that need them.
+# Neither is a default: graph.backend stays networkx, and WavefrontSkew degrades to a no-op without
+# islpy. Their tests skip silently wherever the extra is absent, so they get one job that installs both.
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  extensions:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev
+        pip-packages: pytest-xdist
+        extras: testing,fastgraph,polyhedral
+
+    - name: Extension dependencies present
+      # Both extras must actually install: a missing one turns the whole job into silent skips,
+      # which is the failure this workflow exists to prevent.
+      run: |
+        python -c "import rustworkx; print('rustworkx', rustworkx.__version__)"
+        python -c "import islpy; print('islpy', islpy.version.VERSION_TEXT)"
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        export DACE_optimizer_automatic_simplification=1
+        export DACE_compiler_cpu_implementation=experimental_readable
+        export DACE_compiler_cuda_implementation=experimental
+        export DACE_compiler_command_cache=1
+        export DACE_compiler_precompiled_header=1
+        pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
+          tests/graphlib \
+          tests/sdfg/analysis/polyhedral_isl_test.py \
+          tests/canonicalize/wavefront_polyhedron_test.py \
+          -m "not gpu and not long and not sequential"
