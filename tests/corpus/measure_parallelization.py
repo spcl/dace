@@ -71,9 +71,10 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
 from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 
-from hpcagent_bench.frameworks import Benchmark, DaceFramework, TimedCompiledSDFG
-from hpcagent_bench.spec import KERNELS, BenchSpec
-from hpcagent_bench import paths as hpcagent_paths
+# hpcagent_bench is an OUT-OF-TREE package: it is not a dace dependency and is absent in CI. Importing
+# it at module scope made every consumer of this module -- including the three tests that only want
+# ``cpu_params`` -- fail to COLLECT, which aborts the whole pytest run. It is only ever needed by the
+# hpcagent sweep below, so each user imports it locally instead.
 
 #: The correct CPU canonicalize parameters (the numerical gate's ``_CPU`` set).
 #: ``peel_limit`` is overridable for the peel study; the rest are the CPU defaults.
@@ -266,7 +267,9 @@ def _tsvc25_case(name):
 #: import time -- a plain attribute copy, not a live reference -- so ``set_datatype`` must run
 #: before this corpus's first kernel import, once, for the whole process.
 @functools.lru_cache(maxsize=1, typed=True)
-def _hpcagent_framework() -> DaceFramework:
+def _hpcagent_framework():
+    from hpcagent_bench.frameworks import DaceFramework
+
     dfw = DaceFramework('dace_cpu')
     dfw.set_datatype(None)  # fp64 / complex128, matching the corpus's numpy references
     return dfw
@@ -279,6 +282,9 @@ def _hpcagent_names() -> List[str]:
     into hpcagent_bench) and any kernel with no DaCe implementation at all. Skips are counted
     and named below, never silent.
     """
+    from hpcagent_bench import paths as hpcagent_paths
+    from hpcagent_bench.spec import KERNELS, BenchSpec
+
     covered: List[str] = []
     no_dace: List[str] = []
     names: List[str] = []
@@ -301,6 +307,8 @@ def _hpcagent_names() -> List[str]:
 
 
 def _hpcagent_case(name):
+    from hpcagent_bench.frameworks import Benchmark, TimedCompiledSDFG
+
     dfw = _hpcagent_framework()
     bench = Benchmark(name)
     program = dfw.implementations(bench)[0][0]
