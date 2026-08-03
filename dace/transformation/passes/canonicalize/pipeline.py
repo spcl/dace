@@ -50,6 +50,7 @@ from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.dataflow.distribute_tasklet_into_map import DistributeTaskletIntoMap
 from dace.transformation.dataflow.map_fusion_vertical import MapFusionVertical
 from dace.transformation.dataflow.map_fusion_horizontal import MapFusionHorizontal
+from dace.transformation.dataflow.redundant_array import RedundantArray
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import WCRToAugAssign
 from dace.transformation.passes.rematerialize_derived_temporaries import RematerializeDerivedTemporaries
@@ -1328,6 +1329,20 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
                                                 MapFusionVertical(),
                                                 MapFusionHorizontal()]))]
+
+    # redundant_array (post-fuse cleanup): drop a transient that only ever gets copied wholesale into
+    # its destination, so the producing map writes the destination directly. The last ``SimplifyPass``
+    # ran BEFORE the terminal LoopToMap and the terminal fuse above, so from that point on nothing
+    # reclaims arrays at all -- and ``ArrayElimination`` (Simplify's array reclaimer) refuses this
+    # shape anyway: its ``_is_war_carrier`` guard skips the candidate whenever the DESTINATION is read
+    # and written in the same state, which is every in-place stencil sweep (heat3d's
+    # ``A_slice -> A[1:-1, 1:-1, 1:-1]``, an (N-2)^3 buffer). ``RedundantArray`` only ever redirects a
+    # transient's WRITERS into the destination, so it cannot expose a read to a later in-place write;
+    # the mirrored ``RedundantSecondArray`` fold (redirecting a copy's READERS onto a WAR carrier, TSVC
+    # s212) is what that guard exists for and is deliberately NOT run here -- on the corpus it never
+    # matched anyway, and refusing costs a warning. BEFORE the remat stage: deleting the buffer first
+    # shortens the chains remat then walks.
+    s += [('end', PatternMatchAndApplyRepeated([RedundantArray()]))]
 
     # remat: vertical fusion pulls a consumer sub-expression UP into the producer, because the value it
     # is built from is a register there; when a THIRD map still consumes the result, fusion cannot delete
