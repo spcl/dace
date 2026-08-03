@@ -90,8 +90,8 @@ class UnblockDimensions(ppl.Pass):
             for node in state.nodes():
                 if not isinstance(node, dace.nodes.NestedSDFG):
                     continue
-                boundary = ([(ie, ie.dst_conn) for ie in state.in_edges(node)] +
-                            [(oe, oe.src_conn) for oe in state.out_edges(node)])
+                boundary = ([(ie, ie.dst_conn) for ie in state.in_edges(node)] + [(oe, oe.src_conn)
+                                                                                  for oe in state.out_edges(node)])
                 for edge, conn in boundary:
                     if edge.data is None or edge.data.data != arr_name or conn is None:
                         continue

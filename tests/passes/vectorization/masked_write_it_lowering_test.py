@@ -109,7 +109,10 @@ def test_masked_const_write_matches_numpy(isa, remainder):
     scalar/masked tail) bit-exact vs NumPy, at a non-tile-divisible size."""
     sdfg = _base(masked_zero)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=remainder, branch_mode=BranchMode.MERGE,
+        VectorizeConfig(widths=(8, ),
+                        target_isa=isa,
+                        remainder_strategy=remainder,
+                        branch_mode=BranchMode.MERGE,
                         validate_all=True)).apply_pass(sdfg, {})
     rng = np.random.default_rng(0)
     Nval = 37
@@ -130,7 +133,10 @@ def test_masked_value_write_matches_numpy(isa, remainder):
     iteration mask on the remainder store."""
     sdfg = _base(masked_val)
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=remainder, branch_mode=BranchMode.MERGE,
+        VectorizeConfig(widths=(8, ),
+                        target_isa=isa,
+                        remainder_strategy=remainder,
+                        branch_mode=BranchMode.MERGE,
                         validate_all=True)).apply_pass(sdfg, {})
     rng = np.random.default_rng(1)
     Nval = 37

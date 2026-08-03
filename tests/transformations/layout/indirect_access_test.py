@@ -9,7 +9,6 @@ registered shuffle ``sigma``, composing ``sigma^-1`` onto the runtime index so
 ``x'[sigma^-1(col[i])] == x[col[i]]`` for any ``col``. Every candidate reproduces the numpy oracle;
 the sweep only picks the physical layout of ``x``."""
 import numpy
-import pytest
 import dace
 
 from dace.libraries.layout.shuffle import register_shuffle

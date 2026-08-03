@@ -23,7 +23,6 @@ the bogus scan match is refused, and ``LoopToMap`` lifts the loop to a bare Map.
 import copy
 
 import numpy as np
-import sympy
 
 import dace
 from dace import symbolic

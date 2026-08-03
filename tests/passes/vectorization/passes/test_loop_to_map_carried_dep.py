@@ -23,8 +23,8 @@ import pytest
 from dace.sdfg.state import LoopRegion
 from dace.transformation.interstate import LoopToMap
 from tests.corpus.tsvc.tsvc import (s481_d_single, s482_d_single, s1119_d_single, s2101_d_single, s2111_d_single,
-                               s231_d_single, s2275_d_single, s232_d_single, s235_d_single, s256_d_single,
-                               s257_d_single)
+                                    s231_d_single, s2275_d_single, s232_d_single, s235_d_single, s256_d_single,
+                                    s257_d_single)
 
 # (kernel, loop variables carrying a real dependency that MUST stay sequential).
 _CARRIED_DEP = [

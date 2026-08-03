@@ -96,9 +96,25 @@ def _active_cuda_impl():
     return Config.get('compiler', 'cuda', 'implementation')
 
 
+#: Directories owned by a dedicated workflow. Marked by path so the two suites stay selectable
+#: without touching hundreds of files; general CI deselects them.
+_SUITE_DIRS = (
+    (os.path.join('tests', 'passes', 'vectorization'), 'vectorization'),
+    (os.path.join('tests', 'passes', 'canonicalize'), 'canonicalization'),
+    (os.path.join('tests', 'canonicalize'), 'canonicalization'),
+)
+
+
 def pytest_collection_modifyitems(config, items):
-    """Auto-skip tests marked old_gpu_codegen_only / new_gpu_codegen_only based on the
-    current ``compiler.cuda.implementation`` config value."""
+    """Mark the vectorization / canonicalization suites by path, then auto-skip tests marked
+    old_gpu_codegen_only / new_gpu_codegen_only per ``compiler.cuda.implementation``."""
+    for item in items:
+        path = str(getattr(item, 'fspath', ''))
+        for prefix, mark in _SUITE_DIRS:
+            if prefix in path:
+                item.add_marker(getattr(pytest.mark, mark))
+                break
+
     try:
         impl = _active_cuda_impl()
     except Exception:

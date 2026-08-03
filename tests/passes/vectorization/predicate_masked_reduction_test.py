@@ -38,8 +38,7 @@ def _make_masked_reduction(gather: bool) -> dace.SDFG:
     read_sub = subsets.Range([(sympy.Symbol('idx'), sympy.Symbol('idx'), 1)]) if gather \
         else subsets.Range([(j, j, 1)])
     st.add_edge(an_a, None, tk, '_i', Memlet(data='a', subset=read_sub))
-    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]),
-                                               wcr='lambda x, y: x + y'))
+    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]), wcr='lambda x, y: x + y'))
 
     init = sdfg.add_state('init', is_start_block=True)
     sdfg.add_node(cb)
@@ -55,10 +54,8 @@ def test_gate_helper_affine_vs_gather():
     """The gate helper flags a data-dependent (gather) read subset and clears an affine one."""
     aff = _make_masked_reduction(gather=False)
     gat = _make_masked_reduction(gather=True)
-    aff_body = next(n for n, _ in aff.all_nodes_recursive()
-                    if isinstance(n, dace.SDFGState) and n.label == 'reduce')
-    gat_body = next(n for n, _ in gat.all_nodes_recursive()
-                    if isinstance(n, dace.SDFGState) and n.label == 'reduce')
+    aff_body = next(n for n, _ in aff.all_nodes_recursive() if isinstance(n, dace.SDFGState) and n.label == 'reduce')
+    gat_body = next(n for n, _ in gat.all_nodes_recursive() if isinstance(n, dace.SDFGState) and n.label == 'reduce')
     assert _body_has_data_dependent_read(aff, aff_body) is False
     assert _body_has_data_dependent_read(gat, gat_body) is True
 
@@ -101,8 +98,7 @@ def _make_compound_masked_reduction() -> dace.SDFG:
     tk = st.add_tasklet('addend', {'_i'}, {'_o'}, '_o = _i')
     an_acc = st.add_access('acc')
     st.add_edge(an_a, None, tk, '_i', Memlet(data='a', subset=subsets.Range([(j, j, 1)])))
-    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]),
-                                               wcr='lambda x, y: x + y'))
+    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]), wcr='lambda x, y: x + y'))
     init = sdfg.add_state('init', is_start_block=True)
     sdfg.add_node(cb)
     sdfg.add_edge(init, cb, dace.InterstateEdge())
@@ -144,8 +140,8 @@ def _make_wcr_priv_masked_reduction() -> dace.SDFG:
     an_acc = st.add_access('acc')
     st.add_edge(an_a, None, tk, '_i', Memlet(data='a', subset=subsets.Range([(j, j, 1)])))
     st.add_edge(tk, '_o', an_priv, None, Memlet(data='_wcr_priv_addend', subset=subsets.Range([(0, 0, 1)])))
-    st.add_edge(an_priv, None, an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]),
-                                                    wcr='lambda x, y: x + y'))
+    st.add_edge(an_priv, None, an_acc, None,
+                Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]), wcr='lambda x, y: x + y'))
     init = sdfg.add_state('init', is_start_block=True)
     sdfg.add_node(cb)
     sdfg.add_edge(init, cb, dace.InterstateEdge())
@@ -183,8 +179,7 @@ def test_escaping_plain_write_is_refused():
     an_acc = st.add_access('acc')
     an_b = st.add_access('b')  # escaping plain write
     st.add_edge(an_a, None, tk, '_i', Memlet(data='a', subset=subsets.Range([(j, j, 1)])))
-    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]),
-                                               wcr='lambda x, y: x + y'))
+    st.add_edge(tk, '_o', an_acc, None, Memlet(data='acc', subset=subsets.Range([(0, 0, 1)]), wcr='lambda x, y: x + y'))
     st.add_edge(tk, '_e', an_b, None, Memlet(data='b', subset=subsets.Range([(j, j, 1)])))
     init = sdfg.add_state('init', is_start_block=True)
     sdfg.add_node(cb)

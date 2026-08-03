@@ -125,15 +125,19 @@ def fit_message_size(sizes: Sequence[int], times: Sequence[float]) -> Fit:
     beta = (sw * swxy - swx * swy) / denom
     alpha = (swy - beta * swx) / sw
     predicted = [alpha + beta * x for x in sizes]
-    num = sum(w * (y - p) ** 2 for w, y, p in zip(weight, times, predicted))
+    num = sum(w * (y - p)**2 for w, y, p in zip(weight, times, predicted))
     mean = swy / sw
-    den = sum(w * (y - mean) ** 2 for w, y in zip(weight, times))
+    den = sum(w * (y - mean)**2 for w, y in zip(weight, times))
     residual = math.sqrt(num / den) if den > 0 else 0.0
     return Fit(alpha=alpha, beta=beta, residual=residual)
 
 
-def validate(p: LogGP, fit: Fit, peak_bytes_per_s: float, knee_concurrency: float,
-             latency_tol: float = 0.10, gap_tol: float = 0.20) -> List[str]:
+def validate(p: LogGP,
+             fit: Fit,
+             peak_bytes_per_s: float,
+             knee_concurrency: float,
+             latency_tol: float = 0.10,
+             gap_tol: float = 0.20) -> List[str]:
     """Reasons to reject the parametrization; empty means accept. Cross-checks each parameter two independent ways."""
     reasons: List[str] = []
     if p.L <= 0 or p.G <= 0 or p.g <= 0:

@@ -12,7 +12,6 @@ collapsed no-op cast becomes trivial and is eliminated, while a genuine cast sur
 BOTH passes.
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes

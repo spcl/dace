@@ -57,7 +57,6 @@ def _mk(n=48, names=("a", "b", "c", "d"), seed=0):
 # Fuse: consecutive same-range sequential sibling loops.
 # ---------------------------------------------------------------------------
 
-
 # LoopFusion targets the SEQUENTIAL residual loops LoopToMap refused (recurrences,
 # in-place scans) -- a parallel elementwise loop is left to become a Map, NOT fused
 # (see ``test_parallel_elementwise_loops_left_for_loop_to_map``). So the fuse cases
@@ -222,7 +221,7 @@ def test_does_not_fuse_map_with_loop():
     def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in dace.map[0:N]:  # parallel map -- NOT a LoopRegion
             b[i] = a[i] + 1.0
-        for i in range(1, N):    # sequential recurrence -- a LoopRegion
+        for i in range(1, N):  # sequential recurrence -- a LoopRegion
             c[i] = c[i - 1] + b[i]
 
     inputs = _mk(names=("a", "b", "c"))

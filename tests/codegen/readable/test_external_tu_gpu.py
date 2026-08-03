@@ -90,8 +90,7 @@ def kernel_in_loop(name):
     sdfg = dace.SDFG(name)
     for arr in ("A", "B"):
         sdfg.add_array(arr, [256], dace.float64, storage=GPU_GLOBAL)
-    loop = LoopRegion("loop", condition_expr="t < 4", loop_var="t", initialize_expr="t = 0",
-                      update_expr="t = t + 1")
+    loop = LoopRegion("loop", condition_expr="t < 4", loop_var="t", initialize_expr="t = 0", update_expr="t = t + 1")
     sdfg.add_node(loop, is_start_block=True)
     body = loop.add_state("body", is_start_block=True)
     e, x = body.add_map("k", dict(i="0:256"), schedule=GPU_DEVICE)

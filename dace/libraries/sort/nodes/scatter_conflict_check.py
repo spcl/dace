@@ -24,7 +24,6 @@ from dace.codegen.common import sym2cpp
 from dace.libraries.standard.environments.cuda import CUDA
 from dace.transformation.transformation import ExpandTransformation
 from . import _helpers
-from .. import environments
 
 INPUT_CONNECTOR_NAME = "_idx_in"
 OUTPUT_CONNECTOR_NAME = "_count_out"
@@ -82,7 +81,9 @@ class ExpandPure(ExpandTransformation):
         in_desc, _in, _out = _validate(node, state, sdfg)
         n, ct = _length(node, state), in_desc.dtype.ctype
         code = "{\n#include <memory>\n" + _tagcount_body(ct, n, INPUT_CONNECTOR_NAME, omp=False) + "}"
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, code, language=dace.Language.CPP)
+        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME},
+                             code,
+                             language=dace.Language.CPP)
 
 
 @library.expansion
@@ -96,7 +97,9 @@ class ExpandCPU(ExpandTransformation):
         in_desc, _in, _out = _validate(node, state, sdfg)
         n, ct = _length(node, state), in_desc.dtype.ctype
         code = "{\n#include <memory>\n" + _tagcount_body(ct, n, INPUT_CONNECTOR_NAME, omp=True) + "}"
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, code, language=dace.Language.CPP)
+        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME},
+                             code,
+                             language=dace.Language.CPP)
 
 
 @library.expansion
@@ -116,9 +119,11 @@ class ExpandCUDA(ExpandTransformation):
         n, ct = _length(node, state), in_desc.dtype.ctype
         code = ("{\n#include <memory>\n#include <vector>\n"
                 f"std::vector<{ct}> _t(({n}));\n"
-                f"cudaMemcpy(_t.data(), {INPUT_CONNECTOR_NAME}, ({n}) * sizeof({ct}), cudaMemcpyDeviceToHost);\n"
-                + _tagcount_body(ct, n, "_t.data()", omp=True) + "}")
-        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME}, code, language=dace.Language.CPP)
+                f"cudaMemcpy(_t.data(), {INPUT_CONNECTOR_NAME}, ({n}) * sizeof({ct}), cudaMemcpyDeviceToHost);\n" +
+                _tagcount_body(ct, n, "_t.data()", omp=True) + "}")
+        return nodes.Tasklet(node.name, {INPUT_CONNECTOR_NAME}, {OUTPUT_CONNECTOR_NAME},
+                             code,
+                             language=dace.Language.CPP)
 
 
 @library.node

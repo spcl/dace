@@ -107,7 +107,8 @@ def test_k2_cond_subset_loads_with_replicate_factor():
     (W_1 copies). Equivalently: the loaded ``A_tile`` is full-tile shape ``(W_0, W_1)``
     with the same value along ``W_1`` per ``W_0``."""
     sdfg = _build_k2_cond_subset_of_dims(16, 16)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR", expand_tile_nodes=False)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR",
+                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     # Find the TileLoad that reads A.
@@ -136,7 +137,8 @@ def test_k2_cond_invariant_symbol_is_scalar_broadcast():
     produces a Scalar bool output -- the TileITE then broadcasts at expansion time
     via kind_cond=Scalar / Symbol."""
     sdfg = _build_k2_cond_invariant_symbol(16, 16)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR", expand_tile_nodes=False)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa="SCALAR",
+                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     body_state = list(inner.states())[0]

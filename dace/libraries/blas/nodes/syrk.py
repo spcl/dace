@@ -15,7 +15,7 @@ reference lowering that likewise writes only the ``uplo`` triangle.
 """
 import dace.library
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, dtypes, memlet as mm, properties
+from dace import SDFG, SDFGState, memlet as mm, properties
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.libraries.blas.nodes.rank_k_helpers import (add_coeff_arrays, add_triangular_tasklet, beta_scale_state,

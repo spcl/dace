@@ -13,9 +13,7 @@ import numpy as np
 import pytest
 
 import dace
-import dace.libraries.fft as fftlib
-from dace.libraries.fft.algorithms import dft
-from dace.libraries.fft.nodes import FFT, IFFT
+from dace.libraries.fft.nodes import FFT
 
 
 # ---------------------------------------------------------------------------

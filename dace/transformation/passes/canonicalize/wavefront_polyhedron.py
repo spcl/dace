@@ -33,8 +33,9 @@ guarantee).
 from typing import List, Optional, Sequence, Tuple
 
 from dace import symbolic
-from dace.sdfg.analysis.polyhedral_isl import (HAVE_ISL, isl, classify_dim, collect_basic_sets, constraint_to_sympy,
-                                               dedupe_terms, is_domain_empty, make_set, pwaff_bound, subs_by_name)
+from dace.sdfg.analysis.polyhedral_isl import HAVE_ISL  # noqa: F401  # re-export: wavefront_skew reads poly.HAVE_ISL
+from dace.sdfg.analysis.polyhedral_isl import (isl, classify_dim, collect_basic_sets, constraint_to_sympy, dedupe_terms,
+                                               make_set, pwaff_bound, subs_by_name)
 
 
 class SkewBounds:
@@ -50,8 +51,8 @@ class SkewBounds:
         self.p_hi_terms = p_hi_terms
 
 
-def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints, tau: Tuple[int, int],
-                t_name: str, p_name: str) -> Optional[SkewBounds]:
+def skew_bounds(dims: Tuple[str, str], params: Sequence[str], domain_constraints, tau: Tuple[int, int], t_name: str,
+                p_name: str) -> Optional[SkewBounds]:
     """Project the domain through the unimodular skew ``t = a*u + b*v`` and read
     back bound terms. ``dims`` are ``(u, v)``; ``tau = (a, b)``. The parallel axis
     ``p`` is the coordinate whose complement inverts over the integers:

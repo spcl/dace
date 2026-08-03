@@ -36,6 +36,8 @@ def _as_plain_array(desc):
     shape/strides/dtype/storage that ``as_array`` preserves.
     """
     return desc.as_array() if isinstance(desc, dace.data.View) else desc
+
+
 from dace.libraries.onnx.op_implementations.utils import in_desc_with_name, op_implementation, out_desc_with_name
 from dace.frontend.common import create_einsum_sdfg
 

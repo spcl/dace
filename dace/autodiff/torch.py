@@ -59,9 +59,8 @@ def make_backward_function(
     def _boundary(sdfg: dace.SDFG, kind: str) -> dace.SDFGState:
         states = sdfg.sink_nodes() if kind == "sink" else sdfg.source_nodes()
         if len(states) != 1:
-            raise AutoDiffException(
-                f"make_backward_function: expected a single {kind} state in SDFG '{sdfg.name}' to "
-                f"attach scalar-copy plumbing, found {len(states)}")
+            raise AutoDiffException(f"make_backward_function: expected a single {kind} state in SDFG '{sdfg.name}' to "
+                                    f"attach scalar-copy plumbing, found {len(states)}")
         return states[0]
 
     for name, desc in backward_input_arrays.items():
@@ -95,7 +94,7 @@ def make_backward_function(
             fwd_copy_state = forward_sdfg.add_state_after(_boundary(forward_sdfg, "sink"),
                                                           label="copy_out_" + fwd_arr_name)
             bwd_copy_state = backward_sdfg.add_state_before(_boundary(backward_sdfg, "source"),
-                                                           label="copy_in_" + bwd_arr_name)
+                                                            label="copy_in_" + bwd_arr_name)
             fwd_copy_state.add_edge(fwd_copy_state.add_read(name), None, fwd_copy_state.add_write(fwd_arr_name), None,
                                     dace.Memlet(name + "[0]"))
 

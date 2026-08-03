@@ -6,7 +6,7 @@ import numpy
 import dace
 
 from dace.transformation.layout.split_dimensions import SplitDimensions
-from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout, NormalizeScheduleForLayout
+from dace.transformation.layout.normalize_schedule import normalize_schedule_for_layout
 
 N = dace.symbol("N")
 

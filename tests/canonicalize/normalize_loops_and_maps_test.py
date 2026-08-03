@@ -340,7 +340,8 @@ def test_normalize_loop_bounds_idempotent_and_equalizes_ranges():
     assert NormalizeLoopBounds().apply_pass(sdfg, {}) is None  # idempotent
     loops = [r for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
     spans = {(str(loop_analysis.get_init_assignment(l)), str(loop_analysis.get_loop_end(l)),
-              str(loop_analysis.get_loop_stride(l))) for l in loops}
+              str(loop_analysis.get_loop_stride(l)))
+             for l in loops}
     assert len(spans) == 1, f"ranges not equalized: {spans}"
     assert next(iter(spans))[0] == '0'
 

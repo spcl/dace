@@ -13,7 +13,6 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-import numpy as np
 import pytest
 
 import dace
@@ -50,8 +49,9 @@ def test_tiled_rewrites_to_augassign():
     # acc is written plain by the tasklet AND read back to feed __in1.
     acc_writes = [e for e in state.edges() if isinstance(e.dst, nodes.AccessNode) and e.dst.data == "acc"]
     assert len(acc_writes) == 1 and acc_writes[0].data.wcr is None
-    assert any(isinstance(e.src, nodes.AccessNode) and e.src.data == "acc" and e.dst_conn == "__in1"
-               for e in state.edges()), "expected an accumulator read-back into __in1"
+    assert any(
+        isinstance(e.src, nodes.AccessNode) and e.src.data == "acc" and e.dst_conn == "__in1"
+        for e in state.edges()), "expected an accumulator read-back into __in1"
 
 
 def test_tail_strips_wcr():

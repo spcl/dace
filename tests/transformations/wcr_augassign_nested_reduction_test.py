@@ -41,7 +41,10 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     ime, imx = ist.add_map("kmap", {"k": "0:N"})
     t = ist.add_tasklet("acc", {"__in"}, {"__out"}, "__out = __in")
     ist.add_memlet_path(ist.add_read("arow"), ime, t, dst_conn="__in", memlet=dace.Memlet("arow[k]"))
-    ist.add_memlet_path(t, imx, ist.add_write("c"), src_conn="__out",
+    ist.add_memlet_path(t,
+                        imx,
+                        ist.add_write("c"),
+                        src_conn="__out",
                         memlet=dace.Memlet(cidx, wcr="lambda x, y: x + y"))
 
     sdfg = dace.SDFG("outer_nested_reduction")
@@ -52,7 +55,10 @@ def _nested_reduction_sdfg(reduce_over_i: bool) -> dace.SDFG:
     nsdfg = state.add_nested_sdfg(inner, {"arow"}, {"c"}, {"N": "N", "i": "i"})
     state.add_memlet_path(state.add_read("A"), me, nsdfg, dst_conn="arow", memlet=dace.Memlet("A[i, 0:N]"))
     cbound = "C[0:N]" if reduce_over_i else "C[i, 0:N]"
-    state.add_memlet_path(nsdfg, mx, state.add_write("C"), src_conn="c",
+    state.add_memlet_path(nsdfg,
+                          mx,
+                          state.add_write("C"),
+                          src_conn="c",
                           memlet=dace.Memlet(cbound, wcr="lambda x, y: x + y"))
     sdfg.validate()
     return sdfg
@@ -100,15 +106,17 @@ def _toplevel_injective_sdfg() -> dace.SDFG:
     me, mx = state.add_map("m", {"i": "0:N"})
     t = state.add_tasklet("acc", {"__in"}, {"__out"}, "__out = __in")
     state.add_memlet_path(state.add_read("A"), me, t, dst_conn="__in", memlet=dace.Memlet("A[i]"))
-    state.add_memlet_path(t, mx, state.add_write("C"), src_conn="__out",
+    state.add_memlet_path(t,
+                          mx,
+                          state.add_write("C"),
+                          src_conn="__out",
                           memlet=dace.Memlet("C[i]", wcr="lambda x, y: x + y"))
     sdfg.validate()
     return sdfg
 
 
 def _toplevel_wcr_edges(sdfg: dace.SDFG) -> int:
-    return sum(1 for st in sdfg.all_states() for e in st.edges()
-              if e.data is not None and e.data.wcr is not None)
+    return sum(1 for st in sdfg.all_states() for e in st.edges() if e.data is not None and e.data.wcr is not None)
 
 
 def test_toplevel_injective_write_still_reverts():

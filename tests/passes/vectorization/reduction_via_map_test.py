@@ -59,7 +59,9 @@ def masked_reduce(data: dace.float64[N], mask: dace.int64[N], res: dace.float64[
 def _run(prog, kwargs, ref, isa):
     from dace.libraries.tileops import TileReduce
     sdfg = prog.to_sdfg(simplify=True)
-    cfg = VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
+    cfg = VectorizeConfig(widths=(8, ),
+                          target_isa=isa,
+                          remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE,
                           expand_tile_nodes=False)
     VectorizeCPUMultiDim(cfg).apply_pass(sdfg, {})
     # The scalar accumulation must have been LOWERED to a horizontal TileReduce -- i.e. actually

@@ -604,8 +604,7 @@ def _rmw_chain_in_map_sdfg(name: str, n: int, k: int) -> dace.SDFG:
 
     entry, exit_node = state.add_map("m", {"i": f"0:{n}"})
     for arr in ("B", "C"):
-        state.add_edge(state.add_access(arr), None, entry, f"IN_{arr}",
-                       dace.Memlet.from_array(arr, sdfg.arrays[arr]))
+        state.add_edge(state.add_access(arr), None, entry, f"IN_{arr}", dace.Memlet.from_array(arr, sdfg.arrays[arr]))
         entry.add_in_connector(f"IN_{arr}")
         entry.add_out_connector(f"OUT_{arr}", force=True)
 
@@ -650,8 +649,7 @@ def test_rmw_chain_in_map_body_drains_only_the_final_hop(k: int):
     staged.validate()
     a_vec = numpy.zeros(n)
     staged.compile()(A=a_vec, B=B, C=C)
-    numpy.testing.assert_allclose(a_vec, a_ref, rtol=RTOL, atol=ATOL,
-                                  err_msg="staging dropped part of the RMW chain")
+    numpy.testing.assert_allclose(a_vec, a_ref, rtol=RTOL, atol=ATOL, err_msg="staging dropped part of the RMW chain")
 
 
 # The cloudsc-pattern (zqlhs / zsolqb reuse) tests live separately in

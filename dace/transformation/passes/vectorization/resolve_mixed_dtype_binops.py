@@ -199,8 +199,8 @@ class ResolveMixedDtypeBinops(ppl.Pass):
         state.add_edge(tmp_an, None, tasklet, conn, dace.Memlet(tmp))
         state.remove_edge(edge)
 
-    def _insert_output_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge, conn: str,
-                            promoted: dtypes.typeclass, out_dt: dtypes.typeclass) -> None:
+    def _insert_output_cast(self, state: SDFGState, tasklet: nodes.Tasklet, edge, conn: str, promoted: dtypes.typeclass,
+                            out_dt: dtypes.typeclass) -> None:
         """Compute at ``promoted`` into a fresh transient, then ``_co = dace.<out_dt>(_ci)``
         stores the result into the original destination, casting to its dtype (a downcast
         when it is narrower than ``promoted``, a widening store when it is wider)."""

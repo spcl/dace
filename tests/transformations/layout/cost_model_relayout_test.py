@@ -17,14 +17,20 @@ import dace
 from dace.transformation.layout.cost_model.loggp import LogGP, achievable_rate
 from dace.transformation.layout.cost_model.relayout import (array_bytes, bandwidth_efficiency, block_traffic,
                                                             break_even_uses, cache_efficiency, max_layout_delta,
-                                                            nest_time_by_efficiency, relayout_pays, relayout_pays_by_efficiency,
-                                                            relayout_time, single_pass_efficiency_threshold,
-                                                            streaming_relayout_time)
+                                                            nest_time_by_efficiency, relayout_pays,
+                                                            relayout_pays_by_efficiency, relayout_time,
+                                                            single_pass_efficiency_threshold, streaming_relayout_time)
 
 # A DRAM-ish CPU level: 95 ns latency, 100 GB/s, 64-byte lines, no sectoring.
 CPU = LogGP(L=95e-9, o=0.0, g=4e-9, G=1.0 / 100e9, line_bytes=64, bw_saturated=100e9, bw_core=20e9)
 # A GPU level: a 128-byte request granularity, but 32-byte sectors actually cross the channels.
-GPU = LogGP(L=500e-9, o=0.0, g=1e-9, G=1.0 / 1000e9, line_bytes=128, bw_saturated=1000e9, bw_core=1000e9,
+GPU = LogGP(L=500e-9,
+            o=0.0,
+            g=1e-9,
+            G=1.0 / 1000e9,
+            line_bytes=128,
+            bw_saturated=1000e9,
+            bw_core=1000e9,
             sector_bytes=32)
 
 

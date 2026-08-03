@@ -31,9 +31,8 @@ def _openmp_runtime_loadable():
     return False
 
 
-_SKIP_BUILD = pytest.mark.skipif(
-    not OpenBLAS.is_installed() or not _openmp_runtime_loadable(),
-    reason='needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime')
+_SKIP_BUILD = pytest.mark.skipif(not OpenBLAS.is_installed() or not _openmp_runtime_loadable(),
+                                 reason='needs an installed OpenBLAS (LAPACKE provider) and a loadable OpenMP runtime')
 
 
 def test_lapacke_header_and_symbols_available():
@@ -63,6 +62,7 @@ def test_lapacke_header_and_symbols_available():
 @_SKIP_BUILD
 def test_cholesky_compiles_and_links_lapacke():
     """cholesky2 path: np.linalg.cholesky -> Potrf -> LAPACKE_?potrf, end to end."""
+
     @dace.program
     def chol(A: dace.float64[48, 48]):
         return np.linalg.cholesky(A)
@@ -76,6 +76,7 @@ def test_cholesky_compiles_and_links_lapacke():
 @_SKIP_BUILD
 def test_complex_solve_compiles_and_links_lapacke():
     """contour_integral path: complex np.linalg.solve -> Getrf+Getrs -> LAPACKE_z{getrf,getrs}."""
+
     @dace.program
     def solve(A: dace.complex128[32, 32], B: dace.complex128[32, 32]):
         return np.linalg.solve(A, B)

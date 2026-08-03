@@ -8,7 +8,6 @@ size-N array (the anti-pattern of the max-fission MapFission). ``split_maps`` is
 canonicalization pipeline is byte-identical -- the default-constructed pass must leave the map alone.
 """
 import numpy as np
-import pytest
 
 import dace
 from dace.sdfg import nodes

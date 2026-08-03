@@ -19,7 +19,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes as nd
 from dace.libraries.blas.nodes.symm import Symm
 from dace.transformation.passes.canonicalize.loop_to_symm import LoopToSymm
 

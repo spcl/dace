@@ -88,8 +88,7 @@ def test_verdict_first_implies_tier2_wins_for_every_parameter_set():
     m_c, b_c = float(col.messages().subs(n)), float(col.bytes_moved().subs(n))
     for L in (10e-9, 95e-9, 500e-9):
         for bw in (10e9, 100e9, 1000e9):
-            p = LogGP(L=L, o=0.0, g=4e-9, G=gap_from_bandwidth(bw), line_bytes=64, bw_saturated=bw,
-                      bw_core=bw / 2)
+            p = LogGP(L=L, o=0.0, g=4e-9, G=gap_from_bandwidth(bw), line_bytes=64, bw_saturated=bw, bw_core=bw / 2)
             for C in (1.0, 8.0, 148.0, float("inf")):
                 assert nest_memory_time(p, b_r, m_r, C) <= nest_memory_time(p, b_c, m_c, C)
 

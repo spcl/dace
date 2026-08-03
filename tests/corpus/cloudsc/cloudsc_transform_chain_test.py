@@ -32,7 +32,7 @@ from dace.transformation.interstate import LoopToMap
 from dace.transformation.passes import SymbolPropagation
 from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
-                                                    generate_cloudsc_inputs, make_sequential)
+                                                            generate_cloudsc_inputs, make_sequential)
 
 #: (ieee_build, sequential, rtol, atol) per regime.
 _REGIMES = {

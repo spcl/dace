@@ -11,7 +11,6 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg.nodes import MapEntry, NestedSDFG
 from dace.sdfg.state import ConditionalBlock
 from dace.transformation.interstate.move_map_invariant_if_up import MoveMapInvariantIfUp
 

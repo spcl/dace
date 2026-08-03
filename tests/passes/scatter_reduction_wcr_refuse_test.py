@@ -40,9 +40,11 @@ import dace
 from dace import nodes
 from dace.transformation.passes.normalize_wcr import NormalizeWCR
 from dace.transformation.passes.normalize_wcr_source import NormalizeWCRSource
-from dace.transformation.passes.privatize_scatter_reduction import (
-    PrivatizeScatterReduction, surface_scatter_reduction, is_data_dependent_scatter_sink,
-    data_dependent_scatter_wcr_edge, scatter_reduction_wcr_edge, map_is_parallel, resolve_root_data)
+from dace.transformation.passes.privatize_scatter_reduction import (PrivatizeScatterReduction,
+                                                                    surface_scatter_reduction,
+                                                                    is_data_dependent_scatter_sink,
+                                                                    data_dependent_scatter_wcr_edge,
+                                                                    scatter_reduction_wcr_edge, map_is_parallel)
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N, bins = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'bins'))

@@ -58,6 +58,7 @@ _MULTIDIM_KNOBS = [
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
+
 def _assert_matches(name: str, got: dict, ref: dict, stage: str):
     """Assert every float output matches the reference, ``nan``/``inf`` equal.
 

@@ -29,8 +29,8 @@ import dace
 from dace.transformation.layout.permute_dimensions import PermuteDimensions
 
 NA, NE = dace.symbol("NA"), dace.symbol("NE")
-M = 4   # ~ Norb orbitals per block (small: a block spans a few cache lines)
-W = 3   # SSE energy window width
+M = 4  # ~ Norb orbitals per block (small: a block spans a few cache lines)
+W = 3  # SSE energy window width
 
 
 @dace.program

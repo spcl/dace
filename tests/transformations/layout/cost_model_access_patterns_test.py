@@ -154,8 +154,9 @@ INSPECTOR = 3.0  # read the index array + bucket it: ~3 array passes of traffic
 def test_static_replace_beats_inspector_executor_at_equal_efficiency():
     """Same reordering, same resulting layout -- static replace simply does not pay the inspector.
     It is strictly better wherever sigma is known without running the program."""
-    assert (break_even_passes(SCATTERED, PERFECT, overhead_passes=0.0) <=
-            break_even_passes(SCATTERED, PERFECT, overhead_passes=INSPECTOR))
+    assert (break_even_passes(SCATTERED, PERFECT, overhead_passes=0.0) <= break_even_passes(SCATTERED,
+                                                                                            PERFECT,
+                                                                                            overhead_passes=INSPECTOR))
 
 
 def test_static_replace_of_a_scattered_gather_pays_immediately():

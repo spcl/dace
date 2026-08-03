@@ -85,11 +85,10 @@ class SplitMultiOutputTasklets(ppl.Pass):
             return False
         # Only straight-line ``name = expr`` statements are safe to slice by output.
         if not body or not all(
-                isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)
-                for s in body):
+                isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name) for s in body):
             return False
-        stmts: List[Tuple[str, str, Set[str]]] = [(s.targets[0].id, ast.unparse(s.value), _rhs_names(s.value))
-                                                  for s in body]
+        stmts: List[Tuple[str, str,
+                          Set[str]]] = [(s.targets[0].id, ast.unparse(s.value), _rhs_names(s.value)) for s in body]
         out_conns = set(tasklet.out_connectors)
         in_conns = set(tasklet.in_connectors)
         # The last statement assigning each output connector is its defining statement.

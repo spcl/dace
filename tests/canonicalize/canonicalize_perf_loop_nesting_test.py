@@ -79,8 +79,10 @@ def test_guard_over_imperfect_nest_parallelizes_value_preserving():
 
     # Maximal parallelism: the nest is exposed as Maps with no sequential-loop residue.
     maps = [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.MapEntry)]
-    seq_loops = [r for r in sdfg.all_control_flow_regions(recursive=True)
-                 if isinstance(r, LoopRegion) and not r.pinned_sequential]
+    seq_loops = [
+        r for r in sdfg.all_control_flow_regions(recursive=True)
+        if isinstance(r, LoopRegion) and not r.pinned_sequential
+    ]
     assert len(maps) >= 2, f"nest did not fully map (maps={len(maps)})"
     assert not seq_loops, f"sequential loop survived: {[r.label for r in seq_loops]}"
     # The guard is preserved (not silently dropped), wherever canonicalize placed it.

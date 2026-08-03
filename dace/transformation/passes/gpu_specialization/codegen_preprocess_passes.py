@@ -68,8 +68,8 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
         from dace.transformation.helpers import wrap_code_node_in_unit_gpu_map
         from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import (
             is_already_lowered_gpu_runtime_call, is_pipeline_sync_tasklet)
-        kernel_internal_schedules = (dtypes.ScheduleType.GPU_ThreadBlock,
-                                     dtypes.ScheduleType.GPU_ThreadBlock_Dynamic, dtypes.ScheduleType.GPU_Warp)
+        kernel_internal_schedules = (dtypes.ScheduleType.GPU_ThreadBlock, dtypes.ScheduleType.GPU_ThreadBlock_Dynamic,
+                                     dtypes.ScheduleType.GPU_Warp)
         gpu_storage = (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared, dtypes.StorageType.CPU_Pinned)
         modified = False
 
@@ -84,9 +84,8 @@ class NormalizeHostLevelGPUSchedules(ppl.Pass):
                   # Host-side GPU runtime-call tasklets (cudaMemcpyAsync launchers, sync
                   # tasklets) legitimately touch GPU data from the host -- leave them be.
                   and not is_already_lowered_gpu_runtime_call(node) and not is_pipeline_sync_tasklet(node)):
-                touches_gpu_data = any(
-                    not e.data.is_empty() and state.parent.arrays[e.data.data].storage in gpu_storage
-                    for e in state.all_edges(node))
+                touches_gpu_data = any(not e.data.is_empty() and state.parent.arrays[e.data.data].storage in gpu_storage
+                                       for e in state.all_edges(node))
                 if touches_gpu_data:
                     host_gpu_tasklets.append((state, node))
 

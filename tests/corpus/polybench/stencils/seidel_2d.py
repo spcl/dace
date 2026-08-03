@@ -33,8 +33,8 @@ def seidel2d(A: datatype[N, N], tsteps: dace.int32):
     # in-row Gauss-Seidel scan (``A[i, j] += A[i, j-1]``) that is inherently serial.
     for t in range(0, tsteps - 1):
         for i in range(1, N - 1):
-            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] +
-                           A[i + 1, 1:-1] + A[i + 1, 2:])
+            A[i, 1:-1] += (A[i - 1, :-2] + A[i - 1, 1:-1] + A[i - 1, 2:] + A[i, 2:] + A[i + 1, :-2] + A[i + 1, 1:-1] +
+                           A[i + 1, 2:])
             for j in range(1, N - 1):
                 A[i, j] += A[i, j - 1]
                 A[i, j] /= 9.0

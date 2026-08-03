@@ -9,7 +9,6 @@ import numpy as np
 import pytest
 
 from dace.properties import CodeBlock
-from dace.sdfg.nodes import MapEntry
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.interstate.move_if_into_map import MoveIfIntoMap

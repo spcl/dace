@@ -3100,8 +3100,9 @@ def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool
     e = s.replace(lambda t: isinstance(t, int_floor), lambda t: sympy.floor(t.args[0] / t.args[1]))
     e = e.replace(lambda t: isinstance(t, int_ceil), lambda t: sympy.ceiling(t.args[0] / t.args[1]))
     if assume_symbols_nonnegative:
-        e = e.subs({sym: sympy.Symbol(sym.name, nonnegative=True, integer=bool(sym.is_integer))
-                    for sym in e.free_symbols})
+        e = e.subs(
+            {sym: sympy.Symbol(sym.name, nonnegative=True, integer=bool(sym.is_integer))
+             for sym in e.free_symbols})
     if e.is_nonnegative is True:
         return True
     atoms = list(e.atoms(sympy.floor, sympy.ceiling))

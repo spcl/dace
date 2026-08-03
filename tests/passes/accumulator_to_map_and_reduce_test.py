@@ -263,8 +263,10 @@ def test_seeded_inplace_accumulator_distinct_subsets():
     sdfg.validate()
 
     # Every edge that names ``acc`` must own a distinct subset object.
-    acc_subsets = [id(e.data.subset) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
-                   if e.data is not None and e.data.data == 'acc' and e.data.subset is not None]
+    acc_subsets = [
+        id(e.data.subset) for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for e in st.edges()
+        if e.data is not None and e.data.data == 'acc' and e.data.subset is not None
+    ]
     assert len(acc_subsets) == len(set(acc_subsets)), "shared subset object across acc memlets"
 
     src = np.random.default_rng(7).random(12)

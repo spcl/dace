@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests for the InlineTaskletConnectors pass. """
 import numpy as np
-import pytest
 import dace
 from dace.sdfg import nodes as dnodes
 from dace.transformation.passes.inline_tasklet_connectors import InlineTaskletConnectors

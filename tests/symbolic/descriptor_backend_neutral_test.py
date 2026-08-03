@@ -10,7 +10,6 @@ Both halves are asserted here whichever backend is active, so the sympy default 
 neutral heads as equivalent to the sympy ones and the idxalg path pins the real cross-engine case.
 """
 import dace
-import pytest
 import sympy
 
 from dace import data, symbolic, symbolic_engine

@@ -47,7 +47,7 @@ Conservative -- only fires when:
 Anything else is a no-op.
 """
 import copy
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 
 import re
 

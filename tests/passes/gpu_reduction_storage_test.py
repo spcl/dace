@@ -123,9 +123,9 @@ def test_gpuauto_delegates_custom_and_resets_environment():
     from dace.libraries.standard.nodes.reduce import ExpandReduceGPUAuto
     # Custom -> delegates, GPUAuto env includes CUB ReduceScratch.
     custom = build_reduce(dtypes.StorageType.GPU_Global,
-                           'GPUAuto',
-                           wcr='lambda a, b: a if a > b else b',
-                           identity=-1e300)
+                          'GPUAuto',
+                          wcr='lambda a, b: a if a > b else b',
+                          identity=-1e300)
     custom.expand_library_nodes()
     env_paths = {e if isinstance(e, str) else e.full_class_path() for e in ExpandReduceGPUAuto.environments}
     assert any('ReduceScratch' in p for p in env_paths), "Custom delegation must carry the CUB ReduceScratch env"

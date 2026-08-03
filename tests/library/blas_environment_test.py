@@ -48,9 +48,8 @@ def test_some_blas_environment_detected_when_a_blas_is_present():
     if not _system_has_a_blas():
         pytest.skip('no BLAS library installed on this machine')
     detected = {env.__name__: env.is_installed() for env in ALL_BLAS_ENVIRONMENTS}
-    assert any(detected.values()), (
-        f'a BLAS library is loadable but no DaCe BLAS environment detected it: {detected}. '
-        'DaCe cannot build any BLAS library node in this configuration.')
+    assert any(detected.values()), (f'a BLAS library is loadable but no DaCe BLAS environment detected it: {detected}. '
+                                    'DaCe cannot build any BLAS library node in this configuration.')
 
 
 def test_openblas_single_library_is_detected():

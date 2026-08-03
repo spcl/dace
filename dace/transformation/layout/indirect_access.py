@@ -64,8 +64,8 @@ def indirect_accesses(sdfg: SDFG) -> List[IndirectAccess]:
                 for node in state.data_nodes():
                     if node.data not in sd.arrays:
                         continue
-                    edges = ([(e, 'scatter') for e in state.in_edges(node)] +
-                             [(e, 'gather') for e in state.out_edges(node)])
+                    edges = ([(e, 'scatter') for e in state.in_edges(node)] + [(e, 'gather')
+                                                                               for e in state.out_edges(node)])
                     for edge, kind in edges:
                         if edge.data is None or edge.data.subset is None:
                             continue

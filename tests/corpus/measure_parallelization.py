@@ -71,10 +71,8 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
 from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 
-# hpcagent_bench is an OUT-OF-TREE package: it is not a dace dependency and is absent in CI. Importing
-# it at module scope made every consumer of this module -- including the three tests that only want
-# ``cpu_params`` -- fail to COLLECT, which aborts the whole pytest run. It is only ever needed by the
-# hpcagent sweep below, so each user imports it locally instead.
+# hpcagent_bench is out-of-tree and absent in CI. At module scope it broke COLLECTION for every
+# consumer, which aborts the whole run; only the hpcagent sweep needs it, so it imports locally.
 
 #: The correct CPU canonicalize parameters (the numerical gate's ``_CPU`` set).
 #: ``peel_limit`` is overridable for the peel study; the rest are the CPU defaults.

@@ -323,7 +323,6 @@ def test_iedge_iv_refuses_when_iedge_has_other_assignments():
 # symbolic-step case.
 # ---------------------------------------------------------------------------
 
-from dace.sdfg.state import ControlFlowRegion  # noqa: E402
 from dace import symbolic  # noqa: E402
 
 
@@ -435,7 +434,10 @@ def _build_between_blocks_iv(label, use_before, use_after, step_rhs='k + 1'):
     sdfg.add_symbol('k', dace.int64)
     sdfg.add_symbol('g', dace.float64)
     init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion(label + '_lp', initialize_expr='i = 0', condition_expr='i < N', update_expr='i = i + 1',
+    loop = LoopRegion(label + '_lp',
+                      initialize_expr='i = 0',
+                      condition_expr='i < N',
+                      update_expr='i = i + 1',
                       loop_var='i')
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge(assignments={'k': '0'}))
@@ -498,7 +500,10 @@ def _build_derived_symbol_loop(label):
     sdfg.add_symbol('c', dace.int64)
     sdfg.add_symbol('g', dace.float64)
     init = sdfg.add_state('init', is_start_block=True)
-    loop = LoopRegion(label + '_lp', initialize_expr='i = 0', condition_expr='i < N', update_expr='i = i + 1',
+    loop = LoopRegion(label + '_lp',
+                      initialize_expr='i = 0',
+                      condition_expr='i < N',
+                      update_expr='i = i + 1',
                       loop_var='i')
     sdfg.add_node(loop)
     sdfg.add_edge(init, loop, dace.InterstateEdge())
@@ -544,7 +549,10 @@ def test_derived_symbol_rewritten_in_nested_loop_not_inlined():
     sdfg.add_node(outer)
     sdfg.add_edge(init, outer, dace.InterstateEdge())
     o0 = outer.add_state('o0', is_start_block=True)
-    inner = LoopRegion('inner', initialize_expr='jj = 0', condition_expr='jj < N', update_expr='jj = jj + 1',
+    inner = LoopRegion('inner',
+                       initialize_expr='jj = 0',
+                       condition_expr='jj < N',
+                       update_expr='jj = jj + 1',
                        loop_var='jj')
     outer.add_node(inner)
     outer.add_edge(o0, inner, dace.InterstateEdge(assignments={'k': '2*i'}))  # looks derived at the outer level
@@ -584,10 +592,10 @@ def _subset_reads_array(sdfg: dace.SDFG) -> bool:
 
 @dace.program
 def _indirect_scatter(A: dace.int64[N, 5], B: dace.float64[N, 5]):
-    for jm in range(5):        # outer -> loop-invariant to the inner loop (as cloudsc JM)
+    for jm in range(5):  # outer -> loop-invariant to the inner loop (as cloudsc JM)
         for jl in range(N):
-            idx = A[jl, jm]    # a data gather promoted to an interstate load
-            B[jl, idx] = 1.0   # idx used as a subset index -- must STAY a symbol
+            idx = A[jl, jm]  # a data gather promoted to an interstate load
+            B[jl, idx] = 1.0  # idx used as a subset index -- must STAY a symbol
 
 
 def test_array_load_not_inlined_as_iv_program():
@@ -615,8 +623,11 @@ def test_array_load_not_inlined_as_iv_handbuilt():
     sdfg.add_array('B', [8, 5], dace.float64)
     sdfg.add_symbol('jm', dace.int64)
     sdfg.add_symbol('idx', dace.int64)
-    loop = LoopRegion('jlloop', condition_expr='jl < 8', loop_var='jl',
-                      initialize_expr='jl = 0', update_expr='jl = jl + 1')
+    loop = LoopRegion('jlloop',
+                      condition_expr='jl < 8',
+                      loop_var='jl',
+                      initialize_expr='jl = 0',
+                      update_expr='jl = jl + 1')
     sdfg.add_node(loop, is_start_block=True)
     s_def = loop.add_state('s_def', is_start_block=True)
     s_use = loop.add_state('s_use')
@@ -628,8 +639,9 @@ def test_array_load_not_inlined_as_iv_handbuilt():
     InductionVariableSubstitution().apply_pass(sdfg, {})
 
     # ``idx`` stays a plain symbol in the subset; the load stays on the interstate edge.
-    b_subsets = [str(e.data.subset) for st in loop.all_states() for e in st.edges()
-                 if e.data is not None and e.data.data == 'B']
+    b_subsets = [
+        str(e.data.subset) for st in loop.all_states() for e in st.edges() if e.data is not None and e.data.data == 'B'
+    ]
     assert b_subsets == ['jl, idx'], b_subsets
     assert any('idx' in (e.data.assignments or {}) for e in sdfg.all_interstate_edges()), \
         "the interstate load 'idx := A[jl, jm]' must survive -- it is not an IV"

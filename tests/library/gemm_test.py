@@ -265,8 +265,7 @@ def test_gemm_rowwise_loop_structure():
                             sdfg_name='rowwise_struct')
     sdfg.expand_library_nodes()
     unidim = [
-        n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, dace.sdfg.nodes.MapEntry) and len(n.map.params) == 1
+        n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, dace.sdfg.nodes.MapEntry) and len(n.map.params) == 1
     ]
     # The contraction nest is exactly i / k / j (the beta=0 init map is 2D, excluded).
     assert len(unidim) == 3

@@ -218,7 +218,10 @@ def test_expand_terminates_on_wcr_reduction_out_edge():
     # Full (already-widened) in-edge -- nothing to widen there.
     st.add_memlet_path(st.add_read("A"), me, nsdfg, dst_conn="a", memlet=dace.Memlet("A[0:M]"))
     # The only non-full edge: a WCR reduction out-edge (a single-element slot).
-    st.add_memlet_path(nsdfg, mx, st.add_write("out"), src_conn="o",
+    st.add_memlet_path(nsdfg,
+                       mx,
+                       st.add_write("out"),
+                       src_conn="o",
                        memlet=dace.Memlet("out[i]", wcr="lambda x, y: x + y"))
     sdfg.validate()
 

@@ -145,8 +145,10 @@ def _condition_referenced_scalars(sdfg):
         for cb in reg.get_meta_codeblocks():
             names |= cb.get_free_symbols()
     names &= set(sdfg.arrays.keys())
-    return {nm: sum(1 for st in sdfg.states() for an in st.data_nodes() if an.data == nm and st.in_degree(an) > 0)
-            for nm in names}
+    return {
+        nm: sum(1 for st in sdfg.states() for an in st.data_nodes() if an.data == nm and st.in_degree(an) > 0)
+        for nm in names
+    }
 
 
 def test_privatize_keeps_branch_condition_scalar():

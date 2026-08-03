@@ -8,7 +8,7 @@ asserted (noisy on a shared host)."""
 import numpy
 import dace
 
-from dace.transformation.layout.brute_force import (sweep, best, time_cpu, permutation_candidates, SweepResult)
+from dace.transformation.layout.brute_force import (sweep, best, time_cpu, permutation_candidates)
 
 N = dace.symbol("N")
 

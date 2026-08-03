@@ -8,7 +8,6 @@ from dace.sdfg.state import AbstractControlFlowRegion, SDFGState
 from dace.transformation import transformation, helpers as xfh
 from dace.properties import ListProperty, Property, make_properties
 from collections import defaultdict
-from copy import deepcopy as dc
 from sympy import floor
 from typing import Dict, List, Set, Tuple
 

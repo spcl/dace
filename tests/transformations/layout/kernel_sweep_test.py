@@ -5,7 +5,6 @@ Each kernel enumerates its global layout candidates (dimension permutations of t
 orientation is the layout decision), and the sweep compiles/runs/verifies every candidate against
 the numpy oracle. The invariant asserted here is CORRECTNESS: every transparent candidate reproduces
 the oracle and ``best()`` returns a correct one. Timing is not asserted (noisy on a shared host)."""
-import numpy
 
 from dace.transformation.layout.brute_force import sweep, best
 from dace.transformation.layout.timing import compute_region_timer

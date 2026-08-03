@@ -155,7 +155,9 @@ def test_k1_masked_ite_isa_backend(isa, flag, header):
         pytest.skip(f"host lacks {flag}")
     sdfg = _k1_masked_ite_sdfg(f"e2e_k1_maskite_{isa.lower()}")
     VectorizeCPUMultiDim(
-        VectorizeConfig(widths=(8, ), target_isa=isa, remainder_strategy=RemainderStrategy.MASKED_TAIL,
+        VectorizeConfig(widths=(8, ),
+                        target_isa=isa,
+                        remainder_strategy=RemainderStrategy.MASKED_TAIL,
                         branch_mode=BranchMode.MERGE)).apply_pass(sdfg, {})
     sdfg.validate()
     csdfg = sdfg.compile()

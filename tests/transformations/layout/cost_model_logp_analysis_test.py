@@ -141,11 +141,16 @@ def test_sequential_affine_nest_gets_prefetch_inclusive_concurrency():
     assert cost.concurrency == P.core_stream_mlp == P.bw_core * P.L / P.line_bytes
     assert cost.concurrency > P.core_mlp > 1.0  # stream > demand-miss knee > chain
     # the demand-miss knee stays available for prefetch-hostile callers, measured or defaulted
-    p_measured = LogGP(L=P.L, o=0.0, g=P.g, G=P.G, line_bytes=64, bw_saturated=P.bw_saturated,
-                       bw_core=P.bw_core, c_core=8.0)
+    p_measured = LogGP(L=P.L,
+                       o=0.0,
+                       g=P.g,
+                       G=P.G,
+                       line_bytes=64,
+                       bw_saturated=P.bw_saturated,
+                       bw_core=P.bw_core,
+                       c_core=8.0)
     assert p_measured.core_mlp == 8.0
-    assert analyze_loop_nest(st, me, p_measured, block_bytes=64,
-                             concurrency=p_measured.core_mlp).concurrency == 8.0
+    assert analyze_loop_nest(st, me, p_measured, block_bytes=64, concurrency=p_measured.core_mlp).concurrency == 8.0
 
 
 def test_total_time_is_one_continuous_formula():
@@ -162,8 +167,10 @@ def test_total_time_is_one_continuous_formula():
     assert _at(lat.total_time()) == pytest.approx(_at(lat.total_messages()) * P.L)  # the chase: M*L
     assert _at(lat.total_time()) > _at(bw.total_time())
     # monotone in C, and continuous at the crossover C* = M*L/(B*G)
-    times = [_at(analyze_loop_nest(st, me, P, block_bytes=64, concurrency=c).total_time())
-             for c in (1.0, 4.0, 8.0, 64.0, 148.0, 1e6)]
+    times = [
+        _at(analyze_loop_nest(st, me, P, block_bytes=64, concurrency=c).total_time())
+        for c in (1.0, 4.0, 8.0, 64.0, 148.0, 1e6)
+    ]
     assert times == sorted(times, reverse=True)
     m, b = _at(lat.total_messages()), _at(lat.total_bytes())
     c_star = m * P.L / (b * P.G)
@@ -194,8 +201,14 @@ def test_gpu_sector_granularity_changes_the_message_count():
     assert _at(sector.latency_per_iter()) > _at(line.latency_per_iter())
 
 
-GPU = LogGP(L=500e-9, o=0.0, g=1e-9, G=gap_from_bandwidth(1000e9), line_bytes=128, bw_saturated=1000e9,
-            bw_core=1000e9, sector_bytes=32)
+GPU = LogGP(L=500e-9,
+            o=0.0,
+            g=1e-9,
+            G=gap_from_bandwidth(1000e9),
+            line_bytes=128,
+            bw_saturated=1000e9,
+            bw_core=1000e9,
+            sector_bytes=32)
 
 
 def test_request_and_transfer_granularities_are_split_when_p_carries_both():
@@ -228,8 +241,7 @@ def test_scattered_access_needs_line_over_sector_more_concurrency_to_saturate():
         return _at(a.messages_per_iter) * GPU.L / (_at(a.bytes_moved_per_iter) * GPU.G)
 
     # contiguous A: k = 4 sectors per 128B request; scattered A: k = 1 (one 32B sector per request)
-    assert c_star(scat, "A") / c_star(contig, "A") == pytest.approx(GPU.line_bytes / GPU.sector_bytes,
-                                                                    rel=0.05)
+    assert c_star(scat, "A") / c_star(contig, "A") == pytest.approx(GPU.line_bytes / GPU.sector_bytes, rel=0.05)
 
 
 def test_line_granular_analysis_not_element_granular():
@@ -260,8 +272,14 @@ def test_populated_cores_refine_the_saturated_assumption():
     st.add_memlet_path(st.add_read("A"), me, t, dst_conn="a", memlet=_dace.Memlet("A[i,j]"))
     st.add_memlet_path(t, mx, st.add_write("C"), src_conn="c", memlet=_dace.Memlet("C[i,j]"))
 
-    p_measured = LogGP(L=P.L, o=0.0, g=P.g, G=P.G, line_bytes=64, bw_saturated=P.bw_saturated,
-                       bw_core=P.bw_core, c_core=8.0)
+    p_measured = LogGP(L=P.L,
+                       o=0.0,
+                       g=P.g,
+                       G=P.G,
+                       line_bytes=64,
+                       bw_saturated=P.bw_saturated,
+                       bw_core=P.bw_core,
+                       c_core=8.0)
     saturated = analyze_loop_nest(st, me, p_measured, block_bytes=64)
     populated = analyze_loop_nest(st, me, p_measured, block_bytes=64, n_cores=16)
     assert saturated.concurrency == float("inf")
@@ -270,13 +288,11 @@ def test_populated_cores_refine_the_saturated_assumption():
     assert populated.regime() == "bandwidth"
     # SCATTERED nest (prefetch-hostile): the demand-miss budget is the honest unit -- and 16 x 8 =
     # 128 < BDP ~148: a scattered parallel nest does NOT quite saturate, which blanket inf hides.
-    scattered = analyze_loop_nest(st, me, p_measured, block_bytes=64,
-                                  concurrency=16 * p_measured.core_mlp)
+    scattered = analyze_loop_nest(st, me, p_measured, block_bytes=64, concurrency=16 * p_measured.core_mlp)
     assert scattered.concurrency == 128.0
     assert scattered.regime() == "latency"
     # explicit concurrency overrides n_cores
-    assert analyze_loop_nest(st, me, p_measured, block_bytes=64, concurrency=4.0,
-                             n_cores=16).concurrency == 4.0
+    assert analyze_loop_nest(st, me, p_measured, block_bytes=64, concurrency=4.0, n_cores=16).concurrency == 4.0
 
 
 def test_gpu_thread_per_cell_lane_axis_carries_the_coalescing():
@@ -310,8 +326,15 @@ def test_gpu_occupancy_is_the_unit_count():
     st.add_memlet_path(t, mx, st.add_write("C"), src_conn="c", memlet=_dace.Memlet("C[i,j]"))
 
     # per-warp outstanding ~4 (in-order lanes; scoreboard slots), measured by a multi-warp P-chase
-    gpu = LogGP(L=GPU.L, o=0.0, g=GPU.g, G=GPU.G, line_bytes=128, bw_saturated=GPU.bw_saturated,
-                bw_core=GPU.bw_core, sector_bytes=32, c_core=4.0)
+    gpu = LogGP(L=GPU.L,
+                o=0.0,
+                g=GPU.g,
+                G=GPU.G,
+                line_bytes=128,
+                bw_saturated=GPU.bw_saturated,
+                bw_core=GPU.bw_core,
+                sector_bytes=32,
+                c_core=4.0)
     bdp = analyze_loop_nest(st, me, gpu).bandwidth_delay_product()
     assert bdp == __import__("pytest").approx(500e-9 * 1000e9 / 128)  # ~3906 requests
 

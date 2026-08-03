@@ -194,8 +194,15 @@ def run_closure(inputs, n=8):
     def run(sdfg):
         shape = tuple(int(dace.symbolic.evaluate(s, {NC: nc, NE: ne, V: v})) for s in sdfg.arrays["tsg"].shape)
         y = numpy.zeros(nc)
-        sdfg(x=inputs["x"].copy(), e0=inputs["e0"].copy(), e1=inputs["e1"].copy(), tabf=tabf.copy(),
-             tsg=pack_tsg(shape), y=y, NC=nc, NE=ne, V=v)
+        sdfg(x=inputs["x"].copy(),
+             e0=inputs["e0"].copy(),
+             e1=inputs["e1"].copy(),
+             tabf=tabf.copy(),
+             tsg=pack_tsg(shape),
+             y=y,
+             NC=nc,
+             NE=ne,
+             V=v)
         return {"y": y}
 
     return run

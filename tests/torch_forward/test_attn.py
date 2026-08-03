@@ -19,11 +19,7 @@ def test_attn(use_cpp_dispatcher: bool, device):
     P = 64
     N = P * H
     SM, SN = 512, 512
-    K, Q, V = [
-        torch.randn([SM, B, N]).to(dev),
-        torch.randn([SN, B, N]).to(dev),
-        torch.randn([SM, B, N]).to(dev)
-    ]
+    K, Q, V = [torch.randn([SM, B, N]).to(dev), torch.randn([SN, B, N]).to(dev), torch.randn([SM, B, N]).to(dev)]
     ptmodel = torch.nn.MultiheadAttention(N, H, bias=False).to(dev)
 
     pt_outputs = ptmodel(Q, K, V)

@@ -69,8 +69,7 @@ def lower_reduction_wcr_in_body(inner_sdfg: SDFG, tiled: bool = True) -> int:
                 in2_subset = copy.deepcopy(src_subset)
             else:
                 src_desc = inner_sdfg.arrays.get(edge.src.data)
-                in2_subset = (subsets.Range.from_array(src_desc)
-                              if src_desc is not None else copy.deepcopy(acc_subset))
+                in2_subset = (subsets.Range.from_array(src_desc) if src_desc is not None else copy.deepcopy(acc_subset))
             state.add_edge(edge.src, None, tasklet, '__in2', Memlet(data=edge.src.data, subset=in2_subset))
             state.add_edge(tasklet, '__out', dst, None, Memlet(data=acc, subset=copy.deepcopy(acc_subset)))
             state.remove_edge(edge)

@@ -69,6 +69,7 @@ _MULTIDIM_KNOBS = [
     dict(target_isa="SCALAR", remainder_strategy="masked_tail", branch_mode="fp_factor"),
 ]
 
+
 def _oracle(program):
     """The numpy oracle for a kernel: ``ref_`` + name with any ``ext_`` dropped."""
     base = program.name.rsplit("tsvc_2_5_", 1)[-1]

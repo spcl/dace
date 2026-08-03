@@ -36,7 +36,7 @@ import dace
 from dace.codegen.codegen import generate_code
 
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
-                                                    generate_cloudsc_inputs, make_sequential)
+                                                            generate_cloudsc_inputs, make_sequential)
 from tests.perf.cloudsc_backend_pipeline import filtered_inputs, run_pipeline
 
 BACKENDS = ['networkx', 'rustworkx']
@@ -154,9 +154,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--reps', type=int, default=10, help='Repetitions per backend (default: 10)')
     parser.add_argument('--output', type=str, default=None, help='Optional path to dump raw samples as JSON')
-    parser.add_argument('--table-output', type=str, default=None,
+    parser.add_argument('--table-output',
+                        type=str,
+                        default=None,
                         help='Optional path to write the median comparison as a markdown table')
-    parser.add_argument('--tmp-dir', type=str, default='/tmp/graph_backend_cloudsc_bench',
+    parser.add_argument('--tmp-dir',
+                        type=str,
+                        default='/tmp/graph_backend_cloudsc_bench',
                         help='Scratch dir for serialize/deserialize (default: /tmp/graph_backend_cloudsc_bench)')
     args = parser.parse_args()
 
@@ -185,13 +189,14 @@ def main():
             times = run_one_repetition(reference, backend, args.tmp_dir, rep)
             for phase in PHASES:
                 samples[backend][phase].append(times[phase])
-            print(f'backend={backend:<10} rep={rep + 1}/{args.reps}  ' +
-                 '  '.join(f'{PHASE_LABELS[p]}={times[p]:.4f}s' for p in PHASES))
+            print(f'backend={backend:<10} rep={rep + 1}/{args.reps}  ' + '  '.join(f'{PHASE_LABELS[p]}={times[p]:.4f}s'
+                                                                                   for p in PHASES))
 
     print()
     print(f'Median over {args.reps} repetitions:')
-    print(median_report(samples) if len(available_backends) == 2 else
-         '\n'.join(f'{PHASE_LABELS[p]}: {statistics.median(samples["networkx"][p]):.4f}s' for p in PHASES))
+    print(
+        median_report(samples) if len(available_backends) == 2 else '\n'.join(
+            f'{PHASE_LABELS[p]}: {statistics.median(samples["networkx"][p]):.4f}s' for p in PHASES))
 
     if args.output:
         with open(args.output, 'w') as f:

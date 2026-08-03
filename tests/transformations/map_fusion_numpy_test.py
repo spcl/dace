@@ -18,7 +18,7 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
-from dace.transformation.dataflow import MapFusion, MapFusionVertical, MapFusionHorizontal
+from dace.transformation.dataflow import MapFusionVertical, MapFusionHorizontal
 
 N = dace.symbol("N")
 M = dace.symbol("M")
@@ -155,8 +155,16 @@ def test_horizontal_shared_inputs():
 
     rng = np.random.default_rng(6)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k, {"a": a, "b": b, "c": np.zeros(64), "d": np.zeros(64)},
-                           {"c": a + b, "d": a * b}, syms={"N": 64})
+    before, after = _check(k, {
+        "a": a,
+        "b": b,
+        "c": np.zeros(64),
+        "d": np.zeros(64)
+    }, {
+        "c": a + b,
+        "d": a * b
+    },
+                           syms={"N": 64})
     assert before == 2 and after == 1
 
 
@@ -170,8 +178,17 @@ def test_horizontal_three_way():
         d[:] = a - 3.0
 
     a = np.random.default_rng(7).random(64)
-    before, after = _check(k, {"a": a, "b": np.zeros(64), "c": np.zeros(64), "d": np.zeros(64)},
-                           {"b": a + 1.0, "c": a * 2.0, "d": a - 3.0}, syms={"N": 64})
+    before, after = _check(k, {
+        "a": a,
+        "b": np.zeros(64),
+        "c": np.zeros(64),
+        "d": np.zeros(64)
+    }, {
+        "b": a + 1.0,
+        "c": a * 2.0,
+        "d": a - 3.0
+    },
+                           syms={"N": 64})
     assert before == 3 and after < before
 
 
@@ -189,8 +206,7 @@ def test_elementwise_then_reduction_value_preserving():
         out[0] = np.sum(t)
 
     a = np.random.default_rng(8).random(64)
-    before, after = _check(k, {"a": a, "out": np.zeros(1)}, {"out": np.array([np.sum((a + 1.0)**2)])},
-                           syms={"N": 64})
+    before, after = _check(k, {"a": a, "out": np.zeros(1)}, {"out": np.array([np.sum((a + 1.0)**2)])}, syms={"N": 64})
     assert after <= before
 
 
@@ -204,8 +220,7 @@ def test_dot_product_chain_value_preserving():
 
     rng = np.random.default_rng(9)
     a, b = rng.random(128), rng.random(128)
-    before, after = _check(k, {"a": a, "b": b, "out": np.zeros(1)}, {"out": np.array([np.sum(a * b)])},
-                           syms={"N": 128})
+    before, after = _check(k, {"a": a, "b": b, "out": np.zeros(1)}, {"out": np.array([np.sum(a * b)])}, syms={"N": 128})
     assert after <= before
 
 
@@ -214,14 +229,22 @@ def test_mixed_vertical_and_horizontal():
 
     @dace.program
     def k(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
-        t = a + b            # producer
-        c[:] = t * 2.0       # vertical consumer of t
-        d[:] = a - b         # horizontal sibling (same range, shares a,b)
+        t = a + b  # producer
+        c[:] = t * 2.0  # vertical consumer of t
+        d[:] = a - b  # horizontal sibling (same range, shares a,b)
 
     rng = np.random.default_rng(10)
     a, b = rng.random(64), rng.random(64)
-    before, after = _check(k, {"a": a, "b": b, "c": np.zeros(64), "d": np.zeros(64)},
-                           {"c": (a + b) * 2.0, "d": a - b}, syms={"N": 64})
+    before, after = _check(k, {
+        "a": a,
+        "b": b,
+        "c": np.zeros(64),
+        "d": np.zeros(64)
+    }, {
+        "c": (a + b) * 2.0,
+        "d": a - b
+    },
+                           syms={"N": 64})
     assert after < before
 
 
@@ -253,8 +276,19 @@ def test_incompatible_shapes_not_vertically_fused():
 
     rng = np.random.default_rng(12)
     a, b = rng.random(32), rng.random(48)
-    before, after = _check(k, {"a": a, "b": b, "oa": np.zeros(32), "ob": np.zeros(48)},
-                           {"oa": a + 1.0, "ob": b * 2.0}, syms={"N": 32, "M": 48})
+    before, after = _check(k, {
+        "a": a,
+        "b": b,
+        "oa": np.zeros(32),
+        "ob": np.zeros(48)
+    }, {
+        "oa": a + 1.0,
+        "ob": b * 2.0
+    },
+                           syms={
+                               "N": 32,
+                               "M": 48
+                           })
     assert after == before  # different iteration spaces: not fused
 
 

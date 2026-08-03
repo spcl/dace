@@ -10,7 +10,6 @@ none of them covered this. Bit-exactness cannot catch a doubled pad either -- it
 inconsistency -- so these assert on the descriptors and memlets directly."""
 import dace
 import sympy as sp
-from dace import nodes
 
 from dace.transformation.layout.pad_dimensions import PadDimensions
 from dace.transformation.layout.shuffle_elements import ShuffleElements

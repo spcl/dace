@@ -17,7 +17,7 @@ from copy import deepcopy as dc
 
 import dace.library
 import dace.sdfg.nodes
-from dace import SDFG, SDFGState, data as dt, dtypes, memlet as mm, properties, symbolic
+from dace import SDFG, SDFGState, dtypes, memlet as mm, properties
 from dace.frontend.common import op_repository as oprepo
 from dace.libraries.blas.blas_helpers import to_blastype
 from dace.symbolic import symstr

@@ -173,10 +173,13 @@ def test_symbolic_overapproximated_wcr_refused_no_typeerror():
 
     # expr_index 2 == ``inp -[wcr]-> output`` (AccessNode -> AccessNode).
     xform = WCRToAugAssign()
-    xform.setup_match(sdfg, sdfg.cfg_id, sdfg.node_id(state), {
-        WCRToAugAssign.inp: state.node_id(vnode),
-        WCRToAugAssign.output: state.node_id(hist),
-    }, expr_index=2)
+    xform.setup_match(sdfg,
+                      sdfg.cfg_id,
+                      sdfg.node_id(state), {
+                          WCRToAugAssign.inp: state.node_id(vnode),
+                          WCRToAugAssign.output: state.node_id(hist),
+                      },
+                      expr_index=2)
     # Must return False without raising (pre-fix this raised the symbolic TypeError).
     assert xform.can_be_applied(state, 2, sdfg) is False
 

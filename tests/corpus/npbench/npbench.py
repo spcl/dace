@@ -58,10 +58,7 @@ SIZE_CAP = 16
 def _capped_sizes(c: dict, cap: Optional[int] = SIZE_CAP) -> Dict[str, object]:
     if cap is None:
         return dict(c["sizes"])
-    return {
-        k: (min(v, cap) if isinstance(v, int) and not isinstance(v, bool) else v)
-        for k, v in c["sizes"].items()
-    }
+    return {k: (min(v, cap) if isinstance(v, int) and not isinstance(v, bool) else v) for k, v in c["sizes"].items()}
 
 
 def make_inputs(c: dict, cap: Optional[int] = SIZE_CAP) -> Tuple[Dict[str, np.ndarray], Dict[str, object]]:

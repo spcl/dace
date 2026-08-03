@@ -48,8 +48,14 @@ def test_modular_gather_read_1d(branch_mode, remainder_strategy):
     xv, sv = 60, 3  # xv not a multiple of 8 -> remainder tile; sv < W -> cyclic wrap within a tile
     run_vectorization_test(
         dace_func=modular_gather_read_1d,
-        arrays={"out": numpy.zeros(xv), "a": numpy.random.random(sv)},
-        params={"X": xv, "S": sv},
+        arrays={
+            "out": numpy.zeros(xv),
+            "a": numpy.random.random(sv)
+        },
+        params={
+            "X": xv,
+            "S": sv
+        },
         vector_width=8,
         sdfg_name="modular_gather_read_1d",
         branch_mode=branch_mode,
@@ -64,8 +70,15 @@ def test_modular_gather_read_2d(branch_mode, remainder_strategy):
     yv, xv, sv = 8, 60, 3
     run_vectorization_test(
         dace_func=modular_gather_read_2d,
-        arrays={"out": numpy.zeros((yv, xv)), "a": numpy.random.random((yv, sv))},
-        params={"Y": yv, "X": xv, "S": sv},
+        arrays={
+            "out": numpy.zeros((yv, xv)),
+            "a": numpy.random.random((yv, sv))
+        },
+        params={
+            "Y": yv,
+            "X": xv,
+            "S": sv
+        },
         vector_width=8,
         sdfg_name="modular_gather_read_2d",
         branch_mode=branch_mode,
@@ -81,8 +94,14 @@ def test_square_gather_read_1d(branch_mode, remainder_strategy):
     xv, sv = 60, 5  # xv not a multiple of 8 -> remainder tile
     run_vectorization_test(
         dace_func=square_gather_read_1d,
-        arrays={"out": numpy.zeros(xv), "a": numpy.random.random(sv)},
-        params={"X": xv, "S": sv},
+        arrays={
+            "out": numpy.zeros(xv),
+            "a": numpy.random.random(sv)
+        },
+        params={
+            "X": xv,
+            "S": sv
+        },
         vector_width=8,
         sdfg_name="square_gather_read_1d",
         branch_mode=branch_mode,

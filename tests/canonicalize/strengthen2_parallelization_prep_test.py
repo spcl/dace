@@ -124,8 +124,10 @@ def test_crossover_candidates_are_the_floor_and_ceil_of_the_direction_flip():
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     loop = _loops(sdfg)[0]
     points = BestEffortLoopPeeling(peel_limit=4).direction_flip_split_points(loop)
-    assert points == [symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D') - 1, 2),
-                      symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2)], points
+    assert points == [
+        symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D') - 1, 2),
+        symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2)
+    ], points
 
 
 def test_measurement_picks_the_bracket_that_unblocks_both_halves():
@@ -164,8 +166,7 @@ def test_the_accepted_split_counts_both_range_segments():
     mini, _ = peel._isolate_loop(_loops(sdfg)[0], sdfg)
     assert peel._mappable_loop_count(copy.deepcopy(mini)) == 0, 'the unsplit loop parallelizes nothing'
     cand = copy.deepcopy(mini)
-    assert peel._split_loop_at(cand, _loops(cand)[0],
-                              symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2))
+    assert peel._split_loop_at(cand, _loops(cand)[0], symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2))
     peel._clean_peeled_remainder(cand)
     assert peel._mappable_loop_count(cand) == 2
 

@@ -18,7 +18,6 @@ most values of ``N`` but false for some.
 """
 import pytest
 
-import dace
 from dace import subsets, symbolic
 
 N = symbolic.pystr_to_symbolic('N')

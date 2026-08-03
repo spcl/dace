@@ -3,15 +3,13 @@
 these run anywhere and pin the algebra the measured parameters flow through."""
 import pytest
 
-from dace.transformation.layout.cost_model.loggp import (LogGP, Fit, gap_from_bandwidth, lines_touched,
-                                                         message_time, achievable_rate, memory_time,
-                                                         nest_memory_time, bandwidth_delay_product, regime,
-                                                         fit_message_size, validate)
+from dace.transformation.layout.cost_model.loggp import (LogGP, Fit, gap_from_bandwidth, lines_touched, message_time,
+                                                         achievable_rate, memory_time, nest_memory_time,
+                                                         bandwidth_delay_product, regime, fit_message_size, validate)
 
 
 def _dram(L=95e-9, g=4e-9, bw_sat=100e9, bw_core=40e9, line=64):
-    return LogGP(L=L, o=0.0, g=g, G=gap_from_bandwidth(bw_sat), line_bytes=line, bw_saturated=bw_sat,
-                 bw_core=bw_core)
+    return LogGP(L=L, o=0.0, g=g, G=gap_from_bandwidth(bw_sat), line_bytes=line, bw_saturated=bw_sat, bw_core=bw_core)
 
 
 def test_lines_touched_rounds_up_to_granularity():
@@ -199,8 +197,14 @@ def test_core_mlp_prefers_the_measured_knee():
     overrides; without one, the cap is the honest fallback."""
     default = _dram(L=95e-9, g=4e-9)
     assert default.core_mlp == pytest.approx(default.concurrency)  # no measurement -> L/g
-    measured = LogGP(L=95e-9, o=0.0, g=4e-9, G=gap_from_bandwidth(100e9), line_bytes=64,
-                     bw_saturated=100e9, bw_core=40e9, c_core=8.0)
+    measured = LogGP(L=95e-9,
+                     o=0.0,
+                     g=4e-9,
+                     G=gap_from_bandwidth(100e9),
+                     line_bytes=64,
+                     bw_saturated=100e9,
+                     bw_core=40e9,
+                     c_core=8.0)
     assert measured.core_mlp == 8.0
     assert measured.concurrency == pytest.approx(23.75)  # L/g unchanged; validate() cross-checks them
 
@@ -237,8 +241,14 @@ def test_nest_memory_time_decouples_bytes_from_messages():
     """Under sectoring bytes != messages * line -- the one thing achievable_rate cannot express. A
     scattered GPU access: M requests but only M sectors of 32B, so the bandwidth term is 4x smaller
     than the line-coupled form would claim, while the latency term keeps the full request count."""
-    gpu = LogGP(L=500e-9, o=0.0, g=1e-9, G=gap_from_bandwidth(1000e9), line_bytes=128,
-                bw_saturated=1000e9, bw_core=1000e9, sector_bytes=32)
+    gpu = LogGP(L=500e-9,
+                o=0.0,
+                g=1e-9,
+                G=gap_from_bandwidth(1000e9),
+                line_bytes=128,
+                bw_saturated=1000e9,
+                bw_core=1000e9,
+                sector_bytes=32)
     M = 1_000_000
     scattered_bytes = M * gpu.sector_bytes  # one 32B sector per 128B request
     line_coupled_bytes = M * gpu.line_bytes
@@ -290,8 +300,8 @@ def test_nest_time_is_convex_and_nonincreasing_in_concurrency():
     assert ts == sorted(ts, reverse=True)  # non-increasing
     for a, b in ((1.0, 9.0), (10.0, 200.0), (100.0, 1000.0)):
         mid = (a + b) / 2
-        assert nest_memory_time(p, B, M, mid) <= (nest_memory_time(p, B, M, a) +
-                                                  nest_memory_time(p, B, M, b)) / 2 + 1e-15
+        assert nest_memory_time(p, B, M,
+                                mid) <= (nest_memory_time(p, B, M, a) + nest_memory_time(p, B, M, b)) / 2 + 1e-15
 
 
 if __name__ == "__main__":

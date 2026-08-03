@@ -468,8 +468,11 @@ def _build_nsdfg_accumulating_connector_sdfg(n: int) -> dace.SDFG:
     t = istate.add_tasklet('one', {}, {'_r'}, '_r = 1.0')
     aw = istate.add_write('acc')
     istate.add_edge(ime, None, t, None, dace.Memlet())
-    istate.add_memlet_path(t, imx, aw, src_conn='_r', memlet=dace.Memlet(data='acc', subset='k',
-                                                                        wcr='lambda a, b: a + b'))
+    istate.add_memlet_path(t,
+                           imx,
+                           aw,
+                           src_conn='_r',
+                           memlet=dace.Memlet(data='acc', subset='k', wcr='lambda a, b: a + b'))
 
     sdfg = dace.SDFG(f'nsdfg_accumulating_connector_n{n}')
     sdfg.add_array('out', [n, n], dace.float64)

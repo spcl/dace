@@ -51,9 +51,15 @@ def _reference(program):
     arrays, scalars = tsvc_2_5.make_inputs(program)
     oracle = _oracle(program)
     pool = {
-        **{n: a.copy() for n, a in arrays.items()},
+        **{
+            n: a.copy()
+            for n, a in arrays.items()
+        },
         **scalars,
-        **{s.lower(): v for s, v in tsvc_2_5.SIZES.items()},
+        **{
+            s.lower(): v
+            for s, v in tsvc_2_5.SIZES.items()
+        },
         "n": tsvc_2_5.SIZES["LEN_1D"],
     }
     oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
@@ -91,9 +97,10 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
     for name, arr in arrays.items():
         if np.issubdtype(arr.dtype, np.integer):
             continue  # index/permutation arrays are read-only inputs
-        assert np.allclose(np.asarray(ref[name]), np.asarray(got[name]), rtol=_TOL, atol=_TOL, equal_nan=True), (
-            f"{program.name}/{name}: {stage} diverges from numpy oracle, "
-            f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
+        assert np.allclose(
+            np.asarray(ref[name]), np.asarray(got[name]), rtol=_TOL, atol=_TOL,
+            equal_nan=True), (f"{program.name}/{name}: {stage} diverges from numpy oracle, "
+                              f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
 
 
 @pytest.mark.parametrize("phase", PHASES)

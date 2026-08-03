@@ -13,7 +13,10 @@ from dace.memlet import Memlet
 from dace import typeclass
 
 
-def materialise_lane_id_index_tile(inner_state, expr: str, iter_vars: Tuple[str, ...], widths: Tuple[int, ...],
+def materialise_lane_id_index_tile(inner_state,
+                                   expr: str,
+                                   iter_vars: Tuple[str, ...],
+                                   widths: Tuple[int, ...],
                                    name_hint: str = "_sym_tile") -> "dace.nodes.AccessNode":
     """Mint a per-lane int64 tile = ``expr`` evaluated at ``(iter_var_k -> iter_var_k + __l_k)``
     for each tile dim ``k`` -- i.e. the function is EXPANDED INSIDE per lane, not widened as if

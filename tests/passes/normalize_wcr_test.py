@@ -365,7 +365,10 @@ def _build_readwrite_redundant_interior_wcr() -> dace.SDFG:
     n = state.add_nested_sdfg(body, {'d', 'b_io'}, {'b_io'})  # b_io is in AND out
     state.add_memlet_path(state.add_read('data'), me, n, dst_conn='d', memlet=dace.Memlet('data[i]'))
     state.add_memlet_path(state.add_read('b'), me, n, dst_conn='b_io', memlet=dace.Memlet('b[i]'))
-    state.add_memlet_path(n, mx, state.add_write('b'), src_conn='b_io',
+    state.add_memlet_path(n,
+                          mx,
+                          state.add_write('b'),
+                          src_conn='b_io',
                           memlet=dace.Memlet(data='b', subset='i', wcr='lambda x, y: x + y'))
     sdfg.validate()
     return sdfg

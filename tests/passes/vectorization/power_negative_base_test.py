@@ -64,8 +64,9 @@ def test_sin_squared_negative_base_vectorizes_without_nan(isa):
     ref = np.sin(x)**2
 
     sdfg = sin_squared.to_sdfg(simplify=True)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=isa,
-                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ), target_isa=isa,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
     y = np.zeros(n)
     sdfg(x=x.copy(), y=y, N=n)

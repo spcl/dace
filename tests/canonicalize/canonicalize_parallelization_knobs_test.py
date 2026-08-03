@@ -371,8 +371,9 @@ def test_loop_peeling_modulo_symbolic_offset_specializes_if_par_else_seq():
     assert 'K < N' in cond.as_string, f'true branch must be guarded by K < N: {cond.as_string!r}'
     assert any(isinstance(n, nodes.MapEntry) for n, _ in par_region.all_nodes_recursive()), \
         'the K < N branch must be the band split lifted to Maps'
-    seq_loops = [r for r in seq_region.all_control_flow_regions(recursive=True)
-                 if isinstance(r, LoopRegion) and r.loop_variable]
+    seq_loops = [
+        r for r in seq_region.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable
+    ]
     assert seq_loops and all(l.pinned_sequential for l in seq_loops), \
         'the else branch must keep the original (pinned) sequential modular loop'
 

@@ -10,7 +10,6 @@ it so it tiles per-lane like any other elementwise broadcast.
 """
 import copy
 
-import numpy as np
 import pytest
 
 from dace.libraries.blas.nodes.matmul import MatMul

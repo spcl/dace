@@ -323,8 +323,7 @@ def test_loop_region_read_and_write_sets_bound_scalar():
     nsdfg.add_array('n', [1], dace.int32)
     nsdfg.add_array('a', [10], dace.float64)
 
-    loop = LoopRegion('loop', condition_expr='i < n[0]', loop_var='i', initialize_expr='i = 0',
-                      update_expr='i = i + 1')
+    loop = LoopRegion('loop', condition_expr='i < n[0]', loop_var='i', initialize_expr='i = 0', update_expr='i = i + 1')
     nsdfg.add_node(loop, is_start_block=True)
     body = loop.add_state('body', is_start_block=True)
     body.add_edge(body.add_tasklet('t', {}, {'o'}, 'o = 1'), 'o', body.add_write('a'), None, dace.Memlet('a[i]'))

@@ -54,8 +54,8 @@ class GPUCodegenPreprocessPipeline(Pipeline):
         # extended moved it into the canonicalize pipeline, so running it here too would apply it
         # twice.
         from dace.transformation.passes.gpu_specialization.codegen_preprocess_passes import (
-            AddThreadBlockMaps, ExpandLibraryNodes, NormalizeHostLevelGPUSchedules,
-            NormalizeHostLevelGPUSchedulesEarly, ReinferConnectorTypes)
+            AddThreadBlockMaps, ExpandLibraryNodes, NormalizeHostLevelGPUSchedules, NormalizeHostLevelGPUSchedulesEarly,
+            ReinferConnectorTypes)
         from dace.transformation.passes.gpu_specialization.insert_explicit_gpu_global_memory_copies import (
             InsertExplicitGPUGlobalMemoryCopies)
         from dace.transformation.passes.promote_gpu_scalars_to_arrays import PromoteGPUScalarsToArrays

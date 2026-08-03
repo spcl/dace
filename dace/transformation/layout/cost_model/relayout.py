@@ -66,7 +66,10 @@ def relayout_pays(t_nest_before: sp.Basic, t_nest_after: sp.Basic, t_relayout: s
 # Efficiency enters only the G (bandwidth) term below, never L (paid per message, not per byte).
 
 
-def bandwidth_efficiency(useful_bytes: sp.Basic, sectors_touched: sp.Basic, p: LogGP, written: bool = False,
+def bandwidth_efficiency(useful_bytes: sp.Basic,
+                         sectors_touched: sp.Basic,
+                         p: LogGP,
+                         written: bool = False,
                          covers_full_block: bool = False) -> sp.Basic:
     """epsilon in (0, 1]: fraction of moved bytes the computation actually uses."""
     return sp.sympify(useful_bytes) / block_traffic(sectors_touched, p, written, covers_full_block)
@@ -78,7 +81,9 @@ def nest_time_by_efficiency(useful_bytes: sp.Basic, epsilon: sp.Basic, messages:
     return nest_memory_time(p, sp.sympify(useful_bytes) / sp.sympify(epsilon), sp.sympify(messages), concurrency)
 
 
-def relayout_pays_by_efficiency(eps_before: float, eps_after: float, passes: int = 1,
+def relayout_pays_by_efficiency(eps_before: float,
+                                eps_after: float,
+                                passes: int = 1,
                                 overhead_passes: float = 0.0) -> bool:
     """Whether a relayout pays from efficiencies alone: passes * (1/eps_before - 1/eps_after) >= 2 + overhead_passes.
     Bandwidth regime only; use nest_time / relayout_pays for a latency-bound nest."""

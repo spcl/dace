@@ -50,17 +50,15 @@ NB, NLEV, NPROMA = dace.symbol("NB"), dace.symbol("NLEV"), dace.symbol("NPROMA")
 
 
 @dace.program
-def zekinh(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int64[NB, NPROMA, 3],
-           edge_blk: dace.int64[NB, NPROMA, 3], z_kin_hor_e: dace.float64[NB, NLEV, NPROMA],
-           z_ekinh: dace.float64[NB, NLEV, NPROMA]):
+def zekinh(e_bln: dace.float64[NB, 3, NPROMA], edge_idx: dace.int64[NB, NPROMA, 3], edge_blk: dace.int64[NB, NPROMA, 3],
+           z_kin_hor_e: dace.float64[NB, NLEV, NPROMA], z_ekinh: dace.float64[NB, NLEV, NPROMA]):
     """Reconstruct cell kinetic energy: for each cell ``(jb, jc)`` and level ``jk``, gather the three
     incident edge columns of ``z_kin_hor_e`` through ``edge_blk`` / ``edge_idx`` and combine them with
     the barycentric weights ``e_bln``. The three ``m`` terms are written out (no WCR, no nested loop)."""
     for jb, jk, jc in dace.map[0:NB, 0:NLEV, 0:NPROMA] @ dace.ScheduleType.Sequential:
-        z_ekinh[jb, jk, jc] = (
-            e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]] +
-            e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]] +
-            e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
+        z_ekinh[jb, jk, jc] = (e_bln[jb, 0, jc] * z_kin_hor_e[edge_blk[jb, jc, 0], jk, edge_idx[jb, jc, 0]] +
+                               e_bln[jb, 1, jc] * z_kin_hor_e[edge_blk[jb, jc, 1], jk, edge_idx[jb, jc, 1]] +
+                               e_bln[jb, 2, jc] * z_kin_hor_e[edge_blk[jb, jc, 2], jk, edge_idx[jb, jc, 2]])
 
 
 def oracle(e_bln, edge_idx, edge_blk, z_kin_hor_e):

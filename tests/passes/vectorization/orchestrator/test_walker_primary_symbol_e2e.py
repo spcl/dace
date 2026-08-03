@@ -136,7 +136,8 @@ def test_symbol_invariant_does_not_materialise_a_tile():
     """The data-independent symbol path emits a TileBinop with kind=Symbol on the
     Symbol operand AND no per-lane materialised tile transient appears in the body."""
     sdfg = _build_add_symbol_kernel(8)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, expand_tile_nodes=False)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
+                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
     # Walk the body NSDFG and check no `_sym_tile`-prefixed transient appears.
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     assert len(body_nsdfgs) >= 1
@@ -154,7 +155,8 @@ def test_symbol_lane_id_materialises_a_tile():
     """The lane-id-dependent path materialises a per-lane tile and the lib node
     reads from it as a Tile operand."""
     sdfg = _build_lane_id_kernel(8)
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR, expand_tile_nodes=False)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
+                                         expand_tile_nodes=False)).apply_pass(sdfg, {})
     body_nsdfgs = [n for s in sdfg.states() for n in s.nodes() if isinstance(n, dace.nodes.NestedSDFG)]
     inner = body_nsdfgs[0].sdfg
     sym_tile_arrays = [n for n in inner.arrays if n.startswith("_sym_tile") or n.startswith("_idx_")]

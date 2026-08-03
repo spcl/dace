@@ -68,12 +68,7 @@ class NormalizeScheduleForLayout(ppl.Pass):
                 tile_sizes = tuple(widths[p] for p in me.map.params)
                 # Per-map override: divides_evenly can't hold globally if this map's extent isn't a multiple of its width.
                 divides = self._divides_evenly and not provably_indivisible(me, tile_sizes)
-                MapTiling.apply_to(sdfg,
-                                   options={
-                                       'tile_sizes': tile_sizes,
-                                       'divides_evenly': divides
-                                   },
-                                   map_entry=me)
+                MapTiling.apply_to(sdfg, options={'tile_sizes': tile_sizes, 'divides_evenly': divides}, map_entry=me)
                 count += 1
         return count
 

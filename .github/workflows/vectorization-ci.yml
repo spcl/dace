@@ -1,0 +1,48 @@
+name: Vectorization
+
+# Dedicated runner for the vectorization suite (-m vectorization, marked by path in
+# tests/conftest.py). General CI deselects it, so these tests run ONCE here instead of
+# across its python x simplify matrix.
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  vectorization:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+          g++-aarch64-linux-gnu
+        pip-packages: pytest-xdist
+        extras: testing,polyhedral
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # New codegens only; no autoopt, no serialization round-trip.
+        export DACE_compiler_cpu_implementation=experimental_readable
+        export DACE_compiler_cuda_implementation=experimental
+        export DACE_optimizer_automatic_simplification=1
+        pytest -n auto --tb=short --timeout_method thread --timeout=600 \
+          -m "vectorization and not gpu and not long and not sequential"

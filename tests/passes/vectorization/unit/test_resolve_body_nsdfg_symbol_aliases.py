@@ -75,7 +75,8 @@ def test_resolve_alias_leaves_offset_and_identity_mappings_untouched():
     ra = ist.add_access("A")
     t = ist.add_tasklet("r", {"a"}, set(), "pass")
     ist.add_edge(ra, None, t, "a", dace.Memlet("A[ii]"))
-    nsdfg = state.add_nested_sdfg(inner, {"A"}, set(),
+    nsdfg = state.add_nested_sdfg(inner, {"A"},
+                                  set(),
                                   symbol_mapping={
                                       "ii": symbolic.pystr_to_symbolic("_loop_it_0 + 1"),
                                       "_loop_it_0": symbolic.pystr_to_symbolic("_loop_it_0"),

@@ -100,11 +100,7 @@ def test_durbin_canonicalize_valid_deterministic():
     base = PB.fresh_sdfg(_durbin_kernel())
     for _ in range(10):
         # validate=True raises InvalidSDFG* if any stage left the SDFG invalid.
-        canonicalize(copy.deepcopy(base),
-                     validate=True,
-                     validate_all=False,
-                     peel_limit=4,
-                     break_anti_dependence=True)
+        canonicalize(copy.deepcopy(base), validate=True, validate_all=False, peel_limit=4, break_anti_dependence=True)
 
 
 def test_durbin_value_preserving():

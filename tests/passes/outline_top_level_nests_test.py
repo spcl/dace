@@ -1,7 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Tests for the ``OutlineTopLevelNests`` pass: each top-level loop nest of the root SDFG becomes its
     own ``no_inline`` nested SDFG, structurally loss-free and codegen-agnostic. """
-import copy
 
 import numpy
 import pytest

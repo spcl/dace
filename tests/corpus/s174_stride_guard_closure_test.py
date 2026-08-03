@@ -28,7 +28,6 @@ import copy
 import os
 
 import numpy as np
-import pytest
 
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion

@@ -21,13 +21,15 @@ def _mk(init, cond, upd):
     return lp
 
 
-@pytest.mark.parametrize('init,cond,upd,expected', [
-    ('i = 0', 'i < N', 'i = i + 1', False),      # 0..N-1 -- genuinely multi-trip
-    ('i = 1', 'i <= N', 'i = i + 1', False),     # 1..N   -- genuinely multi-trip
-    ('i = 5', 'i < 6', 'i = i + 1', True),       # single iteration 5..5
-    ('i = 5', 'i < 5', 'i = i + 1', True),       # empty 5..4 (zero iterations)
-    ('i = 0', 'i < N', 'i = i + 2', False),      # unit-stride only -- stride 2 not admitted
-])
+@pytest.mark.parametrize(
+    'init,cond,upd,expected',
+    [
+        ('i = 0', 'i < N', 'i = i + 1', False),  # 0..N-1 -- genuinely multi-trip
+        ('i = 1', 'i <= N', 'i = i + 1', False),  # 1..N   -- genuinely multi-trip
+        ('i = 5', 'i < 6', 'i = i + 1', True),  # single iteration 5..5
+        ('i = 5', 'i < 5', 'i = i + 1', True),  # empty 5..4 (zero iterations)
+        ('i = 0', 'i < N', 'i = i + 2', False),  # unit-stride only -- stride 2 not admitted
+    ])
 def test_at_most_one_iteration_is_sound(init, cond, upd, expected):
     assert loop_provably_at_most_one_iteration(_mk(init, cond, upd)) is expected
 

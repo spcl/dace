@@ -82,7 +82,7 @@ def reference(mass, pos, vel, N, Nt, dt, G, softening):
 @dc.program
 def getAcc(pos: dc_float[N, 3], mass: dc_float[N], G: dc_float, softening: dc_float):
     """
-    Calculate the acceleration on each particle due to Newton's Law 
+    Calculate the acceleration on each particle due to Newton's Law
     pos  is an N x 3 matrix of positions
     mass is an N x 1 vector of masses
     G is Newton's Gravitational constant

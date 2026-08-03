@@ -91,7 +91,8 @@ class LoopNestLogP:
 
     def bandwidth_per_iter(self) -> sp.Basic:
         """Bandwidth term per iteration: the bytes that cross the channels times the per-byte gap."""
-        return sp.Add(*[a.bytes_moved_per_iter * self.p.G for a in self._globals()]) if self._globals() else sp.Integer(0)
+        return sp.Add(*[a.bytes_moved_per_iter * self.p.G
+                        for a in self._globals()]) if self._globals() else sp.Integer(0)
 
     def time_per_iter(self) -> sp.Basic:
         """Serialised per-iteration cost L*messages + G*bytes; diagnostic ceiling, not a predictor."""
@@ -137,8 +138,7 @@ def _loop_ranges(state: dace.SDFGState, map_entry: dace.nodes.MapEntry) -> List[
     return [{p: r for p, r in zip(e.map.params, e.map.range)} for e in entries]
 
 
-def exposed_concurrency(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, p: LogGP,
-                        n_cores: int = None) -> float:
+def exposed_concurrency(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, p: LogGP, n_cores: int = None) -> float:
     """Estimate independent block requests the nest can keep in flight (exposed MLP), from schedule and n_cores."""
     scope_dict = state.scope_dict()
     schedules = [map_entry.map.schedule]
@@ -151,8 +151,7 @@ def exposed_concurrency(state: dace.SDFGState, map_entry: dace.nodes.MapEntry, p
                 schedules.append(node.map.schedule)
     parallel = any(s in PARALLEL_SCHEDULES for s in schedules)
     # GPU: demand-miss core_mlp (per-warp). CPU: prefetch-inclusive core_stream_mlp.
-    gpu = any(s in (dace.dtypes.ScheduleType.GPU_Device, dace.dtypes.ScheduleType.GPU_ThreadBlock)
-              for s in schedules)
+    gpu = any(s in (dace.dtypes.ScheduleType.GPU_Device, dace.dtypes.ScheduleType.GPU_ThreadBlock) for s in schedules)
     unit_mlp = p.core_mlp if gpu else p.core_stream_mlp
     if not parallel:
         return unit_mlp
@@ -193,8 +192,12 @@ def analyze_loop_nest(state: dace.SDFGState,
         concurrency = exposed_concurrency(state, map_entry, p, n_cores)
     line_bytes = block_bytes if block_bytes is not None else p.line_bytes
     sector_bytes = block_bytes if block_bytes is not None else p.sector_bytes
-    counts = count_loop_nest(state, map_entry, line_bytes=line_bytes, sector_bytes=sector_bytes,
-                             local_arrays=local_arrays, replayed_counts=replayed_counts)
+    counts = count_loop_nest(state,
+                             map_entry,
+                             line_bytes=line_bytes,
+                             sector_bytes=sector_bytes,
+                             local_arrays=local_arrays,
+                             replayed_counts=replayed_counts)
     return LoopNestLogP(total_iters=counts.total_iters, arrays=counts.arrays, p=p, concurrency=concurrency)
 
 
@@ -238,11 +241,10 @@ def count_loop_nest(state: dace.SDFGState,
             messages, sectors = map(sp.sympify, replayed_counts[name])
         elif name in dynamic:
             # dynamic memlet subset is whole-array; scoring it would mis-price a gather as one read
-            raise ValueError(
-                f"array {name!r} is accessed through a dynamic (data-dependent) memlet; its block "
-                f"counts are not statically derivable. Replay the materialized index array with "
-                f"blocks_touched.replayed_blocks_touched and pass the chosen bound via "
-                f"replayed_counts={{'{name}': (messages_per_iter, sectors_per_iter)}}.")
+            raise ValueError(f"array {name!r} is accessed through a dynamic (data-dependent) memlet; its block "
+                             f"counts are not statically derivable. Replay the materialized index array with "
+                             f"blocks_touched.replayed_blocks_touched and pass the chosen bound via "
+                             f"replayed_counts={{'{name}': (messages_per_iter, sectors_per_iter)}}.")
         else:
             # element wider than granularity spans multiple blocks; multiply span back in
             line_elems = max(1, line_bytes // dtype_bytes)
@@ -266,7 +268,9 @@ def count_loop_nest(state: dace.SDFGState,
         bytes_moved = sectors * sector_bytes * write_factor
         arrays[name] = ArrayLogP(name, False, messages, sectors, bytes_moved)
 
-    return NestCounts(total_iters=sp.simplify(total_iters), arrays=arrays, line_bytes=line_bytes,
+    return NestCounts(total_iters=sp.simplify(total_iters),
+                      arrays=arrays,
+                      line_bytes=line_bytes,
                       sector_bytes=sector_bytes)
 
 

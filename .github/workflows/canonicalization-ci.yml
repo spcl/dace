@@ -1,0 +1,48 @@
+name: Canonicalization
+
+# Dedicated runner for the canonicalization suite (-m canonicalization, marked by path in
+# tests/conftest.py: tests/canonicalize + tests/passes/canonicalize). General CI deselects it.
+# canonicalize+vectorize combination tests live under the vectorization mark and run there.
+
+on:
+  push:
+    branches: [ main, ci-fix ]
+  pull_request:
+    branches: [ main, ci-fix ]
+  merge_group:
+    branches: [ main, ci-fix ]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{github.workflow}}-${{github.ref}}
+  cancel-in-progress: true
+
+jobs:
+  canonicalization:
+    if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        submodules: 'recursive'
+    - uses: ./.github/actions/setup-dace
+      with:
+        python-version: '3.14'
+        apt-packages: >-
+          libyaml-dev cmake
+          libblas-dev libopenblas-dev liblapacke-dev
+        pip-packages: pytest-xdist
+        # islpy: without it WavefrontSkew is a no-op and its tests skip.
+        extras: testing,polyhedral
+
+    - name: Test with pytest
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_cache=unique
+        # New codegens only; no autoopt, no serialization round-trip.
+        export DACE_compiler_cpu_implementation=experimental_readable
+        export DACE_compiler_cuda_implementation=experimental
+        export DACE_optimizer_automatic_simplification=1
+        pytest -n auto --tb=short --timeout_method thread --timeout=600 \
+          -m "canonicalization and not gpu and not long and not sequential"

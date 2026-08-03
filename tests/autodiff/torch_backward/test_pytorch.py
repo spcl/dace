@@ -196,7 +196,12 @@ def test_weights(device):
             x = self.fc3(x)
             return x
 
-    run_pytorch_module(Module(), sdfg_name="test_weights", shape=(4, 784), use_max=False, auto_optimize=False, device=device)
+    run_pytorch_module(Module(),
+                       sdfg_name="test_weights",
+                       shape=(4, 784),
+                       use_max=False,
+                       auto_optimize=False,
+                       device=device)
 
 
 @pytest.mark.torch
@@ -219,7 +224,8 @@ def test_nested_gradient_summation(device):
                        sdfg_name="test_nested_gradient_summation",
                        shape=(4, 10),
                        use_max=False,
-                       auto_optimize=False, device=device)
+                       auto_optimize=False,
+                       device=device)
 
 
 @pytest.mark.torch

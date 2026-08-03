@@ -28,7 +28,7 @@ import pytest
 import dace
 from dace import nodes
 from dace.transformation.passes.privatize_scatter_reduction import (PrivatizeScatterReduction, scatter_wcr_op,
-                                                                    scatter_reduction_wcr_edge, SCATTER_REDUCIBLE_OPS)
+                                                                    SCATTER_REDUCIBLE_OPS)
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
 
 N, bins, npt = (dace.symbol(s, dtype=dace.int64) for s in ('N', 'bins', 'npt'))

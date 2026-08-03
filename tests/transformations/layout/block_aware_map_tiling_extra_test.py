@@ -275,6 +275,7 @@ if __name__ == "__main__":
     test_idempotent_when_tile_equals_extent()
     print("block-aware map tiling extra tests PASS")
 
+
 def test_divides_evenly_is_not_asserted_on_a_map_that_provably_is_not():
     """divides_evenly is a caller ASSERTION applied to every map this pass tiles. A map whose extent
     is a known constant the tile does not divide (10 vs 8) would have its remainder DROPPED by

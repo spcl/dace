@@ -12,7 +12,6 @@ import numpy as np
 import dace
 from dace.config import Config
 
-
 #: The constexpr binding a write-once single-value transient gets. Which of the two spellings is
 #: emitted is ``scalar_emission_type``'s call, not this group's: the default (``scalar``, since
 #: ``c027cdf12``) normalizes the length-1 transient to a by-value Scalar and binds it as

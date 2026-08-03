@@ -118,8 +118,7 @@ def tensor_init_for_desc(name: str, desc: data.Data, clean_weights: Dict[str, to
         # host initializer list, then ``.to(kCUDA)`` to actually copy device-side
         # (mirrors ``constant_initializer_code``). For a host descriptor, a plain
         # ``.clone()`` takes ownership of the leaked buffer as before.
-        to_device = ('.to(torch::kCUDA)'
-                     if desc.storage in GPU_RESIDENT_STORAGES else '.clone()')
+        to_device = ('.to(torch::kCUDA)' if desc.storage in GPU_RESIDENT_STORAGES else '.clone()')
         return f"""\
             Tensor {name} = torch::from_blob(
                 new float[{len(values)}]{{{values_str}}},
@@ -654,6 +653,7 @@ def register_and_compile_torch_extension(module: 'dace.frontend.ml.torch.DaceMod
     # resolve in the extension.
     extra_cflags = ["-g"]
     extra_ldflags = []
+
     # ``has_gpu_code`` keys off dtypes.GPU_STORAGES (only GPU_Shared) + GPU schedules, so an SDFG
     # that is GPU-resident but only moves data (GPU_Global arrays + stream copies, no kernels --
     # e.g. a pure Reshape) reports False. The generated CPU source still references gpuStream_t /

@@ -578,8 +578,7 @@ def _nest_then_expand(sdfg):
 
 def _index_reached_a_body(sdfg, index_name):
     """Whether ``index_name`` is a readable inner array of some body NSDFG."""
-    return any(index_name in n.sdfg.arrays for n, _ in sdfg.all_nodes_recursive()
-               if isinstance(n, nodes.NestedSDFG))
+    return any(index_name in n.sdfg.arrays for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nodes.NestedSDFG))
 
 
 def test_threads_direct_array_gather_index():

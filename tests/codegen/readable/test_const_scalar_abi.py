@@ -74,7 +74,8 @@ def test_readable_default_is_by_ref():
     """The readable generator's DEFAULT binds by const reference -- the legacy ABI."""
     if not experimental_available():
         pytest.skip("experimental readable codegen not ready")
-    assert dace.Config.get("compiler", "cpu", "codegen_params", "const_scalar_abi") == "by_ref", "default must be by_ref"
+    assert dace.Config.get("compiler", "cpu", "codegen_params",
+                           "const_scalar_abi") == "by_ref", "default must be by_ref"
     decl = _scalar_arg_decl(_generate(EXPERIMENTAL, "by_ref"))
     assert BY_REF in decl, decl
 
@@ -115,7 +116,11 @@ def test_both_abis_are_bit_exact(abi):
     def run(impl, abi_value):
 
         def build_and_run():
-            with use_implementation(impl), set_temporary("compiler", "cpu", "codegen_params", "const_scalar_abi", value=abi_value):
+            with use_implementation(impl), set_temporary("compiler",
+                                                         "cpu",
+                                                         "codegen_params",
+                                                         "const_scalar_abi",
+                                                         value=abi_value):
                 sdfg = _nsdfg_scalar_arg_sdfg(f"abirun_{impl}_{abi_value}")
                 csdfg = sdfg.compile()
             o = np.arange(16, dtype=np.float64)

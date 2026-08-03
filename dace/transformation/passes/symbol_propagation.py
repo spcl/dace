@@ -273,10 +273,7 @@ class SymbolPropagation(ppl.Pass):
             # substitution reaches into DESCRIPTORS, and a data read in a shape is not a legal
             # descriptor (see :func:`_is_array_access`). The symbol stays live, which correctly
             # pins its defining iedge instead of eliminating it.
-            safe_subs = {
-                sym: rhs
-                for sym, rhs in bindings.items() if rhs is not None and not _is_array_access(rhs)
-            }
+            safe_subs = {sym: rhs for sym, rhs in bindings.items() if rhs is not None and not _is_array_access(rhs)}
 
             # Substitute every propagatable LHS into the SDFG's descriptors. Symbols
             # whose value was already substituted everywhere will have no live shape

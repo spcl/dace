@@ -7,9 +7,7 @@ reduction accumulator. The staging / write-back copies sequence that cross-state
 carry; eliminating either splices the array element straight onto the WCR-written
 scalar and drops the reduction (polybench ludcmp's LU update collapses to zero).
 """
-import copy
 
-import numpy as np
 import pytest
 
 import dace

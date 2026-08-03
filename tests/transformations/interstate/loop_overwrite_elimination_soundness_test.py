@@ -28,7 +28,6 @@ it cannot, because line 11 imports the module-level wrapper, which swallows it.
 The pass is exported from ``dace.transformation.interstate`` but is not wired into any pipeline, so
 these are latent for anyone who requests the transformation explicitly.
 """
-import copy
 import os
 
 os.environ.setdefault('OMP_NUM_THREADS', '1')

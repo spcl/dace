@@ -22,7 +22,6 @@ from dace.transformation.layout.block_aware_map_tiling import BlockAwareMapTilin
 
 N = dace.symbol("N")
 
-
 # ============================ build_relayout vs numpy ============================ #
 _relayout_counter = [0]
 
@@ -137,7 +136,11 @@ def ew3d(A: dace.float64[N, N, N], B: dace.float64[N, N, N], C: dace.float64[N, 
 @pytest.mark.parametrize("perm", [[0, 2, 1], [2, 1, 0], [1, 2, 0]])
 def test_permute_pass_elementwise_3d(perm):
     n = 6
-    _permute_pass_kernel_check(ew3d, {"A": perm, "B": perm, "C": perm}, {
+    _permute_pass_kernel_check(ew3d, {
+        "A": perm,
+        "B": perm,
+        "C": perm
+    }, {
         "A": (n, n, n),
         "B": (n, n, n),
         "C": (n, n, n)

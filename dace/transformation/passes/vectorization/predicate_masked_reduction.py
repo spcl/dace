@@ -181,8 +181,9 @@ class PredicateMaskedReduction(ppl.Pass):
             # Recipe 1: the condition already names a materialized per-lane scalar mask.
             # It must not be produced inside the branch (else unconditional evaluation
             # changes semantics).
-            if any(isinstance(n, nodes.AccessNode) and n.data == cond_text and state.in_degree(n) > 0
-                   for n in state.nodes()):
+            if any(
+                    isinstance(n, nodes.AccessNode) and n.data == cond_text and state.in_degree(n) > 0
+                    for n in state.nodes()):
                 return None
         else:
             # Recipe 2: a compound predicate ``(a[i] > K)`` reading arrays. Materialize
@@ -232,7 +233,12 @@ class PredicateMaskedReduction(ppl.Pass):
                 return None
         return cleaned, connectors, subsets
 
-    def _apply_one(self, sd: SDFG, cb: ConditionalBlock, cond_text: str, state: SDFGState, reductions: List[Tuple],
+    def _apply_one(self,
+                   sd: SDFG,
+                   cb: ConditionalBlock,
+                   cond_text: str,
+                   state: SDFGState,
+                   reductions: List[Tuple],
                    cond_materialize=None):
         """Mutate the branch body in place (predicate each addend), then dissolve ``cb``."""
         if cond_materialize is not None:

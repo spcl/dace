@@ -131,7 +131,9 @@ def test_k2_axpy_scalar_postamble_matches_numpy(m, n):
     (W-strided tiles) off from step-1 scalar boundary slabs, so a non-divisible
     K>=2 trip vectorizes the interior and runs the boundary scalar."""
     sdfg = _k2_axpy_sdfg(f"e2e_k2_axpy_scalar_{m}_{n}")
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR, remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, 8), target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
     rng = np.random.default_rng(seed=m * 100 + n)
     A = rng.random((m, n))

@@ -41,6 +41,8 @@ jobs:
           libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev
           libpapi-dev papi-tools g++-aarch64-linux-gnu
         pip-packages: flake8 pytest-xdist coverage
+        # islpy: without it WavefrontSkew is a no-op and its tests skip.
+        extras: testing,polyhedral
         codecov: 'true'
 
     - name: Install Intel oneAPI MKL
@@ -73,7 +75,7 @@ jobs:
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
         # idxalg is an optional out-of-tree symbolic backend; its seam tests stay in the repo but do not run here.
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential"
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 --ignore=tests/symbolic/optional_idxalg_backend_test.py -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not tblis and not mpi and not scalapack and not datainstrument and not long and not integration and not sequential and not vectorization and not canonicalization"
         ./codecov
 
     - name: Test OpenBLAS LAPACK

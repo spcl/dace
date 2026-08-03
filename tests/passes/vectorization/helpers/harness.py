@@ -30,7 +30,6 @@ from dace.transformation.passes.vectorization.config import VectorizeConfig
 
 from dace.transformation.passes.vectorization.enums import ISA
 
-
 N = dace.symbol('N')
 S1 = dace.symbol("S1")
 S2 = dace.symbol("S2")

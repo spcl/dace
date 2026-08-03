@@ -27,8 +27,7 @@ def _make_seeded_reduction_body() -> "tuple[dace.SDFG, dace.SDFGState, nodes.Nes
     st = inner.add_state('copyback', is_start_block=True)
     p = st.add_access('priv')
     o = st.add_access('oc')
-    st.add_nedge(p, o, Memlet(data='priv', subset=subsets.Range([(0, 0, 1)]),
-                              other_subset=subsets.Range([(0, 0, 1)])))
+    st.add_nedge(p, o, Memlet(data='priv', subset=subsets.Range([(0, 0, 1)]), other_subset=subsets.Range([(0, 0, 1)])))
 
     outer = dace.SDFG('outer')
     outer.add_scalar('acc', dace.float64, transient=True)
@@ -57,10 +56,10 @@ def test_reduction_copyback_lowered_to_fold():
     assert t.in_connectors.keys() == {'__in1', '__in2'} and t.out_connectors.keys() == {'__out'}
     assert '__in1 + __in2' in t.code.as_string
     # ``oc`` is written by the fold; the plain AN -> AN copy is gone.
-    assert any(isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'oc' and e.src is t
-               for e in body_state.edges())
-    assert not any(isinstance(e.src, nodes.AccessNode) and e.src.data == 'priv'
-                   and isinstance(e.dst, nodes.AccessNode) for e in body_state.edges())
+    assert any(isinstance(e.dst, nodes.AccessNode) and e.dst.data == 'oc' and e.src is t for e in body_state.edges())
+    assert not any(
+        isinstance(e.src, nodes.AccessNode) and e.src.data == 'priv' and isinstance(e.dst, nodes.AccessNode)
+        for e in body_state.edges())
 
 
 def test_no_boundary_wcr_leaves_copyback_untouched():
@@ -85,10 +84,10 @@ def test_other_endpoint_widens_guard():
     p = st.add_access('priv')
     s = st.add_access('scalar_sink')
     b = st.add_access('tileB')
-    e_scalar = st.add_nedge(p, s, Memlet(data='priv', subset=subsets.Range([(0, 7, 1)]),
-                                         other_subset=subsets.Range([(0, 0, 1)])))
-    e_tile = st.add_nedge(p, b, Memlet(data='priv', subset=subsets.Range([(0, 7, 1)]),
-                                       other_subset=subsets.Range([(0, 7, 1)])))
+    e_scalar = st.add_nedge(
+        p, s, Memlet(data='priv', subset=subsets.Range([(0, 7, 1)]), other_subset=subsets.Range([(0, 0, 1)])))
+    e_tile = st.add_nedge(
+        p, b, Memlet(data='priv', subset=subsets.Range([(0, 7, 1)]), other_subset=subsets.Range([(0, 7, 1)])))
     # scalar_sink stays single-element (not in the widen set) -> do NOT widen its other_subset.
     assert WidenAccesses._other_endpoint_widens(e_scalar, 'priv', sd, to_widen={'priv'}) is False
     # tileB is itself being widened -> widen its other_subset symmetrically.

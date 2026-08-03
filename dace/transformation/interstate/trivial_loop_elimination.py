@@ -68,9 +68,7 @@ class TrivialLoopElimination(transformation.MultiStateTransformation):
         # nussinov). ``replace_dict`` is the override-aware path. ``replace_keys=False`` leaves the
         # about-to-be-removed loop's own ``loop_variable`` alone; nested loops keep their own iterators
         # because those names are not in the replacement map.
-        self.loop.replace_dict({itervar: str(start)},
-                               symrepl={symbolic.symbol(itervar): start},
-                               replace_keys=False)
+        self.loop.replace_dict({itervar: str(start)}, symrepl={symbolic.symbol(itervar): start}, replace_keys=False)
 
         # Reparent the loop's blocks into the parent graph. A loop body is its own name scope, so a
         # label that was unique inside the loop can already be taken in the destination: sibling loops

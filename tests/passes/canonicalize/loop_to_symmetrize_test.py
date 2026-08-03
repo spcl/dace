@@ -20,11 +20,9 @@ import numpy as np
 import pytest
 
 import dace
-from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.libraries.standard.nodes import Symmetrize
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.loop_to_symmetrize import LoopToSymmetrize
 
 M = dace.symbol('M')
 
@@ -56,7 +54,8 @@ def _nsym(sdfg):
 
 
 def _nloops(sdfg):
-    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True) if isinstance(r, LoopRegion) and r.loop_variable)
+    return sum(1 for r in sdfg.all_control_flow_regions(recursive=True)
+               if isinstance(r, LoopRegion) and r.loop_variable)
 
 
 def _mirror(X, source_upper):

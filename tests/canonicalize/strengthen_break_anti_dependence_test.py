@@ -26,9 +26,9 @@ def test_break_anti_dependence_offset0_read_across_state_not_snapshotted():
     @dace.program
     def kern(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
         for i in range(N - 1):
-            a[i] = a[i + 1] + b[i]      # read-ahead WAR on a -> array is renamable
+            a[i] = a[i + 1] + b[i]  # read-ahead WAR on a -> array is renamable
             if b[i] > 0.5:
-                c[i] = a[i] * 2.0       # reads FRESH a[i], a separate branch-body state
+                c[i] = a[i] * 2.0  # reads FRESH a[i], a separate branch-body state
             else:
                 c[i] = a[i] * 3.0
 
@@ -44,7 +44,7 @@ def test_break_anti_dependence_offset0_read_across_state_not_snapshotted():
     ra = a.copy()
     rc = np.zeros(n)
     for i in range(n - 1):
-        ra[i] = ra[i + 1] + b[i]                      # read-ahead: reads ORIGINAL a[i+1]
+        ra[i] = ra[i + 1] + b[i]  # read-ahead: reads ORIGINAL a[i+1]
         rc[i] = ra[i] * 2.0 if b[i] > 0.5 else ra[i] * 3.0  # reads the FRESH a[i]
 
     ao = a.copy()

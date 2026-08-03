@@ -40,8 +40,8 @@ NB, NLEV, NPROMA = dace.symbol("NB"), dace.symbol("NLEV"), dace.symbol("NPROMA")
 
 @dace.program
 def one_loop(vn: dace.float64[NB, NLEV, NPROMA], wgtfac_e: dace.float64[NB, NLEV, NPROMA],
-             vt: dace.float64[NB, NLEV, NPROMA], vn_ie: dace.float64[NB, NLEV, NPROMA],
-             zkh: dace.float64[NB, NLEV, NPROMA]):
+             vt: dace.float64[NB, NLEV, NPROMA], vn_ie: dace.float64[NB, NLEV, NPROMA], zkh: dace.float64[NB, NLEV,
+                                                                                                          NPROMA]):
     """One velocity one-loop sweep over interior levels ``jk in [1, NLEV)``: difference ``vn`` against
     the level below it into ``vn_ie`` and difference ``vt``/``wgtfac_e`` into ``zkh``. Pure
     elementwise per ``(jb, jk, je)`` (no reduction); ``jk = 0`` is never written and stays 0."""

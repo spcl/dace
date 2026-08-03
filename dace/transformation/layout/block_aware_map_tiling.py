@@ -40,8 +40,7 @@ class BlockAwareMapTiling(ppl.Pass):
         for state in sdfg.all_states():
             scope = state.scope_dict()
             top_maps = [
-                n for n in state.nodes()
-                if isinstance(n, dace.nodes.MapEntry) and scope[n] is None
+                n for n in state.nodes() if isinstance(n, dace.nodes.MapEntry) and scope[n] is None
                 and len(n.map.params) == len(self._tile_sizes)
             ]
             for me in top_maps:

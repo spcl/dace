@@ -165,8 +165,10 @@ def main():
             dt = time.time() - t0
             f.write(f"{corpus}\t{name}\t{args.target}\t{status}\t{dt:.1f}\t{maxdiff}\t{reason}\n")
             f.flush()
-            print(f"[{i:3d}/{len(cases)}] {label:44s} {status:5s} ({dt:5.1f}s) diff={maxdiff:9s} "
-                  f"pass={npass} fail={nfail}", flush=True)
+            print(
+                f"[{i:3d}/{len(cases)}] {label:44s} {status:5s} ({dt:5.1f}s) diff={maxdiff:9s} "
+                f"pass={npass} fail={nfail}",
+                flush=True)
 
     print(f"\n==== SWEEP DONE: {npass}/{len(cases)} PASS, {nfail} FAIL/ERROR ({args.target}) ====")
     if fails:

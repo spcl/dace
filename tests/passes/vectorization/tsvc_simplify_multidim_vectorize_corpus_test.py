@@ -61,9 +61,9 @@ def _assert_matches(name: str, got: dict, ref: dict, phase: str):
     for n, a in got.items():
         if not (isinstance(a, np.ndarray) and np.issubdtype(a.dtype, np.floating) and a.size):
             continue
-        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9, equal_nan=True), (
-            f"{name}/{n}: {phase} diverges from numpy reference, "
-            f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
+        assert np.allclose(np.asarray(a), np.asarray(ref[n]), rtol=1e-9, atol=1e-9,
+                           equal_nan=True), (f"{name}/{n}: {phase} diverges from numpy reference, "
+                                             f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
 
 
 @pytest.mark.parametrize("name", _KERNELS)

@@ -330,8 +330,9 @@ def test_vectorize_on_prelifted(name):
     # Pre-lift: the contractions are Einsum nodes BEFORE the vectorizer runs.
     sdfg.apply_transformations_repeated(LiftEinsum)
     assert sum(1 for st in sdfg.states() for nd in st.nodes() if isinstance(nd, blas.Einsum)) == n_contractions
-    VectorizeCPUMultiDim(VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
-                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=(8, ), target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(sdfg, {})
     sdfg.validate()
     _run(sdfg, inp, syms, out_name, expected)
 

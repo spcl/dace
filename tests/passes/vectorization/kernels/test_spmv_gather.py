@@ -75,8 +75,9 @@ def test_spmv_matches_numpy(n, nnz, widths):
 
     vec = _spmv.to_sdfg(simplify=True)
     vec.name = f"spmv_{n}_{nnz}_{'x'.join(map(str, widths))}"
-    VectorizeCPUMultiDim(VectorizeConfig(widths=widths, target_isa=ISA.SCALAR,
-                                         remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(vec, {})
+    VectorizeCPUMultiDim(
+        VectorizeConfig(widths=widths, target_isa=ISA.SCALAR,
+                        remainder_strategy=RemainderStrategy.SCALAR_POSTAMBLE)).apply_pass(vec, {})
     vec.validate()
 
     y_vec = np.zeros(n)

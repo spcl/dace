@@ -46,7 +46,6 @@ from dace import SDFG, SDFGState, data, dtypes
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.subsets import Range
 from dace.symbolic import symbol
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.helpers import unsqueeze_memlet
@@ -390,8 +389,8 @@ class NormalizeWCR(ppl.Pass):
         outer_me = state.entry_node(nsdfg)
         outer_mx = state.exit_node(outer_me)
         dest = out_edge.data.data
-        dest_an = next((oe.dst for oe in state.out_edges(outer_mx) if oe.data is not None and oe.data.data == dest
-                        and isinstance(oe.dst, nodes.AccessNode)), None)
+        dest_an = next((oe.dst for oe in state.out_edges(outer_mx)
+                        if oe.data is not None and oe.data.data == dest and isinstance(oe.dst, nodes.AccessNode)), None)
         if dest_an is None:
             return False
         # Every tasklet input must trace to a direct nsdfg boundary connector fed by a
@@ -432,9 +431,14 @@ class NormalizeWCR(ppl.Pass):
                 # Non-scatter co-output (e.g. a scalar reduction sharing the tasklet) is
                 # recomputed into a dead scalar; DCE prunes it.
                 inner_desc = nsdfg.sdfg.arrays[oe.data.data]
-                dname, _ = state.sdfg.add_scalar('_wcrdead_' + oe.src_conn, inner_desc.dtype, transient=True,
+                dname, _ = state.sdfg.add_scalar('_wcrdead_' + oe.src_conn,
+                                                 inner_desc.dtype,
+                                                 transient=True,
                                                  find_new_name=True)
-                state.add_memlet_path(new_t, new_mx, state.add_access(dname), src_conn=oe.src_conn,
+                state.add_memlet_path(new_t,
+                                      new_mx,
+                                      state.add_access(dname),
+                                      src_conn=oe.src_conn,
                                       memlet=Memlet(data=dname, subset='0'))
 
         # Redirect the trapped nsdfg slice output to a dead transient (mirror dest's

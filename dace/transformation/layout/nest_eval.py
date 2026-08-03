@@ -114,7 +114,10 @@ def evaluate_nest(state: SDFGState,
         sdfg(**run_args, **syms)
         return {out: run_args[out] for out in sorted(written)}
 
-    results = sweep({tag: make_for(tag, apply) for tag, apply in candidates.items()},
+    results = sweep({
+        tag: make_for(tag, apply)
+        for tag, apply in candidates.items()
+    },
                     run,
                     reference,
                     reps=reps,
