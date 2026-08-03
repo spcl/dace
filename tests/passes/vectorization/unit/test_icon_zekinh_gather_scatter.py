@@ -60,7 +60,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     * Trivial ``_out = _in`` assign tasklets (``_is_assign_tasklet``) -- the
       descent leaves these as one-element copies (collapsing into AN -> AN
       would drop source-side coordinates, per user directive).
-    * ``tile_runtime_*`` trip-guard tasklets (SYMBOLIC-dim ``__builtin_trap``
+    * ``tile_runtime_*`` trip-guard tasklets (SYMBOLIC-dim ``std::abort``
       control, not a compute residual).
     * Scalar ``__tile_k1_tail`` remainder tasklets operating purely on ``(1,)``
       scalars -- scalar-load -> scalar chains stay python scalar tasklets (user

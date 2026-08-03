@@ -3,7 +3,7 @@
 
 Canonicalization treats every free symbol as nonnegative (offset-sign reasoning);
 this pass makes that contract runtime-checked by prepending a side-effecting
-``__builtin_trap`` start state that aborts when a signed-integer free symbol is
+``std::abort`` start state that aborts when a signed-integer free symbol is
 negative. The guard must be the first state, be marked side-effecting so simplify
 keeps it, be a no-op when there is nothing signed to guard, and survive the full
 canonicalize pipeline.
@@ -49,7 +49,7 @@ def _axpy_sdfg():
 def _trap_tasklets(sdfg):
     return [
         n for st in sdfg.all_states() for n in st.nodes()
-        if isinstance(n, nodes.Tasklet) and '__builtin_trap' in n.code.as_string
+        if isinstance(n, nodes.Tasklet) and 'std::abort' in n.code.as_string
     ]
 
 
@@ -142,7 +142,7 @@ def test_guard_aborts_on_negative_symbol():
                           },
                           capture_output=True,
                           text=True)
-    # __builtin_trap terminates via a signal -> negative returncode, and "NO_TRAP"
+    # std::abort terminates via a signal -> negative returncode, and "NO_TRAP"
     # must not have been reached.
     assert 'NO_TRAP' not in proc.stdout
     assert proc.returncode != 0

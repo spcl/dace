@@ -392,7 +392,7 @@ def test_split_statements_symbolic_forward_offset_snapshots_with_guard():
     # ``K - 1 >= 0`` is exactly the strict ``K > 0`` for integer offsets; a bare ``K >= 0``
     # here would admit the aliasing K == 0 case.
     assert 'K - 1' in code and '>= 0' in code, code
-    assert '__builtin_trap' in code, code
+    assert 'std::abort' in code, code
     # The guard carries no connectors, so only ``side_effects`` keeps dead-code elimination
     # from pruning it -- pruning would silently restore the unsound assume-positive path.
     assert guards[0].side_effects

@@ -692,14 +692,14 @@ class BreakAntiDependence(ppl.Pass):
         check over an array.
 
         Implementation: a single CPP tasklet with one input connector reading
-        the whole array. The body is a tight ``for`` loop with ``__builtin_trap``
+        the whole array. The body is a tight ``for`` loop with ``std::abort``
         on the first violation.
         """
         desc = sdfg.arrays[arr_name]
         n_str = symbolic.symstr(desc.shape[0])
         conn = f'__arr_{arr_name}'
         code = (f'for (long long _j = 0; _j < ({n_str}); _j++) {{\n'
-                f'    if (!({conn}[_j] > 0)) {{ __builtin_trap(); }}\n'
+                f'    if (!({conn}[_j] > 0)) {{ std::abort(); }}\n'
                 f'}}')
         tlet = pre.add_tasklet(
             name=f'_break_antidep_array_guard_{arr_name}',
@@ -718,7 +718,7 @@ class BreakAntiDependence(ppl.Pass):
 
         The tasklet has zero connectors and is allowed to read free SDFG
         symbols by name (per the SDFG convention "init / symbol-only tasklets
-        may have no src connectors"). Trips ``__builtin_trap`` on violation so
+        may have no src connectors"). Trips ``std::abort`` on violation so
         the failure is loud at runtime and does not corrupt downstream output.
 
         The soundness condition for the snapshot rename is ``offset >= 0`` (a
@@ -729,10 +729,9 @@ class BreakAntiDependence(ppl.Pass):
         it is a defensive backstop.
         """
         expr_str = symbolic.symstr(expr)
-        # `assert(...)` is also valid but `__builtin_trap()` gives a hard fault
-        # at any optimization level and matches the convention used elsewhere
-        # in the pipeline (scatter guard).
-        code = f'if (!(({expr_str}) >= 0)) {{ __builtin_trap(); }}'
+        # Not `assert(...)`: NDEBUG compiles it out. `std::abort()` is standard and faults at any
+        # optimization level; SIGABRT also reads as deliberate, unlike a trap's misleading SIGILL.
+        code = f'if (!(({expr_str}) >= 0)) {{ std::abort(); }}'
         # Tasklet with no input/output connectors. The CPU codegen still emits
         # its body; the symbols referenced in the code are resolved against
         # the enclosing scope.
@@ -757,7 +756,7 @@ class BreakAntiDependence(ppl.Pass):
         * ``guards``        -- symbolic expressions (each asserted ``> 0``).
         * ``array_guards``  -- array names (each element asserted ``> 0``).
 
-        Both guard kinds emit a side-effect ``__builtin_trap`` tasklet into the
+        Both guard kinds emit a side-effect ``std::abort`` tasklet into the
         snapshot pre-state.
 
         Redirection is PER EDGE and restricted to strict read-ahead reads

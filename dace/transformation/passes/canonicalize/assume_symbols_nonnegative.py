@@ -23,7 +23,7 @@ discipline as the scatter no-conflict guard
   as a trap on its negation.
 
 This pass makes the whole contract explicit and *checked*. It prepends a new
-start state whose single side-effecting tasklet calls ``__builtin_trap()`` when
+start state whose single side-effecting tasklet calls ``std::abort()`` when
 any guarded condition is violated. Only **signed** integer symbols are guarded
 for nonnegativity (an unsigned symbol is nonnegative by construction, so
 ``x < 0`` is a tautology the guard would waste a comparison on). A tracked
@@ -168,7 +168,7 @@ def is_assumption_guard_block(block) -> bool:
     """True if ``block`` is the runtime assumption-guard state emitted by
     :func:`insert_assumption_guards` (label ``_assume_nonneg_syms``).
 
-    Its ``__builtin_trap`` tasklets are infrastructure -- they read only symbols
+    Its ``std::abort`` tasklets are infrastructure -- they read only symbols
     and touch no data -- so structural counts that verify a "tile-only descent"
     exclude them exactly as they already exclude the ``tile_runtime`` divisibility
     trip guards. Exposed so tests / audits recognize the guard without importing
@@ -217,7 +217,7 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     return ``1`` if emitted, else ``None`` (nothing to guard, or already present).
 
     Every assumption from :func:`collect_assumptions` becomes its OWN
-    side-effecting ``__builtin_trap`` tasklet (``if (!assumption) trap()``) in a
+    side-effecting ``std::abort`` tasklet (``if (!assumption) trap()``) in a
     single new start state -- one tasklet per assumption so a fault points at the
     exact violated relation, all in one state so the guard is a single dominating
     block. ``sym2cpp`` prints the negation of a sympy relational directly
@@ -230,10 +230,10 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
     guards = {
         node.code.as_string
         for state in sdfg.states()
-        for node in state.nodes() if isinstance(node, nodes.Tasklet) and '__builtin_trap' in node.code.as_string
+        for node in state.nodes() if isinstance(node, nodes.Tasklet) and 'std::abort' in node.code.as_string
     }
     checks = [
-        c for c in (f'if ({sym2cpp(sympy.Not(a))}) {{ __builtin_trap(); }}' for a in collect_assumptions(sdfg))
+        c for c in (f'if ({sym2cpp(sympy.Not(a))}) {{ std::abort(); }}' for a in collect_assumptions(sdfg))
         if c not in guards
     ]
     if not checks:
@@ -255,7 +255,7 @@ def insert_assumption_guards(sdfg: SDFG) -> Optional[int]:
             code,
             language=dtypes.Language.CPP,
         )
-        # ``__builtin_trap()`` is a real side effect with no data output, so
+        # ``std::abort()`` is a real side effect with no data output, so
         # DeadDataflowElimination would otherwise prune this tasklet -- and with
         # it the guard -- as dead. Mark it side-effecting so simplify keeps it.
         guard.side_effects = True

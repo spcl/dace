@@ -464,7 +464,7 @@ def test_else_branch_duplicate_idx_takes_sequential_path():
     and the result matches the deterministic last-write-wins semantics.
 
     Without the else-branch (default trap mode) this same input would invoke
-    ``__builtin_trap()`` and abort the process; the dispatcher mode degrades
+    ``std::abort()`` and abort the process; the dispatcher mode degrades
     to a correct sequential run instead.
     """
     sdfg = tsvc_vas.to_sdfg(simplify=True)
@@ -546,7 +546,7 @@ def test_assume_no_conflicts_skips_guard_and_lifts_unconditionally():
 
 @pytest.mark.parametrize('kernel', [tsvc_s4113, tsvc_s491, tsvc_vas])
 def test_no_conflict_guard_survives_full_canonicalize(kernel):
-    """The runtime no-conflict guard (``ScatterConflictCheck`` + ``__builtin_trap``) must survive
+    """The runtime no-conflict guard (``ScatterConflictCheck`` + ``std::abort``) must survive
     the WHOLE canonicalize pipeline -- including the terminal SimplifyPass. The
     trap tasklet has no data output, so unless it is marked side-effecting,
     DeadDataflowElimination prunes it and the check/count chain feeding it looks
@@ -559,7 +559,7 @@ def test_no_conflict_guard_survives_full_canonicalize(kernel):
 
     has_check = _count_guard_nodes(sdfg) >= 1
     has_trap = any(
-        isinstance(n, nodes.Tasklet) and '__builtin_trap' in n.code.as_string for st in sdfg.all_states()
+        isinstance(n, nodes.Tasklet) and 'std::abort' in n.code.as_string for st in sdfg.all_states()
         for n in st.nodes())
     maps = sum(1 for st in sdfg.all_states() for n in st.nodes()
                if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None)

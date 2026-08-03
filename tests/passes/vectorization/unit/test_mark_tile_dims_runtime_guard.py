@@ -7,7 +7,7 @@ short, symbolic, or per-iteration-varying (e.g. wavefront) trip is handled by
 masking -- or, under ``scalar_postamble``, by the scalar remainder loop. So:
 
 1. A symbolic trip ``N`` is classified (a spec is recorded) and NO runtime
-   guard state is planted. (Earlier designs planted a ``__builtin_trap``
+   guard state is planted. (Earlier designs planted a ``std::abort``
    ``N >= W`` guard at SDFG entry; it traps spuriously on wavefront trips that
    depend on an outer-loop iterator -- undefined at entry -- and is unnecessary
    because the mask/remainder already handle ``trip < W`` correctly.)
@@ -62,18 +62,18 @@ def _guard_states(sdfg):
 
 
 def test_mark_tile_dims_no_guard_for_symbolic_trip():
-    """Symbolic trip ``N``: a spec is recorded and NO ``__builtin_trap`` guard
+    """Symbolic trip ``N``: a spec is recorded and NO ``std::abort`` guard
     state is planted -- the mask/remainder handles ``trip < W`` at runtime."""
     N = dace.symbol('N')
     sdfg = _build_inner_map_sdfg('symbolic_trip', N)
     res = MarkTileDims(widths=(8, )).apply_pass(sdfg, {})
     assert res is not None, "MarkTileDims should classify the symbolic-trip map"
     assert not _guard_states(sdfg), 'no runtime trip guard must be planted for a symbolic trip'
-    # And no tasklet anywhere calls __builtin_trap.
+    # And no tasklet anywhere calls std::abort.
     for s in sdfg.states():
         for n in s.nodes():
             if isinstance(n, dace.nodes.Tasklet):
-                assert '__builtin_trap' not in n.code.as_string
+                assert 'std::abort' not in n.code.as_string
 
 
 def test_mark_tile_dims_no_guard_for_static_trip_at_or_above_width():

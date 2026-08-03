@@ -2,6 +2,7 @@
 """Tests for :class:`WavefrontSkew`. Classical 2-D wavefront pattern (TSVC s2111)."""
 import itertools
 import random
+import sys
 from fractions import Fraction
 
 import numpy as np
@@ -133,7 +134,7 @@ def test_wavefront_skew_accepts_symbolic_offsets():
 
 def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
     """When the offset symbol is *not* declared ``positive=True`` the matcher
-    still accepts via the optimistic fall-through, but a ``__builtin_trap``
+    still accepts via the optimistic fall-through, but a ``std::abort``
     runtime guard is planted in a pre-state to catch a runtime sym <= 0
     violation. A positive runtime value passes the guard and produces the
     correct skewed result.
@@ -159,7 +160,7 @@ def test_wavefront_skew_emits_runtime_guard_for_unannotated_symbol():
         n for n in guard_states[0].nodes() if isinstance(n, dace.nodes.Tasklet) and n.label.startswith('_skew_guard_')
     ]
     assert len(guards) == 1
-    assert '__builtin_trap' in guards[0].code.as_string
+    assert 'std::abort' in guards[0].code.as_string
 
     # Runtime check: a positive ``sym_unannot`` value passes the guard and
     # the result matches the un-skewed sequential oracle.
@@ -203,7 +204,7 @@ def test_wavefront_skew_refuses_when_inner_already_parallel():
 
 def test_wavefront_skew_runtime_guard_traps_on_violation():
     """Negative ``sym_unannot`` violates the wavefront-dep assumption; the
-    planted ``__builtin_trap`` fires and the program aborts (subprocess
+    planted ``std::abort`` fires and the program aborts (subprocess
     isolation prevents the trap from killing the test runner)."""
     import subprocess
     import textwrap
@@ -226,11 +227,9 @@ def test_wavefront_skew_runtime_guard_traps_on_violation():
         assert WavefrontSkew().apply_pass(sdfg, {}) == 1
         sdfg(aa=np.zeros((8, 8)), N=8, sym_unannot=-1)  # negative -> trap
     ''')
-    res = subprocess.run(['/home/primrose/.pyenv/versions/py13/bin/python', '-c', src],
-                         capture_output=True,
-                         timeout=120)
-    # ``__builtin_trap`` -> SIGILL; the python interpreter exits with a non-zero
-    # status (typically -SIGILL or similar). A normal exit means no guard fired.
+    res = subprocess.run([sys.executable, '-c', src], capture_output=True, timeout=120)
+    # ``std::abort`` -> SIGABRT; the interpreter exits non-zero. Assertion is
+    # signal-agnostic: a normal exit means no guard fired.
     assert res.returncode != 0, ('runtime guard did not trap on a violating sym '
                                  f'(stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})')
 

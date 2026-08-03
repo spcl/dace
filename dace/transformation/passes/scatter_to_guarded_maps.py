@@ -23,7 +23,7 @@ This pass operationalises that contract end-to-end:
    arrays.
 2. **Guard** each detected ``idx`` array via
    :func:`~dace.transformation.passes.scatter_conflict_guard.insert_scatter_guard`,
-   which inserts an ``IntegerSort`` + adjacent-equal-pair check + ``__builtin_trap()``
+   which inserts an ``IntegerSort`` + adjacent-equal-pair check + ``std::abort()``
    at the earliest legal CFG state.
 3. **Parallelize** by applying ``LoopToMap`` in ``permissive`` mode, which lifts
    the scatter loops (and any other previously refused permissive cases) into
@@ -50,7 +50,7 @@ class ScatterToGuardedMaps(ppl.Pass):
 
     Two collision policies are supported via :attr:`emit_unparallelized_else_branch`:
 
-    - ``False`` (default): the guard's check tasklet calls ``__builtin_trap()``
+    - ``False`` (default): the guard's check tasklet calls ``std::abort()``
       whenever a duplicate is detected; the parallelised Map runs unconditionally
       afterwards. The contract is "permutation or abort" -- callers committed to
       that contract get the simpler CFG.
@@ -77,7 +77,7 @@ class ScatterToGuardedMaps(ppl.Pass):
         "the duplicate-count symbol: the True branch runs a sequential clone "
         "of the original scatter loop; the False branch runs the parallel "
         "Map lift. The duplicate-trap is suppressed; collisions degrade to "
-        "sequential execution instead of ``__builtin_trap()``.",
+        "sequential execution instead of ``std::abort()``.",
     )
 
     assume_no_conflicts = properties.Property(

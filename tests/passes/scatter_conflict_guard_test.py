@@ -343,7 +343,7 @@ def test_duplicate_idx_aborts_the_process():
     """Running the guarded SDFG with a duplicate ``ip`` traps before returning.
 
     Spawns a fresh Python subprocess so the SIGABRT/SIGILL/SIGTRAP from
-    ``__builtin_trap()`` doesn't kill the test runner. The subprocess prints
+    ``std::abort()`` doesn't kill the test runner. The subprocess prints
     a marker only if the abort *didn't* fire; we check the marker is absent
     AND the subprocess exited abnormally (non-zero return / signal).
     """

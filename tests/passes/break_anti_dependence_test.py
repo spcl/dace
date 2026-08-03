@@ -98,7 +98,7 @@ def test_break_anti_dependence_out_of_place_noop():
 def test_break_anti_dependence_symbolic_positive_offset():
     """``a[i] = a[i + inc] + b[i]`` with ``inc`` a free symbol -- carried offset is
     ``+inc`` which is non-numeric. The pass renames under the assumption ``inc > 0``
-    AND inserts a runtime ``__builtin_trap`` guard on ``inc <= 0``. This mirrors
+    AND inserts a runtime ``std::abort`` guard on ``inc <= 0``. This mirrors
     TSVC s175 (forward-read parallel with symbolic stride)."""
     inc = dace.symbol('inc')
 
@@ -125,7 +125,7 @@ def test_break_anti_dependence_symbolic_positive_offset():
     assert g.code.language == dace.dtypes.Language.CPP
     assert not g.in_connectors and not g.out_connectors
     # The guard's expression should contain the offset symbol.
-    assert 'inc' in g.code.as_string and '__builtin_trap' in g.code.as_string
+    assert 'inc' in g.code.as_string and 'std::abort' in g.code.as_string
 
     # Numerical correctness (with inc=1, equivalent to the constant-offset case s121).
     rng = np.random.default_rng(0)
@@ -158,7 +158,7 @@ def test_break_anti_dependence_symbolic_guard_survives_full_canonicalize():
 
     guards = [
         n for n, _ in sdfg.all_nodes_recursive()
-        if isinstance(n, nodes.Tasklet) and '__builtin_trap' in (n.code.as_string or '')
+        if isinstance(n, nodes.Tasklet) and 'std::abort' in (n.code.as_string or '')
     ]
     assert len(guards) >= 1, 'the positive-offset guard must survive full canonicalize'
     assert all(g.side_effects for g in guards), 'guard must be side-effecting so DCE keeps it'
@@ -254,7 +254,7 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     ``__sym - i`` is resolved by walking back through interstate-edge
     assignments + the producing tasklet to the array read ``idx[i]``. Renaming
     is sound iff every element of ``idx`` is positive, so the pass plants a
-    per-element ``__builtin_trap`` guard tasklet (one input edge reading
+    per-element ``std::abort`` guard tasklet (one input edge reading
     ``idx`` whole, CPP body with a tight ``for`` loop checking each slot)."""
     idx_dtype = dace.int32
 
@@ -280,7 +280,7 @@ def test_break_anti_dependence_data_indirected_offset_via_runtime_check():
     g = array_guards[0]
     assert g.code.language == dace.dtypes.Language.CPP
     assert len(g.in_connectors) == 1 and not g.out_connectors
-    assert 'idx' in g.code.as_string and '__builtin_trap' in g.code.as_string
+    assert 'idx' in g.code.as_string and 'std::abort' in g.code.as_string
 
     # Numerical correctness with a permutation that satisfies idx[i] > 0
     # for the in-range positions.

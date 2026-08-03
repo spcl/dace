@@ -56,7 +56,7 @@ def _count_tasklets(sdfg: dace.SDFG) -> int:
     copy at codegen, so the K-dim tile-only contract is preserved as
     "no NON-assign raw tasklets" rather than "zero tasklets total".
 
-    The runtime nonnegativity guard's ``__builtin_trap`` tasklets (symbolic-size
+    The runtime nonnegativity guard's ``std::abort`` tasklets (symbolic-size
     kernels) are infrastructure, not compute, so they are excluded exactly as the
     ``tile_runtime`` divisibility trip guards are."""
     return sum(

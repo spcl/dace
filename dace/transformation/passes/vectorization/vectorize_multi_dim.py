@@ -1181,7 +1181,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # (line ~493) made every signed-integer free symbol ``nonnegative=True`` at COMPILE time so
         # the tile emitter's offset/size reasoning (``x ** N`` -> ipow, full-tile store size
         # ``end - begin + W``) is sound; that assumption is only valid if the caller actually passes
-        # ``s >= 0``. Prepend one dominating start state whose per-symbol ``__builtin_trap`` aborts
+        # ``s >= 0``. Prepend one dominating start state whose per-symbol ``std::abort`` aborts
         # on a negative value so the contract is CHECKED at the boundary, not silently assumed. Emit
         # LAST -- after expansion + the per-lane audit -- so nothing reshapes the start block after
         # (the same "runs last" rule the canonicalize guard follows to avoid orphaning its state).

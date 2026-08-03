@@ -807,7 +807,7 @@ class WavefrontSkew(ppl.Pass):
         instance.apply(outer, sdfg)
 
     def _emit_positive_guard(self, outer: LoopRegion, deps: List[Dependence], guard_syms: List[object]) -> None:
-        """Plant a ``__builtin_trap`` before ``outer`` that fires if any distance
+        """Plant a ``std::abort`` before ``outer`` that fires if any distance
         component carrying an unannotated symbol is positive at runtime (soundness
         needs it ``<= 0``). Mirrors ``BreakAntiDependence``'s positive guard."""
         gset = dict.fromkeys(s.name for s in guard_syms)
@@ -829,7 +829,7 @@ class WavefrontSkew(ppl.Pass):
         # state and tasklet got a different label on every run of the SAME input -- different emitted C
         # symbols and a different build hash. crc32 is a stable digest of the same text.
         tag = zlib.crc32(parts.encode()) & 0xfffffff
-        code = f'if ({parts}) {{ __builtin_trap(); }}'
+        code = f'if ({parts}) {{ std::abort(); }}'
         pre = outer.parent_graph.add_state_before(outer, label=f'_skew_guard_{tag:x}')
         guard = pre.add_tasklet(name=f'_skew_guard_{tag:x}',
                                 inputs={},

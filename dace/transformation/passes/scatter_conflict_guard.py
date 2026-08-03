@@ -5,7 +5,7 @@ Permissive ``LoopToMap`` lifts an indirect write ``out[idx[i]] = ...`` into a pa
 scatter Map *assuming* ``idx`` is a permutation (duplicates → write-write races). This
 pass checks that contract at runtime with an opaque ``ScatterConflictCheck`` libnode
 (sort a copy + count adjacent-equal → host ``int64`` count); an interstate edge binds the
-count to a symbol, and a trap tasklet ``__builtin_trap()``s if it is positive.
+count to a symbol, and a trap tasklet ``std::abort()``s if it is positive.
 
 - Opaque libnode → the tile vectorizer never looks inside it, so the guard leaves the
   scatter Map it guards fully vectorizable. Only Maps are tiled; the guard is a libnode +
@@ -39,7 +39,7 @@ class GuardScatterConflicts(ppl.Pass):
 
     :param idx_names: Names of integer arrays whose values must be a permutation
         (no duplicates) at runtime. The pass emits, for each name, a sort of the
-        array plus an adjacent-equal-pair scan that calls ``__builtin_trap()`` on
+        array plus an adjacent-equal-pair scan that calls ``std::abort()`` on
         violation. Emission point is the earliest CFG state where the array is
         fully defined: the SDFG's entry if the array has no internal writes; the
         topologically-latest state with an in-degree-positive AccessNode of the
@@ -202,7 +202,7 @@ def insert_scatter_guard(sdfg: SDFG,
     :param sdfg: The SDFG to mutate in place.
     :param idx_name: The integer array whose runtime values must be all distinct.
     :param emit_trap: When ``True`` (default), the chain ends in a state whose
-        tasklet calls ``__builtin_trap()`` if the duplicate count is positive.
+        tasklet calls ``std::abort()`` if the duplicate count is positive.
         When ``False``, the trap state is omitted and the duplicate-count
         symbol is returned for the caller to thread into its own runtime
         check (e.g. a ``ConditionalBlock`` selecting between a parallel and
@@ -270,7 +270,7 @@ def _build_guard_states(sdfg: SDFG,
 
     ``check`` runs the opaque ``ScatterConflictCheck`` libnode over ``idx_name`` into the
     ``int64`` host collision count. ``trap`` (emitted iff ``emit_trap``) reads the count via
-    the ``trap_sym`` interstate binding and ``__builtin_trap()``s if positive; a count (not a
+    the ``trap_sym`` interstate binding and ``std::abort()``s if positive; a count (not a
     boolean) gives a free duplicate-pair diagnostic on abort.
 
     :returns: ``(check_state, trap_state, count_name, trap_sym)``.
@@ -302,7 +302,7 @@ def _build_guard_states(sdfg: SDFG,
     if emit_trap:
         trap_state = sdfg.add_state(f"_scatter_guard_trap_{idx_name}")
         trap_tasklet = trap_state.add_tasklet(f"check_assumption_{idx_name}", {}, {},
-                                              f"if ({trap_sym} > 0) {{ __builtin_trap(); }}",
+                                              f"if ({trap_sym} > 0) {{ std::abort(); }}",
                                               language=dtypes.Language.CPP)
         trap_tasklet.side_effects = True
 

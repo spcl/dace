@@ -1391,7 +1391,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # assume_constraints (LAST): make the assumptions the pipeline relied on
     # explicit and runtime-checked, by prepending a side-effecting
-    # ``__builtin_trap`` start state that aborts when one is violated -- a
+    # ``std::abort`` start state that aborts when one is violated -- a
     # negative signed-integer free symbol (the offset-sign nonnegativity
     # contract) or a false tracked relation (e.g. the ``K < N`` a modular-wrap
     # split leaned on). Runs AFTER every structural pass + the terminal simplify:

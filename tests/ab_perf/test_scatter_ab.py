@@ -12,7 +12,7 @@ Variant B (on) -- ``ScatterToGuardedMaps`` runs after canonicalize: it
 inserts a sort+duplicate-count guard on ``idx`` and lifts the loop to a
 parallel ``Map[i]`` (``emit_unparallelized_else_branch=False`` -- the
 permutation contract is enforced by the duplicate-count check; if a
-duplicate were ever observed, ``__builtin_trap()`` aborts; with a clean
+duplicate were ever observed, ``std::abort()`` aborts; with a clean
 permutation the parallel Map runs).
 
 CPU + GPU; the GPU side relies on the guarded Map being a vanilla parallel
