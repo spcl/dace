@@ -7,6 +7,7 @@ Every shape-and-value test runs under both emit modes the pass exposes:
 writeback`` so a downstream ``LoopToMap`` can produce ``#pragma omp
 parallel for reduction(op:scalar)``).
 """
+import numpy as np
 import pytest
 
 import dace
@@ -1217,6 +1218,195 @@ def test_double_buffer_carry_scan_not_lifted(prefer):
     assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
 
 
+# ---------------------------------------------------------------------------
+# The loop's OWN SDFG decides the lift.
+#
+# ``all_nodes_recursive`` descends into NestedSDFGs, so the LoopRegions the passes iterate
+# may live one level down. Every matcher resolves descriptors BY NAME, so handing it the
+# top-level SDFG answers from the wrong repository -- silently, because a same-named outer
+# descriptor resolves rather than raising. The fixtures below pin both directions.
+# ---------------------------------------------------------------------------
+
+N_NEST = dace.symbol("N_NEST")
+
+
+@dace.program
+def _nested_sum_callee(aa: dace.float64[N_NEST], ss: dace.float64[1]):
+    for i in range(N_NEST):
+        ss[0] = ss[0] + aa[i]
+
+
+@dace.program
+def _nested_sum_caller(x: dace.float64[N_NEST], t: dace.float64[1]):
+    _nested_sum_callee(x, t)
+
+
+@dace.program
+def _nested_dot_callee(aa: dace.float64[N_NEST], bb: dace.float64[N_NEST], dd: dace.float64[1]):
+    for i in range(N_NEST):
+        dd[0] = dd[0] + aa[i] * bb[i]
+
+
+@dace.program
+def _nested_dot_caller(x: dace.float64[N_NEST], y: dace.float64[N_NEST], t: dace.float64[1]):
+    _nested_dot_callee(x, y, t)
+
+
+@dace.program
+def _nested_live_write_callee(a: dace.float64[N_NEST], s: dace.float64[1], b: dace.float64[N_NEST]):
+    for i in range(N_NEST):
+        s[0] = s[0] + a[i]
+        b[:] = a
+
+
+@dace.program
+def _nested_live_write_caller(a: dace.float64[N_NEST], s: dace.float64[1], o: dace.float64[N_NEST]):
+    b = np.zeros(N_NEST, dtype=np.float64)
+    s[0] = s[0] + a[0]  # mints the callee's staging-transient names in the CALLER too
+    _nested_live_write_callee(a, s, b)
+    o[:] = b
+
+
+def _loops_inside_nested_sdfgs(sdfg: dace.SDFG):
+    """``[(loop.label, owner.name)]`` for every named loop that lives in a NestedSDFG."""
+    return [(r.label, sd.name) for sd in sdfg.all_sdfgs_recursive() if sd.parent_sdfg is not None
+            for r in sd.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable]
+
+
+def _nest_without_inlining(prog) -> dace.SDFG:
+    """Build ``prog``'s SDFG with the callee kept as a NestedSDFG.
+
+    Everything except ``InlineSDFGs`` runs, so the loop body reaches the single-content-state
+    shape the matchers want while the reduction stays one level down -- the shape any caller
+    that lifts on an SDFG it did not fully inline hands the pass.
+    """
+    from dace.transformation.passes.lift_preprocess import LiftPreprocess
+    from dace.transformation.passes.simplify import SimplifyPass
+    sdfg = prog.to_sdfg(simplify=False)
+    SimplifyPass(skip={'InlineSDFGs'}, validate=True).apply_pass(sdfg, {})
+    LiftPreprocess().apply_pass(sdfg, {})
+    return sdfg
+
+
+def _inner_sdfg(sdfg: dace.SDFG) -> dace.SDFG:
+    (inner, ) = [sd for sd in sdfg.all_sdfgs_recursive() if sd.parent_sdfg is not None]
+    return inner
+
+
+def _misowned_data(sdfg: dace.SDFG):
+    """``[(sdfg.name, state.label, name)]`` for every AccessNode or memlet naming data its
+    OWN SDFG does not define. A lift that resolved descriptors against the wrong SDFG
+    allocates its scalars in one repository and wires them in the other, leaving exactly
+    this residue."""
+    bad = []
+    for sd in sdfg.all_sdfgs_recursive():
+        for state in sd.states():
+            for n in state.data_nodes():
+                if n.data not in sd.arrays:
+                    bad.append((sd.name, state.label, n.data))
+            for e in state.edges():
+                if not e.data.is_empty() and e.data.data is not None and e.data.data not in sd.arrays:
+                    bad.append((sd.name, state.label, e.data.data))
+    return bad
+
+
+def test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays(prefer):
+    """A reduction inside a NestedSDFG must be matched against THAT SDFG's descriptors.
+
+    ``_extract`` resolves the accumulator with ``accum not in sdfg.arrays -> refuse``. The
+    frontend's staging scalar (``ss_slice_plus_aa_slice``) exists only in the callee, so
+    against the top-level SDFG the guard fires and a perfectly liftable reduction is
+    silently dropped on the floor -- a predicate answering False because it looked in the
+    wrong place, not because the shape was unsafe.
+
+    Pins the PROPERTY (the lift happens, lands in the owning SDFG, and the result matches
+    the sequential oracle) rather than a count, and guards non-vacuity: if the fixture ever
+    stops nesting the loop, or the caller ever gains the callee's names, it proves nothing.
+    """
+    sdfg = _nest_without_inlining(_nested_sum_caller)
+    inner = _inner_sdfg(sdfg)
+    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
+    assert 'ss' not in sdfg.arrays, 'fixture is vacuous: the caller must NOT define the accumulator'
+
+    lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert lifted == 1, f'the nested reduction must lift; got {lifted}'
+    # Whatever the emit mode minted belongs to the loop's OWN SDFG, not the top-level one.
+    assert not _misowned_data(sdfg), f'the lift wired data across SDFGs: {_misowned_data(sdfg)}'
+    if prefer == 'reduce-libnode':
+        assert [
+            sd.name for sd in sdfg.all_sdfgs_recursive() for st in sd.states() for n in st.nodes()
+            if isinstance(n, Reduce)
+        ] == [inner.name], 'the Reduce must be emitted in the nested SDFG'
+
+    n = 24
+    rng = np.random.default_rng(1147)
+    x = rng.standard_normal(n)
+    t = np.zeros(1)
+    sdfg(x=x, t=t, N_NEST=n)
+    assert np.allclose(t[0], x.sum()), 'lifted nested reduction diverged from the sequential oracle'
+
+
+def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient(prefer):
+    """A same-named descriptor in the CALLER must not authorise a lift the callee forbids.
+
+    ``_extract`` refuses a loop that writes any LIVE (non-transient) array besides the
+    accumulator: a single ``Reduce`` emits one final value and would drop the per-iteration
+    writes. ``b`` is a non-transient connector in the callee -- and a local TRANSIENT in the
+    caller. Asked against the top-level SDFG the guard reads the caller's answer, passes,
+    and the lift deletes the loop wholesale: ``b`` (hence ``o``) is never written. A wrong
+    answer, not a missed one.
+    """
+    sdfg = _nest_without_inlining(_nested_live_write_caller)
+    inner = _inner_sdfg(sdfg)
+    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
+    assert sdfg.arrays['b'].transient and not inner.arrays['b'].transient, (
+        'fixture is vacuous: the collision must flip the transient flag between the two SDFGs')
+
+    lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert not lifted, f'a loop writing a live array must not lift; got {lifted}'
+    assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
+
+    n = 24
+    rng = np.random.default_rng(1148)
+    a = rng.standard_normal(n)
+    s = np.zeros(1)
+    o = np.zeros(n)
+    sdfg(a=a, s=s, o=o, N_NEST=n)
+    assert np.allclose(s[0], a[0] + a.sum()), 'accumulator diverged from the sequential oracle'
+    assert np.allclose(o, a), 'the per-iteration write to the live array was dropped'
+
+
+def test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays():
+    """Same ownership property for ``RetargetWCRAccumulator``.
+
+    ``_extract_wcr_body`` looks the WCR write's destination up with ``sdfg.arrays.get`` and
+    skips it when the descriptor is missing or transient. ``dd`` lives only in the callee,
+    so against the top-level SDFG every candidate is skipped and the multi-tasklet dot
+    product keeps its serial in-body accumulate instead of the privatised scalar a
+    downstream ``LoopToMap`` lowers to ``reduction(+:scalar)``.
+    """
+    sdfg = _nest_without_inlining(_nested_dot_caller)
+    assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
+    assert 'dd' not in sdfg.arrays, 'fixture is vacuous: the caller must NOT define the accumulator'
+
+    PinNestedSequentialLoops().apply_pass(sdfg, {})
+    LoopToReduce(prefer='wcr-scalar').apply_pass(sdfg, {})
+    AccumulatorCopyChainToWCR().apply_pass(sdfg, {})
+    retargeted = RetargetWCRAccumulator().apply_pass(sdfg, {})
+    sdfg.validate()
+    assert retargeted == 1, f'the nested WCR accumulator must be retargeted; got {retargeted}'
+
+    n = 24
+    rng = np.random.default_rng(1149)
+    x = rng.standard_normal(n)
+    y = rng.standard_normal(n)
+    t = np.zeros(1)
+    sdfg(x=x, y=y, t=t, N_NEST=n)
+    assert np.allclose(t[0], x @ y), 'retargeted nested dot product diverged from the sequential oracle'
+
+
 if __name__ == "__main__":
     test_sdfg_api_sum_reduction_is_lifted()
     test_frontend_augassign_length1_array_is_lifted()
@@ -1235,3 +1425,8 @@ if __name__ == "__main__":
     test_all_pattern_lifts_to_and_in_permissive()
     test_any_pattern_symbol_bridge_via_tmp_scalar()
     test_array_slot_sum_reduction_is_lifted()
+    test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays('reduce-libnode')
+    test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays('wcr-scalar')
+    test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient('reduce-libnode')
+    test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient('wcr-scalar')
+    test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays()
