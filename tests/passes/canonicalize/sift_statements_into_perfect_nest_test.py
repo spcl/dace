@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for :class:`SiftStatementsIntoPerfectNest`: sink outer-level statements into the
+"""Tests for ``sift_imperfect_nests``: sink outer-level statements into the
 inner loop under boundary guards to make an imperfect nest perfect (GPU-only).
 
 Each test builds a small SDFG (Python frontend or hand-built LoopRegions), applies the pass
@@ -23,7 +23,8 @@ import pytest
 import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import ConditionalBlock, LoopRegion
-from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import SiftStatementsIntoPerfectNest
+from dace.transformation.passes.canonicalize.perfect_loop_nesting import PerfectLoopNesting
+from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
 
 N = dace.symbol('N')
 M = dace.symbol('M')
@@ -161,7 +162,7 @@ def test_pre_only_sift():
     copy.deepcopy(base)(a=a.copy(), b=ref_b, s=ref_s, N=n)
 
     sdfg = _pre_only.to_sdfg(simplify=True)
-    assert SiftStatementsIntoPerfectNest(target='gpu').apply_pass(sdfg, {}) == 1
+    assert sift_imperfect_nests(sdfg) == 1
     sdfg.validate()
 
     outer, inner = _outer_loop(sdfg), _inner_loop(sdfg)
@@ -187,7 +188,7 @@ def test_post_only_sift():
     copy.deepcopy(base)(a=a.copy(), b=ref_b, c=ref_c, N=n)
 
     sdfg = _post_only.to_sdfg(simplify=True)
-    assert SiftStatementsIntoPerfectNest(target='gpu').apply_pass(sdfg, {}) == 1
+    assert sift_imperfect_nests(sdfg) == 1
     sdfg.validate()
 
     inner = _inner_loop(sdfg)
@@ -211,7 +212,7 @@ def test_pre_and_post_sift():
     a = np.random.rand(n, 5)
 
     sdfg = _pre_and_post.to_sdfg(simplify=True)
-    assert SiftStatementsIntoPerfectNest(target='gpu').apply_pass(sdfg, {}) == 1
+    assert sift_imperfect_nests(sdfg) == 1
     sdfg.validate()
 
     inner = _inner_loop(sdfg)
@@ -246,7 +247,7 @@ def test_interstate_assignment_sifts_with_statement():
     copy.deepcopy(base)(a=a.copy(), b=ref, N=n)
 
     sdfg = _build_interstate_sdfg()
-    assert SiftStatementsIntoPerfectNest(target='gpu').apply_pass(sdfg, {}) == 1
+    assert sift_imperfect_nests(sdfg) == 1
     sdfg.validate()
 
     # No stray interstate assignment left in the outer body.
@@ -271,7 +272,7 @@ def test_refuses_possibly_empty_inner_loop():
     """A free-symbol inner bound ``range(M)`` is not provably >= 1: sifting the post store would
     drop it when M == 0, so the pass refuses (S1). Verified correct at M == 0."""
     sdfg = _maybe_empty.to_sdfg(simplify=True)
-    assert SiftStatementsIntoPerfectNest(target='gpu').apply_pass(sdfg, {}) is None
+    assert sift_imperfect_nests(sdfg) == 0
     sdfg.validate()
 
     c = np.full(4, 9.0)
@@ -280,7 +281,8 @@ def test_refuses_possibly_empty_inner_loop():
 
 
 def test_cpu_target_noop():
-    """The pass is GPU-only: with ``target='cpu'`` it returns None and changes nothing."""
+    """The sink is GPU-only. The matcher itself is target-agnostic, so the policy lives in
+    ``PerfectLoopNesting``: under ``target='cpu'`` no boundary guard is ever introduced."""
     n = 6
     a = np.random.rand(n, 5)
     base = _pre_and_post.to_sdfg(simplify=True)
@@ -289,9 +291,9 @@ def test_cpu_target_noop():
 
     sdfg = _pre_and_post.to_sdfg(simplify=True)
     conds_before = len(_conds(sdfg))
-    assert SiftStatementsIntoPerfectNest(target='cpu').apply_pass(sdfg, {}) is None
+    PerfectLoopNesting(target='cpu').apply_pass(sdfg, {})
     sdfg.validate()
-    assert len(_conds(sdfg)) == conds_before  # structurally unchanged
+    assert len(_conds(sdfg)) == conds_before  # no boundary guard was introduced
 
     out = np.zeros(n)
     sdfg(a=a.copy(), c=out, N=n)
@@ -307,7 +309,7 @@ def test_refuses_outer_axis_carry():
     z0 = np.zeros((n, 5))
 
     sdfg = _outer_carry.to_sdfg(simplify=True)
-    assert SiftStatementsIntoPerfectNest(target='gpu').apply_pass(sdfg, {}) is None
+    assert sift_imperfect_nests(sdfg) == 0
     sdfg.validate()
 
     out_y, out_z = y0.copy(), z0.copy()
@@ -331,7 +333,7 @@ def test_new_start_block_set_correctly():
     a = np.random.rand(n, 5)
 
     sdfg = _pre_only.to_sdfg(simplify=True)
-    assert SiftStatementsIntoPerfectNest(target='gpu').apply_pass(sdfg, {}) == 1
+    assert sift_imperfect_nests(sdfg) == 1
 
     inner = _inner_loop(sdfg)
     start = inner.start_block
@@ -343,6 +345,32 @@ def test_new_start_block_set_correctly():
     out_b, out_s = np.zeros((n, 5)), np.zeros(n)
     sdfg(a=a.copy(), b=out_b, s=out_s, N=n)
     assert np.array_equal(out_b, a + a[:, 0:1])
+
+
+def test_perfect_loop_nesting_drives_the_sink_on_gpu_only():
+    """``PerfectLoopNesting`` owns this capability: ``target='gpu'`` performs the sink,
+    ``target='cpu'`` does not. Distribution alone cannot reach this shape -- the pre statement
+    feeds the inner body, so the group analysis keeps them together.
+
+    Asserted on the boundary guard rather than on a named loop: the pass SSA-renames iterators.
+    """
+    gpu = _pre_only.to_sdfg(simplify=True)
+    guards_before = len(_conds(gpu))
+    assert PerfectLoopNesting(target='gpu').apply_pass(gpu, {})
+    gpu.validate()
+    assert len(_conds(gpu)) == guards_before + 1
+
+    cpu = _pre_only.to_sdfg(simplify=True)
+    PerfectLoopNesting(target='cpu').apply_pass(cpu, {})
+    cpu.validate()
+    assert len(_conds(cpu)) == guards_before
+
+
+def test_sift_is_idempotent():
+    """Re-running must be a no-op -- the pass sits in the canonicalize fixpoint."""
+    sdfg = _pre_only.to_sdfg(simplify=True)
+    assert sift_imperfect_nests(sdfg) == 1
+    assert sift_imperfect_nests(sdfg) == 0
 
 
 if __name__ == '__main__':

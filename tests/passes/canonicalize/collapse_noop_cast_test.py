@@ -156,7 +156,17 @@ def test_genuine_cast_survives_both_passes():
     assert tasklet.code.as_string == 'out = dace.float64(inp)'
 
 
+def test_idempotent():
+    """Re-running must be a no-op: the pass leads the canonicalize ``clean`` block, which is
+    expected to reach a fixed point, so the rewritten ``out = inp`` must not re-match."""
+    sdfg, _, tasklet = build_cast_sdfg(dace.float64, dace.float64, 'out = dace.float64(inp)')
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) == 1
+    assert CollapseNoOpCast().apply_pass(sdfg, {}) is None
+    assert tasklet.code.as_string == 'out = inp'
+
+
 if __name__ == '__main__':
+    test_idempotent()
     test_noop_cast_collapsed()
     test_bare_spelling_collapsed()
     test_subscript_argument_collapsed()

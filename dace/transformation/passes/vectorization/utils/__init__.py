@@ -5,7 +5,6 @@ from .name_schemes import LaneIdScheme  # noqa: F401
 from .code_rewrite import (  # noqa: F401
     offset_symbol_in_expression, use_laneid_symbol_in_expression,
 )
-from .iteration import walk_memlets_of  # noqa: F401
 from .arrays import (  # noqa: F401
     add_transient_arrays_from_list, replace_arrays_with_new_shape,
 )

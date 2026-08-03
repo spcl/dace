@@ -32,9 +32,10 @@ A no-op when the body is already a single statement per loop.
 """
 from typing import Any, Dict, Optional
 
-from dace import SDFG
+from dace import SDFG, properties
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopElimination
+from dace.transformation.passes.canonicalize.sift_statements_into_perfect_nest import sift_imperfect_nests
 from dace.transformation.passes.loop_fission import LoopFission
 from dace.transformation.passes.move_if_into_loop import MoveIfIntoLoop
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
@@ -45,12 +46,35 @@ from dace.transformation.passes.unique_loop_iterators import UniqueLoopIterators
 _MAX_ROUNDS = 8
 
 
+@properties.make_properties
 @transformation.explicit_cf_compatible
 class PerfectLoopNesting(ppl.Pass):
-    """Distribute the parent loop per data-independent statement group to a
-    fixpoint, forming a perfect nest of single-statement loops."""
+    """Form perfect nests, by DISTRIBUTING the parent loop per data-independent statement
+    group and -- on GPU -- by SINKING the outer statements fission cannot separate.
+
+    The two directions are complementary, which is why one pass owns both. Fission handles
+    ``for i: {S1; S2}`` where the statements are independent, splitting the parent. It is a
+    no-op on ``for i: {pre; for j: body; post}`` whenever ``pre`` feeds ``body`` -- the usual
+    case, since that is why they share a nest -- because the group analysis merges on any
+    shared written container. And even when they ARE independent, distributing yields three
+    loops rather than the single 2-D nest a GPU grid needs. So ``target='gpu'`` additionally
+    sinks the surviving pre/post blocks into the inner loop under boundary guards
+    (``sift_imperfect_nests``; see that module for the S1 / S7 soundness gates). On CPU the
+    sink is skipped -- burying the pre/post work under a ``j == <boundary>`` guard destroys
+    the sequential-fusion locality the outer level otherwise has.
+    """
 
     CATEGORY: str = 'Optimization Preparation'
+
+    target = properties.Property(dtype=str,
+                                 default='cpu',
+                                 choices=['cpu', 'gpu'],
+                                 desc="Target policy: 'gpu' also sinks outer statements into the inner "
+                                 "loop to expose the outer axis; 'cpu' distributes only.")
+
+    def __init__(self, target: str = 'cpu'):
+        super().__init__()
+        self.target = target
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.Everything
@@ -76,6 +100,10 @@ class PerfectLoopNesting(ppl.Pass):
             if MoveIfIntoLoop().apply_pass(sdfg, {}):
                 changed = True
             if trivial.apply_pass(sdfg, {}):
+                changed = True
+            # Sink LAST in the round: give fission the first chance to separate the statements
+            # outright, and only sink what is still stuck in an imperfect nest.
+            if self.target == 'gpu' and sift_imperfect_nests(sdfg):
                 changed = True
             if not changed:
                 break

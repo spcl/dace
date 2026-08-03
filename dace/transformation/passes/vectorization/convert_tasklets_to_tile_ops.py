@@ -29,9 +29,9 @@ from dace.transformation.passes.vectorization.utils.pass_invariants import (asse
 
 #: Binary ops → :class:`TileBinop`. Comparisons (``< <= > >= == !=``) produce bool tile
 #: outputs → :class:`TileITE` cond input (design 7.5). Powers arrive as the function-form
-#: ``pow`` / ``ipow`` (``PowerOperatorExpansion`` rewrites every ``**`` to ``pow`` or an
+#: ``pow`` / ``ipow`` (``PowerOperatorExpansion`` rewrites a LITERAL integer exponent > 1 to an
 #: unrolled product; ``RelaxIntegerPowers`` relaxes an integer-exponent ``pow`` → ``ipow``).
-#: ``**`` is retained for robustness against a residual bare operator.
+#: ``**`` is retained: every exponent the expansion does not take stays a bare operator.
 _SUPPORTED_BINOPS = {
     "+", "-", "*", "/", "%", "py_mod", "**", "pow", "ipow", "min", "max", "atan2", "hypot", "fmod", "<", "<=", ">",
     ">=", "==", "!=", "&&", "||", "&", "|", "^"
@@ -517,8 +517,8 @@ class ConvertTaskletsToTileOps(ppl.Pass):
             return None
         # Try every op against both operand orderings. DaCe wraps the RHS in parens
         # (``_o = (_a + _b)``); accept both. Function-form ops use ``op(a, b)`` (this
-        # covers ``pow`` / ``ipow``); ``**`` keeps the bare-operator infix case for a
-        # residual power PowerOperatorExpansion did not rewrite.
+        # covers ``pow`` / ``ipow``); ``**`` keeps the bare-operator infix case for the
+        # non-literal-integer exponents PowerOperatorExpansion deliberately leaves alone.
         for op in _SUPPORTED_BINOPS:
             for a, b in (in_conns, list(reversed(in_conns))):
                 if op in _FUNCTION_FORM_BINOPS:
