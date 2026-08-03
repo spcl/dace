@@ -1,3 +1,5 @@
+import re
+
 import dace
 
 
@@ -186,6 +188,13 @@ def test_argument_signature_test():
         atype_res = res_arglist[aname]
         assert isinstance(atype_res,
                           atype_ref), f"Expected '{aname}' to have type {atype_ref}, but it had {type(atype_res)}."
+
+    # GPU codegen tiles the map into nested scopes, so `D` is only named on the outermost edge of its
+    #  path. The kernel signature has to keep it, and its stride, all the same.
+    kernel = next(o.clean_code for o in sdfg.generate_code() if o.language == "cu")
+    signature = re.search(r"__global__ void .*\((.*)\)", kernel).group(1)
+    for arg in ("* __restrict__ D", "second_stride_D"):
+        assert arg in signature, f"Expected '{arg}' in the kernel signature, but got '{signature}'."
 
     # If we have cupy we will also compile it.
     try:

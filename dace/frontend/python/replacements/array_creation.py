@@ -6,6 +6,7 @@ import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, sym_type, broadcast_together
+from dace.frontend.python.replacements.array_creation_dace import promote_size_scalars_in_shape
 from dace.frontend.python.replacements.operators import result_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
@@ -65,6 +66,10 @@ def _numpy_full(pv: ProgramVisitor,
     if isinstance(shape, (Number, str)) or symbolic.issymbolic(shape):
         shape = [shape]
 
+    shape, promoted = promote_size_scalars_in_shape(pv, sdfg, shape)
+    if promoted:
+        # Promotion opens a state to carry the symbol assignment; the fill has to follow it.
+        state = pv.last_block
     if any(isinstance(s, str) for s in shape):
         raise DaceSyntaxError(
             pv, None, f'Data-dependent shape {shape} is currently not allowed. Only constants '
