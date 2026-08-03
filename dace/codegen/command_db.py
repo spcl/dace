@@ -119,15 +119,26 @@ def replay(entries: Sequence[Dict[str, str]], build_folder: str, jobs: int) -> b
     # An entry reading a file no other entry produces is a source compile, so those all run at once.
     # The rest consume what the build makes -- objects, and under CUDA separable compilation a device
     # link the shared-library link then reads. Ninja reports one input per entry, too little to order
-    # those by, so they run serially in the order it declared them.
+    # those by, and its compdb DECLARATION order is not dependency order: a program that links a
+    # just-built static library (the nanobind extension links libnanobind-static.a) is declared
+    # before the archive it consumes. An entry whose command mentions another pending entry's output
+    # therefore waits for that entry; anything unresolvable falls back to declared order.
     produced = {e['output'] for e in entries}
     compiles = [e for e in entries if e.get('file') not in produced]
+    remaining = [e for e in entries if e.get('file') in produced]
+    ordered = []
+    while remaining:
+        ready = [e for e in remaining if not any(o is not e and o['output'] in e['command'] for o in remaining)]
+        if not ready:
+            ready = [remaining[0]]
+        ordered.extend(ready)
+        remaining = [e for e in remaining if e not in ready]
     try:
         with ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
             # list(), not all(): short-circuiting leaves futures unconsumed, dropping their exceptions.
             if not all(list(pool.map(run, compiles))):
                 return False
-        if not all(run(e) for e in entries if e.get('file') in produced):
+        if not all(run(e) for e in ordered):
             return False
     except OSError:
         return False
