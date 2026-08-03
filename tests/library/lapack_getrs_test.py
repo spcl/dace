@@ -1,7 +1,7 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import dace.libraries.lapack as lapack
-import dace.libraries.standard as std
+import dace.libraries.linalg as linalg
 import numpy as np
 import pytest
 
@@ -40,7 +40,7 @@ def make_sdfg(implementation, dtype, storage=dace.StorageType.Default):
         Bho = state.add_read("B")
         Bin = state.add_access("B" + suffix)
         Bout = state.add_access("B" + suffix)
-        transpose_in = std.Transpose("transpose_in", dtype=dtype)
+        transpose_in = linalg.Transpose("transpose_in", dtype=dtype)
         transpose_in.implementation = "cuBLAS"
         state.add_nedge(Ahi, Ai, Memlet.from_array(*Ahost_arr))
         state.add_nedge(Bhi, Bin, Memlet.from_array(*Bhost_arr))

@@ -100,7 +100,7 @@ class StartStateElimination(transformation.MultiStateTransformation):
             return False
         # Assignments that make descriptors into symbols cannot be eliminated
         for assign in edge.data.assignments.values():
-            if graph.arrays.keys() & symbolic.free_symbols_and_functions(assign):
+            if graph.arrays.keys() & (symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)):
                 return False
 
         return True

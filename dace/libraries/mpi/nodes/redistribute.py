@@ -91,7 +91,7 @@ class Redistribute(MPINode):
     }
     default_implementation = "MPI"
 
-    redistr = properties.Property(dtype=str, default='tmp')
+    redistr = properties.DataProperty(default='tmp')
 
     def __init__(self, name, redistr='tmp', *args, **kwargs):
         super().__init__(name, *args, inputs={"_inp_buffer"}, outputs={"_out_buffer"}, **kwargs)

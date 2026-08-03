@@ -26,7 +26,7 @@ def infer_out_connector_type(sdfg: SDFG, state: SDFGState, node: nodes.CodeNode,
     e = next(state.out_edges_by_connector(node, cname))
     if cname is None:
         return None
-    scalar = (e.data.subset and e.data.subset.num_elements() == 1
+    scalar = (bool(e.data.subset) and e.data.subset.num_elements() == 1
               and (not e.data.dynamic or (e.data.dynamic and e.data.wcr is not None)))
     if e.data.data is not None:
         allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
@@ -64,7 +64,7 @@ def infer_connector_types(sdfg: SDFG):
                 cname = e.dst_conn
                 if cname is None:
                     continue
-                scalar = (e.data.subset and e.data.subset.num_elements() == 1)
+                scalar = bool(e.data.subset) and e.data.subset.num_elements() == 1
                 if e.data.data is not None:
                     allocated_as_scalar = (sdfg.arrays[e.data.data].storage is not dtypes.StorageType.GPU_Global)
                 else:
@@ -310,7 +310,7 @@ def _set_default_schedule_in_scope(state: SDFGState,
                 else:
                     local_child_schedule = child_schedule
                 node.schedule = local_child_schedule
-        elif getattr(node, 'schedule', False) and not isinstance(node, nodes.ExitNode):
+        elif isinstance(node, nodes.LibraryNode):
             if node.schedule == dtypes.ScheduleType.Default:
                 if child_schedule is None:
                     local_child_schedule = _determine_schedule_from_storage(state, node)

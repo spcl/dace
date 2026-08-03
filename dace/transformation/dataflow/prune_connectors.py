@@ -141,7 +141,7 @@ class PruneSymbols(pm.SingleStateTransformation):
                 candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
 
                 for assign in e.data.assignments.values():
-                    candidates -= (symbolic.free_symbols_and_functions(assign) - ignore)
+                    candidates -= ((symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)) - ignore)
 
                 if local_ignore is None:
                     local_ignore = set(e.data.assignments.keys())

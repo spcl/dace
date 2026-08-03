@@ -61,6 +61,8 @@ def onnx_constant_or_none(sdfg: dace.SDFG, node_or_name: Union[nodes.AccessNode,
 
 class ReplacementTransformation(transformation.SingleStateTransformation, abc.ABC):
 
+    _pattern: Optional[gr.OrderedDiGraph] = None
+
     @classmethod
     @abc.abstractmethod
     def pattern(cls) -> gr.OrderedDiGraph[nodes.Node, dace.Memlet]:
@@ -88,7 +90,7 @@ class ReplacementTransformation(transformation.SingleStateTransformation, abc.AB
 
     @classmethod
     def expressions(cls):
-        if hasattr(cls, '_pattern'):
+        if cls._pattern is not None:
             return [cls._pattern]
         result = cls.pattern()
         add_connecting_access_nodes(result)

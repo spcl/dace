@@ -1,4 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
+from typing import Optional
+from unittest import mock
+
 import dace
 from dace.sdfg import utils
 import dace.dtypes as dtypes
@@ -7,10 +10,36 @@ import numpy as np
 import pytest
 
 
+class _MockProgramVisitor:
+
+    def __init__(self):
+        self.globals = {}
+        self.scope_arrays = {}
+        self.scope_symbols = {}
+        self.current_lineinfo = None
+        self._target_name_counter = 0
+        self._dispatcher = mock.MagicMock()
+        self._dispatcher.defined_vars = set()
+
+    def get_target_name(self, output_index: Optional[int] = None, default: Optional[str] = None) -> str:
+        self._target_name_counter += 1
+        return default or f'__pgrid{self._target_name_counter}'
+
+    def __getattr__(self, name):
+        value = mock.MagicMock()
+        setattr(self, name, value)
+        return value
+
+
+def _mock_program_visitor():
+    return _MockProgramVisitor()
+
+
 @pytest.mark.mpi
 def test_process_grid():
 
     P = dace.symbol('P', dace.int32)
+    pv = _mock_program_visitor()
 
     sdfg = dace.SDFG("process_grid_test")
     sdfg.add_symbol('P', dace.int32)
@@ -20,17 +49,18 @@ def test_process_grid():
     _, varr = sdfg.add_array("valid", (1, ), dtype=dace.bool_)
 
     state = sdfg.add_state("start")
-    pgrid_name = comm._cart_create(None, sdfg, state, [1, P])
+    pgrid_name = comm._cart_create(pv, sdfg, state, [1, P])
 
     state2 = sdfg.add_state("main")
     sdfg.add_edge(state, state2, dace.InterstateEdge())
-    tasklet = state2.add_tasklet(
-        "MPI_Cart_get", {}, {'d', 'p', 'c', 'v'},
-        f"MPI_Cart_get(__state->{pgrid_name}_comm, P, d, p, c);\nv = __state->{pgrid_name}_valid;", dtypes.Language.CPP)
+    tasklet = state2.add_tasklet("MPI_Cart_get", {'g'}, {'d', 'p', 'c', 'v'},
+                                 "MPI_Cart_get(g, P, d, p, c);\nv = (g != MPI_COMM_NULL);", dtypes.Language.CPP)
+    pgrid = state2.add_read(pgrid_name)
     dims = state2.add_write("dims")
     periods = state2.add_write("periods")
     coords = state2.add_write("coords")
     valid = state2.add_write("valid")
+    state2.add_edge(pgrid, None, tasklet, 'g', dace.Memlet(data=pgrid_name))
     state2.add_edge(tasklet, 'd', dims, None, dace.Memlet.from_array("dims", darr))
     state2.add_edge(tasklet, 'p', periods, None, dace.Memlet.from_array("periods", parr))
     state2.add_edge(tasklet, 'c', coords, None, dace.Memlet.from_array("coords", carr))
@@ -62,6 +92,7 @@ def test_process_grid():
 def test_sub_grid():
 
     P = dace.symbol('P', dace.int32)
+    pv = _mock_program_visitor()
 
     sdfg = dace.SDFG("sub_grid_test")
     sdfg.add_symbol('P', dace.int32)
@@ -71,19 +102,19 @@ def test_sub_grid():
     _, varr = sdfg.add_array("valid", (1, ), dtype=dace.bool_)
 
     state = sdfg.add_state("start")
-    parent_pgrid_name = comm._cart_create(None, sdfg, state, [1, P])
-    pgrid_name = comm._cart_sub(None, sdfg, state, parent_pgrid_name, [False, True])
+    parent_pgrid_name = comm._cart_create(pv, sdfg, state, [1, P])
+    pgrid_name = comm._cart_sub(pv, sdfg, state, parent_pgrid_name, [False, True])
 
     state2 = sdfg.add_state("main")
     sdfg.add_edge(state, state2, dace.InterstateEdge())
-    tasklet = state2.add_tasklet(
-        "MPI_Cart_get", {}, {'d', 'p', 'c', 'v'},
-        f"MPI_Cart_get(__state->{pgrid_name}_comm, P, &d, &p, &c);\nv = __state->{pgrid_name}_valid;",
-        dtypes.Language.CPP)
+    tasklet = state2.add_tasklet("MPI_Cart_get", {'g'}, {'d', 'p', 'c', 'v'},
+                                 "MPI_Cart_get(g, P, &d, &p, &c);\nv = (g != MPI_COMM_NULL);", dtypes.Language.CPP)
+    pgrid = state2.add_read(pgrid_name)
     dims = state2.add_write("dims")
     periods = state2.add_write("periods")
     coords = state2.add_write("coords")
     valid = state2.add_write("valid")
+    state2.add_edge(pgrid, None, tasklet, 'g', dace.Memlet(data=pgrid_name))
     state2.add_edge(tasklet, 'd', dims, None, dace.Memlet.from_array("dims", darr))
     state2.add_edge(tasklet, 'p', periods, None, dace.Memlet.from_array("periods", parr))
     state2.add_edge(tasklet, 'c', coords, None, dace.Memlet.from_array("coords", carr))

@@ -13,7 +13,7 @@ from dace.sdfg import graph as gr, nodes as nd
 from dace.sdfg.state import ControlFlowRegion
 import networkx as nx
 from networkx.algorithms import isomorphism as iso
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterable, Iterator, List, Optional, Tuple, Type, Union
 from dace.sdfg.validation import InvalidSDFGError
 from dace.transformation import transformation as xf, pass_pipeline as ppl
 
@@ -79,11 +79,8 @@ class PatternMatchAndApply(ppl.Pass):
         self.print_report = print_report
         self.progress = progress
 
-    def depends_on(self) -> Set[Type[ppl.Pass]]:
-        result = set()
-        for p in self.transformations:
-            result.update(p.depends_on())
-        return result
+    def depends_on(self) -> List[Union[Type[ppl.Pass], ppl.Pass]]:
+        return ppl.unique_dependencies(self.transformations)
 
     def modifies(self) -> ppl.Modifies:
         result = ppl.Modifies.Nothing
@@ -100,7 +97,7 @@ class PatternMatchAndApply(ppl.Pass):
         # For every transformation in the list, find first match and apply
         for xform in self.transformations:
             if sdfg.root_sdfg.using_explicit_control_flow:
-                if (not hasattr(xform, '__explicit_cf_compatible__') or xform.__explicit_cf_compatible__ == False):
+                if not xform.__explicit_cf_compatible__:
                     warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                   ' due to incompatibility with experimental control flow blocks. If the ' +
                                   'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
@@ -219,8 +216,7 @@ class PatternMatchAndApplyRepeated(PatternMatchAndApply):
                 applied_anything = False
                 for xform in xforms:
                     if sdfg.root_sdfg.using_explicit_control_flow:
-                        if (not hasattr(xform, '__explicit_cf_compatible__')
-                                or xform.__explicit_cf_compatible__ == False):
+                        if not xform.__explicit_cf_compatible__:
                             warnings.warn('Pattern matching is skipping transformation ' + xform.__class__.__name__ +
                                           ' due to incompatibility with experimental control flow blocks. If the ' +
                                           'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +
@@ -405,7 +401,7 @@ def _try_to_match_transformation(graph: Union[ControlFlowRegion, SDFGState], col
                     setattr(match, oname, oval)
 
         if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(match, '__explicit_cf_compatible__') or match.__explicit_cf_compatible__ == False):
+            if not match.__explicit_cf_compatible__:
                 warnings.warn('Pattern matching is skipping transformation ' + match.__class__.__name__ +
                               ' due to incompatibility with experimental control flow blocks. If the ' +
                               'SDFG does not contain experimental blocks, ensure the top level SDFG does ' +

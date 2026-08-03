@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Transformation helper API. """
 import ast
 import copy
@@ -1961,7 +1961,7 @@ def replace_sdfg_dtypes(
 def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
     # Swap nodes
     for node, _ in sdfg.all_nodes_recursive():
-        if hasattr(node, "in_connectors"):
+        if isinstance(node, nodes.Node):
             for in_con_name, in_con_type in node.in_connectors.items():
                 if in_con_type == from_type:
                     node.in_connectors[in_con_name] = to_type
@@ -1971,7 +1971,6 @@ def _change_sdfg_type(sdfg: SDFG, from_type: typeclass, to_type: typeclass, swap
                         node.in_connectors[in_con_name] = dtypes.pointer(to_type)
                         swaps_count += 1
 
-        if hasattr(node, "out_connectors"):
             for out_con_name, out_con_type in node.out_connectors.items():
                 if out_con_type == from_type:
                     node.out_connectors[out_con_name] = to_type
@@ -2040,7 +2039,7 @@ def _change_struct_type(descriptor: dtypes.struct, from_type: typeclass, to_type
 
 def _change_member_types(descriptor: data.Array, from_type: typeclass, to_type: typeclass, swaps_count: int) -> int:
     """Change member types for descriptors with members attribute."""
-    if not hasattr(descriptor, "members"):
+    if not isinstance(descriptor, data.Structure):
         raise TypeError(f"Expected type with member attr but got {descriptor}")
 
     for member_name, member_descriptor in descriptor.members.items():
@@ -2066,3 +2065,49 @@ def _is_pointer(obj) -> bool:
 def _is_structure_view(obj) -> bool:
     """Check if object is a StructureView."""
     return isinstance(obj, data.StructureView)
+
+
+def move_branch_cfg_up_discard_conditions(if_block: ConditionalBlock, body_to_take: ControlFlowRegion):
+    """
+    Move a branch of a ``ConditionalBlock`` up into its parent CFG, replacing the
+    conditional with the selected branch body and discarding the condition check
+    and every other branch. Incoming and outgoing edges of the conditional are
+    rewired to the spliced branch's start and end nodes.
+
+    :param if_block: The conditional block to dissolve.
+    :param body_to_take: The branch body whose nodes and edges are spliced into
+        ``if_block.parent_graph`` in place of ``if_block``.
+    """
+    bodies = {b for _, b in if_block.branches}
+    assert body_to_take in bodies
+    assert isinstance(if_block, ConditionalBlock)
+
+    graph = if_block.parent_graph
+
+    node_map = dict()
+    new_start_block = None
+    new_end_block = None
+
+    for node in body_to_take.nodes():
+        copynode = copy.deepcopy(node)
+        node_map[node] = copynode
+        start_block_case = (body_to_take.start_block == node) and (graph.start_block == if_block)
+        if body_to_take.start_block == node:
+            assert new_start_block is None
+            new_start_block = copynode
+        if body_to_take.out_degree(node) == 0:
+            assert new_end_block is None
+            new_end_block = copynode
+        graph.add_node(copynode, is_start_block=start_block_case)
+
+    for edge in body_to_take.edges():
+        src = node_map[edge.src]
+        dst = node_map[edge.dst]
+        graph.add_edge(src, dst, copy.deepcopy(edge.data))
+
+    for ie in graph.in_edges(if_block):
+        graph.add_edge(ie.src, new_start_block, copy.deepcopy(ie.data))
+    for oe in graph.out_edges(if_block):
+        graph.add_edge(new_end_block, oe.dst, copy.deepcopy(oe.data))
+
+    graph.remove_node(if_block)
