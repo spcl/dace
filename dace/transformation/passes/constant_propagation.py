@@ -70,15 +70,18 @@ class ConstantPropagation(ppl.Pass):
         """
         initial_symbols = initial_symbols or {}
 
-        # A constant for a Scalar data descriptor is baked with specialize_scalar (folds reads, drops the
+        # A constant for a Scalar data descriptor is baked with specialize_scalars (folds reads, drops the
         # node); the replace_dict path below would rename its data to the literal and leave a dangling ref.
-        from dace.sdfg.utils import specialize_scalar
-        specialized_scalars: Set[str] = set()
-        for name in list(initial_symbols):
-            if name in sdfg.arrays and isinstance(sdfg.arrays[name], data.Scalar):
-                specialize_scalar(sdfg, name, initial_symbols[name])
-                specialized_scalars.add(name)
+        from dace.sdfg.utils import specialize_scalars
+        # Bake them all in one call: the walk it costs is per call, not per scalar.
+        scalars_to_bake = {
+            name: value
+            for name, value in initial_symbols.items()
+            if name in sdfg.arrays and isinstance(sdfg.arrays[name], data.Scalar)
+        }
+        specialized_scalars: Set[str] = set(scalars_to_bake)
         if specialized_scalars:
+            specialize_scalars(sdfg, scalars_to_bake)
             initial_symbols = {k: v for k, v in initial_symbols.items() if k not in specialized_scalars}
 
         # Records the two graph edits that ``result`` does NOT witness: a nested-SDFG

@@ -15,7 +15,7 @@ import time
 from typing import Dict, Tuple, Union
 
 import dace
-from dace.sdfg.utils import specialize_scalar
+from dace.sdfg.utils import specialize_scalars
 from dace.transformation.interstate import LoopUnroll
 
 from tests.corpus.cloudsc.generate_data_for_cloudsc import CLOUDSC_SYMBOLS
@@ -52,8 +52,7 @@ def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
     with dace.config.set_temporary('graph', 'backend', value=backend):
         t0 = time.perf_counter()
         sdfg.specialize({name: CLOUDSC_SYMBOLS[name] for name in SPECIALIZED_SYMBOLS})
-        for name in SPECIALIZED_SCALARS:
-            specialize_scalar(sdfg, name, CLOUDSC_SYMBOLS[name])
+        specialize_scalars(sdfg, {name: CLOUDSC_SYMBOLS[name] for name in SPECIALIZED_SCALARS})
         applied = sdfg.apply_transformations_repeated(LoopUnroll)
         sdfg.validate()
         t1 = time.perf_counter()

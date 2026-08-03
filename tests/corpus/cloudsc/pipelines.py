@@ -42,7 +42,7 @@ from dace import dtypes
 from dace.codegen.codegen import generate_code
 from dace.config import set_temporary
 from dace.sdfg import nodes
-from dace.sdfg.utils import specialize_symbol
+from dace.sdfg.utils import specialize_symbols
 from dace.transformation.dataflow.map_collapse import MapCollapse
 from dace.transformation.pass_pipeline import Pipeline
 from dace.transformation.passes.canonicalize.pipeline import _build_stages
@@ -88,9 +88,8 @@ def specialize_stage(constants: Optional[Dict[str, int]]) -> List[Stage]:
         return []
 
     def apply(sdfg, consts=dict(constants)):
-        for name, value in consts.items():
-            if name in sdfg.symbols or any(name == str(s) for s in sdfg.free_symbols):
-                specialize_symbol(sdfg, name, value)
+        free = {str(s) for s in sdfg.free_symbols}
+        specialize_symbols(sdfg, {n: v for n, v in consts.items() if n in sdfg.symbols or n in free})
 
     return [('specialize', apply)]
 
