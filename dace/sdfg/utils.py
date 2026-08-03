@@ -2755,11 +2755,14 @@ def _interacting(values: Dict[str, Union[float, int, str]]) -> bool:
     """Whether any value mentions another entry's name.
 
     Batching substitutes SIMULTANEOUSLY; the one-at-a-time loop substitutes SEQUENTIALLY, and the two
-    differ exactly when a value names a key -- ``{a: 'b+1', b: '2'}`` folds to ``a=3`` sequentially but
-    to ``a=b+1`` simultaneously. Only a string value can name anything, so numbers are always safe.
+    differ exactly when a value names ANOTHER entry's key -- ``{a: 'b+1', b: '2'}`` folds to ``a=3``
+    sequentially but to ``a=b+1`` simultaneously. Naming its own key is degenerate, not an
+    interaction. Only a string value can name anything, so numbers are always safe.
     """
     names = values.keys()
-    return any(isinstance(val, str) and (names & set(re.findall(r'[A-Za-z_]\w*', val))) for val in values.values())
+    return any(
+        isinstance(val, str) and ((names - {name}) & set(re.findall(r'[A-Za-z_]\w*', val)))
+        for name, val in values.items())
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):

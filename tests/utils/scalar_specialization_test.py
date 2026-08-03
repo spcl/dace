@@ -1,7 +1,11 @@
-import dace
 import copy
+import json
+import re
+
 import numpy as np
-from dace.sdfg.utils import specialize_scalar
+
+import dace
+from dace.sdfg.utils import specialize_scalar, specialize_scalars
 
 Y = dace.symbolic.symbol("Y")
 X = dace.symbolic.symbol("X")
@@ -78,8 +82,51 @@ def test_float_value_round_trips_exactly():
     assert value == 1 / 3
 
 
+@dace.program
+def affine(A: dace.float64[X], B: dace.float64[X], a: dace.float64, b: dace.float64, c: dace.float64):
+    for i in dace.map[0:X:1]:
+        B[i] = A[i] * a + b - c
+
+
+def _canonical_json(sdfg):
+    """Serialized SDFG with guids blanked, so two independently built graphs compare equal."""
+    return re.sub(r'"guid"\s*:\s*"[^"]*"', '"guid": ""', json.dumps(sdfg.to_json(), sort_keys=True))
+
+
+def test_batched_specialization_matches_one_at_a_time():
+    """Baking the set in one walk must land the same graph as one call per scalar, and still run."""
+    values = {'a': 2.0, 'b': 3.0, 'c': 4.0}
+
+    looped = affine.to_sdfg()
+    for name, value in values.items():
+        specialize_scalar(looped, name, value)
+    batched = affine.to_sdfg()
+    specialize_scalars(batched, values)
+    assert _canonical_json(batched) == _canonical_json(looped)
+
+    x_val = 16
+    A = np.random.rand(x_val)
+    B = np.zeros(x_val)
+    batched(A=A, B=B, X=x_val, **values)
+    np.testing.assert_allclose(B, A * 2.0 + 3.0 - 4.0)
+
+
+def test_interacting_values_keep_sequential_meaning():
+    """A value naming another key cannot be applied simultaneously -- it must fall back to the loop."""
+    values = {'a': 'b', 'b': '2.0', 'c': '1.0'}
+
+    looped = affine.to_sdfg()
+    for name, value in values.items():
+        specialize_scalar(looped, name, value)
+    batched = affine.to_sdfg()
+    specialize_scalars(batched, values)
+    assert _canonical_json(batched) == _canonical_json(looped)
+
+
 if __name__ == "__main__":
     test_nested_sdfg()
     test_integer_value_keeps_floating_point_division()
     test_cpp_tasklet_substitution_matches_unspaced_operators()
     test_float_value_round_trips_exactly()
+    test_batched_specialization_matches_one_at_a_time()
+    test_interacting_values_keep_sequential_meaning()

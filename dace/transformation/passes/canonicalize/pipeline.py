@@ -1518,7 +1518,7 @@ class CanonicalizationPipeline(ppl.Pass):
     :param specialize_constants: Optional ``{symbol: value}`` map (e.g. CloudSC's
                              ``{'nclv': 5}``, or a kernel's shape symbols like
                              ``{'Norb': 3}``) baked into the SDFG via
-                             ``specialize_symbol`` (recursively, dropping the symbol)
+                             ``specialize_symbols`` (recursively, dropping the symbol)
                              BEFORE canonicalization -- the same specialization the
                              cloudsc parallelization pipeline does. Symbolic trip
                              counts that become concrete then unroll under
@@ -1769,7 +1769,7 @@ def canonicalize(sdfg: SDFG,
                                    violated at runtime; ``False`` (default) keeps
                                    the sound guards.
     :param specialize_constants: Optional ``{symbol: value}`` baked in via
-                             ``specialize_symbol`` (cloudsc-style, recursive into nested
+                             ``specialize_symbols`` (cloudsc-style, recursive into nested
                              SDFGs) before canonicalization, so symbolic trip counts
                              unroll (e.g. ``{'nclv': 5}``) and concrete matmul extents
                              (e.g. ``{'Norb': 3}``) enable the small-GEMM ``'pure'`` path.
