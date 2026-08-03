@@ -46,15 +46,14 @@ block of the inner body, and the interstate-edge data (conditions **and** assign
 fed the moved blocks is re-emitted inside the guarded region so nothing is silently dropped.
 """
 import copy
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
-from dace import SDFG, properties, symbolic
+from dace import SDFG, symbolic
 from dace.properties import CodeBlock
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDFGState
 from dace.sdfg.utils import set_nested_sdfg_parent_references
-from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.analysis.loop_analysis import (get_init_assignment, get_loop_end, get_loop_stride)
 
 
@@ -315,57 +314,30 @@ def _sift(outer: LoopRegion, inner: LoopRegion, pre: List[SDFGState], post: List
     outer.start_block = outer.node_id(inner)
 
 
-@properties.make_properties
-@transformation.explicit_cf_compatible
-class SiftStatementsIntoPerfectNest(ppl.Pass):
-    """Sift imperfect-nest outer statements into the inner loop under boundary guards (GPU-only).
+def sift_imperfect_nests(sdfg: SDFG) -> int:
+    """Sift every qualifying imperfect nest in ``sdfg``; return how many were sifted.
 
-    See the module docstring for the transform, the soundness gates (S1 non-empty inner loop,
-    S7 outer-axis independence, boundary-assignment refusal) and the GPU-only rationale.
+    Driven by :class:`~dace.transformation.passes.canonicalize.perfect_loop_nesting.PerfectLoopNesting`
+    under ``target='gpu'`` -- this module holds the matcher and the rewrite, not a Pass of its own,
+    so perfect nesting has ONE entry point.
+
+    :param sdfg: The SDFG to transform in place.
+    :returns: The number of nests sifted (0 if none matched).
     """
-
-    CATEGORY: str = 'Optimization Preparation'
-
-    target = properties.Property(dtype=str,
-                                 default='cpu',
-                                 choices=['cpu', 'gpu'],
-                                 desc="Target policy: 'gpu' sifts to expose the outer axis; 'cpu' is a no-op.")
-
-    def __init__(self, target: str = 'cpu'):
-        super().__init__()
-        self.target = target
-
-    def modifies(self) -> ppl.Modifies:
-        return ppl.Modifies.CFG
-
-    def should_reapply(self, modified: ppl.Modifies) -> bool:
-        return False
-
-    def depends_on(self):
-        return {}
-
-    def apply_pass(self, sdfg: SDFG, _: Dict[str, Any]) -> Optional[int]:
-        """Sift every qualifying imperfect nest in ``sdfg``.
-
-        :param sdfg: The SDFG to transform in place.
-        :returns: The number of nests sifted, or ``None`` if none / not a GPU target.
-        """
-        if self.target != 'gpu':
-            return None
-        count = 0
-        # Each sift rewrites the CFG (moves/removes blocks), so re-scan from scratch after
-        # every application until nothing more matches.
-        while True:
-            m = _match(sdfg)
-            if m is None:
-                break
-            _sift(*m)
-            count += 1
-        if count:
-            # _sift deep-copies blocks; any nested SDFG carried along keeps a stale parent
-            # reference until repaired (mirrors MoveIfIntoLoop.apply_pass).
-            set_nested_sdfg_parent_references(sdfg)
-        return count or None
+    count = 0
+    # Each sift rewrites the CFG (moves/removes blocks), so re-scan from scratch after
+    # every application until nothing more matches.
+    while True:
+        m = _match(sdfg)
+        if m is None:
+            break
+        _sift(*m)
+        count += 1
+    if count:
+        # _sift deep-copies blocks; any nested SDFG carried along keeps a stale parent
+        # reference until repaired (mirrors MoveIfIntoLoop.apply_pass).
+        set_nested_sdfg_parent_references(sdfg)
+    return count
 
 
-__all__ = ['SiftStatementsIntoPerfectNest']
+__all__ = ['sift_imperfect_nests']

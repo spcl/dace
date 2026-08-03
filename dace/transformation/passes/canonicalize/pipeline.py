@@ -855,7 +855,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # the same knob as that stage.
     if break_anti_dependence:
         s += [('fission', BreakAntiDependence())]
-    s += [('fission', PerfectLoopNesting()), ('fission', _uniq_fis)]
+    # target= threads the GPU policy through: on 'gpu' the pass ALSO sinks the outer
+    # statements fission could not separate into the inner loop, so the nest is perfect
+    # enough for a grid collapse. On CPU it distributes only (see its docstring).
+    s += [('fission', PerfectLoopNesting(target=target)), ('fission', _uniq_fis)]
 
     # untrivialize: splice out the single-iteration trivial-loop scaffold (the
     # wrappers MoveIfIntoLoop put around bare siblings) *while still a LoopRegion*,
