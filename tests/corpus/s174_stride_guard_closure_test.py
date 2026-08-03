@@ -25,10 +25,8 @@ boundary the guard used to cover, and fails (SIGABRT) on an unconditional-``Scan
 predicate is NOT provable must survive untouched.
 """
 import copy
-import os
 
 import numpy as np
-import pytest
 
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
@@ -38,6 +36,7 @@ from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from tests.corpus.measure_parallelization import cpu_params, guarded_fallback_loops
 from tests.corpus.tsvc import tsvc as _TS
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
+from tests.helpers.isolation import MISMATCH, exit_code
 
 _ZERO_TRIP_LEN = 64
 
@@ -96,40 +95,26 @@ def test_s174_zero_trip_count_does_not_abort():
 
     The reference is a no-op there. An unconditional residue-class ``Scan`` would instead hit
     ``if (s <= 0) std::abort();`` in ``dace::scan::strided_inclusive_sum`` and die on SIGABRT,
-    so this asserts the closure is the Map form. Run in a forked child: a regression aborts the
-    process, which must not take the test session down with it.
+    so this asserts the closure is the Map form. Run in a spawned child: a regression aborts the
+    process, which must not take the test session down with it. Spawn rather than fork -- this
+    process has already run compiled kernels, and a fork child deadlocks on the OpenMP team it
+    inherits without owning.
     """
     sdfg, _ = _canonicalized('s174_d_single', 'guardclose_zero')
     fin = finalize_for_target(copy.deepcopy(sdfg), 'cpu')
     fin.name = f'{fin.name}_gc_zero'
-    csdfg = fin.compile()
 
     a = np.arange(_ZERO_TRIP_LEN, dtype=np.float64)
     b = np.ones(_ZERO_TRIP_LEN, dtype=np.float64)
+    work = a.copy()
 
-    read_fd, write_fd = os.pipe()
-    pid = os.fork()
-    if pid == 0:  # child: never return into pytest, and never raise past os._exit
-        code = 1
-        try:
-            work = a.copy()
-            csdfg(a=work, b=b.copy(), M=0, LEN_1D=_ZERO_TRIP_LEN)
-            code = 0 if np.array_equal(work, a) else 2  # M == 0 must leave `a` untouched
-        except BaseException:  # noqa: BLE001 -- report as an exit code, never as an exception
-            code = 3
-        finally:
-            os.write(write_fd, bytes([code]))
-            os._exit(code)
+    # M == 0 must leave `a` untouched, so `work` is compared against the pristine `a`.
+    code = exit_code(fin, {'a': work, 'b': b, 'M': 0, 'LEN_1D': _ZERO_TRIP_LEN}, [(work, a)], exact=True)
 
-    os.close(write_fd)
-    _, status = os.waitpid(pid, 0)
-    os.close(read_fd)
-
-    assert not os.WIFSIGNALED(status), (
-        f'zero-trip M=0 killed by signal {os.WTERMSIG(status) if os.WIFSIGNALED(status) else "?"} '
-        '(SIGABRT=6 means the guard was dropped onto an unconditional strided Scan)')
-    assert os.WEXITSTATUS(status) != 2, 'M=0 must be a no-op, but the kernel wrote to `a`'
-    assert os.WEXITSTATUS(status) == 0, f'zero-trip M=0 run failed (exit {os.WEXITSTATUS(status)})'
+    assert code >= 0, (f'zero-trip M=0 killed by signal {-code} '
+                       '(SIGABRT=6 means the guard was dropped onto an unconditional strided Scan)')
+    assert code != MISMATCH, 'M=0 must be a no-op, but the kernel wrote to `a`'
+    assert code == 0, f'zero-trip M=0 run failed (exit {code})'
 
 
 def test_s171_symbolic_stride_guard_is_kept():

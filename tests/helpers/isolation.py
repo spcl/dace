@@ -101,13 +101,23 @@ def exit_code(sdfg: dace.SDFG,
     Negative is a signal, ``-signal.SIGABRT`` for a kernel that trapped -- the verdict the runtime
     guard tests assert on. Use :func:`run_isolated` when only a clean run counts as a pass.
     """
-    process = mp.get_context('spawn').Process(target=compare_in_child, args=(sdfg, dict(kwargs), list(outputs), exact))
+    return exit_code_of(compare_in_child, sdfg, dict(kwargs), list(outputs), exact, timeout=timeout)
+
+
+def exit_code_of(target: Callable[..., Any], *args: Any, timeout: float = 900.0) -> int:
+    """Exit code of a spawned child that ran picklable ``target(*args)``; negative is a signal.
+
+    For a child whose verdict is richer than pass/fail, or whose comparison has to stay in the
+    child because it is the test's own -- ``target`` ends by calling :func:`sys.exit` with the code
+    the caller will assert on.
+    """
+    process = mp.get_context('spawn').Process(target=target, args=args)
     process.start()
     process.join(timeout)
     if process.exitcode is None:
         process.kill()
         process.join()
-        raise AssertionError(f'isolated kernel did not finish within {timeout}s')
+        raise AssertionError(f'isolated child did not finish within {timeout}s')
     return process.exitcode
 
 

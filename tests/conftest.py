@@ -96,13 +96,12 @@ def guarded_fork() -> int:
     straight through.
     """
     if openmp_team_was_live():
-        raise RuntimeError(
-            "os.fork() from a process holding a live OpenMP thread team deadlocks the child: the "
-            "child inherits libgomp's team barrier recording threads that fork did not carry over, "
-            "so its first parallel region waits on them forever. The team is up because a compiled "
-            "DaCe CPU kernel has already run in this process. Run the kernel in a spawned child via "
-            "tests.helpers.isolation instead, or pin OMP_NUM_THREADS=1 before dace is imported so no "
-            "team is ever built.")
+        raise RuntimeError("os.fork() from a process holding a live OpenMP thread team deadlocks the child: the "
+                           "child inherits libgomp's team barrier recording threads that fork did not carry over, "
+                           "so its first parallel region waits on them forever. The team is up because a compiled "
+                           "DaCe CPU kernel has already run in this process. Run the kernel in a spawned child via "
+                           "tests.helpers.isolation instead, or pin OMP_NUM_THREADS=1 before dace is imported so no "
+                           "team is ever built.")
     return UNGUARDED_FORK()
 
 

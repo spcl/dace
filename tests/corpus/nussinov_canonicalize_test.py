@@ -67,7 +67,6 @@ os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
 os.environ.setdefault("UCX_VFS_ENABLE", "n")
 
-import numpy as np
 import pytest
 
 import dace
@@ -76,43 +75,13 @@ from dace.transformation.interstate.trivial_loop_elimination import TrivialLoopE
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
 from tests.corpus.polybench import polybench as PB
+from tests.helpers.isolation import call_in_child
 
 
 def _nussinov_kernel():
     kernels = PB.collect("nussinov")
     assert kernels, "polybench nussinov kernel not found in the corpus"
     return kernels[0]
-
-
-def _run_forked(build_and_run):
-    """Compile + run ``build_and_run() -> Dict[str, ndarray]`` in a forked child.
-
-    Repo rule: always fork when running a compiled kernel so a segfault cannot take
-    down the pytest process. Outputs are marshalled back through a temporary npz.
-    """
-    import tempfile
-
-    handle, path = tempfile.mkstemp(suffix=".npz")
-    os.close(handle)
-    pid = os.fork()
-    if pid == 0:  # child
-        try:
-            outputs = build_and_run()
-            np.savez(path, **{name: np.asarray(value) for name, value in outputs.items()})
-            os._exit(0)
-        except BaseException:  # noqa: BLE001 - report and exit non-zero, never raise past fork
-            import traceback
-            traceback.print_exc()
-            os._exit(17)
-    _, status = os.waitpid(pid, 0)
-    ok = os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
-    result = None
-    if ok:
-        with np.load(path) as data:
-            result = {name: data[name] for name in data.files}
-    if os.path.exists(path):
-        os.remove(path)
-    return ok, result
 
 
 def _zero_trip_sdfg() -> dace.SDFG:
@@ -196,8 +165,7 @@ def _end_to_end_bit_exact(peel_limit: int):
     candidate = canonicalize(copy.deepcopy(base), validate=True, peel_limit=peel_limit, break_anti_dependence=True)
     finalized = finalize_for_target(candidate, "cpu")
 
-    ok, got = _run_forked(lambda: PB.run(finalized, call_arrays, psize))
-    assert ok, "candidate nussinov kernel run crashed"
+    got = call_in_child(PB.run, finalized, call_arrays, psize)
     assert PB.outputs_match(reference, got), "canonicalized nussinov is not value-preserving vs reference"
 
 
