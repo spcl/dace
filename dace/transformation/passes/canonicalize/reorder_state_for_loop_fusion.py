@@ -80,7 +80,7 @@ ALIASING_TYPES = (dt.View, dt.Reference)
 
 
 @transformation.explicit_cf_compatible
-class AbsorbState(ppl.Pass):
+class ReorderStateForLoopFusion(ppl.Pass):
     """Reorder a between-loops SIBLING state past the second loop when doing so is dependence-legal
     AND unlocks ``FuseLoops``. ``state`` is never nested into ``loop2``; it stays a sibling block
     before and after, just moved from ``loop1 -> state -> loop2`` to ``loop1 -> loop2 -> state``.
@@ -99,7 +99,7 @@ class AbsorbState(ppl.Pass):
         return [AccessSets]
 
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> Optional[int]:
-        """Absorb every legal, fusion-unlocking between-loops state in ``sdfg``, to a fixpoint.
+        """Reorder every legal, fusion-unlocking between-loops state in ``sdfg``, to a fixpoint.
 
         :param sdfg: The SDFG to transform in place.
         :returns: Number of states sunk, or ``None`` if none.
@@ -108,7 +108,7 @@ class AbsorbState(ppl.Pass):
         if access_sets is None:
             access_sets = AccessSets().apply_pass(sdfg, {})
 
-        absorbed = 0
+        reordered = 0
         changed = True
         while changed:
             changed = False
@@ -116,8 +116,8 @@ class AbsorbState(ppl.Pass):
                 for cfg in list(sd.all_control_flow_regions(recursive=True)):
                     # `sd`, not the top SDFG: the throwaway copy in `would_fuse` only has to carry the
                     # SDFG the candidate actually lives in, and FuseLoops is handed that same scope.
-                    if self.absorb_one(sd, cfg, access_sets):
-                        absorbed += 1
+                    if self.reorder_one(sd, cfg, access_sets):
+                        reordered += 1
                         changed = True
                         break
                 if changed:
@@ -126,7 +126,7 @@ class AbsorbState(ppl.Pass):
                 # The move can change which pairs of blocks are adjacent to which edges, so a stale
                 # access-set entry could under- or over-count what an endpoint now touches -- recompute.
                 access_sets = AccessSets().apply_pass(sdfg, {})
-        return absorbed or None
+        return reordered or None
 
     @staticmethod
     def candidates(cfg: ControlFlowRegion) -> List[Candidate]:
@@ -202,16 +202,18 @@ class AbsorbState(ppl.Pass):
         (WCR or not, dynamic or not) is always treated as a conflict even if the actual subsets might not
         overlap -- an undecided overlap is not legal.
         """
-        if AbsorbState.escapes(second):  # item 7
+        if ReorderStateForLoopFusion.escapes(second):  # item 7
             return False
         sdfg = state.sdfg
-        if AbsorbState.has_side_effecting_code(state, sdfg) or AbsorbState.has_side_effecting_code(second, sdfg):
+        if ReorderStateForLoopFusion.has_side_effecting_code(
+                state, sdfg) or ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg):
             return False  # item 11
-        if AbsorbState.nested_sdfgs_within(state) or AbsorbState.nested_sdfgs_within(second):  # item 5 (+6)
+        if ReorderStateForLoopFusion.nested_sdfgs_within(state) or ReorderStateForLoopFusion.nested_sdfgs_within(
+                second):  # item 5 (+6)
             return False
         reads_s, writes_s = access_sets[state]
         reads_b, writes_b = access_sets[second]
-        if AbsorbState.touches_aliasing_data(sdfg, reads_s | writes_s | reads_b | writes_b):  # item 4
+        if ReorderStateForLoopFusion.touches_aliasing_data(sdfg, reads_s | writes_s | reads_b | writes_b):  # item 4
             return False
         if writes_s & reads_b:  # item 1, RAW: state writes what second reads
             return False
@@ -229,11 +231,11 @@ class AbsorbState(ppl.Pass):
         """
         memo: Dict[int, Any] = {}
         sdfg_copy = copy.deepcopy(sdfg, memo)
-        AbsorbState.sink(memo[id(cfg)], memo[id(first)], memo[id(state)], memo[id(second)])
+        ReorderStateForLoopFusion.reorder_past(memo[id(cfg)], memo[id(first)], memo[id(state)], memo[id(second)])
         return FuseLoops.can_be_applied_to(sdfg_copy, first=memo[id(first)], second=memo[id(second)])
 
     @staticmethod
-    def sink(cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion) -> None:
+    def reorder_past(cfg: ControlFlowRegion, first: LoopRegion, state: SDFGState, second: LoopRegion) -> None:
         """Rewire ``first -> state -> second`` into ``first -> second -> state``, in place.
 
         ``state`` stays a SIBLING node of ``cfg`` throughout -- it is never added into ``second``'s own
@@ -252,16 +254,16 @@ class AbsorbState(ppl.Pass):
         for e in tail_edges:
             cfg.add_edge(state, e.dst, copy.deepcopy(e.data))
 
-    def absorb_one(self, sdfg: SDFG, cfg: ControlFlowRegion, access_sets: Dict[Any, Tuple[Any, Any]]) -> bool:
+    def reorder_one(self, sdfg: SDFG, cfg: ControlFlowRegion, access_sets: Dict[Any, Tuple[Any, Any]]) -> bool:
         """Find and sink one legal, fusion-unlocking candidate inside ``cfg``."""
         for first, state, second in self.candidates(cfg):
             if not self.reorder_legal(state, second, access_sets):
                 continue
             if not self.would_fuse(sdfg, cfg, first, state, second):
                 continue
-            self.sink(cfg, first, state, second)
+            self.reorder_past(cfg, first, state, second)
             return True
         return False
 
 
-__all__ = ['AbsorbState']
+__all__ = ['ReorderStateForLoopFusion']

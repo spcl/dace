@@ -1,5 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""``AbsorbState`` must only sink a between-loops state past the second loop when the reorder is
+"""``ReorderStateForLoopFusion`` must only sink a between-loops state past the second loop when the reorder is
 dependence-legal (no RAW/WAR/WAW against the second loop, no side effect) AND it actually unlocks
 ``FuseLoops`` on the resulting adjacency. Either condition failing alone must leave the SDFG untouched.
 """
@@ -14,7 +14,7 @@ import dace
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.state import BreakBlock, LoopRegion, SDFGState
 from dace.transformation.passes.analysis.analysis import AccessSets
-from dace.transformation.passes.canonicalize.absorb_state import AbsorbState
+from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
 from dace.transformation.passes.canonicalize.loop_fusion import LoopFusion
 
 N = 8
@@ -38,7 +38,7 @@ def _build(conflict: str = 'none',
     controls what the middle state touches, to probe RAW / WAR / WAW against ``loop2`` in isolation;
     ``'none'`` makes the state touch only ``C``/``M``, which neither loop goes near.
     """
-    sdfg = dace.SDFG(f"absorb_state_{conflict}_{loop2_end}_{state_side_effects}")
+    sdfg = dace.SDFG(f"reorder_state_for_loop_fusion_{conflict}_{loop2_end}_{state_side_effects}")
     for name in ("P", "Q", "T", "U"):
         sdfg.add_array(name, [N], dace.float64)
     sdfg.add_array("C", [1], dace.float64)
@@ -107,7 +107,7 @@ def test_legal_reorder_that_unlocks_fusion_is_sunk_and_correct():
     oracle = _run(copy.deepcopy(sdfg))
     assert state in sdfg.nodes(), "state starts as a sibling block of first/second"
 
-    assert AbsorbState().apply_pass(sdfg, {}) == 1
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) == 1
     assert state in sdfg.nodes(), "state must still be a SIBLING block, not nested into second's body"
     assert state not in second.nodes(), "state must never be absorbed into second's own node set"
     assert len(sdfg.edges_between(first, state)) == 0
@@ -135,11 +135,11 @@ def test_a_second_loop_with_side_effects_is_not_sunk_past():
     sdfg, first, state, second = _build(conflict='none')
     body2 = next(b for b in second.nodes() if isinstance(b, SDFGState))
     acc2 = next(n for n in body2.nodes() if isinstance(n, dace.sdfg.nodes.Tasklet))
-    assert AbsorbState.has_side_effecting_code(second, sdfg) is False, "fixture must start effect-free"
+    assert ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg) is False, "fixture must start effect-free"
     acc2.side_effects = True
-    assert AbsorbState.has_side_effecting_code(second, sdfg) is True
+    assert ReorderStateForLoopFusion.has_side_effecting_code(second, sdfg) is True
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -154,7 +154,7 @@ def test_a_candidate_holding_the_entry_block_is_not_sunk(entry: str):
     entry can be anything other than ``first``: with a plain chain ``first`` is the unique source node
     and ``start_block`` reports it no matter what was declared.
     """
-    sdfg = dace.SDFG(f"absorb_state_entry_{entry}")
+    sdfg = dace.SDFG(f"reorder_state_for_loop_fusion_entry_{entry}")
     for name in ("P", "Q", "T", "U"):
         sdfg.add_array(name, [N], dace.float64)
     sdfg.add_symbol("i", dace.int64)
@@ -175,8 +175,8 @@ def test_a_candidate_holding_the_entry_block_is_not_sunk(entry: str):
     sdfg.add_edge(second, first, InterstateEdge())
     assert sdfg.start_block is (state if entry == "state" else second)
 
-    assert AbsorbState.candidates(sdfg) == []
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion.candidates(sdfg) == []
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -188,7 +188,7 @@ def test_a_conflicting_state_is_not_sunk(conflict: str):
     the same container) must each refuse the reorder outright."""
     sdfg, first, state, second = _build(conflict=conflict)
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -198,7 +198,7 @@ def test_a_state_with_side_effects_is_not_sunk():
     """Even with disjoint data, a side-effecting state must not be reordered relative to loop2."""
     sdfg, first, state, second = _build(conflict='none', state_side_effects=True)
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -209,7 +209,7 @@ def test_legal_reorder_but_loops_not_fusable_is_not_sunk():
     loop1's, so ``FuseLoops`` would refuse the resulting adjacency -- condition 2 must gate the sink."""
     sdfg, first, state, second = _build(conflict='none', loop2_end=N - 2)
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -234,9 +234,9 @@ def test_a_view_touched_by_the_state_is_not_sunk():
     # Isolate the predicate itself: it must flag the touch as aliasing-risky on its own terms, not
     # merely coincide with some other guard also refusing this fixture.
     reads_s, writes_s = AccessSets().apply_pass(sdfg, {})[state]
-    assert AbsorbState.touches_aliasing_data(sdfg, reads_s | writes_s) is True
+    assert ReorderStateForLoopFusion.touches_aliasing_data(sdfg, reads_s | writes_s) is True
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -257,9 +257,9 @@ def test_a_loop2_with_an_early_exit_block_is_not_sunk():
     # Isolate the predicate: FuseLoops' own body-shape recognizer also happens to reject a body
     # containing a bare BreakBlock, so an end-to-end None here would not by itself prove THIS guard
     # is the one doing the work -- assert the guard directly fires on its own terms.
-    assert AbsorbState.escapes(second) is True
+    assert ReorderStateForLoopFusion.escapes(second) is True
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -281,9 +281,9 @@ def test_an_edge_assignment_the_second_loop_consumes_is_not_sunk():
 
     # Isolate the guard: candidates() must reject the match itself (not merely fail some later,
     # unrelated check) -- the identical fixture without the assignment yields exactly one candidate.
-    assert AbsorbState.candidates(sdfg) == []
+    assert ReorderStateForLoopFusion.candidates(sdfg) == []
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
     assert len(sdfg.edges_between(first, second)) == 0
@@ -303,23 +303,23 @@ def test_another_path_into_second_is_not_sunk():
 
     # Isolate the guard: candidates() must reject the match itself, because second now has two
     # predecessors -- the identical fixture without ``extra`` yields exactly one candidate.
-    assert AbsorbState.candidates(sdfg) == []
+    assert ReorderStateForLoopFusion.candidates(sdfg) == []
     assert len(sdfg.in_edges(second)) == 2
 
-    assert AbsorbState().apply_pass(sdfg, {}) is None
+    assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) is None
     assert len(sdfg.edges_between(first, state)) == 1
     assert len(sdfg.edges_between(state, second)) == 1
 
 
 def test_non_vacuous_neutered_pass_would_fail_the_positive_assertions():
-    """Prove the positive test is not vacuously true: with ``AbsorbState`` neutered (stubbed to always
+    """Prove the positive test is not vacuously true: with ``ReorderStateForLoopFusion`` neutered (stubbed to always
     return ``None``, exactly a `return None` no-op), the positive test's own load-bearing assertions --
     the sink firing, and ``LoopFusion`` then succeeding -- both fail."""
     sdfg, first, state, second = _build(conflict='none')
 
-    with mock.patch.object(AbsorbState, 'apply_pass', return_value=None):
+    with mock.patch.object(ReorderStateForLoopFusion, 'apply_pass', return_value=None):
         with pytest.raises(AssertionError, match=r'assert None == 1'):
-            assert AbsorbState().apply_pass(sdfg, {}) == 1
+            assert ReorderStateForLoopFusion().apply_pass(sdfg, {}) == 1
 
     # The neutered pass touched nothing, so loop1/loop2 are still not adjacent -> fusion must refuse too.
     with pytest.raises(AssertionError, match=r'assert None == 1'):

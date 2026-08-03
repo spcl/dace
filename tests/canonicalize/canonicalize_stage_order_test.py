@@ -207,7 +207,7 @@ def test_every_stage_unit_is_self_contained(target: str, knob: str):
     would silently lose its inputs; :func:`_assert_self_contained` turns that into an error at
     apply time. Checking it here instead means a mis-wired stage is caught by building the recipe,
     not by a corpus kernel getting far enough into ``canonicalize`` to reach the offending unit --
-    which is what happened to ``AbsorbState``: it was wired bare, and only a corpus run found it.
+    which is what happened to ``ReorderStateForLoopFusion``: it was wired bare, and only a corpus run found it.
     """
     for flipped in (False, True):
         for _label, unit in _build_stages(target=target, **{knob: flipped}):

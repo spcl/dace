@@ -13,7 +13,7 @@ from dace.transformation import pass_pipeline as ppl
 
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
-from dace.transformation.passes.canonicalize.absorb_state import AbsorbState
+from dace.transformation.passes.canonicalize.reorder_state_for_loop_fusion import ReorderStateForLoopFusion
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
@@ -59,7 +59,6 @@ from dace.transformation.passes.clean_access_node_to_scalar_slice_to_tasklet_pat
 from dace.transformation.passes.clean_tasklet_to_scalar_slice_to_access_node_pattern import (
     CleanTaskletToScalarSliceToAccessNodePattern)
 from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArrays, PrivatizeScalars, ScalarFission
-from dace.transformation.passes.accumulator_to_map_and_reduce import AccumulatorToMapAndReduce
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
@@ -612,24 +611,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])),
           ('prep', SplitStatements(break_anti_dependence=break_anti_dependence))]
 
-    # lift_reduce (GPU only): rewrite an accumulator loop into the "per-iteration
-    # deltas into a buffer + Reduce libnode" form (while the reduction is still a Map --
-    # once ``lower`` rewrites it to a LoopRegion+NestedSDFG the clean shape is gone; the
-    # Reduce libnode carries its own identity). This buffer+Reduce form is the
-    # GPU-efficient reduction: the Reduce node expands to a warp/block tree-reduce,
-    # whereas a WCR scalar on GPU lowers to a contended per-thread ``atomicAdd``.
-    #
-    # On CPU we deliberately do NOT lift to buffer+Reduce: the WCR-on-map form produced
-    # later by ``reduction_to_wcr_map`` (``AccumulatorCopyChainToWCR`` + ``LoopToMap``) lowers to
-    # an OpenMP ``reduction(op:var)`` clause (per-thread privatization + tree-reduce),
-    # which is the CPU-efficient form and needs no intermediate buffer.
-    #
-    # TODO: implement scalar -> MapExit WCR reduction lowering for GPU (hierarchical
-    # warp/block reduce) so the GPU path can lower the WCR form directly, matching the
-    # CPU OMP-reduction path, instead of relying on this buffer+Reduce fallback.
-    if target == 'gpu':
-        s += [('lift_reduce', AccumulatorToMapAndReduce())]
-
     # WCRToAugAssign BEFORE lower: rewrite every conflict-free (injective) WCR back to
     # an explicit RMW while maps are still maps; what stays WCR is a genuine reduction
     # that MapToForLoop then refuses to lower (kept parallel -> OMP reduction), so the
@@ -1099,7 +1080,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         s += [('loop_fuse', ReconstructWavefrontNest())]
     # GPU only: a state stranded between two loops blocks FuseLoops outright (it matches a two-node
     # path graph). SinkStateIntoLoop above already recovers the case where the state can be replicated
-    # per iteration; AbsorbState recovers the disjoint case instead, reordering the state to after the
+    # per iteration; ReorderStateForLoopFusion recovers the disjoint case instead, reordering the state to after the
     # second loop. GPU-gated because there fusing is worth more than the tidier block order -- one
     # kernel launch instead of two -- while on CPU the two loops cost about the same either way.
     # Measured over all four corpora at both targets: it fires ZERO times, so un-gating it to CPU
@@ -1110,7 +1091,7 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
         # Wrapped because it declares ``depends_on([AccessSets])``: stages are applied with an empty
         # results dict, so a bare dependency-bearing pass trips ``_assert_self_contained`` -- which
         # is why the original bare wiring made ``canonicalize(target='gpu')`` raise outright.
-        s += [('loop_fuse', ppl.Pipeline([AbsorbState()]))]
+        s += [('loop_fuse', ppl.Pipeline([ReorderStateForLoopFusion()]))]
     s += [('loop_fuse', LoopFusion())]
     s += [('loop_fuse', WavefrontSkew())]
     s += [('loop_fuse', PatternMatchAndApplyRepeated([LoopToMap()]))]

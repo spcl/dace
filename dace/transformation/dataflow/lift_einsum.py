@@ -303,7 +303,7 @@ class LiftEinsum(xf.SingleStateTransformation):
         #   3. Else the output is a non-transient argument -> the CALLER provides
         #      the prior value (a bare ``C += A@B`` over an input) -> FOLD (beta=1).
         #   4. Else it is a fresh, uninitialized transient -> OVERWRITE (beta=0)
-        #      rather than fold garbage (the AccumulatorToMapAndReduce seed hazard).
+        #      rather than fold garbage (the accumulator-seed hazard).
         if out_edge.data.wcr is not None:
             # Only a tensor output (a free output index) reaches here -- can_be_applied refuses
             # a scalar-output dot (``i,i->``), which stays a WCR reduction. The output matrix's
