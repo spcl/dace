@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Differential tests for dace.graphlib: every assertion must hold identically under
-    backend='networkx' (the trivial/reference case) and backend='rustworkx' (skipped
-    automatically if rustworkx is not installed, e.g. dace[fastgraph] was not pip-installed --
-    see .github/workflows/graph-backend-ci.yml for the CI job that always has it available). """
+    backend='networkx' (the shipping default) and backend='rustworkx' (skipped automatically if
+    rustworkx is not installed -- CI installs it via the `fastgraph` extra, see general-ci.yml).
+    graph.backend stays defaulted to 'networkx'; this suite tests the opt-in backend, it does not
+    change which one ships. """
 import importlib.util
 
 import networkx

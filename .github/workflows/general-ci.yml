@@ -42,7 +42,9 @@ jobs:
           libpapi-dev papi-tools g++-aarch64-linux-gnu
         pip-packages: flake8 pytest-xdist coverage
         # islpy: without it WavefrontSkew is a no-op and its tests skip.
-        extras: testing,polyhedral
+        # fastgraph (rustworkx): without it tests/graphlib's rustworkx half silently skips on
+        # find_spec. graph.backend stays defaulted to networkx -- this only tests the opt-in backend.
+        extras: testing,polyhedral,fastgraph
         codecov: 'true'
 
     - name: Install Intel oneAPI MKL
