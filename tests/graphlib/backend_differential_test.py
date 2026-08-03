@@ -1,8 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Differential tests for dace.graphlib: every assertion must hold identically under
-    backend='networkx' (the trivial/reference case) and backend='rustworkx' (skipped
-    automatically if rustworkx is not installed, e.g. dace[fastgraph] was not pip-installed --
-    see .github/workflows/graph-backend-ci.yml for the CI job that always has it available). """
+    backend='networkx' (the shipping default) and backend='rustworkx' (skipped automatically if
+    rustworkx is not installed -- CI installs it via the `fastgraph` extra, see general-ci.yml).
+    graph.backend stays defaulted to 'networkx'; this suite tests the opt-in backend, it does not
+    change which one ships. """
 import importlib.util
 
 import networkx
@@ -49,6 +50,73 @@ def test_weakly_connected_components(backend):
         G = _diamond()
         comps = {frozenset(c) for c in gl.weakly_connected_components(G)}
         assert comps == {frozenset({'a', 'b', 'c', 'd'}), frozenset({'e'})}
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_weakly_connected_component(backend):
+    """ The undirected-reachability question two call sites need (cuda.py's callback stream sweep,
+        split_tasklets.py's floating-island check), asked directly on the DIRECTED graph so no
+        undirected graph type crosses the backend boundary. Result must be reachability-correct
+        (NOT just descendants+ancestors of the node) and in graph node order, not set order. """
+    with gl.set_default_backend(backend):
+        G = _diamond()
+        assert list(gl.weakly_connected_component(G, 'd')) == ['a', 'b', 'c', 'd']
+        assert list(gl.weakly_connected_component(G, 'e')) == ['e']
+        # 'b' and 'c' are joined only via a shared predecessor AND a shared successor -- a
+        # descendants|ancestors shortcut would still find them, so add a node that only an honest
+        # undirected traversal reaches: f -> a is upstream of a, reachable from d only sideways.
+        G.add_edge('f', 'a')
+        assert list(gl.weakly_connected_component(G, 'd')) == ['a', 'b', 'c', 'd', 'f']
+        assert 'd' in gl.weakly_connected_component(G, 'f')
+        with pytest.raises(KeyError):
+            gl.weakly_connected_component(G, 'nonexistent')
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_weakly_connected_component_after_node_removal(backend):
+    """ Regression guard: rustworkx's PyDiGraph.to_undirected() RENUMBERS node indices once the
+        graph has index holes from a remove_node (directed [0, 2, 3] comes back as undirected
+        [0, 1, 2]), so an implementation built on it maps results back to the WRONG nodes. """
+    with gl.set_default_backend(backend):
+        G = gl.DiGraph()
+        for name in ('n0', 'n1', 'n2', 'n3'):
+            G.add_node(name)
+        G.remove_node('n1')
+        G.add_edge('n0', 'n2')
+        assert list(gl.weakly_connected_component(G, 'n2')) == ['n0', 'n2']
+        assert list(gl.weakly_connected_component(G, 'n3')) == ['n3']
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_weakly_connected_component_on_real_networkx_graph(backend):
+    """ Both real call sites pass an SDFGState's `.nx` escape hatch, i.e. a real networkx.DiGraph,
+        not a graphlib-native graph -- that path must give the identical answer on either backend. """
+    with gl.set_default_backend(backend):
+        real_g = networkx.DiGraph()
+        real_g.add_edges_from([('b', 'a'), ('c', 'b'), ('e', 'd')])
+        real_g.add_node('f')
+        assert list(gl.weakly_connected_component(real_g, 'a')) == ['b', 'a', 'c']
+        assert list(gl.weakly_connected_component(real_g, 'd')) == ['e', 'd']
+        assert list(gl.weakly_connected_component(real_g, 'f')) == ['f']
+
+
+@pytest.mark.parametrize('backend', _BACKENDS)
+def test_edge_views_with_data(backend):
+    """ in_edges/out_edges' networkx `data=` keyword: dace/sdfg/analysis/vector_inference.py reads
+        each edge's 'mode' payload through it. """
+    with gl.set_default_backend(backend):
+        G = gl.DiGraph()
+        G.add_edge('x', 'y', mode=1)
+        G.add_edge('z', 'y', mode=7)
+        assert [(u, v, d['mode']) for u, v, d in G.in_edges('y', data=True)] == [('x', 'y', 1), ('z', 'y', 7)]
+        assert [(u, v, d['mode']) for u, v, d in G.out_edges('x', data=True)] == [('x', 'y', 1)]
+        assert list(G.out_edges('x')) == [('x', 'y')]
+        # dace/sdfg/graph.py's DiGraph.in_edges/out_edges pass data POSITIONALLY
+        assert list(G.in_edges('y', True)) == list(G.in_edges('y', data=True))
+        assert list(G.out_edges('x', True)) == list(G.out_edges('x', data=True))
+        # payload is the stored dict by reference, same as G[u][v]
+        next(iter(G.out_edges('x', data=True)))[2]['mode'] = 42
+        assert G['x']['y']['mode'] == 42
 
 
 @pytest.mark.parametrize('backend', _BACKENDS)

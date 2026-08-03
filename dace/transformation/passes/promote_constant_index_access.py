@@ -81,9 +81,7 @@ import copy
 import io
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-import networkx as nx
-import networkx.algorithms.shortest_paths as nxsp
-
+from dace import graphlib as nx
 from dace import SDFG, data, dtypes, properties, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
@@ -525,7 +523,7 @@ class PromoteConstantIndexAccess(ppl.Pass):
             return True
         # Another write of the slot in the same state, with a dataflow path to the read.
         for cand in state_writes:
-            if cand is not read and nxsp.has_path(state.nx, cand, read):
+            if cand is not read and nx.has_path(state.nx, cand, read):
                 return True
         # A block that dominates the read and writes the slot on every path through itself.
         pivot: ControlFlowBlock = state

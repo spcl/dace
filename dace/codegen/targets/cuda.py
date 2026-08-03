@@ -986,7 +986,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                         'movement is forced onto the default stream. This is only correct if the callback uses '
                         'the default stream; for any other stream, add a "dace.current_stream" argument to the '
                         'callback and use it (e.g. cupy ExternalStream).', UserWarning)
-                    for n in nx.node_connected_component(state.nx.to_undirected(as_view=True), node):
+                    for n in nx.weakly_connected_component(state.nx, node):
                         n._cuda_stream = 'nullptr'
 
     def _emit_copy(self, state_id: int, src_node: nodes.Node, src_storage: dtypes.StorageType, dst_node: nodes.Node,

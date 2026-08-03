@@ -25,6 +25,9 @@ class NetworkxBackend:
     def weakly_connected_components(self, G):
         return networkx.weakly_connected_components(G)
 
+    def weakly_connected_component(self, G, node):
+        return networkx.node_connected_component(G.to_undirected(as_view=True), node)
+
     def topological_sort(self, G):
         return networkx.topological_sort(G)
 

@@ -270,13 +270,18 @@ class RustworkxGraphHandle:
     # recovers real networkx's actual insertion-order iteration (see EdgeView._list's docstring
     # for the full explanation and the real bug this fixes).
 
-    def in_edges(self, node):
-        idx = self._index.index_of(node)
-        return [(self._index.node_at(u), self._index.node_at(v)) for u, v, _ in reversed(list(self._rx.in_edges(idx)))]
+    # data=True yields (u, v, attr dict) triples, matching networkx.DiGraph.in_edges/out_edges' own
+    # data= keyword; the payload is the stored dict by reference, same as G[u][v].
 
-    def out_edges(self, node):
-        idx = self._index.index_of(node)
-        return [(self._index.node_at(u), self._index.node_at(v)) for u, v, _ in reversed(list(self._rx.out_edges(idx)))]
+    def in_edges(self, node, data=False):
+        at = self._index.node_at
+        edges = reversed(list(self._rx.in_edges(self._index.index_of(node))))
+        return [(at(u), at(v), p) for u, v, p in edges] if data else [(at(u), at(v)) for u, v, _ in edges]
+
+    def out_edges(self, node, data=False):
+        at = self._index.node_at
+        edges = reversed(list(self._rx.out_edges(self._index.index_of(node))))
+        return [(at(u), at(v), p) for u, v, p in edges] if data else [(at(u), at(v)) for u, v, _ in edges]
 
     def successors(self, node):
         idx = self._index.index_of(node)
@@ -468,6 +473,20 @@ class RustworkxBackend:
         G = _coerce(G)
         for comp in rustworkx.weakly_connected_components(G._rx):
             yield {G._index.node_at(i) for i in comp}
+
+    def weakly_connected_component(self, G, node):
+        # Deliberately scans weakly_connected_components on the PyDiGraph instead of the more direct
+        # to_undirected() + node_connected_component: PyDiGraph.to_undirected() RENUMBERS node indices
+        # whenever the graph has index holes from a remove_node (confirmed empirically -- directed
+        # [0, 2, 3] comes back as undirected [0, 1, 2]), so its result cannot be mapped back through
+        # NodeIndexMap. Missing node raises KeyError, matching real networkx.node_connected_component.
+        import rustworkx
+        G = _coerce(G)
+        idx = _index_of(G, node, KeyError, node)
+        for comp in rustworkx.weakly_connected_components(G._rx):
+            if idx in comp:
+                return {G._index.node_at(i) for i in comp}
+        raise KeyError(node)
 
     def topological_sort(self, G):
         # lazy generator, matching real networkx.topological_sort. rustworkx raises its own

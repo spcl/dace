@@ -29,6 +29,9 @@ class GraphBackend(Protocol):
     def weakly_connected_components(self, G: Any) -> Iterable[Set[Any]]:
         ...
 
+    def weakly_connected_component(self, G: Any, node: Any) -> Set[Any]:
+        ...
+
     def topological_sort(self, G: Any) -> Iterable[Any]:
         ...
 

@@ -1,9 +1,9 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Experimental CUDA code generator: emits kernels, streams, and host glue for GPU SDFGs."""
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Set, Tuple, Union
-import networkx as nx
 
 import dace
+from dace import graphlib as nx
 from dace import data as dt, Memlet
 from dace import dtypes, registry, symbolic, subsets
 from dace.config import Config
