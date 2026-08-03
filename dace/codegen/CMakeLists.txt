@@ -15,6 +15,7 @@ set(DACE_PCH_DIR "" CACHE STRING "Directory holding a precompiled <dace/dace.h>"
 # itself as a nanobind extension module (single artifact, no loader stub).
 option(DACE_ENABLE_NANOBIND "Build the DaCe program as a nanobind extension module" OFF)
 set(DACE_NANOBIND_CMAKE_DIR "" CACHE STRING "Path to nanobind's CMake package directory")
+set(DACE_NANOBIND_STATIC_LIB "" CACHE STRING "Prebuilt nanobind helper archive to link instead of compiling it")
 
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
@@ -280,6 +281,22 @@ if(DACE_ENABLE_NANOBIND)
   find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
   find_package(nanobind CONFIG REQUIRED HINTS ${DACE_NANOBIND_CMAKE_DIR})
   nanobind_add_module(${DACE_PROGRAM_NAME} NB_STATIC ${DACE_CPP_FILES} ${DACE_OBJECTS})
+  if(DACE_NANOBIND_STATIC_LIB)
+    # Link a prebuilt, machine-cached copy of nanobind's helper archive instead of compiling its
+    # ~12 translation units per build folder. The `nanobind-static` target stays alive so its
+    # PUBLIC/INTERFACE surface (include directories, compile options) keeps flowing into the
+    # module's own translation units - only its sources are swapped for one empty stub, and the
+    # real symbols come from the archive appended below.
+    #
+    # The archive is deliberately NOT keyed on any DaCe configuration: nanobind compiles the
+    # helper library with its own fixed flags, so no configurable DaCe setting reaches these
+    # translation units. If a configuration that DOES influence them is ever introduced (e.g.
+    # forwarding extra flags into nanobind_add_module), the cache path on the Python side
+    # (compiler.nanobind_static_cache_path) MUST start keying on it.
+    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/dace_nb_stub.cpp "")
+    set_target_properties(nanobind-static PROPERTIES SOURCES ${CMAKE_CURRENT_BINARY_DIR}/dace_nb_stub.cpp)
+    target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_NANOBIND_STATIC_LIB})
+  endif()
   target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_LIBS})
   # Keep the historical library file name; the import machinery resolves
   # PyInit_<name> from the module name, not from the file name.
