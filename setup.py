@@ -38,6 +38,9 @@ except (subprocess.CalledProcessError, OSError, IndexError, ValueError):
     # Any failure in getting the CMake version counts as "not found"
     pass
 
+# Ninja generates the build for generated code (see dace/codegen/compiler.py). Any version will do.
+ninja_requires = [] if shutil.which('ninja') else ['ninja']
+
 with open("README.md", "r") as fp:
     long_description = fp.read()
 

@@ -16,7 +16,9 @@ def _make_sdfg(
     ub: Union[str, int],
     on_gpu: bool,
 ) -> tuple[dace.SDFG, dace.nodes.MapEntry]:
-    sdfg = dace.SDFG("map_test_" + ("gpu" if on_gpu else "cpu") + f"_{int(time.time())}")
+    # Nanoseconds, not seconds: the four CPU tests here share this name, and at second resolution two
+    # of them land in the same build folder and clobber each other's build when run in parallel.
+    sdfg = dace.SDFG("map_test_" + ("gpu" if on_gpu else "cpu") + f"_{time.time_ns()}")
     state = sdfg.add_state(is_start_block=True)
 
     for name in ["i0", "o0"]:

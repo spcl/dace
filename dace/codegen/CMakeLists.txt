@@ -9,6 +9,7 @@ set(DACE_FILES "" CACHE STRING "List of host code files relative to the root of 
 set(DACE_LIBS "" CACHE STRING "Extra libraries")
 set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.g., 14, 17, 20, 23, 26)")
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
+set(DACE_PCH_DIR "" CACHE STRING "Directory holding a precompiled <dace/dace.h>")
 
 # Nanobind interface (compiler.interface=nanobind): build the program library
 # itself as a nanobind extension module (single artifact, no loader stub).
@@ -54,7 +55,18 @@ foreach(DACE_FILE ${DACE_FILES})
   else()
     set(DACE_CPP_FILES ${DACE_CPP_FILES} ${DACE_FILE})
   endif()
+  if(NOT DACE_FILE_EXT STREQUAL ".cu")
+    list(APPEND DACE_GENERATED_HOST_FILES ${DACE_FILE})
+  endif()
 endforeach()
+
+# Reuse the precompiled DaCe runtime header. Generated host sources only: force-including it into an
+# environment's aux .cpp or a .cu can break a file that never asked for it. Mismatched flags are
+# ignored by the compiler.
+if(DACE_PCH_DIR AND DACE_GENERATED_HOST_FILES)
+  set_source_files_properties(${DACE_GENERATED_HOST_FILES} PROPERTIES
+                              COMPILE_OPTIONS "-I${DACE_PCH_DIR};-include;dace_prewarm.h")
+endif()
 
 # Internal dependencies
 set(DACE_RUNTIME_DIR ${CMAKE_SOURCE_DIR}/../runtime)
@@ -280,8 +292,12 @@ else()
   target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
 endif()
 
-# Set C++ standard to C++20 (or the configured standard)
+# Standard C++, not the GNU dialect: CXX_STANDARD on its own emits -std=gnu++NN, which accepts
+# extensions that Clang then rejects.
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDARD})
+# Forbids silent decay below the required standard (e.g. falling back to an older compiler default).
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
+set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 
 # Create DaCe loader stub (not needed on the nanobind path)
 if(NOT DACE_ENABLE_NANOBIND)
