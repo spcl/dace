@@ -3,7 +3,7 @@ import copy
 import functools
 import re
 
-import networkx as nx
+from dace import graphlib as nx
 
 import dace
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -712,7 +712,7 @@ class SplitTasklets(ppl.Pass):
         # edge in body order. A real RAW (routed through the array) or a shared scope /
         # access node already connects the pair, so no extra edge is added there.
         for k in range(len(emitted) - 1):
-            if not nx.has_path(state.nx.to_undirected(as_view=True), emitted[k], emitted[k + 1]):
+            if emitted[k + 1] not in nx.weakly_connected_component(state.nx, emitted[k]):
                 state.add_edge(emitted[k], None, emitted[k + 1], None, dace.memlet.Memlet(None))
 
     def apply_pass(self, sdfg: SDFG, pipeline_results) -> Optional[Dict[str, Set[str]]]:

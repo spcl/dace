@@ -22,6 +22,7 @@ do; the two rustworkx has no implementation of at all (transitive closure, max-f
 always run on real networkx regardless of backend, since there's nothing to lower to.
 """
 import contextlib
+from typing import KeysView
 
 import dace.config
 import dace.graphlib.resolve as resolve
@@ -31,11 +32,11 @@ from dace.graphlib.algorithms.flow import edmondskarp
 from networkx.exception import NetworkXError, NetworkXNoCycle, NetworkXNoPath, NetworkXUnfeasible, NodeNotFound
 
 __all__ = [
-    'DiGraph', 'MultiDiGraph', 'has_path', 'immediate_dominators', 'weakly_connected_components', 'topological_sort',
-    'simple_cycles', 'find_cycle', 'is_directed_acyclic_graph', 'descendants', 'ancestors', 'all_simple_paths',
-    'transitive_closure', 'transitive_closure_dag', 'dfs_edges', 'shortest_path_length', 'minimum_cut',
-    'get_node_attributes', 'isomorphism', 'NetworkXError', 'NetworkXNoCycle', 'NetworkXNoPath', 'NetworkXUnfeasible',
-    'NodeNotFound', 'set_default_backend', 'get_backend_name'
+    'DiGraph', 'MultiDiGraph', 'has_path', 'immediate_dominators', 'weakly_connected_components',
+    'weakly_connected_component', 'topological_sort', 'simple_cycles', 'find_cycle', 'is_directed_acyclic_graph',
+    'descendants', 'ancestors', 'all_simple_paths', 'transitive_closure', 'transitive_closure_dag', 'dfs_edges',
+    'shortest_path_length', 'minimum_cut', 'get_node_attributes', 'isomorphism', 'NetworkXError', 'NetworkXNoCycle',
+    'NetworkXNoPath', 'NetworkXUnfeasible', 'NodeNotFound', 'set_default_backend', 'get_backend_name'
 ]
 
 
@@ -57,6 +58,20 @@ def immediate_dominators(G, start):
 
 def weakly_connected_components(G):
     return resolve.backend_for(G).weakly_connected_components(G)
+
+
+def weakly_connected_component(G, node) -> KeysView:
+    """The single weak component of the DIRECTED graph G containing `node` -- what
+    `networkx.node_connected_component(G.to_undirected(as_view=True), node)` computes, exposed as one
+    directed-graph call so no undirected graph type has to cross the backend boundary for the two
+    call sites that need it (dace/codegen/targets/cuda.py, dace/transformation/passes/split_tasklets.py).
+
+    Returned in graph node order, NOT as a bare set: iteration over a set of id()-hashed DaCe nodes is
+    not reproducible across processes and this result can reach codegen. The KeysView is still a
+    collections.abc.Set, so `in`/`len`/set operators work exactly as on networkx's own return value.
+    """
+    component = resolve.backend_for(G).weakly_connected_component(G, node)
+    return dict.fromkeys(n for n in G.nodes() if n in component).keys()
 
 
 def topological_sort(G):
