@@ -4,6 +4,7 @@
 import ast
 import collections
 import copy
+import re
 import warnings
 from dace import graphlib as nx
 import time
@@ -2575,8 +2576,8 @@ def _get_used_symbols_impl(scope: Union[SDFG, ControlFlowRegion, SDFGState, nd.M
         raise Exception("Unsupported scope type for get_constant_data: {}".format(type(scope)))
 
 
-def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
-    # This function replaces a scalar with the name <scalar_name> with a constant
+def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalars: Dict[str, Union[float, int, str]]):
+    # This function replaces the scalars named by <scalars> with their constant values
     # A scalar can appear on:
     # 1. Interstate Edge
     # -> For 1: Replace occurence on the interstate edge with scalar_name
@@ -2585,8 +2586,6 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # 3. Access Node
     # -> If access node is used then e.g. [scalar] -> [tasklet]
     # -> then create a [tasklet] that uses the scalar_val as a constant value inside
-    import re
-
     import numpy
 
     def _token_replace(code: str, src: str, dst: str) -> str:
@@ -2594,6 +2593,11 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
         # operator -- `o = _in*3` kept the token '_in*3', so the connector was removed while the
         # code still referenced it. The lookbehind also excludes '.', leaving `x._in` alone.
         return re.sub(r'(?<![A-Za-z0-9_.])' + re.escape(src) + r'(?![A-Za-z0-9_])', dst, code).strip()
+
+    def _token_replace_all(code: str, repl: Dict[str, str]) -> str:
+        for src, dst in repl.items():
+            code = _token_replace(code, src, dst)
+        return code
 
     def _scalar_literal(value: Union[float, int, str], dtype) -> str:
         """Source-level literal for ``value``, substituted verbatim into tasklet code.
@@ -2614,15 +2618,20 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
             return repr(float(value))
         return str(value)
 
-    def repl_code_block_or_str(input: Union[CodeBlock, str], src: str, dst: str):
+    def repl_code_block_or_str(input: Union[CodeBlock, str], repl: Dict[str, str]):
         if isinstance(input, CodeBlock):
-            return CodeBlock(_token_replace(input.as_string, src, dst))
-        else:
-            return input.replace(src, dst)
+            return CodeBlock(_token_replace_all(input.as_string, repl))
+        for src, dst in repl.items():
+            input = input.replace(src, dst)
+        return input
 
-    # Captured before the descriptor is removed below (see _scalar_literal).
-    scalar_desc = sdfg.arrays.get(scalar_name)
-    scalar_dtype = scalar_desc.dtype if scalar_desc is not None else None
+    # ``subs`` keeps the raw values (a float stays a float); ``strvals`` is the textual form used for
+    # code/condition rewriting and interstate edges.
+    subs = dict(scalars)
+    strvals = {name: str(val) for name, val in scalars.items()}
+
+    # Captured before the descriptors are removed below (see _scalar_literal).
+    scalar_dtypes = {name: (sdfg.arrays[name].dtype if name in sdfg.arrays else None) for name in scalars}
 
     nsdfgs = []
     # Before replacing anything collect all nested SDFGs and their in-out edges for recursion
@@ -2634,27 +2643,29 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
     # If we are the root SDFG then we need can't remove non-transient scalar (but will just not use it)
     # For nestedSDFGs we will remove
     if root != sdfg:
-        if scalar_name in sdfg.arrays:
-            sdfg.remove_data(scalar_name, validate=False)
+        for scalar_name in scalars:
+            if scalar_name in sdfg.arrays:
+                sdfg.remove_data(scalar_name, validate=False)
 
-        if scalar_name in sdfg.symbols:
-            sdfg.remove_symbol(scalar_name)
+            if scalar_name in sdfg.symbols:
+                sdfg.remove_symbol(scalar_name)
 
-    c = 0
     for state in sdfg.all_states():
         # Check dynamic inputs
         for e in state.edges():
             if e not in state.edges():
                 continue
-            if e.data is None or e.data.data != scalar_name:
+            if e.data is None or e.data.data not in scalars:
                 continue
 
-            # Now we know we have an edge where memlet.data is the scalar
+            # Now we know we have an edge where memlet.data is one of the scalars. Each edge carries
+            # exactly one data name, so the scalars partition the edges -- no edge is claimed twice.
+            scalar_name = e.data.data
+            scalar_val = scalars[scalar_name]
+            scalar_dtype = scalar_dtypes[scalar_name]
 
             src = e.src
             dst = e.dst
-
-            assert e.data.data == scalar_name
 
             if isinstance(e.dst, nd.Tasklet):
                 in_tasklet_name = e.dst_conn
@@ -2704,44 +2715,71 @@ def _specialize_scalar_impl(root: 'dace.SDFG', sdfg: 'dace.SDFG', scalar_name: s
                 new_range_list = []
 
                 for (b, e, s) in node.map.range:
-                    _b = b.subs(scalar_name, scalar_val)
-                    _e = e.subs(scalar_name, scalar_val)
-                    _s = s.subs(scalar_name, scalar_val)
-                    new_range_list.append((_b, _e, _s))
+                    new_range_list.append((b.subs(subs), e.subs(subs), s.subs(subs)))
                 node.map.range = dace.subsets.Range(new_range_list)
 
     # Replace on for CFGs as
     for cfg in sdfg.all_control_flow_regions():
         if isinstance(cfg, LoopRegion):
-            cfg.loop_condition = repl_code_block_or_str(cfg.loop_condition, scalar_name, str(scalar_val))
-            cfg.init_statement = repl_code_block_or_str(cfg.init_statement, scalar_name, str(scalar_val))
-            cfg.update_statement = repl_code_block_or_str(cfg.update_statement, scalar_name, str(scalar_val))
-            assert cfg.loop_variable != scalar_name, (
-                f"Loop variable {cfg.loop_variable} cannot be the same as the scalar {scalar_name}")
+            cfg.loop_condition = repl_code_block_or_str(cfg.loop_condition, strvals)
+            cfg.init_statement = repl_code_block_or_str(cfg.init_statement, strvals)
+            cfg.update_statement = repl_code_block_or_str(cfg.update_statement, strvals)
+            assert cfg.loop_variable not in scalars, (
+                f"Loop variable {cfg.loop_variable} cannot be the same as a specialized scalar")
         if isinstance(cfg, ConditionalBlock):
             for i, (n_cond, n_body) in enumerate(cfg.branches):
                 if n_cond is not None:
-                    cfg.branches[i] = (repl_code_block_or_str(n_cond, scalar_name, str(scalar_val)), n_body)
+                    cfg.branches[i] = (repl_code_block_or_str(n_cond, strvals), n_body)
 
     for edge in sdfg.all_interstate_edges(recursive=True):
-        edge.data.replace_dict({f"{scalar_name}": f"{scalar_val}"})
+        edge.data.replace_dict(strvals)
 
     if root != sdfg:
-        if scalar_name in sdfg.parent_nsdfg_node.symbol_mapping:
-            del sdfg.parent_nsdfg_node.symbol_mapping[scalar_name]
+        for scalar_name in scalars:
+            sdfg.parent_nsdfg_node.symbol_mapping.pop(scalar_name, None)
 
     for nsdfg_node, state, in_edges, out_edges in nsdfgs:
+        # The captures are pre-mutation, so an edge carrying one of the scalars is still listed here
+        # even though the loop above removed it. Skip a nest that lost its last edge and was deleted.
+        if nsdfg_node not in state.nodes():
+            continue
         in_data_mapping = {ie.data.data: ie.dst_conn for ie in in_edges if ie.data.data is not None}
         out_data_mapping = {oe.data.data: oe.src_conn for oe in out_edges if oe.data.data is not None}
-        assert scalar_name not in out_data_mapping
-        if scalar_name in in_data_mapping:
-            _specialize_scalar_impl(root, nsdfg_node.sdfg, in_data_mapping[scalar_name], scalar_val)
+        assert not (scalars.keys() & out_data_mapping.keys())
+        inner = {in_data_mapping[n]: v for n, v in scalars.items() if n in in_data_mapping}
+        if inner:
+            _specialize_scalar_impl(root, nsdfg_node.sdfg, inner)
+
+
+def _interacting(values: Dict[str, Union[float, int, str]]) -> bool:
+    """Whether any value mentions another entry's name.
+
+    Batching substitutes SIMULTANEOUSLY; the one-at-a-time loop substitutes SEQUENTIALLY, and the two
+    differ exactly when a value names a key -- ``{a: 'b+1', b: '2'}`` folds to ``a=3`` sequentially but
+    to ``a=b+1`` simultaneously. Only a string value can name anything, so numbers are always safe.
+    """
+    names = values.keys()
+    return any(isinstance(val, str) and (names & set(re.findall(r'[A-Za-z_]\w*', val))) for val in values.values())
 
 
 def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[float, int, str]):
-    import sympy
+    """Bake a scalar data container to a constant. Single-entry case of :func:`specialize_scalars`."""
+    assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_name)}"
+    specialize_scalars(sdfg, {scalar_name: scalar_val})
 
-    assert isinstance(scalar_name, str), f"Expected scalar name to be str got {type(scalar_val)}"
+
+def specialize_scalars(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, str]]):
+    """Bake scalar data containers to constant values, recursively through nested SDFGs.
+
+    Folds each scalar's reads into the reading tasklets, drops its edges/connectors and rewrites loop
+    and branch conditions and interstate edges. Doing the whole set in one call is what makes it cheap:
+    the traversal (every state, every nested SDFG, every interstate edge) costs the same for one name
+    as for twenty, so N names cost one walk instead of N.
+
+    :param sdfg: The SDFG to specialize.
+    :param values: Map of scalar name to the constant value to substitute in.
+    """
+    import sympy
 
     def _sympy_to_python_number(val):
         """Convert any SymPy numeric type to a native Python int or float."""
@@ -2754,15 +2792,23 @@ def specialize_scalar(sdfg: 'dace.SDFG', scalar_name: str, scalar_val: Union[flo
             return float(val.evalf())
         return val  # unchanged if not a number
 
-    assert isinstance(
-        scalar_val,
-        (float, int, str,
-         sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(scalar_val)}"
-    if not isinstance(scalar_val, (float, int, str)):
-        if isinstance(scalar_val, sympy.Number):
-            scalar_val = _sympy_to_python_number(scalar_val)
+    if not values:
+        return
 
-    _specialize_scalar_impl(sdfg, sdfg, scalar_name, scalar_val)
+    scalars = {}
+    for name, val in values.items():
+        assert isinstance(
+            val, (float, int, str,
+                  sympy.Number)), f"Expected scalar value to be float, int, str, or sympy.Number, got {type(val)}"
+        scalars[name] = _sympy_to_python_number(val) if not isinstance(val, (float, int, str)) else val
+
+    if _interacting(scalars):
+        # Cannot fold into one pass without changing the result -- keep the sequential meaning.
+        for name, val in scalars.items():
+            _specialize_scalar_impl(sdfg, sdfg, {name: val})
+        return
+
+    _specialize_scalar_impl(sdfg, sdfg, scalars)
 
 
 def specialize_symbol(sdfg: 'dace.SDFG', symbol_name: str, value: Union[float, int, str]):
@@ -2779,21 +2825,50 @@ def specialize_symbol(sdfg: 'dace.SDFG', symbol_name: str, value: Union[float, i
     :param symbol_name: The symbol to replace.
     :param value: The constant value to substitute in.
     """
-    val = str(value)
+    specialize_symbols(sdfg, {symbol_name: value})
+
+
+def specialize_symbols(sdfg: 'dace.SDFG', values: Dict[str, Union[float, int, str]]) -> None:
+    """Bake free symbols to constant values, recursively through nested SDFGs.
+
+    Plural form of :func:`specialize_symbol`, and the one to call when baking several symbols: the
+    recursive walk over every nested SDFG costs the same for one symbol as for twenty, so folding N
+    symbols into a single call turns N walks into one.
+
+    Substituting the symbols together is identical to substituting them one at a time as long as no
+    value names another key; :func:`_interacting` detects the exception and falls back to sequential.
+
+    :param sdfg: The SDFG to specialize.
+    :param values: Map of symbol name to the constant value to substitute in.
+    """
+    if not values:
+        return
+    if _interacting(values):
+        # Cannot fold into one pass without changing the result -- keep the sequential meaning.
+        for name, value in values.items():
+            specialize_symbols(sdfg, {name: value})
+        return
+    vals = {name: str(value) for name, value in values.items()}
     for sd in list(sdfg.all_sdfgs_recursive()):
-        # Drop the symbol's interstate-edge definitions first: baking it to a constant makes them dead,
-        # and ``replace_dict`` would otherwise rewrite the assignment *key* into a literal -- an invalid
-        # ``<value> = ...`` edge (hit on the frontend's ``dim = dim`` buffer-dimension materializers).
+        # Drop the symbols' interstate-edge definitions first: baking them to constants makes them
+        # dead, and ``replace_dict`` would otherwise rewrite the assignment *key* into a literal -- an
+        # invalid ``<value> = ...`` edge (hit on the frontend's ``dim = dim`` buffer-dimension
+        # materializers).
         for e in sd.all_interstate_edges(recursive=False):
-            e.data.assignments.pop(symbol_name, None)
-        if symbol_name in sd.symbols or any(str(s) == symbol_name for s in sd.free_symbols):
-            sd.replace_dict({symbol_name: val})
-        if symbol_name in sd.symbols:
-            sd.remove_symbol(symbol_name)
-    # Strip the symbol from any nested SDFG node's symbol_mapping that still maps it.
+            for name in vals:
+                e.data.assignments.pop(name, None)
+        free = {str(s) for s in sd.free_symbols}
+        present = {name: val for name, val in vals.items() if name in sd.symbols or name in free}
+        if present:
+            sd.replace_dict(present)
+        for name in vals:
+            if name in sd.symbols:
+                sd.remove_symbol(name)
+    # Strip the symbols from any nested SDFG node's symbol_mapping that still maps them.
     for node, _ in sdfg.all_nodes_recursive():
         if isinstance(node, NestedSDFG):
-            node.symbol_mapping.pop(symbol_name, None)
+            for name in vals:
+                node.symbol_mapping.pop(name, None)
 
 
 def demote_symbol_to_scalar(sdfg: 'dace.SDFG',

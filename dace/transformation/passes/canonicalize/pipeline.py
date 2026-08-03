@@ -1668,13 +1668,13 @@ class CanonicalizationPipeline(ppl.Pass):
         disable_openmp_sections(sdfg)
         # Specialize chosen symbols to constants first (e.g. ``nclv = 5``), so the
         # otherwise-symbolic species-loop trip counts become concrete and unroll.
-        # ``specialize_symbol`` descends into nested SDFGs (and strips their
+        # ``specialize_symbols`` descends into nested SDFGs (and strips their
         # ``symbol_mapping``); a plain ``replace_dict`` would leave nested-SDFG
-        # bodies -- the bulk of a real cloudsc build -- unspecialized.
+        # bodies -- the bulk of a real cloudsc build -- unspecialized. Baking the whole
+        # set in one call costs one graph walk per SDFG instead of one per symbol.
         if self._specialize_constants:
-            from dace.sdfg.utils import specialize_symbol
-            for sym, val in self._specialize_constants.items():
-                specialize_symbol(sdfg, sym, val)
+            from dace.sdfg.utils import specialize_symbols
+            specialize_symbols(sdfg, self._specialize_constants)
         stages = _build_stages(unroll_limit=self.unroll_limit,
                                peel_limit=self.peel_limit,
                                break_anti_dependence=self.break_anti_dependence,

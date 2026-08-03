@@ -15,7 +15,7 @@ import time
 from typing import Dict, Tuple, Union
 
 import dace
-from dace.sdfg.utils import specialize_scalar
+from dace.sdfg.utils import specialize_scalars
 from dace.transformation.interstate import LoopUnroll
 
 from tests.corpus.cloudsc.generate_data_for_cloudsc import CLOUDSC_SYMBOLS
@@ -52,8 +52,7 @@ def specialize_and_unroll(sdfg: dace.SDFG, backend: str) -> Tuple[float, int]:
     with dace.config.set_temporary('graph', 'backend', value=backend):
         t0 = time.perf_counter()
         sdfg.specialize({name: CLOUDSC_SYMBOLS[name] for name in SPECIALIZED_SYMBOLS})
-        for name in SPECIALIZED_SCALARS:
-            specialize_scalar(sdfg, name, CLOUDSC_SYMBOLS[name])
+        specialize_scalars(sdfg, {name: CLOUDSC_SYMBOLS[name] for name in SPECIALIZED_SCALARS})
         applied = sdfg.apply_transformations_repeated(LoopUnroll)
         sdfg.validate()
         t1 = time.perf_counter()
@@ -80,8 +79,8 @@ def run_pipeline(sdfg: dace.SDFG, backend: str) -> Dict[str, float]:
     return {'simplify': simplify_time, 'config_prop_loopunroll': pass_time}
 
 
-def filtered_inputs(sdfg: dace.SDFG,
-                    inputs: Dict[str, Union['object', int, float]]) -> Dict[str, Union['object', int, float]]:
+def filtered_inputs(sdfg: dace.SDFG, inputs: Dict[str, Union['object', int,
+                                                             float]]) -> Dict[str, Union['object', int, float]]:
     """Restrict a generated CloudSC input dict to the names ``sdfg`` actually still
     expects. ``specialize``/``specialize_scalar`` can remove a symbol/scalar from the
     compiled call signature entirely, so a stale full input dict (built once, shared
