@@ -44,7 +44,7 @@ def test_lapacke_header_and_symbols_available():
     # lapacke.h must be reachable: it's in the env's declared headers, and in single-lib
     # (spack/conda) mode it lives off the default include path, so an include dir must resolve.
     assert 'lapacke.h' in OpenBLAS.headers
-    if OpenBLAS._mode() == 'single':
+    if OpenBLAS._mode() == 'direct_link':
         incs = OpenBLAS.cmake_includes()
         assert any(os.path.isfile(os.path.join(d, 'lapacke.h')) for d in incs), \
             f'lapacke.h not found under resolved include dirs {incs}'

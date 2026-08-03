@@ -62,7 +62,7 @@ def test_openblas_single_library_is_detected():
     libs = OpenBLAS.cmake_libraries()
     assert libs, 'OpenBLAS.is_installed() is True but cmake_libraries() is empty'
 
-    if OpenBLAS._mode() == 'single':
+    if OpenBLAS._mode() == 'direct_link':
         # A single libopenblas -> headers live off the default include path, so an include
         # dir with cblas.h must be provided, and we must NOT require find_package(BLAS)
         # (CMake can't satisfy it for an off-path spack/conda install -> configure would fail).

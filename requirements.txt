@@ -7,6 +7,7 @@ networkx==3.4.2
 numpy==1.26.4
 packaging==24.1
 ply==3.11
+Pygments==2.20.0
 PyYAML==6.0.2
 sympy==1.14.0
 ordered-set==4.1.0
