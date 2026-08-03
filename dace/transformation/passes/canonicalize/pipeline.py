@@ -5,6 +5,7 @@ Rewrites an SDFG into a deterministic canonical form so later passes (fusion,
 vectorization, scheduling, equivalence checks) observe one shape per
 computation. See ``DESIGN.md`` for the rationale and ordering constraints.
 """
+import os
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from dace import SDFG, properties
@@ -1568,6 +1569,12 @@ class CanonicalizationPipeline(ppl.Pass):
         'stage that produced an invalid SDFG instead of only catching it at the end. Affordable by '
         'default because it is scoped: a stage returning None is skipped, and a Pipeline validates '
         'its own sub-passes rather than re-walking the whole SDFG here. Set False to skip it.')
+    dump_dir = properties.Property(
+        dtype=str,
+        default=None,
+        allow_none=True,
+        desc='Directory to save the SDFG into after every stage, for bisecting which stage broke it. '
+        'None (default) disables dumping entirely.')
     unroll_limit = properties.Property(dtype=int,
                                        default=DEFAULT_UNROLL_LIMIT,
                                        desc='Unroll constant-trip loops <= this many iterations (0 disables).')
@@ -1641,11 +1648,13 @@ class CanonicalizationPipeline(ppl.Pass):
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
                  lift_copy: bool = True,
-                 semantic_lifting: bool = True):
+                 semantic_lifting: bool = True,
+                 dump_dir: Optional[str] = None):
         if target not in _TARGET_DEFAULTS:
             raise ValueError(f"target must be one of {sorted(_TARGET_DEFAULTS)}; got {target!r}")
         self.validate = validate
         self.validate_all = validate_all
+        self.dump_dir = dump_dir
         self.unroll_limit = unroll_limit
         self.target = target
         # Per-target knobs: ``None`` -> preset; explicit value overrides preset.
@@ -1718,7 +1727,10 @@ class CanonicalizationPipeline(ppl.Pass):
                                lift=self.lift,
                                lift_copy=self.lift_copy,
                                semantic_lifting=self.semantic_lifting)
-        for _label, unit in stages:
+        if self.dump_dir:
+            os.makedirs(self.dump_dir, exist_ok=True)
+            sdfg.save(os.path.join(self.dump_dir, '000_input.sdfgz'), compress=True)
+        for index, (_label, unit) in enumerate(stages, start=1):
             _assert_self_contained(unit)
             # A Pipeline validates its own members when asked, so scope validation to the
             # sub-pass that actually changed something instead of re-walking the whole SDFG here.
@@ -1730,6 +1742,10 @@ class CanonicalizationPipeline(ppl.Pass):
             # re-validation -- that is what makes validate_all affordable by default.
             if self.validate_all and result is not None and not is_pipeline:
                 sdfg.validate()
+            # Dump AFTER every stage, including no-ops: a bisect needs a dense index, and a stage
+            # that reports no change can still have rewritten the graph (5 units do exactly that).
+            if self.dump_dir:
+                sdfg.save(os.path.join(self.dump_dir, f'{index:03d}_{_label}.sdfgz'), compress=True)
         disable_openmp_sections(sdfg)
         if self.validate:
             sdfg.validate()
@@ -1752,7 +1768,8 @@ def canonicalize(sdfg: SDFG,
                  specialize_constants: Optional[Dict[str, int]] = None,
                  lift: bool = True,
                  lift_copy: bool = True,
-                 semantic_lifting: bool = True) -> SDFG:
+                 semantic_lifting: bool = True,
+                 dump_dir: Optional[str] = None) -> SDFG:
     """Canonicalize ``sdfg`` in place and return it.
 
     One-call recipe analogous to ``auto_optimize``.
@@ -1831,7 +1848,8 @@ def canonicalize(sdfg: SDFG,
                              specialize_constants=specialize_constants,
                              lift=lift,
                              lift_copy=lift_copy,
-                             semantic_lifting=semantic_lifting).apply_pass(sdfg, {})
+                             semantic_lifting=semantic_lifting,
+                             dump_dir=dump_dir).apply_pass(sdfg, {})
     # Canonicalized output opts in to OpenMP array-section reduction codegen (whole-buffer
     # WCR accumulators of a parallel map -> ``reduction(op:A[0:n])`` instead of per-element
     # atomics; complex via ``declare reduction``). Off by default elsewhere; only provably
