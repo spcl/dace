@@ -220,5 +220,16 @@ def test_refuses_single_loop():
     assert not _libnodes(sdfg)
 
 
+@pytest.mark.parametrize('program', [_transpose2d, _transpose3d], ids=['2d', '3d'])
+def test_idempotent(program):
+    """Re-running must be a no-op: the pass is wired into the canonicalize recipe, which is
+    expected to reach a fixed point, so a second application has to lift nothing."""
+    sdfg = program.to_sdfg(simplify=True)
+    assert _apply(sdfg) == 1
+    lifted = _libnodes(sdfg)
+    assert _apply(sdfg) == 0
+    assert _libnodes(sdfg) == lifted
+
+
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])

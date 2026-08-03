@@ -65,6 +65,7 @@ from dace.transformation.passes.vectorization.insert_tile_load_store import Inse
 # per user direction 2026-06-10). See the pass docstring for the 5-step algorithm.
 from dace.transformation.passes.vectorization.widen_accesses import WidenAccesses
 from dace.transformation.passes.vectorization.tasklet_preprocessing_passes import (
+    PowerOperatorExpansion,
     RemoveMathCall,
     RewriteModuloToPyMod,
     StripPowerExponentCast,
@@ -773,7 +774,8 @@ class VectorizeMultiDim(ppl.Pipeline):
         passes.append(_RunInlineBranchLoweredNSDFGs())
         # Full prep before tiling (so the tile path handles every kernel the frontend emits):
         #   * RemoveEmptyStates — tidy the CFG after branch lowering.
-        #   * PowerOperatorExpansion — ``x**2`` → ``x*x``; ``x**c`` → ``exp(c*log(x))``.
+        #   * PowerOperatorExpansion — ``x**2`` → ``x*x`` for a LITERAL integer exponent only;
+        #     every other exponent stays ``**``.
         #   * SplitTasklets — one op per tasklet (also splits expanded power / fp_factor
         #     arithmetic) so the tile emitter can classify each.
         #   * RemoveMathCall — drop the ``math.`` prefix so ``math.exp``/``log`` match
@@ -799,6 +801,19 @@ class VectorizeMultiDim(ppl.Pipeline):
             # kept as ``**`` (NOT expanded to ``pow`` / a product): the tile emitter decides
             # ``pow`` vs ``ipow`` per operand at emission time from the exponent.
             StripPowerExponentCast(),
+            # Expand a LITERAL-integer-exponent power in a tasklet body to repeated multiplies
+            # (``x**2`` -> ``x*x``). ``**`` / ``pow`` / ``ipow`` carry NO ISA character
+            # (``tileops/_dispatch.py:51-56``), so a ``TileBinop`` holding one falls back to the
+            # per-lane ``pure`` loop and depends on the C compiler's libmvec to vectorize it; the
+            # product instead lowers to a native SIMD multiply with no libm call. It runs BEFORE
+            # ``SplitTasklets``, which then splits the expanded product into one primitive op per
+            # tasklet -- and the tile emitter already carries the matching consumer, accepting the
+            # 1-in-connector ``_out = _a * _a`` shape this produces
+            # (``convert_tasklets_to_tile_ops.py:485-489``). Exponents 0 / 1, a non-integer literal,
+            # and a non-constant exponent are all left as ``**`` for the emitter to classify --
+            # in particular the connector-borne exponent of numpy's ``power`` ufunc, where the
+            # old ``exp(c*log(x))`` identity produced NaN for a negative base (arc_distance).
+            PowerOperatorExpansion(),
             SplitTasklets(),
             # After splitting each body into a single primitive op, unify any mixed-dtype
             # binop by inserting cast tasklets (NumPy promotion). The tile pipeline locks

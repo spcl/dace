@@ -14,6 +14,8 @@ from dace.transformation import pass_pipeline as ppl
 from dace.transformation.passes.relax_integer_powers import RelaxIntegerPowers
 from dace.transformation.passes.simplify import SimplifyPass
 from dace.transformation.passes.canonicalize.absorb_state import AbsorbState
+from dace.transformation.passes.canonicalize.collapse_noop_cast import CollapseNoOpCast
+from dace.transformation.passes.canonicalize.loop_to_transpose import LoopToTranspose
 from dace.transformation.passes.canonicalize.normalize_floor_division import NormalizeFloorDivision
 from dace.transformation.passes.canonicalize.normalize_loop_and_map_origin import NormalizeLoopAndMapOrigin
 from dace.transformation.passes.simplification.continue_to_condition import ContinueToCondition
@@ -580,9 +582,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # is not closed-form (the trip count is data-dependent), so SplitStatements / IVS below
     # cannot handle it. Lift the early exit to a find-first index + clipped range HERE --
     # before those stages -- so they only ever see the resulting break-free, clipped loop.
-    s += [('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()), ('clean', _uniq),
-          ('clean', ContinueToCondition()), ('clean', EarlyExitToFindIndex()), ('clean', SimplifyPass()),
-          ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
+    #
+    # ``CollapseNoOpCast`` leads the block: a Fortran kind coercion / numpy ``astype`` lands as
+    # ``__out = dace.float64(__inp)`` where ``__out`` ALREADY has that dtype. Every downstream
+    # matcher reads tasklet bodies textually, so the redundant call hides an otherwise-plain
+    # assignment from all of them -- and from ``TrivialTaskletElimination`` inside the
+    # ``SimplifyPass`` five entries below, whose predicate is the exact string
+    # ``out = in`` (``trivial_tasklet_elimination.py:85``) and which separately refuses any
+    # endpoint dtype mismatch, so it can never collapse the cast itself. Rewriting to the plain
+    # assignment first is what lets that Simplify fold the copy away in the same block. A
+    # genuine cast (differing dtypes) fails the pass's own equality check and is kept.
+    s += [('clean', CollapseNoOpCast()), ('clean', RewriteModuloToPyMod()), ('clean', NormalizeNegativeStride()),
+          ('clean', _uniq), ('clean', ContinueToCondition()), ('clean', EarlyExitToFindIndex()),
+          ('clean', SimplifyPass()), ('clean', PatternMatchAndApplyRepeated([StateFusionExtended()]))]
 
     # loop_to_syrk / loop_to_syr2k (semantic lift, gated like loop_to_symm): the
     # hand-written symmetric rank-k / rank-2k update nests (polybench syrk / syr2k) are
@@ -953,6 +965,25 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # negative-stride flipping and body-state fusion) for the scan matcher. Order matters: the
     # extra folds must NOT precede ``LoopToReduce``, whose single-tasklet matcher claims the
     # un-folded augassign shape.
+    # loop_to_transpose (semantic lift, gated like the other LoopTo* lifts): a hand-written
+    # tensor permutation ``B[i, j] = A[j, i]`` -- a perfect nest whose innermost body is a PURE
+    # copy at permuted point subscripts -- becomes a ``Transpose`` (2-D, BLAS omatcopy) or
+    # ``TensorTranspose`` (N-D, HPTT / cuTENSOR) node.
+    #
+    # Nothing else in the recipe covers this shape, which is why it gets its own slot:
+    # ``LiftEinsum`` refuses a single tensor operand outright ("a unary copy / transpose /
+    # reduction", ``lift_einsum.py:120``), and ``AssignmentAndCopyKernelToMemsetAndMemcpy``
+    # deliberately REJECTS permutations -- the tasklet body ``_out = _in`` is identical for a
+    # copy, a broadcast and a transpose, so it discriminates on subscript order and hands the
+    # permuted case back (``assignment_and_copy_kernel_to_memset_and_memcpy.py:99-109``).
+    # Left unlifted, a transpose nest stays a strided element-wise copy.
+    #
+    # It runs FIRST in the block, ahead of ``LoopToEinsum``: both read a perfect nest of point
+    # subscripts, and the transpose matcher is the strictly narrower one (pure copy, one
+    # operand, bijective permutation), so letting it claim its shape first costs the einsum
+    # matcher nothing -- an einsum needs >= 2 operands and refuses this shape anyway.
+    if semantic_lifting and lift:
+        s += [('loop_to_x', LoopToTranspose())]
     s += [('loop_to_x', LoopToEinsum()), ('loop_to_x', PatternMatchAndApplyRepeated([WCRToAugAssign()])),
           ('loop_to_x', LoopToReduce()), ('loop_to_x', LiftPreprocess()),
           ('loop_to_x', LoopToScan(interchange_carry_with_map=interchange_carry_with_map)), ('loop_to_x', ArgMaxLift()),
