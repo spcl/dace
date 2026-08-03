@@ -55,7 +55,7 @@ import pytest
 
 import dace
 from dace import symbolic
-from dace.sdfg.utils import specialize_symbol
+from dace.sdfg.utils import specialize_symbols
 from dace.transformation.dataflow.trivial_tasklet_elimination import TrivialTaskletElimination
 from dace.transformation.dataflow.wcr_conversion import AugAssignToWCR
 from dace.transformation.interstate.loop_to_map import LoopToMap
@@ -178,8 +178,7 @@ _SPECIES_NAMES = frozenset(_SPECIES_CONSTANTS)
 
 
 def _specialize(sdfg):
-    for name, val in _SPECIES_CONSTANTS.items():
-        specialize_symbol(sdfg, name, val)
+    specialize_symbols(sdfg, _SPECIES_CONSTANTS)
 
 
 def _unroll_fixpoint(sdfg):
