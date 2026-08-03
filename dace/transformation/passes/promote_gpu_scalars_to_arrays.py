@@ -10,18 +10,13 @@ Bare-identifier references to a promoted name are subscripted ``name[0]`` in
 interstate/loop/branch code slots and ``symbol_mapping`` values; memlets are
 left intact since a ``Scalar`` access already carries subset ``[0]``.
 """
-import re
-from typing import Any, Dict, Optional, Callable
-
-import numpy as np
+from typing import Any, Dict, Optional
 
 from dace import data, dtypes, properties
 from dace.sdfg import SDFG, infer_types, nodes, SDFGState
-from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.transformation.passes.gpu_specialization.helpers.gpu_helpers import written_by_gpu_map_exit
-
-PatternApplier: type = Callable[[str], str]
+from dace.transformation.passes.length_one_array_scalar_conversion import (rewrite_code_slots, rewrite_refs_to_element)
 
 
 def invalidate_array_connectors(sdfg: SDFG):
@@ -134,94 +129,43 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         # matching descriptor (children inherit the parent's choice).
         for nsdfg in list(sdfg.all_sdfgs_recursive()):
             for name in list(nsdfg.arrays):
-                reason = self._needs_promotion(nsdfg, name)
-                if reason is None:
+                if not self._needs_promotion(nsdfg, name):
                     continue
-                # A host-side copy endpoint keeps its storage; every other reason means a
-                # kernel touches the value, which requires device memory.
-                self._promote_one(nsdfg, name, force_gpu_global=(reason != 'copy_endpoint'))
+                self._promote_one(nsdfg, name)
                 promoted += 1
 
         invalidate_array_connectors(sdfg)
 
         return promoted if promoted > 0 else None
 
-    def _needs_promotion(self, sdfg: SDFG, name: str) -> Optional[str]:
-        """Why ``name`` must be widened, or ``None``. The reason selects the target storage."""
+    def _needs_promotion(self, sdfg: SDFG, name: str) -> bool:
         desc = sdfg.arrays[name]
         if not isinstance(desc, data.Scalar):
-            return None
+            return False
 
         # Rule 1: GPU storage is incompatible with Scalar.
         if desc.storage in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
-            return 'gpu'
-
-        # Rule 3: host scalar that is an endpoint of a direct copy edge whose other endpoint is
-        # GPU-resident. The GPU pipeline lifts that edge to a ``CopyLibraryNode`` whose
-        # ``cudaMemcpyAsync`` tasklet types the scalar side as a pointer connector, so a bare
-        # ``Scalar`` codegens as ``const T* = scalar`` and fails to compile. Widening it gives the
-        # copy a real pointer. Checked before rule 2, whose exemptions do not apply: a copy
-        # endpoint is typically a transient (e.g. a propagated constant) that rule 2 skips.
-        if self._is_host_gpu_copy_endpoint(sdfg, name):
-            return 'copy_endpoint'
+            return True
 
         # Rule 2: kernel output -- written by a GPU map's ``MapExit``.
         if desc.storage in self._RULE2_EXEMPT_STORAGES:
-            return None
-        if self.non_transient_only and desc.transient:
-            return None
-        return 'gpu' if written_by_gpu_map_exit(sdfg, name) else None
-
-    @staticmethod
-    def _is_host_gpu_copy_endpoint(sdfg: SDFG, name: str) -> bool:
-        """True if ``name`` is a scalar on one side of a direct ``AccessNode -> AccessNode`` copy
-        edge whose other side is GPU-resident (a host<->device scalar copy the pipeline will lift).
-
-        Skips anything in the SDFG's argument list. Widening changes a descriptor from ``Scalar``
-        to a length-1 ``Array``, which for an *argument* also changes the program's public
-        signature -- callers passing a scalar then fail with "Passing an object (type float32) to
-        an array". Compile-time constants and transients are not part of that signature, so they
-        can be widened freely; a non-transient argument must keep its declared type.
-        """
-        from dace.libraries.standard.helper import GPU_RESIDENT_STORAGES
-
-        if name in sdfg.arglist():
             return False
+        if self.non_transient_only and desc.transient:
+            return False
+        return written_by_gpu_map_exit(sdfg, name)
 
-        for state in sdfg.states():
-            for edge in state.edges():
-                src, dst = edge.src, edge.dst
-                if not (isinstance(src, nodes.AccessNode) and isinstance(dst, nodes.AccessNode)):
-                    continue
-                if edge.data.is_empty() or edge.data.wcr is not None:
-                    continue
-                if src.data == name:
-                    other = sdfg.arrays[dst.data]
-                elif dst.data == name:
-                    other = sdfg.arrays[src.data]
-                else:
-                    continue
-                if other.storage in GPU_RESIDENT_STORAGES:
-                    return True
-        return False
-
-    def _promote_one(self, sdfg: SDFG, name: str, force_gpu_global: bool = True):
+    def _promote_one(self, sdfg: SDFG, name: str):
         """Replace a Scalar descriptor with a length-1 Array and propagate the
         change, recursing into nested SDFGs that re-declare the same name as a
         Scalar.
-
-        :param force_gpu_global: When True, a non-GPU scalar is moved to ``GPU_Global`` because a
-            kernel touches it. When False, its storage is preserved -- a host-side copy endpoint
-            must stay on the host; only its type changes so the copy gets a real pointer.
         """
         scalar_desc: data.Scalar = sdfg.arrays[name]
 
-        # A kernel write needs real device memory, so a Default / CPU-side scalar moves to
-        # GPU_Global; a scalar that already has GPU storage keeps it. A host copy endpoint
-        # (force_gpu_global=False) keeps its host storage.
+        # Rule 2 promotes Default / CPU-side scalars to GPU_Global because
+        # the kernel write needs real device memory; rule 1 keeps the
+        # pre-existing GPU storage.
         target_storage = scalar_desc.storage
-        if force_gpu_global and target_storage not in (dtypes.StorageType.GPU_Global,
-                                                       dtypes.StorageType.GPU_Shared):
+        if target_storage not in (dtypes.StorageType.GPU_Global, dtypes.StorageType.GPU_Shared):
             target_storage = dtypes.StorageType.GPU_Global
 
         array_desc = data.Array(
@@ -239,92 +183,28 @@ class PromoteGPUScalarsToArrays(ppl.Pass):
         sdfg.remove_data(name, validate=False)
         sdfg.add_datadesc(name, array_desc)
 
-        # Keep the constants table consistent with the widened descriptor. A compile-time
-        # constant scalar is emitted by the frame codegen straight from it as
-        # ``constexpr T name = v;``, ignoring the descriptor in ``arrays``. Feeding such a
-        # constant into a pointer-typed copy connector then yields ``const T* = name``, which
-        # does not compile. Re-storing it as a length-1 array makes codegen emit
-        # ``constexpr T name[1] = {v};``, which decays to a pointer for the copy.
-        if name in sdfg.constants_prop:
-            _, cstval = sdfg.constants_prop[name]
-            sdfg.constants_prop[name] = (array_desc, np.reshape(np.asarray(cstval), (1, )))
+        # Shared with the general Scalar <-> length-1 Array passes: the state-machine slots that name a
+        # descriptor textually, and the bare-reference -> ``name[0]`` transform, are the same rewrite.
+        rewrite_code_slots(sdfg, lambda text: rewrite_refs_to_element(text, {name: name}))
+        self._rewrite_states(sdfg=sdfg, name=name)
 
-        compiled_pattern = re.compile(rf'(?<![\w.])({re.escape(name)})(?!\s*\[)\b')
-        pattern = lambda s: compiled_pattern.sub(rf'\1[0]', s)
-
-        self._rewrite_state_machine(sdfg, pattern)
-        self._rewrite_states(sdfg=sdfg, name=name, pattern=pattern, force_gpu_global=force_gpu_global)
-
-    @staticmethod
-    def _rewrite_codeblock(pattern: PatternApplier, codeblock: properties.CodeBlock) -> properties.CodeBlock:
-        codeblock_str = codeblock.as_string
-        new_codeblock_str = pattern(codeblock_str)
-        return properties.CodeBlock(new_codeblock_str, codeblock.language)
-
-    def _rewrite_state_machine(self, sdfg: SDFG, pattern: PatternApplier) -> None:
-        """Rewrite bare-identifier references on every state-machine code slot:
-        interstate edges (assignments + condition), ``LoopRegion`` and
-        ``ConditionalBlock`` CodeBlocks. ``InterstateEdge.assignments`` and
-        ``.condition`` are class-level properties so they always exist.
-        """
-        for cfg in sdfg.all_control_flow_regions():
-            for edge in cfg.edges():
-                ise = edge.data
-                if ise is None:
-                    continue
-                for k, v in list(ise.assignments.items()):
-                    if not isinstance(v, str):
-                        continue
-                    new_v = pattern(v)
-                    if new_v != v:
-                        ise.assignments[k] = new_v
-                ise.condition = self._rewrite_codeblock(pattern, ise.condition)
-
-        # ``ConditionalBlock`` and ``LoopRegion`` carry the only CodeBlock slots
-        # a state-machine walk reaches; other blocks embed no user expressions.
-        for block in sdfg.all_control_flow_blocks(recursive=True):
-            if isinstance(block, ConditionalBlock):
-                # Rebuild the entry rather than item-assigning into it: ``add_branch`` appends a
-                # mutable ``[condition, body]``, but ``remove_branch`` rebuilds the list with
-                # ``(c, b)`` tuples -- so ``branch[0] = ...`` raises "'tuple' object does not
-                # support item assignment" on any ConditionalBlock that has had a branch removed.
-                for i, (condition, branch_body) in enumerate(block.branches):
-                    if condition is not None:
-                        block.branches[i] = (self._rewrite_codeblock(pattern, condition), branch_body)
-            elif isinstance(block, LoopRegion):
-                # init/update are optional -- a ``while`` LoopRegion has only the condition.
-                if block.update_statement is not None:
-                    block.update_statement = self._rewrite_codeblock(pattern, block.update_statement)
-                if block.init_statement is not None:
-                    block.init_statement = self._rewrite_codeblock(pattern, block.init_statement)
-                if block.loop_condition is not None:
-                    block.loop_condition = self._rewrite_codeblock(pattern, block.loop_condition)
-
-    def _rewrite_states(self, sdfg: SDFG, name: str, pattern: PatternApplier,
-                        force_gpu_global: bool = True) -> None:
+    def _rewrite_states(self, sdfg: SDFG, name: str) -> None:
         """Apply the promotion in all states."""
         for state in sdfg.states():
-            self._rewrite_state(state=state, name=name, pattern=pattern)
+            self._rewrite_state(state=state, name=name)
 
-    def _rewrite_state(self, state: SDFGState, name: str, pattern: PatternApplier) -> None:
-        """Push the rewrite into NestedSDFGs reached from ``state``.
+    def _rewrite_state(self, state: SDFGState, name: str) -> None:
+        """Push the promotion into NestedSDFGs reached from ``state``.
 
         Memlets are not touched -- a ``Scalar`` access always carries subset
-        ``[0]``, identical to a length-1 array's. The two slots that DO need
-        attention are (a) the inner descriptor when the NSDFG re-declares it
-        as a ``Scalar``, and (b) ``symbol_mapping`` values that bare-reference
-        the promoted name (frontend symbol-promotion threads scalars into the
-        nested scope this way).
+        ``[0]``, identical to a length-1 array's. What DOES need attention is
+        the inner descriptor when the NSDFG re-declares the promoted name as a
+        ``Scalar``; ``symbol_mapping`` values are handled by the shared
+        ``rewrite_code_slots`` walk.
         """
         for node in state.nodes():
             if not isinstance(node, nodes.NestedSDFG):
                 continue
-
-            for k, v in list(node.symbol_mapping.items()):
-                v_str = v if isinstance(v, str) else str(v)
-                new_v = pattern(v_str)
-                if new_v != v_str:
-                    node.symbol_mapping[k] = new_v
 
             handled_inner_names: set[str] = set()  # If data is referenced as input and output.
             for iedge in state.in_edges(node):

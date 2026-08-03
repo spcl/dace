@@ -282,13 +282,77 @@ def test_symbol_mapping_value_rewrite():
         nsdfg.symbol_mapping['s_inner']
 
 
+# ---------------------------------------------------------------------------
+# NestedSDFG connector residency. An outer ``Scalar`` ``h`` that is one end of a
+# direct device<->host copy is re-declared as ``h_in`` on a NestedSDFG
+# connector. The two ends of a connector name the SAME buffer, so whatever the
+# pass decides for the outer descriptor the inner one must match -- a promotion
+# that moves only one end to ``GPU_Global`` hands the NestedSDFG a device
+# pointer for a host buffer.
+# ---------------------------------------------------------------------------
+def _build_copy_endpoint_nsdfg(host_storage: dtypes.StorageType, device_to_host: bool):
+    """Outer scalar ``h`` (storage ``host_storage``) copied to/from GPU scalar ``d``, then fed to a
+    NestedSDFG whose connector re-declares it as the ``Scalar`` ``h_in``."""
+    inner = dace.SDFG('inner')
+    inner.add_scalar('h_in', dtype=dace.float64, transient=False, storage=dtypes.StorageType.Default)
+    inner.add_scalar('o_in', dtype=dace.float64, transient=False, storage=dtypes.StorageType.Default)
+    istate = inner.add_state('s', is_start_block=True)
+    istate.add_nedge(istate.add_access('h_in'), istate.add_access('o_in'), Memlet(data='h_in', subset='0'))
+
+    outer = dace.SDFG('copy_endpoint')
+    outer.add_scalar('d', dtype=dace.float64, transient=True, storage=dtypes.StorageType.GPU_Global)
+    outer.add_scalar('h', dtype=dace.float64, transient=True, storage=host_storage)
+    outer.add_scalar('o', dtype=dace.float64, transient=True, storage=host_storage)
+    copy_state = outer.add_state('copy', is_start_block=True)
+    dev, host = copy_state.add_access('d'), copy_state.add_access('h')
+    if device_to_host:
+        copy_state.add_nedge(dev, host, Memlet(data='d', subset='0'))
+    else:
+        copy_state.add_nedge(host, dev, Memlet(data='h', subset='0'))
+
+    use_state = outer.add_state('use')
+    outer.add_edge(copy_state, use_state, dace.InterstateEdge())
+    nsdfg = use_state.add_nested_sdfg(sdfg=inner, inputs={'h_in'}, outputs={'o_in'})
+    use_state.add_edge(use_state.add_access('h'), None, nsdfg, 'h_in', Memlet(data='h', subset='0'))
+    use_state.add_edge(nsdfg, 'o_in', use_state.add_access('o'), None, Memlet(data='o', subset='0'))
+    return outer, inner
+
+
+@pytest.mark.parametrize('device_to_host', [True, False])
+def test_nested_connector_residency_agrees_for_host_copy_endpoint(device_to_host: bool):
+    """A HOST scalar that is one end of a device<->host copy must not have its NestedSDFG
+    counterpart moved to the device on its own: both ends stay host-resident."""
+    outer, inner = _build_copy_endpoint_nsdfg(dtypes.StorageType.CPU_Heap, device_to_host)
+    _run(outer)
+    outer_storage = outer.arrays['h'].storage
+    inner_storage = inner.arrays['h_in'].storage
+    assert outer_storage == inner_storage, (outer_storage, inner_storage)
+    assert outer_storage == dtypes.StorageType.CPU_Heap, outer_storage
+
+
+def test_nested_connector_residency_agrees_for_gpu_scalar():
+    """Control for the two tests above: a GPU-resident scalar (rule 1) IS promoted, and both ends
+    of the connector land on ``GPU_Global``. Isolates the failure above to the host endpoint."""
+    outer, inner = _build_copy_endpoint_nsdfg(dtypes.StorageType.GPU_Global, device_to_host=True)
+    _run(outer)
+    outer_storage = outer.arrays['h'].storage
+    inner_storage = inner.arrays['h_in'].storage
+    assert outer_storage == inner_storage, (outer_storage, inner_storage)
+    assert outer_storage == dtypes.StorageType.GPU_Global, outer_storage
+    assert isinstance(outer.arrays['h'], data.Array), type(outer.arrays['h']).__name__
+    assert isinstance(inner.arrays['h_in'], data.Array), type(inner.arrays['h_in']).__name__
+
+
 if __name__ == '__main__':
     test_issue_2393_conditional_block_pattern()
     test_loop_region_init_update_condition_rewrite()
     test_interstate_edge_condition_and_assignment_rewrite()
     test_nested_sdfg_rename_via_connector()
-    test_memlet_other_subset_preserved()
+    test_memlet_other_subset_preserved_x_as_data()
     test_rule2_kernel_output_scalar_promoted()
     test_rule2_transient_purely_internal_not_promoted(True)
     test_rule2_transient_purely_internal_not_promoted(False)
     test_symbol_mapping_value_rewrite()
+    test_nested_connector_residency_agrees_for_host_copy_endpoint(True)
+    test_nested_connector_residency_agrees_for_host_copy_endpoint(False)
+    test_nested_connector_residency_agrees_for_gpu_scalar()
