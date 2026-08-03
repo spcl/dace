@@ -921,16 +921,19 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+                # Outgoing-Memlet counterpart of the above. A source-relative Memlet here
+                # (.data names the inner transient, not the written array) would drop that
+                # array -- and its shape/stride symbols -- from the kernel signature, so
+                # resolve the real destination from the memlet-tree root.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                    if oedge.data.is_empty():
+                        continue
+                    root_dst = self.graph.memlet_tree(oedge).root().edge.dst
+                    dst_name = root_dst.data if isinstance(root_dst, nd.AccessNode) else oedge.data.data
+                    if dst_name not in descs and dst_name not in additional_descs:
+                        additional_descs[dst_name] = sdfg.arrays[dst_name]
 
             else:
                 # Case is ignored.
