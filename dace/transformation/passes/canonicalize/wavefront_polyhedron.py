@@ -33,7 +33,8 @@ guarantee).
 from typing import List, Optional, Sequence, Tuple
 
 from dace import symbolic
-from dace.sdfg.analysis.polyhedral_isl import HAVE_ISL  # noqa: F401  # re-export: wavefront_skew reads poly.HAVE_ISL
+# noqa: F401 -- re-exports reached as poly.<name> from wavefront_skew; ruff cannot see that use.
+from dace.sdfg.analysis.polyhedral_isl import HAVE_ISL, is_domain_empty  # noqa: F401
 from dace.sdfg.analysis.polyhedral_isl import (isl, classify_dim, collect_basic_sets, constraint_to_sympy, dedupe_terms,
                                                make_set, pwaff_bound, subs_by_name)
 

@@ -209,8 +209,6 @@ def test_wavefront_skew_runtime_guard_traps_on_violation():
     import subprocess
     import textwrap
     src = textwrap.dedent('''
-        import sys
-        sys.path.insert(0, '/home/primrose/Work/yakup-dev')
         import numpy as np
         import dace
         from dace.transformation.passes.canonicalize.wavefront_skew import WavefrontSkew
@@ -225,13 +223,15 @@ def test_wavefront_skew_runtime_guard_traps_on_violation():
 
         sdfg = prog.to_sdfg(simplify=True)
         assert WavefrontSkew().apply_pass(sdfg, {}) == 1
+        print('BUILT', flush=True)
         sdfg(aa=np.zeros((8, 8)), N=8, sym_unannot=-1)  # negative -> trap
     ''')
     res = subprocess.run([sys.executable, '-c', src], capture_output=True, timeout=120)
-    # ``std::abort`` -> SIGABRT; the interpreter exits non-zero. Assertion is
-    # signal-agnostic: a normal exit means no guard fired.
-    assert res.returncode != 0, ('runtime guard did not trap on a violating sym '
-                                 f'(stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})')
+    ctx = f'(rc={res.returncode}, stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})'
+    # Non-vacuity: without BUILT any child failure -- an import error, a skew that did not apply --
+    # would satisfy the returncode check and the test could never fail.
+    assert b'BUILT' in res.stdout, f'child died before the guarded call {ctx}'
+    assert res.returncode != 0, f'runtime guard did not trap on a violating sym {ctx}'
 
 
 @dace.program

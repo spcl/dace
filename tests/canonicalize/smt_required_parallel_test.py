@@ -150,15 +150,19 @@ def test_unique_scatter_guard_rejects_duplicate_indices():
     a child -- an uncaught SIGILL/abort here is the guard doing its job."""
     import subprocess
     import sys
-    src = ('import numpy as np, sys\n'
-           'sys.path.insert(0, "/home/primrose/Work/dace")\n'
+    src = ('import numpy as np\n'
            'from tests.canonicalize import smt_required_parallel_test as T\n'
            'sdfg = T.cpu_canon(T.unique_scatter.to_sdfg(simplify=True))\n'
            'idx = np.array([0, 0, 1, 1, 2, 2, 3, 3], dtype=np.int64)\n'
+           'print("BUILT", flush=True)\n'
            'sdfg(A=np.zeros(8), B=np.arange(1.0, 9.0), IDX=idx, N=8)\n'
            'print("NO_TRAP")\n')
     proc = subprocess.run([sys.executable, '-c', src], capture_output=True, text=True, timeout=900)
-    assert 'NO_TRAP' not in proc.stdout, 'duplicate indices must trip the guard, not run silently'
+    ctx = f'(rc={proc.returncode}, stdout={proc.stdout!r}, stderr={proc.stderr[-400:]!r})'
+    # Non-vacuity: without BUILT a child that crashed for any other reason prints nothing and the
+    # NO_TRAP check passes, so the test could never fail.
+    assert 'BUILT' in proc.stdout, f'child died before the guarded call {ctx}'
+    assert 'NO_TRAP' not in proc.stdout, f'duplicate indices must trip the guard, not run silently {ctx}'
 
 
 # --------------------------------------------------------------------------- #
