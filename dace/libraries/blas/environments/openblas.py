@@ -120,13 +120,19 @@ class OpenBLAS:
 
     @staticmethod
     def _mode():
-        """``'reference'`` if reference-BLAS libs are on the loader path (let CMake's
-        FindBLAS locate them); else ``'single'`` if a lone ``libopenblas`` is (link it
-        directly); else ``None`` (not installed)."""
-        if _reference_blas_libs():
-            return 'reference'
+        """``'reference'`` if reference-BLAS libs are on the loader path AND a ``libopenblas``
+        exists for CMake to find (let FindBLAS locate them); else ``'single'`` if a lone
+        ``libopenblas`` is (link it directly); else ``None`` (not installed).
+
+        Reference mode pins ``BLA_VENDOR=OpenBLAS``, which makes FindBLAS search for
+        ``libopenblas`` specifically -- so a box whose reference ``libblas`` is NOT OpenBLAS
+        would satisfy the loader-path check and then fail configure with "Could NOT find BLAS".
+        Requiring the OpenBLAS library up front makes this predicate prove what the mode needs.
+        """
         lib, _ = _single_libopenblas()
-        return 'single' if lib else None
+        if not lib:
+            return None
+        return 'reference' if _reference_blas_libs() else 'single'
 
     @staticmethod
     def cmake_packages():
@@ -152,11 +158,15 @@ class OpenBLAS:
 
     @staticmethod
     def cmake_libraries():
-        ref = _reference_blas_libs()
-        if ref:
-            return ref
-        lib, _ = _single_libopenblas()
-        return [lib] if lib else []
+        # Driven by _mode() like the other four, so is_installed() cannot report an OpenBLAS
+        # the mode has already rejected.
+        mode = OpenBLAS._mode()
+        if mode == 'reference':
+            return _reference_blas_libs()
+        if mode == 'single':
+            lib, _ = _single_libopenblas()
+            return [lib]
+        return []
 
     @staticmethod
     def is_installed():

@@ -23,7 +23,7 @@ def _run(sdfg, **kw):
     sdfg(**kw)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_axpy_openblas():
     n, a = 16, 1.7
     rng = np.random.default_rng(0)
@@ -45,7 +45,7 @@ def test_axpy_openblas():
     np.testing.assert_allclose(res, expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_scal_openblas():
     n, a = 20, 2.5
     x = np.random.default_rng(1).standard_normal(n)
@@ -78,7 +78,7 @@ def _build_reduction_sdfg(node_cls, n, *, x_dtype=dace.float64, out_dtype=None):
     return sdfg
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_nrm2_openblas():
     n = 16
     x = np.random.default_rng(2).standard_normal(n)
@@ -88,7 +88,7 @@ def test_nrm2_openblas():
     np.testing.assert_allclose(out[0], np.linalg.norm(x), rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_asum_openblas():
     n = 16
     x = np.random.default_rng(3).standard_normal(n)
@@ -98,7 +98,7 @@ def test_asum_openblas():
     np.testing.assert_allclose(out[0], np.sum(np.abs(x)), rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_iamax_openblas():
     n = 24
     x = np.random.default_rng(4).standard_normal(n)
@@ -109,7 +109,7 @@ def test_iamax_openblas():
     assert int(out[0]) == 11
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_copy_openblas():
     n = 18
     x = np.random.default_rng(5).standard_normal(n)
@@ -127,7 +127,7 @@ def test_copy_openblas():
     np.testing.assert_array_equal(y, x)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_swap_openblas():
     n = 12
     rng = np.random.default_rng(6)
@@ -153,7 +153,7 @@ def test_swap_openblas():
     np.testing.assert_array_equal(y_out, x_orig)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_trsv_openblas():
     n = 8
     rng = np.random.default_rng(7)
@@ -178,7 +178,7 @@ def test_trsv_openblas():
     np.testing.assert_allclose(x_out, expected, rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_trmv_openblas():
     n = 6
     rng = np.random.default_rng(8)
@@ -202,7 +202,7 @@ def test_trmv_openblas():
     np.testing.assert_allclose(x_out, expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_symv_openblas():
     n = 6
     rng = np.random.default_rng(9)
@@ -230,7 +230,7 @@ def test_symv_openblas():
     np.testing.assert_allclose(y_out, expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_trsm_openblas():
     m, n = 6, 4
     rng = np.random.default_rng(10)
@@ -255,7 +255,7 @@ def test_trsm_openblas():
     np.testing.assert_allclose(np.asarray(B_out), expected, rtol=1e-10, atol=1e-10)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_trmm_openblas():
     m, n = 6, 4
     rng = np.random.default_rng(11)
@@ -279,7 +279,7 @@ def test_trmm_openblas():
     np.testing.assert_allclose(np.asarray(B_out), expected, rtol=1e-12, atol=1e-12)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_symm_openblas():
     m, n = 5, 4
     rng = np.random.default_rng(12)
@@ -307,7 +307,7 @@ def test_symm_openblas():
     np.testing.assert_allclose(np.asarray(C_out), expected, rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_syrk_openblas():
     n, k = 5, 4
     A = np.random.default_rng(13).standard_normal((n, k))
@@ -330,7 +330,7 @@ def test_syrk_openblas():
     np.testing.assert_allclose(np.tril(np.asarray(C_out)), np.tril(expected), rtol=_RTOL, atol=_ATOL)
 
 
-@pytest.mark.mkl
+@pytest.mark.openblas
 def test_ger_openblas():
     m, n = 5, 4
     rng = np.random.default_rng(14)

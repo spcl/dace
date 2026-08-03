@@ -36,7 +36,7 @@ jobs:
     - uses: ./.github/actions/setup-dace
       with:
         # 3.12 is this workflow's only axis: General Tests covers 3.10/3.14 and ML covers 3.13.
-        python-version: '3.12'
+        python-version: '3.14'
         # cmake + ninja: the build cache replays a recorded ``ninja -t compdb``, and
         # dace/codegen/compiler.py only selects the Ninja generator when ``ninja`` is on PATH.
         # BLAS/LAPACK: the readable library-lowering test lowers BLAS library nodes and the corpus
