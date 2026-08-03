@@ -50,7 +50,7 @@ import collections
 import copy
 import tempfile
 from itertools import chain, repeat
-from typing import Any, Callable, Dict, List, Optional, OrderedDict, Tuple, Union
+from typing import Any, Dict, List, Optional, OrderedDict, Tuple, Union
 
 import numpy as np
 

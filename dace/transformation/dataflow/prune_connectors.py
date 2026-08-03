@@ -2,11 +2,10 @@
 from typing import Set, Tuple
 import re
 
-from dace import dtypes, SDFG, SDFGState, symbolic, properties, data as dt
+from dace import dtypes, SDFG, SDFGState, symbolic, properties
 from dace.transformation import transformation as pm, helpers
 from dace.sdfg import nodes, utils
 from dace.sdfg.analysis import cfg
-from dace.sdfg.state import StateSubgraphView
 
 
 @properties.make_properties
@@ -142,7 +141,7 @@ class PruneSymbols(pm.SingleStateTransformation):
                 candidates -= (set(map(str, symbolic.symbols_in_ast(e.data.condition.code[0]))) - ignore)
 
                 for assign in e.data.assignments.values():
-                    candidates -= (symbolic.free_symbols_and_functions(assign) - ignore)
+                    candidates -= ((symbolic.free_symbols_and_functions(assign) | symbolic.arrays(assign)) - ignore)
 
                 if local_ignore is None:
                     local_ignore = set(e.data.assignments.keys())

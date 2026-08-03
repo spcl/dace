@@ -1,11 +1,11 @@
-# Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""TensorDot library node and its pure / TTGT / cuTENSOR expansions."""
 import collections
 import dace
-import dace.libraries.linalg.environments as environments
 
+from dace.libraries.linalg import environments
 from dace import library, nodes, properties
 from dace.utils import prod as _prod
-from dace.libraries.blas import blas_helpers
 from dace.symbolic import symstr
 from dace.transformation.transformation import ExpandTransformation
 
@@ -155,7 +155,7 @@ class ExpandTTGT(ExpandTransformation):
             right_tt = _transpose(None, sdfg, state, "_right_tensor", right_axes, outname="ttgt_right_transposed")
             right_tt_arr = sdfg.arrays[right_tt]
 
-        from dace.libraries.blas import Gemm
+        from dace.libraries.blas import Gemm  # Avoid import loop
         prv_state = state
         state = sdfg.add_state(f"{node.label}_gemm_state")
         sdfg.add_edge(prv_state, state, dace.InterstateEdge())
@@ -234,7 +234,8 @@ class ExpandTTGT(ExpandTransformation):
             state.add_edge(tasklet, '_c', dot_vnode, None, dace.Memlet.from_array(dot_vname, dot_view))
             state.add_edge(dot_vnode, 'views', dot_anode, None, dace.Memlet.from_array(dot_name, dot_arr))
             out_node = state.add_write('_out_tensor')
-            from dace.libraries.standard import TensorTranspose
+            # Avoid import loop: TensorTranspose is a sibling node in dace.libraries.linalg
+            from dace.libraries.linalg import TensorTranspose
             tasklet = TensorTranspose('_TensorTranspose', node.permutation)
             state.add_edge(dot_anode, None, tasklet, '_inp_tensor', dace.Memlet.from_array(dot_name, dot_arr))
             state.add_edge(tasklet, '_out_tensor', out_node, None, dace.Memlet.from_array('_out_tensor', out_arr))
@@ -257,8 +258,13 @@ class ExpandTTGT(ExpandTransformation):
 @library.expansion
 class ExpandCuTensor(ExpandTransformation):
     """
-    Implements the TensorDot library node using cuTENSOR for CUDA-compatible GPUs.
-    For more information, see https://developer.nvidia.com/cutensor.
+    Implements the TensorDot library node using cuTENSOR v2 (cutensorContract)
+    for CUDA-compatible GPUs. Requires cuTENSOR >= 2.0.
+
+    The contraction expresses:
+        D_{modesD} = alpha * A_{modesA} * B_{modesB} + beta * C_{modesC}
+    where in this kernel C and D share the same buffer and modes
+    (i.e. D = alpha * A * B with beta = 0).
     """
 
     environments = [environments.cuTensor]
@@ -268,16 +274,16 @@ class ExpandCuTensor(ExpandTransformation):
         left_tensor, right_tensor, out_tensor = node.validate(parent_sdfg, parent_state)
 
         dtype = out_tensor.dtype.base_type
-        func, cuda_type, _ = blas_helpers.cublas_type_metadata(dtype)
-        cuda_dtype = blas_helpers.dtype_to_cudadatatype(dtype)
-        compute_type = f"CUTENSOR_COMPUTE{cuda_dtype[cuda_dtype.rfind('_'):]}"
-        func = func + 'getrf'
+        if dtype not in environments.cuTensor.TYPE_MAP:
+            raise NotImplementedError(f"cuTENSOR TensorDot does not support dtype {dtype}; supported: "
+                                      f"{sorted(str(t) for t in environments.cuTensor.TYPE_MAP)}")
+        cutensor_dtype, compute_desc, scalar_type = environments.cuTensor.TYPE_MAP[dtype]
 
-        alpha = f"({cuda_type})1.0"
-        beta = f"({cuda_type})0.0"
+        alpha = f"({scalar_type})1.0"
+        beta = f"({scalar_type})0.0"
         abtext = f"""
-            {cuda_type} alpha = {alpha};
-            {cuda_type} beta = {beta};
+            {scalar_type} alpha = {alpha};
+            {scalar_type} beta = {beta};
         """
 
         left_modes = list(range(len(left_tensor.shape)))
@@ -291,9 +297,9 @@ class ExpandCuTensor(ExpandTransformation):
             out_modes = [out_modes[i] for i in node.permutation]
 
         modes = f"""
-            std::vector<int> modeA{{{','.join(str(m) for m in left_modes)}}};
-            std::vector<int> modeB{{{','.join(str(m) for m in right_modes)}}};
-            std::vector<int> modeC{{{','.join(str(m) for m in out_modes)}}};
+            std::vector<int32_t> modeA{{{','.join(str(m) for m in left_modes)}}};
+            std::vector<int32_t> modeB{{{','.join(str(m) for m in right_modes)}}};
+            std::vector<int32_t> modeC{{{','.join(str(m) for m in out_modes)}}};
         """
 
         extents = "std::unordered_map<int, int64_t> extent;\n"
@@ -318,58 +324,65 @@ class ExpandCuTensor(ExpandTransformation):
             std::vector<int64_t> stridesC{{{','.join(str(s) for s in out_tensor.strides)}}};
         """
 
+        # cuTENSOR v2: descriptors take an alignment hint (bytes) instead of
+        # a per-pointer query; 256 is safe for all CUDA allocations.
         tdesc = f"""
             cutensorTensorDescriptor_t descA, descB, descC;
-            dace::linalg::CheckCuTensorError(cutensorInitTensorDescriptor(
-                &__dace_cutensor_handle, &descA, modeA.size(), extentA.data(), stridesA.data(), {cuda_dtype}, CUTENSOR_OP_IDENTITY));
-            dace::linalg::CheckCuTensorError(cutensorInitTensorDescriptor(
-                &__dace_cutensor_handle, &descB, modeB.size(), extentB.data(), stridesB.data(), {cuda_dtype}, CUTENSOR_OP_IDENTITY));
-            dace::linalg::CheckCuTensorError(cutensorInitTensorDescriptor(
-                &__dace_cutensor_handle, &descC, modeC.size(), extentC.data(), stridesC.data(), {cuda_dtype}, CUTENSOR_OP_IDENTITY));
-            // printf("Tensor descriptors created!\\n");
+            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
+                __dace_cutensor_handle, &descA, modeA.size(),
+                extentA.data(), stridesA.data(), {cutensor_dtype}, 256));
+            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
+                __dace_cutensor_handle, &descB, modeB.size(),
+                extentB.data(), stridesB.data(), {cutensor_dtype}, 256));
+            dace::linalg::CheckCuTensorError(cutensorCreateTensorDescriptor(
+                __dace_cutensor_handle, &descC, modeC.size(),
+                extentC.data(), stridesC.data(), {cutensor_dtype}, 256));
         """
 
+        # Contraction descriptor: D = alpha * A * B + beta * C; here D == C.
         cdesc = f"""
-            uint32_t alignmentRequirementA, alignmentRequirementB, alignmentRequirementC;
-            dace::linalg::CheckCuTensorError(cutensorGetAlignmentRequirement(&__dace_cutensor_handle, _left_tensor, &descA, &alignmentRequirementA));
-            dace::linalg::CheckCuTensorError(cutensorGetAlignmentRequirement(&__dace_cutensor_handle, _right_tensor, &descB, &alignmentRequirementB));
-            dace::linalg::CheckCuTensorError(cutensorGetAlignmentRequirement(&__dace_cutensor_handle, _out_tensor, &descC, &alignmentRequirementC));
-            cutensorContractionDescriptor_t desc;
-            dace::linalg::CheckCuTensorError(cutensorInitContractionDescriptor(
-                &__dace_cutensor_handle, &desc,
-                &descA, modeA.data(), alignmentRequirementA,
-                &descB, modeB.data(), alignmentRequirementB,
-                &descC, modeC.data(), alignmentRequirementC,
-                &descC, modeC.data(), alignmentRequirementC,
-                {compute_type}));
-            // printf("Memory alignment and coontraction descriptor created!\\n");
+            cutensorOperationDescriptor_t opDesc;
+            dace::linalg::CheckCuTensorError(cutensorCreateContraction(
+                __dace_cutensor_handle, &opDesc,
+                descA, modeA.data(), CUTENSOR_OP_IDENTITY,
+                descB, modeB.data(), CUTENSOR_OP_IDENTITY,
+                descC, modeC.data(), CUTENSOR_OP_IDENTITY,
+                descC, modeC.data(),
+                {compute_desc}));
         """
 
         workspace = """
-            cutensorContractionFind_t find;
-            dace::linalg::CheckCuTensorError(cutensorInitContractionFind(&__dace_cutensor_handle, &find, CUTENSOR_ALGO_DEFAULT));
-            size_t worksize = 0;
-            dace::linalg::CheckCuTensorError(cutensorContractionGetWorkspace(
-                &__dace_cutensor_handle, &desc, &find, CUTENSOR_WORKSPACE_RECOMMENDED, &worksize));
+            cutensorPlanPreference_t planPref;
+            dace::linalg::CheckCuTensorError(cutensorCreatePlanPreference(
+                __dace_cutensor_handle, &planPref,
+                CUTENSOR_ALGO_DEFAULT, CUTENSOR_JIT_MODE_DEFAULT));
+            uint64_t worksize = 0;
+            dace::linalg::CheckCuTensorError(cutensorEstimateWorkspaceSize(
+                __dace_cutensor_handle, opDesc, planPref,
+                CUTENSOR_WORKSPACE_DEFAULT, &worksize));
             void *work = nullptr;
             if (worksize > 0) cudaMalloc(&work, worksize);
-            // printf("Workspace created!\\n");
         """
 
         execute = """
-            cutensorContractionPlan_t plan;
-            dace::linalg::CheckCuTensorError(cutensorInitContractionPlan(&__dace_cutensor_handle, &plan, &desc, &find, worksize));
-            cutensorStatus_t err;
-            err = cutensorContraction(
-                &__dace_cutensor_handle, &plan,
-                (void*)&alpha, _left_tensor, _right_tensor, (void*)&beta, _out_tensor, _out_tensor,
+            cutensorPlan_t plan;
+            dace::linalg::CheckCuTensorError(cutensorCreatePlan(
+                __dace_cutensor_handle, &plan, opDesc, planPref, worksize));
+            cutensorStatus_t err = cutensorContract(
+                __dace_cutensor_handle, plan,
+                (const void*)&alpha, _left_tensor, _right_tensor,
+                (const void*)&beta,  _out_tensor,  _out_tensor,
                 work, worksize, __dace_current_stream);
-            cudaStreamSynchronize(__dace_current_stream);
-            if(err != CUTENSOR_STATUS_SUCCESS) {
+            if (err != CUTENSOR_STATUS_SUCCESS) {
                 printf("ERROR: %s\\n", cutensorGetErrorString(err));
             }
+            cutensorDestroyPlan(plan);
+            cutensorDestroyPlanPreference(planPref);
+            cutensorDestroyOperationDescriptor(opDesc);
+            cutensorDestroyTensorDescriptor(descC);
+            cutensorDestroyTensorDescriptor(descB);
+            cutensorDestroyTensorDescriptor(descA);
             if (work) cudaFree(work);
-            // printf("Contraction executed!\\n");
         """
 
         code = f"{environments.cuTensor.handle_setup_code(node)}{abtext}{modes}{extents}{tdesc}{cdesc}{workspace}{execute}"

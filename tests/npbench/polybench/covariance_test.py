@@ -7,11 +7,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.transformation.interstate import InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, MapFusionVertical, StreamingComposition, PruneConnectors
 from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.libraries.standard import Reduce
-from dace.libraries.blas import Gemv
 from dace.autodiff import add_backward_pass
 
 # Data set sizes

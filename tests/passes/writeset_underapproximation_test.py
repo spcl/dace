@@ -605,7 +605,7 @@ def test_simple_loop_overwrite():
     init = sdfg.add_state("init")
     end = sdfg.add_state("end")
     loop_body = sdfg.add_state("loop_body")
-    _, guard, _ = sdfg.add_loop(init, loop_body, end, "i", "0", "i < N", "i + 1")
+    _, guard, _ = sdfg.add_loop_state_machine(init, loop_body, end, "i", "0", "i < N", "i + 1")
     a0 = loop_body.add_access("A")
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[i]"))
@@ -629,8 +629,8 @@ def test_loop_2D_overwrite():
     loop_body = sdfg.add_state("loop_body")
     loop_before_1 = sdfg.add_state("loop_before_1")
     loop_after_1 = sdfg.add_state("loop_after_1")
-    _, guard2, _ = sdfg.add_loop(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
-    _, guard1, _ = sdfg.add_loop(init, loop_before_1, end, "j", "0", "j < M", "j + 1", loop_after_1)
+    _, guard2, _ = sdfg.add_loop_state_machine(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
+    _, guard1, _ = sdfg.add_loop_state_machine(init, loop_before_1, end, "j", "0", "j < M", "j + 1", loop_after_1)
     a0 = loop_body.add_access("A")
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
@@ -659,10 +659,12 @@ def test_loop_2D_propagation_gap_symbolic():
     loop_after_1 = sdfg.add_state("loop_after_1")
     loop_before_2 = sdfg.add_state("loop_before_2")
     loop_after_2 = sdfg.add_state("loop_after_2")
-    _, guard3, _ = sdfg.add_loop(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")  # inner-most loop
-    _, guard2, _ = sdfg.add_loop(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < K", "k + 1",
-                                 loop_after_1)  # second-inner-most loop
-    _, guard1, _ = sdfg.add_loop(init, loop_before_2, end, "j", "0", "j < M", "j + 1", loop_after_2)  # outer-most loop
+    _, guard3, _ = sdfg.add_loop_state_machine(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N",
+                                               "i + 1")  # inner-most loop
+    _, guard2, _ = sdfg.add_loop_state_machine(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < K", "k + 1",
+                                               loop_after_1)  # second-inner-most loop
+    _, guard1, _ = sdfg.add_loop_state_machine(init, loop_before_2, end, "j", "0", "j < M", "j + 1",
+                                               loop_after_2)  # outer-most loop
     a0 = loop_body.add_access("A")
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
@@ -687,8 +689,8 @@ def test_2_loops_overwrite():
     end = sdfg.add_state("end")
     loop_body_1 = sdfg.add_state("loop_body_1")
     loop_body_2 = sdfg.add_state("loop_body_2")
-    _, guard_1, after_state = sdfg.add_loop(init, loop_body_1, None, "i", "0", "i < N", "i + 1")
-    _, guard_2, _ = sdfg.add_loop(after_state, loop_body_2, end, "i", "0", "i < N", "i + 1")
+    _, guard_1, after_state = sdfg.add_loop_state_machine(init, loop_body_1, None, "i", "0", "i < N", "i + 1")
+    _, guard_2, _ = sdfg.add_loop_state_machine(after_state, loop_body_2, end, "i", "0", "i < N", "i + 1")
     a0 = loop_body_1.add_access("A")
     loop_tasklet_1 = loop_body_1.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body_1.add_edge(loop_tasklet_1, "a", a0, None, dace.Memlet("A[i]"))
@@ -720,9 +722,10 @@ def test_loop_2D_overwrite_propagation_gap_non_empty():
     loop_after_1 = sdfg.add_state("loop_after_1")
     loop_before_2 = sdfg.add_state("loop_before_2")
     loop_after_2 = sdfg.add_state("loop_after_2")
-    _, guard3, _ = sdfg.add_loop(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
-    _, guard2, _ = sdfg.add_loop(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < 10", "k + 1", loop_after_1)
-    _, guard1, _ = sdfg.add_loop(init, loop_before_2, end, "j", "0", "j < M", "j + 1", loop_after_2)
+    _, guard3, _ = sdfg.add_loop_state_machine(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
+    _, guard2, _ = sdfg.add_loop_state_machine(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < 10", "k + 1",
+                                               loop_after_1)
+    _, guard1, _ = sdfg.add_loop_state_machine(init, loop_before_2, end, "j", "0", "j < M", "j + 1", loop_after_2)
     a0 = loop_body.add_access("A")
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
@@ -751,9 +754,10 @@ def test_loop_nest_multiplied_indices():
     loop_after_1 = sdfg.add_state("loop_after_1")
     loop_before_2 = sdfg.add_state("loop_before_2")
     loop_after_2 = sdfg.add_state("loop_after_2")
-    _, guard3, _ = sdfg.add_loop(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
-    _, guard2, _ = sdfg.add_loop(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < 10", "k + 1", loop_after_1)
-    _, guard1, _ = sdfg.add_loop(init, loop_before_2, end, "j", "0", "j < M", "j + 1", loop_after_2)
+    _, guard3, _ = sdfg.add_loop_state_machine(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
+    _, guard2, _ = sdfg.add_loop_state_machine(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < 10", "k + 1",
+                                               loop_after_1)
+    _, guard1, _ = sdfg.add_loop_state_machine(init, loop_before_2, end, "j", "0", "j < M", "j + 1", loop_after_2)
     a0 = loop_body.add_access("A")
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[i,i*j]"))
@@ -783,9 +787,10 @@ def test_loop_nest_empty_nested_loop():
     loop_after_1 = sdfg.add_state("loop_after_1")
     loop_before_2 = sdfg.add_state("loop_before_2")
     loop_after_2 = sdfg.add_state("loop_after_2")
-    _, guard3, _ = sdfg.add_loop(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
-    _, guard2, _ = sdfg.add_loop(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < 0", "k + 1", loop_after_1)
-    _, guard1, _ = sdfg.add_loop(init, loop_before_2, end, "j", "0", "j < M", "j + 1", loop_after_2)
+    _, guard3, _ = sdfg.add_loop_state_machine(loop_before_1, loop_body, loop_after_1, "i", "0", "i < N", "i + 1")
+    _, guard2, _ = sdfg.add_loop_state_machine(loop_before_2, loop_before_1, loop_after_2, "k", "0", "k < 0", "k + 1",
+                                               loop_after_1)
+    _, guard1, _ = sdfg.add_loop_state_machine(init, loop_before_2, end, "j", "0", "j < M", "j + 1", loop_after_2)
     a0 = loop_body.add_access("A")
     loop_tasklet = loop_body.add_tasklet("overwrite", {}, {"a"}, "a = 0")
     loop_body.add_edge(loop_tasklet, "a", a0, None, dace.Memlet("A[j,i]"))
@@ -813,8 +818,8 @@ def test_loop_nest_inner_loop_conditional():
     if_merge = sdfg.add_state("if_merge")
     loop_before_2 = sdfg.add_state("loop_before_2")
     loop_after_2 = sdfg.add_state("loop_after_2")
-    _, guard2, _ = sdfg.add_loop(loop_before_2, loop_body, loop_after_2, "k", "0", "k < N", "k + 1")
-    _, guard1, _ = sdfg.add_loop(init, if_guard, end, "j", "0", "j < M", "j + 1", if_merge)
+    _, guard2, _ = sdfg.add_loop_state_machine(loop_before_2, loop_body, loop_after_2, "k", "0", "k < N", "k + 1")
+    _, guard1, _ = sdfg.add_loop_state_machine(init, if_guard, end, "j", "0", "j < M", "j + 1", if_merge)
     sdfg.add_edge(if_guard, loop_before_2, dace.InterstateEdge(condition="j % 2 == 0"))
     sdfg.add_edge(if_guard, if_merge, dace.InterstateEdge(condition="j % 2 == 1"))
     sdfg.add_edge(loop_after_2, if_merge, dace.InterstateEdge())
@@ -909,7 +914,7 @@ def test_loop_break():
     loop_body_0 = sdfg.add_state("loop_body_0")
     loop_body_1 = sdfg.add_state("loop_body_1")
     loop_after_1 = sdfg.add_state("loop_after_1")
-    _, guard3, _ = sdfg.add_loop(init, loop_body_0, loop_after_1, "i", "0", "i < N", "i + 1", loop_body_1)
+    _, guard3, _ = sdfg.add_loop_state_machine(init, loop_body_0, loop_after_1, "i", "0", "i < N", "i + 1", loop_body_1)
     sdfg.add_edge(loop_body_0, loop_after_1, dace.InterstateEdge(condition="i > 10"))
     sdfg.add_edge(loop_body_0, loop_body_1, dace.InterstateEdge(condition="not(i > 10)"))
     a0 = loop_body_1.add_access("A")

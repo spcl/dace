@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set
 import warnings
@@ -12,6 +12,7 @@ from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.dead_dataflow_elimination import DeadDataflowElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.fusion_inline import FuseStates, InlineControlFlowRegions, InlineSDFGs
+from dace.transformation.passes.lift_trivial_if import LiftTrivialIf
 from dace.transformation.passes.optional_arrays import OptionalArrayInference
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
@@ -32,6 +33,7 @@ SIMPLIFY_PASSES = [
     DeadDataflowElimination,
     DeadStateElimination,
     PruneEmptyConditionalBranches,
+    LiftTrivialIf,
     RemoveUnusedSymbols,
     ReferenceToView,
     ArrayElimination,
@@ -113,7 +115,7 @@ class SimplifyPass(ppl.FixedPointPipeline):
         Apply a pass from the pipeline. This method is meant to be overridden by subclasses.
         """
         if sdfg.root_sdfg.using_explicit_control_flow:
-            if (not hasattr(p, '__explicit_cf_compatible__') or p.__explicit_cf_compatible__ == False):
+            if not p.__explicit_cf_compatible__:
                 warnings.warn(p.__class__.__name__ + ' is not being applied due to incompatibility with ' +
                               'experimental control flow blocks. If the SDFG does not contain experimental blocks, ' +
                               'ensure the top level SDFG does not have `SDFG.using_explicit_control_flow` set to ' +

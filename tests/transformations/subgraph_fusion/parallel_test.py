@@ -1,10 +1,8 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 from dace.transformation.subgraph import MultiExpansion, SubgraphFusion
-import dace.sdfg.nodes as nodes
 import numpy as np
 
-from typing import Union, List
 from dace.sdfg.graph import SubgraphView
 
 N, M, O, P, Q, R = [dace.symbol(s) for s in ['N', 'M', 'O', 'P', 'Q', 'R']]

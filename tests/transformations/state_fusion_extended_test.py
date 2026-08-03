@@ -1,3 +1,4 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 from dace import SDFG, InterstateEdge, Memlet
 from dace import dtypes
 from dace.transformation.interstate import StateFusionExtended
@@ -61,5 +62,52 @@ def test_extended_fusion():
     assert sdfg.number_of_nodes() == 1
 
 
+def test_extended_fusion_refuses_unsafe_write_after_read():
+    """A read state followed by an in-place write of the same array must
+    not be fused (write-after-read / anti-dependency).
+
+    ``s1`` reads ``A[k]`` in two tasklets; the later ``s2`` does
+    ``A[k] = A[k] + 1``. Safely fusing would need a dependency edge to
+    every first-state sink reading ``A`` (arbitrarily fanned out), so
+    ``StateFusionExtended`` must refuse and leave the two states
+    separate; the interstate edge then keeps the write ordered after the
+    reads. Previously it fused without that ordering and the write
+    clobbered the still-pending reads.
+    """
+    sdfg = SDFG('state_fusion_war_ordering')
+    sdfg.add_array('A', [8], dtypes.float64)
+    sdfg.add_array('B', [8], dtypes.float64)
+    sdfg.add_array('C', [8], dtypes.float64)
+    sdfg.add_symbol('k', dtypes.int64)
+
+    s1 = sdfg.add_state('read_A', is_start_block=True)
+    s2 = sdfg.add_state('increment_A')
+    sdfg.add_edge(s1, s2, InterstateEdge())
+
+    ar_b = s1.add_read('A')
+    bw = s1.add_write('B')
+    tb = s1.add_tasklet('rb', {'_in'}, {'_out'}, '_out = _in')
+    s1.add_edge(ar_b, None, tb, '_in', Memlet('A[k]'))
+    s1.add_edge(tb, '_out', bw, None, Memlet('B[k]'))
+
+    ar_c = s1.add_read('A')
+    cw = s1.add_write('C')
+    tc = s1.add_tasklet('rc', {'_in'}, {'_out'}, '_out = _in')
+    s1.add_edge(ar_c, None, tc, '_in', Memlet('A[k]'))
+    s1.add_edge(tc, '_out', cw, None, Memlet('C[k]'))
+
+    ar2 = s2.add_read('A')
+    aw2 = s2.add_write('A')
+    ti = s2.add_tasklet('inc', {'_in'}, {'_out'}, '_out = _in + 1.0')
+    s2.add_edge(ar2, None, ti, '_in', Memlet('A[k]'))
+    s2.add_edge(ti, '_out', aw2, None, Memlet('A[k]'))
+    sdfg.validate()
+
+    applied = sdfg.apply_transformations_repeated(StateFusionExtended)
+    assert applied == 0, 'write-after-read fusion must be refused'
+    assert sdfg.number_of_nodes() == 2, 'the two states must remain separate'
+
+
 if __name__ == '__main__':
     test_extended_fusion()
+    test_extended_fusion_refuses_unsafe_write_after_read()

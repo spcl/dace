@@ -1,14 +1,12 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ DaCe Python parsing functionality and entry point to Python frontend. """
 import ast
-from dataclasses import dataclass
 import inspect
-import itertools
 import copy
 import os
 import sympy
 import sys
-from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union, TYPE_CHECKING
 from typing import get_origin, get_args
 import warnings
 
@@ -17,6 +15,9 @@ from dace.config import Config
 from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
+
+if TYPE_CHECKING:
+    from dace.codegen.compiled_sdfg import CompiledSDFG
 
 try:
     import mpi4py
@@ -104,9 +105,9 @@ def infer_symbols_from_datadescriptor(sdfg: SDFG,
     for arg_name, arg_val in args.items():
         if arg_name in sdfg.arrays:
             desc = sdfg.arrays[arg_name]
-            if not hasattr(desc, 'shape') or not hasattr(arg_val, 'shape'):
+            if not hasattr(arg_val, 'shape'):
                 continue
-            symbolic_values = list(desc.shape) + list(getattr(desc, 'strides', [])) + list(getattr(desc, 'offset', []))
+            symbolic_values = list(desc.shape) + list(desc.strides) + list(desc.offset)
             given_values = list(arg_val.shape)
             given_strides = []
             if hasattr(arg_val, 'strides'):
@@ -171,7 +172,6 @@ class DaceProgram(pycommon.SDFGConvertible):
                  method: bool = False,
                  use_explicit_cf: bool = True,
                  ignore_type_hints: bool = False):
-        from dace.codegen import compiled_sdfg  # Avoid import loops
 
         self.f = f
         self.dec_args = args
@@ -796,7 +796,8 @@ class DaceProgram(pycommon.SDFGConvertible):
 
         return sdfg, cachekey
 
-    def load_precompiled_sdfg(self, path: str, *args, **kwargs) -> None:
+    def load_precompiled_sdfg(self, path: str, *args,
+                              **kwargs) -> tuple['CompiledSDFG', cached_program.ProgramCacheKey]:
         """
         Loads an external compiled SDFG object that will be invoked when the
         function is called.
@@ -807,8 +808,8 @@ class DaceProgram(pycommon.SDFGConvertible):
         :param args: Optional compile-time arguments.
         :param kwargs: Optional compile-time keyword arguments.
         """
-        from dace.sdfg import utils as sdutil  # Avoid import loop
-        csdfg = sdutil.load_precompiled_sdfg(path)
+        from dace.codegen import compiler as sdfg_compiler  # Avoid import loop
+        csdfg = sdfg_compiler.load_precompiled_sdfg(path)
         _, cachekey = self._load_sdfg(None, *args, **kwargs)
 
         # Update SDFG cache with the SDFG and compiled version

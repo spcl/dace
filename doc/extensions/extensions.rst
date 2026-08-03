@@ -4,7 +4,7 @@ Extending DaCe
 The DaCe framework is designed to be user-extensible. Developers can externally extend DaCe by
 adding new types of nodes, frontend languages, transformations, and hardware architecture backends.
 
-The three key mechanisms of extensibility are class inheritance, :ref:`replacements <replacements>`, and :ref:`enums`.
+The three key mechanisms of extensibility are class inheritance, replacements, and enumerations.
 
    * Class inheritance is used for new :ref:`library nodes <libnodes>`, :ref:`data types <typeclasses>`,
      :ref:`transformations <transformations>`, :ref:`passes <pass>`, :ref:`code generator targets <codegen>`,
@@ -22,11 +22,12 @@ For more examples of how to extend DaCe, see the following resources:
    * Code generators: `Extending the Code Generator <https://nbviewer.jupyter.org/github/spcl/dace/blob/main/tutorials/codegen.ipynb>`_
    * Frontend extensions (enumerations and replacements): `Tensor Core code sample <https://github.com/spcl/dace/blob/main/samples/codegen/tensor_cores.py>`_
 
-.. .. toctree
-..    :maxdepth: 1
+.. toctree::
+   :maxdepth: 1
 
-..    .. symbolic
-..    .. libraries
-..    .. frontend
-..    .. sdfgconvertible
-..    .. backend
+   symbolic
+   libraries
+   frontend
+   sdfgconvertible
+   backend
+   instrumentation

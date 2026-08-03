@@ -3,6 +3,7 @@
 Contains replacements of reduction operations, which cover both NumPy's Mathematical Functions (e.g., ``numpy.sum``)
 and Sorting, Searching, and Counting Functions (e.g., ``numpy.argmax``).
 """
+import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python.nested_call import NestedCall
 from dace.frontend.python.replacements.utils import ProgramVisitor, normalize_axes

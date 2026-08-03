@@ -5,8 +5,6 @@ import dace.dtypes
 import numpy as np
 import dace as dc
 import pytest
-from dace.transformation.interstate import InlineSDFG
-from dace.transformation.dataflow import StreamingMemory, StreamingComposition, MapFusionVertical
 from dace.transformation.auto.auto_optimize import auto_optimize
 import argparse
 from dace.autodiff import add_backward_pass

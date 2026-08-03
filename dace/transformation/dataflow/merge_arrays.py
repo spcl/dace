@@ -1,9 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 from dace.transformation import transformation
-from dace import memlet
 from dace.sdfg.graph import OrderedDiGraph
-from dace import memlet
-from dace.sdfg import nodes, utils, graph as gr
+from dace.sdfg import nodes, utils
 from dace.sdfg import SDFGState
 from dace.sdfg.propagation import propagate_memlet
 

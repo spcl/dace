@@ -1,6 +1,7 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
 from dace.transformation.interstate.loop_unroll import LoopUnroll
 from dace.transformation.interstate.loop_peeling import LoopPeeling
 
@@ -29,7 +30,8 @@ def test_unroll():
     sdfg.simplify()
     assert len(sdfg.nodes()) == 1
     sdfg.apply_transformations(LoopUnroll)
-    assert len(sdfg.nodes()) == 5 * 2
+    # +1: the empty predecessor LoopUnroll prepends when the loop is the graph's start block.
+    assert len(sdfg.nodes()) == 5 * 2 + 1
     sdfg.simplify()
     assert len(sdfg.nodes()) == 1
     A = np.random.rand(20)
@@ -84,3 +86,29 @@ if __name__ == '__main__':
     test_unroll()
     test_peeling_start()
     test_peeling_end()
+
+
+@pytest.mark.parametrize('start, condition, step, expected', [
+    (0, 'i < 10', 'i + 1', list(range(0, 10, 1))),
+    (0, 'i < 10', 'i + 3', list(range(0, 10, 3))),
+    (9, 'i > -1', 'i - 1', list(range(9, -1, -1))),
+    (9, 'i > -1', 'i - 3', list(range(9, -1, -3))),
+    (9, 'i >= 0', 'i - 1', list(range(9, -1, -1))),
+    (5, 'i <= 5', 'i + 1', [5]),
+])
+def test_unroll_covers_every_iteration(start, condition, step, expected):
+    """Every iteration is unrolled, counting up or down, at any stride."""
+    sdfg = dace.SDFG(f'unroll_{start}_{step.replace(" ", "").replace("-", "m").replace("+", "p")}')
+    sdfg.add_array('A', [10], dace.float64)
+    loop = dace.sdfg.state.LoopRegion('l', condition, 'i', f'i = {start}', f'i = {step}')
+    sdfg.add_node(loop, is_start_block=True)
+    body = loop.add_state('body', is_start_block=True)
+    tasklet = body.add_tasklet('write', {}, {'o'}, 'o = 1.0')
+    body.add_edge(tasklet, 'o', body.add_write('A'), None, dace.Memlet('A[i]'))
+
+    assert sdfg.apply_transformations_repeated([LoopUnroll]) == 1
+
+    A = np.zeros([10])
+    sdfg(A=A)
+    written = sorted(int(i) for i, v in enumerate(A) if v != 0)
+    assert written == sorted(expected)

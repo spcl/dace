@@ -1,6 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Helper functions for compilation. """
-from typing import Any, Union, Tuple, Type, Optional, List, Dict
+from typing import Any, Union, Tuple, Type, List
 
 import copy
 import numpy as np

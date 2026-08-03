@@ -426,7 +426,7 @@ Calling SDFGs Directly
 ----------------------
 
 If you want to call SDFGs from a ``@dace.program`` you can do so directly. This is useful when you have a custom implementation
-or when you want to use another frontend (for example, in a :ref:`domain-specific language <dsl>`). Example:
+or when you want to use another frontend (for example, in a domain-specific language). Example:
 
 .. code-block:: python
 

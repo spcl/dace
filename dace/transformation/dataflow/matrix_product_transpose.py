@@ -1,4 +1,4 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Implements the matrix-matrix product transpose transformation. """
 
 from copy import deepcopy as dcpy
@@ -17,11 +17,11 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         T(A) @ T(B) = T(B @ A)
     """
     import dace.libraries.blas as blas  # Avoid slow imports
-    import dace.libraries.standard as std  # Avoid slow imports
+    import dace.libraries.linalg as linalg  # Avoid slow imports
 
-    transpose_a = transformation.PatternNode(std.Transpose)
+    transpose_a = transformation.PatternNode(linalg.Transpose)
     at = transformation.PatternNode(nodes.AccessNode)
-    transpose_b = transformation.PatternNode(std.Transpose)
+    transpose_b = transformation.PatternNode(linalg.Transpose)
     bt = transformation.PatternNode(nodes.AccessNode)
     a_times_b = transformation.PatternNode(blas.MatMul)
 
@@ -58,7 +58,7 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
         return f"{transpose_a.name} -> {a_times_b.name} <- {transpose_b.name}"
 
     def apply(self, graph: SDFGState, sdfg: SDFG):
-        import dace.libraries.standard as std
+        import dace.libraries.linalg as linalg  # Avoid slow imports
 
         transpose_a = self.transpose_a
         _at = self.at
@@ -83,7 +83,7 @@ class MatrixProductTranspose(transformation.SingleStateTransformation):
             break
         tmp_name, tmp_arr = sdfg.add_temp_transient(shape, a_times_b.dtype)
         tmp_acc = graph.add_access(tmp_name)
-        transpose_c = std.Transpose('_Transpose_', a_times_b.dtype)
+        transpose_c = linalg.Transpose('_Transpose_', a_times_b.dtype)
         for edge in graph.out_edges(a_times_b):
             _, _, dst, dst_conn, memlet = edge
             graph.remove_edge(edge)

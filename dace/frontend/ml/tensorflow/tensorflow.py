@@ -360,7 +360,6 @@ class TFSession:
             :return: A function that receives a feed_dict, evaluates the nodes,
                      and returns a tuple of values in the same order as nodes.
         """
-        from dace.config import Config
 
         # Create a unique name for this session
         if name is None:

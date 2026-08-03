@@ -4,7 +4,7 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import dace
 from dace import symbolic
-from dace.sdfg import graph, nodes as nodes, propagation, validation
+from dace.sdfg import graph, nodes as nodes, validation
 from dace.transformation import helpers
 
 

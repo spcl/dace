@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 from dace import dtypes, data
-from dace.data import Array
 from typing import Any, Dict, Tuple
 
 

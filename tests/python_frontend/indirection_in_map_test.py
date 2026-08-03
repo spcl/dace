@@ -1,7 +1,6 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-import scipy as sp
 import scipy.sparse as sparse
 
 M = dace.symbol('M')

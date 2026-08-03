@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import copy
 import dace
 from dace.sdfg.utils import consolidate_edges
 from dace.transformation.dataflow import MapCollapse

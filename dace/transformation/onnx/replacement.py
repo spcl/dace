@@ -2,11 +2,9 @@
 """ General class for pattern replacement transformations. """
 import abc
 import dace
-from dace import registry, nodes, data as dt
+from dace import nodes, data as dt
 from dace.transformation import transformation, helpers as xfh
 from typing import Any, Dict, List, Optional, Tuple, Union
-from dace.sdfg import utils as sdutil
-from dace.libraries.onnx import nodes as onnx_op
 from dace.sdfg import graph as gr
 
 
@@ -63,6 +61,8 @@ def onnx_constant_or_none(sdfg: dace.SDFG, node_or_name: Union[nodes.AccessNode,
 
 class ReplacementTransformation(transformation.SingleStateTransformation, abc.ABC):
 
+    _pattern: Optional[gr.OrderedDiGraph] = None
+
     @classmethod
     @abc.abstractmethod
     def pattern(cls) -> gr.OrderedDiGraph[nodes.Node, dace.Memlet]:
@@ -90,7 +90,7 @@ class ReplacementTransformation(transformation.SingleStateTransformation, abc.AB
 
     @classmethod
     def expressions(cls):
-        if hasattr(cls, '_pattern'):
+        if cls._pattern is not None:
             return [cls._pattern]
         result = cls.pattern()
         add_connecting_access_nodes(result)

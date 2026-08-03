@@ -402,7 +402,7 @@ class Config(object):
     @staticmethod
     def get_default(*key_hierarchy):
         """ Returns the default value of a given configuration entry.
-            Takes into accound current operating system.
+            Takes into account current operating system.
 
             :param key_hierarchy: A tuple of strings leading to the
                                   configuration entry.
