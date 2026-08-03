@@ -21,7 +21,7 @@ import copy
 import pytest
 
 from tests.corpus.polybench import polybench
-from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipeline, make_pass, select_widths
+from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline, make_pass, phases_for, select_widths
 
 _KERNELS = [k.name for k in polybench.collect()]
 
@@ -40,8 +40,16 @@ def _base(name):
     return _BASE[name]
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("phase", PHASES)
+def _cases():
+    """``(kernel, phase)`` pairs. Kernel-major so one kernel's phases share the memoized ``_base``;
+    ``xdist_group`` keeps them on one worker under ``--dist loadgroup``."""
+    return [
+        pytest.param(k.name, phase, id=f"{phase}-{k.name}", marks=pytest.mark.xdist_group(name=k.name))
+        for k in polybench.collect() for phase in phases_for(polybench.program(k))
+    ]
+
+
+@pytest.mark.parametrize("name,phase", _cases())
 def test_polybench_corpus(name, phase):
     base, call_arrays, psize, ref, widths = _base(name)
     sdfg = copy.deepcopy(base)

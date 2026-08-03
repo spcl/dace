@@ -91,6 +91,9 @@ def test_polybench_corpus(name, phase):
     sdfg = copy.deepcopy(canon)
     if phase == "canon_vec":
         _multidim_pass(name).apply_pass(sdfg, {})
+    # Per-(kernel, phase) name: concurrent xdist builds must not share .dacecache (race -> spurious
+    # CompilationError), matching the ``*_simplify_multidim`` sibling.
+    sdfg.name = f"{sdfg.name}_{phase}"
     sdfg.validate()
     got = polybench.run(sdfg, call_arrays, psize)
     assert polybench.outputs_match(ref, got), f"{name}/{phase}: output diverges from baseline"

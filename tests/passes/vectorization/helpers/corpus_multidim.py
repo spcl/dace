@@ -15,14 +15,21 @@ and ``polybench_simplify_multidim_vectorize_corpus_test.py``) share:
 * :data:`CONFIGS` / :data:`PHASES` -- the 4 vectorize configs
   (``{AVX512, SCALAR} x {merge, fp_factor}``, all ``scalar_postamble``
   remainder) plus the ``base`` (no-vectorize) phase.
+* :func:`phases_for` -- the phases to run for ONE kernel: the ``fp_factor``
+  configs are generated only for kernels that carry a conditional (see
+  :func:`exercises_branch_lowering`).
 * :func:`make_pass` -- build the :class:`VectorizeCPUMultiDim` for one config.
 
 Each corpus file supplies its own loader (inputs / reference / run / compare)
 because npbench (numpy oracle) and polybench (value-preservation vs the
 untransformed baseline) differ.
 """
+import ast
+import inspect
+import textwrap
 from typing import Dict, Tuple
 
+from dace.frontend.python.parser import DaceProgram
 from dace.libraries.tileops._dispatch import detect_host_isa
 from dace.sdfg import nodes as nd
 from dace.transformation.dataflow import MapFusionHorizontal, MapFusionVertical
@@ -37,18 +44,92 @@ from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import Vec
 #: (``detect_host_isa`` -> AVX512 / AVX2 / ARM_SVE / ARM_NEON / SCALAR), NOT a hardcoded AVX-512:
 #: vectorization enforces arch-native (a forced non-host ISA would SIGILL at runtime -- see
 #: ``_dispatch.host_supported_isas``), so pinning AVX-512 made every avx512 phase fail on an
-#: AVX2-only or ARM box. Host-native keeps full SIMD-vs-scalar coverage on every machine with no
-#: skips. When the host is itself SCALAR the two blocks collapse (dict dedupes the equal keys).
+#: AVX2-only or ARM box.
+#:
+#: The arm is labelled ``hostsimd``, NOT by the detected ISA: the label reaches the pytest test ID,
+#: and an ISA-derived one renamed every SIMD case per runner (``[...-avx512_merge]`` vs
+#: ``[...-avx2_merge]``), so a before/after ID diff across a heterogeneous runner pool showed a
+#: full rename instead of the real delta. The ISA still varies per host -- it just stops leaking
+#: into the identifier. On a SCALAR-only host the two arms are the same config; both still run (the
+#: ID set must not depend on the runner's CPU either).
 _HOST_ISA = detect_host_isa()
 CONFIGS: Dict[str, dict] = {
-    f"{isa.lower()}_{short}": dict(target_isa=isa, branch_mode=mode)
-    for isa in (_HOST_ISA, "SCALAR")
+    f"{label}_{short}": dict(target_isa=isa, branch_mode=mode)
+    for label, isa in (("hostsimd", _HOST_ISA), ("scalar", "SCALAR"))
     for short, mode in (("merge", "merge"), ("fpfac", "fp_factor"))
 }
 
 #: Parametrized phases: the base (no-vectorize) numerical check plus one per
 #: vectorize config. ``base`` must pass for a vectorize config to be meaningful.
 PHASES: Tuple[str, ...] = ("base", *CONFIGS)
+
+#: Calls that can lower to a conditional / select. Over-broad on purpose (see
+#: :func:`exercises_branch_lowering`).
+_BRANCH_CALLS = frozenset({"where", "select", "clip", "min", "max", "minimum", "maximum", "fmin", "fmax"})
+
+
+def exercises_branch_lowering(program) -> bool:
+    """Can ``branch_mode`` change this kernel's lowering at all?
+
+    ``fp_factor`` differs from ``merge`` by exactly three extra passes:
+    :class:`LowerITEToFpFactor` (rewrites an INTEGER-dtype ``ITE(c, t, e)`` tasklet body to
+    ``c*t + (1-c)*e``), :class:`EliminateBranches` (matches a ``ConditionalBlock``) and
+    :class:`LowerInterstateConditionalAssignmentsToTasklets` (consumes only the
+    ``condition_symbol_to_scalar`` tasklets ``EliminateBranches`` mints). Every one of them needs
+    a conditional in the SDFG, and neither the python frontend nor :func:`base_pipeline`
+    (``simplify`` / ``LoopToMap`` / ``MapFusion``) manufactures one from straight-line source --
+    so on a branchless kernel both modes run the identical pipeline and emit identical code.
+
+    Read off the kernel source, never a name list, so a kernel that GAINS an ``if/else`` picks the
+    ``fp_factor`` phase back up on its own. Deliberately over-broad -- ``Compare`` / ``BoolOp`` /
+    ``min`` / ``max`` all count and unreadable source answers ``True`` -- because a false positive
+    costs one redundant phase while a false negative would drop coverage.
+
+    :param program: the kernel's ``@dace.program``.
+    """
+    return _branches(program.f, set())
+
+
+def _branches(fn, seen) -> bool:
+    """``exercises_branch_lowering`` over one function, recursing into the ``@dace.program`` and
+    module-local helpers it calls -- npbench kernels push their conditionals into helpers
+    (``nbody`` -> ``getAcc``), which a source scan of the entry alone would miss."""
+    if fn in seen:
+        return False
+    seen.add(fn)
+    try:
+        tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
+    except Exception:  # noqa: BLE001 -- cannot read the source; assume it branches
+        return True
+    # ``getsource`` includes the decorators; they are registration metadata, not kernel code, and
+    # recursing into one (``@tsvc_kernel``) would mark every kernel as branching.
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            node.decorator_list = []
+    glb = fn.__globals__
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.If, ast.IfExp, ast.BoolOp, ast.Compare)):
+            return True
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        name = func.attr if isinstance(func, ast.Attribute) else (func.id if isinstance(func, ast.Name) else "")
+        # ``np.divide(..., where=mask)`` is a predicated write, same as an if/else.
+        if name in _BRANCH_CALLS or any(kw.arg == "where" for kw in node.keywords):
+            return True
+        callee = glb.get(name)
+        callee = callee.f if isinstance(callee, DaceProgram) else callee
+        if inspect.isfunction(callee) and _branches(callee, seen):
+            return True
+    return False
+
+
+def phases_for(program) -> Tuple[str, ...]:
+    """Phases to run for ONE kernel: :data:`PHASES` minus the ``fp_factor`` configs when the
+    kernel carries no conditional for them to act on (see :func:`exercises_branch_lowering`)."""
+    if exercises_branch_lowering(program):
+        return PHASES
+    return tuple(p for p in PHASES if not p.endswith("_fpfac"))
 
 
 def base_pipeline(sdfg) -> None:

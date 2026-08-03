@@ -21,7 +21,7 @@ import copy
 import pytest
 
 from tests.corpus.npbench import npbench
-from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipeline, make_pass, select_widths
+from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline, make_pass, phases_for, select_widths
 
 _CORPUS = {c["name"]: c for c in npbench.collect()}
 _KERNELS = sorted(_CORPUS)
@@ -41,8 +41,16 @@ def _base(name):
     return _BASE[name]
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("phase", PHASES)
+def _cases():
+    """``(kernel, phase)`` pairs. Kernel-major so one kernel's phases share the memoized ``_base``;
+    ``xdist_group`` keeps them on one worker under ``--dist loadgroup``."""
+    return [
+        pytest.param(name, phase, id=f"{phase}-{name}", marks=pytest.mark.xdist_group(name=name)) for name in _KERNELS
+        for phase in phases_for(_CORPUS[name]["program"])
+    ]
+
+
+@pytest.mark.parametrize("name,phase", _cases())
 def test_npbench_corpus(name, phase):
     base, arrays, params, ref, widths = _base(name)
     sdfg = copy.deepcopy(base)

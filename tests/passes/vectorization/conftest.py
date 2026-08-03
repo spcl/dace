@@ -101,6 +101,13 @@ def pytest_configure(config):
         "a more comprehensive sibling). Skipped by default; opt in with "
         "``--run-simple`` to include them in the sweep.",
     )
+    # pytest-xdist registers this itself when installed; register it here too so the corpus
+    # marks don't raise PytestUnknownMarkWarning when it is not.
+    config.addinivalue_line(
+        "markers",
+        "xdist_group(name): corpus kernel group -- keeps one kernel's phases on one worker "
+        "(so the memoized base SDFG is built once) under ``--dist loadgroup``.",
+    )
 
 
 def pytest_addoption(parser):

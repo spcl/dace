@@ -57,6 +57,11 @@ def _program(mod) -> DaceProgram:
     return progs[0]
 
 
+def program(kernel: PolybenchKernel) -> DaceProgram:
+    """The kernel's ``@dace.program`` object (source-level inspection; no SDFG build)."""
+    return _program(_module(kernel))
+
+
 def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
     """Discover polybench kernels recursively across the category subfolders
     (datamining / linear_algebra / medley / stencils); skips the loader + ``__init__``."""

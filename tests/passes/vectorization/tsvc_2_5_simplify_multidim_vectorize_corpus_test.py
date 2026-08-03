@@ -27,7 +27,7 @@ import pytest
 
 import dace
 from tests.corpus.tsvc_2_5 import tsvc_2_5, tsvc_2_5_numpy
-from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipeline, make_pass, select_widths
+from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline, make_pass, phases_for, select_widths
 
 _CORPUS = tsvc_2_5.collect()
 _TOL = 1e-9
@@ -103,8 +103,16 @@ def _run_and_check(program, sdfg, arrays, scalars, ref, stage: str):
                               f"max|diff|={np.nanmax(np.abs(np.asarray(ref[name]) - np.asarray(got[name]))):.3e}")
 
 
-@pytest.mark.parametrize("phase", PHASES)
-@pytest.mark.parametrize("idx,program", list(enumerate(_CORPUS)), ids=[p.name for p in _CORPUS])
+def _cases():
+    """``(kernel, phase)`` pairs. Kernel-major so one kernel's phases share the memoized ``_base``;
+    ``xdist_group`` keeps them on one worker under ``--dist loadgroup``."""
+    return [
+        pytest.param(idx, p, phase, id=f"{p.name}-{phase}", marks=pytest.mark.xdist_group(name=p.name))
+        for idx, p in enumerate(_CORPUS) for phase in phases_for(p)
+    ]
+
+
+@pytest.mark.parametrize("idx,program,phase", _cases())
 def test_tsvc_2_5_corpus(idx, program, phase):
     """base(simplify+loop2map+mapfusion) [+ multidim vectorize] -> verify vs oracle."""
     base, arrays, scalars, ref, widths = _base(program)

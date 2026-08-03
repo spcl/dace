@@ -28,7 +28,7 @@ import pytest
 
 from tests.corpus.tsvc import tsvc
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
-from tests.passes.vectorization.helpers.corpus_multidim import PHASES, base_pipeline, make_pass, select_widths
+from tests.passes.vectorization.helpers.corpus_multidim import base_pipeline, make_pass, phases_for, select_widths
 
 _KERNELS = [k.name for k in tsvc.collect()]
 
@@ -66,8 +66,16 @@ def _assert_matches(name: str, got: dict, ref: dict, phase: str):
                                              f"max|diff|={np.nanmax(np.abs(np.asarray(a) - np.asarray(ref[n]))):.3e}")
 
 
-@pytest.mark.parametrize("name", _KERNELS)
-@pytest.mark.parametrize("phase", PHASES)
+def _cases():
+    """``(kernel, phase)`` pairs. Kernel-major so one kernel's phases share the memoized ``_base``;
+    ``xdist_group`` keeps them on one worker under ``--dist loadgroup``."""
+    return [
+        pytest.param(k.name, phase, id=f"{phase}-{k.name}", marks=pytest.mark.xdist_group(name=k.name))
+        for k in tsvc.collect() for phase in phases_for(k.program)
+    ]
+
+
+@pytest.mark.parametrize("name,phase", _cases())
 def test_tsvc_corpus(name, phase):
     """base(simplify+loop2map+mapfusion) [+ multidim vectorize] -> verify vs numpy."""
     base, arrays, ck, ref, widths = _base(name)
