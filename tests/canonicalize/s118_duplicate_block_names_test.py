@@ -33,9 +33,7 @@ underlying reparenting bug is unaffected by that guard -- a merely single-iterat
 trivially eliminable and still collides -- which is what the unit test above pins.
 """
 import copy
-import os
 
-import numpy as np
 import pytest
 
 import dace
@@ -48,6 +46,7 @@ from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepe
 from tests.corpus.measure_parallelization import cpu_params
 from tests.corpus.tsvc import tsvc as TS
 from tests.corpus.tsvc.tsvc_numpy import REFERENCES
+from tests.helpers.isolation import exit_code
 
 _N = 8
 _TRIALS = 10
@@ -143,7 +142,9 @@ def test_s118_canonicalizes_to_a_valid_sdfg():
 def test_s118_is_bit_exact_after_canonicalization():
     """Canonicalization is value-preserving: ``s118`` must match its numpy oracle exactly.
 
-    Run in a forked child so a miscompiled kernel segfaulting cannot take the session down.
+    Run in a spawned child so a miscompiled kernel segfaulting cannot take the session down. Spawn
+    rather than fork: this process has already run compiled kernels, and a fork child deadlocks on
+    the OpenMP team it inherits without owning.
     """
     kernel = TS.collect(name='s118_d_single')[0]
     arrays, call_kwargs = TS.make_inputs(kernel, seed=1234)
@@ -154,29 +155,13 @@ def test_s118_is_bit_exact_after_canonicalization():
     canonicalize(sdfg, validate=True, validate_all=False, **cpu_params(4))
     fin = finalize_for_target(copy.deepcopy(sdfg), 'cpu')
     fin.name = f'{fin.name}_s118_dupnames_exact'
-    csdfg = fin.compile()
 
     got = {n: a.copy() for n, a in arrays.items()}
-    read_fd, write_fd = os.pipe()
-    pid = os.fork()
-    if pid == 0:  # child: never return into pytest, and never raise past os._exit
-        code = 1
-        try:
-            csdfg(**got, **call_kwargs)
-            # A pure reassociation-free recurrence: equality is exact, no tolerance.
-            code = 0 if all(np.array_equal(got[n], ref[n]) for n in arrays) else 2
-        except BaseException:  # noqa: BLE001 -- report as an exit code, never as an exception
-            code = 3
-        finally:
-            os.write(write_fd, bytes([code]))
-            os._exit(code)
+    # A pure reassociation-free recurrence: equality is exact, no tolerance.
+    code = exit_code(fin, dict(got, **call_kwargs), [(got[n], ref[n]) for n in arrays], exact=True)
 
-    os.close(write_fd)
-    _, status = os.waitpid(pid, 0)
-    os.close(read_fd)
-
-    assert not os.WIFSIGNALED(status), f's118 killed by signal {os.WTERMSIG(status)}'
-    assert os.WEXITSTATUS(status) == 0, f's118 not bit-exact against the numpy oracle (code {os.WEXITSTATUS(status)})'
+    assert code >= 0, f's118 killed by signal {-code}'
+    assert code == 0, f's118 not bit-exact against the numpy oracle (code {code})'
 
 
 if __name__ == '__main__':

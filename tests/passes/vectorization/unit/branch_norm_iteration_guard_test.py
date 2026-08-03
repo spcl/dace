@@ -96,7 +96,7 @@ def run_bit_exact(sdfg: dace.SDFG, kwargs: dict, outputs) -> None:
     fabricate lands on a sentinel and cannot fault. And ``os.fork()`` around ``sdfg.compile()``
     deadlocks the child once any earlier test in the process has run an OpenMP kernel, which is a
     worse failure mode than the crash it would be guarding against; see
-    :mod:`tests.passes.vectorization.helpers.isolation` for the mechanism and for the spawn-based
+    :mod:`tests.helpers.isolation` for the mechanism and for the spawn-based
     escape hatch the cases that DO need containment use.
 
     :param sdfg: SDFG to compile and run.

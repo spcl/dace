@@ -1,7 +1,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """``DistributeTaskletIntoMap`` must only absorb a free Tasklet that is what blocks Map fusion."""
 import copy
-import os
+from typing import Any, Dict
 
 import numpy as np
 import pytest
@@ -9,6 +9,7 @@ import pytest
 import dace
 from dace import nodes
 from dace.transformation.dataflow import DistributeTaskletIntoMap, MapFusionVertical
+from tests.helpers.isolation import call_in_child
 
 N = 8
 
@@ -83,34 +84,29 @@ def shape_of(sdfg: dace.SDFG):
     return [(state.label, state.number_of_nodes(), state.number_of_edges()) for state in sdfg.states()]
 
 
-def run(sdfg: dace.SDFG, **extra) -> np.ndarray:
-    """Execute in a forked child so a compiled kernel cannot take the test process down.
+def run_in_child(sdfg: dace.SDFG, extra: Dict[str, Any], wants_c: bool) -> np.ndarray:
+    """Child body for :func:`run`: call ``sdfg`` on fresh buffers and return the outputs.
 
-    ``extra`` carries the optional fixture arguments (``dt``, ``C``); ``C`` is echoed back after
-    ``B`` so a caller that asked for it can check the second consumer was still written.
+    Allocating here rather than shipping buffers in keeps every array owning its own memory -- DaCe
+    rejects an argument whose ``.base`` is the pickle buffer an unpickled array carries.
     """
     a = np.arange(1, N + 1, dtype=np.float64)
     b = np.zeros(N, dtype=np.float64)
-    c = extra.pop("C", None)
-    out = [b] if c is None else [b, c]
-    nbytes = sum(x.nbytes for x in out)
-    read_fd, write_fd = os.pipe()
-    if os.fork() == 0:
-        os.close(read_fd)
-        sdfg(A=a, B=b, **({} if c is None else {"C": c}), **extra)
-        os.write(write_fd, b"".join(x.tobytes() for x in out))
-        os._exit(0)
-    os.close(write_fd)
-    raw = b""
-    while len(raw) < nbytes:
-        chunk = os.read(read_fd, nbytes - len(raw))
-        if not chunk:
-            break
-        raw += chunk
-    os.close(read_fd)
-    os.wait()
-    assert len(raw) == nbytes, "child died before writing its result"
-    return np.frombuffer(raw, dtype=np.float64)
+    c = np.zeros(1, dtype=np.float64) if wants_c else None
+    sdfg(A=a, B=b, **({} if c is None else {"C": c}), **extra)
+    return b if c is None else np.concatenate((b, c))
+
+
+def run(sdfg: dace.SDFG, **extra) -> np.ndarray:
+    """Execute in a spawned child so a compiled kernel cannot take the test process down.
+
+    ``extra`` carries the optional fixture arguments (``dt``, ``C``); ``C`` is echoed back after
+    ``B`` so a caller that asked for it can check the second consumer was still written. Spawned
+    rather than forked: this process has already run compiled kernels, and a fork child deadlocks
+    on the OpenMP team it inherits but does not own.
+    """
+    wants_c = extra.pop("C", None) is not None
+    return call_in_child(run_in_child, sdfg, extra, wants_c)
 
 
 def test_absorbing_the_free_tasklet_unblocks_fusion():

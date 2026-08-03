@@ -29,7 +29,7 @@ from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import RemainderStrategy, BranchMode
 from dace.transformation.passes.vectorization.vectorize_cpu_multi_dim import VectorizeCPUMultiDim
-from tests.passes.vectorization.helpers.isolation import run_isolated
+from tests.helpers.isolation import run_isolated
 
 M = dace.symbol('M')
 N = dace.symbol('N')

@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-import os
 from typing import Tuple
 
 import numpy as np
@@ -9,6 +8,8 @@ import dace
 from dace.sdfg import nodes
 from dace.transformation import dataflow as dftrans
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
+
+from tests.helpers.isolation import exit_code
 
 from .map_fusion_vertical_test import count_nodes, unique_name
 
@@ -484,34 +485,21 @@ def test_horizontal_fusion_drops_an_equal_dynamic_map_range(binding: str):
 def test_horizontal_fusion_keeps_the_dynamic_map_range_bound():
     """Dropping the redundant binding must not change the iteration space of the fused Map.
 
-    Run in a forked child so a miscompiled kernel segfaulting cannot take the session down.
+    Run in a spawned child so a miscompiled kernel segfaulting cannot take the session down. Spawn,
+    not fork: this process has already run compiled kernels, so a fork child would inherit an
+    OpenMP team it does not own and deadlock instead of reporting anything.
     """
     sdfg = _make_shared_dynamic_map_range_sdfg("same_data")
     assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True) == 1
-    csdfg = sdfg.compile()
 
     bound = np.full((1, ), 4, dtype=np.int64)
     args = {name: np.full((10, ), -1.0, dtype=np.float64) for name in ("A", "B")}
     expected = {name: np.where(np.arange(10) < 4, value, -1.0) for name, value in (("A", 1.0), ("B", 2.0))}
 
-    read_fd, write_fd = os.pipe()
-    pid = os.fork()
-    if pid == 0:  # child: never return into pytest, and never raise past os._exit
-        code = 1
-        try:
-            csdfg(bound=bound, other_bound=bound.copy(), **args)
-            code = 0 if all(np.array_equal(args[n], expected[n]) for n in args) else 2
-        except BaseException:  # noqa: BLE001 -- report as an exit code, never as an exception
-            code = 3
-        finally:
-            os.write(write_fd, bytes([code]))
-            os._exit(code)
-
-    os.close(write_fd)
-    _, status = os.waitpid(pid, 0)
-    os.close(read_fd)
-    assert not os.WIFSIGNALED(status), f"fused kernel killed by signal {os.WTERMSIG(status)}"
-    assert os.WEXITSTATUS(status) == 0, f"fused Map did not honor the dynamic bound (code {os.WEXITSTATUS(status)})"
+    kwargs = dict(args, bound=bound, other_bound=bound.copy())
+    code = exit_code(sdfg, kwargs, [(args[name], expected[name]) for name in args], exact=True)
+    assert code >= 0, f"fused kernel killed by signal {-code}"
+    assert code == 0, f"fused Map did not honor the dynamic bound (code {code})"
 
 
 @pytest.mark.parametrize("binding", ["other_data", "written_data"])

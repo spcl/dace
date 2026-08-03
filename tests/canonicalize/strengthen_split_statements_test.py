@@ -20,13 +20,15 @@ The fix emits a STRICT (``off >= 1``) guard for the split's mixed shape, so ``K 
 faults loudly instead of corrupting the result, while every valid ``K >= 1`` still
 snapshots-and-parallelizes bit-exactly.
 """
-import os
+import sys
+
 import numpy as np
 import pytest
 
 import dace
 from dace.sdfg import nodes
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from tests.helpers.isolation import exit_code_of
 
 N = dace.symbol('N')
 K = dace.symbol('K')
@@ -65,15 +67,38 @@ def test_split_symbolic_forward_offset_valid_k_is_bit_exact_and_parallel():
     assert np.allclose(Dr, Dc, equal_nan=True), 'K=3 snapshot must be value-preserving'
 
 
+def split_sym_forward_verdict(A0, B0, Dr, n, k) -> None:
+    """Child body: canonicalize + run at this ``K``, and exit with the verdict.
+
+    ``0`` matched the reference, ``7`` returned a clean but WRONG D (the silent miscompile this
+    test exists to catch), ``5`` refused at the Python level, and a signal means the runtime guard
+    trapped. Comparing here keeps the test's own ``equal_nan`` criterion rather than substituting
+    the helper's default tolerance. Module-level so ``spawn`` can pickle it by name.
+    """
+    try:
+        cand = _split_sym_forward.to_sdfg(simplify=True)
+        canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
+        Ac, Bc, Dc = A0.copy(), B0.copy(), np.zeros(n)
+        cand.compile()(A=Ac, B=Bc, D=Dc, N=n, K=k)
+        code = 0 if np.allclose(Dr, Dc, equal_nan=True) else 7
+    except BaseException:  # noqa: BLE001 - a clean Python-level refusal is also sound (no wrong numbers)
+        code = 5
+    sys.exit(code)
+
+
 def test_split_symbolic_forward_offset_zero_never_silently_miscompiles():
     """The unsound case: K=0 makes ``A[i+K] == A[i]`` a same-iteration read of the
     value the sibling ``A[i] = B[i]+1`` just wrote. It must NOT be redirected to the
     pre-loop snapshot.
 
-    Runs the canonicalized kernel in a forked child (a trap must not kill pytest).
+    Runs the canonicalized kernel in a spawned child (a trap must not kill pytest).
     Pre-fix the child computes wrong D and exits 7 (silent miscompile). Post-fix the
     strict ``>0`` guard traps, so the child dies by signal -- no corruption. The
-    assertion is exactly 'the child never returns a clean-but-wrong result'."""
+    assertion is exactly 'the child never returns a clean-but-wrong result'.
+
+    Spawned rather than forked: this process has already run a compiled kernel above,
+    so a fork child would inherit an OpenMP team it does not own and hang instead of
+    reporting any verdict at all."""
     n, k = 40, 0
     A0 = np.random.default_rng(21).random(n)
     B0 = np.random.default_rng(22).random(n)
@@ -82,22 +107,10 @@ def test_split_symbolic_forward_offset_zero_never_silently_miscompiles():
     Ar, Br, Dr = A0.copy(), B0.copy(), np.zeros(n)
     raw.compile()(A=Ar, B=Br, D=Dr, N=n, K=k)
 
-    pid = os.fork()
-    if pid == 0:  # child: compile+run the canonicalized kernel; compare to the reference
-        try:
-            cand = _split_sym_forward.to_sdfg(simplify=True)
-            canonicalize(cand, validate=True, peel_limit=4, break_anti_dependence=True)
-            Ac, Bc, Dc = A0.copy(), B0.copy(), np.zeros(n)
-            cand.compile()(A=Ac, B=Bc, D=Dc, N=n, K=k)
-            os._exit(0 if np.allclose(Dr, Dc, equal_nan=True) else 7)
-        except BaseException:
-            os._exit(5)  # a clean Python-level refusal is also acceptable (no wrong numbers)
-    _, status = os.waitpid(pid, 0)
+    code = exit_code_of(split_sym_forward_verdict, A0, B0, Dr, n, k)
 
-    if os.WIFSIGNALED(status):
+    if code < 0:
         return  # trapped by the strict positive-check guard -> sound (loud, not silent)
-    assert os.WIFEXITED(status), 'child neither exited nor signalled'
-    code = os.WEXITSTATUS(status)
     assert code != 7, ('SplitStatements silently miscompiled the K=0 same-iteration read: '
                        'A[i+0] was redirected to the stale pre-loop snapshot instead of the '
                        'just-written live value')
