@@ -1680,7 +1680,7 @@ def propagate_subset(memlets: List[Memlet],
             defined_variables |= memlet.free_symbols
         defined_variables -= set(params)
     # ``?`` carries no value, so a range over it stays unpropagatable; by name alone it would read as defined.
-    defined_variables = set(map(str, defined_variables)) - {symbolic.UndefinedSymbol().name}
+    defined_variables = set(map(str, defined_variables)) - {symbolic.UNDEFINED_NAME}
 
     if undefined_variables is not None:
         defined_variables -= set(map(str, undefined_variables))

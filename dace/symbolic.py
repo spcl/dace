@@ -350,6 +350,10 @@ class UndefinedSymbol(symbol):
         return hash(self.name)
 
 
+#: The name every :class:`UndefinedSymbol` carries. Not a valid symbol name, so nothing else claims it.
+UNDEFINED_NAME = UndefinedSymbol().name
+
+
 class TypedConstant(sympy.AtomicExpr):
     """A typed constant value that participates in symbolic expressions.
 
