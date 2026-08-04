@@ -111,7 +111,9 @@ def test_nesting_view():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert any(isinstance(node, tn.ViewNode) for node in stree.children)
+    # Anywhere in the tree: the view binding is loop-invariant, but a frontend
+    # is free to emit it inside the loop rather than hoisting it out.
+    assert any(isinstance(node, tn.ViewNode) for node in stree.preorder_traversal())
 
 
 def test_nesting_nview():
@@ -131,7 +133,7 @@ def test_nesting_nview():
 
     sdfg = main.to_sdfg()
     stree = as_schedule_tree(sdfg)
-    assert any(isinstance(v, tn.NView) for v in stree.children)
+    assert any(isinstance(v, tn.NView) for v in stree.preorder_traversal())
 
 
 def test_irreducible_sub_sdfg():

@@ -26,9 +26,9 @@ class ExpandDotPure(ExpandTransformation):
 
         n = n or node.n or sz
 
-        dtype_x = desc_x.dtype.type
-        dtype_y = desc_y.dtype.type
-        dtype_result = desc_res.dtype.type
+        dtype_x = desc_x.dtype
+        dtype_y = desc_y.dtype
+        dtype_result = desc_res.dtype
         sdfg = dace.SDFG(node.label + "_sdfg")
 
         if desc_x.dtype.veclen > 1 or desc_y.dtype.veclen > 1:

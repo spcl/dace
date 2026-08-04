@@ -49,9 +49,9 @@ class ExpandGemmPure(ExpandTransformation):
         ((edge_a, outer_array_a, shape_a, strides_a, _, _), (edge_b, outer_array_b, shape_b, strides_b, _, _),
          cdata) = _get_matmul_operands(node, parent_state, parent_sdfg)
 
-        dtype_a = outer_array_a.dtype.type
-        dtype_b = outer_array_b.dtype.type
-        dtype_c = dace.dtype_to_typeclass(np.result_type(dtype_a, dtype_b).type)
+        dtype_a = outer_array_a.dtype
+        dtype_b = outer_array_b.dtype
+        dtype_c = cdata[1].dtype
 
         if node.transA:
             trans_shape_a = list(reversed(shape_a))
