@@ -1477,7 +1477,8 @@ class UnderapproximateWrites(ppl.Pass):
             for memlet in memlets:
                 defined_variables |= memlet.free_symbols
             defined_variables -= set(params)
-        defined_variables = set(map(str, defined_variables))
+        # ``?`` carries no value, so a range over it stays unpropagatable; by name alone it would read as defined.
+        defined_variables = set(map(str, defined_variables)) - {symbolic.UndefinedSymbol().name}
 
         # Iteration variables are matched against the subsets, so they must be the very instances those carry.
         scope_symbols = symbolic.symbols_in([m.subset for m in memlets] + [m.other_subset for m in memlets] + [rng])
