@@ -10,7 +10,7 @@ from dace.sdfg.state import AbstractControlFlowRegion, ConditionalBlock, Control
 from dace.transformation import pass_pipeline as ppl, transformation
 from dace.cli.progress import optional_progressbar
 from dace import data, SDFG, SDFGState, dtypes, symbolic, properties
-from typing import Any, Dict, Set, Optional, Tuple
+from typing import Any, Dict, List, Set, Optional, Tuple
 
 
 class _UnknownValue:
@@ -20,6 +20,7 @@ class _UnknownValue:
 
 ConstsT = Dict[str, Any]
 BlockConstsT = Dict[ControlFlowBlock, ConstsT]
+OrderCacheT = Dict[ControlFlowBlock, List[ControlFlowBlock]]
 
 
 @dataclass(unsafe_hash=True)
@@ -263,15 +264,10 @@ class ConstantPropagation(ppl.Pass):
                 return replaced > 0
         return False
 
-    def _collect_constants_for_conditional(self,
-                                           conditional: ConditionalBlock,
-                                           arrays: Set[str],
-                                           in_const_dict: BlockConstsT,
-                                           pre_const_dict: BlockConstsT,
-                                           post_const_dict: BlockConstsT,
-                                           out_const_dict: BlockConstsT,
-                                           order_cache: Optional[Dict[int, list]] = None,
-                                           last_in: Optional[Dict[int, ConstsT]] = None) -> None:
+    def _collect_constants_for_conditional(self, conditional: ConditionalBlock, arrays: Set[str],
+                                           in_const_dict: BlockConstsT, pre_const_dict: BlockConstsT,
+                                           post_const_dict: BlockConstsT, out_const_dict: BlockConstsT,
+                                           order_cache: OrderCacheT, last_in: BlockConstsT) -> None:
         """
         Collect the constants for and inside of a conditional region.
         Recursively collects constants inside of nested regions.
@@ -286,6 +282,8 @@ class ConstantPropagation(ppl.Pass):
                                 contents are executed. Populated by this function.
         :param out_const_dict: Dictionary mapping each control flow block to the set of constants observed right after
                                the block is executed. Populated by this function.
+        :param order_cache: See ``_collect_constants_for_region``.
+        :param last_in: See ``_collect_constants_for_region``.
         """
         if order_cache is None:
             order_cache = {}
@@ -352,8 +350,8 @@ class ConstantPropagation(ppl.Pass):
                                       pre_const_dict: BlockConstsT,
                                       post_const_dict: BlockConstsT,
                                       out_const_dict: BlockConstsT,
-                                      order_cache: Optional[Dict[int, list]] = None,
-                                      last_in: Optional[Dict[int, ConstsT]] = None) -> None:
+                                      order_cache: Optional[OrderCacheT] = None,
+                                      last_in: Optional[BlockConstsT] = None) -> None:
         """
         Finds all constants and constant-assigned symbols in the control flow graph for each block.
         Recursively collects constants for nested control flow regions.
@@ -377,11 +375,11 @@ class ConstantPropagation(ppl.Pass):
                                 contents are executed. Populated by this function.
         :param out_const_dict: Dictionary mapping each control flow block to the set of constants observed right after
                                the block is executed. Populated by this function.
+        :param order_cache: Avoids re-sorting a region on every sweep. Created on the outermost call.
+        :param last_in: Avoids re-collecting a nested region whose inputs did not change.
         """
-        if order_cache is None:
-            order_cache = {}
-        if last_in is None:
-            last_in = {}
+        order_cache = {} if order_cache is None else order_cache
+        last_in = {} if last_in is None else last_in
         # Given the 'in constants', i.e., the constants for before the current region is executed, compute the 'pre
         # constants', i.e., the set of constants seen inside the region when executing.
         if cfg in in_const_dict:
@@ -414,13 +412,10 @@ class ConstantPropagation(ppl.Pass):
             in_const_dict[start_block] = {}
             in_const_dict[start_block].update(pre_const)
 
-        # The topological block order is derived from the CFG structure (dominators + branch merges),
-        # which does not change during collection -- so compute it once per region and reuse it across
-        # every ``while redo`` sweep instead of recomputing the dominator sort each time.
-        block_order = order_cache.get(id(cfg))
-        if block_order is None:
-            block_order = list(cfg_analysis.blockorder_topological_sort(cfg, recursive=False))
-            order_cache[id(cfg)] = block_order
+        # Collection does not mutate the CFG, so the order is the same on every sweep below.
+        if cfg not in order_cache:
+            order_cache[cfg] = list(cfg_analysis.blockorder_topological_sort(cfg, recursive=False))
+        block_order = order_cache[cfg]
 
         redo = True
         while redo:
@@ -476,15 +471,12 @@ class ConstantPropagation(ppl.Pass):
                 if assignments:
                     redo |= self._propagate(in_const_dict[block], assignments)
 
-                # A nested region's internal constants depend solely on its 'in' constants, so re-collect
-                # it only when those changed since the last time (identical input -> identical output, and
-                # the post/out dicts it populated are still valid). This is what removes the multiplicative
-                # re-analysis of nested regions across the outer fixpoint.
                 if isinstance(block, (ControlFlowRegion, ConditionalBlock)):
-                    cur_in = in_const_dict[block]
-                    prev_in = last_in.get(id(block))
-                    if prev_in is None or prev_in != cur_in:
-                        last_in[id(block)] = dict(cur_in)
+                    # A nested region is a function of its 'in constants', so unchanged ones give the
+                    # same fixpoint and the post/out dicts it populated are still valid. This is what
+                    # removes the multiplicative re-analysis of nested regions across the outer fixpoint.
+                    if last_in.get(block) != in_const_dict[block]:
+                        last_in[block] = in_const_dict[block].copy()
                         if isinstance(block, ControlFlowRegion):
                             self._collect_constants_for_region(block, arrays, in_const_dict, pre_const_dict,
                                                                post_const_dict, out_const_dict, order_cache, last_in)
