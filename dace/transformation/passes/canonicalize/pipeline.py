@@ -68,7 +68,8 @@ from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeli
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
-from dace.transformation.passes.canonicalize.induction_variable_substitution import InductionVariableSubstitution
+from dace.transformation.passes.canonicalize.induction_variable_substitution import (InductionVariableSubstitution,
+                                                                                     LoopCarriedRotationSubstitution)
 from dace.transformation.passes.scalar_to_symbol import ScalarToSymbolPromotion
 from dace.transformation.passes.canonicalize.materialize_loop_exit_symbols import MaterializeLoopExitSymbols
 from dace.transformation.passes.canonicalize.normalize_negative_stride import NormalizeNegativeStride
@@ -789,6 +790,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # dependence's direction, never removes one, so it cannot make a dependent loop
     # parallelizable while preserving values -- clearing the anti-dependence does.)
     if peel_limit > 0:
+        # rotate (BEFORE peel): a loop-carried DELAY LINE (``x = b[i]`` read one iteration later)
+        # has no ``a*i + b`` write subset, so LoopToMap refuses a whole loop over a carry whose
+        # value is just a shifted array element. Substituting the shifted read and deleting the
+        # update makes the body DOALL; the one iteration the shifted read does not cover is peeled
+        # off the front, which is why this shares ``peel_limit`` -- and its "runs more often than we
+        # peel it" assumption -- instead of owning a knob. Runs before ``BestEffortLoopPeeling`` so
+        # the peel search sees the already-unblocked loop and nominates nothing further for it.
+        s += [('rotate', LoopCarriedRotationSubstitution(peel_limit))]
         s += [('peel', BestEffortLoopPeeling(peel_limit))]
     if break_anti_dependence:
         s += [('break_antidep', BreakAntiDependence())]
