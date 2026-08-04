@@ -531,7 +531,7 @@ class PAPIUtils(object):
                 # To not have hidden elements that get added again later, we
                 # also replace the values in the other itvars...
                 for k, v in retparams.items():
-                    newv = symbolic.pystr_to_symbolic(str(v))
+                    newv = symbolic.pystr_to_symbolic(v)
 
                     tarsyms = symbolic.symlist(target).keys()
                     if x in tarsyms:
