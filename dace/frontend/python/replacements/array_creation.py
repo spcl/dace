@@ -286,8 +286,8 @@ def _arange(pv: ProgramVisitor,
     outname = pv.get_target_name()
     outname, outarr = sdfg.add_transient(outname, shape, dtype, find_new_name=True)
 
-    start = f'decltype(__out)({start})'
-    actual_step = f'decltype(__out)({actual_step})'
+    start = f'{dtype.ctype}({start})'
+    actual_step = f'{dtype.ctype}({actual_step})'
 
     state.add_mapped_tasklet(name="_numpy_arange_",
                              map_ranges={'__i': f"0:{shape[0]}"},
@@ -374,6 +374,9 @@ def _linspace(pv: ProgramVisitor,
         if dtype in (dtypes.int8, dtypes.int16, dtypes.int32, dtypes.int64, dtypes.uint8, dtypes.uint16, dtypes.uint32,
                      dtypes.uint64):
             dtype = dtypes.dtype_to_typeclass(float)
+    elif not isinstance(dtype, dtypes.typeclass):
+        # An explicitly passed dtype arrives as a numpy type; the tasklet body below needs ``ctype``.
+        dtype = dtypes.dtype_to_typeclass(dtype)
 
     outname = pv.get_target_name()
     outname, _ = sdfg.add_transient(outname, shape_with_axis, dtype, find_new_name=True)
@@ -407,7 +410,7 @@ def _linspace(pv: ProgramVisitor,
     # Compute the step first (``i * (delta/num)``), matching numpy.linspace's ``start + arange*step`` order.
     # Multiplying before dividing (``i*delta/num``) is a different floating-point rounding and is not
     # bit-exact with numpy.
-    code = f'__out = {startcode} + __sind * (decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)}))'
+    code = f'__out = {startcode} + __sind * ({dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)}))'
 
     state.add_mapped_tasklet(name="linspace",
                              map_ranges=ranges_with_axis,
@@ -433,12 +436,11 @@ def _linspace(pv: ProgramVisitor,
         stepname, _ = sdfg.add_scalar(stepname, dtype, transient=True, find_new_name=True)
         out_index = '[0]'
 
-    state.add_mapped_tasklet(
-        'retstep',
-        ranges,
-        copy.deepcopy(inputs),
-        f'__out = decltype(__out)({stopcode} - {startcode}) / decltype(__out)({symbolic.symstr(num)})',
-        {'__out': Memlet(f"{stepname}{out_index}")},
-        external_edges=True)
+    state.add_mapped_tasklet('retstep',
+                             ranges,
+                             copy.deepcopy(inputs),
+                             f'__out = {dtype.ctype}({stopcode} - {startcode}) / {dtype.ctype}({symbolic.symstr(num)})',
+                             {'__out': Memlet(f"{stepname}{out_index}")},
+                             external_edges=True)
 
     return outname, stepname
