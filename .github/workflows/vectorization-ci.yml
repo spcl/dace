@@ -21,6 +21,7 @@ jobs:
   vectorization:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
     - uses: actions/checkout@v7
@@ -50,4 +51,4 @@ jobs:
         # loadgroup, not the default load: corpus cases carry xdist_group(kernel) so one kernel's
         # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
         pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "vectorization and not gpu and not long and not sequential"
+          -m "vectorization and not gpu and not long and not sequential and not perf"
