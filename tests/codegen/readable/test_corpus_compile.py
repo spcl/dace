@@ -42,7 +42,25 @@ SYMBOL_SIZE = 13
 
 #: Per-kernel overrides where the uniform SYMBOL_SIZE is invalid. stockham_fft sizes its arrays as
 #: ``R**K`` (radix-R, K-stage FFT), so 13**13 (~2 PiB) is unallocatable; bind small powers (N=2**6=64).
-SYMBOL_OVERRIDES = {"stockham_fft": {"R": 2, "K": 6}}
+#: scattering_self is an 8-deep nest (Nkz, NE, Nqz, Nw, N3D, N3D, NA, NB) of Norb-square complex
+#: matmuls, so a uniform 13 is 13**8 ~= 8.2e8 iterations -- it ran for ~2h and took the CI job down
+#: with it. Two per axis keeps the shape exercised at 2**8 = 256 iterations.
+SYMBOL_OVERRIDES = {
+    "stockham_fft": {
+        "R": 2,
+        "K": 6
+    },
+    "scattering_self": {
+        "Nkz": 2,
+        "NE": 2,
+        "Nqz": 2,
+        "Nw": 2,
+        "N3D": 2,
+        "NA": 2,
+        "NB": 2,
+        "Norb": 2
+    },
+}
 
 #: npbench corpus subpackages under ``tests/npbench`` this sweep covers: ``polybench`` (npbench's
 #: polybench set) and ``misc`` (the non-polybench npbench kernels). The heavier deep-learning /
