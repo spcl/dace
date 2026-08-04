@@ -22,6 +22,7 @@ jobs:
   cloudsc-e2e:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
@@ -49,7 +50,11 @@ jobs:
         # 2400s does not cover the canonicalize file: one ``canonicalize`` call on the
         # 6342-block CloudSC SDFG is over an hour on a loaded 16-core box, and the fixture
         # that pays it is billed to whichever test runs first.
+        # The two tests/canonicalize entries are integration-marked for the same reason and were
+        # previously collected by the canonicalization workflow, whose 600s per-test cap kills them.
         pytest -n 2 --dist loadfile -m integration --tb=short --timeout_method thread --timeout=7200 \
           tests/corpus/cloudsc/cloudsc_parallelize_chain_test.py \
           tests/corpus/cloudsc/cloudsc_transform_chain_test.py \
-          tests/corpus/cloudsc/cloudsc_canonicalize_test.py
+          tests/corpus/cloudsc/cloudsc_canonicalize_test.py \
+          tests/canonicalize/cloudsc_canonicalize_staged_test.py \
+          tests/canonicalize/canonicalize_determinism_test.py

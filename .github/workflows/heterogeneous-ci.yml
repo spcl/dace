@@ -22,6 +22,7 @@ jobs:
   test-heterogeneous:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, linux]
+    timeout-minutes: 60
     steps:
     - uses: actions/checkout@v7
       with:

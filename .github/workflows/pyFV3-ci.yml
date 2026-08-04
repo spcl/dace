@@ -19,6 +19,7 @@ concurrency:
 jobs:
   configure:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     name: "Read test configuration"
     outputs:
@@ -32,6 +33,7 @@ jobs:
 
   build_and_validate_pyFV3:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     needs: configure
     strategy:
       fail-fast: false

@@ -50,5 +50,9 @@ jobs:
         export DACE_compiler_precompiled_header=1
         # loadgroup, not the default load: corpus cases carry xdist_group(kernel) so one kernel's
         # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
+        # ``not integration``: tests/canonicalize also holds two whole-application harnesses that take
+        # far longer than the 600s per-test cap here (the staged CloudSC walk builds and verifies the
+        # kernel once per phase; the determinism probe spawns a 1800s subprocess). They are marked
+        # ``integration`` and run in the dedicated integration workflow, which budgets 7200s per test.
         pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
-          -m "canonicalization and not gpu and not long and not sequential and not perf"
+          -m "canonicalization and not gpu and not long and not sequential and not perf and not integration"

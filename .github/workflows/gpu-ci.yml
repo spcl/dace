@@ -19,6 +19,7 @@ jobs:
   test-gpu:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: [self-hosted, gpu]
+    timeout-minutes: 120
     steps:
     - uses: actions/checkout@v7
       with:
