@@ -472,8 +472,8 @@ class StencilTiling(transformation.SubgraphTransformation):
                                            "your parameters and match.")
 
                     self.tile_sizes.append(tile_stride + max_diff + min_diff)
-                    self.tile_offset_lower.append(symbolic.pystr_to_symbolic(str(min_diff)))
-                    self.tile_offset_upper.append(symbolic.pystr_to_symbolic(str(max_diff)))
+                    self.tile_offset_lower.append(symbolic.pystr_to_symbolic(min_diff))
+                    self.tile_offset_upper.append(symbolic.pystr_to_symbolic(max_diff))
 
                 # get calculated parameters
                 tile_size = self.tile_sizes[-1]
