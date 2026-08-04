@@ -418,27 +418,33 @@ class BestEffortLoopPeeling(ppl.Pass):
                     values.append(x)
         return values
 
-    #: Where a range guard stops holding, as an offset from the compared value, for ``i <op> k`` and
-    #: for the mirrored ``k <op> i``. Splitting there puts the guarded iterations in one segment and
-    #: the rest in another, where the guard is a contradiction the remainder cleanup drops.
+    #: First iteration of the SECOND segment for ``i <op> k`` and the mirrored ``k <op> i``, as an
+    #: offset from the compared value -- the split point a two-way :meth:`_split_loop_at` wants,
+    #: which puts the run where the guard holds in one segment and the run where it does not in the
+    #: other. Each side's guard is then constant over its own range, so the remainder cleanup drops
+    #: the contradiction and lifts the tautology.
     _RANGE_GUARD_BOUNDARY = {
-        (ast.Lt, False): -1,  # i < k  holds up to k-1
-        (ast.LtE, False): 0,  # i <= k holds up to k
-        (ast.Gt, False): 0,  # i > k  starts at k+1, so k ends the false run
-        (ast.GtE, False): -1,  # i >= k starts at k
-        (ast.Gt, True): -1,  # k > i  == i < k
-        (ast.GtE, True): 0,  # k >= i == i <= k
-        (ast.Lt, True): 0,  # k < i  == i > k
-        (ast.LtE, True): -1,  # k <= i == i >= k
+        (ast.Lt, False): 0,  # i < k  holds below k, so k opens the false run
+        (ast.LtE, False): 1,  # i <= k holds through k
+        (ast.Gt, False): 1,  # i > k  starts at k+1
+        (ast.GtE, False): 0,  # i >= k starts at k
+        (ast.Gt, True): 0,  # k > i  == i < k
+        (ast.GtE, True): 1,  # k >= i == i <= k
+        (ast.Lt, True): 1,  # k < i  == i > k
+        (ast.LtE, True): 0,  # k <= i == i >= k
     }
 
     def range_guard_split_points(self, loop: LoopRegion):
         """Split points for an ``if i < k`` style guard that holds over a PREFIX or SUFFIX of the
         iteration space, rather than the single iteration ``if i == k`` carves out.
 
-        The canonical "peel to eliminate the comparison" case: split where the guard stops holding
-        and one side's guard is a range contradiction, which :meth:`_prune_dead_loop_branches` drops
-        -- leaving a body with no guard left to block ``LoopToMap``.
+        The canonical "peel to eliminate the comparison" case. Split TWO-WAY, not into singletons:
+        ``if i < 2`` over ``range(N)`` becomes the loop ``[0, 1]`` plus the loop ``[2, N-1]``, so the
+        guarded run stays one loop that a later ``ShortLoopUnroll`` may or may not unroll, rather
+        than this pass deciding to unroll it here by emitting an iteration per segment.
+
+        Either way the guard is constant over each segment, so :meth:`_prune_dead_loop_branches`
+        drops it -- leaving a body with nothing left to block ``LoopToMap``.
 
         Liberal by design, like the other candidate sources: :meth:`_best_split_for` probes each
         candidate on an isolated copy and keeps one only if it unblocks strictly more maps.
@@ -818,7 +824,12 @@ class BestEffortLoopPeeling(ppl.Pass):
         # bounds. See :meth:`_provably_nonneg_symbolic`.
         return self._provably_nonneg_symbolic(expr)
 
-    def _specialize_index_set_split(self, sdfg: SDFG, loop: LoopRegion, x, relations) -> None:
+    def _specialize_index_set_split(self,
+                                    sdfg: SDFG,
+                                    loop: LoopRegion,
+                                    x,
+                                    relations,
+                                    middle_singleton: bool = True) -> None:
         """Replace ``loop`` with ``if (start <= x <= end) { index-set split } else { original loop }``.
 
         The split form regroups the same iterations only inside the range (see
@@ -828,7 +839,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         :meth:`_specialize_modulo_split`, whose far-half fold is likewise conditional."""
         from dace.transformation.passes.loop_specialization import specialize_loop_under_condition
         if not relations:
-            if self._split_loop_at(sdfg, loop, x):
+            if self._split_loop_at(sdfg, loop, x, middle_singleton=middle_singleton):
                 self._clean_peeled_remainder(sdfg)
             return
         # A ``CodeBlock`` condition is PYTHON (``and``, not ``&&``), and the relation is rendered by
@@ -837,7 +848,7 @@ class BestEffortLoopPeeling(ppl.Pass):
         condition = ' and '.join(f'({r})' for r in sorted(relations, key=str))
 
         def _parallelize(par_loop, par_region, _owner):
-            if self._split_loop_at(sdfg, par_loop, x):
+            if self._split_loop_at(sdfg, par_loop, x, middle_singleton=middle_singleton):
                 self._clean_peeled_remainder(par_region)
 
         specialize_loop_under_condition(loop, condition, _parallelize, sdfg)
@@ -856,9 +867,13 @@ class BestEffortLoopPeeling(ppl.Pass):
         }
 
     def _best_split_for(self, loop: LoopRegion, sdfg: SDFG):
-        """The ``if i == x`` guard value whose index-set split unblocks the most maps
-        for ``loop`` (probed on an isolated copy), or ``None`` if splitting does not
-        help or the loop already maps."""
+        """``(x, middle_singleton)`` for the index-set split that unblocks the most maps for
+        ``loop`` (probed on an isolated copy), or ``None`` if splitting does not help or the loop
+        already maps.
+
+        The mode travels with the point because the two candidate families want different splits: a
+        guard true for ONE iteration wants that iteration carved out (``middle_singleton``), a guard
+        true over a RUN wants the two-way split that keeps the run whole."""
         from dace.transformation.interstate.loop_to_map import LoopToMap
         # Cheap structural gate FIRST: a loop with no ``if i == x`` equality guard and no
         # broadcast-conflict split point has no split candidate, so a split can never unblock it --
@@ -872,9 +887,8 @@ class BestEffortLoopPeeling(ppl.Pass):
         for x in self.direction_flip_split_points(loop):
             if x not in candidates:
                 candidates.append(x)
-        for x in self.range_guard_split_points(loop):
-            if x not in candidates:
-                candidates.append(x)
+        two_way = {x for x in self.range_guard_split_points(loop) if x not in candidates}
+        candidates += sorted(two_way, key=str)
         # A split point is baked into ``loop``'s segment bounds (see :meth:`_split_loop_at`), so it
         # must be in scope at ``loop``'s own level. Drop any candidate naming an iterator an INNER
         # loop binds -- a value that varies per inner iteration is undefined where the outer segments
@@ -900,9 +914,10 @@ class BestEffortLoopPeeling(ppl.Pass):
             return None
         best_count, best = baseline, None
         for x in candidates:
+            singleton = x not in two_way
             cand = copy.deepcopy(mini)
             cloops = _loops(cand)
-            if not cloops or not self._split_loop_at(cand, cloops[0], x):
+            if not cloops or not self._split_loop_at(cand, cloops[0], x, middle_singleton=singleton):
                 continue
             self._clean_peeled_remainder(cand)
             try:
@@ -911,7 +926,7 @@ class BestEffortLoopPeeling(ppl.Pass):
             except Exception:
                 continue
             if n_mappable > best_count:
-                best_count, best = n_mappable, x
+                best_count, best = n_mappable, (x, singleton)
         return best
 
     def _prune_dead_loop_branches(self, sdfg: SDFG):
@@ -1427,13 +1442,14 @@ class BestEffortLoopPeeling(ppl.Pass):
         #    point does not have to (``if i == K`` with a free ``K``), so an unprovable membership
         #    becomes the `if in-range: split else: original loop` branch condition.
         for loop in list(_loops(sdfg)):
-            x = self._best_split_for(loop, sdfg)
-            if x is None:
+            found = self._best_split_for(loop, sdfg)
+            if found is None:
                 continue
+            x, middle_singleton = found
             relations = self._split_range_relations(loop, x)
             if relations is None:
                 continue
-            self._specialize_index_set_split(sdfg, loop, x, relations)
+            self._specialize_index_set_split(sdfg, loop, x, relations, middle_singleton=middle_singleton)
             applied += 1
         # 2. Peel a genuinely-wrapping body modulo to its floor-correct affine form,
         #    even for loops LoopToMap already maps (the wrap-around access otherwise
