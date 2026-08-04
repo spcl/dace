@@ -122,7 +122,9 @@ def replace_dict(subgraph: 'StateSubgraphView',
             edge.data.subset = _replsym(edge.data.subset, symrepl)
         if (edge.data.other_subset is not None and repl.keys() & edge.data.other_subset.free_symbols):
             edge.data.other_subset = _replsym(edge.data.other_subset, symrepl)
-        if symrepl.keys() & edge.data.volume.free_symbols:
+        # By name, like the subsets above: symbol identity includes the dtype, and the keys are minted
+        # from bare names, so an intersection of instances would miss the very symbols to replace.
+        if repl.keys() & set(map(str, edge.data.volume.free_symbols)):
             edge.data.volume = _replsym(edge.data.volume, symrepl)
 
 
@@ -207,7 +209,7 @@ def replace_properties_dict(node: Any,
             # Symbol mappings for nested SDFGs
             for symname, sym_mapping in propval.items():
                 try:
-                    propval[symname] = symbolic.pystr_to_symbolic(str(sym_mapping)).subs(symrepl)
+                    propval[symname] = symbolic.pystr_to_symbolic(sym_mapping).subs(symrepl)
                 except AttributeError:  # If the symbolified value has no subs
                     pass
 
