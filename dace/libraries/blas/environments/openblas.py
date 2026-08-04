@@ -95,7 +95,7 @@ def _standalone_libopenblas():
     return None, None
 
 
-def _openblas_present():
+def _openblas_present() -> bool:
     """Whether a ``libopenblas`` exists at all. The ldconfig cache counts: ``BLA_VENDOR=OpenBLAS``
     makes FindBLAS search the standard link paths, so it needs no resolvable directory."""
     return bool(ctypes.util.find_library('openblas')) or bool(_standalone_libopenblas()[0])
