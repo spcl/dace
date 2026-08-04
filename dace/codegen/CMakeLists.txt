@@ -85,8 +85,13 @@ if(DACE_ENABLE_CUDA)
   set(CUDAToolkit_ROOT ${CUDA_TOOLKIT_ROOT_DIR})
 
   find_package(CUDAToolkit REQUIRED)
-  set(CMAKE_CUDA_STANDARD 17)
+  # Device code follows the host standard: the two share headers, so a mismatch is an ODR violation.
+  set(CMAKE_CUDA_STANDARD ${DACE_CPP_STANDARD})
+  set(CMAKE_CUDA_STANDARD_REQUIRED ON)
   set(CMAKE_CUDA_SEPARABLE_COMPILATION ON)
+  # Device code calls host constexpr functions (std::numeric_limits and friends). Here rather than in
+  # the configurable nvcc arguments, since overriding those must not turn it off.
+  string(APPEND CMAKE_CUDA_FLAGS " --expt-relaxed-constexpr")
 
   # CMake 3.24: set_property(TARGET tgt PROPERTY CUDA_ARCHITECTURES native)
   if (NOT DEFINED LOCAL_CUDA_ARCHITECTURES)
@@ -224,6 +229,11 @@ set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} ${DACE_ENV_LINK_FLAG
 # Create HIP object files
 if(DACE_ENABLE_HIP)
   enable_language(HIP)
+
+  # As for CUDA above: device and host share headers, so they must agree on the standard. hipcc would
+  # otherwise fall back to its own default, currently gnu++17.
+  set(CMAKE_HIP_STANDARD ${DACE_CPP_STANDARD})
+  set(CMAKE_HIP_STANDARD_REQUIRED ON)
 
   # Get local AMD architectures
   if (NOT DEFINED LOCAL_HIP_ARCHITECTURES)
