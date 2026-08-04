@@ -73,7 +73,7 @@ setup(
     install_requires=[
         'numpy', 'networkx >= 2.5, <= 3.5', 'astunparse', 'sympy >= 1.9', 'pyyaml', 'ply', 'fparser >= 0.1.3, != 0.2.3',
         'dill', 'pyreadline;platform_system=="Windows"', 'packaging', 'typing-extensions', 'ml_dtypes'
-    ] + cmake_requires,
+    ] + cmake_requires + ninja_requires,
     extras_require={
         'ml': ['onnx', 'torch', 'onnxsim', 'onnxscript', 'onnxruntime', 'protobuf', 'ninja'],
         'testing': [
