@@ -638,7 +638,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # Subset per target: arms must agree when both write it (element-write
         # convention M3.1b enforces upstream).
         write_subsets = {}
-        for arr in all_escapes:
+        for arr in sorted(all_escapes):  # hash order here would decide ITE tasklet creation order
             t, e = then_writes.get(arr), else_writes.get(arr)
             if t is not None and e is not None and str(t) != str(e):
                 raise NotImplementedError(
@@ -652,7 +652,7 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         # New 3-CFG states in parent graph. compute-else = empty pass-through for
         # single-arm conditionals (no else to clone); apply-merge reads pre-cb value of
         # each target via ``else_op = arr`` fallback.
-        ct_state = parent.add_state(f"compute_then_{cb.label}")
+        ct_state = parent.add_state(f"compute_then_{cb.label}", is_start_block=was_start)
         ce_state = parent.add_state(f"compute_else_{cb.label}")
         am_state = parent.add_state(f"apply_ITE_{cb.label}")
 
@@ -682,8 +682,6 @@ class SameWriteSetIfElseToITECFG(ppl.Pass):
         parent.add_edge(ce_state, am_state, dace.InterstateEdge())
         for e in out_edges:
             parent.add_edge(am_state, e.dst, e.data)
-        if was_start:
-            parent.start_block = parent.node_id(ct_state)
 
         # ITE tasklets. Non-writing arm contributes pre-cb value (reads original ``arr``,
         # intact because writing arm targets its private temp). Resolve cond once so the

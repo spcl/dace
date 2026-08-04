@@ -24,6 +24,7 @@ Downstream chain ``GenerateTileIterationMask`` -> ``InsertTileLoadStore`` -> ``G
 ``ConvertTaskletsToTileOps`` then emits gather/scatter.
 """
 import copy
+import re
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import dace
@@ -324,7 +325,6 @@ class WidenAccesses(ppl.Pass):
     @staticmethod
     def _tasklet_references_iter_var(tasklet: Tasklet, iter_vars: Tuple[str, ...]) -> bool:
         """True iff ``tasklet``'s code body references any tile iter-var name."""
-        import re
         if tasklet.code is None:
             return False
         code_str = tasklet.code.as_string or ""
@@ -581,7 +581,6 @@ class WidenAccesses(ppl.Pass):
 
         :returns: number of (AN, k) pairs seeded.
         """
-        import re as _re
         widths = tuple(self.widths)
         seeded = 0
         for inner_state in inner_sdfg.states():
@@ -611,7 +610,7 @@ class WidenAccesses(ppl.Pass):
                         if kind != PerDimKind.GATHER:
                             continue
                         begin_str = str(sub.ranges[k][0]).strip()
-                        if _re.fullmatch(r"[A-Za-z_]\w*", begin_str) is None:
+                        if re.fullmatch(r"[A-Za-z_]\w*", begin_str) is None:
                             continue
                         if emit_per_lane_symbol_fanout(inner_sdfg,
                                                        begin_str,
@@ -805,13 +804,13 @@ class WidenAccesses(ppl.Pass):
             nt_lane_dep = self._classify_non_transients(inner_sdfg, iter_vars)
             # Step 2: widen non-transient boundary memlets. SYMMETRIC over
             # gather/scatter edges.
-            for name in nt_lane_dep:
+            for name in sorted(nt_lane_dep):
                 if self._widen_non_transient_memlets(inner_sdfg, name, iter_vars):
                     total += 1
             # Step 3: propagate lane-dep through Tasklets (fixed point).
             to_widen = self._propagate_lane_dep(inner_sdfg, iter_vars, nt_lane_dep)
             # Step 4: widen lane-dep transient descriptors.
-            for name in to_widen:
+            for name in sorted(to_widen):
                 if self._widen_transient(inner_sdfg, name, to_widen):
                     total += 1
             # Step 5: seed per-lane symbols for Bypass-form gathers. Idempotent;

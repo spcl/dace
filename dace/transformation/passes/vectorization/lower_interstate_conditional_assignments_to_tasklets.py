@@ -1,15 +1,12 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 """Demote free symbols used in conditional-assignment tasklets to scalars."""
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 import dace
-from dace import SDFG, data, properties, SDFGState, symbolic
+from dace import SDFG, properties, SDFGState, symbolic
 from dace.sdfg import ControlFlowRegion, nodes
 from dace.sdfg.state import BreakBlock, ConditionalBlock, LoopRegion
 from dace.transformation import pass_pipeline as ppl, transformation
 import dace.sdfg.utils as sdutil
-from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
-from dace.transformation.passes import FuseStates
-from dace import dtypes
 
 
 @properties.make_properties
@@ -25,8 +22,14 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
     conditional_assignment_tasklet_prefix = properties.Property(dtype=str,
                                                                 default="condition_symbol_to_scalar",
                                                                 allow_none=False)
-    also_demote = properties.ListProperty(element_type=str, default=list())
+    also_demote = properties.ListProperty(element_type=str, default=[])
     apply_once = properties.Property(dtype=bool, default=False)
+
+    def __init__(self, also_demote: Optional[List[str]] = None) -> None:
+        super().__init__()
+        # A Property default is stored on the instance without copying, so every default-built
+        # pass would otherwise share the one list object.
+        self.also_demote = list(also_demote or [])
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.AccessNodes | ppl.Modifies.InterstateEdges | ppl.Modifies.Tasklets | ppl.Modifies.Edges
@@ -47,14 +50,13 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         if self._applied > 0 and self.apply_once:
             return False
 
-        if all({isinstance(n, SDFGState) for n in cfg.nodes()}):
-            tasklets = set()
-            free_conditional_symbols = set()
+        if all(isinstance(n, SDFGState) for n in cfg.nodes()):
+            # Ordered: this drives demote_symbol_to_scalar, which adds arrays to the SDFG.
+            free_conditional_symbols: Dict[str, None] = {}
             for state in cfg.nodes():
                 for node in state.nodes():
                     if isinstance(node, nodes.Tasklet) and node.label.startswith(
                             self.conditional_assignment_tasklet_prefix):
-                        tasklets.add((node, state))
                         expr = symbolic.SymExpr(node.code.as_string.split(" = ")[-1])
                         syms = expr.free_symbols
                         # If not in inconnectors then it is a symbol
@@ -75,11 +77,11 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
                                               } if cfg.sdfg.parent_nsdfg_node is not None else {}
                         no_access_free_syms = all_free_syms - func_calls.union(boolean_func_calls).union(
                             arr_names).union(parent_symbol_name)
-                        free_conditional_symbols = free_conditional_symbols.union(no_access_free_syms)
+                        free_conditional_symbols.update(dict.fromkeys(sorted(no_access_free_syms)))
 
             for additional_demote_sym in self.also_demote:
                 if additional_demote_sym in cfg.sdfg.symbols:
-                    free_conditional_symbols.add(additional_demote_sym)
+                    free_conditional_symbols[additional_demote_sym] = None
 
             # We should demote all the free conditional symbols
             for conditional_sym in free_conditional_symbols:
@@ -132,52 +134,6 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
 
         return False
 
-    def _apply_extended_state_fusion(self, sdfg: SDFG):
-        """Fuse consecutive states recursively, including nested SDFGs.
-
-        :param sdfg: The SDFG whose states are fused in place.
-        """
-        FuseStates().apply_pass(sdfg, {})
-        applied = True
-        while applied:
-            applied = False
-            for s1 in sdfg.bfs_nodes(sdfg.start_block):
-                if s1 not in sdfg.nodes():
-                    continue
-                out_edges = sdfg.out_edges(s1)
-                assert len(out_edges) <= 1
-                if len(out_edges) == 1:
-                    s2 = out_edges[0].dst
-                    if s2 not in sdfg.nodes():
-                        continue
-                    if isinstance(s1, SDFGState) and isinstance(s2, SDFGState):
-                        t = StateFusionExtended()
-                        t.first_state = s1
-                        t.second_state = s2
-                        if t.can_be_applied(sdfg, 0, sdfg, False):
-                            applied = True
-                            t.apply(sdfg, sdfg)
-
-        for state in sdfg.all_states():
-            for node in state.nodes():
-                if isinstance(node, nodes.NestedSDFG):
-                    self._apply_extended_state_fusion(node.sdfg)
-
-    def _setzero_true_for_all_transient_scalars(self, sdfg: SDFG):
-        """Mark every scope-lifetime transient scalar as zero-initialized.
-
-        :param sdfg: The SDFG whose transient scalars are updated in place.
-        """
-        for state in sdfg.all_states():
-            for node in state.data_nodes():
-                if (isinstance(state.sdfg.arrays[node.data], data.Scalar)
-                        and state.sdfg.arrays[node.data].transient is True
-                        and (state.sdfg.arrays[node.data].lifetime == dtypes.AllocationLifetime.Scope)):
-                    node.setzero = True
-            for node in state.nodes():
-                if isinstance(node, nodes.NestedSDFG):
-                    self._setzero_true_for_all_transient_scalars(node.sdfg)
-
     def apply_pass(self, sdfg: SDFG, pipeline_results: Dict[str, Any]) -> bool:
         """Demote conditional-assignment free symbols to scalars across the SDFG.
 
@@ -186,8 +142,6 @@ class LowerInterstateConditionalAssignmentsToTasklets(ppl.Pass):
         :returns: ``True`` if any symbol was demoted.
         """
         self._applied = 0
-        #self._setzero_true_for_all_transient_scalars(sdfg)
         has_applied = self._apply(sdfg)
-        # self._apply_extended_state_fusion(sdfg)
 
         return has_applied

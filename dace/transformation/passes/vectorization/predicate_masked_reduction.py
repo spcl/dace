@@ -248,7 +248,8 @@ class PredicateMaskedReduction(ppl.Pass):
             cleaned, connectors, subsets = cond_materialize
             mask_name, _ = sd.add_scalar('_pmr_mask', dtypes.bool_, transient=True, find_new_name=True)
             mask_node = state.add_access(mask_name)
-            mask_t = state.add_tasklet('pmr_mask', set(connectors.values()), {'_m'}, f'_m = ({cleaned})')
+            mask_t = state.add_tasklet('pmr_mask', dict.fromkeys(connectors.values()), dict.fromkeys(['_m']),
+                                       f'_m = ({cleaned})')
             for arr, conn in connectors.items():
                 sub = subsets.get(arr, '[0]')
                 state.add_edge(state.add_access(arr), None, mask_t, conn, Memlet(expr=f'{arr}{sub}'))
@@ -271,11 +272,12 @@ class PredicateMaskedReduction(ppl.Pass):
             # accumulator dtype makes all three ITE arms the same type.
             ident_name, _ = sd.add_scalar('_pmr_ident', acc_desc.dtype, transient=True, find_new_name=True)
             ident_node = state.add_access(ident_name)
-            seed = state.add_tasklet('pmr_ident', set(), {'_s'}, f'_s = {identity}')
+            seed = state.add_tasklet('pmr_ident', {}, dict.fromkeys(['_s']), f'_s = {identity}')
             state.add_edge(seed, '_s', ident_node, None, Memlet(expr=f'{ident_name}[0]'))
 
             # ITE select: identity where the mask is false -> op no-op.
-            ite = state.add_tasklet('pmr_ite', {'_c', '_t', '_e'}, {'_o'}, '_o = ITE(_c, _t, _e)')
+            ite = state.add_tasklet('pmr_ite', dict.fromkeys(['_c', '_t', '_e']), dict.fromkeys(['_o']),
+                                    '_o = ITE(_c, _t, _e)')
             state.add_edge(state.add_access(cond_text), None, ite, '_c', Memlet(expr=f'{cond_text}[0]'))
             state.add_edge(addend_node, None, ite, '_t', Memlet(expr=f'{addend_name}[0]'))
             state.add_edge(ident_node, None, ite, '_e', Memlet(expr=f'{ident_name}[0]'))

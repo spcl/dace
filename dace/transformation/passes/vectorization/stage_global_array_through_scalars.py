@@ -399,7 +399,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
         # connector names rather than going through
         # :meth:`SDFGState.add_memlet_path`, which triggers propagation
         # the moment its empty-edge skeleton is in place.
-        for k in write_keys:
+        for k in sorted(write_keys):
             sn = scalar_nodes[k]
             for e in writes_by_key[k]["edges"]:
                 if e not in state.edges():
@@ -407,7 +407,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                 state.remove_edge(e)
                 state.add_edge(e.src, e.src_conn, sn, None, Memlet(f"{sn.data}[0]"))
 
-        for k in read_keys:
+        for k in sorted(read_keys):
             sn = scalar_nodes[k]
             for e in reads_by_key[k]["edges"]:
                 if e not in state.edges():
@@ -445,7 +445,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             # not drain its partial value to the outer array, or every hop becomes an unordered
             # writer of the same element. Inert for the distinct-subset fan-out (zsolqa), where no
             # write subset is ever rewritten downstream.
-            for k in write_keys - superseded_keys:
+            for k in sorted(write_keys - superseded_keys):
                 self._add_scoped_path(state,
                                       src=scalar_nodes[k],
                                       scope_nodes=exits,
@@ -453,7 +453,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
                                       array_name=array_name,
                                       subset=writes_by_key[k]["subset"])
 
-            for k in read_only_keys:
+            for k in sorted(read_only_keys):
                 self._add_scoped_path(state,
                                       src=outer_source,
                                       scope_nodes=list(reversed(entries)),
@@ -470,7 +470,7 @@ class StageGlobalArrayThroughScalars(ppl.Pass):
             # bridge, so publishing each one makes all of them unordered writers of the SAME
             # element -- the intermediate partial sums race the real result and last-writer-wins
             # silently drops the tail of the accumulation. Only the final hop publishes.
-            for k in write_keys - superseded_keys:
+            for k in sorted(write_keys - superseded_keys):
                 state.add_edge(scalar_nodes[k], None, bridge, None,
                                Memlet(data=array_name, subset=writes_by_key[k]["subset"]))
             # A bridge whose every write is superseded published nothing, so the keep-alive below

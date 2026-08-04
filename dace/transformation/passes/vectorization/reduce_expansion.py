@@ -130,8 +130,8 @@ def _build_vectorized_full_reduction(node: Reduce, state, sdfg, opname: str):
     nsdfg.add_array("_out", outsubset.size(), output_data.dtype, storage=output_data.storage)
     nsdfg.append_global_code('#include "dace/cpu_vectorizable_math.h"')
 
-    inedge._dst_conn = "_in"
-    outedge._src_conn = "_out"
+    inedge.dst_conn = "_in"
+    outedge.src_conn = "_out"
     node.add_in_connector("_in")
     node.add_out_connector("_out")
 

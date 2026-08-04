@@ -11,7 +11,7 @@ while ``from ...vectorization import VectorizeCPUMultiDim`` still works on deman
 """
 # Importing this module registers the ``"vectorized"`` implementation on the
 # standard ``Reduce`` library node (schedule-aware dispatcher). Cycle-safe.
-from . import reduce_expansion  # noqa: F401
+from dace.transformation.passes.vectorization import reduce_expansion  # noqa: F401
 
 _PIPELINE_EXPORTS = frozenset({"VectorizeMultiDim", "VectorizeCPUMultiDim", "VectorizeGPUMultiDim"})
 

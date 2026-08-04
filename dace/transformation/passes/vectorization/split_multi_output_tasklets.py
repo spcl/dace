@@ -34,9 +34,9 @@ from dace.sdfg import SDFG, SDFGState, nodes as nd
 from dace.transformation import pass_pipeline as ppl
 
 
-def _rhs_names(node: ast.AST) -> Set[str]:
-    """Every ``Name`` identifier read in an expression AST."""
-    return {n.id for n in ast.walk(node) if isinstance(n, ast.Name)}
+def _rhs_names(node: ast.AST) -> Dict[str, None]:
+    """Every ``Name`` identifier read in an expression AST, in AST order."""
+    return dict.fromkeys(n.id for n in ast.walk(node) if isinstance(n, ast.Name))
 
 
 class SplitMultiOutputTasklets(ppl.Pass):
@@ -88,8 +88,11 @@ class SplitMultiOutputTasklets(ppl.Pass):
                 isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name) for s in body):
             return False
         stmts: List[Tuple[str, str,
-                          Set[str]]] = [(s.targets[0].id, ast.unparse(s.value), _rhs_names(s.value)) for s in body]
-        out_conns = set(tasklet.out_connectors)
+                          Dict[str,
+                               None]]] = [(s.targets[0].id, ast.unparse(s.value), _rhs_names(s.value)) for s in body]
+        # Ordered: iteration order below decides the order the split tasklets and their edges are
+        # added to the state, and the connector dicts already carry a deterministic one.
+        out_conns = dict.fromkeys(tasklet.out_connectors)
         in_conns = set(tasklet.in_connectors)
         # The last statement assigning each output connector is its defining statement.
         last_def: Dict[str, int] = {}
@@ -106,14 +109,12 @@ class SplitMultiOutputTasklets(ppl.Pass):
         if any(o not in out_edges for o in out_conns):
             return False
 
-        plans: List[Tuple[str, List[int], Set[str]]] = []
+        plans: List[Tuple[str, List[int], Dict[str, None]]] = []
         for o in out_conns:
-            sliced = self._backward_slice(stmts, last_def[o], out_conns - {o})
+            sliced = self._backward_slice(stmts, last_def[o], set(out_conns) - {o})
             if sliced is None:
                 return False  # output depends on another output -- leave intact
-            used_in = set()
-            for i in sliced:
-                used_in |= (stmts[i][2] & in_conns)
+            used_in = dict.fromkeys(name for i in sliced for name in stmts[i][2] if name in in_conns)
             plans.append((o, sorted(sliced), used_in))
 
         scope_entry = state.entry_node(tasklet)
@@ -121,7 +122,7 @@ class SplitMultiOutputTasklets(ppl.Pass):
         # every output, so a partial failure never leaves a half-split state).
         for o, sliced, used_in in plans:
             code = "\n".join(f"{stmts[i][0]} = {stmts[i][1]}" for i in sliced)
-            new_t = state.add_tasklet(f"{tasklet.label}_out_{o}", set(used_in), {o}, code)
+            new_t = state.add_tasklet(f"{tasklet.label}_out_{o}", dict.fromkeys(used_in), dict.fromkeys([o]), code)
             if not used_in:
                 # Reads nothing, so it would become a second in-degree-0 BFS root inside the scope
                 # and scope_dict() would visit the map exit twice. Re-anchor it where the original was.
@@ -136,7 +137,7 @@ class SplitMultiOutputTasklets(ppl.Pass):
         state.remove_node(tasklet)
         return True
 
-    def _backward_slice(self, stmts: List[Tuple[str, str, Set[str]]], target_idx: int,
+    def _backward_slice(self, stmts: List[Tuple[str, str, Dict[str, None]]], target_idx: int,
                         other_outputs: Set[str]) -> Optional[Set[int]]:
         """Indices of the statements needed to compute ``stmts[target_idx]``'s LHS.
 

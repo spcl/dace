@@ -10,7 +10,7 @@ can wire it into every lib node without crossing a NestedSDFG boundary.
 from typing import Dict, Optional, Tuple
 
 import dace
-from dace import properties
+from dace import properties, symbolic
 from dace.sdfg.nodes import MapEntry
 from dace.transformation import pass_pipeline as ppl
 from dace.libraries.tileops import TileMaskGen
@@ -166,8 +166,9 @@ class GenerateTileIterationMask(ppl.Pass):
         # bound symbol the body NSDFG doesn't otherwise use (unlike a shape symbol
         # like ``klev``) must be threaded in, else the TileMaskGen tasklet fails to
         # compile (``'kfdia' was not declared``).
-        import dace.symbolic as _sym
-        ub_syms = {str(s) for ub in spec.global_ubs for s in _sym.pystr_to_symbolic(str(ub)).free_symbols}
+        # Ordered: this decides the order the symbols are added to the nested SDFG.
+        ub_syms = dict.fromkeys(
+            sorted(str(s) for ub in spec.global_ubs for s in symbolic.pystr_to_symbolic(str(ub)).free_symbols))
         thread_symbols_into_nsdfg(inner_sdfg, body_nsdfg, ub_syms, parent_sdfg)
         return True
 

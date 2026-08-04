@@ -673,9 +673,6 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         for fn in ("min(", "max(", "pow(", "ipow(", "ITE("):
             if rhs.startswith(fn):
                 return None
-        # Reject leading minus (handled by _detect_unop_with_symbol negation case).
-        if rhs.startswith("-") and not rhs.startswith("-"):  # never triggers; placeholder
-            return None
         return out_conn, rhs
 
     def _reads_scalar_operand_inline(self, node) -> bool:
@@ -1736,7 +1733,6 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         out_subset = ", ".join(f"0:{w}" for w in widths)
         inner_state.add_edge(tasklet, "_out", out_an, None, _Memlet(f"{arr_name}[{out_subset}]"))
         return arr_name
-        return True
 
     def _convert_binop(self, inner_state: SDFGState, tasklet: Tasklet, detected) -> bool:
         out_conn, a_conn, b_conn, op = detected
