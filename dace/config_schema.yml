@@ -372,8 +372,10 @@ required:
                         title: nvcc Arguments
                         description: >
                             nvcc flags on top of the build type; no ``-O`` (that comes from
-                            ``compiler.build_type``).
-                        default: '-lineinfo -Xcompiler -march=native -Xcompiler -fno-math-errno -Xcompiler -fno-trapping-math -Xcompiler -fno-signed-zeros -Xcompiler -freciprocal-math -Xcompiler -Wno-unused-parameter'
+                            ``compiler.build_type``). Host flags are not listed here: DaCe forwards
+                            ``compiler.cpu.args`` through ``-Xcompiler`` so both halves of a ``.cu``
+                            are built the same way.
+                        default: '-lineinfo'
                         default_Windows: ''
 
                     hip_args:
@@ -381,8 +383,9 @@ required:
                         title: hipcc Arguments
                         description: >
                             hipcc flags on top of the build type; no ``-O`` (that comes from
-                            ``compiler.build_type``).
-                        default: '-fPIC -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter'
+                            ``compiler.build_type``). Host flags are not listed here: DaCe forwards
+                            ``compiler.cpu.args``, which hipcc takes directly.
+                        default: '-fPIC'
 
                     cuda_arch:
                         type: str
