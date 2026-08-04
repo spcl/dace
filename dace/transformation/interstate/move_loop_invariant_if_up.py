@@ -16,7 +16,13 @@ Conservative -- only fires when:
   allowed and are dropped (they carry no effect, so the loop is a genuine
   no-op when ``c`` is false -> hoisting is value-preserving: ``c`` true =>
   the loop runs the body every iteration as before; ``c`` false => the loop
-  did nothing observable before and is simply not entered after);
+  did nothing observable before and is simply not entered after). A guard
+  that shares its body with siblings it is data-independent of is first
+  distributed into a loop of its own (``for k: { A; if c: B }`` ->
+  ``for k: { A }; for k: { if c: B }``) using ``LoopFission``'s independence
+  criterion, then hoisted -- otherwise a loop-fusion pass that welds a
+  guard-only loop back onto a sibling would put the guard permanently out
+  of reach;
 * the condition does not reference the loop variable nor any data/symbol
   written inside the loop, *except* symbols an interstate edge of the chain
   assigns from a provably-invariant expression -- those assignments are
@@ -38,6 +44,9 @@ from dace.sdfg.state import ConditionalBlock, ControlFlowRegion, LoopRegion, SDF
 from dace.sdfg import nodes
 from dace.sdfg.utils import set_nested_sdfg_parent_references
 from dace.transformation import pass_pipeline as ppl, transformation
+# Shared soundness kernel for the loop distribution below -- the same import route
+# ``fuse_loops.py`` uses, so fission, fusion and this hoist can never disagree.
+from dace.transformation.passes.loop_fission import LoopFission, _independent_block_groups
 
 
 def _free(expr: str) -> Set[str]:
@@ -165,6 +174,85 @@ def _reads_outside(loop: LoopRegion, cb: ConditionalBlock) -> Set[str]:
     return reads
 
 
+def _hoistable(sdfg: SDFG, loop: LoopRegion, cb: ConditionalBlock,
+               require_full_hoist: bool) -> Optional[Tuple[CodeBlock, List[Tuple[str, str]]]]:
+    """Whether the guard ``cb`` is loop-invariant enough to leave ``loop``.
+
+    Judged on the WHOLE loop (every block, every iedge), so the answer stays
+    valid -- and only gets more permissive -- if ``loop`` is later distributed
+    down to just ``cb`` by :func:`_split_guard_loop`.
+
+    :param sdfg: The root SDFG (bounds the ancestor walk).
+    :param loop: The loop the guard sits in.
+    :param cb: The single-branch guarding conditional block.
+    :param require_full_hoist: If set, only accept the candidate when the
+        guard can be sifted out past *every* enclosing loop (the whole parent
+        chain) -- if it would get stuck at some ancestor loop (its condition
+        references that loop's variable or data it writes), do nothing at
+        all. Used by the canonicalize pipeline, where a guard left stranded
+        between not-perfectly-collapsed map levels is worse than not moving.
+    :returns: ``(cond, hoist_assignments)`` or ``None``. ``hoist_assignments``
+        is the list of invariant ``(lhs, rhs)`` pairs that must move to the
+        outer-guard's incoming edge; per-iteration assignments stay where they
+        are inside the new (now-guarded) loop body and are NOT in this list --
+        the splice in ``_move`` keeps them in place automatically.
+    """
+    if len(cb.branches) != 1:
+        return None
+    cond, branch = cb.branches[0]
+    if cond is None or not isinstance(branch, ControlFlowRegion):
+        return None
+
+    lvar = str(loop.loop_variable)
+    loop_w = _written(loop)
+    outside_reads = _reads_outside(loop, cb)
+    # Interstate-edge assignments on the loop's own chain. Split into:
+    #   - invariant: hoist with the guard;
+    #   - per-iteration: must be DEAD outside the branch (lhs not read
+    #     anywhere except inside cb), otherwise refuse.
+    chain_assignments: List[Tuple[str, str]] = []
+    for e in loop.edges():
+        for lhs, rhs in e.data.assignments.items():
+            rf = _free(rhs)
+            is_variant = (lvar in rf or bool(rf & loop_w) or lhs in loop_w - set(e.data.assignments))
+            if not is_variant:
+                chain_assignments.append((lhs, rhs))
+                continue
+            # Variant assignment: only legal to leave inside the loop
+            # body if its lhs is not observed outside the branch.
+            if lhs in outside_reads:
+                return None
+
+    assigned = {lhs for lhs, _ in chain_assignments}
+    cfree = {str(s) for s in cond.get_free_symbols()}
+    # The guard must be invariant: no loop variable, and no dependence on
+    # loop-written data/symbols other than the hoistable chain symbols.
+    if lvar in cfree:
+        return None
+    if (cfree & loop_w) - assigned:
+        return None
+
+    # All-or-nothing mode: only hoist if the guard can clear *every*
+    # enclosing loop. If some ancestor loop's variable or written data
+    # appears in the condition, the guard would stall there -- skip it.
+    if require_full_hoist:
+        for anc in _enclosing_loops(loop, sdfg):
+            avar = str(anc.loop_variable)
+            aw = _written(anc)
+            # The guard clears ``anc`` only if both the condition AND
+            # every chain assignment it carries are invariant w.r.t.
+            # ``anc`` -- a chain assignment whose RHS reads ``anc``'s
+            # variable / written data (e.g. ``g_index = g[i]``) pins the
+            # guard to ``anc`` even though the *condition* alone looks
+            # invariant.
+            if avar in cfree or ((cfree & aw) - assigned):
+                return None
+            if any(avar in _free(rhs) or (_free(rhs) & aw) for _, rhs in chain_assignments):
+                return None
+
+    return cond, chain_assignments
+
+
 def _match(
     sdfg: SDFG,
     require_full_hoist: bool = False
@@ -173,18 +261,8 @@ def _match(
     loop-invariant condition (plus a hoistable invariant assignment chain
     and any per-iteration assignments that are dead outside the branch).
 
-    :param require_full_hoist: If set, only accept the candidate when the
-        guard can be sifted out past *every* enclosing loop (the whole parent
-        chain) -- if it would get stuck at some ancestor loop (its condition
-        references that loop's variable or data it writes), do nothing at
-        all. Used by the canonicalize pipeline, where a guard left stranded
-        between not-perfectly-collapsed map levels is worse than not moving.
+    :param require_full_hoist: See :func:`_hoistable`.
     :returns: ``(loop, cond_block, cond, hoist_assignments)`` or ``None``.
-        ``hoist_assignments`` is the list of invariant ``(lhs, rhs)`` pairs
-        that must move to the outer-guard's incoming edge; per-iteration
-        assignments stay where they are inside the new (now-guarded) loop
-        body and are NOT in this list -- the splice in ``_move`` keeps them
-        in place automatically.
     """
     for loop in sdfg.all_control_flow_regions(recursive=True):
         if not isinstance(loop, LoopRegion):
@@ -198,78 +276,58 @@ def _match(
             # Safety: hoisting the conditional would also sweep any
             # non-empty sibling body block into the new outer-guarded
             # scope, dropping its execution under the not-taken path --
-            # value-changing. Per-iteration iedge assignments on the
-            # body chain ARE allowed (they live on EDGES, not blocks,
-            # and have no observable side effect when their lhs is dead
-            # outside the branch); see the iedge classification below.
+            # value-changing. Such a body is handled by distributing the
+            # sibling out first (:func:`_split_guard_loop`). Per-iteration
+            # iedge assignments on the body chain ARE allowed (they live on
+            # EDGES, not blocks, and have no observable side effect when
+            # their lhs is dead outside the branch).
             continue
-        cb = cbs[0]
-        if len(cb.branches) != 1:
-            continue
-        cond, branch = cb.branches[0]
-        if cond is None or not isinstance(branch, ControlFlowRegion):
-            continue
-
-        lvar = str(loop.loop_variable)
-        loop_w = _written(loop)
-        outside_reads = _reads_outside(loop, cb)
-        # Interstate-edge assignments on the loop's own chain. Split into:
-        #   - invariant: hoist with the guard;
-        #   - per-iteration: must be DEAD outside the branch (lhs not read
-        #     anywhere except inside cb), otherwise refuse.
-        chain_assignments: List[Tuple[str, str]] = []
-        bad = False
-        for e in loop.edges():
-            for lhs, rhs in e.data.assignments.items():
-                rf = _free(rhs)
-                is_variant = (lvar in rf or bool(rf & loop_w) or lhs in loop_w - set(e.data.assignments))
-                if not is_variant:
-                    chain_assignments.append((lhs, rhs))
-                    continue
-                # Variant assignment: only legal to leave inside the loop
-                # body if its lhs is not observed outside the branch.
-                if lhs in outside_reads:
-                    bad = True
-                    break
-            if bad:
-                break
-        if bad:
-            continue
-
-        assigned = {lhs for lhs, _ in chain_assignments}
-        cfree = {str(s) for s in cond.get_free_symbols()}
-        # The guard must be invariant: no loop variable, and no dependence on
-        # loop-written data/symbols other than the hoistable chain symbols.
-        if lvar in cfree:
-            continue
-        if (cfree & loop_w) - assigned:
-            continue
-
-        # All-or-nothing mode: only hoist if the guard can clear *every*
-        # enclosing loop. If some ancestor loop's variable or written data
-        # appears in the condition, the guard would stall there -- skip it.
-        if require_full_hoist:
-            stuck = False
-            for anc in _enclosing_loops(loop, sdfg):
-                avar = str(anc.loop_variable)
-                aw = _written(anc)
-                # The guard clears ``anc`` only if both the condition AND
-                # every chain assignment it carries are invariant w.r.t.
-                # ``anc`` -- a chain assignment whose RHS reads ``anc``'s
-                # variable / written data (e.g. ``g_index = g[i]``) pins the
-                # guard to ``anc`` even though the *condition* alone looks
-                # invariant.
-                if avar in cfree or ((cfree & aw) - assigned):
-                    stuck = True
-                    break
-                if any(avar in _free(rhs) or (_free(rhs) & aw) for _, rhs in chain_assignments):
-                    stuck = True
-                    break
-            if stuck:
-                continue
-
-        return loop, cb, cond, chain_assignments
+        h = _hoistable(sdfg, loop, cbs[0], require_full_hoist)
+        if h is not None:
+            return loop, cbs[0], h[0], h[1]
     return None
+
+
+def _split_guard_loop(sdfg: SDFG, require_full_hoist: bool) -> bool:
+    """Distribute one loop so its invariant guard ends up alone in a loop of its own.
+
+    ``for k: { A; if c: B }`` -> ``for k: { A }; for k: { if c: B }``, legal exactly when
+    ``A`` and the guard share no written data container -- ``LoopFission``'s own
+    independence criterion, reused rather than re-derived. Needed because the guard is
+    otherwise unreachable: a fusion pass that welds a guard-only loop back onto a sibling
+    (canonicalize's ``loop_fuse`` stage does, for locality) leaves the guard with a
+    non-empty sibling block, which :func:`_match` must refuse forever.
+
+    Only fires when the guard would then actually hoist -- the split is pure churn
+    otherwise.
+
+    :param sdfg: The SDFG to search and transform in place.
+    :param require_full_hoist: See :func:`_hoistable`.
+    :returns: ``True`` if a loop was distributed.
+    """
+    for loop in sdfg.all_control_flow_regions(recursive=True):
+        if not isinstance(loop, LoopRegion):
+            continue
+        cbs = [b for b in loop.nodes() if isinstance(b, ConditionalBlock)]
+        if len(cbs) != 1 or _linear_order(loop) is None:
+            continue
+        if _hoistable(sdfg, loop, cbs[0], require_full_hoist) is None:
+            continue
+        groups = _independent_block_groups(loop)
+        if groups is None or not any(len(g) == 1 and g[0] is cbs[0] for g in groups):
+            continue
+        # The split reorders execution -- all of ``A``, then all of ``B`` -- and the
+        # independence criterion only sees data containers, so refuse around anything
+        # whose order relative to other side effects is observable.
+        if any(
+                isinstance(n, nodes.CodeNode) and n.has_ordered_side_effects(st.sdfg) for st in loop.all_states()
+                for n in st.nodes()):
+            continue
+        LoopFission._fission_blocks(loop, groups)
+        # The per-group deepcopy leaves nested SDFGs pointing at the old parent.
+        set_nested_sdfg_parent_references(sdfg)
+        return True
+    return False
 
 
 @properties.make_properties
@@ -280,7 +338,9 @@ class MoveLoopInvariantIfUp(ppl.Pass):
     The inverse of ``MoveIfIntoLoop``. Repeatedly applied so an innermost
     invariant guard sifts all the way up through nested loops. The
     interstate-edge symbol-assignment chain the condition depends on is
-    hoisted with it; emptied boundary states are dropped.
+    hoisted with it; emptied boundary states are dropped. A guard sharing its
+    loop body with data-independent siblings is distributed into its own loop
+    first (:func:`_split_guard_loop`).
 
     :param require_full_hoist: All-or-nothing mode (for canonicalization):
         only hoist a guard when it can be sifted out past *every* enclosing
@@ -315,7 +375,12 @@ class MoveLoopInvariantIfUp(ppl.Pass):
         while True:
             m = _match(sdfg, self.require_full_hoist)
             if m is None:
-                break
+                # The guard may be sharing its body with independent siblings: split
+                # them apart and re-match. Terminates -- a split leaves the guard alone
+                # in its own single-block clone, which is no longer splittable.
+                if not _split_guard_loop(sdfg, self.require_full_hoist):
+                    break
+                continue
             self._move(*m)
             count += 1
         if count:
