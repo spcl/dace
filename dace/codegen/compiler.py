@@ -24,6 +24,7 @@ from functools import lru_cache
 
 import dace
 from dace.config import Config
+from dace.codegen import build_cache
 from dace.codegen import command_db
 from dace.codegen import compiler_family
 from dace.codegen import exceptions as cgx
@@ -304,6 +305,7 @@ def seed_cmake_configure(build_folder: str, key: str) -> bool:
         with open(os.path.join(build_folder, 'CMakeCache.txt'), 'w') as fp:
             fp.write(cache)
         shutil.copytree(os.path.join(entry, 'CMakeFiles'), os.path.join(build_folder, 'CMakeFiles'), dirs_exist_ok=True)
+        build_cache.touch(entry)
         return True
     except OSError:
         shutil.rmtree(os.path.join(build_folder, 'CMakeFiles'), ignore_errors=True)
@@ -326,6 +328,7 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.copy2(os.path.join(build_folder, 'CMakeCache.txt'), staging)
         shutil.copytree(versions[0], os.path.join(staging, 'CMakeFiles', os.path.basename(versions[0])))
         os.rename(staging, entry)  # atomic, and loses harmlessly to a concurrent publisher
+        build_cache.prune(os.path.join(build_cache_root(), 'configure'))
     except OSError:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -365,6 +368,10 @@ def prepare_precompiled_header(targets) -> Optional[str]:
                            check=True,
                            capture_output=True)
             os.replace(staging, header + '.gch')
+            # ~110 MB just landed in the cache, whose default root is RAM. Bound it here, at the
+            # only point where it grows.
+            build_cache.prune(os.path.join(build_cache_root(), 'pch'))
+        build_cache.touch(pch)
         return pch
     except (OSError, subprocess.SubprocessError):
         return None

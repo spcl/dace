@@ -44,9 +44,110 @@ def cache_root(kind: str) -> str:
     return os.path.join(root, kind)
 
 
+#: Share of the backing filesystem one cache kind may occupy before its least-recently-used
+#: entries are evicted. A fraction rather than a constant because the default root is ``/dev/shm``,
+#: whose size tracks the node's RAM: the same constant that is negligible on a 512 GB node would
+#: swallow a laptop. Override the resulting budget with ``DACE_BUILD_CACHE_MAX_MB``.
+CACHE_FRACTION = 0.25
+
+#: Budget when the filesystem cannot be measured. Two PCH entries' worth -- small enough that an
+#: unmeasurable root can never be the thing that fills a disk.
+FALLBACK_BUDGET = 256 * 1024**2
+
+
 def signature(*parts: object) -> str:
     """Short stable digest of everything an entry depends on."""
     return hashlib.sha256('\0'.join(str(p) for p in parts).encode()).hexdigest()[:16]
+
+
+def entry_size(path: str) -> int:
+    """Bytes ``path`` occupies, whether it is a cache entry directory or a single file."""
+    if os.path.isfile(path):
+        try:
+            return os.path.getsize(path)
+        except OSError:
+            return 0
+    total = 0
+    for root, _, filenames in os.walk(path):
+        for name in filenames:
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                pass
+    return total
+
+
+def budget(root: str) -> int:
+    """Bytes the cache under ``root`` may occupy."""
+    override = os.environ.get('DACE_BUILD_CACHE_MAX_MB')
+    if override:
+        try:
+            return int(float(override) * 1024**2)
+        except ValueError:
+            pass
+    try:
+        stat = os.statvfs(root)
+        return int(stat.f_blocks * stat.f_frsize * CACHE_FRACTION)
+    except OSError:
+        return FALLBACK_BUDGET
+
+
+def prune(root: str) -> None:
+    """Evict least-recently-used entries under ``root`` until it fits its budget.
+
+    Without this the cache only ever grows, and its default root is RAM: a long-lived session that
+    keeps producing fresh signatures (a corpus sweep, a flag search) fills ``/dev/shm`` and the
+    machine runs out of memory. A PCH entry is ~110 MB, so a few dozen signatures is all it takes.
+
+    Takes the directory rather than a cache kind because both build backends keep their caches in
+    the same shape but resolve the root separately.
+
+    Eviction is advisory in the same sense as the rest of this module. Deleting an entry another
+    process is reading is safe -- it holds the file open and POSIX keeps the inode alive -- and a
+    process that had resolved the path but not yet opened it just misses and compiles without the
+    cache. Only speed is ever at stake.
+    """
+    try:
+        entries = [os.path.join(root, name) for name in os.listdir(root)]
+    except OSError:
+        return  # no cache of this kind yet
+    sized, total = [], 0
+    for path in entries:
+        # Access time BEFORE sizing: walking an entry to measure it reads its directory, which
+        # refreshes the very atime being sampled and would flatten the LRU order into listdir order.
+        # Ordering by last use, not creation, is what keeps a reused entry alive over a newer idle one.
+        try:
+            used = os.path.getatime(path)
+        except OSError:
+            continue
+        size = entry_size(path)
+        total += size
+        sized.append((used, size, path))
+    limit = budget(root)
+    for _, size, path in sorted(sized):
+        if total <= limit:
+            return
+        if os.path.isfile(path):
+            try:
+                os.unlink(path)
+            except OSError:
+                continue
+        else:
+            shutil.rmtree(path, ignore_errors=True)
+        total -= size
+
+
+def touch(path: str) -> None:
+    """Mark a cache entry as used, so :func:`prune` sees it as recent.
+
+    A cache HIT does not write anything, and ``/dev/shm`` is commonly mounted ``relatime`` -- the
+    kernel would not refresh the access time on a read either. Without this the LRU order decays
+    into creation order and the most valuable entries are evicted first.
+    """
+    try:
+        os.utime(path, None)
+    except OSError:
+        pass
 
 
 def newest_mtime(directory: str) -> float:
@@ -89,6 +190,8 @@ def ensure_dace_pch(cxx: str, pch_flags: Sequence[str], runtime_inc: str, runtim
             tmp_gch = f'{gch}.tmp.{os.getpid()}'
             run([cxx] + list(pch_flags) + ['-I', runtime_inc, '-x', 'c++-header', header, '-o', tmp_gch])
             os.replace(tmp_gch, gch)
+            prune(cache_root('pch'))  # a new ~110 MB entry just landed in RAM
+        touch(pch_dir)
         return ['-I', pch_dir, '-include', PREWARM_HEADER]
     except Exception:
         return None  # any trouble -> compile without the PCH
@@ -173,6 +276,7 @@ def publish_configure_cache(build_folder: str, key: str) -> None:
         shutil.copy2(cache_file, os.path.join(staging, _CACHE_FILE))
         shutil.copytree(os.path.join(cmakefiles, version), os.path.join(staging, _CMAKEFILES, version))
         os.rename(staging, entry)  # atomic; fails harmlessly if another build won the race
+        prune(cache_root('configure'))
     except OSError:
         shutil.rmtree(staging, ignore_errors=True)
 
