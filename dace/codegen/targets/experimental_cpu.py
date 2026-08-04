@@ -50,6 +50,11 @@ SIZE_CONSTEVAL_QUALIFIER = 'static DACE_HDFI consteval'
 # (a C++ tasklet body, a library node's code property): over-matching costs a refusal, missing a
 # token costs a miscompile, so the tokenizer is deliberately the crude one.
 IDENTIFIER_TOKENS = re.compile(r'[A-Za-z_]\w*')
+# Punctuation a C++ declarator may carry between its type and its name (``double *p``, ``T &r``,
+# ``std::vector<double> v``). _declared_identifiers looks THROUGH these when deciding whether the
+# token before an identifier introduced it, so the same tokens used as operators (``a * b``,
+# ``a > b``) read as declarations too -- the safe direction, see that method.
+DECLARATOR_TOKENS = frozenset({'*', '&', '>'})
 
 
 def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
@@ -177,6 +182,8 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         self._size_sig_to_name: Dict[tuple, str] = {}
         # Per-tasklet cache of identifiers appearing in the (rewritten) body.
         self._body_identifiers: Dict[int, Set[str]] = {}
+        # Per-native-tasklet cache of identifiers the C++ body DECLARES (see _declared_identifiers).
+        self._body_declarations: Dict[int, Set[str]] = {}
         # Per-native-tasklet cache: id(node) -> {connector_name: cpp_access}. An entry means the
         # connector is accessed directly (scalar index / base pointer) instead of via a copy-in/out.
         self._cpp_inline: Dict[int, Dict[str, str]] = {}
@@ -613,7 +620,7 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # classic connector for both sides. (Mirrors InlineTaskletConnectors.)
         inout = set(node.in_connectors) & set(node.out_connectors)
         inline: Dict[str, str] = {}
-        for name in set(in_map) | set(out_map):
+        for name in dict.fromkeys((*in_map, *out_map)):
             if name in inout:
                 if name in in_map and name in out_map and in_map[name] == out_map[name]:
                     inline[name] = in_map[name]
@@ -639,29 +646,68 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
     def _drop_captured_inlines(self, node, inline: Dict[str, str]) -> None:
         """
         Removes from ``inline`` every connector whose access text would be CAPTURED by the tasklet
-        body, i.e. whose access text names an identifier the body itself already uses.
+        body, i.e. whose access text names an identifier the body DECLARES as a local.
 
         The access text is spliced into a raw C++ body that this generator does not parse, so it lands
         inside whatever scope the body declares. If the body declares that identifier (``tblis_tensor
         A, B, C;`` in the TBLIS ``TensorDot`` expansion, with the contracted array also named ``A``),
         the inlined name binds to the body's local instead of the array -- a wrong program, not a
-        compile error, whenever the local happens to have a compatible type. Detecting a *declaration*
-        needs a C++ parser; any occurrence is the sound over-approximation, and the cost of an extra
-        refusal is only the classic connector copy-in/out, which is always correct.
+        compile error, whenever the local happens to have a compatible type.
+
+        Only a *declaration* shadows. A body that merely READS a name the access text also names is
+        reading the very same variable -- the enclosing map parameter in ``arr[arr_idx(i)]`` spliced
+        into ``_out = (i < 2) ? 0.0 : _inp;`` is the loop's own ``i`` -- so refusing on any occurrence
+        would refuse almost every scalar connector under a map.
 
         Connectors that stay inlined vanish from the body, so they cannot capture anything; dropping
         one puts its name back into the body, hence the fixpoint.
         """
         if not inline:
             return
-        body_names = self._used_identifiers(node)
+        declared = self._declared_identifiers(node)
         while True:
-            occupied = body_names - set(inline)
+            occupied = declared - set(inline)
             captured = [c for c, access in inline.items() if not occupied.isdisjoint(IDENTIFIER_TOKENS.findall(access))]
             if not captured:
                 return
             for conn in captured:
                 del inline[conn]
+
+    def _declared_identifiers(self, node) -> Set[str]:
+        """
+        Names the C++ tasklet body declares as its own, over-approximated from the pygments token
+        stream: an identifier is taken as declared when the previous significant token is a keyword
+        (``int``, ``auto``, ``const``, ...) or another identifier (a user type -- ``tblis_tensor A``),
+        or when it continues that declarator's comma list (``, B, C``). ``DECLARATOR_TOKENS`` are
+        skipped over rather than ended on, so ``double *p`` and ``std::vector<double> v`` still read
+        as declarations of ``p`` and ``v``.
+
+        C++ cannot be disambiguated without a parser, so ``a * b`` and ``a > b`` also read as
+        declarations. Erring towards "declared" only costs a refusal (the classic connector
+        copy-in/out, always correct); missing a declaration costs a miscompile.
+        """
+        key = id(node)
+        cached = self._body_declarations.get(key)
+        if cached is not None:
+            return cached
+        declared: Set[str] = set()
+        previous = None  # last significant token, with the declarator punctuation skipped
+        in_declarator_list = False
+        for token_type, value in CppLexer().get_tokens(node.code.as_string):
+            if token_type in Token.Text or token_type in Token.Comment or value in DECLARATOR_TOKENS:
+                continue
+            if token_type in Token.Name:
+                if previous is not None and (previous[0] in Token.Keyword or previous[0] in Token.Name or
+                                             (in_declarator_list and previous[1] == ',')):
+                    declared.add(value)
+                    in_declarator_list = True
+                else:
+                    in_declarator_list = False
+            elif value != ',':
+                in_declarator_list = False
+            previous = (token_type, value)
+        self._body_declarations[key] = declared
+        return declared
 
     def _register_inlined_copy_target(self, sdfg, state_dfg, node, edge, is_output: bool) -> None:
         """

@@ -62,6 +62,18 @@ SYMBOL_OVERRIDES = {
     },
 }
 
+#: Integer inputs that are INDEX arrays, as ``{kernel: {input: bounding symbol}}``. ``make_inputs``
+#: cannot tell what an integer input indexes, so it draws the generic small range; an index array
+#: whose bound is smaller reads out of bounds, and out-of-bounds reads are undefined behaviour whose
+#: garbage differs from run to run -- ONE generator run twice already disagrees, so the comparison
+#: says nothing about either code generator. ``scattering_self``'s ``neigh_idx`` is a neighbour table
+#: indexing ``G``'s ``NA`` axis, which the bounds above pin at 2.
+INDEX_INPUTS = {"scattering_self": {"neigh_idx": "NA"}}
+
+#: Range the generic integer inputs are drawn from (small and nonzero: they are counts/values, and a
+#: kernel dividing by one must not divide by zero).
+INTEGER_RANGE = (1, 5)
+
 #: npbench corpus subpackages under ``tests/npbench`` this sweep covers: ``polybench`` (npbench's
 #: polybench set) and ``misc`` (the non-polybench npbench kernels). The heavier deep-learning /
 #: weather-stencil subpackages are left out.
@@ -109,9 +121,13 @@ def load_program(family, name):
     return programs[0][1]
 
 
-def make_inputs(sdfg, symbols, seed=0):
+def make_inputs(sdfg, symbols, index_bounds=None, seed=0):
     """Deterministic inputs matched to the SDFG's argument descriptors (free symbols are
-    passed separately, so they are skipped here)."""
+    passed separately, so they are skipped here).
+
+    An integer input named in ``index_bounds`` (see :data:`INDEX_INPUTS`) indexes an axis, so it is
+    drawn from ``[0, symbols[bound])`` instead of the generic :data:`INTEGER_RANGE`."""
+    index_bounds = index_bounds or {}
     rng = np.random.default_rng(seed)
     inputs = {}
     for name, desc in sdfg.arglist().items():
@@ -127,7 +143,9 @@ def make_inputs(sdfg, symbols, seed=0):
         elif npdt.kind == "c":
             inputs[name] = (rng.standard_normal(shape) + 1j * rng.standard_normal(shape)).astype(npdt)
         else:
-            inputs[name] = rng.integers(1, 5, shape).astype(npdt)
+            bound = index_bounds.get(name)
+            low, high = (0, symbols[bound]) if bound else INTEGER_RANGE
+            inputs[name] = rng.integers(low, high, shape).astype(npdt)
     return inputs
 
 
@@ -153,7 +171,7 @@ def build_and_run(family, name, implementation, target):
             symbols.update({s: v for s, v in SYMBOL_OVERRIDES.get(name, {}).items() if s in symbols})
             if target == "gpu":
                 sdfg.apply_gpu_transformations()
-            inputs = make_inputs(sdfg, symbols)
+            inputs = make_inputs(sdfg, symbols, INDEX_INPUTS.get(name))
             call_arguments = {n: (v.copy() if hasattr(v, "copy") else v) for n, v in inputs.items()}
             result = sdfg(**call_arguments, **symbols)
             return collect_outputs(result, call_arguments)

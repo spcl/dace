@@ -347,9 +347,14 @@ class ExpandReduceAuto(pm.ExpandTransformation):
           an identity to seed the accumulator, so a node without one goes the parallel way.
         * a GPU schedule -> ``ExpandReduceGPUAuto``, which plans the device schedule itself and
           falls back to the pure expansion when it cannot.
-        * anything else, including a schedule nobody inferred -> OpenMP, which emits a real
-          ``reduction()`` clause instead of a per-element atomic. It reassociates, so it is not
-          reproducible across thread counts; that is the accepted cost of a parallel reduction.
+        * ``Default``, i.e. nobody inferred one -> the pure map+WCR expansion. This is not codegen
+          (``codegen.py`` infers schedules *before* it expands), it is a caller running
+          ``expand_library_nodes()`` on a graph it still intends to transform, and the OpenMP
+          expansion returns an opaque C++ tasklet that no dataflow transformation can see into
+          (``LiftEinsum`` stops recognising the reduction, fusion stops fusing it).
+        * any other concrete schedule -> OpenMP, which emits a real ``reduction()`` clause instead
+          of a per-element atomic. It reassociates, so it is not reproducible across thread counts;
+          that is the accepted cost of a parallel reduction.
     """
     environments = []
 
@@ -364,6 +369,9 @@ class ExpandReduceAuto(pm.ExpandTransformation):
             # The GPU expansion picks its own environments when it delegates to CUB
             ExpandReduceAuto.environments = list(ExpandReduceGPUAuto.environments)
             return expanded
+        if node.schedule == dtypes.ScheduleType.Default:
+            # Un-inferred: stay in dataflow form so later passes can still match the reduction.
+            return ExpandReducePure.expansion(node, state, sdfg)
         return ExpandReduceOpenMP.expansion(node, state, sdfg)
 
 
