@@ -1045,11 +1045,8 @@ def build_subprocess_sigmask() -> Iterator[None]:
     immediately around the fork is enough. ``pthread_sigmask`` is per-thread, so this never disturbs
     another thread or the process's steady-state mask. No-op where ``pthread_sigmask``/``SIGCHLD``
     are unavailable (Windows)."""
-    if not hasattr(signal, 'pthread_sigmask') or not hasattr(signal, 'SIGCHLD'):
-        yield
-        return
-    if signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, []):
-        yield  # already deliverable -- the common, non-launcher case
+    if os.name != 'posix' or signal.SIGCHLD not in signal.pthread_sigmask(signal.SIG_BLOCK, []):
+        yield  # Windows has neither call, or SIGCHLD is already deliverable (the common case).
         return
     signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
     try:
