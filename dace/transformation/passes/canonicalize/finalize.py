@@ -31,6 +31,7 @@ from dace.transformation.auto.auto_optimize import (apply_gpu_storage, make_tran
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.libraries.standard.nodes.reduce import Reduce
+from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.scan import Scan
 from dace.libraries.standard.nodes.copy_node import CopyLibraryNode, select_copy_implementation
 from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode, select_memset_implementation
@@ -179,6 +180,11 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
                 node.implementation = 'pure'
             elif 'OpenMP' in impls:
                 node.implementation = 'OpenMP'
+            continue
+        # ``ArgReduce``: parallel -> ``OpenMP`` (a ``declare reduction`` over the (value, index)
+        # pair -- argmax is associative on the PAIR, not on the value); sequential -> ``pure``.
+        if isinstance(node, ArgReduce) and device == dtypes.DeviceType.CPU:
+            node.implementation = 'pure' if sequential else ('OpenMP' if 'OpenMP' in impls else node.implementation)
             continue
         # ``Scan``: parallel -> ``CPU`` (OpenMP 5.0 ``#pragma omp parallel for simd reduction(inscan,..)``
         # + ``#pragma omp scan``); sequential -> the serial ``pure`` scan.

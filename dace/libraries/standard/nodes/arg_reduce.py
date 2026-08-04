@@ -96,6 +96,67 @@ class ExpandArgReducePure(ExpandTransformation):
 
 
 @library.expansion
+class ExpandArgReduceOpenMP(ExpandTransformation):
+    """Parallel CPU lowering: an OpenMP ``declare reduction`` over a (value, index) pair.
+
+    argmax is associative on the PAIR, not on the value alone -- combining two partial results has
+    to carry the index that produced the winning value, and break ties toward the LOWER index so
+    the result matches the sequential scan element-for-element. A plain
+    ``reduction(max:val)`` cannot express that, hence the custom combiner.
+    """
+
+    environments = []
+
+    @staticmethod
+    def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
+        node.validate(parent_sdfg, parent_state)
+        in_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == '_in')
+        val_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_val')
+        idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
+
+        in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
+        idx_dtype = parent_sdfg.arrays[idx_edge.data.data].dtype
+        from dace.codegen.targets.cpp import sym2cpp
+        sub = in_edge.data.subset
+        n_str = sym2cpp(sub.num_elements())
+        op = _OP_CPP[node.op]
+
+        step = sub.ranges[0][2] if len(sub.ranges) == 1 else 1
+        try:
+            unit_stride = (int(symbolic.simplify(step)) == 1)
+        except (TypeError, ValueError):
+            unit_stride = False
+        access = "__i" if unit_stride else f"(__i * ({sym2cpp(step)}))"
+
+        vt, it = in_dtype.ctype, idx_dtype.ctype
+        # Tie-break on the lower index so a parallel combine reproduces the sequential answer
+        # exactly; without it the result depends on how the range was split across threads.
+        code = (f"struct __ar_pair {{ {vt} v; {it} i; }};\n"
+                f"#pragma omp declare reduction(__ar_best : struct __ar_pair : \\\n"
+                f"    omp_out = (omp_in.v {op} omp_out.v || "
+                f"(omp_in.v == omp_out.v && omp_in.i < omp_out.i)) ? omp_in : omp_out) \\\n"
+                f"    initializer(omp_priv = omp_orig)\n"
+                f"struct __ar_pair __best;\n"
+                f"__best.v = _in[0]; __best.i = 0;\n"
+                f"#pragma omp parallel for reduction(__ar_best : __best)\n"
+                f"for ({it} __i = 1; __i < {n_str}; ++__i) {{\n"
+                f"    if (_in[{access}] {op} __best.v) {{ __best.v = _in[{access}]; __best.i = __i; }}\n"
+                f"}}\n"
+                f"_out_val = __best.v;\n"
+                f"_out_idx = __best.i;")
+        return nodes.Tasklet(
+            label=f"{node.label}_openmp",
+            inputs={'_in': dace.pointer(in_dtype)},
+            outputs={
+                '_out_val': None,
+                '_out_idx': None
+            },
+            code=code,
+            language=dace.dtypes.Language.CPP,
+        )
+
+
+@library.expansion
 class ExpandArgReduceCUDA(ExpandTransformation):
     """GPU lowering via ``cub::DeviceReduce::ArgMax`` / ``ArgMin`` (stub)."""
 
@@ -115,12 +176,14 @@ class ExpandArgReduceCUDA(ExpandTransformation):
 class ArgReduce(nodes.LibraryNode):
     """Argmax / argmin over ``_in`` -> ``_out_val`` (value) + ``_out_idx`` (index).
 
-    :cvar implementations: ``"pure"`` (CPU sequential scan) and ``"CUDA"``
-        (CUB ArgMax/ArgMin, stubbed). ``default_implementation = "pure"``.
+    :cvar implementations: ``"pure"`` (CPU sequential scan), ``"OpenMP"`` (parallel pair
+        reduction) and ``"CUDA"`` (CUB ArgMax/ArgMin, stubbed).
+        ``default_implementation = "pure"``.
     """
 
     implementations = {
         'pure': ExpandArgReducePure,
+        'OpenMP': ExpandArgReduceOpenMP,
         'CUDA': ExpandArgReduceCUDA,
     }
     default_implementation = 'pure'
