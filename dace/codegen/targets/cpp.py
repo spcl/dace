@@ -692,14 +692,7 @@ def _check_range_conflicts(subset, a, itersym, b, step):
 
 
 def _check_map_conflicts(map, edge):
-    for itervar, (_, _, mapskip) in zip(map.params, map.range):
-        itersym = symbolic.pystr_to_symbolic(itervar)
-        a = sp.Wild('a', exclude=[itersym])
-        b = sp.Wild('b', exclude=[itersym])
-        if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
-            return False
-    # If matches all map params, good to go
-    return True
+    return not write_conflicted_map_params(map, edge)
 
 
 def _check_neighbor_conflicts(dfg, edge):
@@ -729,8 +722,10 @@ def _check_neighbor_conflicts(dfg, edge):
 
 def write_conflicted_map_params(map, edge):
     result = []
+    # Symbol identity includes the dtype, so the iterator must be the instance the subset carries.
+    itersyms = symbolic.symbols_in([edge.data.subset])
     for itervar, (_, _, mapskip) in zip(map.params, map.range):
-        itersym = symbolic.pystr_to_symbolic(itervar)
+        itersym = symbolic.resolve_symbol(itervar, itersyms)
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
         if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
