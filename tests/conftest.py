@@ -169,6 +169,9 @@ _SUITE_DIRS = (
     (os.path.join('tests', 'passes', 'vectorization'), 'vectorization'),
     (os.path.join('tests', 'passes', 'canonicalize'), 'canonicalization'),
     (os.path.join('tests', 'canonicalize'), 'canonicalization'),
+    # DISABLED: 892 combinatorial sweeps over layout permutations. Marked so nothing selects them
+    # -- no workflow runs `-m layout` -- until the axes that actually buy coverage are picked out.
+    (os.path.join('tests', 'transformations', 'layout'), 'layout'),
     # Needs a real MPI launcher (the heterogeneous runner runs these under ``mpirun -n 2``), so mark
     # the directory rather than rely on each file remembering the marker -- three did not.
     (os.path.join('tests', 'library', 'mpi'), 'mpi'),
