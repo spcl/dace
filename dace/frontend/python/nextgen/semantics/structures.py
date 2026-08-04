@@ -6,10 +6,6 @@ The frontend registers only base :class:`~dace.data.Structure` containers in
 the repository; members are addressed by dotted data paths (``tracers.data``,
 ``outer.inner.data``) that resolve through the base structure's ``members``,
 matching ``SDFG.arrays`` (a ``NestedDict``).
-
-This module is the canonical home of these helpers; the legacy
-``dace.frontend.python.schedule_tree.structure_support`` module re-exports
-them for the old frontend until its removal.
 """
 import copy
 from dataclasses import dataclass

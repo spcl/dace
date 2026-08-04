@@ -47,7 +47,6 @@ class PreprocessedAST:
     src: str
     preprocessed_ast: ast.AST
     program_globals: Dict[str, Any]
-    resolved_arg_annotations: Optional[Dict[str, Any]] = None
 
 
 TypeAlias = getattr(ast, 'TypeAlias', type(None))

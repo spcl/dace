@@ -140,20 +140,12 @@ class ScheduleTreeConvertible:
     objects.
     """
 
-    def __schedule_tree__(self,
-                          *args,
-                          lambda_bindings: Optional[Dict[str, ast.AST]] = None,
-                          callable_bindings: Optional[Dict[str, Any]] = None,
-                          **kwargs) -> 'ScheduleTreeRoot':
+    def __schedule_tree__(self, *args, **kwargs) -> 'ScheduleTreeRoot':
         """
         Returns a schedule-tree representation of this object.
 
         :param args: Arguments or argument types that can be used for
                      specialization.
-        :param lambda_bindings: Optional lambda specializations propagated from
-                                the caller.
-        :param callable_bindings: Optional callable specializations propagated
-                                  from the caller.
         :param kwargs: Keyword arguments or argument types that can be used for
                        specialization.
         :return: A schedule-tree root representing this object.

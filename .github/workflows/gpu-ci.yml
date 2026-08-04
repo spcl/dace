@@ -10,7 +10,6 @@ on:
   #  branches: [ main, ci-fix ]
 
 env:
-  # DACE_frontend_stree_callback_check: warn
   CUDACXX: /usr/local/cuda/bin/nvcc
   MKLROOT: /opt/intel/oneapi/mkl/latest/
   CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

@@ -7,10 +7,9 @@ binding, rule-driven lowering, verification).
 See :mod:`dace.frontend.python.nextgen.pipeline` for the stage contracts.
 """
 import ast
-import copy
 from typing import Any, Dict, Optional, Sequence, Tuple
 
-from dace import data, dtypes, symbolic
+from dace import data
 from dace.cli.progress import OptionalProgressBar
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import preprocessing
@@ -114,87 +113,13 @@ def parse_program(program, *args, debug: bool = False, **kwargs) -> tn.ScheduleT
     Convenience entry point: preprocess a :class:`DaceProgram` and build a
     verified schedule tree from it.
 
-    This mirrors the argument-type resolution of
-    ``DaceProgram._generate_schedule_tree`` in compact form and exists for
-    tests and direct use until the parser switches over to this pipeline.
+    :param program: The ``@dace.program`` to lower.
+    :param args: JIT argument examples.
+    :param debug: If True, runs extra verification between pipeline passes.
+    :param kwargs: JIT keyword argument examples.
+    :return: A verified :class:`ScheduleTreeRoot`.
     """
-    argtypes, _, gvars, specified = program._get_type_annotations(args, kwargs)
-
-    # Copy argument descriptors before marking them non-transient: annotation
-    # descriptors are shared across calls and must not be mutated.
-    for argument_name, descriptor in list(argtypes.items()):
-        if isinstance(descriptor, data.View):
-            descriptor = descriptor.as_array()
-        else:
-            descriptor = copy.deepcopy(descriptor)
-        descriptor.transient = False
-        argtypes[argument_name] = descriptor
-
-    global_vars = dict(program.global_vars)
-
-    # Bound methods: "self" is resolved through the closure, not an argument
-    if program.methodobj is not None and program.objname is not None:
-        global_vars[program.objname] = program.methodobj
-
-    # None-valued arguments become foldable globals instead of containers
-    removed_args = set()
-    for argument_name, descriptor in argtypes.items():
-        if descriptor.dtype.type is None:
-            global_vars[argument_name] = None
-            removed_args.add(argument_name)
-
-    modules = {key: value.__name__ for key, value in global_vars.items() if dtypes.ismodule(value)}
-    modules['builtins'] = ''
-
-    # Symbols also resolve under their actual names (aliased symbol globals)
-    global_vars.update(
-        {value.name: value
-         for value in list(global_vars.values()) if isinstance(value, symbolic.symbol)})
-
-    unspecified_defaults = {key: value for key, value in program.default_args.items() if key not in specified}
-    removed_args.update(unspecified_defaults)
-    gvars.update(unspecified_defaults)
-    global_vars.update(gvars)
-
-    argtypes = {key: value for key, value in argtypes.items() if key not in removed_args}
-    for descriptor in argtypes.values():
-        global_vars.update({free_symbol.name: free_symbol for free_symbol in descriptor.free_symbols})
-
-    parsed_ast, closure = preprocessing.preprocess_dace_program(program.f,
-                                                                argtypes,
-                                                                global_vars,
-                                                                modules,
-                                                                resolve_functions=program.resolve_functions,
-                                                                default_args=unspecified_defaults.keys())
-
-    constants: Dict[str, Tuple[data.Data, Any]] = {}
-    for constant_name, value in closure.closure_constants.items():
-        if constant_name in removed_args:
-            continue
-        try:
-            descriptor = data.create_datadescriptor(value)
-        except (TypeError, ValueError):
-            continue
-        constants[constant_name] = (descriptor, value)
-
-    callback_mapping = {key: original for key, (original, _, _) in closure.callbacks.items()}
-    callbacks = {key: function for key, (_, function, _) in closure.callbacks.items()}
-    arg_names = [argument_name for argument_name in program.argnames if argument_name in argtypes]
-    closure_arrays = {
-        reference_name: (qualified_name, descriptor)
-        for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items()
-        if reference_name not in removed_args
-    }
-
-    return build_schedule_tree(program.name,
-                               parsed_ast,
-                               argtypes,
-                               constants=constants,
-                               callback_mapping=callback_mapping,
-                               callbacks=callbacks,
-                               arg_names=arg_names,
-                               closure_arrays=closure_arrays,
-                               debug=debug)
+    return program.to_schedule_tree(*args, debug=debug, **kwargs)
 
 
 def _program_node(parsed_ast: preprocessing.PreprocessedAST) -> ast.FunctionDef:

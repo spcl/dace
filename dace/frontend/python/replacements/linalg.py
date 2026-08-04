@@ -10,7 +10,7 @@ from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
 import ast
 from numbers import Integral
-from typing import Optional, Sequence, Union
+from typing import Optional, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
@@ -338,7 +338,47 @@ def _einsum(pv: ProgramVisitor,
 from dace.frontend.common.op_repository import infers_descriptor, infers_operator_descriptor
 from dace.frontend.common.einsum import EinsumParser
 from dace.frontend.python.replacements.type_inference import _get_desc
-from dace.frontend.python.schedule_tree.expression_support import (_matmul_output_shape)
+from dace.frontend.python.replacements.utils import broadcast_together
+
+
+def _broadcast_prefix_shapes(left_prefix: Tuple[object, ...], right_prefix: Tuple[object,
+                                                                                  ...]) -> Optional[Tuple[object, ...]]:
+    if not left_prefix:
+        return tuple(right_prefix)
+    if not right_prefix:
+        return tuple(left_prefix)
+    try:
+        result, _, _, _, _ = broadcast_together(left_prefix, right_prefix)
+    except Exception:
+        return None
+    return tuple(result)
+
+
+def _matmul_output_shape(left_shape: Tuple[object, ...], right_shape: Tuple[object,
+                                                                            ...]) -> Optional[Tuple[object, ...]]:
+    """Infer the result shape for NumPy-style matmul semantics.
+
+    This mirrors the subset of ``numpy.matmul`` shape rules that the frontend
+    lowers structurally: vector-vector, matrix-vector, vector-matrix,
+    matrix-matrix, and batched matrix-matrix.
+    """
+
+    if len(left_shape) == 1 and len(right_shape) == 1:
+        return tuple()
+
+    if len(left_shape) == 2 and len(right_shape) == 1:
+        return (left_shape[0], )
+
+    if len(left_shape) == 1 and len(right_shape) == 2:
+        return (right_shape[1], )
+
+    if len(left_shape) < 2 or len(right_shape) < 2:
+        return None
+
+    batch_shape = _broadcast_prefix_shapes(left_shape[:-2], right_shape[:-2])
+    if batch_shape is None:
+        return None
+    return batch_shape + (left_shape[-2], right_shape[-1])
 
 
 def _unprovable_batch_shape(left_shape, right_shape):

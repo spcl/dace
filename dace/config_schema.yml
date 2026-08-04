@@ -637,34 +637,15 @@ required:
                     folding) on the input code. Set to zero to disable preprocessing
                     optimizations, set to -1 to run until the code has not changed.
 
-            stree_callback_check:
-                type: str
-                title: Schedule-tree callback discrepancy check
-                default: error
+            use_nextgen:
+                type: bool
+                title: Use the next-generation Python frontend
+                default: true
                 description: >
-                    Controls the parallel schedule-tree lowering check that
-                    compares the nextgen frontend's Python callback nodes
-                    against the classic frontend's callbacks (the ground truth
-                    for intent, since callback auto-detection happens in shared
-                    preprocessing). A nextgen callback-node count exceeding the
-                    classic callback count indicates a nextgen lowering gap.
-                    ``error`` (default) raises a RuntimeError, ``warn`` emits a
-                    warning (useful for triage sessions collecting the full gap
-                    picture), and ``off`` disables the check.
-
-            stree_report:
-                type: str
-                title: Schedule-tree lowering gap report path
-                default: ''
-                description: >
-                    When set to a file path, the parallel schedule-tree
-                    lowering check appends one JSON line per parsed program
-                    (program name, owning test, classic/nextgen callback
-                    counts, categorized callback reasons, diagnostic node
-                    counts). Writes are single-line O_APPEND appends, safe
-                    under pytest-xdist. Aggregate the collected lines with
-                    ``python -m dace.frontend.python.nextgen.coverage report
-                    <file>``.
+                    If True, ``@dace.program`` functions are lowered by the
+                    next-generation frontend, which builds a verified schedule
+                    tree and converts it into an SDFG. If False, the classic
+                    AST-to-SDFG frontend is used instead.
 
             boolean_index_strategy:
                 type: str

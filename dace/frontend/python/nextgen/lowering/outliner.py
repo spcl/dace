@@ -13,10 +13,6 @@ Example:
 
     The outlined scaffold is what callback lowering executes; the schedule
     tree preserves the original callback code text as well.
-
-This module is the canonical home of the outliner; the legacy
-``dace.frontend.python.schedule_tree.callback_support`` module re-exports it
-for the old frontend until its removal.
 """
 from __future__ import annotations
 

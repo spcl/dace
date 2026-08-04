@@ -1597,7 +1597,9 @@ def _connect_view_edges(sdfg: SDFG, bindings: 'dict[str, tn.ViewNode]') -> None:
                     continue
                 memlet = copy.deepcopy(binding.memlet)
                 if state.in_degree(view_node) == 0:
-                    source = state.add_read(binding.source)
+                    source = _produced_in_state(state, scopes, binding.source, bindings, view_node)
+                    if source is None:
+                        source = state.add_read(binding.source)
                     state.add_edge(source, None, view_node, 'views', memlet)
                     next_round.append(source)
                 elif state.out_degree(view_node) == 0:
@@ -1608,6 +1610,61 @@ def _connect_view_edges(sdfg: SDFG, bindings: 'dict[str, tn.ViewNode]') -> None:
                     raise NotImplementedError(f"View '{view_node.data}' is both read and written in one state; "
                                               "cannot determine the viewing direction.")
             to_process = next_round
+
+
+def _produced_in_state(state: SDFGState, scopes: dict, name: str, bindings: 'dict[str, tn.ViewNode]',
+                       view_node: nodes.AccessNode) -> Optional[nodes.AccessNode]:
+    """
+    The access node a view read must attach to when the viewed container is
+    produced earlier in the same state, or None if there is no such node.
+
+    ``a = np.arange(10); b = a.reshape(10, 1)`` puts the producing map and the
+    view into one state -- a read-after-write is expressible with memlets and
+    needs no state boundary. Reading the source through a *fresh* access node
+    there would leave the produced data unconnected to the view: an
+    uninitialized transient, which simplification is then free to eliminate
+    along with the map that filled it.
+
+    :param state: The state the view is being connected in.
+    :param scopes: The state's scope dictionary.
+    :param name: Name of the viewed container.
+    :param bindings: All view bindings, to leave views of views to the
+                     iterative resolution in :func:`_connect_view_edges`.
+    :param view_node: The view access node the source would be attached to.
+    :return: The unique top-level access node that finishes writing ``name`` in
+             this state, or None when there is no unambiguous safe one.
+    """
+    if name in bindings:
+        return None
+    candidates = [
+        node for node in state.data_nodes()
+        if node.data == name and scopes.get(node) is None and state.in_degree(node) > 0 and state.out_degree(node) == 0
+    ]
+    if len(candidates) != 1:
+        return None
+
+    # A view that FEEDS the computation writing its own source -- ``nester(A[:,
+    # i])`` inside a map, where the callee writes back into A -- reaches that
+    # write, so the viewing edge would point back into itself. Such a view has
+    # to read through its own access node.
+    if _reaches(state, view_node, candidates[0]):
+        return None
+    return candidates[0]
+
+
+def _reaches(state: SDFGState, source: nodes.Node, target: nodes.Node) -> bool:
+    """Whether ``target`` is reachable from ``source`` along the state's edges."""
+    seen = {id(source)}
+    frontier = [source]
+    while frontier:
+        node = frontier.pop()
+        for edge in state.out_edges(node):
+            if edge.dst is target:
+                return True
+            if id(edge.dst) not in seen:
+                seen.add(id(edge.dst))
+                frontier.append(edge.dst)
+    return False
 
 
 def _import_view_source(sdfg: SDFG, name: str) -> bool:

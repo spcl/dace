@@ -1,6 +1,5 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
-import pytest
 
 import dace
 from dace.frontend.python import nextgen
@@ -280,21 +279,12 @@ def test_nested_basic_then_newaxis_then_ellipsis():
 
 
 def test_nested_through_an_index_array():
-    """
-    Written into an out parameter rather than returned: returning a subscript
-    OF a computed transient is a separate, pre-existing defect -- see
-    :func:`test_view_of_a_computed_transient_is_broken`.
-    """
 
     @dace.program
-    def program(A: dace.float64[8, 6, 4], ind: dace.int32[3], out: dace.float64[6, 4]):
-        out[:] = A[ind][1]
+    def program(A: dace.float64[8, 6, 4], ind: dace.int32[3]):
+        return A[ind][1]
 
-    out = np.zeros((6, 4))
-    tree = nextgen.parse_program(program)
-    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
-    tree.as_sdfg()(A=A3, ind=IND, out=out)
-    assert np.allclose(out, A3[IND][1])
+    _check(program, A3[IND][1], A=A3, ind=IND)
 
 
 def test_basic_slice_then_index_array():
@@ -307,32 +297,22 @@ def test_basic_slice_then_index_array():
 
 
 def test_index_array_then_basic():
-    """Also written into an out parameter, for the same reason."""
 
     @dace.program
-    def program(A: dace.float64[20, 10], ind: dace.int32[3], out: dace.float64[3]):
-        out[:] = A[:, ind][0]
+    def program(A: dace.float64[20, 10], ind: dace.int32[3]):
+        return A[:, ind][0]
 
-    out = np.zeros(3)
-    tree = nextgen.parse_program(program)
-    assert not _callbacks(tree), [node.reason for node in _callbacks(tree)]
-    tree.as_sdfg()(A=A2, ind=IND, out=out)
-    assert np.allclose(out, A2[:, IND][0])
+    _check(program, A2[:, IND][0], A=A2, ind=IND)
 
 
-@pytest.mark.xfail(reason='Pre-existing: a ViewNode over a transient written by a preceding map lowers to '
-                   'uninitialized memory. Unrelated to indexing -- reproduces with no subscript on the '
-                   'right-hand side at all (B = A + 1.0; return B[1]), and the schedule tree is identical '
-                   'to the one built before the index-planner work.',
-                   strict=True)
-def test_view_of_a_computed_transient_is_broken():
+def test_view_of_a_computed_transient():
     """
-    Records a silent miscompilation found while building this suite.
+    Regression test for a silent miscompilation found while building this suite.
 
     ``B`` is a transient written by a map; ``B[1]`` binds a ``ViewNode`` over
-    it, and the returned copy reads uninitialized memory. The schedule tree is
-    correct -- the defect is in the tree-to-SDFG conversion -- so nothing in
-    the frontend's own checks catches it.
+    it. The tree-to-SDFG conversion used to read the source through a fresh
+    access node, disconnecting it from the map's output, so the returned copy
+    read uninitialized memory (and simplification eliminated the map).
     """
 
     @dace.program
@@ -624,7 +604,7 @@ if __name__ == '__main__':
     test_nested_through_an_index_array()
     test_basic_slice_then_index_array()
     test_index_array_then_basic()
-    # test_view_of_a_computed_transient_is_broken()  # xfail: pre-existing tree-to-SDFG defect
+    test_view_of_a_computed_transient()
     test_index_by_a_slice_of_an_index_array()
     test_index_by_arithmetic_on_an_index_array()
     test_reversed_slice()

@@ -62,21 +62,6 @@ def test_structure_members():
     assert 'tracers.vapor' in writes
 
 
-def test_structure_vs_old_frontend():
-    tree = nextgen.parse_program(initialize_all)
-    old_tree = initialize_all.to_schedule_tree()
-
-    for root in (tree, old_tree):
-        assert not _nodes_of_type(root, tn.PythonCallbackNode)
-        assert len(_nodes_of_type(root, tn.RefSetNode)) == 2
-        # Same container convention: base structure registered, members as
-        # dotted paths only. (The old frontend additionally materializes the
-        # loop variable 'index' as a scalar container; nextgen binds it as a
-        # symbol.)
-        assert {'tracers', 'fill_value'} <= set(root.containers)
-        assert not any('.' in name for name in root.containers)
-
-
 def test_structure_unknown_member():
 
     @dace.program
@@ -189,7 +174,6 @@ def test_nested_member_write():
 
 if __name__ == '__main__':
     test_structure_members()
-    test_structure_vs_old_frontend()
     test_structure_unknown_member()
     test_nested_structure_members()
     test_structure_execution()

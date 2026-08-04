@@ -4,7 +4,6 @@ import ast
 import inspect
 import copy
 import os
-import re
 import sympy
 import sys
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Sequence, Tuple, Union
@@ -13,7 +12,7 @@ import warnings
 
 from dace import data, dtypes, hooks, symbolic
 from dace.config import Config
-from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing, schedule_tree_frontend)
+from dace.frontend.python import (newast, common as pycommon, cached_program, preprocessing)
 from dace.sdfg import SDFG, utils as sdutils
 from dace.data import create_datadescriptor, Data
 
@@ -332,9 +331,7 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                                             constant_args)
 
             if self._cache.has(cachekey):
-                entry = self._cache.get(cachekey)
-                self._run_parallel_schedule_tree_lowering_checks(args, kwargs, entry.sdfg)
-                return entry.sdfg
+                return self._cache.get(cachekey).sdfg
 
         sdfg = self._parse(args, kwargs, simplify=simplify, save=save, validate=validate)
 
@@ -344,13 +341,14 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
 
         return sdfg
 
-    def to_schedule_tree(self, *args, use_cache: bool = False, **kwargs) -> 'tn.ScheduleTreeRoot':
+    def to_schedule_tree(self, *args, use_cache: bool = False, debug: bool = False, **kwargs) -> 'tn.ScheduleTreeRoot':
         """
         Creates a schedule tree directly from the DaCe Python frontend.
 
         :param args: JIT argument examples.
         :param kwargs: JIT keyword argument examples.
         :param use_cache: If True, reuses a cached schedule tree when possible.
+        :param debug: If True, runs extra verification between frontend passes.
         :return: A schedule-tree root object.
         """
         self._reject_async_program()
@@ -359,32 +357,25 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         if self.methodobj is not None:
             self.global_vars[self.objname] = self.methodobj
 
-        argtypes, _, constant_args, specified = self._get_type_annotations(args, kwargs)
-        self.global_vars.update(constant_args)
-
         cachekey = None
         if use_cache:
+            argtypes, _, constant_args, specified = self._get_type_annotations(args, kwargs)
+            self.global_vars.update(constant_args)
+
             cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys,
                                             constant_args)
             if cachekey in self._schedule_tree_cache:
                 return copy.deepcopy(self._schedule_tree_cache[cachekey])
 
-        stree = self._generate_schedule_tree(args, kwargs)
+        stree = self._generate_schedule_tree(args, kwargs, debug=debug)
 
         if use_cache:
             self._schedule_tree_cache[cachekey] = copy.deepcopy(stree)
 
         return stree
 
-    def __schedule_tree__(self,
-                          *args,
-                          lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
-                          callable_bindings: Optional[Dict[str, Any]] = None,
-                          **kwargs) -> 'tn.ScheduleTreeRoot':
-        return self._generate_schedule_tree(tuple(args),
-                                            dict(kwargs),
-                                            lambda_bindings=lambda_bindings,
-                                            callable_bindings=callable_bindings)
+    def __schedule_tree__(self, *args, **kwargs) -> 'tn.ScheduleTreeRoot':
+        return self._generate_schedule_tree(tuple(args), dict(kwargs))
 
     def __sdfg__(self, *args, **kwargs) -> SDFG:
         return self._parse(args, kwargs, simplify=None, save=False, validate=False)
@@ -647,36 +638,6 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         except:
             # Evaluating arbitrary code - anything can happen. Good luck.
             return dtypes.compiletime
-
-    def _resolved_schedule_tree_arg_annotations(self) -> Dict[str, Any]:
-        result: Dict[str, Any] = {}
-
-        for aname, sig_arg in self.signature.parameters.items():
-            if self.objname is not None and aname == self.objname:
-                continue
-
-            ann = sig_arg.annotation
-            if self.ignore_type_hints or _is_empty(ann) or ann is dtypes.compiletime:
-                continue
-
-            try:
-                if get_origin(ann) is Union:
-                    hint_args = get_args(ann)
-                    if len(hint_args) == 1:
-                        ann = hint_args[0]
-                    elif len(hint_args) == 2 and (hint_args[0] is type(None) or hint_args[1] is type(None)):
-                        ann = hint_args[1] if hint_args[0] is type(None) else hint_args[0]
-
-                ann = self._evaluate_annotation(ann)
-            except (TypeError, ValueError):
-                continue
-
-            if ann is dtypes.compiletime:
-                continue
-
-            result[aname] = ann
-
-        return result
 
     def _get_type_annotations(
             self, given_args: Tuple[Any],
@@ -966,333 +927,26 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         _, key = self._load_sdfg(None, *args, **kwargs)
         return key
 
-    def _generate_schedule_tree(self,
-                                args: Tuple[Any],
-                                kwargs: Dict[str, Any],
-                                *,
-                                lambda_bindings: Optional[Dict[str, ast.Lambda]] = None,
-                                callable_bindings: Optional[Dict[str, Any]] = None,
-                                update_program_state: bool = True) -> 'tn.ScheduleTreeRoot':
-        """Generates a schedule tree directly from the preprocessed frontend AST."""
-        dace_func = self.f
-
-        argtypes, _, gvars, specified = self._get_type_annotations(args, kwargs)
-        runtime_args = self._bind_schedule_tree_arguments(args, kwargs)
-
-        if self.methodobj is not None:
-            self.global_vars[self.objname] = self.methodobj
-
-        for name, descriptor in argtypes.items():
-            if isinstance(descriptor, data.View):
-                argtypes[name] = descriptor.as_array()
-                argtypes[name].transient = False
-            else:
-                descriptor_copy = copy.deepcopy(descriptor)
-                if descriptor_copy.transient:
-                    descriptor_copy.transient = False
-                argtypes[name] = descriptor_copy
-
-        global_vars = copy.copy(self.global_vars)
-
-        removed_args = set()
-        for name, descriptor in argtypes.items():
-            if descriptor.dtype.type is None:
-                global_vars[name] = None
-                removed_args.add(name)
-
-        modules = {k: v.__name__ for k, v in global_vars.items() if dtypes.ismodule(v)}
-        modules['builtins'] = ''
-
-        global_vars.update({v.name: v for _, v in global_vars.items() if isinstance(v, symbolic.symbol)})
-
-        unspecified_default_args = {k: v for k, v in self.default_args.items() if k not in specified}
-        removed_args.update(unspecified_default_args)
-        gvars.update(unspecified_default_args)
-
-        global_vars.update(gvars)
-
-        argtypes = {k: v for k, v in argtypes.items() if k not in removed_args}
-        for argtype in argtypes.values():
-            global_vars.update({v.name: v for v in argtype.free_symbols})
-
-        parsed_ast, closure = preprocessing.preprocess_dace_program(
-            dace_func,
-            argtypes,
-            global_vars,
-            modules,
-            resolve_functions=self.resolve_functions,
-            default_args=unspecified_default_args.keys(),
-            normalize_generic_for_loops=True,
-            preserve_object_attributes=True,
-            prefer_resolved_object_attributes=({self.objname}
-                                               if self.methodobj is not None and self.objname is not None else None),
-            disallowed_stmts=set(),
-            preserve_raises=True,
-            preserve_fstrings=True,
-            preserve_uninlinable_context_managers=True,
-            preserve_call_expansions=True)
-        parsed_ast.resolved_arg_annotations = self._resolved_schedule_tree_arg_annotations()
-
-        if update_program_state:
-            self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
-            self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
-            self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
-            self.resolver = closure
-
-        constants: Dict[str, Tuple[Data, Any]] = {}
-        for name, value in closure.closure_constants.items():
-            if name in removed_args:
-                continue
-            try:
-                descriptor = create_datadescriptor(value)
-            except (TypeError, ValueError):
-                descriptor = None
-            if descriptor is not None:
-                constants[name] = (descriptor, value)
-
-        callback_mapping = {name: original_name for name, (original_name, _, _) in closure.callbacks.items()}
-        arg_names = [name for name in self.argnames if name in argtypes]
-
-        seeded_callable_bindings = dict(callable_bindings or {})
-        for name, value in runtime_args.items():
-            if name in removed_args or name in seeded_callable_bindings:
-                continue
-            if callable(value):
-                seeded_callable_bindings[name] = value
-
-        seed_bindings = None
-        if self.methodobj is not None and self.objname is not None:
-            from dace.data.core import infer_structured_object_members
-            from dace.data.pydata import PythonClass
-
-            try:
-                self_descriptor = PythonClass(infer_structured_object_members(self.methodobj),
-                                              name=type(self.methodobj).__name__)
-            except (TypeError, ValueError):
-                # Keep bound-method self available to the schedule-tree frontend
-                # even when the object has no currently inferable typed members.
-                self_descriptor = PythonClass({}, name=type(self.methodobj).__name__)
-
-            if self_descriptor is not None:
-                seed_bindings = {
-                    self.objname: schedule_tree_frontend._Binding(descriptor=self_descriptor, kind='container')
-                }
-
-        stree = schedule_tree_frontend.build_schedule_tree(self.name,
-                                                           parsed_ast,
-                                                           argtypes,
-                                                           constants=constants,
-                                                           callback_mapping=callback_mapping,
-                                                           arg_names=arg_names,
-                                                           lambda_bindings=lambda_bindings,
-                                                           callable_bindings=seeded_callable_bindings,
-                                                           seed_bindings=seed_bindings)
-
-        for name, (_, descriptor, _, _) in closure.closure_arrays.items():
-            if name in removed_args or name in stree.containers:
-                continue
-            stree.containers[name] = copy.deepcopy(descriptor)
-            for free_symbol in descriptor.free_symbols:
-                stree.symbols.setdefault(free_symbol.name, free_symbol)
-
-        return stree
-
-    def _run_parallel_schedule_tree_lowering_checks(self, args: Tuple[Any], kwargs: Dict[str, Any], sdfg: SDFG) -> None:
-        # Deferred import: the nextgen package pulls in the lowering rule
-        # modules, which import this module back.
-        from dace.frontend.python import nextgen
-        stree = nextgen.parse_program(self, *args, **kwargs)
-        self._check_schedule_tree_parallel_lowering(stree, sdfg)
-
-    def _check_schedule_tree_parallel_lowering(self, stree: 'tn.ScheduleTreeRoot', sdfg: SDFG) -> None:
-        from dace.data.pydata import PythonClass
-        from dace.sdfg.analysis.schedule_tree import treenodes as tn
-
-        statement_nodes: List[tn.StatementNode] = []
-        refset_nodes: List[tn.RefSetNode] = []
-        callback_nodes: List[tn.PythonCallbackNode] = []
-        pythonclass_names: List[str] = []
-
-        for node in stree.preorder_traversal():
-            if isinstance(node, tn.StatementNode):
-                statement_nodes.append(node)
-            elif isinstance(node, tn.RefSetNode):
-                refset_nodes.append(node)
-            elif isinstance(node, tn.PythonCallbackNode):
-                callback_nodes.append(node)
-
-        for name, descriptor in stree.containers.items():
-            if isinstance(descriptor, PythonClass):
-                pythonclass_names.append(name)
-
-        classic_count = self._classic_callback_count(sdfg)
-        discrepancy = len(callback_nodes) > classic_count
-        self._write_stree_report(statement_nodes, refset_nodes, callback_nodes, pythonclass_names, classic_count,
-                                 discrepancy)
-
-        if statement_nodes:
-            examples = ', '.join(repr(node.code.as_string) for node in statement_nodes[:3])
-            raise RuntimeError(f'Schedule-tree parallel lowering failed for {self.name}: '
-                               f'generated {len(statement_nodes)} StatementNode(s); examples: {examples}')
-
-        self._check_callback_discrepancy(callback_nodes, classic_count, discrepancy)
-
-        if refset_nodes:
-            if not self._sdfg_contains_reference_descriptors(sdfg):
-                targets = ', '.join(sorted({node.target for node in refset_nodes})[:5])
-                warnings.warn(
-                    'Schedule-tree parallel lowering failed for '
-                    f'{self.name}: generated RefSetNode(s) for {targets}, '
-                    'but the SDFG contains no reference descriptors',
-                    UserWarning,
-                    stacklevel=4)
-
-            for node in refset_nodes:
-                source_text = node.source_expr
-                if source_text is None and node.memlet is not None:
-                    source_text = str(node.memlet)
-                if source_text is None:
-                    source_text = type(node.src_desc).__name__
-                warnings.warn(
-                    'Schedule-tree parallel lowering warning for '
-                    f'{self.name}: RefSetNode target "{node.target}" from {source_text}',
-                    UserWarning,
-                    stacklevel=4)
-
-        for name in pythonclass_names:
-            warnings.warn(f'Schedule-tree parallel lowering warning for {self.name}: PythonClass container "{name}"',
-                          UserWarning,
-                          stacklevel=4)
-
-    def _classic_callback_count(self, sdfg: SDFG) -> int:
+    def _preprocess_program(
+        self,
+        args: Tuple[Any],
+        kwargs: Dict[str, Any],
+        update_program_state: bool = True
+    ) -> Tuple[preprocessing.PreprocessedAST, 'pycommon.SDFGClosure', ArgTypes, Set[str], Dict[str, Any], Set[str]]:
         """
-        The number of Python callback CALL SITES the classic frontend emitted
-        into the generated SDFG.
+        Runs the shared Python preprocessing stage on this program.
 
-        Sites, not distinct callbacks: the nextgen side is counted in schedule
-        tree nodes, and one callback called twice (``call(arr); ...;
-        call(arr)``) is two nodes there but a single ``callback_mapping`` entry
-        and a single callback-typed symbol here. Counting the invoking tasklets
-        puts both sides on the same footing.
+        Both frontends consume the same preprocessed AST and closure, so this
+        step runs exactly once per parse, before a backend is chosen.
 
-        Falls back to the number of distinct callbacks when no invoking tasklet
-        is found, so a callback invoked in a form this does not recognize can
-        never make the comparison under-count.
+        :param args: The given arguments to the program.
+        :param kwargs: The given keyword arguments to the program.
+        :param update_program_state: If True, records the resolved closure on
+                                     this object.
+        :return: A 6-tuple of (preprocessed AST, closure, argument types, names
+                 of the arguments removed from the signature, extra global
+                 variables, names of the specified arguments).
         """
-        names: Set[str] = set()
-        for nested in sdfg.all_sdfgs_recursive():
-            names.update(name for name, stype in nested.symbols.items() if isinstance(stype, dtypes.callback))
-            names.update(nested.callback_mapping)
-            names.update(nested.callback_mapping.values())
-        if not names:
-            return 0
-        invocation = re.compile(r'\b(?:%s)\s*\(' % '|'.join(re.escape(name) for name in names))
-        sites = 0
-        for nested in sdfg.all_sdfgs_recursive():
-            for state in nested.states():
-                for node in state.nodes():
-                    code = getattr(getattr(node, 'code', None), 'as_string', None)
-                    if code:
-                        sites += len(invocation.findall(code))
-        return max(sites, len(names))
-
-    def _check_callback_discrepancy(self, callback_nodes: List['tn.PythonCallbackNode'], classic_count: int,
-                                    discrepancy: bool) -> None:
-        """
-        Compare the classic frontend's Python callbacks against the nextgen
-        schedule tree's callback nodes.
-
-        The classic frontend is the ground truth for *intent*: preprocessing
-        (where callbacks are auto-detected) is shared by both frontends, and
-        classic records its callbacks in the generated SDFG
-        (``sdfg.callback_mapping`` and callback-typed symbols). Nextgen
-        batching only merges adjacent callbacks, so a nextgen callback-node
-        count exceeding classic's callback-site count proves excess
-        interpreter fallbacks — a nextgen lowering gap by definition.
-
-        Behavior is controlled by the ``frontend.stree_callback_check``
-        configuration entry: ``error`` (default) raises, ``warn`` warns, and
-        ``off`` disables the check.
-        """
-        mode = Config.get('frontend', 'stree_callback_check')
-        if mode not in ('error', 'warn') or not discrepancy:
-            return
-        reasons = '\n'.join(f'  - {node.reason}' for node in callback_nodes)
-        message = (f'Schedule-tree parallel lowering discrepancy for {self.name}: nextgen produced '
-                   f'{len(callback_nodes)} Python callback node(s) but the classic frontend uses '
-                   f'{classic_count} callback(s). Callback reasons:\n{reasons}')
-        if mode == 'error':
-            raise RuntimeError(message)
-        warnings.warn(message, UserWarning, stacklevel=5)
-
-    def _write_stree_report(self, statement_nodes: List['tn.StatementNode'], refset_nodes: List['tn.RefSetNode'],
-                            callback_nodes: List['tn.PythonCallbackNode'], pythonclass_names: List[str],
-                            classic_count: int, discrepancy: bool) -> None:
-        """
-        Append one JSON line describing this parsed program to the gap-report
-        file configured through ``frontend.stree_report`` (no-op when unset).
-
-        Lines are written with a single ``O_APPEND`` write, so concurrent test
-        workers (pytest-xdist) interleave whole records, never partial ones.
-        Aggregate with ``python -m dace.frontend.python.nextgen.coverage
-        report <file>``.
-        """
-        path = Config.get('frontend', 'stree_report')
-        if not path:
-            return
-        import json
-        # Deferred import: the nextgen package imports this module back
-        from dace.frontend.python.nextgen import coverage
-        category_counts: Dict[str, int] = {}
-        for node in callback_nodes:
-            for category in coverage.reason_categories(node.reason):
-                category_counts[category] = category_counts.get(category, 0) + 1
-        record = {
-            'program': self.name,
-            'test': os.environ.get('PYTEST_CURRENT_TEST'),
-            'classic_callbacks': classic_count,
-            'nextgen_nodes': len(callback_nodes),
-            'discrepancy': discrepancy,
-            'reasons': [node.reason for node in callback_nodes],
-            'category_counts': category_counts,
-            'statement_nodes': len(statement_nodes),
-            'refset_warnings': len(refset_nodes),
-            'pythonclass': pythonclass_names,
-        }
-        line = json.dumps(record, default=str) + '\n'
-        descriptor = os.open(path, os.O_APPEND | os.O_CREAT | os.O_WRONLY, 0o644)
-        try:
-            os.write(descriptor, line.encode('utf-8'))
-        finally:
-            os.close(descriptor)
-
-    def _sdfg_contains_reference_descriptors(self, sdfg: SDFG) -> bool:
-        return any(
-            isinstance(descriptor, data.Reference)
-            for _, _, descriptor in sdfg.arrays_recursive(include_nested_data=True))
-
-    def _bind_schedule_tree_arguments(self, args: Tuple[Any], kwargs: Dict[str, Any]) -> Dict[str, Any]:
-        """Return a parameter-to-value map for direct schedule-tree specialization."""
-        filtered_kwargs = {k: v for k, v in kwargs.items() if k not in self.symbols}
-        parameters = [p for p in self.signature.parameters.values() if self.objname is None or p.name != self.objname]
-        bound = inspect.Signature(parameters).bind_partial(*args, **filtered_kwargs)
-        return dict(bound.arguments)
-
-    def _generate_pdp(self,
-                      args: Tuple[Any],
-                      kwargs: Dict[str, Any],
-                      simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
-        """ Generates the parsed AST representation of a DaCe program.
-
-            :param args: The given arguments to the program.
-            :param kwargs: The given keyword arguments to the program.
-            :param simplify: Whether to apply simplification pass when parsing
-                           nested dace programs.
-            :return: A 2-tuple of (parsed SDFG object, was the SDFG retrieved
-                     from cache).
-        """
-        dace_func = self.f
-
         # If exist, obtain type annotations (for compilation)
         argtypes, _, gvars, specified = self._get_type_annotations(args, kwargs)
 
@@ -1342,20 +996,95 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         for argtype in argtypes.values():
             global_vars.update({v.name: v for v in argtype.free_symbols})
 
-        # Parse AST to create the SDFG
-        parsed_ast, closure = preprocessing.preprocess_dace_program(dace_func,
+        # Preprocess the Python AST (shared by both frontends)
+        parsed_ast, closure = preprocessing.preprocess_dace_program(self.f,
                                                                     argtypes,
                                                                     global_vars,
                                                                     modules,
                                                                     resolve_functions=self.resolve_functions,
                                                                     default_args=unspecified_default_args.keys())
 
-        # Create new argument mapping from closure arrays
-        arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
-        self.closure_arg_mapping = arg_mapping
-        self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
-        self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
-        self.resolver = closure
+        if update_program_state:
+            # Create new argument mapping from closure arrays
+            self.closure_arg_mapping = {k: v for k, (_, _, v, _) in closure.closure_arrays.items()}
+            self.closure_array_keys = set(closure.closure_arrays.keys()) - removed_args
+            self.closure_constant_keys = set(closure.closure_constants.keys()) - removed_args
+            self.resolver = closure
+
+        return parsed_ast, closure, argtypes, removed_args, gvars, specified
+
+    def _schedule_tree_from_closure(self,
+                                    parsed_ast: preprocessing.PreprocessedAST,
+                                    closure: 'pycommon.SDFGClosure',
+                                    argtypes: ArgTypes,
+                                    removed_args: Set[str],
+                                    debug: bool = False) -> 'tn.ScheduleTreeRoot':
+        """
+        Lowers an already-preprocessed program to a verified schedule tree.
+
+        :param parsed_ast: The preprocessed program AST.
+        :param closure: The resolved program closure.
+        :param argtypes: Mapping from argument names to data descriptors.
+        :param removed_args: Names of arguments that were folded into globals.
+        :param debug: If True, runs extra verification between frontend passes.
+        :return: A verified schedule-tree root.
+        """
+        # Deferred import: the nextgen package pulls in the lowering rule
+        # modules, which import this module back.
+        from dace.frontend.python import nextgen
+
+        constants: Dict[str, Tuple[Data, Any]] = {}
+        for name, value in closure.closure_constants.items():
+            if name in removed_args:
+                continue
+            try:
+                constants[name] = (create_datadescriptor(value), value)
+            except (TypeError, ValueError):
+                continue
+
+        closure_arrays = {
+            name: (qualname, desc)
+            for name, (qualname, desc, _, _) in closure.closure_arrays.items() if name not in removed_args
+        }
+
+        callback_mapping = {name: original for name, (original, _, _) in closure.callbacks.items()}
+        callbacks = {name: function for name, (_, function, _) in closure.callbacks.items()}
+
+        return nextgen.build_schedule_tree(self.name,
+                                           parsed_ast,
+                                           argtypes,
+                                           constants=constants,
+                                           callback_mapping=callback_mapping,
+                                           callbacks=callbacks,
+                                           arg_names=[name for name in self.argnames if name in argtypes],
+                                           closure_arrays=closure_arrays,
+                                           debug=debug)
+
+    def _generate_schedule_tree(self,
+                                args: Tuple[Any],
+                                kwargs: Dict[str, Any],
+                                *,
+                                debug: bool = False,
+                                update_program_state: bool = True) -> 'tn.ScheduleTreeRoot':
+        """Generates a schedule tree directly from the preprocessed frontend AST."""
+        parsed_ast, closure, argtypes, removed_args, _, _ = self._preprocess_program(
+            args, kwargs, update_program_state=update_program_state)
+        return self._schedule_tree_from_closure(parsed_ast, closure, argtypes, removed_args, debug=debug)
+
+    def _generate_pdp(self,
+                      args: Tuple[Any],
+                      kwargs: Dict[str, Any],
+                      simplify: Optional[bool] = None) -> Tuple[SDFG, bool]:
+        """ Generates the parsed AST representation of a DaCe program.
+
+            :param args: The given arguments to the program.
+            :param kwargs: The given keyword arguments to the program.
+            :param simplify: Whether to apply simplification pass when parsing
+                           nested dace programs.
+            :return: A 2-tuple of (parsed SDFG object, was the SDFG retrieved
+                     from cache).
+        """
+        parsed_ast, closure, argtypes, removed_args, gvars, specified = self._preprocess_program(args, kwargs)
 
         # If recreate flag is False, check and load from cache
         if not self.recreate_sdfg:
@@ -1372,38 +1101,37 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         # If parsed SDFG is already cached, use it
         cachekey = self._cache.make_key(argtypes, specified, self.closure_array_keys, self.closure_constant_keys, gvars)
         if self._cache.has(cachekey):
-            sdfg = self._cache.get(cachekey).sdfg
-
             # We might be in a parsing context (parsing a nested SDFG), do not reuse existing reference
-            sdfg = copy.deepcopy(sdfg)
+            return copy.deepcopy(self._cache.get(cachekey).sdfg), True
 
-            cached = True
-        else:
-            cached = False
-
-            try:
+        try:
+            if Config.get_bool('frontend', 'use_nextgen'):
+                # The next-generation frontend lowers to a schedule tree, which is
+                # then converted back to an SDFG. Simplification and validation are
+                # left to the caller (``_parse``), which applies them either way.
+                stree = self._schedule_tree_from_closure(parsed_ast, closure, argtypes, removed_args)
+                sdfg = stree.as_sdfg(validate=False, simplify=False)
+            else:
                 sdfg = newast.parse_dace_program(self.name,
                                                  parsed_ast,
                                                  argtypes,
                                                  self.dec_kwargs,
                                                  closure,
                                                  simplify=simplify)
-            except Exception:
-                if Config.get_bool('frontend', 'verbose_errors'):
-                    from dace.frontend.python import astutils
-                    print('VERBOSE: Failed to parse the following program:')
-                    print(astutils.unparse(parsed_ast.preprocessed_ast))
-                raise
+        except Exception:
+            if Config.get_bool('frontend', 'verbose_errors'):
+                from dace.frontend.python import astutils
+                print('VERBOSE: Failed to parse the following program:')
+                print(astutils.unparse(parsed_ast.preprocessed_ast))
+            raise
 
-            # Set SDFG argument names, filtering out constants
-            sdfg.arg_names = [a for a in self.argnames if a in argtypes]
+        # Set SDFG argument names, filtering out constants
+        sdfg.arg_names = [a for a in self.argnames if a in argtypes]
 
-            # TODO: Add to parsed SDFG cache
+        # TODO: Add to parsed SDFG cache
 
-            # Set regenerate and recompile flags
-            sdfg.regenerate_code = self.regenerate_code
-            sdfg._recompile = self.recompile
+        # Set regenerate and recompile flags
+        sdfg.regenerate_code = self.regenerate_code
+        sdfg._recompile = self.recompile
 
-        self._run_parallel_schedule_tree_lowering_checks(args, kwargs, sdfg)
-
-        return sdfg, cached
+        return sdfg, False

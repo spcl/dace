@@ -1,10 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """
-Tests for the parallel schedule-tree lowering path: every ``to_sdfg`` also
-builds a schedule tree through the next-generation frontend and checks it
-(:meth:`DaceProgram._run_parallel_schedule_tree_lowering_checks`). Programs
-that used to exercise the old staged frontend's diagnostics (statement nodes,
-reference assignments, PythonClass containers) must now lower cleanly.
+Programs that used to trip the non-stree frontend's diagnostics --
+reference assignments, PythonClass containers -- and must lower cleanly
+through ``to_sdfg`` and the next-generation frontend.
 """
 import dace
 import numpy as np
