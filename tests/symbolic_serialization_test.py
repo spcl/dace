@@ -99,17 +99,21 @@ def test_complex_symbol_roundtrip_preserves_dtype():
     assert restored_sym.dtype == dace.complex128
 
 
-@pytest.mark.parametrize('dtype', [dace.complex64, dace.complex128])
-def test_suffixless_dtype_constant_roundtrips_via_cast_form(dtype):
+def test_suffixless_dtype_constant_roundtrips_via_cast_form():
     """A constant whose dtype has no literal suffix (complex) serializes
-    via the parseable ``dace.<dtype>(value)`` form and round-trips."""
-    tc = symbolic.deserialize_symbolic(f'dace.{dtype.to_string()}(5)')
-    assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dtype
+    via the parseable ``dace.<dtype>(value)`` form and round-trips.
+
+    The point is the real-valued cast argument (``_cast_symbolic_value`` takes its
+    ``sympy.Integer`` branch); ``c64`` vs ``c128`` only picks a suffix string, which
+    ``test_typed_constant_canonical_form_roundtrips`` pins for both.
+    """
+    tc = symbolic.deserialize_symbolic('dace.complex128(5)')
+    assert isinstance(tc, symbolic.TypedConstant) and tc.dtype == dace.complex128
 
     serialized = symbolic.serialize_symbolic(tc)
     restored = symbolic.deserialize_symbolic(serialized)
     assert isinstance(restored, symbolic.TypedConstant)
-    assert restored.dtype == dtype and int(restored.value) == 5
+    assert restored.dtype == dace.complex128 and int(restored.value) == 5
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
@@ -228,11 +232,11 @@ def test_power_deserialization_preserves_typed_symbols_after_plain_power():
     assert symbolic.serialize_symbolic(typed_power) == 'symbol($N, dtype=dace.int16)**2'
 
 
-@pytest.mark.parametrize('simplify', [None, False])
-def test_pystr_to_symbolic_keeps_basic_unsimplified_by_default(simplify):
+def test_pystr_to_symbolic_keeps_basic_unsimplified_by_default():
+    # `simplify=False` is not a second case: `pystr_to_symbolic` tests `simplify is not True`.
     expr = sympy.Add(symbolic.symbol('N'), 1, 1, evaluate=False)
 
-    restored = symbolic.pystr_to_symbolic(expr, simplify=simplify)
+    restored = symbolic.pystr_to_symbolic(expr)
 
     assert restored is expr
     assert len(restored.args) == 3
@@ -375,13 +379,17 @@ def test_cpp_ctype_cast_parses_to_typed_constant(text, ctype):
     assert restored.dtype.ctype == ctype
 
 
-@pytest.mark.parametrize('op', ['Min', 'Max'])
-@pytest.mark.parametrize('literal', [
-    '5.0',
-    '5.0f64',
-    '5f32',
-    '7f64',
-])
+# Min and Max resolve through the same `_functions` entries and print through the same generic
+# StrPrinter path, so the op is an axis nothing branches on: each is paired with two literals
+# rather than swept against all four.
+@pytest.mark.parametrize(
+    'op,literal',
+    [
+        ('Min', '5.0'),  # untyped float
+        ('Max', '5.0f64'),  # float-valued typed literal
+        ('Min', '5f32'),  # integer-valued literal with a float suffix
+        ('Max', '7f64'),  # the normalized form test_minmax_with_ctype_cast_int_literal... produces
+    ])
 def test_minmax_with_float_literal_roundtrip(op, literal):
     serialized = f'{op}({literal}, $N)'
     restored = symbolic.deserialize_symbolic(serialized)
@@ -395,35 +403,37 @@ def test_minmax_with_ctype_cast_int_literal_normalizes_then_stable():
     assert first == second
 
 
-@pytest.mark.parametrize('serialized', [
-    '5i16',
-    '7i64',
-    '5f32',
-    '5.0f64',
-    '(3.0 + 4.0j)c128',
-    '(3.0 - 4.0j)c128',
-    '(-3.0 + 4.0j)c128',
-    '(3.0 + 4.0j)c64',
-    '(4.0j)c128',
-    '(-4.0j)c128',
-    '(4.0j)c64',
-    '(-4.0j)c64',
-])
+@pytest.mark.parametrize(
+    'serialized',
+    [
+        '5i16',  # integer suffix (width is a table lookup, not a branch)
+        '5f32',  # float suffix, integer-valued: `looks_like_float` False
+        '5.0f64',  # float suffix, float-valued: `looks_like_float` True
+        '(3.0 + 4.0j)c128',
+        '(3.0 - 4.0j)c128',  # negative imaginary part: the `op` branch of the printer
+        '(-3.0 + 4.0j)c128',  # negative real part: the `-?` of the regex's `re` group
+        '(3.0 + 4.0j)c64',  # the c64/c128 suffix branch
+        '(4.0j)c128',  # zero real part: the pure-imaginary printer branch / absent `re` group
+        '(-4.0j)c128',  # ... and its sign branch
+    ])
 def test_typed_constant_canonical_form_roundtrips(serialized):
     restored = symbolic.deserialize_symbolic(serialized)
     assert isinstance(restored, symbolic.TypedConstant)
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-@pytest.mark.parametrize('input_form,canonical', [
-    ('4j', '(4.0j)c128'),
-    ('-4j', '(-4.0j)c128'),
-    ('(0.0 + 4.0j)c128', '(4.0j)c128'),
-    ('complex(3.0, 4.0)', '(3.0 + 4.0j)c128'),
-    ('dace.complex128(complex(3.0, 4.0))', '(3.0 + 4.0j)c128'),
-    ('dace.complex64(complex(3.0, 4.0))', '(3.0 + 4.0j)c64'),
-    ('dace.complex128(complex(3.0, -4.0))', '(3.0 - 4.0j)c128'),
-])
+# `dace.complex128(complex(re, im))` is what `_rewrite_typed_complex` hands the AST parser for every
+# `(...)c128` literal, so `test_typed_constant_canonical_form_roundtrips` already drives that form
+# with both signs; `complex(3.0, 4.2)` unwrapped is driven by
+# `test_complex_constant_parse_save_roundtrip`. Only the forms no other test writes stay here.
+@pytest.mark.parametrize(
+    'input_form,canonical',
+    [
+        ('4j', '(4.0j)c128'),  # bare Python imaginary literal
+        ('-4j', '(-4.0j)c128'),  # ... negated, i.e. `_negate` on a complex TypedConstant
+        ('(0.0 + 4.0j)c128', '(4.0j)c128'),  # explicit zero real part collapses
+        ('dace.complex64(complex(3.0, 4.0))', '(3.0 + 4.0j)c64'),  # cast wrapper, non-default width
+    ])
 def test_legacy_complex_form_normalizes_to_canonical_suffix(input_form, canonical):
     first = symbolic.serialize_symbolic(symbolic.deserialize_symbolic(input_form))
     assert first == canonical
@@ -577,9 +587,21 @@ def test_serialization_is_fixed_point(build):
     assert s3 == s1
 
 
-@pytest.mark.parametrize('build', CEILING_AND_SIMILAR.values(), ids=list(CEILING_AND_SIMILAR))
-def test_roundtrip_preserves_free_symbol_names(build):
-    expr = build()
+#: A free symbol name can only be lost to the `$` escape or to an identifier the parser resolves to
+#: something that is not a symbol -- not to the arithmetic shape wrapped around it. These four cover
+#: the typed `symbol($x, dtype=...)` form, the bare `$x` form, and a symbol standing next to each of
+#: the two resolved constants (`pi`, `I`). Every entry of `CEILING_AND_SIMILAR` still runs above.
+NAME_PRESERVING_SHAPES = (
+    'ceiling_triangular',
+    'max_of_integers',
+    'mul_with_transcendental_coeff',
+    'mul_with_imaginary_unit',
+)
+
+
+@pytest.mark.parametrize('name', NAME_PRESERVING_SHAPES)
+def test_roundtrip_preserves_free_symbol_names(name):
+    expr = CEILING_AND_SIMILAR[name]()
     # FIX: Use deserialize_symbolic instead of pystr_to_symbolic
     reparsed = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(expr))
     assert {s.name for s in reparsed.free_symbols} == {s.name for s in expr.free_symbols}
@@ -713,6 +735,8 @@ def test_cloudsc_fixture_deserializes_to_real_sdfg_despite_stale_version_stamp()
     assert isinstance(sdfg, dace.SDFG)
     for node, _ in sdfg.all_nodes_recursive():
         assert not isinstance(node, dace.serialize.SerializableObject)
+
+
 def test_symbol_dtype_is_part_of_symbol_identity():
     assert symbolic.symbol('i', dace.int64) != symbolic.symbol('i', dace.int32)
 

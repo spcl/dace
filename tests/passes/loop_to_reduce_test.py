@@ -33,6 +33,19 @@ def prefer(request):
     return request.param
 
 
+#: Emit mode for MATCHER-only cases. ``apply_pass`` runs ``_extract`` -- and every refusal it
+#: makes -- BEFORE it dispatches on ``prefer``, so a case whose accept/refuse decision is taken
+#: there re-runs an identical lift (or an identical no-op) under the second mode. Those cases fix
+#: the mode here instead of sweeping it; the emit side of every WCR op stays swept by the tests
+#: that do vary the mode: ``+`` by ``test_sdfg_api_sum_reduction_is_lifted``, ``max`` by
+#: ``test_branched_max_is_lifted`` / ``test_conditional_interstate_gt_lifts_to_max``, ``min`` by
+#: the corresponding min pair, ``|``/``&`` by the permissive any/all pair, and the
+#: symbol-accumulator bridge by ``test_any_pattern_symbol_bridge_via_tmp_scalar``.
+#: ``reduce-libnode`` is the stronger single mode for refusals: only it can emit a ``Reduce``,
+#: and only under it does a wrong lift change ``_count_loops``.
+_MATCHER_ONLY_MODE = 'reduce-libnode'
+
+
 def _count_loops(sdfg: dace.SDFG) -> int:
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, LoopRegion))
 
@@ -128,7 +141,13 @@ def _frontend_augassign_len1(A: dace.float64[1], B: dace.float64[N]):
         A[0] += B[i]
 
 
-def test_frontend_augassign_length1_array_is_lifted(prefer):
+def test_frontend_augassign_length1_array_is_lifted():
+    """Frontend ``A[0] += B[i]`` with ``A`` length-1: pins the ``scalar_like`` accumulator arm.
+
+    Matcher-only -- that arm is decided in ``_extract``. The frontend-staged, embedded-loop
+    emit it produces is swept over both modes by ``test_frontend_augassign_array_slice_is_lifted``.
+    """
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _frontend_augassign_len1.to_sdfg(simplify=True)
     sdfg.validate()
     assert _count_loops(sdfg) >= 1
@@ -275,7 +294,14 @@ def _assert_single_reduce_with_wcr(sdfg: dace.SDFG, expected_wcr: str):
     assert red.identity is None
 
 
-def test_conditional_interstate_gt_lifts_to_max(prefer):
+def test_conditional_interstate_gt_lifts_to_max():
+    """``>``/``>=`` guard, either operand order -> ``max``.
+
+    Paired with ``test_branched_max_is_lifted``, which pins the same ``max`` WCR under
+    ``wcr-scalar``: ``_cmp_to_wcr`` decides before the ``prefer`` dispatch and neither lift
+    branches on the WCR op, so the two modes need not be crossed with all four guard forms.
+    """
+    prefer = 'reduce-libnode'
     for cond in ("B[i] > accum", "accum < B[i]", "B[i] >= accum", "accum <= B[i]"):
         sdfg = _build_conditional_minmax_sdfg(cond)
         sdfg.validate()
@@ -287,7 +313,13 @@ def test_conditional_interstate_gt_lifts_to_max(prefer):
         _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: max(a, b)")
 
 
-def test_conditional_interstate_lt_lifts_to_min(prefer):
+def test_conditional_interstate_lt_lifts_to_min():
+    """``<``/``<=`` guard, either operand order -> ``min``.
+
+    Runs ``wcr-scalar`` so this pair covers both emit modes; ``min`` under ``reduce-libnode``
+    is pinned by ``test_branched_min_is_lifted``.
+    """
+    prefer = 'wcr-scalar'
     for cond in ("B[i] < accum", "accum > B[i]", "B[i] <= accum", "accum >= B[i]"):
         sdfg = _build_conditional_minmax_sdfg(cond)
         sdfg.validate()
@@ -299,8 +331,9 @@ def test_conditional_interstate_lt_lifts_to_min(prefer):
         _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: min(a, b)")
 
 
-def test_conditional_interstate_unrelated_array_is_not_lifted(prefer):
-    """Guard compares a different array than the assignment — reject."""
+def test_conditional_interstate_unrelated_array_is_not_lifted():
+    """Guard compares a different array than the assignment — reject (in ``_extract``)."""
+    prefer = _MATCHER_ONLY_MODE
     sdfg = dace.SDFG("interstate_cond_mismatched")
     sdfg.add_symbol("accum", dace.float64)
     sdfg.add_array("B", [N], dace.float64)
@@ -342,8 +375,15 @@ def _build_interstate_binop_sdfg(rhs_expr: str, accum_dtype=dace.int32, arr_dtyp
     return sdfg
 
 
-def test_interstate_edge_bitwise_or_is_lifted(prefer):
+# The four iedge-binop tests below pin ``_extract``'s expression CLASSIFICATION: ``|`` parses to
+# ``bitwise_or`` and ``or`` to ``OR`` (likewise ``&``/``and``), four distinct sympy classes across
+# two isinstance tuples. That is a matcher decision, and the ``|``/``&`` emit under both modes is
+# already pinned by the permissive any/all pair, so they fix the emit mode.
+
+
+def test_interstate_edge_bitwise_or_is_lifted():
     """``{accum: accum | B[i]}`` -> Reduce with ``|`` WCR."""
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_interstate_binop_sdfg("accum | B[i]")
     sdfg.validate()
     assert _count_loops(sdfg) == 1
@@ -353,8 +393,9 @@ def test_interstate_edge_bitwise_or_is_lifted(prefer):
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a | b")
 
 
-def test_interstate_edge_bitwise_and_is_lifted(prefer):
+def test_interstate_edge_bitwise_and_is_lifted():
     """``{accum: accum & B[i]}`` -> Reduce with ``&`` WCR."""
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_interstate_binop_sdfg("accum & B[i]")
     sdfg.validate()
     assert _count_loops(sdfg) == 1
@@ -364,8 +405,9 @@ def test_interstate_edge_bitwise_and_is_lifted(prefer):
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a & b")
 
 
-def test_interstate_edge_logical_or_is_lifted(prefer):
+def test_interstate_edge_logical_or_is_lifted():
     """``{accum: accum or B[i]}`` -> Reduce with ``|`` WCR."""
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_interstate_binop_sdfg("accum or B[i]")
     sdfg.validate()
     assert _count_loops(sdfg) == 1
@@ -375,8 +417,9 @@ def test_interstate_edge_logical_or_is_lifted(prefer):
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a | b")
 
 
-def test_interstate_edge_logical_and_is_lifted(prefer):
+def test_interstate_edge_logical_and_is_lifted():
     """``{accum: accum and B[i]}`` -> Reduce with ``&`` WCR."""
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_interstate_binop_sdfg("accum and B[i]")
     sdfg.validate()
     assert _count_loops(sdfg) == 1
@@ -386,8 +429,13 @@ def test_interstate_edge_logical_and_is_lifted(prefer):
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a & b")
 
 
-def test_tasklet_body_boolop_or_is_lifted(prefer):
-    """Tasklet body ``out = a or b`` lifts to an OR reduction."""
+def test_tasklet_body_boolop_or_is_lifted():
+    """Tasklet body ``out = a or b`` lifts to an OR reduction (``_BOOLOP_TO_WCR`` arm).
+
+    Matcher-only: same hand-built accumulator shape as ``test_sdfg_api_sum_reduction_is_lifted``,
+    which sweeps both emit modes; only the tasklet-body classification differs.
+    """
+    prefer = _MATCHER_ONLY_MODE
     sdfg = dace.SDFG("tasklet_boolop_or")
     sdfg.add_array("A", [1], dace.int32)
     sdfg.add_array("B", [N], dace.int32)
@@ -432,9 +480,10 @@ def _build_any_pattern_sdfg(assign_const: str = "1", guard: str = "B[i] == 1"):
     return sdfg
 
 
-def test_any_pattern_not_lifted_without_permissive(prefer):
+def test_any_pattern_not_lifted_without_permissive():
     """Default (non-permissive) mode leaves the ``any`` pattern alone because
-    the lift assumes the guard array is 0/1-valued."""
+    the lift assumes the guard array is 0/1-valued. Refused in ``_extract``."""
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_any_pattern_sdfg()
     sdfg.validate()
     assert _count_loops(sdfg) == 1
@@ -620,15 +669,19 @@ def _branched_max(a: dace.float64[N], result: dace.float64[N]):
     result[0] = x
 
 
-def test_branched_max_is_lifted(prefer):
+def test_branched_max_is_lifted():
     """TSVC s314: ``for i: if a[i] > x: x = a[i]``.
 
     Frontend lowers the masked update into ``[ConditionalBlock, cond_prep_state,
     post_state]`` joined by iedges ``{arr_sym: a[i]}`` and ``{guard_sym: arr_sym > x}``.
     ``max`` is idempotent so the conditional is redundant at the WCR level
     (``acc = max(acc, a[i])`` matches the masked semantics whether the guard fires or
-    not). Both emit modes are correct.
+    not). Both emit modes are correct: this one runs ``wcr-scalar`` -- whose per-iteration
+    index inversion has to undo the ``range(1, N)`` offset, the ``a[1:N]`` case
+    ``_lift_wcr_scalar`` names s314 for -- and ``test_branched_min_is_lifted`` runs
+    ``reduce-libnode`` on the same matcher.
     """
+    prefer = 'wcr-scalar'
     sdfg = _branched_max.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
@@ -644,8 +697,10 @@ def _branched_min(a: dace.float64[N], result: dace.float64[N]):
     result[0] = x
 
 
-def test_branched_min_is_lifted(prefer):
-    """TSVC s316: same shape as s314 with ``<`` (branched min)."""
+def test_branched_min_is_lifted():
+    """TSVC s316: same shape as s314 with ``<`` (branched min), run under ``reduce-libnode``
+    so the s314/s316 pair still covers both emit modes."""
+    prefer = 'reduce-libnode'
     sdfg = _branched_min.to_sdfg(simplify=True)
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
@@ -1083,9 +1138,9 @@ def _build_scalarised_scan_writeback(n_sym=N):
     return sdfg
 
 
-def test_scalarised_scan_writeback_into_folded_array_not_lifted(prefer):
+def test_scalarised_scan_writeback_into_folded_array_not_lifted():
     """A scalarised prefix-sum that writes its running carry BACK into the folded array
-    (``c = c + A[i]; A[i + 1] = c``) must NOT be lifted to a ``Reduce`` in either emit mode.
+    (``c = c + A[i]; A[i + 1] = c``) must NOT be lifted to a ``Reduce``.
 
     Regression: ``_extract`` used to exempt the folded ``array`` from its "writes only the
     accumulator" guard (``allowed = {accum, array, ...}``), so a writeback into that array
@@ -1093,10 +1148,15 @@ def test_scalarised_scan_writeback_into_folded_array_not_lifted(prefer):
     flux-integral (PFPLSL/PFHPSL) miscompile, ~2.5% error, because a ``Reduce`` emits one final
     value instead of the running per-level sequence. The array is now NOT exempt; the writeback
     is recognised as a scan output and the loop is left for ``LoopToScan``.
+
+    The refusal is ``_extract``'s, taken before ``apply_pass`` dispatches on ``prefer``, so the
+    mode is fixed (``_MATCHER_ONLY_MODE``); ``wcr-scalar`` refusing a scan shape is separately
+    pinned -- with the full retarget prelude -- by ``test_wcr_scalar_refuses_scan_shape_recurrence``.
     """
     import numpy as np
     from dace.libraries.standard.nodes.reduce import Reduce
 
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_scalarised_scan_writeback()
     sdfg.validate()
     assert _count_loops(sdfg) == 1
@@ -1188,12 +1248,14 @@ def _build_double_buffer_scan_writeback(n_sym=N):
     return sdfg
 
 
-def test_transient_scan_writeback_not_lifted(prefer):
+def test_transient_scan_writeback_not_lifted():
     """A prefix-scan carry stamped into a TRANSIENT buffer at a moving slot (``ZP[i+1] = c``) must NOT
     lift to a ``Reduce`` -- the hole 881e55d79 missed (it exempted transient writebacks). gpu_scc's
     flux double-buffer is a transient, so its scan was collapsed and the per-level flux dropped.
+    Mode fixed: the refusal is ``_extract``'s, before the ``prefer`` dispatch.
     """
     from dace.libraries.standard.nodes.reduce import Reduce
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_transient_scan_writeback()
     assert _count_loops(sdfg) == 1
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
@@ -1203,12 +1265,14 @@ def test_transient_scan_writeback_not_lifted(prefer):
     assert not [n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce)], 'no Reduce may be emitted'
 
 
-def test_double_buffer_carry_scan_not_lifted(prefer):
-    """The CloudSC k-caching double-buffer (``ZP[(i+1)%2] = c``, toggled per level by a loop-iedge
-    symbol) must NOT lift to a ``Reduce``: it is a genuine sequential recurrence over a ring buffer,
-    not a fold. Exercises the loop-iedge-symbol arm of the moving-slot refusal.
+def test_double_buffer_carry_scan_not_lifted():
+    """The CloudSC k-caching double-buffer (``ZP[(i+1)%2] = c``) must NOT lift to a ``Reduce``: it is
+    a genuine sequential recurrence over a ring buffer, not a fold. The modulo slot keeps the ``%``
+    form of the moving-slot subset in front of the refusal. Mode fixed: ``_extract`` refuses before
+    the ``prefer`` dispatch.
     """
     from dace.libraries.standard.nodes.reduce import Reduce
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _build_double_buffer_scan_writeback()
     assert _count_loops(sdfg) == 1
     lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
@@ -1347,7 +1411,7 @@ def test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays(prefer):
     assert np.allclose(t[0], x.sum()), 'lifted nested reduction diverged from the sequential oracle'
 
 
-def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient(prefer):
+def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient():
     """A same-named descriptor in the CALLER must not authorise a lift the callee forbids.
 
     ``_extract`` refuses a loop that writes any LIVE (non-transient) array besides the
@@ -1356,7 +1420,12 @@ def test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient(
     caller. Asked against the top-level SDFG the guard reads the caller's answer, passes,
     and the lift deletes the loop wholesale: ``b`` (hence ``o``) is never written. A wrong
     answer, not a missed one.
+
+    Mode fixed: the live-array guard is ``_extract``'s, evaluated before the ``prefer`` dispatch;
+    ``test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays`` sweeps both modes over the
+    positive nested lift (where the emit really does differ per mode).
     """
+    prefer = _MATCHER_ONLY_MODE
     sdfg = _nest_without_inlining(_nested_live_write_caller)
     inner = _inner_sdfg(sdfg)
     assert _loops_inside_nested_sdfgs(sdfg), 'fixture no longer nests the reduction loop'
@@ -1427,6 +1496,5 @@ if __name__ == "__main__":
     test_array_slot_sum_reduction_is_lifted()
     test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays('reduce-libnode')
     test_reduce_lift_inside_nested_sdfg_uses_the_nested_sdfgs_arrays('wcr-scalar')
-    test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient('reduce-libnode')
-    test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient('wcr-scalar')
+    test_reduce_refusal_inside_nested_sdfg_ignores_a_same_named_outer_transient()
     test_retarget_wcr_accumulator_inside_nested_sdfg_uses_the_nested_sdfgs_arrays()

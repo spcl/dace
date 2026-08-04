@@ -423,17 +423,24 @@ def run_and_compare_sdfg(
     return copy_sdfg
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
+# ``use_pass`` below is pinned to ``False`` (the bare transformation driven through
+# ``can_be_applied_to``/``apply_to``) wherever the assertion does not depend on it:
+# the ``EliminateBranches`` pass configuration used by ``use_pass=True`` is already
+# exercised on every one of these shapes by the non-parametrized tests further down
+# (``test_nested_if_two``, ``test_repeated_condition_variables``, ``test_single_assignment``,
+# ``test_write_to_transient``, ``test_split_on_disjoint_subsets``, ...), while the bare
+# transformation entry point has no other consumer. ``test_multi_state_branch_body`` keeps
+# both values because its expected branch count differs between them.
 @temporarily_disable_autoopt_and_serialization
-def test_branch_dependent_value_write(use_pass_flag):
+def test_branch_dependent_value_write():
     a = np.random.rand(N, N)
     b = np.random.rand(N, N)
     c = np.zeros((N, N))
     d = np.zeros((N, N))
     run_and_compare(branch_dependent_value_write,
                     0,
-                    use_pass_flag,
-                    f"branch_dependent_value_write_use_pass_{str(use_pass_flag).lower()}",
+                    False,
+                    "branch_dependent_value_write_use_pass_false",
                     a=a,
                     b=b,
                     c=c,
@@ -448,53 +455,46 @@ def test_weird_condition():
     run_and_compare(weird_condition, 1, False, f"weird_condition", a=a, b=b, ncldtop=ncldtop[0])
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_branch_dependent_value_write_two(use_pass_flag):
+def test_branch_dependent_value_write_two():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.zeros((N, N))
     c = np.zeros((N, N))
     d = np.zeros((N, N))
     run_and_compare(branch_dependent_value_write_two,
                     0,
-                    use_pass_flag,
-                    f"branch_dependent_value_write_two_use_pass_{str(use_pass_flag).lower()}",
+                    False,
+                    "branch_dependent_value_write_two_use_pass_false",
                     a=a,
                     b=b,
                     c=c,
                     d=d)
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_branch_dependent_value_write_single_branch(use_pass_flag):
+def test_branch_dependent_value_write_single_branch():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.zeros((N, N))
     run_and_compare(branch_dependent_value_write_single_branch,
                     0,
-                    use_pass_flag,
-                    f"branch_dependent_value_write_single_branch_use_pass_{str(use_pass_flag).lower()}",
+                    False,
+                    "branch_dependent_value_write_single_branch_use_pass_false",
                     a=a,
                     b=b,
                     d=d)
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_complicated_if(use_pass_flag):
+def test_complicated_if():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.zeros((N, N))
-    run_and_compare(complicated_if,
-                    0,
-                    use_pass_flag,
-                    f"complicated_if_use_pass_{str(use_pass_flag).lower()}",
-                    a=a,
-                    b=b,
-                    d=d)
+    run_and_compare(complicated_if, 0, False, "complicated_if_use_pass_false", a=a, b=b, d=d)
 
 
+# Both driver values kept: the expected branch count is coupled to the flag -- only the
+# pass' ``try_clean`` can lift the multi-state branch body, the bare transformation cannot.
 @pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
 def test_multi_state_branch_body(use_pass_flag):
@@ -514,23 +514,14 @@ def test_multi_state_branch_body(use_pass_flag):
                     s=s[0])
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_nested_if(use_pass_flag):
+def test_nested_if():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
     s = np.zeros((1, )).astype(np.int64)
-    run_and_compare(nested_if,
-                    0,
-                    use_pass_flag,
-                    f"nested_if_use_pass_{str(use_pass_flag).lower()}",
-                    a=a,
-                    b=b,
-                    c=c,
-                    d=d,
-                    s=s[0])
+    run_and_compare(nested_if, 0, False, "nested_if_use_pass_false", a=a, b=b, c=c, d=d, s=s[0])
 
 
 @temporarily_disable_autoopt_and_serialization
@@ -565,33 +556,24 @@ def test_nested_if_two():
     run_and_compare(nested_if_two, 0, True, f"nested_if_two", a=a, b=b, c=c, d=d)
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_tasklets_in_if(use_pass_flag):
+def test_tasklets_in_if():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     c = np.zeros((1, ))
     d = np.zeros((N, N))
-    run_and_compare(tasklets_in_if,
-                    0,
-                    use_pass_flag,
-                    f"tasklets_in_if_use_pass{str(use_pass_flag).lower()}",
-                    a=a,
-                    b=b,
-                    d=d,
-                    c=c[0])
+    run_and_compare(tasklets_in_if, 0, False, "tasklets_in_if_use_passfalse", a=a, b=b, d=d, c=c[0])
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag):
+def test_branch_dependent_value_write_single_branch_nonzero_write():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
     run_and_compare(branch_dependent_value_write_single_branch_nonzero_write,
                     0,
-                    use_pass_flag,
-                    f"branch_dependent_value_write_single_branch_nonzero_write_use_pass_{str(use_pass_flag).lower()}",
+                    False,
+                    "branch_dependent_value_write_single_branch_nonzero_write_use_pass_false",
                     a=a,
                     b=b,
                     d=d)
@@ -611,9 +593,8 @@ def test_branch_dependent_value_write_with_transient_reuse():
                     c=c)
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_single_branch_connectors(use_pass_flag):
+def test_single_branch_connectors():
     a = np.random.choice([0.001, 3.0], size=(N, N))
     b = np.random.choice([0.001, 5.0], size=(N, N))
     d = np.random.choice([0.001, 5.0], size=(N, N))
@@ -621,19 +602,14 @@ def test_single_branch_connectors(use_pass_flag):
 
     sdfg = single_branch_connectors.to_sdfg()
     sdfg.validate()
-    sdfg.name = f"test_single_branch_connectors_use_pass_{str(use_pass_flag).lower()}"
+    sdfg.name = "test_single_branch_connectors_use_pass_false"
     arrays = {"a": a, "b": b, "c": c, "d": d}
     out_no_fuse = {k: v.copy() for k, v in arrays.items()}
     sdfg(a=out_no_fuse["a"], b=out_no_fuse["b"], c=out_no_fuse["c"][0], d=out_no_fuse["d"])
     # Apply transformation
     copy_sdfg = copy.deepcopy(sdfg)
-    copy_sdfg.name = f"test_single_branch_connectors_use_pass_{str(use_pass_flag).lower()}_branch_eliminated"
-    if use_pass_flag:
-        eb = EliminateBranches()
-        eb.apply_to_top_level_ifs = True
-        eb.apply_pass(copy_sdfg, {})
-    else:
-        apply_branch_elimination(copy_sdfg, 2)
+    copy_sdfg.name = "test_single_branch_connectors_use_pass_false_branch_eliminated"
+    apply_branch_elimination(copy_sdfg, 2)
 
     # Run SDFG version (with transformation)
     out_fused = {k: v.copy() for k, v in arrays.items()}
@@ -653,9 +629,8 @@ def test_single_branch_connectors(use_pass_flag):
     assert len(nsdfg.out_connectors) == 1, f"{nsdfg.out_connectors}, length is not 1 but {len(nsdfg.out_connectors)}"
 
 
-@pytest.mark.parametrize("use_pass_flag", [True, False])
 @temporarily_disable_autoopt_and_serialization
-def test_disjoint_subsets(use_pass_flag):
+def test_disjoint_subsets():
     if_cond_58 = np.array([1], dtype=np.int32)
     A = np.random.choice([0.001, 3.0], size=(N, ))
     B = np.random.randn(N, 3, 3)
@@ -663,8 +638,8 @@ def test_disjoint_subsets(use_pass_flag):
     E = np.random.choice([0.001, 3.0], size=(N, 3, 3))
     run_and_compare(disjoint_subsets,
                     0,
-                    use_pass_flag,
-                    f"disjoint_subsets_use_pass_{str(use_pass_flag).lower()}",
+                    False,
+                    "disjoint_subsets_use_pass_false",
                     A=A,
                     B=B,
                     C=C,
@@ -1658,7 +1633,10 @@ def _get_disjoint_chain_sdfg() -> dace.SDFG:
     return sd2, p_s1
 
 
-@pytest.mark.parametrize("rtt_val", [0.0, 4.0, 6.0])
+# ``rtt`` only feeds the runtime condition ``ztp1[i] <= rtt``; the generated code is
+# identical for every value. ``ztp1`` draws from ``{3.5, 5.0}``, so ``rtt = 4.0`` takes both
+# arms within a single run, which strictly dominates the all-true / all-false values.
+@pytest.mark.parametrize("rtt_val", [4.0])
 @temporarily_disable_autoopt_and_serialization
 def test_disjoint_chain_split_branch_only(rtt_val):
     sdfg, nsdfg_parent_state = _get_disjoint_chain_sdfg()
@@ -1694,7 +1672,7 @@ def test_disjoint_chain_split_branch_only(rtt_val):
         np.testing.assert_allclose(out_no_fuse[name], out_fused[name], atol=1e-12)
 
 
-@pytest.mark.parametrize("rtt_val", [0.0, 4.0, 6.0])
+@pytest.mark.parametrize("rtt_val", [4.0])
 @temporarily_disable_autoopt_and_serialization
 def test_disjoint_chain(rtt_val):
     sdfg, _ = _get_disjoint_chain_sdfg()
@@ -1734,7 +1712,11 @@ def pattern_from_cloudsc_one(
                 E[i, j] = 0.0
 
 
-@pytest.mark.parametrize("c_val", [0.0, 1.0, 6.0])
+# ``c`` is a runtime argument, so all values compile to the same code. ``B`` takes values in
+# ``{0.002, 5.001, 10.0}``; ``c = 1.0`` splits it and exercises both arms in one run, whereas
+# ``0.0`` only ever takes the if-arm and ``6.0`` is a second, less balanced split of the same
+# code path. None of the three sits on an equality boundary.
+@pytest.mark.parametrize("c_val", [1.0])
 @temporarily_disable_autoopt_and_serialization
 def test_pattern_from_cloudsc_one(c_val):
     A = np.random.choice([0.001, 5.0], size=(
@@ -2163,7 +2145,10 @@ def test_huge_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
         np.testing.assert_allclose(out_fused[name], out_no_fuse[name], atol=1e-12)
 
 
-@pytest.mark.parametrize("eps_operator_type_for_log_and_div", ["max", "add"])
+# ``mid_sdfg`` has divisions but no ``log`` call, so it only reaches ``DivEps.visit_BinOp`` --
+# a strict subset of what ``test_huge_sdfg_with_log_exp_div`` covers in both eps modes. Keep
+# this smaller reproducer on the default ``add`` mode only.
+@pytest.mark.parametrize("eps_operator_type_for_log_and_div", ["add"])
 @temporarily_disable_autoopt_and_serialization
 def test_mid_sdfg_with_log_exp_div(eps_operator_type_for_log_and_div: str):
     """Generate test data for the loop body function"""
@@ -2528,24 +2513,17 @@ if __name__ == "__main__":
     test_interstate_boolean_op_two()
     test_huge_sdfg_with_log_exp_div("max")
     test_huge_sdfg_with_log_exp_div("add")
-    test_mid_sdfg_with_log_exp_div("max")
     test_mid_sdfg_with_log_exp_div("add")
     test_nested_sdfg_with_return(True)
     test_nested_sdfg_with_return(False)
     test_safe_map_param_use_in_nested_sdfg()
     test_can_be_applied_on_map_param_usage()
-    test_pattern_from_cloudsc_one(0.0)
     test_pattern_from_cloudsc_one(1.0)
-    test_pattern_from_cloudsc_one(6.0)
     test_can_be_applied_on_top_level_and_nested_conditional()
     test_condition_on_bounds()
     test_nested_if_two()
-    test_disjoint_chain_split_branch_only(0.0)
     test_disjoint_chain_split_branch_only(4.0)
-    test_disjoint_chain_split_branch_only(6.0)
-    test_disjoint_chain(0.0)
     test_disjoint_chain(4.0)
-    test_disjoint_chain(6.0)
     test_condition_from_transient_scalar()
     test_single_assignment()
     test_single_assignment_cond_from_scalar()
@@ -2567,14 +2545,14 @@ if __name__ == "__main__":
     test_complicated_pattern_for_manual_clean_up_one()
     test_try_clean_on_complicated_pattern_for_manual_clean_up_one()
     test_try_clean_on_complicated_pattern_for_manual_clean_up_two()
+    test_branch_dependent_value_write()
+    test_branch_dependent_value_write_two()
+    test_branch_dependent_value_write_single_branch()
+    test_branch_dependent_value_write_single_branch_nonzero_write()
+    test_single_branch_connectors()
+    test_complicated_if()
+    test_nested_if()
+    test_tasklets_in_if()
+    test_disjoint_subsets()
     for use_pass_flag in [True, False]:
-        test_branch_dependent_value_write(use_pass_flag)
-        test_branch_dependent_value_write_two(use_pass_flag)
-        test_branch_dependent_value_write_single_branch(use_pass_flag)
-        test_branch_dependent_value_write_single_branch_nonzero_write(use_pass_flag)
-        test_single_branch_connectors(use_pass_flag)
-        test_complicated_if(use_pass_flag)
         test_multi_state_branch_body(use_pass_flag)
-        test_nested_if(use_pass_flag)
-        test_tasklets_in_if(use_pass_flag)
-        test_disjoint_subsets(use_pass_flag)

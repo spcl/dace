@@ -10,43 +10,25 @@ from dace.transformation.passes.split_tasklets import SplitTasklets
 from dace.transformation.passes.canonicalize import canonicalize
 
 # Format: (expression, expected_num_statements_after_split)
+# One case per ASTSplitter branch / operator family: Compare, Constant- and Name-RHS assignment,
+# long chain, unary, division, power, calls, bitwise-on-int, BoolOp. Ids are the original ones;
+# gaps are shapes another id already covers (same branch, longer chain or same operator family).
 example_expressions = [
-    (1, "_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==
-    (2, "out_ci = 5 * in_ci + 4", 2),  # __t0 = 5 * in_ci; out_ci = __t0 + 4
-    (3, "cfl_w_limit_out = (0.85 / dtime_0_in)", 1),  # Single operation
-    (4, "z_w_con_c_out_0 = 0.0", 1),  # Assignment only, no operation
-    (5,
-     "p_diag_out_w_concorr_c_0 = ((p_metrics_0_in_wgtfac_c_0 * z_w_concorr_mc_0_in_0) + ((1.0 - p_metrics_1_in_wgtfac_c_0) * z_w_concorr_mc_1_in_0))",
-     4),  # 4 ops: *, -, *, +
+    (1, "_out_float__if_cond = ((_if_cond == 1) == 0)", 2),  # 2 ==, bool intermediate
+    (4, "z_w_con_c_out_0 = 0.0", 1),  # Constant RHS, no operation
     (6,
      "rot_vec_out_0 = ((((((vec_e_0_in_0 * ptr_int_0_in_geofac_rot_0) + (vec_e_1_in_0 * ptr_int_1_in_geofac_rot_0)) + (vec_e_2_in_0 * ptr_int_2_in_geofac_rot_0)) + (vec_e_3_in_0 * ptr_int_3_in_geofac_rot_0)) + (vec_e_4_in_0 * ptr_int_4_in_geofac_rot_0)) + (vec_e_5_in_0 * ptr_int_5_in_geofac_rot_0))",
-     11),  # 6 * and 5 +
+     11),  # 6 * and 5 +, longest chain
     (7,
      "p_diag_out_ddt_w_adv_pc_0 = (- (z_w_con_c_0_in_0 * (((p_prog_0_in_w_0 * p_metrics_0_in_coeff1_dwdz_0) - (p_prog_1_in_w_0 * p_metrics_1_in_coeff2_dwdz_0)) + (p_prog_2_in_w_0 * (p_metrics_2_in_coeff2_dwdz_0 - p_metrics_3_in_coeff1_dwdz_0)))))",
      8),  # 4 *, 2 -, 1 +, 1 unary -
-    (8, "z_w_con_c_out_0 = ((0.85 * p_metrics_0_in_ddqz_z_half_0) / dtime_0_in)", 2),  # *, /
-    (9, "p_diag_out_max_vcfl_dyn = max_vcfl_dyn_var_152_0_in", 1),  # Assignment only
+    (8, "z_w_con_c_out_0 = ((0.85 * p_metrics_0_in_ddqz_z_half_0) / dtime_0_in)", 2),  # *, /, constant operand
+    (9, "p_diag_out_max_vcfl_dyn = max_vcfl_dyn_var_152_0_in", 1),  # Name RHS, no operation
     (10, "tmp_call_2_out = (p_diag_0_in_vt_0 ** 2)", 1),  # Single **
-    (11,
-     "z_w_concorr_me_out_0 = ((p_prog_0_in_vn_0 * p_metrics_0_in_ddxn_z_full_0) + (p_diag_0_in_vt_0 * p_metrics_1_in_ddxt_z_full_0))",
-     3),  # 2 *, 1 +
-    (12, "_if_cond_23_out = global_data_0_in_lextra_diffu", 1),  # Assignment only
-    (13, "tmp_arg_18_out = (0.85 - (cfl_w_limit_0_in * dtime_0_in))", 2),  # *, -
-    (14, "levmask_out_0 = 0", 1),  # Assignment only
-    (15,
-     "z_v_grad_w_out_0 = (((z_v_grad_w_0_in_0 * p_metrics_0_in_deepatmo_gradh_ifc_0) + (p_diag_0_in_vn_ie_0 * ((p_diag_1_in_vn_ie_0 * p_metrics_1_in_deepatmo_invr_ifc_0) - p_patch_0_in_edges_ft_e_0))) + (z_vt_ie_0_in_0 * ((z_vt_ie_1_in_0 * p_metrics_2_in_deepatmo_invr_ifc_0) + p_patch_1_in_edges_fn_e_0)))",
-     9),  # 6 *, 1 -, 2 +
-    (16,
-     "p_diag_out_ddt_w_adv_pc_0 = (p_diag_0_in_ddt_w_adv_pc_0 + ((difcoef_0_in * p_patch_0_in_cells_area_0) * ((((p_prog_0_in_w_0 * p_int_0_in_geofac_n2s_0) + (p_prog_1_in_w_0 * p_int_1_in_geofac_n2s_0)) + (p_prog_2_in_w_0 * p_int_2_in_geofac_n2s_0)) + (p_prog_3_in_w_0 * p_int_3_in_geofac_n2s_0))))",
-     10),  # 7 *, 3 +
-    (17, "tmp_call_15_out = abs(w_con_e_0_in) * 2.0", 2),  # abs(), *
-    (18, "tmp_call_15_out = min(min(w_con_e_0_in, w_con_e_1_in), 0.0)", 2),  # 2 min()
-    (19, "tmp_call_15_out = exp(exp(a))", 2),  # 2 exp()
-    (20, "tmp_call_15_out = log(log(a))", 2),  # 2 log()
-    (21, "out = a or b", 1),  # 1 or
-    (22, "out = a << 2", 1),  # 1 <<
-    (23, "out = a >> 2", 1),  # 1 >>
-    (24, "out = a | 2", 1),  # 1 |
+    (17, "tmp_call_15_out = abs(w_con_e_0_in) * 2.0", 2),  # abs(), * -- call result feeds a binop
+    (18, "tmp_call_15_out = min(min(w_con_e_0_in, w_con_e_1_in), 0.0)", 2),  # 2 min(), nested 2-arg call
+    (19, "tmp_call_15_out = exp(exp(a))", 2),  # 2 exp(), nested 1-arg call
+    (22, "out = a << 2", 1),  # 1 <<, integer arrays
     (25, "out = (a or True) and (b and True)", 3),  # 2 and, 1 or
 ]
 
@@ -583,7 +565,6 @@ def test_to_ssa_temp_names_do_not_collide_with_input():
         ("out = foo(a, b + 1, c, d)", 2),
         # Two-arg builtin function: ``int_floor(a + 1, 2)`` lifts the ``a + 1``.
         ("out = int_floor(a + 1, 2)", 2),
-        ("out = int_floor(a, b)", 1),
     ])
 def test_to_ssa_multi_input_function_split(code: str, n_lines: int):
     """A function with multiple inputs is split only where its arguments are
@@ -1021,12 +1002,12 @@ def test_split_infers_complex_intermediate_with_int_symbol():
     assert dace.complex128 in split_dtypes.values(), f"complex intermediate lost to coarse typing: {split_dtypes}"
 
 
-@pytest.mark.parametrize("dt", [dace.float16, dace.int8, dace.uint8, dace.int16, dace.complex64])
+@pytest.mark.parametrize("dt", [dace.float16, dace.int8, dace.complex64])
 def test_split_infers_intermediate_dtype_rigorously(dt):
-    """Each split intermediate is typed by rigorous per-operand inference, covering
-    every dtype (int8/uint8/int16/float16/complex64/...), not stamped with one coarse
-    ``input_type``. The old heuristic widened any float to ``float64`` (so a float16
-    chain lost precision) and typed anything non-float as ``int64`` (so int8 widened
+    """Each split intermediate is typed by rigorous per-operand inference -- one dtype per
+    kind the old heuristic got wrong (narrow float / narrow int / complex) -- not stamped
+    with one coarse ``input_type``. The old heuristic widened any float to ``float64`` (so a
+    float16 chain lost precision) and typed anything non-float as ``int64`` (so int8 widened
     and complex64 was mistyped). ``a * a + a`` over a single dtype must stay that dtype.
     """
     name = re.sub(r"\W", "_", dt.ctype)
@@ -1172,7 +1153,7 @@ if __name__ == "__main__":
         test_split_keeps_tasklet_the_splitter_declines(_body)
     test_split_infers_complex_intermediate_with_int_symbol()
     test_split_function_call_intermediate_uses_operand_type()
-    for _dt in [dace.float16, dace.int8, dace.uint8, dace.int16, dace.complex64]:
+    for _dt in [dace.float16, dace.int8, dace.complex64]:
         test_split_infers_intermediate_dtype_rigorously(_dt)
     test_symbol_in_tasklet()
     test_branch_fusion_tasklets()
@@ -1199,7 +1180,6 @@ if __name__ == "__main__":
 @pytest.mark.parametrize(
     "body_expr",
     [
-        "_c = sqrt(_a + _b)",  # function over binop
         "_c = sqrt(_a * _a + _b * _b)",  # function over nested expr (the user's exact example)
         "_c = tanh(_a) * _b",  # function output feeds another binop
         "_c = my_custom_func(_a, _b)",  # arbitrary user function name

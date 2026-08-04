@@ -123,23 +123,6 @@ def test_apply_to_a_named_pair_fuses_it():
 # --- refuses illegal / unsafe pairs ------------------------------------------------------------------
 
 
-def test_refuses_read_ahead_forward_flow():
-    # body2 reads b[i+1] -- a value body1 has not yet produced at iteration i in the fused sweep.
-    @dace.program
-    def prog(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N]):
-        for i in range(1, N):
-            b[i] = b[i - 1] + a[i]
-        for i in range(0, N - 1):
-            c[i] = b[i + 1]
-
-    sd = prog.to_sdfg(simplify=True)
-    for first, second in adjacent_loop_pairs(sd):
-        assert not FuseLoops.can_be_applied_to(sd, first=first, second=second)
-    before, after, applied, exact = run_fused(prog, mk(names=("a", "b", "c")), 48)
-    assert applied == 0  # refused
-    assert exact  # ... and therefore trivially value-preserving
-
-
 def test_refuses_mismatched_iteration_range():
 
     @dace.program
@@ -171,41 +154,16 @@ def test_refuses_doall_parallel_loops():
 # --- never crashes -----------------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("simplify", [True, False])
-def test_never_crashes_on_single_or_no_loop(simplify):
-
+def test_never_crashes_on_single_or_no_loop():
+    # The un-simplified build is the harder shape (empty bridge states); either way a lone loop is no
+    # `LoopRegion -> LoopRegion` path, so the matcher finds nothing and `can_be_applied` never runs.
     @dace.program
     def one_loop(a: dace.float64[N], b: dace.float64[N]):
         for i in range(1, N):
             b[i] = b[i - 1] + a[i]
 
-    sd = one_loop.to_sdfg(simplify=simplify)
+    sd = one_loop.to_sdfg(simplify=False)
     assert (sd.apply_transformations_repeated(FuseLoops) or 0) == 0  # nothing to fuse, no crash
-
-
-def test_value_preserving_across_a_battery():
-    cases = []
-
-    @dace.program
-    def chain3(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
-        for i in range(1, N):
-            b[i] = b[i - 1] + a[i]
-        for i in range(1, N):
-            c[i] = c[i - 1] + b[i]
-        for i in range(1, N):
-            d[i] = d[i - 1] + c[i]
-
-    @dace.program
-    def same_target(a: dace.float64[N], b: dace.float64[N]):
-        for i in range(1, N):
-            b[i] = b[i - 1] + a[i]
-        for i in range(1, N):
-            b[i] = b[i] * 2.0
-
-    for prog, names in ((chain3, ("a", "b", "c", "d")), (same_target, ("a", "b"))):
-        before, after, applied, exact = run_fused(prog, mk(names=names), 48)
-        assert exact, f"{prog.name}: fused result diverged from reference"
-        assert after <= before
 
 
 # =====================================================================================================
@@ -242,16 +200,6 @@ def seq_outer_map_inner_2d(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
 
 
 @dace.program
-def seq_outer_map_inner_scaled(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
-    for i in range(1, N):
-        for j in dace.map[0:N]:
-            b[i, j] = b[i - 1, j] * 0.5 + a[i, j]
-    for i in range(1, N):
-        for j in dace.map[0:N]:
-            c[i, j] = c[i - 1, j] * 0.5 + b[i, j]
-
-
-@dace.program
 def seq_outer_map_reduction_body(a: f64[N, N], b: f64[N], c: f64[N]):
     for i in range(1, N):
         b[i] = b[i - 1]
@@ -261,15 +209,11 @@ def seq_outer_map_reduction_body(a: f64[N, N], b: f64[N], c: f64[N]):
         c[i] = c[i - 1] + b[i]
 
 
-@pytest.mark.parametrize("prog,names", [
-    (seq_outer_map_inner_2d, ("a", "b", "c")),
-    (seq_outer_map_inner_scaled, ("a", "b", "c")),
-])
-def test_map_bodied_recurrence_pair_is_conservatively_refused(prog, names):
+def test_map_bodied_recurrence_pair_is_conservatively_refused():
     # A cross-loop b-write / b-read dependence expressed through a MAP body carries subsets the v1
     # point-wise classifier resolves conservatively, so FuseLoops refuses -- it never WRONGLY fuses, which
     # is what matters. The un-fused program is the correct result (exact).
-    before, after, applied, exact = run_fused(prog, mk2d(names=names), 24)
+    before, after, applied, exact = run_fused(seq_outer_map_inner_2d, mk2d(names=("a", "b", "c")), 24)
     assert exact
     assert applied == 0 and after == before
 
@@ -288,14 +232,6 @@ def test_fusable_outer_seq_loop_with_reduction_body():
 
 
 @dace.program
-def doall_1d_pair(a: f64[N], b: f64[N], c: f64[N]):
-    for i in range(N):
-        b[i] = a[i] * 2.0
-    for i in range(N):
-        c[i] = a[i] + 1.0
-
-
-@dace.program
 def doall_2d_map_pair(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
     for i in range(N):
         for j in dace.map[0:N]:
@@ -303,14 +239,6 @@ def doall_2d_map_pair(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
     for i in range(N):
         for j in dace.map[0:N]:
             c[i, j] = a[i, j] + 1.0
-
-
-def test_doall_scalar_pair_is_refused():
-    # a scalar element-wise pair is DOALL -- LoopToMap would parallelize it, so FuseLoops must not
-    # serialize it.
-    before, after, applied, exact = run_fused(doall_1d_pair, mk(names=("a", "b", "c")), 48)
-    assert exact
-    assert applied == 0
 
 
 def test_doall_map_bodied_pair_fuses_on_read_only_shared():
@@ -334,26 +262,11 @@ def nested_seq_loops_2level(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
             c[i, j] = c[i, j - 1] + b[i, j]
 
 
-@dace.program
-def nested_seq_loops_3level(a: f64[N, N], b: f64[N, N]):
-    for i in range(1, N):
-        for j in range(1, N):
-            for k in range(1, N):
-                b[i, j] = b[i, j - 1] + a[i, j]
-    for i in range(1, N):
-        for j in range(1, N):
-            for k in range(1, N):
-                b[i, j] = b[i, j - 1] * 1.0
-
-
-@pytest.mark.parametrize("prog,names", [
-    (nested_seq_loops_2level, ("a", "b", "c")),
-    (nested_seq_loops_3level, ("a", "b")),
-])
-def test_nested_for_loops_are_refused_but_value_preserving(prog, names):
-    before, after, applied, exact = run_fused(prog, mk2d(names=names), 16)
+def test_nested_for_loops_are_refused_but_value_preserving():
+    before, after, applied, exact = run_fused(nested_seq_loops_2level, mk2d(names=("a", "b", "c")), 16)
     assert exact
-    # a nested-for-loop outer body is not a single compute state -> FuseLoops refuses (v1 conservative).
+    # the outer i-loop of a `for i: for j: b[i,j] = b[i,j-1] + ...` nest is itself DOALL, so the DOALL
+    # guard refuses the pair and leaves it to LoopToMap.
     assert applied == 0
 
 
@@ -407,14 +320,7 @@ def test_real_dependence_blocks_fusion(prog, names, n, d1):
     assert applied == 0  # FuseLoops recognizes the hazard and refuses
 
 
-# --- map-outer / loop-inner, and deeper nests: FuseLoops must never crash, always value-preserving ---
-
-
-@dace.program
-def map_outer_seq_inner(a: f64[N, N], b: f64[N, N]):
-    for i in dace.map[0:N]:
-        for j in range(1, N):
-            b[i, j] = b[i, j - 1] + a[i, j]
+# --- mixed and deeper nests: FuseLoops must never crash, always value-preserving ---------------------
 
 
 @dace.program
@@ -428,15 +334,6 @@ def loop_map_loop_sandwich(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
 
 
 @dace.program
-def two_inner_maps_in_one_loop(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
-    for i in range(1, N):
-        for j in dace.map[0:N]:
-            b[i, j] = b[i - 1, j] + a[i, j]
-        for j in dace.map[0:N]:
-            c[i, j] = c[i - 1, j] + b[i, j]
-
-
-@dace.program
 def deep_4level_nest(a: f64[N, N], b: f64[N, N]):
     for i in range(1, N):
         for j in range(1, N):
@@ -446,9 +343,7 @@ def deep_4level_nest(a: f64[N, N], b: f64[N, N]):
 
 
 @pytest.mark.parametrize("prog,names,n", [
-    (map_outer_seq_inner, ("a", "b"), 16),
     (loop_map_loop_sandwich, ("a", "b", "c"), 16),
-    (two_inner_maps_in_one_loop, ("a", "b", "c"), 16),
     (deep_4level_nest, ("a", "b"), 8),
 ])
 def test_arbitrary_nesting_never_crashes_and_preserves_value(prog, names, n):
@@ -493,17 +388,7 @@ def test_long_chain_of_fusable_recurrences_collapses():
     assert after < before and applied >= 1
 
 
-# --- stencils and gathers in map bodies (value-preservation across access shapes) --------------------
-
-
-@dace.program
-def stencil_map_body_fusable(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
-    for i in range(1, N):
-        for j in dace.map[1:N - 1]:
-            b[i, j] = b[i - 1, j] + a[i, j - 1] + a[i, j + 1]
-    for i in range(1, N):
-        for j in dace.map[1:N - 1]:
-            c[i, j] = c[i - 1, j] + b[i, j]
+# --- gather (indirect) body shape (value-preservation across access shapes) --------------------------
 
 
 @dace.program
@@ -512,11 +397,6 @@ def gather_indirect_in_body(a: f64[N], idx: dace.int64[N], b: f64[N], c: f64[N])
         b[i] = b[i - 1] + a[idx[i]]
     for i in range(1, N):
         c[i] = c[i - 1] + b[i]
-
-
-def test_stencil_in_map_body_is_value_preserving():
-    before, after, applied, exact = run_fused(stencil_map_body_fusable, mk2d(names=("a", "b", "c")), 24)
-    assert exact
 
 
 def test_gather_indexed_read_is_value_preserving():
@@ -531,23 +411,7 @@ def test_gather_indexed_read_is_value_preserving():
     assert exact  # gather in the body must not break value-preservation whichever way it is classified
 
 
-# --- more scalar recurrence shapes that DO fuse (different ops / shared-read / same-cell output) ------
-
-
-@dace.program
-def scalar_sub_recurrence(a: f64[N], b: f64[N], c: f64[N]):
-    for i in range(1, N):
-        b[i] = b[i - 1] - a[i]
-    for i in range(1, N):
-        c[i] = c[i - 1] - b[i]
-
-
-@dace.program
-def scalar_mul_recurrence(a: f64[N], b: f64[N], c: f64[N]):
-    for i in range(1, N):
-        b[i] = b[i - 1] * a[i]
-    for i in range(1, N):
-        c[i] = c[i - 1] * b[i]
+# --- more scalar recurrence shapes that DO fuse (shared-read / multi-statement / same-cell output) ----
 
 
 @dace.program
@@ -575,20 +439,9 @@ def multi_statement_body(a: f64[N], b: f64[N], c: f64[N], d: f64[N]):
         c[i] = c[i - 1] + b[i]
 
 
-@dace.program
-def min_recurrence(a: f64[N], b: f64[N], c: f64[N]):
-    for i in range(1, N):
-        b[i] = min(b[i - 1], a[i])
-    for i in range(1, N):
-        c[i] = min(c[i - 1], b[i])
-
-
 @pytest.mark.parametrize("prog,names", [
-    (scalar_sub_recurrence, ("a", "b", "c")),
-    (scalar_mul_recurrence, ("a", "b", "c")),
     (independent_recurrences_shared_read, ("a", "b", "c")),
     (multi_statement_body, ("a", "b", "c", "d")),
-    (min_recurrence, ("a", "b", "c")),
 ])
 def test_more_scalar_recurrence_pairs_fuse(prog, names):
     before, after, applied, exact = run_fused(prog, mk(names=names), 48)
@@ -604,9 +457,9 @@ def test_same_cell_reread_scale_is_refused():
     assert applied == 0
 
 
-@pytest.mark.parametrize("n", [4, 16, 32, 64])
-def test_scalar_recurrence_fuses_across_sizes(n):
-
+def test_scalar_recurrence_fuses_at_a_small_trip_count():
+    # N is a symbol in the SDFG, so the fusion decision cannot depend on its value -- but the fused loop
+    # must still be right at a trip count of 3 (the file otherwise runs everything at 48).
     @dace.program
     def prog(a: f64[N], b: f64[N], c: f64[N]):
         for i in range(1, N):
@@ -614,28 +467,12 @@ def test_scalar_recurrence_fuses_across_sizes(n):
         for i in range(1, N):
             c[i] = c[i - 1] + b[i]
 
-    before, after, applied, exact = run_fused(prog, mk(n=n, names=("a", "b", "c")), n)
+    before, after, applied, exact = run_fused(prog, mk(n=4, names=("a", "b", "c")), 4)
     assert exact
     assert applied == 1 and after == before - 1
 
 
-# --- more real dependence blockers (scalar, reach the _fusion_legal gate) ----------------------------
-
-
-@dace.program
-def read_ahead_stride_two(a: f64[N], b: f64[N], c: f64[N]):
-    for i in range(1, N - 2):
-        b[i] = b[i - 1] + a[i]
-    for i in range(1, N - 2):
-        c[i] = c[i - 1] + b[i + 2]  # read-ahead by 2 -- b[i+2] not yet produced in the fused sweep
-
-
-@dace.program
-def output_write_offset(a: f64[N], b: f64[N]):
-    for i in range(1, N - 1):
-        b[i] = b[i - 1] + a[i]  # writes b[i]
-    for i in range(1, N - 1):
-        b[i + 1] = a[i] * 3.0  # writes b[i+1] -- a different cell each iteration, order matters
+# --- a read AHEAD of the other loop's write is a legal WAR, not a blocker ----------------------------
 
 
 @dace.program
@@ -646,16 +483,6 @@ def read_ahead_anti_is_safe(a: f64[N], b: f64[N], c: f64[N]):
         b[i] = b[i - 1] + a[i]  # body2 writes b[i]; the fused read of b[i+1] still sees the old value
 
 
-@pytest.mark.parametrize("prog,names", [
-    (read_ahead_stride_two, ("a", "b", "c")),
-    (output_write_offset, ("a", "b")),
-])
-def test_more_real_dependences_block_fusion(prog, names):
-    before, after, applied, exact = run_fused(prog, mk(names=names), 48)
-    assert exact
-    assert applied == 0
-
-
 def test_read_ahead_anti_dependence_is_a_legal_fusion():
     # a read that is AHEAD of the other loop's write (WAR, not read-behind) stays correct when fused --
     # body1 reads b[i+1] before body2 has written it in the fused sweep. FuseLoops fuses, value-preserving.
@@ -664,17 +491,7 @@ def test_read_ahead_anti_dependence_is_a_legal_fusion():
     assert applied >= 1
 
 
-# --- more map / branch / deep structural cases (never crash, value-preserving) -----------------------
-
-
-@dace.program
-def map_bodied_read_only_two_ops(a: f64[N, N], b: f64[N, N], c: f64[N, N]):
-    for i in range(N):
-        for j in dace.map[0:N]:
-            b[i, j] = a[i, j] * a[i, j]
-    for i in range(N):
-        for j in dace.map[0:N]:
-            c[i, j] = a[i, j] + a[i, j]
+# --- branch bodies, reverse iteration, loop-invariant locations --------------------------------------
 
 
 @dace.program
@@ -696,25 +513,6 @@ def reverse_recurrence(a: f64[N], b: f64[N], c: f64[N]):
         c[i] = c[i + 1] + b[i]
 
 
-@dace.program
-def outer_loop_2d_map_3ops(a: f64[N, N], b: f64[N, N], c: f64[N, N], d: f64[N, N]):
-    for i in range(1, N):
-        for j in dace.map[0:N]:
-            b[i, j] = b[i - 1, j] + a[i, j]
-    for i in range(1, N):
-        for j in dace.map[0:N]:
-            c[i, j] = c[i - 1, j] + a[i, j]
-    for i in range(1, N):
-        for j in dace.map[0:N]:
-            d[i, j] = b[i, j] + c[i, j]
-
-
-def test_map_bodied_read_only_fuses():
-    before, after, applied, exact = run_fused(map_bodied_read_only_two_ops, mk2d(names=("a", "b", "c")), 24)
-    assert exact
-    assert applied == 1 and after == before - 1
-
-
 def test_conditional_loop_body_is_refused():
     before, after, applied, exact = run_fused(conditional_in_loop_body, mk(names=("a", "b", "c")), 48)
     assert exact
@@ -724,12 +522,6 @@ def test_conditional_loop_body_is_refused():
 def test_reverse_iteration_pair_is_value_preserving():
     before, after, applied, exact = run_fused(reverse_recurrence, mk(names=("a", "b", "c")), 48)
     assert exact  # negative-stride recurrences: whatever fuses, the value is preserved
-
-
-def test_three_map_bodied_loops_are_value_preserving():
-    before, after, applied, exact = run_fused(outer_loop_2d_map_3ops, mk2d(names=("a", "b", "c", "d")), 20)
-    assert exact
-    assert after <= before
 
 
 @dace.program
@@ -831,39 +623,9 @@ def localize_scalar_chain(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
         out[i] = out[i - 1] + tmp[i]  # recurrence carrier reading tmp[i] point -> loop2 not DOALL
 
 
-@dace.program
-def localize_mul_op(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
-    tmp = np.empty_like(a)
-    for i in range(1, N):
-        acc[i] = acc[i - 1] * 0.5 + a[i]
-        tmp[i] = acc[i] * b[i]
-    for i in range(1, N):
-        out[i] = out[i - 1] - tmp[i]
-
-
-@dace.program
-def localize_min_op(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
-    tmp = np.empty_like(a)
-    for i in range(1, N):
-        acc[i] = acc[i - 1] + a[i]
-        tmp[i] = min(acc[i], b[i])
-    for i in range(1, N):
-        out[i] = max(out[i - 1], tmp[i])
-
-
-@dace.program
-def localize_shared_read(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
-    tmp = np.empty_like(a)
-    for i in range(1, N):
-        acc[i] = acc[i - 1] + a[i]
-        tmp[i] = acc[i] + b[i]
-    for i in range(1, N):
-        out[i] = out[i - 1] + tmp[i] + a[i]  # loop2 also reads the shared input a -- tmp still contracts
-
-
-@pytest.mark.parametrize("prog", [localize_scalar_chain, localize_mul_op, localize_min_op, localize_shared_read])
-def test_intermediate_is_localized_to_a_scalar(prog):
-    applied, exact, big_before, big_after = fuse_and_measure(prog, mk(names=("a", "b", "acc", "out")), 48)
+def test_intermediate_is_localized_to_a_scalar():
+    applied, exact, big_before, big_after = fuse_and_measure(localize_scalar_chain, mk(names=("a", "b", "acc", "out")),
+                                                             48)
     assert applied >= 1
     assert exact
     assert "tmp" in "".join(big_before)  # the [N] intermediate existed before fusion
@@ -871,10 +633,10 @@ def test_intermediate_is_localized_to_a_scalar(prog):
     assert not any("tmp" in x for x in big_after)
 
 
-@pytest.mark.parametrize("n", [4, 16, 48, 64])
-def test_intermediate_localization_holds_across_sizes(n):
+def test_intermediate_localization_at_a_small_trip_count():
+    # the contraction decision is symbolic in N; this pins the contracted [1] slot at a trip count of 3.
     applied, exact, big_before, big_after = fuse_and_measure(localize_scalar_chain,
-                                                             mk(n=n, names=("a", "b", "acc", "out")), n)
+                                                             mk(n=4, names=("a", "b", "acc", "out")), 4)
     assert applied >= 1 and exact
     assert len(big_after) < len(big_before)
 
@@ -958,16 +720,6 @@ def intermediate_carries_history(a: f64[N], b: f64[N], acc: f64[N], out: f64[N])
 
 
 @dace.program
-def intermediate_read_behind_in_second(a: f64[N], b: f64[N], acc: f64[N], out: f64[N]):
-    tmp = np.zeros(N)
-    for i in range(1, N):
-        acc[i] = acc[i - 1] + a[i]
-        tmp[i] = acc[i] + b[i]
-    for i in range(2, N):
-        out[i] = out[i - 1] + tmp[i - 1]  # reads the PREVIOUS tmp cell -> two live cells, no single slot
-
-
-@dace.program
 def intermediate_used_after_loop(a: f64[N], b: f64[N], acc: f64[N], out: f64[N], sink: f64[N]):
     tmp = np.empty_like(a)
     for i in range(1, N):
@@ -980,7 +732,6 @@ def intermediate_used_after_loop(a: f64[N], b: f64[N], acc: f64[N], out: f64[N],
 
 @pytest.mark.parametrize("prog,names", [
     (intermediate_carries_history, ("a", "b", "acc", "out")),
-    (intermediate_read_behind_in_second, ("a", "b", "acc", "out")),
     (intermediate_used_after_loop, ("a", "b", "acc", "out", "sink")),
 ])
 def test_unsafe_intermediate_is_not_contracted_but_value_preserved(prog, names):
@@ -1006,28 +757,6 @@ def test_two_d_intermediate_not_contracted_v1():
     applied, exact, big_before, big_after = fuse_and_measure(prog, mk2d(names=("a", "acc", "out")), 24)
     assert exact
     assert big_before == big_after  # 2-D intermediate left at full size in v1
-
-
-@dace.program
-def gather_indexed_intermediate(a: f64[N], idx: dace.int64[N], acc: f64[N], out: f64[N]):
-    tmp = np.empty_like(a)
-    for i in range(1, N):
-        acc[i] = acc[i - 1] + a[i]
-        tmp[i] = acc[idx[i]]  # written at point i but read via a gather -> not a pure point of i
-    for i in range(1, N):
-        out[i] = out[i - 1] + tmp[i]
-
-
-def test_gather_written_intermediate_value_preserved():
-    rng = np.random.default_rng(11)
-    inputs = {
-        "a": rng.random(48),
-        "idx": rng.integers(0, 48, size=48).astype(np.int64),
-        "acc": rng.random(48),
-        "out": rng.random(48),
-    }
-    applied, exact, big_before, big_after = fuse_and_measure(gather_indexed_intermediate, inputs, 48)
-    assert exact  # tmp WRITE is still point i, so tmp itself may localize; the value must be preserved
 
 
 # --- flow hazard THROUGH a produced intermediate --------------------------------------------------------

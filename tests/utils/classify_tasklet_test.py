@@ -3,17 +3,13 @@ import dace
 import typing
 import dace.sdfg.tasklet_utils as tutil
 
+# One case per (TaskletType, classifier path) pair. `classify_tasklet` picks the type from the operand
+# data descriptors and the op from `_extract_single_op` independently, so the operator axis is NOT
+# crossed with the operand-type axis -- every op below is the only one covering its lookup-table entry
+# (`_BINOP_SYMBOLS` / `_CMP_SYMBOLS` / `_UNARY_SYMBOLS` / call name). Non-commutative ops are preferred
+# so the `_reorder_rhs` ordering stays asserted. Do not re-add commuted duplicates of an existing shape.
 tasklet_infos = [
-    # === ARRAY + SYMBOL ===
-    ("out = in_a + sym_b", "array", {"a"}, {}, {"sym_b"}, {
-        "type": tutil.TaskletType.ARRAY_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "+",
-        "constant1": None,
-        "constant2": "sym_b",
-    }),
+    # === ARRAY + SYMBOL === constant comes from the free-symbol path
     ("out = in_a - sym_b", "array", {"a"}, {}, {"sym_b"}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
         "lhs": "out",
@@ -23,44 +19,8 @@ tasklet_infos = [
         "constant1": None,
         "constant2": "sym_b"
     }),
-    ("out = in_a * sym_b", "array", {"a"}, {}, {"sym_b"}, {
-        "type": tutil.TaskletType.ARRAY_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "*",
-        "constant1": None,
-        "constant2": "sym_b"
-    }),
-    ("out = in_a / sym_b", "array", {"a"}, {}, {"sym_b"}, {
-        "type": tutil.TaskletType.ARRAY_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "/",
-        "constant1": None,
-        "constant2": "sym_b"
-    }),
 
-    # === ARRAY + CONSTANT ===
-    ("out = in_a + 2", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "+",
-        "constant1": None,
-        "constant2": "2"
-    }),
-    ("out = in_a * 3", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "*",
-        "constant1": None,
-        "constant2": "3"
-    }),
+    # === ARRAY + CONSTANT === constant comes from the AST-literal path instead
     ("out = in_a / 2.5", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
         "lhs": "out",
@@ -70,26 +30,8 @@ tasklet_infos = [
         "constant1": None,
         "constant2": "2.5"
     }),
-    ("out = in_a - 5", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "-",
-        "constant1": None,
-        "constant2": "5"
-    }),
 
     # === ARRAY + ARRAY ===
-    ("out = in_a + in_b", "array", {"a", "b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_b",
-        "op": "+",
-        "constant1": None,
-        "constant2": None
-    }),
     ("out = in_a - in_b", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
@@ -99,44 +41,8 @@ tasklet_infos = [
         "constant1": None,
         "constant2": None
     }),
-    ("out = in_a * in_b", "array", {"a", "b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_b",
-        "op": "*",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_a / in_b", "array", {"a", "b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_b",
-        "op": "/",
-        "constant1": None,
-        "constant2": None
-    }),
 
     # === SCALAR + SYMBOL ===
-    ("out = in_x + sym_y", "scalar", {}, {"x"}, {"sym_y"}, {
-        "type": tutil.TaskletType.SCALAR_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_x",
-        "rhs2": None,
-        "op": "+",
-        "constant1": None,
-        "constant2": "sym_y"
-    }),
-    ("out = in_x * sym_y", "scalar", {}, {"x"}, {"sym_y"}, {
-        "type": tutil.TaskletType.SCALAR_SYMBOL,
-        "lhs": "out",
-        "rhs1": "in_x",
-        "rhs2": None,
-        "op": "*",
-        "constant1": None,
-        "constant2": "sym_y"
-    }),
     ("out = in_x - sym_y", "scalar", {}, {"x"}, {"sym_y"}, {
         "type": tutil.TaskletType.SCALAR_SYMBOL,
         "lhs": "out",
@@ -147,54 +53,7 @@ tasklet_infos = [
         "constant2": "sym_y"
     }),
 
-    # === SCALAR + SCALAR ===
-    ("out = in_x + in_y", "scalar", {}, {"x", "y"}, {}, {
-        "type": tutil.TaskletType.SCALAR_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_x",
-        "rhs2": "in_y",
-        "op": "+",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_x * in_y", "scalar", {}, {"x", "y"}, {}, {
-        "type": tutil.TaskletType.SCALAR_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_x",
-        "rhs2": "in_y",
-        "op": "*",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_x / in_y", "scalar", {}, {"x", "y"}, {}, {
-        "type": tutil.TaskletType.SCALAR_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_x",
-        "rhs2": "in_y",
-        "op": "/",
-        "constant1": None,
-        "constant2": None
-    }),
-
-    # === SYMBOL + SYMBOL ===
-    ("out = sym_a + sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
-        "type": tutil.TaskletType.SYMBOL_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "+",
-        "constant1": "sym_a",
-        "constant2": "sym_b"
-    }),
-    ("out = sym_a * sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
-        "type": tutil.TaskletType.SYMBOL_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "*",
-        "constant1": "sym_a",
-        "constant2": "sym_b"
-    }),
+    # === SYMBOL + SYMBOL === two free symbols, no connectors
     ("out = sym_a / sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
         "type": tutil.TaskletType.SYMBOL_SYMBOL,
         "lhs": "out",
@@ -205,25 +64,7 @@ tasklet_infos = [
         "constant2": "sym_b"
     }),
 
-    # === UNARY / FUNCTIONAL OPS ===
-    ("out = abs(in_a)", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.UNARY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "abs",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = exp(in_a)", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.UNARY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "exp",
-        "constant1": None,
-        "constant2": None
-    }),
+    # === UNARY / FUNCTIONAL OPS === function name is read verbatim off the AST call, so one per shape
     ("out = sqrt(in_a)", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.UNARY_ARRAY,
         "lhs": "out",
@@ -233,15 +74,7 @@ tasklet_infos = [
         "constant1": None,
         "constant2": None
     }),
-    ("out = log(in_a)", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.UNARY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": None,
-        "op": "log",
-        "constant1": None,
-        "constant2": None
-    }),
+    # call op + literal: `_reorder_rhs` takes the ast.Call branch, not the infix-split branch
     ("out = pow(in_a, 2)", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
         "lhs": "out",
@@ -251,21 +84,13 @@ tasklet_infos = [
         "constant1": None,
         "constant2": "2"
     }),
+    # call op + two connectors: ast.Call branch of `_reorder_rhs` orders the args
     ("out = min(in_a, in_b)", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
         "rhs1": "in_a",
         "rhs2": "in_b",
         "op": "min",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = max(in_a, in_b)", "array", {"a", "b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_b",
-        "op": "max",
         "constant1": None,
         "constant2": None
     }),
@@ -278,6 +103,7 @@ tasklet_infos = [
         "constant1": "sym_a",
         "constant2": None
     }),
+    # same code as the UNARY_ARRAY case above, scalar descriptor -> isolates the array/scalar branch
     ("out = sqrt(in_a)", "scalar", {}, {"a"}, {}, {
         "type": tutil.TaskletType.UNARY_SCALAR,
         "lhs": "out",
@@ -288,20 +114,11 @@ tasklet_infos = [
         "constant2": None
     }),
 
-    # === ASSIGNMENTS ===
+    # === ASSIGNMENTS === all four descriptor combinations, output descriptor IS inspected here
     ("out = in_a", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT,
         "lhs": "out",
         "rhs1": "in_a",
-        "rhs2": None,
-        "op": "=",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_b", "array", {"b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY_ASSIGNMENT,
-        "lhs": "out",
-        "rhs1": "in_b",
         "rhs2": None,
         "op": "=",
         "constant1": None,
@@ -344,22 +161,13 @@ tasklet_infos = [
         "constant2": None,
     }),
 
-    # === SINGLE-INPUT TWO RHS CASE ===
+    # === SINGLE-INPUT TWO RHS CASE === one connector used twice -> binary, not unary
     ("out = in_a * in_a", "array", {"a"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
         "rhs1": "in_a",
         "rhs2": "in_a",
         "op": "*",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_a + in_a", "array", {"a"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_a",
-        "op": "+",
         "constant1": None,
         "constant2": None
     }),
@@ -372,6 +180,8 @@ tasklet_infos = [
         "constant1": None,
         "constant2": None
     }),
+
+    # array/scalar mix, both operand orders (the output descriptor is not consulted for 2-input tasklets)
     ("out = in_a - in_scl1", "array", {"a"}, {"scl1"}, {}, {
         "type": tutil.TaskletType.ARRAY_SCALAR,
         "lhs": "out",
@@ -390,15 +200,8 @@ tasklet_infos = [
         "constant1": None,
         "constant2": None,
     }),
-    ("out = in_scl1 - in_a", "scalar", {"a"}, {"scl1"}, {}, {
-        "type": tutil.TaskletType.SCALAR_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_scl1",
-        "rhs2": "in_a",
-        "op": "-",
-        "constant1": None,
-        "constant2": None,
-    }),
+
+    # no connectors: two bound literals / free symbol + bound literal / repeated free symbol
     ("out = 2.0 - 1.0", "scalar", {}, {}, {}, {
         "type": tutil.TaskletType.SYMBOL_SYMBOL,
         "lhs": "out",
@@ -408,6 +211,7 @@ tasklet_infos = [
         "constant1": "2.0",
         "constant2": "1.0",
     }),
+    # literal on the LEFT of the symbol -> `_reorder_rhs` must swap
     ("out = 2.0 - sym2", "scalar", {}, {}, {"sym2"}, {
         "type": tutil.TaskletType.SYMBOL_SYMBOL,
         "lhs": "out",
@@ -423,15 +227,6 @@ tasklet_infos = [
         "rhs1": None,
         "rhs2": None,
         "op": "*",
-        "constant1": "sym2",
-        "constant2": None,
-    }),
-    ("out = exp(sym2)", "scalar", {}, {}, {"sym2"}, {
-        "type": tutil.TaskletType.UNARY_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "exp",
         "constant1": "sym2",
         "constant2": None,
     }),
@@ -453,22 +248,14 @@ tasklet_infos = [
         "constant1": "0.0",
         "constant2": None,
     }),
-    # === PYTHON LOGICAL OPERATORS ===
+
+    # === LOGICAL OPERATORS === ast.BoolOp / ast.UnaryOp, and the word-delimiter split in `_reorder_rhs`
     ("out = in_a and in_b", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
         "rhs1": "in_a",
         "rhs2": "in_b",
         "op": "and",
-        "constant1": None,
-        "constant2": None,
-    }),
-    ("out = in_a or in_b", "array", {"a", "b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_b",
-        "op": "or",
         "constant1": None,
         "constant2": None,
     }),
@@ -481,17 +268,6 @@ tasklet_infos = [
         "constant1": None,
         "constant2": None,
     }),
-
-    # === SCALAR LOGICAL OPERATORS ===
-    ("out = in_scl1 and in_scl2", "scalar", {}, {"scl1", "scl2"}, {}, {
-        "type": tutil.TaskletType.SCALAR_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_scl1",
-        "rhs2": "in_scl2",
-        "op": "and",
-        "constant1": None,
-        "constant2": None,
-    }),
     ("out = in_scl1 or in_scl2", "scalar", {}, {"scl1", "scl2"}, {}, {
         "type": tutil.TaskletType.SCALAR_SCALAR,
         "lhs": "out",
@@ -501,46 +277,7 @@ tasklet_infos = [
         "constant1": None,
         "constant2": None,
     }),
-    ("out = not in_scl1", "scalar", {}, {"scl1"}, {}, {
-        "type": tutil.TaskletType.UNARY_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_scl1",
-        "rhs2": None,
-        "op": "not",
-        "constant1": None,
-        "constant2": None,
-    }),
-
-    # === SYMBOLIC LOGICAL OPERATORS ===
-    ("out = sym_a and sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
-        "type": tutil.TaskletType.SYMBOL_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "and",
-        "constant1": "sym_a",
-        "constant2": "sym_b",
-    }),
-    ("out = sym_a or sym_b", "scalar", {}, {}, {"sym_a", "sym_b"}, {
-        "type": tutil.TaskletType.SYMBOL_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "or",
-        "constant1": "sym_a",
-        "constant2": "sym_b",
-    }),
-    ("out = not sym_a", "scalar", {}, {}, {"sym_a"}, {
-        "type": tutil.TaskletType.UNARY_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "not",
-        "constant1": "sym_a",
-        "constant2": None,
-    }),
-
-    # === CONSTANT LOGICAL EXPRESSIONS ===
+    # bool literals: the only non-numeric constants that reach `str(c)` and the word split
     ("out = True and False", "scalar", {}, {}, {}, {
         "type": tutil.TaskletType.SYMBOL_SYMBOL,
         "lhs": "out",
@@ -550,78 +287,14 @@ tasklet_infos = [
         "constant1": "True",
         "constant2": "False",
     }),
-    ("out = not True", "scalar", {}, {}, {}, {
-        "type": tutil.TaskletType.UNARY_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "not",
-        "constant1": "True",
-        "constant2": None,
-    }),
-    ("out = in_a == in_b", "array", {"a", "b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_b",
-        "op": "==",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_a == in_scl", "array", {"a"}, {"scl"}, {}, {
-        "type": tutil.TaskletType.ARRAY_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_scl",
-        "op": "==",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_scl1 == in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
-        "type": tutil.TaskletType.SCALAR_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_scl1",
-        "rhs2": "in_scl2",
-        "op": "==",
-        "constant1": None,
-        "constant2": None
-    }),
-    # Less than
+
+    # === COMPARISONS === one `_CMP_SYMBOLS` entry each, spread over the operand shapes
     ("out = in_a < in_b", "array", {"a", "b"}, {}, {}, {
         "type": tutil.TaskletType.ARRAY_ARRAY,
         "lhs": "out",
         "rhs1": "in_a",
         "rhs2": "in_b",
         "op": "<",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_a < in_scl", "array", {"a"}, {"scl"}, {}, {
-        "type": tutil.TaskletType.ARRAY_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_scl",
-        "op": "<",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_scl1 < in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
-        "type": tutil.TaskletType.SCALAR_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_scl1",
-        "rhs2": "in_scl2",
-        "op": "<",
-        "constant1": None,
-        "constant2": None
-    }),
-
-    # Greater than or equal
-    ("out = in_a >= in_b", "array", {"a", "b"}, {}, {}, {
-        "type": tutil.TaskletType.ARRAY_ARRAY,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_b",
-        "op": ">=",
         "constant1": None,
         "constant2": None
     }),
@@ -634,24 +307,6 @@ tasklet_infos = [
         "constant1": None,
         "constant2": None
     }),
-    ("out = in_scl1 >= in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
-        "type": tutil.TaskletType.SCALAR_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_scl1",
-        "rhs2": "in_scl2",
-        "op": ">=",
-        "constant1": None,
-        "constant2": None
-    }),
-    ("out = in_a != in_scl", "array", {"a"}, {"scl"}, {}, {
-        "type": tutil.TaskletType.ARRAY_SCALAR,
-        "lhs": "out",
-        "rhs1": "in_a",
-        "rhs2": "in_scl",
-        "op": "!=",
-        "constant1": None,
-        "constant2": None
-    }),
     ("out = in_scl1 != in_scl2", "array", {}, {"scl1", "scl2"}, {}, {
         "type": tutil.TaskletType.SCALAR_SCALAR,
         "lhs": "out",
@@ -660,15 +315,6 @@ tasklet_infos = [
         "op": "!=",
         "constant1": None,
         "constant2": None
-    }),
-    ("out = s1 != 0.5", "array", {}, {}, {"s1"}, {
-        "type": tutil.TaskletType.SYMBOL_SYMBOL,
-        "lhs": "out",
-        "rhs1": None,
-        "rhs2": None,
-        "op": "!=",
-        "constant1": "s1",
-        "constant2": '0.5'
     }),
     ("out = s1 == 0.5", "array", {}, {}, {"s1"}, {
         "type": tutil.TaskletType.SYMBOL_SYMBOL,
@@ -679,6 +325,7 @@ tasklet_infos = [
         "constant1": "s1",
         "constant2": '0.5'
     }),
+    # symbol LEFT of an array connector: the only case asserting constant1 + rhs2 together
     ("out = i > in__arr", "array", {"_arr"}, {}, {"i"}, {
         "type": tutil.TaskletType.ARRAY_SYMBOL,
         "lhs": "out",
@@ -686,15 +333,6 @@ tasklet_infos = [
         "rhs2": "in__arr",
         "op": ">",
         "constant1": "i",
-        "constant2": None
-    }),
-    ("out = in_sc1", "array", {}, {"sc1"}, {}, {
-        "type": tutil.TaskletType.ARRAY_SCALAR_ASSIGNMENT,
-        "lhs": "out",
-        "rhs1": "in_sc1",
-        "rhs2": None,
-        "op": "=",
-        "constant1": None,
         "constant2": None
     })
 ]
