@@ -1212,8 +1212,13 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 edge.data.replace_dict(repl, replace_keys=replace_keys)
 
             # Replace in states
-            for state in self.nodes():
-                state.replace_dict(repl, symrepl)
+            for block in self.nodes():
+                # A nested region owns interstate edges of its own, so ``replace_keys`` must reach it:
+                # dropping it renames an assignment's uses but not its target, splitting one symbol in two.
+                if isinstance(block, AbstractControlFlowRegion):
+                    block.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
+                else:
+                    block.replace_dict(repl, symrepl)
 
 
 @make_properties
@@ -3786,7 +3791,7 @@ class LoopRegion(ControlFlowRegion):
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
 
-        super().replace_dict(repl, symrepl, replace_in_graph)
+        super().replace_dict(repl, symrepl, replace_in_graph, replace_keys)
 
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
@@ -3963,7 +3968,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
             replace_properties_dict(self, repl, symrepl)
 
         for cond, region in self._branches:
-            region.replace_dict(repl, symrepl, replace_in_graph)
+            region.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
             if cond is not None:
                 replace_in_codeblock(cond, repl)
 
