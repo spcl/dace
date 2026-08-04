@@ -69,7 +69,7 @@ still be referenced by interstate-edge assignments that the cascade-up pass
 hoisted; those are left alone.)
 """
 import copy
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import sympy
 
@@ -138,17 +138,6 @@ def _try_extract_perfect_one_child(cfg: ControlFlowRegion) -> Optional[ControlFl
             return None
         candidate = b
     return candidate
-
-
-def _try_extract_perfect_two_level_nest(outer: LoopRegion) -> Optional[LoopRegion]:
-    """Backward-compatible single-level wrapper around
-    :func:`_try_extract_perfect_one_child`. Kept for tests that pin the
-    immediate-inner contract; new code should prefer
-    :func:`_iter_candidate_inners` for multi-dim support."""
-    inner = _try_extract_perfect_one_child(outer)
-    if isinstance(inner, LoopRegion):
-        return inner
-    return None
 
 
 def _iter_candidate_inners(outer: LoopRegion):
@@ -379,28 +368,6 @@ def _collect_body_subset_exprs(inner: LoopRegion) -> List[symbolic.SymbolicType]
                     exprs.append(symbolic.pystr_to_symbolic(str(hi)))
                     exprs.append(symbolic.pystr_to_symbolic(str(stp)))
     return exprs
-
-
-def _all_memlet_uses_only(inner: LoopRegion, allowed_atoms: Set[str], forbidden_atoms: Set[str]) -> bool:
-    """``True`` iff every memlet-subset expression references at most symbols
-    from ``allowed_atoms`` (any expression of them is fine) and references *no*
-    symbol from ``forbidden_atoms``.
-
-    The check is conservative: an expression like ``2*i + ii + 1`` is fine if
-    both ``i`` and ``ii`` are allowed (because ``i + ii`` is the combined
-    iterator), but ``i`` alone without ``ii`` is forbidden -- the rewrite would
-    map only the ``i + ii`` part to ``k`` and would leave the bare ``i`` adrift.
-
-    This function only checks the *atom membership* of each expression's free
-    symbols; the structural ``i + ii`` vs ``ii``-only requirement is enforced
-    by the caller (it sets ``allowed_atoms`` appropriately).
-    """
-    forbidden = dict.fromkeys(symbolic.pystr_to_symbolic(a) for a in forbidden_atoms)
-    for ex in _collect_body_subset_exprs(inner):
-        free = ex.free_symbols
-        if any(f in forbidden for f in free):
-            return False
-    return True
 
 
 def depends_only_on_sum(ex: sympy.Basic, i_sym: sympy.Symbol, ii_sym: sympy.Symbol) -> bool:

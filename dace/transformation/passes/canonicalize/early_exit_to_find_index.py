@@ -713,7 +713,6 @@ class EarlyExitToFindIndex(ppl.Pass):
     def _check_soundness(self, sdfg, loop, cond_block, cond_iedge_bindings, cond_expr_str, body_pre_blocks,
                          body_post_blocks, true_pre_break_states) -> bool:
         """Tier-Cheap whole-array disjointness + structural checks."""
-        loop_var = loop.loop_variable
         # 1) Cond's read-set: arrays referenced in the resolved expression.
         cond_reads = self._read_arrays_from_expr(cond_expr_str, sdfg)
         # Widen with the underlying arrays of any transient scalar the

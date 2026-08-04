@@ -140,9 +140,8 @@ class NormalizeNegativeStride(ppl.Pass):
             for e in in_edges_into_start:
                 e.data.assignments[old_var] = sub_expr
         else:
-            entry = loop.add_state(f"{loop.label}_neg_inv_entry")
+            entry = loop.add_state(f"{loop.label}_neg_inv_entry", is_start_block=True)
             loop.add_edge(entry, body_start, dace.InterstateEdge(assignments={old_var: sub_expr}))
-            loop.start_block = loop.node_id(entry)
 
         # Rewrite the LoopRegion's iteration descriptors to drive ``new_var`` forward.
         loop.loop_variable = new_var

@@ -102,9 +102,7 @@ substituted) with a small inner map is the case that still lifts.
 import ast
 from typing import Dict, List, Optional, Tuple
 
-import sympy
-
-from dace import SDFG, nodes, properties
+from dace import SDFG, nodes, properties, symbolic
 from dace.sdfg import SDFGState
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -276,7 +274,7 @@ class LiftLoopCarriedReduction(ppl.Pass):
                       loop_analysis.get_loop_stride(loop)):
             if bound is None:
                 return False  # an unanalyzable loop bound is not a proven constant either
-            syms.update(dict.fromkeys(sympy.sympify(bound).free_symbols))
+            syms.update(dict.fromkeys(symbolic.pystr_to_symbolic(bound).free_symbols))
         return not syms
 
     def _collect_candidates(self, body_states: List[SDFGState], itervar: str) -> List[_AccumulatorCandidate]:

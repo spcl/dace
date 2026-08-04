@@ -200,7 +200,7 @@ def equals(a, b) -> bool:
 def expressions_equal(actual: sympy.Basic, expected: sympy.Basic) -> bool:
     """Whether two resolved value expressions are symbolically identical."""
     try:
-        return bool(sympy.simplify(sympy.expand(actual - expected)) == 0)
+        return bool(symbolic.simplify(sympy.expand(actual - expected)) == 0)
     except Exception:
         return False
 

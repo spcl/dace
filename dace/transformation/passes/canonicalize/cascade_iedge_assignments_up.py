@@ -361,11 +361,8 @@ def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key:
         for e in in_edges:
             e.data.assignments[key] = rhs
         return
-    is_start = dest.start_block is child
-    pre = dest.add_state(f'{child.label}_iedge_hoist')
+    pre = dest.add_state(f'{child.label}_iedge_hoist', is_start_block=dest.start_block is child)
     dest.add_edge(pre, child, InterstateEdge(assignments={key: rhs}))
-    if is_start:
-        dest.start_block = dest.node_id(pre)
 
 
 def _drop_inner_symbol_declarations(sdfg: SDFG, key: str, dest: ControlFlowRegion):
