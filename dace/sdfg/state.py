@@ -897,6 +897,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
 
         # Add data arguments from memlets, if do not appear in any of the nodes (i.e., originate externally)
         #  TODO: Investigate is scanning the adjacent edges of the input and output connectors is better.
+        graph = self.graph if isinstance(self, SubgraphView) else self
         for edge in self.edges():
             if edge.data.is_empty():
                 continue
@@ -913,7 +914,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 #  to where it originates from.
                 # NOTE: We have to use a memlet path, because we have to go "against the flow"
                 #   Furthermore, in a valid SDFG the data will only come from one source anyway.
-                top_source_edge = self.graph.memlet_path(edge)[0]
+                top_source_edge = graph.memlet_path(edge)[0]
                 if not isinstance(top_source_edge.src, nd.AccessNode):
                     continue
                 additional_descs = ({
@@ -921,16 +922,16 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
-                additional_descs = {}
-                connector_to_look = "OUT_" + edge.dst_conn[3:]
-                for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                # Same case as above, but for outgoing Memlets. The whole tree, not one hop out of
+                # the exit: with a nested scope (an inserted thread-block map) the next hop still
+                # carries the inner Memlet, and only the edge leaving the outermost exit names the
+                # data. Branches are why this is the tree and not the path -- one write can leave
+                # through several exits.
+                additional_descs = {
+                    oedge.data.data: sdfg.arrays[oedge.data.data]
+                    for oedge in graph.memlet_tree(edge) if not isinstance(oedge.dst, nd.ExitNode)
+                    and not oedge.data.is_empty() and oedge.data.data not in descs
+                }
 
             else:
                 # Case is ignored.
