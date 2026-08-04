@@ -294,6 +294,14 @@ class LoopToTranspose(ppl.Pass):
             ranges[v] = (symbolic.pystr_to_symbolic(str(lo)), symbolic.pystr_to_symbolic(str(last)), inc_i)
             loop_var_syms.append(v)
 
+        # A bound naming another iterator makes the nest triangular, and a triangular window is not a
+        # transposable box: the lift would splice that iterator into the view subsets, stranding it as a
+        # free symbol (`for j in range(i+1, M)` -> `B[..., _loop_it_0 + 1:M]`).
+        nest_syms = set(loop_var_syms)
+        for lo, last, _ in ranges.values():
+            if (lo.free_symbols | last.free_symbols) & nest_syms:
+                return False
+
         d = len(loops)
         extracted = _extract_permutation_copy(body)
         if extracted is None:
