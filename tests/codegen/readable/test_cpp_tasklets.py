@@ -77,6 +77,22 @@ def _build_ternary(name):
     return sdfg
 
 
+def _build_shadowing_ternary(name, body):
+    """``_build_ternary``'s shape with a caller-chosen body, so a body that DECLARES one of the
+    names the inlined access text carries (``arr[arr_idx(i)]`` -> ``arr``, ``arr_idx``, ``i``) can be
+    checked to keep its connector copy."""
+    sdfg = dace.SDFG(name)
+    sdfg.add_array('arr', [8], dace.float64)
+    sdfg.add_array('arr2', [8], dace.float64)
+    st = sdfg.add_state('main')
+    me, mx = st.add_map('m', dict(i='0:8'))
+    t = st.add_tasklet('tern', {'_inp'}, {'_out'}, body, language=dace.dtypes.Language.CPP)
+    st.add_memlet_path(st.add_access('arr'), me, t, dst_conn='_inp', memlet=dace.Memlet('arr[i]'))
+    st.add_memlet_path(t, mx, st.add_access('arr2'), src_conn='_out', memlet=dace.Memlet('arr2[i]'))
+    sdfg.validate()
+    return sdfg
+
+
 def _build_ptr_scalar(name):
     """ A CPP tasklet with two pointer connectors and one scalar connector. """
     sdfg = dace.SDFG(name)
@@ -224,6 +240,28 @@ def test_cpp_ternary_scalar_inline():
     assert 'arr[arr_idx(' in code
     assert 'arr2[arr2_idx(' in code
     assert 'double _inp =' not in code
+
+
+def test_cpp_body_declaration_blocks_inlining():
+    """A connector is inlined as raw text into a body this generator does not parse, so a body that
+    DECLARES one of the names that text carries must keep the connector copy -- otherwise the
+    inlined name binds to the body's local. Only a declaration shadows: reading the map's own ``i``
+    (``test_cpp_ternary_scalar_inline``) must still inline."""
+    _set_impl(EXPERIMENTAL)
+
+    # Declares the ARRAY name carried by _inp's access text `arr[arr_idx(i)]`; _out's `arr2[...]`
+    # names nothing the body declares, so it still inlines.
+    sdfg = _build_shadowing_ternary('tern_shadow_arr', 'double arr = 0.5; _out = _inp + arr;')
+    code = sdfg.generate_code()[0].clean_code
+    assert 'double _inp =' in code, 'connector copy dropped although the body declares `arr`'
+    assert 'arr[arr_idx(' not in code
+    assert 'arr2[arr2_idx(' in code, '_out names nothing the body declares and must stay inlined'
+
+    # Declares the MAP SYMBOL both access texts carry, so both connectors keep their copy.
+    sdfg = _build_shadowing_ternary('tern_shadow_sym', 'int i = 3; _out = _inp + i;')
+    code = sdfg.generate_code()[0].clean_code
+    assert 'double _inp =' in code and 'double _out;' in code
+    assert 'arr[arr_idx(' not in code and 'arr2[arr2_idx(' not in code
 
 
 def test_cpp_pointer_and_scalar_unit():
@@ -411,6 +449,7 @@ def test_gemm_cublas_gpu():
 
 if __name__ == '__main__':
     test_cpp_ternary_scalar_inline()
+    test_cpp_body_declaration_blocks_inlining()
     test_cpp_pointer_and_scalar_unit()
     test_memset_pointer_connector()
     test_index_functions_defined_in_every_file()
