@@ -631,8 +631,9 @@ def _get_symbol_upper_bound_from_loop(bwd_generator: 'DataForwardingbwd_generato
         # Get the loop range for this symbol
         loop_size = None
         for l in loops:
-            # Convert the sympy symbol to string to check if it macthes the loop variable
-            if loop_index in l.loop_variable:
+            # Compare the names, not one against the other as a substring: an ``i`` would claim the
+            # bounds of the nearest enclosing ``idx`` loop.
+            if loop_index == l.loop_variable:
                 # Get the max loop range
                 start, end = ad_utils.extract_loop_region_info(l)
 
