@@ -110,7 +110,9 @@ def _one_elem(subset) -> Optional[int]:
 
 
 def _uses(subset: subsets.Subset, sym: sympy.Symbol) -> bool:
-    return subset is not None and any(symbolic.pystr_to_symbolic(str(e)) == sym for e in subset.free_symbols)
+    # By name: ``free_symbols`` already yields names, and re-minting them would compare a default-typed
+    # instance against one carrying the loop variable's own dtype.
+    return subset is not None and str(sym) in subset.free_symbols
 
 
 def _scalar_equiv(sdfg: SDFG, a: str, b: str) -> bool:
@@ -271,7 +273,8 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
 
     blocks = loop.nodes()
     loop_var = loop.loop_variable
-    loop_var_sym = symbolic.pystr_to_symbolic(loop_var)
+    # Carry the declared dtype: ``has``/subtraction below match on symbol identity, which includes it.
+    loop_var_sym = symbolic.symbol(loop_var, sdfg.symbols.get(loop_var))
 
     # Tasklet pattern: single state with exactly one tasklet.
     if len(blocks) == 1 and isinstance(blocks[0], SDFGState):
