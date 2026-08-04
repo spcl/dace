@@ -302,7 +302,9 @@ def seed_cmake_configure(build_folder: str, key: str) -> bool:
             # CMake refuses a cache it finds anywhere other than where it was created, aborting the
             # configure outright, so retarget that one entry at this build folder.
             cache = re.sub(r'(?m)^CMAKE_CACHEFILE_DIR:INTERNAL=.*$',
-                           'CMAKE_CACHEFILE_DIR:INTERNAL=' + build_folder.replace('\\', '/'), fp.read(), 1)
+                           'CMAKE_CACHEFILE_DIR:INTERNAL=' + build_folder.replace('\\', '/'),
+                           fp.read(),
+                           count=1)
         with open(os.path.join(build_folder, 'CMakeCache.txt'), 'w') as fp:
             fp.write(cache)
         shutil.copytree(os.path.join(entry, 'CMakeFiles'), os.path.join(build_folder, 'CMakeFiles'), dirs_exist_ok=True)
