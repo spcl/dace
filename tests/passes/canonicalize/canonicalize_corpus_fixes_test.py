@@ -317,13 +317,14 @@ def test_finalize_never_selects_mkl_prefers_openblas():
     assert 'OpenBLAS' in lib_impls, f"large matmul should lower to OpenBLAS, got {lib_impls}"
 
 
-def test_finalize_gpu_offloads_and_sets_domain_matched_block():
-    """``finalize_for_target(sdfg, 'gpu')`` must offload to the device and choose a thread-block
-    matching the iteration domain (an ``N x N`` map -> a ``16x16`` block, not the ``32,1,1``
-    default), then generate CUDA. Codegen-only (no device needed); the offload is idempotent."""
+def test_offload_to_gpu_sets_domain_matched_block_and_finalize_generates_cuda():
+    """``offload_to_gpu`` must move the nest onto the device and choose a thread-block matching the
+    iteration domain (an ``N x N`` map -> a ``16x16`` block, not the ``32,1,1`` default), after
+    which ``finalize_for_target(sdfg, 'gpu')`` generates CUDA. The device move is a step of its own
+    -- finalize refuses an SDFG that has not had it. Codegen-only (no device needed); idempotent."""
     from dace.sdfg import nodes
     from dace.transformation.passes.canonicalize import canonicalize
-    from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+    from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 
     Nsym = dace.symbol("N", dtype=dace.int64)
 
@@ -335,19 +336,21 @@ def test_finalize_gpu_offloads_and_sets_domain_matched_block():
 
     sdfg = madd.to_sdfg(simplify=False)
     canonicalize(sdfg, validate=True, target="gpu")
+    offload_to_gpu(sdfg)
     finalize_for_target(sdfg, "gpu", validate=True)
 
     gpu_maps = [
         n for n, _ in sdfg.all_nodes_recursive()
         if isinstance(n, nodes.MapEntry) and n.map.schedule == dace.dtypes.ScheduleType.GPU_Device
     ]
-    assert gpu_maps, "finalize(gpu) should offload the loop nest to a GPU_Device map"
+    assert gpu_maps, "offload_to_gpu should move the loop nest to a GPU_Device map"
     assert any(n.map.gpu_block_size == [16, 16, 1] for n in gpu_maps), \
         f"N x N map should get a 16x16 block, got {[n.map.gpu_block_size for n in gpu_maps]}"
     titles = [c.title for c in sdfg.generate_code()]
     assert any("cuda" in t.lower() for t in titles), f"expected CUDA codegen, got {titles}"
 
-    # Idempotent: a second finalize (already offloaded) does not double-offload / crash.
+    # Idempotent: offloading and finalizing again does not double-offload / crash.
+    offload_to_gpu(sdfg)
     finalize_for_target(sdfg, "gpu", validate=True)
 
 

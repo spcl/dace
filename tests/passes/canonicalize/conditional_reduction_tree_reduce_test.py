@@ -30,7 +30,7 @@ import pytest
 
 import dace
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
-from dace.transformation.passes.canonicalize.finalize import finalize_for_target
+from dace.transformation.passes.canonicalize.finalize import finalize_for_target, offload_to_gpu
 
 N = dace.symbol('N')
 K = dace.symbol('K')
@@ -42,6 +42,7 @@ def _cpu_code(sdfg) -> str:
 
 
 def _gpu_code(sdfg) -> str:
+    offload_to_gpu(sdfg)  # the device move is a step of its own; finalize refuses a host SDFG
     finalize_for_target(sdfg, 'gpu')
     return "\n".join(c.clean_code for c in sdfg.generate_code())
 

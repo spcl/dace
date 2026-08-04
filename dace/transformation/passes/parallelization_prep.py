@@ -18,6 +18,7 @@ Transformation classes are imported lazily inside the methods: importing them at
 module load would cycle (this package is imported by the transformations those
 imports pull in).
 """
+import ast
 import copy
 from typing import Any, Dict, Optional
 
@@ -384,7 +385,6 @@ class BestEffortLoopPeeling(ppl.Pass):
         that blocks parallelization can be carved out as [start, x-1] + {x} + [x+1,
         end] (a boundary ``x`` simply drops the empty side -- see
         :meth:`_split_loop_at`). ``x`` must not depend on the loop variable."""
-        import ast
         ivar_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
         values = []
         for cb in [b for b in loop.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]:
@@ -412,6 +412,67 @@ class BestEffortLoopPeeling(ppl.Pass):
                     continue
                 try:
                     x = symbolic.pystr_to_symbolic(ast.unparse(other))
+                except Exception:
+                    continue
+                if ivar_sym not in x.free_symbols and x not in values:
+                    values.append(x)
+        return values
+
+    #: Where a range guard stops holding, as an offset from the compared value, for ``i <op> k`` and
+    #: for the mirrored ``k <op> i``. Splitting there puts the guarded iterations in one segment and
+    #: the rest in another, where the guard is a contradiction the remainder cleanup drops.
+    _RANGE_GUARD_BOUNDARY = {
+        (ast.Lt, False): -1,  # i < k  holds up to k-1
+        (ast.LtE, False): 0,  # i <= k holds up to k
+        (ast.Gt, False): 0,  # i > k  starts at k+1, so k ends the false run
+        (ast.GtE, False): -1,  # i >= k starts at k
+        (ast.Gt, True): -1,  # k > i  == i < k
+        (ast.GtE, True): 0,  # k >= i == i <= k
+        (ast.Lt, True): 0,  # k < i  == i > k
+        (ast.LtE, True): -1,  # k <= i == i >= k
+    }
+
+    def range_guard_split_points(self, loop: LoopRegion):
+        """Split points for an ``if i < k`` style guard that holds over a PREFIX or SUFFIX of the
+        iteration space, rather than the single iteration ``if i == k`` carves out.
+
+        The canonical "peel to eliminate the comparison" case: split where the guard stops holding
+        and one side's guard is a range contradiction, which :meth:`_prune_dead_loop_branches` drops
+        -- leaving a body with no guard left to block ``LoopToMap``.
+
+        Liberal by design, like the other candidate sources: :meth:`_best_split_for` probes each
+        candidate on an isolated copy and keeps one only if it unblocks strictly more maps.
+        """
+        ivar_sym = symbolic.pystr_to_symbolic(loop.loop_variable)
+        values = []
+        for cb in [b for b in loop.all_control_flow_blocks() if isinstance(b, ConditionalBlock)]:
+            for cond, _ in cb.branches:
+                if cond is None:
+                    continue
+                try:
+                    node = cond.code[0]
+                except (AttributeError, IndexError, TypeError):
+                    continue
+                if isinstance(node, ast.Expr):
+                    node = node.value
+                if not isinstance(node, ast.Compare) or len(node.ops) != 1:
+                    continue
+                left, right = node.left, node.comparators[0]
+
+                def is_ivar(n):
+                    return isinstance(n, ast.Name) and n.id == loop.loop_variable
+
+                if is_ivar(left) and not is_ivar(right):
+                    other, mirrored = right, False
+                elif is_ivar(right) and not is_ivar(left):
+                    other, mirrored = left, True
+                else:
+                    continue
+                offset = self._RANGE_GUARD_BOUNDARY.get((type(node.ops[0]), mirrored))
+                if offset is None:
+                    continue
+                try:
+                    x = symbolic.pystr_to_symbolic(ast.unparse(other)) + offset
                 except Exception:
                     continue
                 if ivar_sym not in x.free_symbols and x not in values:
@@ -809,6 +870,9 @@ class BestEffortLoopPeeling(ppl.Pass):
             if x not in candidates:
                 candidates.append(x)
         for x in self.direction_flip_split_points(loop):
+            if x not in candidates:
+                candidates.append(x)
+        for x in self.range_guard_split_points(loop):
             if x not in candidates:
                 candidates.append(x)
         # A split point is baked into ``loop``'s segment bounds (see :meth:`_split_loop_at`), so it

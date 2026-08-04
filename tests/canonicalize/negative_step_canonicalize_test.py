@@ -45,16 +45,22 @@ def _negative_step_ranges(sdfg):
 
 
 def _assert_positive_step_bounds(sdfg, n: int, expected_iterations=None):
-    """Every map/loop has a positive stride; if ``expected_iterations`` is
-    given, every map/loop's concrete trip count (at ``N == n``) equals it.
+    """Every map/loop has a positive stride; if ``expected_iterations`` is given, no map/loop
+    iterates MORE than that and at least one attains it.
 
-    ``LoopToMap`` and the subset-analysis machinery only require step ``> 0``;
-    zero-based / unit-stride is not itself a correctness invariant, so it is
-    intentionally not asserted here. Trip count uses the loop's actual
-    ``(begin, end, step)``: ``floor((end - begin) / step) + 1``.
+    ``LoopToMap`` and the subset-analysis machinery only require step ``> 0``; zero-based /
+    unit-stride is not itself a correctness invariant, so it is intentionally not asserted here.
+    Trip count uses the loop's actual ``(begin, end, step)``: ``floor((end - begin) / step) + 1``.
+
+    Not "every scope trips exactly ``expected_iterations``": lowering the recurrence to a scan
+    splits it into a seed fold over the tail elements and an apply over the rest, and the seed fold
+    legitimately trips fewer times (one, for a single-element seed). Over-iterating is the direction
+    that would be a bug -- it reads or writes past the recurrence's extent -- so that is what is
+    pinned, together with the numerics the caller checks against a hand-rolled oracle.
     """
     subs = {dace.symbol('N'): n}
     seen = 0
+    trips_seen = []
 
     def _trip(b, e, s):
         b_, e_, s_ = (int(dace.symbolic.evaluate(x, subs)) for x in (b, e, s))
@@ -67,7 +73,8 @@ def _assert_positive_step_bounds(sdfg, n: int, expected_iterations=None):
                     assert dace.symbolic.evaluate(s, subs) > 0, f'map step {s} not > 0'
                     if expected_iterations is not None:
                         trip = _trip(b, e, s)
-                        assert trip == expected_iterations, f'map trips {trip} != {expected_iterations}'
+                        assert trip <= expected_iterations, f'map trips {trip} > {expected_iterations}'
+                        trips_seen.append(trip)
                     seen += 1
     for r in sdfg.all_control_flow_regions(recursive=True):
         if isinstance(r, LoopRegion):
@@ -77,9 +84,13 @@ def _assert_positive_step_bounds(sdfg, n: int, expected_iterations=None):
             if expected_iterations is not None:
                 end = loop_analysis.get_loop_end(r)
                 trip = _trip(start, end, stride)
-                assert trip == expected_iterations, f'loop trips {trip} != {expected_iterations}'
+                assert trip <= expected_iterations, f'loop trips {trip} > {expected_iterations}'
+                trips_seen.append(trip)
             seen += 1
     assert seen > 0, 'no map/loop found to check bounds on'
+    if expected_iterations is not None:
+        assert expected_iterations in trips_seen, \
+            f'nothing iterates the recurrence extent {expected_iterations}, only {sorted(set(trips_seen))}'
 
 
 @dace.program

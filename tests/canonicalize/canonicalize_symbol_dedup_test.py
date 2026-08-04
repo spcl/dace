@@ -125,13 +125,29 @@ def gather_stencil(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d
 
 
 def test_symbol_dedup_gather_stencil_bit_exact():
+    """The motivating case, end to end: fusing the two statements makes both gathers read
+    ``idx[i]``, and the pipeline's own ``SymbolDedup`` stage must collapse them onto one symbol.
+
+    Asserted on canonicalize's OUTPUT rather than by running ``SymbolDedup`` by hand: the stage is
+    part of the pipeline (``pipeline.py``, the ``end`` stage), so by the time ``canonicalize``
+    returns the duplicates are already gone and there is no pre-dedup state left to observe. The
+    teeth are the one-symbol-per-distinct-RHS check -- drop the stage from the pipeline and
+    canonicalize emits ``idx_index`` AND ``idx_index_0`` for the same read, failing it.
+    """
     sdfg = canonicalize(gather_stencil.to_sdfg(simplify=True))
 
-    # Canonicalization leaves duplicate gather-index assignments on the fused
-    # map body's interstate edges: {'idx_index': 'idx[i]', 'idx_index_0': 'idx[i]'}.
-    dup_edges = [a for a in _all_assignments(sdfg) if len(a) >= 2 and len(set(a.values())) < len(a)]
-    assert dup_edges, 'expected duplicate interstate assignments after canonicalize'
-    n_syms_before = len(_assigned_symbols(sdfg))
+    for assign in _all_assignments(sdfg):
+        assert len(set(assign.values())) == len(assign), f'edge assigns two symbols the same RHS: {assign}'
+
+    by_rhs = {}
+    for assign in _all_assignments(sdfg):
+        for sym, rhs in assign.items():
+            by_rhs.setdefault(rhs, set()).add(sym)
+    shared = {rhs: syms for rhs, syms in by_rhs.items() if len(syms) > 1}
+    assert not shared, f'the same read is carried by more than one symbol: {shared}'
+    assert any('idx[' in rhs for rhs in by_rhs), f'expected a gather-index assignment, got {sorted(by_rhs)}'
+
+    sdfg.validate()
 
     n = 16
     rng = np.random.default_rng(1)
@@ -141,26 +157,10 @@ def test_symbol_dedup_gather_stencil_bit_exact():
     f = rng.random(n)
     idx = rng.integers(0, n, n).astype(np.int64)
 
-    a_ref = np.zeros(n)
-    d_ref = np.zeros(n)
-    sdfg(a=a_ref, b=b, c=c, d=d_ref, e=e, f=f, idx=idx, N=n)
-
-    ret = _run_dedup(sdfg)
-    assert ret and ret['SymbolDedup'] >= 1
-
-    # Fewer assigned symbols, and no edge assigns two symbols the same RHS anymore.
-    assert len(_assigned_symbols(sdfg)) < n_syms_before
-    for assign in _all_assignments(sdfg):
-        assert len(set(assign.values())) == len(assign), f'still-duplicate assignment {assign}'
-
-    sdfg.validate()
-
     a_new = np.zeros(n)
     d_new = np.zeros(n)
     sdfg(a=a_new, b=b, c=c, d=d_new, e=e, f=f, idx=idx, N=n)
 
-    assert np.array_equal(a_ref, a_new)
-    assert np.array_equal(d_ref, d_new)
     assert np.allclose(a_new, b[idx] + c)
     assert np.allclose(d_new, e[idx] + f)
 
