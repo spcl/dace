@@ -1233,6 +1233,14 @@ class SDFG(ControlFlowRegion):
         return s2t.as_schedule_tree(self, in_place=in_place)
 
     @property
+    def build_folder_is_default(self) -> bool:
+        """Whether the build folder follows the ``cache`` policy rather than being assigned.
+
+        An assigned folder belongs to whoever assigned it, so nothing may reclaim it.
+        """
+        return self._build_folder is None
+
+    @property
     def build_folder(self) -> str:
         """ Returns a relative path to the build cache folder for this SDFG. """
         if self._build_folder is not None:
@@ -2591,6 +2599,7 @@ class SDFG(ControlFlowRegion):
 
         # Compute build folder path before running codegen
         build_folder = self.build_folder
+        compiler.register_disposable_folder(self)
 
         # Get the folder mode, but if the folder already exists, then use the `FOLDER_MODE` file.
         folder_mode = compiler.get_folder_mode(build_folder, probe=True)

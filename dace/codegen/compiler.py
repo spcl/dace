@@ -3,6 +3,7 @@
     compiles each target separately, links all targets to one binary, and
     returns the corresponding CompiledSDFG object. """
 
+import atexit
 import collections
 import contextlib
 import getpass
@@ -652,6 +653,51 @@ def cmake_configure_and_build(
             command_db.publish(
                 build_cache_root(), command_key,
                 command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
+
+
+#: Program folders this process built that no later run could ever address, dropped on the way out.
+#: Not tied to ``CompiledSDFG`` lifetime: CPython frees that object through the garbage collector,
+#: so "the folder goes when the handle goes" is not a moment anything can observe -- a reference
+#: cycle anywhere in the call graph defers it arbitrarily.
+_disposable_folders: Set[str] = set()
+
+
+def build_folder_is_disposable(sdfg: 'dace.SDFG') -> bool:
+    """Whether ``sdfg``'s build folder is garbage the moment this process is done with it.
+
+    Only under ``cache: unique``, which names the folder after the PID: nothing outside this
+    process can ever address it, so the folder is pure garbage once the run ends -- yet it
+    survives, and a test sweep leaves one behind per (SDFG name, worker); this repo's tree had 540
+    of them at 238 MB. Every other policy names the folder so that a later run finds it again,
+    which makes the folder the build cache itself; deleting it would turn every rerun into a full
+    recompile.
+
+    An explicitly assigned build folder is the caller's, never ours to remove.
+    """
+    return sdfg.build_folder_is_default and Config.get('cache') == 'unique'
+
+
+def register_disposable_folder(sdfg: 'dace.SDFG') -> None:
+    """Take ``sdfg``'s build folder into the set dropped when this process ends.
+
+    Called from ``SDFG.compile()`` rather than from the handle that ends up owning the folder,
+    because compilation hands the folder to a deepcopy of the SDFG by assigning it -- at which
+    point the copy looks like a caller-assigned folder and the policy that produced it is no
+    longer visible.
+    """
+    if build_folder_is_disposable(sdfg):
+        _disposable_folders.add(os.path.abspath(sdfg.build_folder))
+
+
+@atexit.register
+def drop_disposable_folders() -> None:
+    """Drop every disposable folder on the way out -- past here nothing can name one again.
+
+    Deleting a folder whose library is still mapped is safe on POSIX (the inode outlives the
+    unlink); on Windows the delete simply fails and the folder is left behind as before.
+    """
+    for folder in _disposable_folders:
+        shutil.rmtree(folder, ignore_errors=True)
 
 
 def get_program_handle(
