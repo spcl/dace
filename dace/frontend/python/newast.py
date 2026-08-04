@@ -3780,7 +3780,7 @@ class ProgramVisitor(ExtNodeVisitor):
             if _subset_has_indirection(rng, self):
                 output_indirection = self.cfg_target.add_state('wslice_%s_%d' % (new_name, node.lineno))
                 wnode = output_indirection.add_write(new_name, debuginfo=self.current_lineinfo)
-                memlet = Memlet.simple(new_name, str(rng))
+                memlet = Memlet(data=new_name, subset=copy.deepcopy(rng))
                 # Dependent augmented assignments need WCR in the
                 # indirection edge.
                 with_wcr = False
@@ -3809,7 +3809,7 @@ class ProgramVisitor(ExtNodeVisitor):
                 if _subset_has_indirection(rng, self):
                     self._add_state('rslice_%s_%d' % (new_name, node.lineno))
                     rnode = self.current_state.add_read(new_name, debuginfo=self.current_lineinfo)
-                    memlet = Memlet.simple(new_name, str(rng))
+                    memlet = Memlet(data=new_name, subset=copy.deepcopy(rng))
                     tmp = self.sdfg._find_new_name(self.get_target_name())
                     ind_name = add_indirection_subgraph(self.sdfg, self.current_state, rnode, None, memlet, tmp, self)
                     rtarget = ind_name
@@ -5349,23 +5349,26 @@ class ProgramVisitor(ExtNodeVisitor):
                                              storage=arrobj.storage,
                                              strides=strides,
                                              find_new_name=True)
+            # Keep the subsets symbolic: symbol identity includes the dtype, and a round trip through a
+            # string re-mints every symbol at the default one, so the self-copy check below would compare
+            # this range against a differently-typed spelling of itself and give up.
             self.views[tmp] = (array,
                                Memlet(data=array,
-                                      subset=str(expr.subset),
-                                      other_subset=str(other_subset),
+                                      subset=copy.deepcopy(expr.subset),
+                                      other_subset=copy.deepcopy(other_subset),
                                       volume=expr.accesses,
                                       wcr=expr.wcr))
         self.variables[tmp] = tmp
         if not isinstance(tmparr, data.View):
             rnode = self.current_state.add_read(array, debuginfo=self.current_lineinfo)
             wnode = self.current_state.add_write(tmp, debuginfo=self.current_lineinfo)
-            # NOTE: We convert the subsets to string because keeping the original symbolic information causes
-            # equality check failures, e.g., in LoopToMap.
+            # NOTE: The subsets are copied, not shared, because aliasing them causes equality check
+            # failures, e.g., in LoopToMap.
             self.current_state.add_nedge(
                 rnode, wnode,
                 Memlet(data=array,
-                       subset=str(expr.subset),
-                       other_subset=str(other_subset),
+                       subset=copy.deepcopy(expr.subset),
+                       other_subset=copy.deepcopy(other_subset),
                        volume=expr.accesses,
                        wcr=expr.wcr))
         return tmp
