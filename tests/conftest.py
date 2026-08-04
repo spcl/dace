@@ -163,12 +163,77 @@ def _active_cuda_impl():
     return Config.get('compiler', 'cuda', 'implementation')
 
 
-#: Directories owned by a dedicated workflow. Marked by path so the two suites stay selectable
+#: Directories owned by a dedicated workflow. Marked by path so the suites stay selectable
 #: without touching hundreds of files; general CI deselects them.
 _SUITE_DIRS = (
     (os.path.join('tests', 'passes', 'vectorization'), 'vectorization'),
     (os.path.join('tests', 'passes', 'canonicalize'), 'canonicalization'),
     (os.path.join('tests', 'canonicalize'), 'canonicalization'),
+    # Needs a real MPI launcher (the heterogeneous runner runs these under ``mpirun -n 2``), so mark
+    # the directory rather than rely on each file remembering the marker -- three did not.
+    (os.path.join('tests', 'library', 'mpi'), 'mpi'),
+    # Before the plain-corpus entry: first match wins, and CloudSC is a whole-application
+    # integration run (offload, pipeline, coalesce, checkpoint-resume), not a kernel corpus.
+    (os.path.join('tests', 'corpus', 'cloudsc'), 'integration'),
+    (os.path.join('tests', 'corpus'), 'corpus'),
+    (os.path.join('tests', 'npbench'), 'corpus'),
+)
+
+#: Library-node and loop-lifting tests introduced by this branch (absent from ``main``). They ran in
+#: general CI AND in each suite runner that happened to collect them; a dedicated runner gives them
+#: one home. Deliberately NOT the whole of ``tests/library`` -- upstream's own library tests stay
+#: where they are.
+_LIBNODE_FILES = (
+    'allany_node_test.py',
+    'arg_reduce_test.py',
+    'argminmax_test.py',
+    'blas_environment_test.py',
+    'broadcast_test.py',
+    'copy_node_test.py',
+    'count_node_test.py',
+    'cshift_test.py',
+    'fft_axis_test.py',
+    'fft_fftw3_test.py',
+    'fft_interpolate_test.py',
+    'fft_pure_ndim_test.py',
+    'fortran_io_test.py',
+    'gemm_runtime_coeff_test.py',
+    'integer_sort_test.py',
+    'lapacke_link_test.py',
+    'loop_to_map_affine_coeffs_test.py',
+    'loop_to_map_conditional_e2e_test.py',
+    'loop_to_map_disjoint_writes_test.py',
+    'loop_to_map_happens_before_war_test.py',
+    'loop_to_map_level_indexed_test.py',
+    'loop_to_map_loop_independent_test.py',
+    'loop_to_map_overlapping_writes_test.py',
+    'loop_to_map_single_iteration_test.py',
+    'loop_to_map_triangular_test.py',
+    'loop_to_scan_test.py',
+    'matmul_trans_test.py',
+    'matmul_unit_dim_squeeze_test.py',
+    'memset_node_test.py',
+    'merge_node_test.py',
+    'norm2_test.py',
+    'preexpanded_libnode_stream_test.py',
+    'scan_strided_test.py',
+    'scan_test.py',
+    'strengthen2_loop_to_scan_test.py',
+    'symm_test.py',
+    'syrk_test.py',
+    'tensordot_tblis_test.py',
+    'test_reduce_view_gpu.py',
+)
+
+#: Corpus files living outside those directories. A corpus case compiles and RUNS a C++ program per
+#: kernel, so wall time tracks the kernel count -- general CI carried ~880 of them, which is why it
+#: takes as long as it does. Matched on the file name, since these sit among ordinary unit tests.
+_CORPUS_FILES = (
+    'tsvc_integration_test.py',
+    'parallelize_peeling_tsvc_test.py',
+    'native_corpus_test.py',
+    'test_corpus_compile.py',
+    'test_corpus_equivalence.py',
 )
 
 
@@ -181,6 +246,12 @@ def pytest_collection_modifyitems(config, items):
             if prefix in path:
                 item.add_marker(getattr(pytest.mark, mark))
                 break
+        else:
+            name = os.path.basename(path)
+            if name in _CORPUS_FILES:
+                item.add_marker(pytest.mark.corpus)
+            elif name in _LIBNODE_FILES or os.path.join('tests', 'library', 'tileops') in path:
+                item.add_marker(pytest.mark.loop2x_libnodes)
 
     try:
         impl = _active_cuda_impl()

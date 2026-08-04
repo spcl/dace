@@ -286,7 +286,7 @@ def test_spmv_bypass_keeps_sdfg_valid():
     sdfg.apply_transformations_repeated(WCRToAugAssign, permissive=False, validate=False)
     sdfg.apply_transformations_repeated([LoopToMap, RefineNestedAccess], permissive=False, validate=False)
     normalize_loop_nests(sdfg)
-    ConvertLengthOneArraysToScalars(recursive=True, transient_only=False).apply_pass(sdfg, {})
+    ConvertLengthOneArraysToScalars(recursive=True, preserve_abi=True).apply_pass(sdfg, {})
     NormalizeWCRSource().apply_pass(sdfg, {})
 
     sdfg.validate()  # BEFORE bypass: valid

@@ -3,6 +3,19 @@ name: Vectorization
 # Dedicated runner for the vectorization suite (-m vectorization, marked by path in
 # tests/conftest.py). General CI deselects it, so these tests run ONCE here instead of
 # across its python x simplify matrix.
+#
+# Split into two cells because a corpus case COMPILES AND RUNS a C++ program, so wall time
+# tracks the number of (kernel, phase) cells rather than the number of assertions. Both cells
+# enter the vectorizer through canonicalize: canonicalization exposes strictly more
+# parallelizable patterns than plain simplification (measured on TSVC: 170/223 kernels get a
+# parallel map after canonicalize versus 109/223 after upstream LoopToMap alone), so a
+# simplify-front-end cell tests the vectorizer on a weaker version of the same input.
+#
+#   c1 -- npbench + polybench corpora, plus every non-corpus vectorization test
+#   c2 -- tsvc + tsvc_2.5 corpora, the two biggest
+#
+# Each corpus test covers BOTH phases per kernel (``canon`` and ``canon_vec``), so canonicalize
+# output and vectorizer output are checked in one compile rather than two.
 
 on:
   push:
@@ -22,6 +35,23 @@ jobs:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
     timeout-minutes: 90
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - cell: c1-npbench-polybench
+            # Everything except the two TSVC corpora, which are cell 2.
+            paths: >-
+              tests/passes/vectorization
+              --ignore=tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
+              --ignore=tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
+          - cell: c2-tsvc
+            paths: >-
+              tests/passes/vectorization/tsvc_canonicalize_vectorize_corpus_test.py
+              tests/passes/vectorization/tsvc_2_5_canonicalize_vectorize_corpus_test.py
+
+    name: ${{ matrix.cell }}
 
     steps:
     - uses: actions/checkout@v7
@@ -50,5 +80,6 @@ jobs:
         export DACE_compiler_precompiled_header=1
         # loadgroup, not the default load: corpus cases carry xdist_group(kernel) so one kernel's
         # phases land on one worker and share its memoized base SDFG instead of rebuilding per worker.
-        pytest -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
+        pytest ${{ matrix.paths }} \
+          -n auto --dist loadgroup --tb=short --timeout_method thread --timeout=600 \
           -m "vectorization and not gpu and not long and not sequential and not perf"
