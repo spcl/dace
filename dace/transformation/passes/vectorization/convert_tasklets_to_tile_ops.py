@@ -1370,6 +1370,16 @@ class ConvertTaskletsToTileOps(ppl.Pass):
         aug_reduction = self._detect_augassign_reduction(inner_state, tasklet)
         if aug_reduction is not None:
             return self._convert_reduction(inner_state, tasklet, aug_reduction)
+        # A ``reduce_accum`` is minted only by this package's own reduction lowerings, so one that
+        # reaches here is a reduction NEITHER detector recognised -- no TileReduce will be built for
+        # it, while the enclosing map still gets tiled. Every lane then writes the same scalar and
+        # the accumulation collapses to its seed: TSVC s4115/s4116 returned 0.0 for a nonzero sum.
+        # Refuse the kernel instead; the orchestrator restores it un-tiled, which is slow and right
+        # rather than fast and wrong.
+        if tasklet.label.startswith('reduce_accum'):
+            raise VectorizeUnsupported(
+                f"reduction tasklet {tasklet.label!r} ({tasklet.code.as_string.strip()!r}) matches no tile-op "
+                "reduction shape -- the addend never widened to a tile, so the fold cannot be expressed")
         binop = self._detect_binop(tasklet)
         if binop is not None:
             return self._convert_binop(inner_state, tasklet, binop)
