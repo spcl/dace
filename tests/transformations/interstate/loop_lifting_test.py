@@ -464,6 +464,64 @@ def test_lift_nested_data_dependent_loops(extra_state):
     assert a[0] == ref
 
 
+def test_lift_nested_for_loops_with_dataflow_guards():
+    """Nested for-style loops whose guard blocks BOTH carry dataflow. Each guard
+    runs once more than its body (it also runs on the final, failing check), so
+    the outer guard must execute NI+1 times and the inner one NJ+1 times per
+    outer iteration. Every block accumulates into its own array cell, which
+    pins the exact execution count - a dropped OR a duplicated execution fails.
+
+    Before the fix the outer lift dropped the guard's final execution and
+    mangled the inner loop out of any liftable shape: the outer guard ran NI
+    times and the inner one exactly once per outer iteration."""
+    from dace.sdfg.state import ConditionalBlock
+
+    NI, NJ = 3, 4
+    sdfg = SDFG('nested_for_dataflow_guards')
+    sdfg.add_symbol('i', dace.int32)
+    sdfg.add_symbol('j', dace.int32)
+    sdfg.add_array('A', (NI + 1, ), dace.int32)
+    sdfg.add_array('B', (NI, NJ + 1), dace.int32)
+    sdfg.add_array('C', (NI, NJ), dace.int32)
+    init_state = sdfg.add_state('init', is_start_block=True)
+    outer_guard = sdfg.add_state('outer_guard')
+    inner_guard = sdfg.add_state('inner_guard')
+    main_state = sdfg.add_state('loop_state')
+    end_state = sdfg.add_state('end')
+    sdfg.add_edge(init_state, outer_guard, InterstateEdge(assignments={'i': '0'}))
+    sdfg.add_edge(outer_guard, inner_guard, InterstateEdge(condition=f'i < {NI}', assignments={'j': '0'}))
+    sdfg.add_edge(outer_guard, end_state, InterstateEdge(condition=f'i >= {NI}'))
+    sdfg.add_edge(inner_guard, main_state, InterstateEdge(condition=f'j < {NJ}'))
+    sdfg.add_edge(inner_guard, outer_guard, InterstateEdge(condition=f'j >= {NJ}', assignments={'i': 'i + 1'}))
+    sdfg.add_edge(main_state, inner_guard, InterstateEdge(assignments={'j': 'j + 1'}))
+
+    def count_executions(state, array, subset):
+        t = state.add_tasklet('t_' + array, {'inp'}, {'out'}, 'out = inp + 1')
+        state.add_edge(state.add_read(array), None, t, 'inp', Memlet(f'{array}[{subset}]'))
+        state.add_edge(t, 'out', state.add_write(array), None, Memlet(f'{array}[{subset}]'))
+
+    count_executions(outer_guard, 'A', 'i')  # outer GUARD: i = 0..NI
+    count_executions(inner_guard, 'B', 'i, j')  # inner GUARD: j = 0..NJ, per i
+    count_executions(main_state, 'C', 'i, j')  # body: j = 0..NJ-1, per i
+
+    assert sdfg.apply_transformations_repeated([LoopLifting]) == 2
+    assert sdfg.using_explicit_control_flow == True
+    assert len([x for x in sdfg.all_control_flow_regions() if isinstance(x, LoopRegion)]) == 2
+    for region in sdfg.all_control_flow_regions():
+        if isinstance(region, ConditionalBlock):
+            for cond, _ in region.branches:
+                if cond is not None:
+                    assert cond.as_string.strip() not in ('(not 1)', 'not 1', '0', 'false', 'False')
+
+    A = np.zeros((NI + 1, ), dtype=np.int32)
+    B = np.zeros((NI, NJ + 1), dtype=np.int32)
+    C = np.zeros((NI, NJ), dtype=np.int32)
+    sdfg(A=A, B=B, C=C)
+    assert np.allclose(A, 1)
+    assert np.allclose(B, 1)
+    assert np.allclose(C, 1)
+
+
 if __name__ == '__main__':
     test_lift_regular_for_loop()
     test_lift_loop_llvm_canonical(True)
@@ -477,3 +535,4 @@ if __name__ == '__main__':
     test_lift_while_loop_with_data_dependent_condition(True)
     test_lift_nested_data_dependent_loops(False)
     test_lift_nested_data_dependent_loops(True)
+    test_lift_nested_for_loops_with_dataflow_guards()
