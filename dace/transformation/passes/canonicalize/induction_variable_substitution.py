@@ -58,9 +58,10 @@ mis-classified as a fold or a parallel map. The TSVC kernel ``s317``
 (``q[0] *= 0.99`` for ``LEN_1D//2`` iters) is the canonical hit.
 """
 import ast
-from typing import Any, List, NamedTuple, Optional, Set, Tuple
+import copy
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
-from dace import SDFG, dtypes, nodes, properties, symbolic
+from dace import SDFG, dtypes, nodes, properties, subsets, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import SDFGState
 from dace.sdfg import utils as sdutil
@@ -1206,3 +1207,434 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
     parent.add_edge(loop, iv_post, iv_edge_out)
 
     return True
+
+
+# -----------------------------------------------------------------------------
+# Loop-carried ROTATION substitution (a delay line -> a shifted array read)
+# -----------------------------------------------------------------------------
+#
+# A carried scalar that is OVERWRITTEN every iteration with a loop-varying array element -- TSVC
+# ``s254``::
+#
+#     x = b[N-1]
+#     for i in range(N):
+#         a[i] = (b[i] + x) * 0.5   # x holds b[i-1] here
+#         x = b[i]                  # seeds the next iteration
+#
+# -- is a one-element delay line, not an accumulator: at iteration ``i`` it EQUALS
+# ``b[i - stride]``. ``LoopToMap`` refuses the loop (``loop_to_map.py:671``: a bare scalar has no
+# ``a*i + b`` write subset, so the write is not uniquely indexed by the iteration variable), and
+# that guard is right -- the fix is to remove the carry, not to weaken the guard::
+#
+#     a[0] = (b[0] + b[N-1]) * 0.5                        # peeled first iteration
+#     for i in range(1, N): a[i] = (b[i] + b[i-1]) * 0.5  # DOALL
+#
+# Same idea as ``try_substitute_use_site_iv`` -- expand the carried value's closed form at every
+# read, then delete the recurrence -- but the closed form is an ARRAY READ rather than arithmetic,
+# so it cannot be spliced as text into an existing connector: each read is REWIRED to a new data
+# edge reading ``src[i - stride]``. And unlike an affine closed form it does not hold on the first
+# iteration (which reads whatever the loop was entered with), so one iteration is peeled off the
+# front first -- reusing ``LoopPeeling``, whose ``peel_limit`` budget also carries the "this loop
+# runs more times than we peel it" assumption.
+#
+# ROTATION AND REDUCTION ARE SURFACE-IDENTICAL: one scalar, written every iteration, blocking
+# ``LoopToMap``. Substituting a REDUCTION as if it were a rotation is a SILENT miscompile -- the
+# loop parallelizes and every element is wrong, with no error raised. The discriminators, all of
+# which must hold (see :func:`plan_rotation`):
+#
+# * the scalar is written EXACTLY ONCE per iteration, so "which value does this read see" has one
+#   answer (a conditional update trails an unknown distance, and is refused with the body shape);
+# * the stored value is a pure array element whose index moves with the iteration variable, and
+#   does NOT come from the scalar itself (``x = x + b[i]`` is an accumulation -- refused, because
+#   chasing the update back lands on the scalar rather than on an independent array);
+# * every read of the scalar happens STRICTLY BEFORE that write, decided by DATAFLOW (intra-state
+#   reachability) and block order (inter-state), never by source order. A read of the version the
+#   update wrote sees ``b[i]``, not ``b[i - stride]``, and is refused;
+# * the source array is not WRITTEN in the loop, so ``src[i - stride]`` still holds what iteration
+#   ``i - stride`` read (an in-place ``x = a[i]`` delay line would otherwise read the version that
+#   iteration WROTE);
+# * the scalar is dead after the loop -- deleting its update must not lose a value someone reads.
+#
+# A multi-stage delay line (TSVC ``s255``: ``y = x; x = b[i]``, so ``x == b[i-1]`` and
+# ``y == b[i-2]``) resolves innermost-first through the pass' fixed point rather than through
+# dedicated chain logic: ``y``'s stored value is ``x``, which is written LATER in the body, so the
+# chase refuses it on the first round. Substituting ``x`` rewrites ``y``'s update to
+# ``y = b[i-1]`` -- itself now a rotation -- which the second round closes to ``b[i-2]``, peeling
+# one more iteration. Each round peels exactly one iteration, so the cumulative peel is the delay
+# depth.
+
+#: How far the update's stored value may be chased back through staging transients before giving up.
+_ROTATION_CHASE_LIMIT = 4
+
+
+class RotationPlan(NamedTuple):
+    """The validated rewrite for one loop-carried rotation (delay-line) scalar."""
+    accum: str  #: the carried scalar container
+    src_data: str  #: array the rotated value comes from
+    src_subset: subsets.Subset  #: the element to read, ALREADY shifted back by one stride
+    post_node: nodes.AccessNode  #: the accumulator version the update writes
+    write_state: SDFGState  #: body state holding that write
+    chase: List[Tuple[SDFGState, nodes.AccessNode]]  #: nodes only the update keeps alive
+    reads: List[Tuple[SDFGState, nodes.AccessNode]]  #: entry versions whose reads shift back
+    touched: List[str]  #: containers the rewrite may leave dangling
+
+
+def _data_edges(edges) -> List[Any]:
+    """Only the edges that MOVE DATA. An empty memlet is an ORDERING edge, so it must never be
+    counted as a write (or a read) of the container it hangs off."""
+    return [e for e in edges if e.data is not None and not e.data.is_empty()]
+
+
+def _subset_at(edge, node) -> Optional[subsets.Subset]:
+    """The subset ``edge``'s memlet addresses in ``node``'s container (``node`` is one endpoint).
+
+    A memlet names ONE of its two containers in ``data``; the other side lives in ``other_subset``.
+    Reading the wrong side turns ``b[i] -> x[0]`` into a read of ``x[i]``, so the side is picked by
+    the node's own container name rather than by ``src_subset`` / ``dst_subset`` (which additionally
+    depend on ``_is_data_src`` having been initialized).
+    """
+    memlet = edge.data
+    if memlet is None:
+        return None
+    if not isinstance(node, nodes.AccessNode) or memlet.other_subset is None:
+        return memlet.subset
+    return memlet.subset if memlet.data == node.data else memlet.other_subset
+
+
+def rotation_body_chain(loop: LoopRegion) -> Optional[List[SDFGState]]:
+    """The loop body as a straight-line list of states, or ``None`` if it is not one.
+
+    A rotation rewrite has to answer "does this read run before that write" for every read. A chain
+    of plain states answers it by position; anything else (a conditional, a nested loop, a fork, a
+    guarded edge) does not -- and a CONDITIONAL update, whose carried value trails an unknown
+    distance, is exactly one of the shapes that must be refused. So the chain requirement is part
+    of the safety gate, not a convenience.
+
+    Map / NestedSDFG scopes are rejected for the reason ``try_substitute_use_site_iv`` rejects them:
+    they hide the per-iteration execution order inside a scope this pass does not model.
+    """
+    blocks = loop.nodes()
+    if not blocks or any(not isinstance(b, SDFGState) for b in blocks):
+        return None
+    if len(loop.edges()) != len(blocks) - 1:
+        return None
+    for e in loop.edges():
+        if e.data.assignments or e.data.condition.as_string not in ('1', 'True', '(1)'):
+            return None
+    if any(loop.in_degree(b) > 1 or loop.out_degree(b) > 1 for b in blocks):
+        return None
+    chain: List[SDFGState] = []
+    seen: Dict[SDFGState, None] = {}
+    cur = loop.start_block
+    while cur is not None:
+        if cur in seen:
+            return None
+        seen[cur] = None
+        chain.append(cur)
+        out = loop.out_edges(cur)
+        cur = out[0].dst if out else None
+    if len(chain) != len(blocks):
+        return None
+    for st in chain:
+        if any(not isinstance(n, (nodes.Tasklet, nodes.AccessNode)) for n in st.nodes()):
+            return None
+    return chain
+
+
+def _read_after_loop(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, container: str) -> bool:
+    """Whether ``container`` can be READ on any path leaving ``loop``.
+
+    The rewrite DELETES the update, so the value the sequential loop would have left behind stops
+    existing -- fine only when nobody looks at it. Reads BEFORE the loop are unaffected (the peeled
+    prologue is one of them, which is what lets a multi-stage delay line peel a second time), so
+    only forward reachability matters.
+
+    Answers conservatively (``True``) for a loop nested inside another region: an enclosing loop
+    re-runs its siblings, so a "later" read is also an "earlier" one and plain forward reachability
+    would no longer be the whole answer.
+    """
+    if parent is not sdfg:
+        return True
+    # An interstate edge can read a container in a condition or an assignment RHS, where "before"
+    # and "after" the loop are not distinguishable by block reachability alone. Rare for a carried
+    # scalar, so any such read anywhere refuses rather than being classified.
+    for e in sdfg.all_interstate_edges():
+        if any(m.data == container for m in e.data.get_read_memlets(sdfg.arrays)):
+            return True
+    for blk in sdutil.dfs_conditional(sdfg, sources=[loop]):
+        if blk is loop:
+            continue
+        for st in ([blk] if isinstance(blk, SDFGState) else list(blk.all_states())):
+            for n in st.nodes():
+                if isinstance(n, nodes.AccessNode) and n.data == container and _data_edges(st.out_edges(n)):
+                    return True
+    return False
+
+
+def _body_nodes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGState, nodes.AccessNode]]:
+    """Every access node for ``container`` in the body, as ``(chain index, state, node)``."""
+    return [(si, st, n) for si, st in enumerate(chain) for n in st.nodes()
+            if isinstance(n, nodes.AccessNode) and n.data == container]
+
+
+def _body_writes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFGState, nodes.AccessNode, Any]]:
+    """Every DATA write to ``container`` in the body, as ``(chain index, state, node, edge)``."""
+    return [(si, st, n, e) for si, st, n in _body_nodes(chain, container) for e in _data_edges(st.in_edges(n))]
+
+
+def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain: List[SDFGState], accum: str,
+                  stride) -> Optional[RotationPlan]:
+    """Validate that ``accum`` is a delay line and enumerate the rewrite. Mutates nothing.
+
+    Every ``return None`` below is one of the discriminators listed at the top of this section.
+    They are the whole correctness argument, because from the outside a rotation and a reduction
+    are the same loop.
+    """
+    desc = sdfg.arrays.get(accum)
+    if desc is None or not desc.transient or _one_elem(subsets.Range.from_array(desc)) != 1:
+        return None
+
+    # (1) written EXACTLY ONCE per iteration -- else a read's value is not this one update's.
+    writes = _body_writes(chain, accum)
+    if len(writes) != 1:
+        return None
+    wsi, write_state, post_node, write_edge = writes[0]
+    if _one_elem(_subset_at(write_edge, post_node)) != 1:
+        return None
+
+    # (2) chase the stored value back to an array element indexed by the iteration variable. Only a
+    #     staging transient whose own single write ALREADY RAN may be looked through, so a
+    #     self-referencing update (an accumulation) and a value written later in the body both
+    #     dead-end here rather than being mistaken for a delay.
+    loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
+    cur_si, cur_node, cur_sub = wsi, write_edge.src, _subset_at(write_edge, write_edge.src)
+    chase: List[Tuple[SDFGState, nodes.AccessNode]] = [(write_state, post_node)]
+    touched: Dict[str, None] = {accum: None}
+    src_data = src_subset = None
+    for _ in range(_ROTATION_CHASE_LIMIT):
+        if not isinstance(cur_node, nodes.AccessNode) or cur_sub is None:
+            return None
+        cdesc = sdfg.arrays.get(cur_node.data)
+        if cdesc is None:
+            return None
+        if _uses(cur_sub, loop_var):
+            src_data, src_subset = cur_node.data, cur_sub
+            break
+        if not cdesc.transient or _one_elem(cur_sub) != 1:
+            return None
+        staged = _body_writes(chain, cur_node.data)
+        if len(staged) != 1:
+            return None
+        ssi, _sstate, snode, sedge = staged[0]
+        if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
+            return None  # written LATER in the body -> a carried value, not this iteration's
+        if _one_elem(_subset_at(sedge, snode)) != 1:
+            return None
+        # The whole staging container dies with the update; (6) below proves nothing else reads it.
+        chase.extend((st, n) for _si, st, n in _body_nodes(chain, cur_node.data))
+        touched[cur_node.data] = None
+        cur_si, cur_node, cur_sub = ssi, sedge.src, _subset_at(sedge, sedge.src)
+    if src_data is None:
+        return None
+    if sdfg.arrays[src_data].dtype != desc.dtype:
+        return None  # the copy into the scalar CONVERTS; reading the source direct would skip that
+    touched[src_data] = None
+
+    # (3) the source must still hold, at ``i - stride``, what iteration ``i - stride`` read. A write
+    #     to it inside the loop breaks that -- an in-place delay line reads the PRE-write version.
+    if _body_writes(chain, src_data):
+        return None
+    shifted = copy.deepcopy(src_subset)
+    shifted.replace({loop_var: loop_var - stride})
+    if str(shifted) == str(src_subset):
+        return None  # not actually shifted -> a same-iteration copy, no delay to remove
+
+    # (4) every read must see the ENTRY value: nothing may read the version the update wrote, and
+    #     no read may be ordered after it. Decided by dataflow + block order, never source order.
+    reads: List[Tuple[SDFGState, nodes.AccessNode]] = []
+    reachable_from_write = dict.fromkeys(sdutil.dfs_conditional(write_state, sources=[post_node]))
+    written_slot = str(_subset_at(write_edge, post_node))
+    for si, st, n in _body_nodes(chain, accum):
+        if n is post_node:
+            continue
+        outs = st.out_edges(n)
+        if not outs:
+            continue
+        if any(e.data is None or e.data.is_empty() for e in outs):
+            return None  # an ordering edge OUT of a version the rewrite deletes loses its order
+        if si > wsi or (si == wsi and n in reachable_from_write):
+            return None  # this read observes the POST-update value: b[i], not b[i - stride]
+        if any(str(_subset_at(e, n)) != written_slot for e in outs):
+            return None  # reads a different slot than the update writes
+        reads.append((st, n))
+    if write_state.out_edges(post_node):
+        return None  # read AFTER the write (value is b[i]), or an ordering edge we would drop
+
+    # (5) nothing after the loop may read the value the deleted update used to leave behind.
+    if _read_after_loop(parent, loop, sdfg, accum):
+        return None
+
+    # (6) the staging transients the update alone keeps alive must have no other consumer.
+    for container in touched:
+        if container in (accum, src_data):
+            continue
+        if sum(len(_data_edges(st.out_edges(n))) for _si, st, n in _body_nodes(chain, container)) != 1:
+            return None
+        if _read_after_loop(parent, loop, sdfg, container):
+            return None
+    return RotationPlan(accum, src_data, shifted, post_node, write_state, chase, reads, list(touched))
+
+
+def delete_rotation_update(chain: List[SDFGState], plan: RotationPlan) -> None:
+    """Drop the delay line's update -- and the staging nodes only it kept alive -- from the body.
+
+    Runs BEFORE the peel, which is not an implementation detail: the peeled iteration is a CLONE of
+    the body, and once every read is a shifted array read the update is dead in the CLONE TOO (gate
+    (5) proved nothing past the loop reads the carry). Peeling first would leave that dead write
+    behind, and a dead write to a carried scalar is not inert -- ``ScalarFission`` reads the peeled
+    iteration's entry read and its own trailing write as one version, and the read then comes from
+    an unwritten container.
+    """
+    for st, n in plan.chase:
+        if n in dict.fromkeys(st.nodes()):
+            st.remove_node(n)
+    # What fed the update is now an access node holding only ordering edges to a write that no
+    # longer exists -- vacuous, so it goes too. Restricted to the containers this rewrite touched,
+    # so the pass never quietly prunes dataflow it did not create.
+    for st in chain:
+        for n in list(st.nodes()):
+            if not isinstance(n, nodes.AccessNode) or n.data not in plan.touched:
+                continue
+            if st.out_degree(n) == 0 and not _data_edges(st.in_edges(n)):
+                st.remove_node(n)
+
+
+def shift_rotation_reads(plan: RotationPlan) -> None:
+    """Rewire every read of the carried scalar to the source element one stride back.
+
+    The read's ORDERING edges move with it: they sequence the CONSUMER, not the scalar, so dropping
+    them would lose the order they enforce (in a two-stage delay line they are the WAR guard on the
+    stage this very read feeds).
+    """
+    from dace import memlet as mm
+
+    for st, n in plan.reads:
+        new_src = st.add_access(plan.src_data)
+        for e in list(st.out_edges(n)):
+            if isinstance(e.dst, nodes.AccessNode):
+                memlet = mm.Memlet(data=plan.src_data,
+                                   subset=copy.deepcopy(plan.src_subset),
+                                   other_subset=copy.deepcopy(_subset_at(e, e.dst)))
+            else:
+                memlet = mm.Memlet(data=plan.src_data, subset=copy.deepcopy(plan.src_subset))
+            st.remove_edge(e)
+            st.add_edge(new_src, None, e.dst, e.dst_conn, memlet)
+        for e in list(st.in_edges(n)):
+            st.remove_edge(e)
+            st.add_edge(e.src, e.src_conn, new_src, None, copy.deepcopy(e.data))
+        st.remove_node(n)
+
+
+def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, budget: Dict[Any, int]) -> bool:
+    """Peel one iteration off ``loop`` and replace one carried delay line by a shifted array read.
+
+    ``budget`` maps a loop to the peels it has left; a multi-stage delay line spends one per stage.
+    """
+    from dace.transformation.interstate.loop_peeling import LoopPeeling
+    from dace.transformation.passes.parallelization_prep import _constant_trip_count, _unique_block_label
+
+    if not loop.loop_variable or budget.get(loop, 0) <= 0:
+        return False
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None or stride == 0:
+        return False
+    chain = rotation_body_chain(loop)
+    if chain is None:
+        return False
+
+    # Deterministic candidate order: body-block order, then node order inside each state. The pass
+    # restarts after every rewrite, so which carried scalar is taken first decides which shapes the
+    # NEXT round still matches -- iterating a hash-ordered set would make that a PYTHONHASHSEED flip.
+    candidates = dict.fromkeys(n.data for st in chain for n in st.nodes() if isinstance(n, nodes.AccessNode))
+    for accum in candidates:
+        plan = plan_rotation(parent, loop, sdfg, chain, accum, stride)
+        if plan is None:
+            continue
+        # ``LoopPeeling`` does NOT guard the peeled iteration, so peeling also asserts the loop runs
+        # at least once -- the assumption ``peel_limit`` already licenses for BestEffortLoopPeeling.
+        # Where the trip count is known, check it instead of assuming it.
+        trip = _constant_trip_count(loop, sdfg)
+        if trip is not None and trip < 1:
+            return False
+        # The peel is the only step that can still fail, and it runs BETWEEN the two halves of the
+        # rewrite -- so probe its one raising step (the new loop start) while the SDFG is still
+        # untouched, rather than discovering it half-applied.
+        try:
+            symbolic.evaluate(start + stride, sdfg.constants)
+        except Exception:
+            return False
+        # ``LoopPeeling`` names the peeled iteration after the loop, so a second peel on the same
+        # loop -- which a two-stage delay line needs -- would mint a duplicate block label. Rename
+        # the remainder first, exactly as ``BestEffortLoopPeeling`` does for its front/back pair.
+        peel_prefix = f'{loop.label}_{loop.loop_variable}'
+        if any(b.label.startswith(peel_prefix) for b in loop.sdfg.all_control_flow_blocks()):
+            loop.label = _unique_block_label(loop.sdfg, loop.label)
+        # Order matters: the update is dead everywhere once the reads are closed, so it goes before
+        # the peel CLONES the body; the reads shift only in the loop, which the peel has narrowed
+        # to the iterations where the shifted read is in range.
+        delete_rotation_update(chain, plan)
+        LoopPeeling().apply_to(sdfg=loop.sdfg, loop=loop, verify=False, options={'count': 1, 'begin': True})
+        shift_rotation_reads(plan)
+        budget[loop] -= 1
+        return True
+    return False
+
+
+@properties.make_properties
+@xf.explicit_cf_compatible
+class LoopCarriedRotationSubstitution(ppl.Pass):
+    """Replace a loop-carried delay-line scalar by a shifted read of the array that fed it.
+
+    Removes the carry that makes ``LoopToMap`` refuse the loop; see the section comment above for
+    the shape, the rewrite, and the gate that keeps a reduction from being rewritten as one.
+    """
+
+    CATEGORY: str = 'Optimization Preparation'
+
+    peel_limit = properties.Property(dtype=int,
+                                     default=4,
+                                     desc='Iterations this pass may peel off one loop, which also bounds the delay '
+                                     'depth a rotation may have (0 disables the pass). Peeling is what makes the '
+                                     'shifted read valid on the first iteration.')
+
+    def __init__(self, peel_limit: int = 4):
+        super().__init__()
+        self.peel_limit = peel_limit
+
+    def modifies(self) -> ppl.Modifies:
+        return ppl.Modifies.CFG | ppl.Modifies.Nodes | ppl.Modifies.Memlets
+
+    def should_reapply(self, modified: ppl.Modifies) -> bool:
+        return False
+
+    def apply_pass(self, sdfg: SDFG, _) -> Optional[int]:
+        if self.peel_limit <= 0:
+            return None
+        # Fixed point: a multi-stage delay line only reveals its outer stage once the inner one is
+        # gone (``y = x`` becomes ``y = b[i-1]``), so re-scan until nothing matches. Every rewrite
+        # removes one carried scalar and spends one peel, so this terminates.
+        budget: Dict[Any, int] = {}
+        count = 0
+        while True:
+            for node, parent in list(sdfg.all_nodes_recursive()):
+                if not isinstance(node, LoopRegion) or _loop_has_break_or_continue(node):
+                    continue
+                budget.setdefault(node, self.peel_limit)
+                if try_substitute_rotation(parent, node, sdfg, budget):
+                    count += 1
+                    break  # SDFG mutated -> restart the scan on a fresh node list
+            else:
+                break
+        return count or None
