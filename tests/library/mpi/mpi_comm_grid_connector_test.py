@@ -16,6 +16,10 @@ from dace.libraries.mpi.nodes.comm_f2c import CommF2c
 from dace.libraries.mpi.nodes.redistribute import Redistribute
 import dace.frontend.python.replacements.mpi as comm_repl
 
+# Routed to the MPI-capable heterogeneous runner (``-m mpi`` under mpirun), like every other
+# tests/library/mpi test -- even though these are codegen-only checks with no MPI runtime.
+pytestmark = pytest.mark.mpi
+
 # Comm-argument spellings of the wired connectors; used to prove a connector is
 # (or is not) the communicator of an emitted MPI call.  Matching the bare name is
 # ambiguous (e.g. ``int _commsize;`` contains ``_comm``), so we look for the
