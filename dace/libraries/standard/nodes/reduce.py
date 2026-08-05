@@ -757,8 +757,8 @@ class ExpandReduceCUDADevice(pm.ExpandTransformation):
         # Reduce fn: query temp-storage size, fetch from per-stream ReduceTag pool
         # (lazy alloc new streams, grow in place on demand), then run CUB.
         cuda_globalcode.write("""
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
-void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
+DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
+cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream)
 {{
     size_t _cub_needed = 0;
     cub::{reduce_type}::{kname}(nullptr, _cub_needed,
@@ -779,7 +779,7 @@ void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, 
         # Write reduction function definition in caller file
         host_globalcode.write(
             """
-DACE_EXPORTED void __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
+DACE_EXPORTED cudaError_t __dace_reduce_{id}({intype} *input, {outtype} *output, {reduce_range_def}, cudaStream_t stream);
         """.format(id=idstr,
                    reduce_range_def=reduce_range_def,
                    intype=input_data.dtype.ctype,

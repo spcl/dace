@@ -310,18 +310,14 @@ def _num_conditionals(sdfg) -> int:
     return len({n for n in sdfg.all_control_flow_blocks() if isinstance(n, ConditionalBlock)})
 
 
-# Guards that are a contradiction over ``i in [2, 9]`` -- the guarded branch never runs. One per
-# ``_cmp_verdict`` sub-check, each sitting on the exact boundary that check decides (``c`` one past
-# ``start`` / ``end``, or on it), plus the operands-reversed form.
-_RANGE_CONTRADICTION = ["i == 1", "i == 10", "i < 2", "i <= 1", "i > 9", "i >= 10", "0 == i"]
+# Guards that are a contradiction over ``i in [2, 9]`` -- the guarded branch never runs.
+_RANGE_CONTRADICTION = ["i == 0", "i == 1", "i == 10", "i == 100", "i < 2", "i <= 1", "i > 9", "i >= 10", "0 == i"]
 
-# Guards that are a tautology over ``i in [2, 9]`` -- the guarded branch always runs. One per
-# ``_cmp_verdict`` sub-check that returns ``'true'``, plus the ``not(...)`` verdict flip.
+# Guards that are a tautology over ``i in [2, 9]`` -- the guarded branch always runs.
 _RANGE_TAUTOLOGY = ["not (i == 0)", "i != 0", "i < 10", "i <= 9", "i > 1", "i >= 2", "i != 100"]
 
-# Guards genuinely data-dependent over ``i in [2, 9]`` -- must NOT be folded. ``i == 9`` is on the
-# boundary: an off-by-one in the ``Eq`` end check (``nonneg`` for ``pos``) would wrongly fold it.
-_RANGE_RUNTIME = ["i < 4", "i > 6", "i == 9"]
+# Guards genuinely data-dependent over ``i in [2, 9]`` -- must NOT be folded.
+_RANGE_RUNTIME = ["i == 5", "i < 4", "i > 6", "i == 9"]
 
 
 @pytest.mark.parametrize("cond", _RANGE_CONTRADICTION)
@@ -346,12 +342,10 @@ def test_iteration_range_tautology_single_branch_lifted(cond: str):
     assert _num_conditionals(sdfg) == 0
 
 
-def test_iteration_range_contradiction_if_else_keeps_else():
-    """An ``if/else`` whose guard is a range contradiction keeps only the else body.
-
-    Structural axis only -- the guard forms are swept against the single-branch shape above, and the
-    verdict machinery (``_range_verdict``) does not look at the branch count."""
-    sdfg = _get_loop_with_conditional("i == 0", with_else=True)
+@pytest.mark.parametrize("cond", _RANGE_CONTRADICTION)
+def test_iteration_range_contradiction_if_else_keeps_else(cond: str):
+    """An ``if/else`` whose guard is a range contradiction keeps only the else body."""
+    sdfg = _get_loop_with_conditional(cond, with_else=True)
     sdfg.validate()
     LiftTrivialIf().apply_pass(sdfg, {})
     sdfg.validate()

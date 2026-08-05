@@ -51,10 +51,15 @@ namespace _detail {
 /// is called for that ``Tag``.
 template<typename Tag>
 inline void *get_scratch(std::size_t bytes_needed, cudaStream_t stream = 0) {
+    // Keyed per stream, and the default/null stream (0) is just another key -- entries never share.
     auto &e = _detail::pool_map<Tag>()[stream];
-    if (bytes_needed > e.bytes) {
+    // ``!e.storage`` and the 1-byte floor are both load-bearing: CUB reads a NULL workspace as "only
+    // report the size" and leaves the output untouched, so handing back a null pointer turns the
+    // reduction into a silent no-op rather than an error. A zero-byte request hits that twice --
+    // ``0 > 0`` skips the allocation, and cudaMalloc(0) hands back null anyway.
+    if (bytes_needed > e.bytes || !e.storage) {
         if (e.storage) cudaFree(e.storage);
-        cudaMalloc(&e.storage, bytes_needed);
+        cudaMalloc(&e.storage, bytes_needed ? bytes_needed : 1);
         e.bytes = bytes_needed;
     }
     return e.storage;

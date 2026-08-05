@@ -112,25 +112,6 @@ class PAPIInstrumentation(InstrumentationProvider):
         # Linking libpapi is declared by the PAPI environment, which the caller registers.
         self._papi_used = True
 
-    def configure_papi_native(self):
-        #same as configure_papi but we skip the check for available counters to enable using native events
-        PAPIInstrumentation._counters &= self._counters
-
-        # Compiler arguments for vectorization output
-        if Config.get_bool('instrumentation', 'papi', 'vectorization_analysis'):
-            Config.append('compiler', 'cpu', 'args', value=' -fopt-info-vec-optimized-missed=../perf/vecreport.txt ')
-
-        # If no PAPI counters are available, disable PAPI
-        if len(self._counters) == 0:
-            self._papi_used = False
-            warnings.warn('No PAPI counters found. Disabling PAPI')
-            return
-
-        # Link with libpapi
-        Config.append('compiler', 'cpu', 'libs', value=' papi ')
-
-        self._papi_used = True
-
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
         if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and PAPIUtils.is_papi_used(
                 sdfg):

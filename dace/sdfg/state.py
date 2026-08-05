@@ -929,16 +929,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets. The whole tree, not one hop out of
-                # the exit: with a nested scope (an inserted thread-block map) the next hop still
-                # carries the inner Memlet, and only the edge leaving the outermost exit names the
-                # data. Branches are why this is the tree and not the path -- one write can leave
-                # through several exits.
-                additional_descs = {
-                    oedge.data.data: sdfg.arrays[oedge.data.data]
-                    for oedge in graph.memlet_tree(edge) if not isinstance(oedge.dst, nd.ExitNode)
-                    and not oedge.data.is_empty() and oedge.data.data not in descs
-                }
+                # Same case as above, but for outgoing Memlets. Every edge on the matching connector
+                #   is inspected, since the data can go to more than one destination, and each is
+                #   followed to where it lands: one hop still names the inner transient whenever the
+                #   write leaves through more than one exit, as it does in a tiled map.
+                additional_descs = {}
+                connector_to_look = "OUT_" + edge.dst_conn[3:]
+                for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
+                    outermost = self.graph.memlet_path(oedge)[-1].data
+                    if ((not outermost.is_empty()) and (outermost.data not in descs)
+                            and (outermost.data not in additional_descs)):
+                        additional_descs[outermost.data] = sdfg.arrays[outermost.data]
 
             else:
                 # Case is ignored.

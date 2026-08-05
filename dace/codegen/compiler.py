@@ -25,7 +25,6 @@ from functools import lru_cache
 
 import dace
 from dace.config import Config
-from dace.codegen import build_cache
 from dace.codegen import command_db
 from dace.codegen import compiler_family
 from dace.codegen import exceptions as cgx
@@ -308,7 +307,6 @@ def seed_cmake_configure(build_folder: str, key: str) -> bool:
         with open(os.path.join(build_folder, 'CMakeCache.txt'), 'w') as fp:
             fp.write(cache)
         shutil.copytree(os.path.join(entry, 'CMakeFiles'), os.path.join(build_folder, 'CMakeFiles'), dirs_exist_ok=True)
-        build_cache.touch(entry)
         return True
     except OSError:
         shutil.rmtree(os.path.join(build_folder, 'CMakeFiles'), ignore_errors=True)
@@ -331,7 +329,6 @@ def publish_cmake_configure(build_folder: str, key: str) -> None:
         shutil.copy2(os.path.join(build_folder, 'CMakeCache.txt'), staging)
         shutil.copytree(versions[0], os.path.join(staging, 'CMakeFiles', os.path.basename(versions[0])))
         os.rename(staging, entry)  # atomic, and loses harmlessly to a concurrent publisher
-        build_cache.prune(os.path.join(build_cache_root(), 'configure'))
     except OSError:
         shutil.rmtree(staging, ignore_errors=True)
 
@@ -371,10 +368,6 @@ def prepare_precompiled_header(targets) -> Optional[str]:
                            check=True,
                            capture_output=True)
             os.replace(staging, header + '.gch')
-            # ~110 MB just landed in the cache, whose default root is RAM. Bound it here, at the
-            # only point where it grows.
-            build_cache.prune(os.path.join(build_cache_root(), 'pch'))
-        build_cache.touch(pch)
         return pch
     except (OSError, subprocess.SubprocessError):
         return None
@@ -603,10 +596,6 @@ def cmake_configure_and_build(
     cmake_command.append("-DDACE_LIBS=\"{}\"".format(" ".join(sorted(libraries))))
     cmake_command.append(f"-DDACE_CMAKE_FILES=\"{';'.join(cmake_files)}\"")
     cmake_command.append(f"-DCMAKE_BUILD_TYPE={Config.get('compiler', 'build_type')}")
-    # Additive static archive next to the .so (opt-in; matches native build mode). Part of the
-    # command ``shape`` below, so a static-archive build never reuses a non-archive recording.
-    cmake_command.append(
-        "-DDACE_STATIC_ARCHIVE={}".format("ON" if Config.get_bool('compiler', 'static_archive') else "OFF"))
     # Free -- the generator already knows the commands -- and lets tooling see a generated source's
     # exact compile flags.
     cmake_command.append("-DCMAKE_EXPORT_COMPILE_COMMANDS=ON")
@@ -657,13 +646,6 @@ def cmake_configure_and_build(
                 command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
 
 
-#: Program folders this process built that no later run could ever address, dropped on the way out.
-#: Not tied to ``CompiledSDFG`` lifetime: CPython frees that object through the garbage collector,
-#: so "the folder goes when the handle goes" is not a moment anything can observe -- a reference
-#: cycle anywhere in the call graph defers it arbitrarily.
-_disposable_folders: Set[str] = set()
-
-
 def build_folder_is_disposable(sdfg: 'dace.SDFG') -> bool:
     """Whether ``sdfg``'s build folder is garbage the moment this process is done with it.
 
@@ -677,6 +659,10 @@ def build_folder_is_disposable(sdfg: 'dace.SDFG') -> bool:
     An explicitly assigned build folder is the caller's, never ours to remove.
     """
     return sdfg.build_folder_is_default and Config.get('cache') == 'unique'
+
+
+#: Build folders this process created under a disposable cache policy, dropped at exit.
+_disposable_folders: Set[str] = set()
 
 
 def register_disposable_folder(sdfg: 'dace.SDFG') -> None:

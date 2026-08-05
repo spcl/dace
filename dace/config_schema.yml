@@ -187,6 +187,24 @@ required:
                 description: >
                     Number of spaces used when indenting generated code.
 
+            precompiled_header:
+                type: bool
+                default: true
+                title: Precompile the DaCe runtime header
+                description: >
+                    Precompile ``<dace/dace.h>`` once per compiler and flag set and force-include it
+                    into generated host sources. An optimization: a header that does not match the
+                    translation unit is ignored, producing the same object.
+
+            configure_cache:
+                type: bool
+                default: true
+                title: Reuse CMake configure results across builds
+                description: >
+                    Seed each build folder with the compiler and ``find_package`` results of an
+                    earlier build of the same shape. An optimization: without a usable entry CMake
+                    configures from scratch.
+
             command_cache:
                 type: bool
                 default: true
@@ -196,17 +214,21 @@ required:
                     for later SDFGs, skipping CMake. An optimization: a missing or mismatched entry
                     falls back to a full build.
 
+            build_jobs:
+                type: int
+                default: 4
+                title: Parallel compile jobs
+                description: >
+                    Translation units compiled concurrently. Small by default: builds share
+                    machines, and each generated-source compile can use a lot of memory.
+
             build_type:
                 type: str
                 default: Release
                 title: Build configuration
                 description: >
-                    Configuration type for the build (can be Debug, Release,
-                    RelWithDebInfo, or MinSizeRel). The build type is the single
-                    source of the optimization level -- compiler.cpu.args carries
-                    only non-optimization flags -- so Release compiles at -O3,
-                    RelWithDebInfo at -O2 -g, Debug at -O0 -g, MinSizeRel at -Os.
-
+                    CMake build type (Debug, Release, RelWithDebInfo, MinSizeRel). Sole source of
+                    the optimization level; ``args`` add to it.
             build_mode:
                 type: str
                 default: cmake
@@ -218,39 +240,6 @@ required:
                     subprocess, skipping cmake configure overhead. "native" is
                     Linux-only and CUDA-only for GPU (no HIP); it errors clearly on
                     anything it cannot resolve without cmake.
-
-            precompiled_header:
-                type: bool
-                default: true
-                title: Precompile the DaCe runtime header
-                description: >
-                    Precompile ``<dace/dace.h>`` once per (compiler, flags) into a
-                    machine-global cache and force-include it into generated host
-                    sources. The runtime umbrella header is most of the compile time
-                    of a small kernel, so this roughly halves it -- but only because
-                    the result is cached across SDFGs: building the header costs more
-                    than it saves for a single translation unit.
-
-                    Purely an optimization. If the cached header does not match the
-                    flags a translation unit is compiled with, the compiler ignores it
-                    and compiles normally, producing the same object.
-
-                    The cache lives in ``/dev/shm`` (falling back to the user cache
-                    directory); override the root with ``DACE_BUILD_CACHE_DIR``.
-
-            configure_cache:
-                type: bool
-                default: true
-                title: Reuse CMake configure results across builds
-                description: >
-                    Seed each fresh build folder with the CMake compiler/ABI detection
-                    and ``find_package`` results of an earlier build configured the
-                    same way, instead of rediscovering them for every SDFG. Turns a
-                    full configure into a reconfigure.
-
-                    Purely an optimization: with no cached entry, or a stale one, CMake
-                    simply does the full job again. Shares ``DACE_BUILD_CACHE_DIR``
-                    with ``precompiled_header``. Applies to ``build_mode: cmake``.
 
             static_archive:
                 type: bool
@@ -266,13 +255,6 @@ required:
                     dlopen. Off by default; supported in both ``native`` and
                     ``cmake`` build modes.
 
-            build_jobs:
-                type: int
-                default: 4
-                title: Parallel compile jobs for the CMake build
-                description: >
-                    Translation units compiled concurrently. Small by default: builds share
-                    machines, and each generated-source compile can use a lot of memory.
 
             allow_shadowing:
                 type: bool
@@ -408,10 +390,12 @@ required:
                         title: Arguments
                         description: >
                             Flags on top of the build type; no ``-O`` (that comes from
-                            ``compiler.build_type``). ``default_<family>`` applies for that
-                            host compiler, since nvc++ rejects several switches below.
-                        default: '-fPIC -Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
-                        default_nvhpc: '-fPIC -Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
+                            ``compiler.build_type``) and no ``-fPIC`` (CMake adds it for every
+                            language, from ``CMAKE_POSITION_INDEPENDENT_CODE``).
+                            ``default_<family>`` applies for that host compiler, since nvc++
+                            rejects several switches below.
+                        default: '-Wall -Wextra -march=native -fno-math-errno -fno-trapping-math -fno-signed-zeros -freciprocal-math -Wno-unused-parameter -Wno-unused-label'
+                        default_nvhpc: '-Wall -Wextra -march=native -fno-signed-zeros -Mfprelaxed=recip -Wno-unused-parameter'
                         default_Windows: '/fp:precise /arch:AVX2 /D_USRDLL /D_WINDLL /D__restrict__=__restrict'
 
                     libs:
@@ -1047,27 +1031,24 @@ required:
                         title: hipcc Arguments
                         description: >
                             hipcc flags on top of the build type; no ``-O`` (that comes from
-                            ``compiler.build_type``). Host flags are not listed here: DaCe forwards
-                            ``compiler.cpu.args``, which hipcc takes directly.
-                        default: '-fPIC'
+                            ``compiler.build_type``) and no ``-fPIC`` (CMake adds it, from
+                            ``CMAKE_POSITION_INDEPENDENT_CODE``). Host flags are not listed here:
+                            DaCe forwards ``compiler.cpu.args``, which hipcc takes directly.
+                        default: ''
 
                     cuda_arch:
                         type: str
-                        title: Additional CUDA architectures
+                        title: CUDA architectures to compile for
                         description: >
-                            Additional CUDA architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: '60'
+                            If empty, the SDFG is compiled for the 'native' CUDA architecture.
+                        default: ''
 
                     hip_arch:
                         type: str
-                        title: Additional HIP architectures
+                        title: HIP architectures to compile for
                         description: >
-                            Additional HIP architectures (separated by commas)
-                            to compile GPU code for, excluding the current
-                            architecture on the compiling machine.
-                        default: 'gfx906'
+                            If empty, the SDFG build will detect the local HIP architecture.
+                        default: ''
 
                     default_block_size:
                         type: str
