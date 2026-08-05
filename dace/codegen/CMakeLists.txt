@@ -2,6 +2,11 @@
 cmake_minimum_required(VERSION 3.18)
 project(dace_program)
 
+# Every target here ends up in a dlopen'ed shared library, so PIC is not optional. Global rather
+# than a configurable compiler argument, which could drop it, and CMake spells it per compiler
+# (-fPIC for the host, -Xcompiler=-fPIC for nvcc).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # General options
 set(DACE_PROGRAM_NAME "dace_program" CACHE STRING "Name of DaCe program")
 set(DACE_SRC_DIR "" CACHE STRING "Root directory of generated code files")
