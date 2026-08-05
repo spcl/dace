@@ -60,12 +60,21 @@ def test_the_default_stream_is_synchronized_at_the_end_of_its_state():
                 'callback output while the device may still be writing it')
 
 
-def test_the_synchronization_follows_the_data_movement_it_guards():
-    """A sync emitted before the copy it is meant to cover orders nothing."""
+def test_the_synchronization_fences_the_callback_rather_than_preceding_it():
+    """A sync emitted before the work it guards orders nothing.
+
+    Anchored on the callback, the one thing both simplification settings emit alike: with
+    ``optimizer.automatic_simplification`` off the callback gets its own state and the copies around
+    it sit on a created stream, so there is no null-stream copy here to anchor on.
+    """
     code = callback_code()
-    last_copy = max(m.start() for m in re.finditer(r'MemcpyAsync\([^;]*nullptr\)', code))
+    callback = re.search(r'scale_on_its_own_stream\([A-Za-z_]\w*\);', code)
+    assert callback, 'the callback tasklet was not emitted, so this test is anchored on nothing'
     sync = re.search(r'StreamSynchronize\(nullptr\)', code)
-    assert sync and sync.start() > last_copy, 'the default-stream synchronization precedes the last copy on it'
+    assert sync, 'no default-stream synchronization was emitted'
+    assert sync.start() > callback.start(), 'the default-stream synchronization precedes the callback it guards'
+    assert not re.search(r'Async\([^;]*nullptr\)', code[sync.end():]), \
+        'work is queued on the default stream after the last synchronization of it'
 
 
 def test_the_default_stream_is_never_rendered_as_an_array_index():
@@ -89,6 +98,6 @@ def test_a_state_on_a_created_stream_still_synchronizes_that_stream():
 
 if __name__ == '__main__':
     test_the_default_stream_is_synchronized_at_the_end_of_its_state()
-    test_the_synchronization_follows_the_data_movement_it_guards()
+    test_the_synchronization_fences_the_callback_rather_than_preceding_it()
     test_the_default_stream_is_never_rendered_as_an_array_index()
     test_a_state_on_a_created_stream_still_synchronizes_that_stream()
