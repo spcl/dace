@@ -1489,19 +1489,25 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         :param config: The vectorizer configuration; its ``device`` / ``target_isa`` /
             ``assume_even`` are overridden with the GPU values.
         """
-        # GPU multidim DEFAULT (K=1): the ``branched_masked_tail`` remainder strategy -- one kernel
-        # with ``if(full-tile) -> mask-free (widened) tile body / else -> MASKED tile body`` -- so
+        # GPU multidim DEFAULT (K=1): the ``branched_tail`` remainder strategy -- one kernel with
+        # ``if(full-tile) -> mask-free (widened) tile body / else -> scalar tail`` -- so
         # vectorization works out of the box on ANY extent (assume_even=False, no RAISE on a
-        # provably-non-divisible extent, no second remainder kernel) AND an aligned iteration emits
-        # no scalar remainder loop. This is the ONLY place the device picks a strategy for the
-        # caller: the base :class:`VectorizeMultiDim` default (``masked_tail``) stays untouched, so
-        # the CPU path is unaffected. Applied only when the caller left that base default and the
-        # tile is single-dim; the branched strategies are K=1-only, so a K>1 request keeps the
-        # even-extent fast path. Any explicitly requested strategy is honored as given.
+        # provably-non-divisible extent, no second remainder kernel). This is the ONLY place the
+        # device picks a strategy for the caller: the base :class:`VectorizeMultiDim` default
+        # (``masked_tail``) stays untouched, so the CPU path is unaffected. Applied only when the
+        # caller left that base default and the tile is single-dim; the branched strategies are
+        # K=1-only, so a K>1 request keeps the even-extent fast path. Any explicitly requested
+        # strategy is honored as given.
+        #
+        # ``branched_masked_tail`` -- the same shape but with a MASKED tile as the else-arm, so an
+        # aligned iteration emits no scalar remainder loop at all -- is the intended destination and
+        # is reachable explicitly. It is NOT the default yet: it splits the map into a main body plus
+        # a tail body, which doubles the tile-op count the GPU tests assert on. Landing it means
+        # updating those expectations in the same change.
         resolved = config
         if (len(config.widths) == 1 and not config.assume_even
                 and coerce_remainder_strategy(config.remainder_strategy) == RemainderStrategy.MASKED_TAIL):
-            resolved = dataclasses.replace(config, remainder_strategy=RemainderStrategy.BRANCHED_MASKED_TAIL)
+            resolved = dataclasses.replace(config, remainder_strategy=RemainderStrategy.BRANCHED_TAIL)
         # A branched strategy handles the non-divisible extent itself, so it must NOT run under
         # ``assume_even`` (which would instead RAISE on the provably-non-divisible case). Every
         # other strategy keeps the even-extent fast path (single strided map, no remainder).
