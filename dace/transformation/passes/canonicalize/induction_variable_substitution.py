@@ -1262,21 +1262,58 @@ def _try_substitute_iedge_iv(parent: ControlFlowRegion, loop: LoopRegion, sdfg: 
 # ``y = b[i-1]`` -- itself now a rotation -- which the second round closes to ``b[i-2]``, peeling
 # one more iteration. Each round peels exactly one iteration, so the cumulative peel is the delay
 # depth.
+#
+# REMATERIALIZATION (TSVC ``s252``). The carried value need not be an array element: it can be the
+# previous iteration's value of a COMPUTED transient::
+#
+#     t = 0.0
+#     for i in range(N):
+#         s = b[i] * c[i]
+#         a[i] = s + t     # t holds b[i-1] * c[i-1] here
+#         t = s
+#
+# The closed form is the producer re-evaluated one iteration back -- ``b[i-1] * c[i-1]`` -- so the
+# read is replaced by a CLONE of the producer tasklet whose own reads are shifted, instead of by a
+# single shifted read. Everything above still applies; recomputation adds two failure modes the
+# shifted read does not have, and :func:`rematerializable_producer` refuses both outright:
+#
+# * a second evaluation DUPLICATES whatever the producer does besides writing its output. So the
+#   accepted producer language is one ``__out = <arithmetic over the input connectors>`` assignment
+#   -- no calls at all (a call may be a dace callback), no side effects, one output connector, and
+#   no reference to the iteration variable in the code (which the clone would have to rewrite);
+# * the clone reads its inputs LATE, so any container the body itself writes would be re-read after
+#   the overwrite -- ``b[i] = ...; t = b[i] * c[i]`` does not rematerialize to ``b[i-1] * c[i-1]``.
+#   Every producer input container must therefore be unwritten in the whole body, which is also what
+#   refuses a producer fed by the carry itself (``t = t + s`` is a REDUCTION: ``t`` is written in the
+#   body, so its own producer input is rejected) or by another carried scalar.
+#
+# Only a one-level staging chain rematerializes (update <- transient <- producer tasklet); a deeper
+# one dead-ends here exactly as it dead-ends in the shifted-read chase.
 
 #: How far the update's stored value may be chased back through staging transients before giving up.
 _ROTATION_CHASE_LIMIT = 4
 
 
+class RematSource(NamedTuple):
+    """A pure producer tasklet to re-evaluate at ``i - stride`` in place of the carried read."""
+    producer: nodes.Tasklet  #: tasklet that computed the value the update stored
+    out_conn: str  #: its single output connector
+    inputs: list[tuple[str, str, subsets.Subset]]  #: (connector, container, subset ALREADY shifted back)
+    dtype: dtypes.typeclass  #: element type the clone's result is stored as
+    stage: nodes.AccessNode | None  #: transient version the update read from, when it dies with the update
+
+
 class RotationPlan(NamedTuple):
     """The validated rewrite for one loop-carried rotation (delay-line) scalar."""
     accum: str  #: the carried scalar container
-    src_data: str  #: array the rotated value comes from
-    src_subset: subsets.Subset  #: the element to read, ALREADY shifted back by one stride
+    src_data: str | None  #: array the rotated value comes from (``None`` when rematerializing)
+    src_subset: subsets.Subset | None  #: the element to read, ALREADY shifted back by one stride
     post_node: nodes.AccessNode  #: the accumulator version the update writes
     write_state: SDFGState  #: body state holding that write
     chase: List[Tuple[SDFGState, nodes.AccessNode]]  #: nodes only the update keeps alive
     reads: List[Tuple[SDFGState, nodes.AccessNode]]  #: entry versions whose reads shift back
     touched: List[str]  #: containers the rewrite may leave dangling
+    remat: RematSource | None = None  #: producer to clone, when the carried value is computed
 
 
 def _data_edges(edges) -> List[Any]:
@@ -1382,6 +1419,113 @@ def _body_writes(chain: List[SDFGState], container: str) -> List[Tuple[int, SDFG
     return [(si, st, n, e) for si, st, n in _body_nodes(chain, container) for e in _data_edges(st.in_edges(n))]
 
 
+def reaches(state: SDFGState, src: nodes.Node, dst: nodes.Node) -> bool:
+    """Whether ``dst`` is downstream of ``src`` in ``state`` -- so ``src`` provably ran first."""
+    return dst in dict.fromkeys(sdutil.dfs_conditional(state, sources=[src]))
+
+
+def pure_producer(sdfg: SDFG, tasklet: nodes.Tasklet, out_conn: str | None, loop_var) -> bool:
+    """Whether ``tasklet`` may be EVALUATED A SECOND TIME, on another iteration's inputs.
+
+    A clone runs the code again, so anything the original does beyond writing its output connector is
+    duplicated. Rather than classify what is duplicable, the accepted language is one
+    ``__out = <arithmetic over the input connectors>`` assignment -- which is what the delay-line
+    producers in the corpus are. A CALL is refused outright even when it looks pure: a name that
+    resolves to a dace callback is a side effect, and telling the two apart is exactly the judgement
+    this refusal avoids.
+    """
+    if len(tasklet.out_connectors) != 1 or out_conn is None or out_conn not in tasklet.out_connectors:
+        return False
+    if tasklet.code.language != dtypes.Language.Python:
+        return False
+    if str(loop_var) in tasklet.free_symbols:
+        return False  # the code itself moves with the iteration; the clone would need it rewritten
+    if tasklet.has_side_effects(sdfg):
+        return False
+    try:
+        tree = ast.parse((tasklet.code.as_string or '').strip())
+    except SyntaxError:
+        return False
+    if len(tree.body) != 1 or not isinstance(tree.body[0], ast.Assign):
+        return False
+    assign = tree.body[0]
+    target = assign.targets[0] if len(assign.targets) == 1 else None
+    if not isinstance(target, ast.Name) or target.id != out_conn:
+        return False
+    for node in ast.walk(assign.value):
+        if isinstance(node, ast.Call):
+            return False
+        if isinstance(node, ast.Name) and node.id not in tasklet.in_connectors and node.id not in sdfg.symbols:
+            return False  # a free name that is neither an input nor a symbol is unmodelled state
+    return True
+
+
+def rematerializable_producer(sdfg: SDFG, chain: list[SDFGState], accum: str, loop_var, stride, wsi: int,
+                              write_edge) -> RematSource | None:
+    """The producer whose re-evaluation at ``i - stride`` equals the value ``write_edge`` stores.
+
+    Disjoint from the shifted-read chase in :func:`plan_rotation` by construction: this requires the
+    update's source to be a transient at a subset that does NOT move with the iteration variable and
+    whose single writer is a TASKLET -- the shape on which that chase dead-ends. Mutates nothing.
+    """
+    # Cheap structural refusals first; the dataflow walk and the symbolic shift come last.
+    stage = write_edge.src
+    if not isinstance(stage, nodes.AccessNode):
+        return None
+    sdesc = sdfg.arrays.get(stage.data)
+    stage_sub = _subset_at(write_edge, stage)
+    if sdesc is None or stage_sub is None or _one_elem(stage_sub) != 1:
+        return None
+    if not sdesc.transient or _uses(stage_sub, loop_var):
+        return None  # a subset moving with i is the DIRECT shifted read, which the chase handles
+    if sdesc.dtype != sdfg.arrays[accum].dtype:
+        return None  # the copy into the carry CONVERTS; a clone feeding the reads would skip that
+    staged = _body_writes(chain, stage.data)
+    if len(staged) != 1:
+        return None
+    ssi, sstate, snode, sedge = staged[0]
+    producer = sedge.src
+    if not isinstance(producer, nodes.Tasklet) or _one_elem(_subset_at(sedge, snode)) != 1:
+        return None
+    if ssi > wsi:
+        return None  # produced LATER in the body -> the update stored a CARRIED value, not this one
+    if ssi == wsi and snode is not stage and not reaches(sstate, snode, stage):
+        return None  # two versions in one state, and no dataflow path proves the producer's write ran
+    if not pure_producer(sdfg, producer, sedge.src_conn, loop_var):
+        return None
+
+    inputs: list[tuple[str, str, subsets.Subset]] = []
+    shifts = 0
+    for e in sstate.in_edges(producer):
+        if e.data is None or e.data.is_empty():
+            return None  # an ordering edge into the producer has no home on the clone
+        src = e.src
+        if not isinstance(src, nodes.AccessNode) or e.dst_conn is None:
+            return None
+        sub = _subset_at(e, src)
+        if sub is None or _one_elem(sub) != 1:
+            return None
+        # The clone reads LATE. Any body write to the container -- by this iteration or an earlier
+        # one -- means ``src[i - stride]`` no longer holds what iteration ``i - stride`` read. This is
+        # also what refuses a producer fed by the carry itself, or by any other carried scalar.
+        container: str = src.data
+        if _body_writes(chain, container):
+            return None
+        shifted: subsets.Subset = copy.deepcopy(sub)
+        shifted.replace({loop_var: loop_var - stride})
+        if str(shifted) != str(sub):
+            shifts += 1
+        inputs.append((e.dst_conn, container, shifted))
+    if not shifts or sorted(conn for conn, _, _ in inputs) != sorted(producer.in_connectors):
+        return None  # nothing moves with i (no delay to remove), or a connector reads nothing
+
+    # The staging version dies with the update only when the update is its sole consumer and it holds
+    # no value of its own; otherwise it stays and the update's write edge alone goes.
+    write_state = chain[wsi]
+    dies = write_state.out_degree(stage) == 1 and not _data_edges(write_state.in_edges(stage))
+    return RematSource(producer, sedge.src_conn, inputs, sdesc.dtype, stage if dies else None)
+
+
 def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain: List[SDFGState], accum: str,
                   stride) -> Optional[RotationPlan]:
     """Validate that ``accum`` is a delay line and enumerate the rewrite. Mutates nothing.
@@ -1402,52 +1546,63 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
     if _one_elem(_subset_at(write_edge, post_node)) != 1:
         return None
 
-    # (2) chase the stored value back to an array element indexed by the iteration variable. Only a
-    #     staging transient whose own single write ALREADY RAN may be looked through, so a
-    #     self-referencing update (an accumulation) and a value written later in the body both
-    #     dead-end here rather than being mistaken for a delay.
     loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
-    cur_si, cur_node, cur_sub = wsi, write_edge.src, _subset_at(write_edge, write_edge.src)
     chase: List[Tuple[SDFGState, nodes.AccessNode]] = [(write_state, post_node)]
     touched: Dict[str, None] = {accum: None}
-    src_data = src_subset = None
-    for _ in range(_ROTATION_CHASE_LIMIT):
-        if not isinstance(cur_node, nodes.AccessNode) or cur_sub is None:
-            return None
-        cdesc = sdfg.arrays.get(cur_node.data)
-        if cdesc is None:
-            return None
-        if _uses(cur_sub, loop_var):
-            src_data, src_subset = cur_node.data, cur_sub
-            break
-        if not cdesc.transient or _one_elem(cur_sub) != 1:
-            return None
-        staged = _body_writes(chain, cur_node.data)
-        if len(staged) != 1:
-            return None
-        ssi, _sstate, snode, sedge = staged[0]
-        if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
-            return None  # written LATER in the body -> a carried value, not this iteration's
-        if _one_elem(_subset_at(sedge, snode)) != 1:
-            return None
-        # The whole staging container dies with the update; (6) below proves nothing else reads it.
-        chase.extend((st, n) for _si, st, n in _body_nodes(chain, cur_node.data))
-        touched[cur_node.data] = None
-        cur_si, cur_node, cur_sub = ssi, sedge.src, _subset_at(sedge, sedge.src)
-    if src_data is None:
-        return None
-    if sdfg.arrays[src_data].dtype != desc.dtype:
-        return None  # the copy into the scalar CONVERTS; reading the source direct would skip that
-    touched[src_data] = None
+    src_data = shifted = None
 
-    # (3) the source must still hold, at ``i - stride``, what iteration ``i - stride`` read. A write
-    #     to it inside the loop breaks that -- an in-place delay line reads the PRE-write version.
-    if _body_writes(chain, src_data):
-        return None
-    shifted = copy.deepcopy(src_subset)
-    shifted.replace({loop_var: loop_var - stride})
-    if str(shifted) == str(src_subset):
-        return None  # not actually shifted -> a same-iteration copy, no delay to remove
+    # (2r) the stored value may be a COMPUTED transient instead of an array element, in which case
+    #      its closed form is the producer re-evaluated one iteration back. Tried first only because
+    #      it is disjoint from the chase below -- it demands the tasklet writer that chase refuses.
+    remat = rematerializable_producer(sdfg, chain, accum, loop_var, stride, wsi, write_edge)
+    if remat is not None:
+        if remat.stage is not None:
+            chase.append((write_state, remat.stage))
+    else:
+        # (2) chase the stored value back to an array element indexed by the iteration variable. Only
+        #     a staging transient whose own single write ALREADY RAN may be looked through, so a
+        #     self-referencing update (an accumulation) and a value written later in the body both
+        #     dead-end here rather than being mistaken for a delay.
+        cur_si, cur_node, cur_sub = wsi, write_edge.src, _subset_at(write_edge, write_edge.src)
+        src_subset = None
+        for _ in range(_ROTATION_CHASE_LIMIT):
+            if not isinstance(cur_node, nodes.AccessNode) or cur_sub is None:
+                return None
+            cdesc = sdfg.arrays.get(cur_node.data)
+            if cdesc is None:
+                return None
+            if _uses(cur_sub, loop_var):
+                src_data, src_subset = cur_node.data, cur_sub
+                break
+            if not cdesc.transient or _one_elem(cur_sub) != 1:
+                return None
+            staged = _body_writes(chain, cur_node.data)
+            if len(staged) != 1:
+                return None
+            ssi, _sstate, snode, sedge = staged[0]
+            if ssi > cur_si or (ssi == cur_si and snode is not cur_node):
+                return None  # written LATER in the body -> a carried value, not this iteration's
+            if _one_elem(_subset_at(sedge, snode)) != 1:
+                return None
+            # The whole staging container dies with the update; (6) below proves nothing else reads it.
+            chase.extend((st, n) for _si, st, n in _body_nodes(chain, cur_node.data))
+            touched[cur_node.data] = None
+            cur_si, cur_node, cur_sub = ssi, sedge.src, _subset_at(sedge, sedge.src)
+        if src_data is None:
+            return None
+        if sdfg.arrays[src_data].dtype != desc.dtype:
+            return None  # the copy into the scalar CONVERTS; reading the source direct would skip that
+        touched[src_data] = None
+
+        # (3) the source must still hold, at ``i - stride``, what iteration ``i - stride`` read. A
+        #     write to it inside the loop breaks that -- an in-place delay line reads the PRE-write
+        #     version.
+        if _body_writes(chain, src_data):
+            return None
+        shifted = copy.deepcopy(src_subset)
+        shifted.replace({loop_var: loop_var - stride})
+        if str(shifted) == str(src_subset):
+            return None  # not actually shifted -> a same-iteration copy, no delay to remove
 
     # (4) every read must see the ENTRY value: nothing may read the version the update wrote, and
     #     no read may be ordered after it. Decided by dataflow + block order, never source order.
@@ -1469,6 +1624,8 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
         reads.append((st, n))
     if write_state.out_edges(post_node):
         return None  # read AFTER the write (value is b[i]), or an ordering edge we would drop
+    if remat is not None and any(st.in_edges(n) for st, n in reads):
+        return None  # an ordering edge INTO the read has no home on the cloned producer
 
     # (5) nothing after the loop may read the value the deleted update used to leave behind.
     if _read_after_loop(parent, loop, sdfg, accum):
@@ -1482,15 +1639,15 @@ def plan_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, chain
             return None
         if _read_after_loop(parent, loop, sdfg, container):
             return None
-    return RotationPlan(accum, src_data, shifted, post_node, write_state, chase, reads, list(touched))
+    return RotationPlan(accum, src_data, shifted, post_node, write_state, chase, reads, list(touched), remat)
 
 
 def delete_rotation_update(chain: List[SDFGState], plan: RotationPlan) -> None:
     """Drop the delay line's update -- and the staging nodes only it kept alive -- from the body.
 
     Runs BEFORE the peel, which is not an implementation detail: the peeled iteration is a CLONE of
-    the body, and once every read is a shifted array read the update is dead in the CLONE TOO (gate
-    (5) proved nothing past the loop reads the carry). Peeling first would leave that dead write
+    the body, and once every read is closed the update is dead in the CLONE TOO (gate (5) proved
+    nothing past the loop reads the carry). Peeling first would leave that dead write
     behind, and a dead write to a carried scalar is not inert -- ``ScalarFission`` reads the peeled
     iteration's entry read and its own trailing write as one version, and the read then comes from
     an unwritten container.
@@ -1518,15 +1675,17 @@ def shift_rotation_reads(plan: RotationPlan) -> None:
     """
     from dace import memlet as mm
 
+    src_data, src_subset = plan.src_data, plan.src_subset
+    assert src_data is not None and src_subset is not None  # the caller dispatches on plan.remat
     for st, n in plan.reads:
-        new_src = st.add_access(plan.src_data)
+        new_src = st.add_access(src_data)
         for e in list(st.out_edges(n)):
             if isinstance(e.dst, nodes.AccessNode):
-                memlet = mm.Memlet(data=plan.src_data,
-                                   subset=copy.deepcopy(plan.src_subset),
+                memlet = mm.Memlet(data=src_data,
+                                   subset=copy.deepcopy(src_subset),
                                    other_subset=copy.deepcopy(_subset_at(e, e.dst)))
             else:
-                memlet = mm.Memlet(data=plan.src_data, subset=copy.deepcopy(plan.src_subset))
+                memlet = mm.Memlet(data=src_data, subset=copy.deepcopy(src_subset))
             st.remove_edge(e)
             st.add_edge(new_src, None, e.dst, e.dst_conn, memlet)
         for e in list(st.in_edges(n)):
@@ -1535,8 +1694,45 @@ def shift_rotation_reads(plan: RotationPlan) -> None:
         st.remove_node(n)
 
 
+def rematerialize_rotation_reads(sdfg: SDFG, plan: RotationPlan) -> None:
+    """Replace every read of the carried scalar by a fresh evaluation of its producer at ``i - stride``.
+
+    One clone per read site, each with its own result scalar: the producer is pure
+    (:func:`pure_producer`) so a second evaluation yields the same value, and every input container it
+    reads was proven unwritten in the body, so reading them late reads the same bytes. The clone is
+    BUILT rather than deep-copied so it carries only the code and the connector types -- no guid, no
+    debug info, nothing that would make two nodes claim to be one.
+    """
+    from dace import memlet as mm
+
+    remat = plan.remat
+    assert remat is not None  # the caller dispatches on plan.remat
+    producer = remat.producer
+    for st, n in plan.reads:
+        name, _ = sdfg.add_scalar(f'{plan.accum}_remat', remat.dtype, transient=True, find_new_name=True)
+        clone = nodes.Tasklet(f'{producer.label}_remat', dict(producer.in_connectors), dict(producer.out_connectors),
+                              producer.code.as_string, producer.code.language)
+        st.add_node(clone)
+        for conn, container, subset in remat.inputs:
+            st.add_edge(st.add_access(container), None, clone, conn,
+                        mm.Memlet(data=container, subset=copy.deepcopy(subset)))
+        value = st.add_access(name)
+        st.add_edge(clone, remat.out_conn, value, None, mm.Memlet(data=name, subset='0'))
+        for e in list(st.out_edges(n)):
+            if isinstance(e.dst, nodes.AccessNode):
+                memlet = mm.Memlet(data=name, subset='0', other_subset=copy.deepcopy(_subset_at(e, e.dst)))
+            else:
+                memlet = mm.Memlet(data=name, subset='0')
+            st.remove_edge(e)
+            st.add_edge(value, None, e.dst, e.dst_conn, memlet)
+        st.remove_node(n)
+
+
 def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: SDFG, budget: Dict[Any, int]) -> bool:
-    """Peel one iteration off ``loop`` and replace one carried delay line by a shifted array read.
+    """Peel one iteration off ``loop`` and close one carried delay line.
+
+    The closed form is a shifted read of the array that fed the carry, or -- when the carry held a
+    COMPUTED transient -- a clone of its producer evaluated one iteration back.
 
     ``budget`` maps a loop to the peels it has left; a multi-stage delay line spends one per stage.
     """
@@ -1586,7 +1782,10 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
         # to the iterations where the shifted read is in range.
         delete_rotation_update(chain, plan)
         LoopPeeling().apply_to(sdfg=loop.sdfg, loop=loop, verify=False, options={'count': 1, 'begin': True})
-        shift_rotation_reads(plan)
+        if plan.remat is None:
+            shift_rotation_reads(plan)
+        else:
+            rematerialize_rotation_reads(sdfg, plan)
         budget[loop] -= 1
         return True
     return False
@@ -1595,10 +1794,12 @@ def try_substitute_rotation(parent: ControlFlowRegion, loop: LoopRegion, sdfg: S
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopCarriedRotationSubstitution(ppl.Pass):
-    """Replace a loop-carried delay-line scalar by a shifted read of the array that fed it.
+    """Replace a loop-carried delay-line scalar by its closed form one iteration back.
 
-    Removes the carry that makes ``LoopToMap`` refuse the loop; see the section comment above for
-    the shape, the rewrite, and the gate that keeps a reduction from being rewritten as one.
+    That is a shifted read of the array that fed the carry, or a re-evaluation of the producer that
+    computed it. Either way the carry that makes ``LoopToMap`` refuse the loop is gone; see the
+    section comment above for the shapes, the rewrites, and the gate that keeps a reduction from
+    being rewritten as one.
     """
 
     CATEGORY: str = 'Optimization Preparation'
