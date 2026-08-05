@@ -2,7 +2,6 @@
 """ Tests the AccessRanges analysis pass. """
 import dace
 from dace.transformation.passes.analysis import AccessRanges
-import numpy as np
 
 N = dace.symbol('N')
 

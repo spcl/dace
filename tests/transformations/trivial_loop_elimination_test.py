@@ -1,8 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from dace.sdfg.nodes import MapEntry
 import dace
 from dace.transformation.interstate import TrivialLoopElimination
-from dace.symbolic import pystr_to_symbolic
 import unittest
 import numpy as np
 

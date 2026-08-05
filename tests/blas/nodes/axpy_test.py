@@ -2,18 +2,13 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 
 import numpy as np
-import pytest
 
-import argparse
 import scipy
-import random
 
 import dace
 from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
-from dace.transformation.interstate import InlineSDFG
-from dace.transformation.dataflow import StreamingMemory
 
 from dace.libraries.standard.memory import aligned_ndarray
 

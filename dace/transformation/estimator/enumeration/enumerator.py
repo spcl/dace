@@ -1,17 +1,16 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ This file implements the Enuerator class """
 
-from dace.transformation.subgraph import SubgraphFusion, helpers
+from dace.transformation.subgraph import helpers
 from dace.properties import make_properties, Property
 from dace.sdfg import SDFG, SDFGState
 from dace.sdfg.graph import SubgraphView
 
 import dace.sdfg.nodes as nodes
 
-from collections import deque, defaultdict, ChainMap
-from typing import Set, Union, List, Callable
+from collections import defaultdict
+from typing import Callable
 import itertools
-import warnings
 
 
 @make_properties

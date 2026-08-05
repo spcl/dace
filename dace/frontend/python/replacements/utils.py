@@ -13,7 +13,6 @@ from typing import List, Sequence, Tuple, TYPE_CHECKING, Union
 
 import numpy as np
 import sympy as sp
-import dace  # For evaluation of data types
 
 ########################################################################
 # Type hint definitions

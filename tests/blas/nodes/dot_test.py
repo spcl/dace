@@ -11,9 +11,6 @@ from dace.memlet import Memlet
 
 import dace.libraries.blas as blas
 
-from dace.transformation.interstate import InlineSDFG
-from dace.config import set_temporary
-
 
 def pure_graph(implementation, dtype, veclen):
 

@@ -729,7 +729,7 @@ class AST_translator:
             else:
                 raise NameError("Variable name not found: " + ast_utils.get_name(i))
 
-            if not hasattr(var, "shape") or len(var.shape) == 0:
+            if not isinstance(var, dat.Data) or len(var.shape) == 0:
                 memlet = ""
             elif (len(var.shape) == 1 and var.shape[0] == 1):
                 memlet = "0"
@@ -757,10 +757,10 @@ class AST_translator:
             if not found:
                 if local_name.name in write_names:
                     ast_utils.add_memlet_write(substate, mapped_name, internal_sdfg,
-                                               self.name_mapping[new_sdfg][local_name.name], memlet)
+                                               self.name_mapping[new_sdfg][local_name.name], dpcp(memlet))
                 if local_name.name in read_names:
                     ast_utils.add_memlet_read(substate, mapped_name, internal_sdfg,
-                                              self.name_mapping[new_sdfg][local_name.name], memlet)
+                                              self.name_mapping[new_sdfg][local_name.name], dpcp(memlet))
 
         for i in addedmemlets:
 

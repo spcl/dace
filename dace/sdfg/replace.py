@@ -1,4 +1,4 @@
-# Copyright 2019-2024 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains functionality to perform find-and-replace of symbols in SDFGs. """
 
 import re
@@ -81,7 +81,7 @@ def replace_dict(subgraph: 'StateSubgraphView',
                     desc = node.desc(state)
                 # In case the AccessNode name was replaced in the sdfg.arrays but not in the SDFG itself
                 # then we have to look for the replaced value in the sdfg.arrays
-                elif repl[node.data] in state.sdfg.arrays:
+                elif node.data in repl and repl[node.data] in state.sdfg.arrays:
                     desc = state.sdfg.arrays[repl[node.data]]
                 else:
                     continue
@@ -199,7 +199,7 @@ def replace_properties_dict(node: Any,
             # Don't replace variables that appear as an input or an output
             # connector, as this should shadow the outer declaration.
             reduced_repl = set(repl.keys())
-            if hasattr(node, 'in_connectors'):
+            if isinstance(node, nodes.Node):
                 reduced_repl -= set(node.in_connectors.keys()) | set(node.out_connectors.keys())
             reduced_repl = {k: repl[k] for k in reduced_repl}
             replace_in_codeblock(propval, reduced_repl, node)

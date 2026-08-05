@@ -1,5 +1,4 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from functools import partial
 from itertools import chain, repeat
 
 from contextlib import contextmanager
@@ -117,12 +116,13 @@ class CompiledSDFGProfiler:
         # Ensure internal SDFG will not be called
         old_dne = compiled_sdfg.do_not_execute
         compiled_sdfg.do_not_execute = True
+        try:
+            yield
 
-        yield
-
-        #####################################
-        # Restore state after skipping contents
-        compiled_sdfg.do_not_execute = old_dne
+        finally:
+            #####################################
+            # Restore state after skipping contents
+            compiled_sdfg.do_not_execute = old_dne
 
         return None
 

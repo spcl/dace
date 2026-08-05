@@ -1,13 +1,11 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Contains redundant array removal transformations. """
 
-from dace import registry
 from dace.sdfg import nodes
 from dace.sdfg import utils as sdutil
 from dace.sdfg.sdfg import SDFG
 from dace.sdfg.state import SDFGState
 from dace.transformation import transformation as pm
-from dace.config import Config
 
 
 class RedundantArrayCopyingIn(pm.SingleStateTransformation):

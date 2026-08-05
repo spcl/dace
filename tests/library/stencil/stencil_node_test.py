@@ -2,7 +2,6 @@
 import dace
 from dace.libraries.stencil import Stencil
 import numpy as np
-from dace.transformation.interstate import InlineSDFG
 
 SIZE = dace.symbol("size")
 ROWS = dace.symbol("rows")

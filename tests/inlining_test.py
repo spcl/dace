@@ -1355,6 +1355,97 @@ def test_multistate_inline_nested_control_flow_blocks():
     assert np.allclose(C, expected)
 
 
+def test_inline_write_write_conflict():
+    """
+    Tests a regression where inlining an SDFG creates a write-write conflict on the same array.
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [10], dace.int32)
+
+    state = sdfg.add_state("test_state", is_start_block=True)
+    access = state.add_access("A")
+    state.add_mapped_tasklet("set_A_to_5",
+                             map_ranges={"__i": "0:10"},
+                             inputs={},
+                             code="__out = 5",
+                             outputs={"__out": dace.Memlet("A[__i]")},
+                             output_nodes={"A": access},
+                             external_edges=True)
+
+    n_sdfg = dace.SDFG("nested")
+    n_sdfg.add_array("A", [10], dace.int32)
+    n_state = n_sdfg.add_state("nested_state", is_start_block=True)
+    n_access = n_state.add_access("A")
+    n_state.add_mapped_tasklet("set_A_to_7",
+                               map_ranges={"__i": "2:5"},
+                               inputs={},
+                               code="__out = 7",
+                               outputs={"__out": dace.Memlet("A[__i]")},
+                               output_nodes={"A": n_access},
+                               external_edges=True)
+
+    n_tasklet_2 = n_state.add_tasklet("plus_one", {"a"}, {"a1"}, "a1 = a + 1")
+    n_access_2 = n_state.add_access("A")
+    n_state.add_memlet_path(n_access, n_tasklet_2, dst_conn="a", memlet=dace.Memlet("A[3]"))
+    n_state.add_memlet_path(n_tasklet_2, n_access_2, src_conn="a1", memlet=dace.Memlet("A[3]"))
+
+    nested = state.add_nested_sdfg(n_sdfg, inputs={"A"}, outputs={"A"}, name="nested_sdfg")
+    state.add_memlet_path(access, nested, dst_conn="A", memlet=dace.Memlet("A[3]"))
+    access_2 = state.add_access("A")
+    state.add_memlet_path(nested, access_2, src_conn="A", memlet=dace.Memlet("A[2:5]"))
+
+    sdfg.validate()
+
+    with pytest.raises(ValueError, match='Transformation cannot be applied'):
+        InlineSDFG().apply_to(sdfg, nested_sdfg=nested)
+
+
+def test_inline_nested_accessnode():
+    """
+    Tests a use case where a non-transient access node is defined within a scope
+    """
+    sdfg = dace.SDFG("tester")
+    sdfg.add_array("A", [10], dace.int32)
+    sdfg.add_array("B", [10], dace.int32)
+
+    state = sdfg.add_state("test_state", is_start_block=True)
+    access = state.add_access("A")
+    state.add_mapped_tasklet("set_A_to_5",
+                             map_ranges={"__i": "0:10"},
+                             inputs={},
+                             code="__out = 5",
+                             outputs={"__out": dace.Memlet("A[__i]")},
+                             output_nodes={"A": access},
+                             external_edges=True)
+
+    n_sdfg = dace.SDFG("nested")
+    n_sdfg.add_array("A", [10], dace.int32)
+    n_sdfg.add_array("B", [10], dace.int32)
+    n_state = n_sdfg.add_state("nested_state", is_start_block=True)
+    me, mx = n_state.add_map("map", {"__i": "2:5"})
+    n_access = n_state.add_access("A")
+    n_access_b = n_state.add_access("B")
+    n_state.add_edge(me, None, n_access, None, dace.Memlet())
+    tasklet = n_state.add_tasklet("set_A_to_7", {"__in"}, {"__out"}, "__out = 7")
+    n_state.add_edge(n_access, None, tasklet, "__in", dace.Memlet("A[__i]"))
+    n_state.add_edge(tasklet, "__out", n_access_b, None, dace.Memlet("B[__i]"))
+    n_tasklet_2 = n_state.add_tasklet("plus_one", {"a"}, {"a1"}, "a1 = a + 1")
+    n_access_2 = n_state.add_access("B")
+    n_state.add_memlet_path(n_access_b, n_tasklet_2, dst_conn="a", memlet=dace.Memlet("B[3]"))
+    n_state.add_memlet_path(n_tasklet_2, n_access_2, src_conn="a1", memlet=dace.Memlet("B[3]"))
+    n_state.add_edge(n_access_2, None, mx, None, dace.Memlet())
+
+    nested = state.add_nested_sdfg(n_sdfg, inputs={"A"}, outputs={"B"}, name="nested_sdfg")
+    state.add_memlet_path(access, nested, dst_conn="A", memlet=dace.Memlet("A[3]"))
+    access_2 = state.add_access("B")
+    state.add_memlet_path(nested, access_2, src_conn="B", memlet=dace.Memlet("B[2:5]"))
+
+    sdfg.validate()
+
+    with pytest.raises(ValueError, match='Transformation cannot be applied'):
+        InlineSDFG().apply_to(sdfg, nested_sdfg=nested)
+
+
 if __name__ == "__main__":
     test()
     # Skipped due to bug that cannot be reproduced outside CI
@@ -1394,3 +1485,6 @@ if __name__ == "__main__":
     for outside_and_inner_symbol_have_same_meaning in [True, False]:
         test_singlestate_inline_with_symbol_mapping(
             outside_and_inner_symbol_have_same_meaning=outside_and_inner_symbol_have_same_meaning)
+
+    test_inline_write_write_conflict()
+    test_inline_nested_accessnode()

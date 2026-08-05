@@ -7,15 +7,10 @@ statements.
 import ast
 import copy
 import inspect
-import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-from dace import data, symbolic
-from dace.config import Config
-from dace.frontend.python import ndloop, wrappers
 from dace.frontend.python import astutils
-from dace.frontend.python.astutils import unparse, rname
-from dace.frontend.python.parser import DaceProgram
+from dace.frontend.python.astutils import rname
 
 
 def get_tasklet_ast(stack_depth=2, frame=None) -> ast.With:

@@ -9,7 +9,7 @@ from typing import Dict, List, Tuple
 import sympy as sp
 
 from dace import sdfg as sd
-from dace.sdfg import graph as gr, utils as sdutil, nodes as nd
+from dace.sdfg import utils as sdutil, nodes as nd
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.symbolic import pystr_to_symbolic
 from dace.transformation import transformation

@@ -3,7 +3,6 @@ import dace
 from dace.codegen.control_flow import LoopRegion
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock
-import pytest
 import dace.sdfg.utils as sdutil
 
 

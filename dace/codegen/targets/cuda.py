@@ -237,6 +237,9 @@ class CUDACodeGen(TargetCodeGenerator):
         # Annotate CUDA streams and events
         self._cuda_streams, self._cuda_events = self._compute_cudastreams(sdfg)
 
+        # Stream-unaware GPU callbacks -> default stream (see method).
+        self._default_stream_unaware_gpu_callbacks(sdfg)
+
         # Find points where memory should be released to the memory pool
         self._compute_pool_release(sdfg)
 
@@ -265,7 +268,7 @@ class CUDACodeGen(TargetCodeGenerator):
         for sdfg in top_sdfg.all_sdfgs_recursive():
             # Skip SDFGs without memory pool hints
             pooled = set(aname for aname, arr in sdfg.arrays.items()
-                         if getattr(arr, 'pool', False) is True and arr.transient)
+                         if isinstance(arr, (dt.Array, dt.Scalar, dt.Structure)) and arr.pool is True and arr.transient)
             if not pooled:
                 continue
             self.has_pool = True
@@ -395,6 +398,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
 DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
 DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
@@ -459,6 +463,15 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     return __err;
 }}
 
+// The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
+// process, so it is not a reliable carrier for this SDFG's failures. Hand back what the generated
+// code recorded instead, and clear it so a failure is delivered exactly once.
+int __dace_gpu_last_error({sdfg_state_name} *__state) {{
+    int __err = static_cast<int>(__state->gpu_context->lasterror);
+    __state->gpu_context->lasterror = (gpuError_t)0;
+    return __err;
+}}
+
 bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream)
 {{
     if (streamid < 0 || streamid >= {nstreams})
@@ -493,7 +506,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
         return [self._codeobject]
 
     def node_dispatch_predicate(self, sdfg, state, node):
-        if hasattr(node, 'schedule'):  # NOTE: Works on nodes and scopes
+        # NOTE: Works on nodes and scopes
+        if isinstance(node, (nodes.EntryNode, nodes.ExitNode, nodes.LibraryNode)):
             if node.schedule in dtypes.GPU_SCHEDULES:
                 return True
         if self._in_device_code:
@@ -549,10 +563,8 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
             flags = Config.get("compiler", "cuda", "hip_args")
-            flags += ' ' + ' '.join(
-                '--offload-arch={arch}'.format(arch=arch if arch.startswith("gfx") else "gfx" + arch)
-                for arch in hip_arch)
-            options.append("-DEXTRA_HIP_FLAGS=\"{}\"".format(flags))
+            options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
+            options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
             host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
@@ -946,6 +958,29 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         max_events = max(state_events)
 
         return max_streams, max_events
+
+    def _default_stream_unaware_gpu_callbacks(self, top_sdfg: SDFG):
+        """A GPU-touching callback not using ``__dace_current_stream`` is forced onto the null stream."""
+        for sd in top_sdfg.all_sdfgs_recursive():
+            for state in sd.states():
+                for node in list(state.nodes()):
+                    if not (isinstance(node, nodes.Tasklet) and node.side_effects):
+                        continue
+                    if is_devicelevel_gpu(sd, state, node):
+                        continue
+                    if not any(
+                            e.data.data in sd.arrays and sd.arrays[e.data.data].storage == dtypes.StorageType.GPU_Global
+                            for e in state.all_edges(node)):
+                        continue
+                    if '__dace_current_stream' in node.code.as_string:  # stream-aware: leave as is
+                        continue
+                    warnings.warn(
+                        f'Callback "{node.label}" accesses GPU memory but is not stream-aware, so its data '
+                        'movement is forced onto the default stream. This is only correct if the callback uses '
+                        'the default stream; for any other stream, add a "dace.current_stream" argument to the '
+                        'callback and use it (e.g. cupy ExternalStream).', UserWarning)
+                    for n in nx.node_connected_component(state.nx.to_undirected(as_view=True), node):
+                        n._cuda_stream = 'nullptr'
 
     def _emit_copy(self, state_id: int, src_node: nodes.Node, src_storage: dtypes.StorageType, dst_node: nodes.Node,
                    dst_storage: dtypes.StorageType, dst_schedule: dtypes.ScheduleType,
@@ -1482,7 +1517,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             # otherwise streams do not behave as expected becasue they are
             # allocated on host side
             streams_to_reset = [
-                node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.nodes.data.Stream)
+                node for node in state.data_nodes() if isinstance(node.desc(sdfg), dace.data.Stream)
                 and node.desc(sdfg).lifetime == dtypes.AllocationLifetime.Scope
             ]
             for stream in streams_to_reset:
@@ -1733,6 +1768,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         assert node.gpu_maxnreg is not None and node.gpu_maxnreg >= 0
         if node.gpu_maxnreg == 0:
             maxnreg_str = ''
+            gpu_min_warps_per_eu = ''
+            if node.gpu_min_warps_per_eu is not None and node.gpu_min_warps_per_eu > 0:
+                gpu_min_warps_per_eu = f',{node.gpu_min_warps_per_eu}'
             # Set kernel launch bounds
             if node.gpu_launch_bounds == "-1":
                 launch_bounds = ''
@@ -1740,9 +1778,9 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 if any(symbolic.issymbolic(b) for b in block_dims):
                     launch_bounds = ''
                 else:
-                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))})'
+                    launch_bounds = f'__launch_bounds__({_topy(prod(block_dims))}{gpu_min_warps_per_eu})'
             else:
-                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds})'
+                launch_bounds = f'__launch_bounds__({node.gpu_launch_bounds}{gpu_min_warps_per_eu})'
         else:
             maxnreg_str = f'__maxnreg__({node.gpu_maxnreg})'
             launch_bounds = ''

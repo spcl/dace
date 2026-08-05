@@ -20,7 +20,7 @@ DaCe is divided into the following subfolders:
         * ``data.py``: Definitions for usage and creation of :ref:`descriptors`
         * ``memlet.py``: Definition of a :ref:`Memlet <sdfg-memlet>`
         * ``subsets.py``: Subset types used in memlets (e.g., :class:`~dace.subsets.Range`)
-        * ``symbolic.py``: Symbolic types, expressions, conversion, and analysis functions. See :ref:`sdfg-symbol` and :ref:`symbolic`
+        * ``symbolic.py``: Symbolic types, expressions, conversion, and analysis functions. See :ref:`sdfg-symbol`
     * Optimization and transformation:
         * ``transformation``: Transformation classes and helpers. See :ref:`transformations`
 

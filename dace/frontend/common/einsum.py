@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 """ Classes to handle Einstein-notation sums (einsum) as a library node. """
-from functools import reduce
 from itertools import chain
 from string import ascii_letters
 from typing import Dict, List, Optional
@@ -13,8 +12,6 @@ from dace.utils import prod
 from dace.sdfg.nodes import AccessNode
 from dace.sdfg import SDFG, SDFGState, InterstateEdge, dealias
 from dace.memlet import Memlet
-from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import StringLiteral
 
 
 def _is_sequential(index_list):

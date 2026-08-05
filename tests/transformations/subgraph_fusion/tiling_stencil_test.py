@@ -3,7 +3,6 @@
 import contextlib
 
 import dace
-from dace.sdfg import SDFG
 from dace.transformation.subgraph.stencil_tiling import StencilTiling
 from dace.transformation.subgraph import SubgraphFusion
 from dace.sdfg.graph import SubgraphView

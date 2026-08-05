@@ -3,7 +3,7 @@
 set -e
 
 # Install dependencies
-pip install --upgrade twine
+pip install --upgrade twine build
 
 # Synchronize submodules
 git submodule update --init --recursive

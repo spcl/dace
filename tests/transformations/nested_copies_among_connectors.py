@@ -2,7 +2,6 @@
 import dace
 import numpy as np
 
-from dace.transformation import dataflow, interstate, subgraph
 from dace.transformation.interstate import InlineSDFG
 
 

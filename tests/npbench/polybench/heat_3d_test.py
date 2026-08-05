@@ -5,9 +5,7 @@ import numpy as np
 import dace as dc
 import pytest
 import argparse
-from dace.transformation.interstate import InlineSDFG
 from dace.transformation.auto.auto_optimize import auto_optimize
-from dace.config import set_temporary
 from dace.autodiff import add_backward_pass
 
 # Dataset sizes

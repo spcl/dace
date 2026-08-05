@@ -1,5 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import re
+import dace
 from dace import sourcemap
 from dace.properties import (Property, DictProperty, SetProperty, make_properties)
 
@@ -45,9 +46,15 @@ class CodeObject(object):
         self.linkable = linkable
         self.environments = environments or set()
 
-        if language == 'cpp' and title == 'Frame' and sdfg:
-            sourcemap.create_maps(sdfg, code, self.target.target_name)
+        # NOTE: In an earlier version, the source maps were generated here. However,
+        #   this had the side effect that the build folder was generated containing
+        #   the source maps, i.e. the `map/` subfolder. However, no code was actually
+        #   dumped to disc. Another effect is that the generation of code would actually
+        #   overwrite the source map, thus it was moved to `generate_program_folder()`.
 
     @property
     def clean_code(self):
         return re.sub(r'[ \t]*////__(DACE:|CODEGEN;)[^\n]*', '', self.code)
+
+    def create_source_map(self, sdfg: 'dace.SDFG') -> None:
+        sourcemap.create_maps(sdfg, self.code, self.target.target_name)

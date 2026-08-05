@@ -28,7 +28,6 @@ from dace import nodes as nd
 
 # ONNX-specific imports
 import dace.libraries.onnx as donnx
-from dace.libraries.onnx.converters import clean_onnx_name
 from dace.libraries.onnx.op_implementations.linalg_ops import PureEinsum
 from dace.transformation.onnx.replacement import onnx_constant_or_none
 

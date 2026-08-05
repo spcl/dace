@@ -6,7 +6,7 @@ import sys
 import os
 import numpy as np
 import copy
-from dace import SDFGState, SDFG, library, dtypes
+from dace import SDFGState, SDFG, library
 from dace.transformation.transformation import ExpandTransformation
 
 # Add the test library to the path

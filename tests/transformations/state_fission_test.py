@@ -9,7 +9,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes, graph
 from dace.transformation import helpers, dataflow
 
-from .utility import count_nodes, unique_name, make_sdfg_args, compile_and_run_sdfg
+from .utility import count_nodes, unique_name
 
 
 def make_vecAdd_sdfg(symbol_name: str, sdfg_name: str, access_nodes_dict: dict, dtype=dace.float32):

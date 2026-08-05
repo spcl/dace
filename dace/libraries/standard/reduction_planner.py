@@ -113,7 +113,7 @@ def simplify_input(shape, strides, axes):
         s = shape[rem[0]]
         for i in range(len(out_strides)):
             if (out_strides[i] > r) == True or r == 1 or expr_is_contained(r, out_strides[i]):
-                out_strides[i] //= s
+                out_strides[i] = symbolic.int_floor(out_strides[i], s)
 
     return shape, strides, axes, out_shape, out_strides
 
@@ -261,7 +261,7 @@ def get_reduction_schedule(in_array: Array,
         if len(schedule.in_shape) == 1 and schedule.out_shape == [1]:
             schedule.one_d_reduction = True
             # increase schedule.grid to appropriate value --> each block sums up 1024 values
-            schedule.grid = [(schedule.in_shape[0] + 1024 - 1) // 1024]
+            schedule.grid = [symbolic.int_ceil(schedule.in_shape[0], 1024)]
 
     else:
         # we are reducing a non-contiguous dimension
@@ -278,7 +278,7 @@ def get_reduction_schedule(in_array: Array,
         if use_mini_warps and (shape[contiguous_dimension] <= 16) == True:
             # we turn on mini_warps
             schedule.mini_warps = True
-            schedule.num_mini_warps = warp_size // shape[contiguous_dimension]
+            schedule.num_mini_warps = symbolic.int_floor(warp_size, shape[contiguous_dimension])
             # we now use 16 * schedule.num_mini_warps threads to compute 1 output element
             schedule.block = [16, shape[contiguous_dimension]]
             schedule.shared_mem_size = shape[contiguous_dimension]

@@ -1,12 +1,12 @@
-# Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
 import dace
+import pytest
 from dace.sdfg import nodes, utils as sdutils
 from dace.transformation.dataflow import MapFission
 from dace.transformation.interstate import InlineSDFG
 from dace.transformation.helpers import nest_state_subgraph
 import numpy as np
-import unittest
 
 
 def mapfission_sdfg():
@@ -603,6 +603,363 @@ def test_dependent_symbol():
     assert np.array_equal(val, ref)
 
 
+@dace.program
+def strided_two_ops(A: dace.float64[10], B: dace.float64[10]):
+    for i in dace.map[0:9:2]:
+        tmp = A[i] * 2.0
+        B[i] = tmp + 1.0
+
+
+def test_strided_fission_step2():
+    """ MapFission on a map with step=2 and a scalar border transient. """
+    A = np.arange(10, dtype=np.float64)
+    B_ref = np.zeros(10, dtype=np.float64)
+    B_test = np.zeros(10, dtype=np.float64)
+
+    strided_two_ops(A=A, B=B_ref)
+
+    sdfg = strided_two_ops.to_sdfg()
+    sdfg.save("before.sdfg")
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    sdfg.save("after.sdfg")
+    assert np.allclose(B_test, B_ref)
+
+
+@dace.program
+def strided_offset_ops(A: dace.float64[30], B: dace.float64[30]):
+    for i in dace.map[10:29:3]:
+        tmp = A[i] + 100.0
+        B[i] = tmp * 0.5
+
+
+def test_strided_fission_offset_and_step():
+    """ MapFission on a map with offset=10 and step=3. """
+    A = np.arange(30, dtype=np.float64)
+    B_ref = np.zeros(30, dtype=np.float64)
+    B_test = np.zeros(30, dtype=np.float64)
+
+    strided_offset_ops(A=A, B=B_ref)
+
+    sdfg = strided_offset_ops.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    assert np.allclose(B_test, B_ref)
+
+
+_N = dace.symbol('N')
+_START = dace.symbol('START')
+_STEP = dace.symbol('STEP')
+_STOP = dace.symbol('STOP')
+
+
+@dace.program
+def symbolic_strided(A: dace.float64[_N], B: dace.float64[_N]):
+    for i in dace.map[_START:_STOP:_STEP]:
+        B[i] = A[i] + 2.0
+        A[i] = B[i] * 0.5
+
+
+def test_symbolic_strided_fission():
+    """ MapFission on a symbolic strided map. """
+    sdfg = symbolic_strided.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    A_ref = np.arange(10, dtype=np.float64)
+    A_test = A_ref.copy()
+    B_ref = np.zeros(10, dtype=np.float64)
+    B_test = np.zeros(10, dtype=np.float64)
+
+    symbolic_strided(A=A_ref, B=B_ref, N=10, START=1, STOP=9, STEP=2)
+    sdfg(A=A_test, B=B_test, N=10, START=1, STOP=9, STEP=2)
+
+    assert np.allclose(B_test, B_ref)
+    assert np.allclose(A_test, A_ref)
+
+
+@dace.program
+def trivial_1d(A: dace.float64[16], B: dace.float64[16]):
+    for i in dace.map[0:16]:
+        tmp = A[i] + 1.0
+        B[i] = tmp * 2.0
+
+
+def test_trivial_1d_step1():
+    """ MapFission on a simple 1D map with step=1. """
+    A = np.arange(16, dtype=np.float64)
+    B_ref = np.zeros(16, dtype=np.float64)
+    B_test = np.zeros(16, dtype=np.float64)
+
+    trivial_1d(A=A, B=B_ref)
+
+    sdfg = trivial_1d.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    assert np.allclose(B_test, B_ref)
+
+
+@dace.program
+def trivial_3d(A: dace.float64[4, 5, 6], B: dace.float64[4, 5, 6]):
+    for i, j, k in dace.map[0:4, 0:5, 0:6]:
+        tmp = A[i, j, k] + 1.0
+        B[i, j, k] = tmp + 2.0
+
+
+def test_trivial_3d_step1():
+    """ MapFission on a 3D map with step=1. """
+    A = np.arange(4 * 5 * 6, dtype=np.float64).reshape(4, 5, 6).copy()
+    B_ref = np.zeros((4, 5, 6), dtype=np.float64)
+    B_test = np.zeros((4, 5, 6), dtype=np.float64)
+
+    trivial_3d(A=A, B=B_ref)
+
+    sdfg = trivial_3d.to_sdfg()
+    assert sdfg.apply_transformations(MapFission, validate=True, validate_all=True) > 0
+
+    sdfg(A=A, B=B_test)
+    assert np.allclose(B_test, B_ref)
+
+
+@dace.program
+def map_with_data_cond(A: dace.float64[10]):
+    for i in dace.map[0:10]:
+        if A[i] > 0.0:
+            A[i] = A[i] + 1.9
+
+
+def test_map_with_if_nested_sdfg():
+    """ MapFission must refuse maps whose body's interstate assignments depend on the map iterator. """
+    # The number of applications depends on whether auto-opt is enabled.
+    # We only check numerical correctness.
+    sdfg = map_with_data_cond.to_sdfg()
+
+    A_ref = np.array([-1.0, 2.0, -3.0, 4.0, 5.0, -6.0, 7.0, -8.0, 9.0, 10.0], dtype=np.float64)
+    A_test = A_ref.copy()
+    map_with_data_cond(A=A_ref)
+    sdfg(A=A_test)
+    assert np.allclose(A_test, A_ref)
+
+
+N, M, P, K = (dace.symbol(s) for s in ('N', 'M', 'P', 'K'))
+
+
+@dace.program
+def _nested_parent(x: dace.float64[N, M], y: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        for jj in dace.map[0:P]:
+            for i in dace.map[0:N]:
+                x[i, j] = 1.0
+            for i in dace.map[0:N]:
+                y[i, j] = 2.0
+
+
+@dace.program
+def _toplevel_two_components(x: dace.float64[N, M], y: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        for i in dace.map[0:N]:
+            x[i, j] = 1.0
+        for i in dace.map[0:N]:
+            y[i, j] = 2.0
+
+
+@dace.program
+def _only_conditional(x: dace.float64[N]):
+    for i in dace.map[0:N]:
+        if i % 2 == 0:
+            x[i] = 1.0
+        else:
+            x[i] = -1.0
+
+
+@dace.program
+def _control_flow_in_scope(x: dace.float64[N, M], y: dace.float64[N, M]):
+    for j in dace.map[0:M]:
+        for i in dace.map[0:N]:
+            if j % 2 == 0:
+                x[i, j] = 1.0
+            else:
+                x[i, j] = -1.0
+        for i in dace.map[0:N]:
+            y[i, j] = 2.0
+
+
+@dace.program
+def _five_set_five_cpy(s0: dace.float64[K], s1: dace.float64[K], s2: dace.float64[K], s3: dace.float64[K],
+                       s4: dace.float64[K], a0: dace.float64[K], a1: dace.float64[K], a2: dace.float64[K],
+                       a3: dace.float64[K], a4: dace.float64[K], c0: dace.float64[K], c1: dace.float64[K],
+                       c2: dace.float64[K], c3: dace.float64[K], c4: dace.float64[K]):
+    for i in dace.map[0:K]:
+        s0[i] = 0.0
+        s1[i] = 1.0
+        s2[i] = 2.0
+        s3[i] = 3.0
+        s4[i] = 4.0
+        c0[i] = a0[i]
+        c1[i] = a1[i]
+        c2[i] = a2[i]
+        c3[i] = a3[i]
+        c4[i] = a4[i]
+
+
+@dace.program
+def _three_set_two_cpy(s0: dace.float64[K], s1: dace.float64[K], s2: dace.float64[K], a0: dace.float64[K],
+                       a1: dace.float64[K], c0: dace.float64[K], c1: dace.float64[K]):
+    for i in dace.map[0:K]:
+        s0[i] = 0.0
+        s1[i] = 1.0
+        s2[i] = 2.0
+        c0[i] = a0[i]
+        c1[i] = a1[i]
+
+
+def _find_map_entry(sdfg, param, nested):
+    """Find a single-parameter map entry by nesting.
+
+    :param sdfg: The SDFG to search.
+    :param param: The map's sole iteration parameter name.
+    :param nested: Whether the map must be inside another scope.
+    :returns: A ``(state, map_entry)`` pair, or ``(None, None)``.
+    """
+    for st in sdfg.all_states():
+        for n in st.nodes():
+            if isinstance(n, nodes.MapEntry) and n.map.params == [param]:
+                if (st.entry_node(n) is not None) == nested:
+                    return st, n
+    return None, None
+
+
+def _fission_maps(sdfg):
+    """Return the top-level ``(state, map_entry)`` pairs.
+
+    :param sdfg: The SDFG to scan.
+    :returns: One pair per outermost map entry.
+    """
+    return [(st, n) for st in sdfg.all_states() for n in st.nodes()
+            if isinstance(n, nodes.MapEntry) and st.entry_node(n) is None]
+
+
+def _assert_no_spurious_connectors(sdfg, n_set, n_cpy):
+    """Assert each fissioned map carries exactly its component's connectors.
+
+    :param sdfg: The fissioned SDFG.
+    :param n_set: Expected count of memset (zero-input) maps.
+    :param n_cpy: Expected count of memcpy (one-input) maps.
+    :raises AssertionError: On a wrong map count or an unused connector.
+    """
+    maps = _fission_maps(sdfg)
+    assert len(maps) == n_set + n_cpy, f"expected {n_set + n_cpy} maps, got {len(maps)}"
+    n_in0 = n_in1 = 0
+    for st, me in maps:
+        mx = st.exit_node(me)
+        in_c = {c for c in me.in_connectors if c.startswith('IN_')}
+        out_c = {c for c in me.out_connectors if c.startswith('OUT_')}
+        assert {e.dst_conn for e in st.in_edges(me) if e.dst_conn} == in_c
+        assert {e.src_conn for e in st.out_edges(me) if e.src_conn} == out_c
+        assert all(st.out_edges(mx)), "map exit has a dangling output"
+        deg = len(in_c)
+        assert deg in (0, 1), f"unexpected input arity {deg}"
+        n_in0 += deg == 0
+        n_in1 += deg == 1
+    assert n_in0 == n_set and n_in1 == n_cpy
+
+
+def test_mapfission_handles_nested_parent_correctly():
+    """Fission a map nested inside another map (regression: Leftover nodes)."""
+    n, m, p = 4, 3, 2
+    sdfg = _nested_parent.to_sdfg(simplify=True)
+    _, jj = _find_map_entry(sdfg, 'jj', nested=True)
+    assert jj is not None
+    assert MapFission.can_be_applied_to(sdfg, map_entry=jj) is True
+
+    x0, y0 = np.zeros((n, m)), np.zeros((n, m))
+    copy.deepcopy(sdfg)(x=x0, y=y0, N=n, M=m, P=p)
+
+    assert sdfg.apply_transformations_repeated(MapFission) >= 1
+    sdfg.validate()
+
+    x1, y1 = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(x=x1, y=y1, N=n, M=m, P=p)
+    assert np.allclose(x1, x0) and np.allclose(y1, y0)
+    assert np.allclose(x1, 1.0) and np.allclose(y1, 2.0)
+
+
+def test_mapfission_still_applies_to_toplevel_map():
+    """Top-level two-component fission is unaffected by the nested fix."""
+    n, m = 6, 5
+    sdfg = _toplevel_two_components.to_sdfg(simplify=True)
+    _, j = _find_map_entry(sdfg, 'j', nested=False)
+    assert j is not None and MapFission.can_be_applied_to(sdfg, map_entry=j) is True
+
+    assert sdfg.apply_transformations_repeated(MapFission) >= 1
+    sdfg.validate()
+
+    x, y = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(x=x, y=y, N=n, M=m)
+    assert np.allclose(x, 1.0) and np.allclose(y, 2.0)
+
+
+@pytest.mark.parametrize("prog,n_set,n_cpy", [(_five_set_five_cpy, 5, 5), (_three_set_two_cpy, 3, 2)])
+def test_memset_memcpy_fission_clean_connectors(prog, n_set, n_cpy):
+    """Many memset/memcpy components fission into maps with no spurious connectors."""
+    k = 8
+    sdfg = prog.to_sdfg(simplify=True)
+    names = list(sdfg.arg_names)
+    args = {nm: (np.zeros(k) if nm.startswith(('s', 'c')) else np.random.rand(k)) for nm in names}
+    ref = {nm: v.copy() for nm, v in args.items()}
+    copy.deepcopy(sdfg)(**ref, K=k)
+
+    assert sdfg.apply_transformations_repeated(MapFission) >= 1
+    sdfg.validate()
+    _assert_no_spurious_connectors(sdfg, n_set, n_cpy)
+
+    out = {nm: v.copy() for nm, v in args.items()}
+    sdfg(**out, K=k)
+    for nm in names:
+        assert np.allclose(out[nm], ref[nm]), f"mismatch on {nm}"
+
+
+def test_mapfission_does_not_apply_to_conditional_map():
+    """A map whose sole body is a conditional: MapFission must not apply."""
+    n = 6
+    sdfg = _only_conditional.to_sdfg(simplify=True)
+    assert sdfg.apply_transformations_repeated(MapFission) == 0
+    sdfg.validate()
+
+    x = np.zeros(n)
+    sdfg(x=x, N=n)
+    assert np.allclose(x, np.where(np.arange(n) % 2 == 0, 1.0, -1.0))
+
+
+def test_mapfission_refuses_conditional_component_stays_valid():
+    """A conditional component is refused; the rest stays valid (regression: Leftover nodes)."""
+    n, m = 5, 4
+    sdfg = _control_flow_in_scope.to_sdfg(simplify=True)
+
+    x0, y0 = np.zeros((n, m)), np.zeros((n, m))
+    copy.deepcopy(sdfg)(x=x0, y=y0, N=n, M=m)
+
+    for st in sdfg.all_states():
+        for me in st.nodes():
+            if not isinstance(me, nodes.MapEntry):
+                continue
+            has_cond = any(
+                isinstance(e.dst, nodes.NestedSDFG) and any(
+                    type(b).__name__ == 'ConditionalBlock' for b in e.dst.sdfg.all_control_flow_regions(recursive=True))
+                for e in st.out_edges(me))
+            if has_cond:
+                assert MapFission.can_be_applied_to(sdfg, map_entry=me) is False
+
+    sdfg.apply_transformations_repeated(MapFission)
+    sdfg.validate()
+
+    x1, y1 = np.zeros((n, m)), np.zeros((n, m))
+    sdfg(x=x1, y=y1, N=n, M=m)
+    assert np.allclose(x1, x0) and np.allclose(y1, y0)
+
+
 if __name__ == '__main__':
     test_subgraph()
     test_nested_sdfg()
@@ -618,3 +975,15 @@ if __name__ == '__main__':
     test_array_copy_outside_scope()
     test_single_data_multiple_connectors()
     test_dependent_symbol()
+    test_strided_fission_step2()
+    test_strided_fission_offset_and_step()
+    test_symbolic_strided_fission()
+    test_trivial_1d_step1()
+    test_trivial_3d_step1()
+    test_map_with_if_nested_sdfg()
+    test_mapfission_handles_nested_parent_correctly()
+    test_mapfission_still_applies_to_toplevel_map()
+    test_memset_memcpy_fission_clean_connectors(_five_set_five_cpy, 5, 5)
+    test_memset_memcpy_fission_clean_connectors(_three_set_two_cpy, 3, 2)
+    test_mapfission_does_not_apply_to_conditional_map()
+    test_mapfission_refuses_conditional_component_stays_valid()

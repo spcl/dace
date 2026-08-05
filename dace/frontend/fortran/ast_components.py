@@ -1,12 +1,12 @@
 # Copyright 2019-2023 ETH Zurich and the DaCe authors. All rights reserved.
-from fparser.two import Fortran2008 as f08
+# NOTE: Fortran2003 needs to be imported before Fortran2008 (circular import otherwise).
 from fparser.two import Fortran2003 as f03
+from fparser.two import Fortran2008 as f08
 from fparser.two import symbol_table
 
-import copy
 from dace.frontend.fortran import ast_internal_classes
-from dace.frontend.fortran.ast_internal_classes import FNode, Name_Node
-from typing import Any, List, Tuple, Type, TypeVar, Union, overload, TYPE_CHECKING
+from dace.frontend.fortran.ast_internal_classes import Name_Node
+from typing import Any, List, Type, TypeVar, Union, overload, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dace.frontend.fortran.intrinsics import FortranIntrinsics

@@ -12,6 +12,15 @@ from typing import Any, Dict, List, Optional, Set, Union
 
 from dace import symbolic
 
+# Optional dace annotations stamped onto stdlib ``ast`` nodes by frontend passes and read back in
+# ``newast``. Declared as class-level defaults so readers use plain attribute access instead of
+# ``getattr(node, name, default)`` -- ``ast`` nodes cannot take an ``__init__`` default. The defaults
+# are immutable and only ever overridden per-instance (never mutated in place), so sharing them across
+# every node of the class is safe.
+ast.AST.toplevel = False
+ast.Call.skip_args = ()
+ast.Call.skip_keywords = ()
+
 
 def _remove_outer_indentation(src: str):
     """ Removes extra indentation from a source Python function.
@@ -343,7 +352,7 @@ def negate_expr(node):
     from dace.properties import CodeBlock  # Avoid import loop
     if isinstance(node, CodeBlock):
         node = node.code
-    if hasattr(node, "__len__"):
+    if isinstance(node, (list, tuple)):
         if len(node) > 1:
             raise ValueError("negate_expr only expects "
                              "single expressions, got: {}".format(node))
@@ -379,7 +388,7 @@ def and_expr(node_a, node_b):
         node_a = node_a.code
         node_b = node_b.code
 
-    if hasattr(node_a, "__len__"):
+    if isinstance(node_a, (list, tuple)):
         if len(node_a) > 1:
             raise ValueError("and_expr only expects single expressions, got: {}".format(node_a))
         if len(node_b) > 1:
