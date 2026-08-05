@@ -21,7 +21,7 @@ typedef cudaError_t gpuError_t;
     gpuError_t errr = (err);                                              \
     if (errr != (gpuError_t)0) {                                          \
       printf("GPU runtime error at %s:%d: %s (%d)\n", __FILE__, __LINE__, \
-             gpuGetErrorString(err), errr);                               \
+             gpuGetErrorString(errr), errr);                              \
       __state->gpu_context->lasterror = errr;                             \
     }                                                                     \
   } while (0)

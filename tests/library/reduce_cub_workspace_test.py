@@ -1,0 +1,101 @@
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""The CUB workspace protocol in the ``CUDA (device)`` reduction expansion.
+
+CUB reads a null ``d_temp_storage`` as "only report the size and do nothing". An unchecked size
+query, a failed allocation, or a zero-byte one (``cudaMalloc(&p, 0)`` hands back a null pointer WITH
+``cudaSuccess``) each leave the pointer null, so the reduction performs no work and leaves the output
+as it found it -- on fresh device memory, a clean array of zeros with no error raised anywhere.
+
+These assert on emitted code, so they need a CUDA toolchain for neither compilation nor a run.
+"""
+import os
+import re
+
+import numpy as np
+import pytest
+
+import dace
+import dace.libraries.standard as std
+
+# (shape, reduced axes, output shape) for the two CUB entry points the expansion can reach:
+# a trailing-axes reduction lowers to DeviceSegmentedReduce, an all-axes one to DeviceReduce.
+CUB_CASES = [([111, 111, 111], (1, 2), [111]), ([1000], (0), [1])]
+
+
+def generated_code_for(in_shape, axes, out_shape) -> str:
+    """Every generated file for a ``CUDA (device)`` reduction over ``axes``, joined.
+
+    The expansion splits across two: the workspace and the CUB calls land in the ``.cu``, the call
+    to the reduce helper in the host ``.cpp``.
+    """
+    reduced = axes
+
+    @dace.program
+    def multidimred(a, b):
+        b[:] = np.sum(a, axis=reduced)
+
+    a = np.zeros(in_shape, np.float64)
+    b = np.zeros(out_shape, np.float64)
+    sdfg = multidimred.to_sdfg(a, b)
+    sdfg.apply_gpu_transformations()
+    rednode = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, std.Reduce))
+    rednode.implementation = 'CUDA (device)'
+
+    generated = sdfg.generate_code()
+    assert any(code.language == 'cu' for code in generated), 'the reduction did not lower to a CUDA file'
+    return '\n'.join(code.clean_code for code in generated)
+
+
+@pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
+def test_the_cub_workspace_size_query_is_checked(in_shape, axes, out_shape):
+    """A failed query leaves the size at zero, which is the zero-byte allocation below."""
+    code = generated_code_for(in_shape, axes, out_shape)
+    query = re.search(r'^.*cub::Device\w*Reduce::\w+\(nullptr,.*$', code, re.MULTILINE)
+    assert query, 'no CUB size query was emitted'
+    assert 'DACE_GPU_CHECK' in query.group(0), f'the CUB size query is unchecked: {query.group(0).strip()}'
+
+
+@pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
+def test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(in_shape, axes, out_shape):
+    """``cudaMalloc(&p, 0)`` returns a null pointer and ``cudaSuccess``, and CUB then does nothing."""
+    code = generated_code_for(in_shape, axes, out_shape)
+    alloc = re.search(r'^.*cudaMalloc\(&__cub_storage_\w+,(?:.|\n)*?\);', code, re.MULTILINE)
+    assert alloc, 'no CUB workspace allocation was emitted'
+    text = alloc.group(0)
+    assert 'DACE_GPU_CHECK' in text, f'the CUB workspace allocation is unchecked: {text.strip()}'
+    assert '? ' in text and ': 1' in text, (f'the CUB workspace allocation can request zero bytes, which yields a null '
+                                            f'pointer that CUB reads as a size query: {text.strip()}')
+
+
+@pytest.mark.parametrize('in_shape,axes,out_shape', CUB_CASES)
+def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
+    """The work call is the only site holding CUB's status for the reduction that produces the output."""
+    code = generated_code_for(in_shape, axes, out_shape)
+    assert re.search(
+        r'cudaError_t __dace_reduce_\w+\(',
+        code), ('the reduce helper returns void, so CUB\'s status is discarded at the only site that has it')
+    call = re.search(r'^.*__dace_reduce_\w+\(_in, _out,.*$', code, re.MULTILINE)
+    assert call, 'no call to the reduce helper was emitted'
+    assert 'DACE_GPU_CHECK' in call.group(0), f'the reduction call is unchecked: {call.group(0).strip()}'
+
+
+def test_the_check_macro_evaluates_its_argument_once():
+    """``DACE_GPU_CHECK`` wraps calls with side effects -- an allocation, and a whole reduction.
+
+    Naming the argument again to format the message would perform the failing call a second time.
+    """
+    path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'cuda', 'cudacommon.cuh')
+    with open(path) as fp:
+        macro = re.search(r'#define DACE_GPU_CHECK\(err\)(?:.|\n)*?while \(0\)', fp.read())
+    assert macro, 'DACE_GPU_CHECK is no longer defined where this test looks for it'
+    body = macro.group(0).split('gpuError_t errr = (err);', 1)[1]
+    assert '(err)' not in body, ('DACE_GPU_CHECK evaluates its argument a second time in the error path; wrapping a '
+                                 'call with side effects then performs it twice')
+
+
+if __name__ == '__main__':
+    for shape, ax, out in CUB_CASES:
+        test_the_cub_workspace_size_query_is_checked(shape, ax, out)
+        test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(shape, ax, out)
+        test_the_reduction_itself_reports_its_status(shape, ax, out)
+    test_the_check_macro_evaluates_its_argument_once()
