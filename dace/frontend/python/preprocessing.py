@@ -2465,6 +2465,26 @@ def find_disallowed_statements(node: ast.AST, stmts=None):
     return None
 
 
+@functools.lru_cache(maxsize=1, typed=True)
+def mpi4py_is_usable() -> bool:
+    """Whether ``mpi4py.MPI`` can actually be imported.
+
+    Installed is not the same as usable. An mpi4py wheel carries no MPI of its own -- it ``dlopen``s
+    ``libmpi`` when the ``MPI`` submodule is first imported -- so on a machine with the package but
+    no MPI runtime that import raises ``RuntimeError: cannot load MPI library``, NOT ``ImportError``.
+    A caller that only guards for ``ImportError`` then lets that escape, and every ``@dace.program``
+    fails to parse on a machine that merely has a stray ``pip install mpi4py``. Both cases mean the
+    same thing to DaCe -- there is no MPI -- so both answer False here.
+
+    Importing the submodule does not initialize MPI, so this stays side-effect-free on the parse path.
+    """
+    try:
+        from mpi4py import MPI  # noqa: F401
+    except Exception:  # noqa: BLE001 -- any failure to reach MPI means it is unavailable
+        return False
+    return True
+
+
 class MPIResolver(ast.NodeTransformer):
     """ Resolves mpi4py-related constants, e.g., mpi4py.MPI.COMM_WORLD. """
 
@@ -2593,10 +2613,9 @@ def preprocess_dace_program(f: Callable[..., Any],
         #del global_vars[mod]
         global_vars[modval] = newmod
 
-    try:
+    # Guard the availability check only, so a genuine error inside the visitor still surfaces.
+    if mpi4py_is_usable():
         src_ast = MPIResolver(global_vars).visit(src_ast)
-    except (ImportError, ModuleNotFoundError, RuntimeError):
-        pass
     src_ast = ModuloConverter().visit(src_ast)
 
     if normalize_generic_for_loops:

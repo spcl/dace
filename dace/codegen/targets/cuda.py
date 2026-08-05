@@ -12,7 +12,7 @@ import dace
 from dace import data as dt, Memlet
 from dace import dtypes, registry
 from dace import subsets, symbolic
-from dace.codegen import common, cppunparse
+from dace.codegen import common, compiler_family, cppunparse
 from dace.codegen.codeobject import CodeObject
 from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
@@ -36,6 +36,20 @@ from dace.transformation.dataflow.add_threadblock_map import AddThreadBlockMap
 if TYPE_CHECKING:
     from dace.codegen.targets.framecode import DaCeCodeGenerator
     from dace.codegen.targets.cpu import CPUCodeGen
+
+#: Host flags a device compiler must not be handed: warnings that only fire inside the CUDA headers,
+#: and position-independent code, which CMake already adds itself for a shared library.
+HOST_FLAGS_NOT_FORWARDED = frozenset({'-Wall', '-Wextra', '-fPIC'})
+
+
+def forwarded_host_args() -> List[str]:
+    """The host flags a ``.cu`` or ``.hip`` translation unit has to be built with as well.
+
+    Most of what DaCe emits into one is host code -- the state struct, the kernel launchers, the
+    stream setup -- and both it and the ``.cpp`` include the same header-only runtime. Compiling the
+    two halves under different flags leaves two versions of the same inline function to pick from.
+    """
+    return [flag for flag in compiler_family.cpu_args().split() if flag not in HOST_FLAGS_NOT_FORWARDED]
 
 
 def prod(iterable):
@@ -398,6 +412,7 @@ class CUDACodeGen(TargetCodeGenerator):
 
 DACE_EXPORTED int __dace_init_cuda({sdfg_state_name} *__state{params});
 DACE_EXPORTED int __dace_exit_cuda({sdfg_state_name} *__state);
+DACE_EXPORTED int __dace_gpu_last_error({sdfg_state_name} *__state);
 DACE_EXPORTED bool __dace_gpu_set_stream({sdfg_state_name} *__state, int streamid, gpuStream_t stream);
 DACE_EXPORTED void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream);
 
@@ -459,6 +474,15 @@ int __dace_exit_cuda({sdfg_state_name} *__state) {{
     }}
 
     delete __state->gpu_context;
+    return __err;
+}}
+
+// The runtime's own last-error slot is per-host-thread and shared with every other GPU user in the
+// process, so it is not a reliable carrier for this SDFG's failures. Hand back what the generated
+// code recorded instead, and clear it so a failure is delivered exactly once.
+int __dace_gpu_last_error({sdfg_state_name} *__state) {{
+    int __err = static_cast<int>(__state->gpu_context->lasterror);
+    __state->gpu_context->lasterror = (gpuError_t)0;
     return __err;
 }}
 
@@ -545,14 +569,18 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             cuda_arch = ';'.join(cuda_arch)
             options.append(f'-DDACE_CUDA_ARCHITECTURES_DEFAULT="{cuda_arch}"')
 
-            flags = Config.get("compiler", "cuda", "args")
+            # One ``-Xcompiler`` per flag, since nvcc splits the comma-separated form on commas.
+            # CMake hands nvcc nothing from CMAKE_CXX_FLAGS, so this is the only route.
+            flags = ' '.join([Config.get('compiler', 'cuda', 'args')] +
+                             [f'-Xcompiler={flag}' for flag in forwarded_host_args()])
             options.append("-DCMAKE_CUDA_FLAGS=\"{}\"".format(flags))
 
         if backend == 'hip':
             hip_arch = Config.get('compiler', 'cuda', 'hip_arch').split(',')
             hip_arch = [ha for ha in hip_arch if ha is not None and len(ha) > 0]
 
-            flags = Config.get("compiler", "cuda", "hip_args")
+            # No wrapping: hipcc is one driver, with no separate host compiler to forward to.
+            flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + forwarded_host_args())
             options.append(f'-DDACE_HIP_ARCHITECTURES_DEFAULT="{";".join(hip_arch)}"')
             options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
