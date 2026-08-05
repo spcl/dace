@@ -447,7 +447,10 @@ def set_fast_implementations(sdfg: SDFG,
 
     # general nodes
     for node, _ in sdfg.all_nodes_recursive():
-        if isinstance(node, nodes.LibraryNode):
+        # ``auto_select_implementation`` opts a node out entirely: its lowering was chosen by a
+        # transformation (the tile ops, from the vectorizer's ``target_isa``), and every branch below
+        # would silently reset it to the generic fallback -- no error, just the ISA path gone.
+        if isinstance(node, nodes.LibraryNode) and node.auto_select_implementation:
             # NOTE: LibraryNodes with sequential schedule on GPU must be expanded to CUDA kernel-compatible code.
             # NOTE: Pure implementations are a safe choice for now but this should be revisited in the future.
             if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
@@ -465,7 +468,7 @@ def set_fast_implementations(sdfg: SDFG,
     # reduce nodes
     if device == dtypes.DeviceType.GPU:
         for node, state in sdfg.all_nodes_recursive():
-            if isinstance(node, dace.nodes.LibraryNode):
+            if isinstance(node, dace.nodes.LibraryNode) and node.auto_select_implementation:
                 if device == dtypes.DeviceType.GPU and node.schedule == dtypes.ScheduleType.Sequential:
                     node.implementation = "pure"
                     continue

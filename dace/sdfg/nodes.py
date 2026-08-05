@@ -1422,6 +1422,15 @@ class LibraryNode(CodeNode):
     #: libraries that set it.
     expand_before_peers: bool = False
 
+    #: Whether device auto-selection (``auto_optimize.set_fast_implementations``) may overwrite
+    #: :attr:`implementation`. False for nodes whose lowering is chosen DELIBERATELY by a
+    #: transformation rather than by the target device -- the tile ops, whose backend is picked from
+    #: the vectorizer's ``target_isa``. Auto-selection would silently reset those to the generic
+    #: fallback and the ISA-native path would vanish with no error. Same class-level-attribute
+    #: rationale as :attr:`expand_before_peers`: it describes the node type, is not serialised, and
+    #: keeps the core unaware of the libraries that set it.
+    auto_select_implementation: bool = True
+
     def __init__(self, name, *args, schedule=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.name = name

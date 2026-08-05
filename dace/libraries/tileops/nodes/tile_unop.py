@@ -240,6 +240,9 @@ class TileUnop(nodes.LibraryNode):
     :cvar default_implementation: ``"pure"``.
     """
 
+    # The backend below is chosen from the vectorizer's ``target_isa``, not from the target
+    # device, so device auto-selection must not overwrite it.
+    auto_select_implementation = False
     implementations = {
         "pure": ExpandTileUnopPure,
         "cutile": ExpandTileUnopCutile,
