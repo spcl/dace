@@ -136,7 +136,12 @@ def test_measurement_picks_the_bracket_that_unblocks_both_halves():
     sdfg = reverse_read_same_write.to_sdfg(simplify=True)
     loop = _loops(sdfg)[0]
     peel = BestEffortLoopPeeling(peel_limit=4)
-    x = peel._best_split_for(loop, sdfg)
+    found = peel._best_split_for(loop, sdfg)
+    assert found is not None
+    x, middle_singleton = found
+    # A direction-flip crossover is one iteration wide, so this is the carve-a-singleton family,
+    # not the two-way range-guard split (715dfeb83).
+    assert middle_singleton is True, 'crossover split must carve the single fixpoint iteration'
     assert x == symbolic.int_floor(symbolic.pystr_to_symbolic('LEN_1D'), 2), x
     assert peel._split_range_relations(loop, x) == frozenset(), 'the split must need no runtime guard'
 

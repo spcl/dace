@@ -234,6 +234,11 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     A2 = a2 * step_s
     B1 = a1 * start_s + b1
     B2 = a2 * start_s + b2
+    # One name can be TWO sympy symbols here -- identity folds in the assumptions and the DaCe dtype,
+    # so a subset rebuilt through arithmetic carries a differently-tagged ``i`` from the one a bound
+    # was reparsed into. They never cancel, so the ``a[i]``/``a[i-1]`` pair of an inner loop leaves
+    # ``i - 1 - i`` symbolic, ``is_number`` False, and a provably disjoint pair reads as "may alias".
+    B1, B2 = symbolic.equalize_symbols(B1, B2)
     diff = sp.expand(B2 - B1)
     if A1 == 0 and A2 == 0:
         return diff.is_number and diff != 0

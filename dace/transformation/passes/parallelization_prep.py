@@ -414,7 +414,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                     x = symbolic.pystr_to_symbolic(ast.unparse(other))
                 except Exception:
                     continue
-                if ivar_sym not in x.free_symbols and x not in values:
+                if symbolic.free_symbol_like(x, ivar_sym) is None and x not in values:
                     values.append(x)
         return values
 
@@ -481,7 +481,7 @@ class BestEffortLoopPeeling(ppl.Pass):
                     x = symbolic.pystr_to_symbolic(ast.unparse(other)) + offset
                 except Exception:
                     continue
-                if ivar_sym not in x.free_symbols and x not in values:
+                if symbolic.free_symbol_like(x, ivar_sym) is None and x not in values:
                     values.append(x)
         return values
 
@@ -540,7 +540,12 @@ class BestEffortLoopPeeling(ppl.Pass):
                     if len(wsub) != len(rsub):
                         continue
                     for x in self.solve_index_crossover(wsub, rsub, ivar):
-                        if ivar not in x.free_symbols and x not in values:
+                        # Recorded in EMIT spelling: the point ends up as text in the segment bounds
+                        # (:meth:`_split_loop_at`), and a subset's assumption-tagged symbols are a
+                        # different sympy identity from what that text parses back to -- two spellings
+                        # of one point neither dedup here nor cancel in the range proofs.
+                        x = symbolic.pystr_to_symbolic(str(x))
+                        if symbolic.free_symbol_like(x, ivar) is None and x not in values:
                             values.append(x)
         return values
 
@@ -568,13 +573,21 @@ class BestEffortLoopPeeling(ppl.Pass):
             r = _as_symbolic(rb)
             if not _is_zero(_as_symbolic(we) - w) or not _is_zero(_as_symbolic(re_) - r):
                 return ()  # a multi-element range in this dim is not a clean point access
-            if ivar not in w.free_symbols and ivar not in r.free_symbols:
+            # Each side's OWN spelling of the loop variable: a differently-assumed instance is a
+            # different sympy symbol, against which ``coeff`` silently answers 0.
+            iw = symbolic.free_symbol_like(w, ivar)
+            ir = symbolic.free_symbol_like(r, ivar)
+            if iw is None and ir is None:
                 if not _is_zero(w - r):
                     return ()  # loop-invariant dimension that does not match -> never aliases
                 continue
-            aw, ar = w.coeff(ivar, 1), r.coeff(ivar, 1)
-            bw, br = symbolic.simplify(w - aw * ivar), symbolic.simplify(r - ar * ivar)
-            if any(ivar in t.free_symbols for t in (aw, ar, bw, br)):
+            if iw is None:
+                iw = ivar  # absent from this side: ``coeff`` correctly yields 0 for any spelling
+            if ir is None:
+                ir = ivar
+            aw, ar = w.coeff(iw, 1), r.coeff(ir, 1)
+            bw, br = symbolic.simplify(w - aw * iw), symbolic.simplify(r - ar * ir)
+            if any(symbolic.free_symbol_like(t, ivar) is not None for t in (aw, ar, bw, br)):
                 return ()  # not affine in the loop variable
             den, num = symbolic.simplify(aw - ar), br - bw
             if not den.is_Integer or den == 0:
@@ -626,14 +639,20 @@ class BestEffortLoopPeeling(ppl.Pass):
                     if len(wsub) != len(rsub):
                         continue
                     x = self._solve_write_eq_read(wsub, rsub, ivar)
-                    if x is not None and ivar not in x.free_symbols and x not in values:
+                    if x is None:
+                        continue
+                    x = symbolic.pystr_to_symbolic(str(x))  # emit spelling, see direction_flip_split_points
+                    if symbolic.free_symbol_like(x, ivar) is None and x not in values:
                         values.append(x)
         return values
 
     @staticmethod
     def _varies_with(sub, ivar) -> bool:
-        """Whether any dimension of ``sub`` STARTS at an index depending on ``ivar``."""
-        return any(ivar in _as_symbolic(b).free_symbols for (b, _e, _s) in sub.ndrange())
+        """Whether any dimension of ``sub`` STARTS at an index depending on ``ivar``.
+
+        By NAME: a subset built through arithmetic carries the loop variable with whatever assumptions
+        the SDFG's symbols were rebuilt with, which is a different sympy symbol from the pass's own."""
+        return any(symbolic.free_symbol_like(_as_symbolic(b), ivar) is not None for (b, _e, _s) in sub.ndrange())
 
     def _solve_write_eq_read(self, wsub, rsub, ivar):
         """Solve ``write_index(i) == read_const`` for the single ``i`` at which the
@@ -650,10 +669,11 @@ class BestEffortLoopPeeling(ppl.Pass):
                 return None  # multi-element write range in this dim -> not a clean point
             if not _is_zero(_as_symbolic(re_) - r):
                 return None  # multi-element read range in this dim
-            if ivar in w.free_symbols:
-                a = w.coeff(ivar, 1)
-                b = symbolic.simplify(w - a * ivar)
-                if ivar in a.free_symbols or ivar in b.free_symbols:
+            iv = symbolic.free_symbol_like(w, ivar)
+            if iv is not None:
+                a = w.coeff(iv, 1)
+                b = symbolic.simplify(w - a * iv)
+                if symbolic.free_symbol_like(a, ivar) is not None or symbolic.free_symbol_like(b, ivar) is not None:
                     return None  # non-affine in the loop variable
                 if not (a.is_number and _is_zero(a * a - 1)):
                     return None  # |a| != 1 -> solution may be non-integer
@@ -1122,21 +1142,28 @@ class BestEffortLoopPeeling(ppl.Pass):
         # Symbols in ``arg`` that are neither the modulus nor a ranged loop variable
         # are wrap OFFSETS: modelled as lying in ``[0, m - 1]`` (the modular-wrap
         # contract, ``offset < m``), which lets the band proof fold the far segment.
-        offsets = frozenset(arg.free_symbols - set(ranges.keys()) - {m})
+        # Excluded by NAME: a loop variable ``arg`` spells with different assumptions
+        # survives a set difference and would then be modelled as a wrap offset --
+        # assuming ``i < m`` of an iteration variable, which nothing proves or guards.
+        not_offsets = {str(lv) for lv in ranges}
+        not_offsets.add(str(m))
+        offsets = frozenset(s for s in arg.free_symbols if str(s) not in not_offsets)
         # Reduce ``arg`` to its extremes over the enclosing loop box: affine in each
         # ranged variable, so the min/max sit at the range ends (per slope sign). A
         # peeled region has no enclosing loop, so ``arg`` is already a fixed point.
         lo = hi = arg
         for lv, (start, end) in ranges.items():
-            if lv not in arg.free_symbols:
+            iv = symbolic.free_symbol_like(arg, lv)
+            if iv is None:
                 continue
-            a = arg.coeff(lv, 1)
-            if lv in a.free_symbols or lv in (arg - a * lv).free_symbols:
+            a = arg.coeff(iv, 1)
+            rest = arg - a * iv
+            if symbolic.free_symbol_like(a, lv) is not None or symbolic.free_symbol_like(rest, lv) is not None:
                 return None  # not affine in this loop variable
             if self._provably_nonneg(a):
-                lo, hi = lo.subs(lv, start), hi.subs(lv, end)
+                lo, hi = lo.subs(iv, start), hi.subs(iv, end)
             elif self._provably_nonneg(-a):
-                lo, hi = lo.subs(lv, end), hi.subs(lv, start)
+                lo, hi = lo.subs(iv, end), hi.subs(iv, start)
             else:
                 return None  # indeterminate slope sign
         # Find the band ``t`` such that ``arg - t*m`` stays in ``[0, m-1]`` over the
@@ -1196,11 +1223,13 @@ class BestEffortLoopPeeling(ppl.Pass):
                                 if operands is None:
                                     continue
                                 arg, m = operands
-                                if ivar not in arg.free_symbols:
+                                iv = symbolic.free_symbol_like(arg, ivar)
+                                if iv is None:
                                     continue
-                                a = arg.coeff(ivar, 1)
-                                b = arg - a * ivar
-                                if ivar in a.free_symbols or ivar in b.free_symbols:
+                                a = arg.coeff(iv, 1)
+                                b = arg - a * iv
+                                if (symbolic.free_symbol_like(a, ivar) is not None
+                                        or symbolic.free_symbol_like(b, ivar) is not None):
                                     continue  # arg not affine in the loop variable
                                 yield mod, arg, m, a, symbolic.simplify(b)
 
@@ -1240,8 +1269,8 @@ class BestEffortLoopPeeling(ppl.Pass):
             if not (a.is_number and _is_zero(a * a - 1)):
                 continue  # |a| != 1: the crossing is not an exact integer in general
             for t in range(-(self.peel_limit + 1), self.peel_limit + 2):
-                x = symbolic.simplify((t * m - b) / a)
-                if ivar in x.free_symbols:
+                x = symbolic.pystr_to_symbolic(str(symbolic.simplify((t * m - b) / a)))  # emit spelling
+                if symbolic.free_symbol_like(x, ivar) is not None:
                     continue
                 # Drop x at/left of the start (empty/no-op before-segment) or right of
                 # the end (empty after-segment) when that is PROVABLE; keep the rest.

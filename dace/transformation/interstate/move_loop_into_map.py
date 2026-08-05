@@ -83,8 +83,15 @@ def _differs_on_map_axis(read: sbs.Subset, write: sbs.Subset, mparams: Set[str])
                 names |= {str(s) for s in token.free_symbols}
         if not (names & mparams):
             continue
-        if any(symbolic.simplify(rt - wt) != 0 for rt, wt in zip(r, w)):
-            return True
+        for rt, wt in zip(r, w):
+            # One name can be TWO sympy symbols -- identity folds in the assumptions and the DaCe
+            # dtype, and a subset rebuilt through arithmetic carries a differently-tagged ``i`` from
+            # the one a bound was reparsed into. They never cancel, so ``i - i`` would read as a
+            # nonzero lane distance and refuse a legal interchange.
+            if symbolic.issymbolic(rt) and symbolic.issymbolic(wt):
+                rt, wt = symbolic.equalize_symbols(rt, wt)
+            if symbolic.simplify(rt - wt) != 0:
+                return True
     return False
 
 

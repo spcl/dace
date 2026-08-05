@@ -76,8 +76,12 @@ def test_split_range_relations_are_discharged_under_the_large_trip_assumption():
     assert len(loops) == 1
     loop = loops[0]
     peel = BestEffortLoopPeeling(peel_limit=4)
-    x = peel._best_split_for(loop, sdfg)
-    assert x is not None, 'expected an index-set split point for the back-conflict loop'
+    found = peel._best_split_for(loop, sdfg)
+    assert found is not None, 'expected an index-set split point for the back-conflict loop'
+    x, middle_singleton = found
+    # An `i == end` / `i == end - 1` equality guard is one iteration wide, so this is the
+    # carve-a-singleton family, not the two-way range-guard split (715dfeb83).
+    assert middle_singleton is True, 'back-conflict split must carve the single conflicting iteration'
     # The split point is the second-to-last iteration: x == end - 1 (compared against the loop's
     # own bound symbols so the assumption-tagged copies cancel).
     end = loop_analysis.get_loop_end(loop)

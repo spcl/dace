@@ -3162,6 +3162,11 @@ def provably_nonnegative(expr, assume_symbols_nonnegative: bool = False) -> bool
     CANONICALIZATION contract (runtime-guarded there), not a property of SDFGs at large, so it is
     off by default: a caller that has not established it must not be handed an answer leaning on it.
     """
+    if isinstance(expr, sympy.Expr):
+        # A bound reparsed from a CodeBlock string and a subset an assumption-setting pass rebuilt
+        # spell one name as two sympy symbols, which then never cancel -- ``x - x`` reads as undecided
+        # rather than 0. Merging them only ever decides an expression that was unprovable before.
+        expr = equalize_symbol(expr)
     s = simplify(expr)
     if not isinstance(s, sympy.Basic):
         return s >= 0
@@ -3641,15 +3646,69 @@ class SympyAwareUnpickler(pickle.Unpickler):
             raise pickle.UnpicklingError("unsupported persistent object")
 
 
+def free_symbol_like(expr: Any, sym: Any) -> sympy.Symbol | None:
+    """The instance of `sym` that `expr` actually holds -- same NAME, whatever assumptions and dtype
+    it carries -- or ``None`` when `expr` does not depend on that name.
+
+    Sympy symbol identity folds in the assumptions AND (per :meth:`symbol._hashable_content`) the DaCe
+    dtype, so one SDFG legitimately holds both spellings of a name: ``a[i]`` keeps the plain ``i`` while
+    an ``a[N - i - 1]`` rebuilt by an assumption-setting pass carries a ``nonnegative``, ``int64`` one.
+    Queried with the wrong instance, ``sym in expr.free_symbols`` is silently ``False`` and
+    ``expr.coeff(sym, 1)`` silently ``0`` -- no error, just a predicate that quietly stops holding.
+    :meth:`symbol._eval_subs` already settles substitution by name; this is the same rule for the
+    membership / coefficient queries, which go through hash and ``__eq__`` and so bypass it.
+
+    Hands back the expression's OWN instance rather than rewriting `expr`, so nothing downstream loses
+    an assumption or has its index arithmetic silently retyped.
+
+    :param expr: The expression to look in; a non-symbolic value holds no symbol and gives ``None``.
+    :param sym: The symbol to look for. Only its name is used.
+    :returns: `expr`'s instance of that name, or ``None``.
+    """
+    if not isinstance(expr, SymbolicBasic):
+        return None
+    free = expr.free_symbols
+    if sym in free:
+        return sym  # identical spelling, the common case: settled by one hash lookup
+    matches = [s for s in free if s.name == sym.name]
+    if not matches:
+        return None
+    # `free_symbols` is a set, so pick deterministically when one name is split across variants.
+    return matches[0] if len(matches) == 1 else min(matches, key=structural_repr)
+
+
+def symbol_merge_key(sym: Any) -> tuple[int, str, str]:
+    """Total order over same-named symbol instances, smallest = the one to keep.
+
+    Most DECLARED first: an instance that lost assumptions did so by being reparsed from a string,
+    which cannot know what the SDFG declared about the name. The rest of the key only has to break
+    ties, and must do so without reading `free_symbols` iteration order, which varies per run.
+    """
+    declared = sum(1 for k in _STRUCTURAL_ASSUMPTIONS if sym.assumptions0.get(k))
+    ctype = sym.dtype.ctype if is_symbol_leaf(sym) else ''
+    return (-declared, structural_repr(sym), ctype)
+
+
 def equalize_symbol(sym: sympy.Expr) -> sympy.Expr:
+    """`sym` with every group of same-named free symbols collapsed onto one instance.
+
+    A name denotes ONE value in an SDFG, but sympy symbol identity folds in the assumptions and (per
+    :meth:`symbol._hashable_content`) the DaCe dtype, so an expression can hold two instances of a
+    name -- a subset an assumption-setting pass rebuilt, against a bound reparsed from its
+    ``CodeBlock`` string -- which sympy then treats as independent variables that never cancel.
     """
-    If a symbol or symbolic expressions has multiple symbols with the same
-    name, it substitutes them with the last symbol (as they appear in
-    s.free_symbols).
-    """
-    symdict = {s.name: s for s in sym.free_symbols}
-    repldict = {s: symdict[s.name] for s in sym.free_symbols}
-    return sym.subs(repldict)
+    free: set = sym.free_symbols
+    by_name: dict[str, list] = {}
+    for s in free:
+        by_name.setdefault(s.name, []).append(s)
+    if len(by_name) == len(free):
+        return sym  # every name unique: nothing to merge, and no rebuild to pay for
+    repl = {}
+    for group in by_name.values():
+        if len(group) > 1:
+            keep = min(group, key=symbol_merge_key)
+            repl.update({s: keep for s in group if s is not keep})
+    return sym.xreplace(repl)
 
 
 def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Expr]:
