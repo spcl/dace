@@ -79,18 +79,40 @@ def test_the_reduction_itself_reports_its_status(in_shape, axes, out_shape):
     assert 'DACE_GPU_CHECK' in call.group(0), f'the reduction call is unchecked: {call.group(0).strip()}'
 
 
+def cudacommon_source() -> str:
+    """The runtime header holding the check macros and the GPU context they record into."""
+    path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'cuda', 'cudacommon.cuh')
+    with open(path) as fp:
+        return fp.read()
+
+
 def test_the_check_macro_evaluates_its_argument_once():
     """``DACE_GPU_CHECK`` wraps calls with side effects -- an allocation, and a whole reduction.
 
     Naming the argument again to format the message would perform the failing call a second time.
     """
-    path = os.path.join(os.path.dirname(dace.__file__), 'runtime', 'include', 'dace', 'cuda', 'cudacommon.cuh')
-    with open(path) as fp:
-        macro = re.search(r'#define DACE_GPU_CHECK\(err\)(?:.|\n)*?while \(0\)', fp.read())
+    macro = re.search(r'#define DACE_GPU_CHECK\(err\)(?:.|\n)*?while \(0\)', cudacommon_source())
     assert macro, 'DACE_GPU_CHECK is no longer defined where this test looks for it'
     body = macro.group(0).split('gpuError_t errr = (err);', 1)[1]
     assert '(err)' not in body, ('DACE_GPU_CHECK evaluates its argument a second time in the error path; wrapping a '
                                  'call with side effects then performs it twice')
+
+
+def test_the_recorded_error_is_the_first_one():
+    """Only the first error names the call that actually broke; the rest describe consequences.
+
+    A failed size query is the case this file is about: it leaves the workspace unsized, and the
+    reduction that then reads it reports an error of its own, about the workspace rather than the
+    query. That later one is what a caller is handed if recording overwrites.
+    """
+    source = cudacommon_source()
+    recorder = re.search(r'void record_error\(gpuError_t err\)(?:.|\n)*?\n  \}', source)
+    assert recorder, 'the GPU context no longer records errors through record_error'
+    assert 'lasterror == (gpuError_t)0' in recorder.group(0), (
+        'record_error records unconditionally, so a later error about a consequence replaces the first one')
+    written = re.findall(r'^.*\blasterror = .*$', source, re.MULTILINE)
+    assert len(written) == 1, (f'an error is recorded without going through record_error, which overwrites whatever '
+                               f'was recorded before it: {[line.strip() for line in written]}')
 
 
 if __name__ == '__main__':
@@ -99,3 +121,4 @@ if __name__ == '__main__':
         test_the_cub_workspace_is_never_allocated_zero_bytes_and_is_checked(shape, ax, out)
         test_the_reduction_itself_reports_its_status(shape, ax, out)
     test_the_check_macro_evaluates_its_argument_once()
+    test_the_recorded_error_is_the_first_one()
