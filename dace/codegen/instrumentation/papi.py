@@ -113,12 +113,10 @@ class PAPIInstrumentation(InstrumentationProvider):
         self._papi_used = True
 
     def on_sdfg_begin(self, sdfg, local_stream, global_stream, codegen):
-        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and PAPIUtils.is_papi_used(
-                sdfg):
-            raise Exception(
-                "You cannot instrument the SDFG object in addition to inner regions. Please remove the instrumentation either from the sdfg nodes or from the sdfg object!"
-            )
-        elif sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(
+        # Whole-SDFG counters are the fallback, not an override: when inner regions are instrumented
+        # too, the per-region path below wins, which is what an unextended DaCe does with the same
+        # SDFG. Refusing the combination instead would make this branch change base behaviour.
+        if sdfg.parent is None and sdfg.instrument is dtypes.InstrumentationType.PAPI_Counters and not PAPIUtils.is_papi_used(
                 sdfg):
             # Configure CMake project and counters
             self.configure_papi_native()
