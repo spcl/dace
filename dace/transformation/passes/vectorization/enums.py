@@ -30,6 +30,10 @@ class RemainderStrategy(str, enum.Enum):
     BRANCHED_TAIL = "branched_tail"  #: GPU-only: ONE kernel with a control-flow branch,
     #: if(full-tile)=vectorized tile body / else=scalar tail, over the fused tile range. K=1 only.
     #: See :class:`~dace.transformation.passes.vectorization.fuse_branched_tail_remainder.FuseBranchedTailRemainder`.
+    BRANCHED_MASKED_TAIL = "branched_masked_tail"  #: GPU K=1 DEFAULT. Same one-kernel branch as
+    #: ``branched_tail``, but the ``else`` arm is a MASKED tile body, not a scalar lane loop: the
+    #: aligned iteration takes the mask-free (widened) arm and NO scalar remainder loop is emitted
+    #: for it. K=1 only, GPU only.
 
 
 class BranchMode(str, enum.Enum):

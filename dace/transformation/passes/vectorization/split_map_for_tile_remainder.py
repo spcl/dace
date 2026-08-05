@@ -54,6 +54,14 @@ TILE_MAIN_MARKER = "__tile_main"
 # body: not tiled, strided, or masked.
 SCALAR_TAIL_MARKER = "__scalar_tail"
 
+# Label suffix: boundary region is a W-strided MASKED tile map -- the plain ``masked`` slab, but
+# TAGGED so ``FuseBranchedTailRemainder`` can find the interior it was split from and fold the two
+# into one branched kernel (the ``branched_masked_tail`` strategy). Every tile prep pass ignores
+# the suffix, so the slab is prepared exactly like an untagged masked slab. Only the
+# ``masked_branch`` tail mode applies it: tagging the plain ``masked`` slab would rename maps on
+# the CPU path, hence rename the emitted functions, for no gain there.
+MASKED_TAIL_MARKER = "__masked_tail"
+
 # Label suffix: boundary region flows through the tile-op pipeline at K=1
 # widths=(1,) — single-lane "scalar tile" remainder. Every tile prep pass treats
 # it as tile-main pinned K=1 w=1: stride 1 (no W-stride), no mask, body rewritten
@@ -119,10 +127,12 @@ class SplitMapForTileRemainder(ppl.Pass):
         allow_none=False,
         default="masked",
         desc="Boundary-region handling: 'masked' (W-strided masked slabs, the "
-        "masked_tail strategy), 'scalar' (step-1 scalar-loop slabs marked "
-        "__scalar_tail, the scalar_postamble strategy), or 'tile_k1' (step-1 "
-        "tile-op slabs at widths=(1,) marked __tile_k1_tail, the K=0/single-lane "
-        "tile-op variant of the scalar_postamble strategy).",
+        "masked_tail strategy), 'masked_branch' (the same masked slabs, tagged "
+        "__masked_tail so FuseBranchedTailRemainder can fold them into the "
+        "interior -- the branched_masked_tail strategy), 'scalar' (step-1 "
+        "scalar-loop slabs marked __scalar_tail, the scalar_postamble strategy), "
+        "or 'tile_k1' (step-1 tile-op slabs at widths=(1,) marked __tile_k1_tail, "
+        "the K=0/single-lane tile-op variant of the scalar_postamble strategy).",
     )
 
     assume_even = properties.Property(
@@ -156,9 +166,10 @@ class SplitMapForTileRemainder(ppl.Pass):
         """Build the pass.
 
         :param widths: Per-dim tile widths, innermost-last (1..3 entries).
-        :param tail_mode: ``"masked"`` (W-strided masked slabs), ``"scalar"``
-            (step-1 scalar-loop slabs marked :data:`SCALAR_TAIL_MARKER`), or
-            ``"tile_k1"`` (step-1 tile-op slabs at ``widths=(1,)`` marked
+        :param tail_mode: ``"masked"`` (W-strided masked slabs), ``"masked_branch"``
+            (the same slabs, marked :data:`MASKED_TAIL_MARKER` for the branched fuse),
+            ``"scalar"`` (step-1 scalar-loop slabs marked :data:`SCALAR_TAIL_MARKER`),
+            or ``"tile_k1"`` (step-1 tile-op slabs at ``widths=(1,)`` marked
             :data:`TILE_K1_TAIL_MARKER`, the single-lane tile-op variant).
         :param assume_even: ``True`` -> mark every eligible map ``__tile_main``
             without splitting (whole extent assumed divisible, no remainder).
@@ -173,9 +184,9 @@ class SplitMapForTileRemainder(ppl.Pass):
         super().__init__()
         if not (1 <= len(widths) <= 3):
             raise ValueError(f"SplitMapForTileRemainder: widths length {len(widths)} not in {{1, 2, 3}}")
-        if tail_mode not in ("masked", "scalar", "tile_k1"):
+        if tail_mode not in ("masked", "masked_branch", "scalar", "tile_k1"):
             raise ValueError(f"SplitMapForTileRemainder: tail_mode {tail_mode!r} not in "
-                             f"{{'masked', 'scalar', 'tile_k1'}}")
+                             f"{{'masked', 'masked_branch', 'scalar', 'tile_k1'}}")
         self.widths = list(widths)
         self.tail_mode = tail_mode
         self.assume_even = assume_even
@@ -313,6 +324,11 @@ class SplitMapForTileRemainder(ppl.Pass):
             # widths=(1,): step 1, no mask, body lowered to single-lane tile ops.
             elif self.tail_mode == "tile_k1" and not slab.entry.map.label.endswith(TILE_K1_TAIL_MARKER):
                 slab.entry.map.label = slab.entry.map.label + TILE_K1_TAIL_MARKER
+            # ``masked_branch`` mode: the slab is prepared exactly like a ``masked`` one (no prep
+            # pass knows this suffix); the mark only tells FuseBranchedTailRemainder which interior
+            # it belongs to, so the pair can be folded into one branched kernel.
+            elif self.tail_mode == "masked_branch" and not slab.entry.map.label.endswith(MASKED_TAIL_MARKER):
+                slab.entry.map.label = slab.entry.map.label + MASKED_TAIL_MARKER
         # Interior fully tiled on every dim (skipped = divisible, peeled =
         # tightened to multiple of W) -> mark mask-free.
         if not map_entry.map.label.endswith(TILE_MAIN_MARKER):
@@ -333,12 +349,11 @@ class SplitMapForTileRemainder(ppl.Pass):
         self._stride_checks = []
         # Snapshot up front: splitting mutates the graph; must not re-split a
         # freshly replicated remainder map.
-        eligible = [
-            (n, g) for n, g in sdfg.all_nodes_recursive()
-            if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState) and is_vectorizable_map(
-                g, n, len(self.widths)) and len(n.map.params) >= K and not n.map.label.endswith(TILE_MAIN_MARKER)
-            and not n.map.label.endswith(SCALAR_TAIL_MARKER) and not n.map.label.endswith(TILE_K1_TAIL_MARKER)
-        ]
+        eligible = [(n, g) for n, g in sdfg.all_nodes_recursive()
+                    if isinstance(n, MapEntry) and isinstance(g, dace.SDFGState)
+                    and is_vectorizable_map(g, n, len(self.widths)) and len(n.map.params) >= K
+                    and not n.map.label.endswith(TILE_MAIN_MARKER) and not n.map.label.endswith(SCALAR_TAIL_MARKER)
+                    and not n.map.label.endswith(TILE_K1_TAIL_MARKER) and not n.map.label.endswith(MASKED_TAIL_MARKER)]
         for n, g in eligible:
             if self._split(g, n, K):
                 applied += 1

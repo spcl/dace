@@ -25,6 +25,8 @@ tile, over all lanes. `K = 1` is plain SIMD; `K = 2` tiles a 2-D nested map.
 | `masked_tail` | full tiles unmasked; only the tail tile carries `m` |
 | `full_mask` | every tile carries `m` |
 | `scalar_postamble` | tiled interior unmasked; remainder is a scalar loop |
+| `branched_masked_tail` | GPU K=1 default: ONE map, `if t + W − 1 ≤ ub` unmasked tile `else` masked tile — no scalar loop |
+| `branched_tail` | GPU K=1: ONE map, `if t + W − 1 ≤ ub` unmasked tile `else` scalar lane loop |
 
 ## Access lattice
 

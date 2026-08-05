@@ -1,22 +1,28 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Tests for the GPU-only ``branched_tail`` remainder strategy.
+"""Tests for the two GPU-only branched remainder strategies.
 
-``branched_tail`` fuses the vectorized main-tiled map and its scalar remainder map into ONE
-GPU kernel whose body is an ``if(full-tile)/else(scalar-tail)`` ``ConditionalBlock`` -- instead
-of two separate ``GPU_Device`` kernels (the ``masked_tail`` / ``scalar_postamble`` remainder on a
-non-divisible extent would emit two kernels). The vectorized tile ops survive UNCHANGED inside
-the ``if`` branch (no arithmetic-select flatten).
+Both fuse the vectorized main-tiled map and its remainder map into ONE GPU kernel whose body is an
+``if(full-tile)/else(remainder)`` ``ConditionalBlock`` -- instead of two separate ``GPU_Device``
+kernels (the ``masked_tail`` / ``scalar_postamble`` remainder on a non-divisible extent would emit
+two kernels). The vectorized tile ops survive UNCHANGED inside the ``if`` branch (no
+arithmetic-select flatten). They differ in the ``else`` arm:
+
+  * ``branched_masked_tail`` -- the GPU K=1 DEFAULT: a MASKED tile body, so an aligned (full-tile)
+    iteration runs the mask-free widened body and NO scalar remainder loop is emitted at all;
+  * ``branched_tail`` -- a step-1 scalar body under a ``Sequential`` lane loop.
 
 Covered:
-  * default off -> the pipeline is byte-identical (no ``FuseBranchedTailRemainder``, no
-    ``ConditionalBlock``, single strided ``assume_even`` map);
+  * the GPU K=1 default IS ``branched_masked_tail`` (split peels a ``masked_branch`` tail, the fuse
+    pass is in the pipeline), and ``assume_even=True`` opts out to the single strided map;
   * the strategy is refused on CPU;
   * the provably-non-divisible extent (1022 @ W=8) takes the fused path instead of RAISING the
     ``assume_even`` error;
-  * the fused SDFG is one map + a conditional with vectorized tile ops in the ``if`` branch and a
-    scalar loop in the ``else``;
-  * the emitted ``.cu`` has exactly ONE kernel with a clean (split-residue-free) bound + condition;
-  * bit-exact vs the NumPy fp16 oracle on the device (elementwise + neighbour-read stencil, W=4/8).
+  * the fused SDFG is one map + a conditional -- vectorized tile ops in the ``if`` branch, and in
+    the ``else`` either a masked tile body (default) or a scalar loop (``branched_tail``);
+  * the emitted ``.cu`` has exactly ONE kernel with a clean (split-residue-free) bound + condition,
+    and under the default a widened (``Align >= 4``) mask-free load with no scalar tail anywhere;
+  * bit-exact vs the NumPy fp16 oracle on the device (elementwise + neighbour-read stencil, W=4/8,
+    and the 2D fp16 stencil under the plain default).
 
 GPU-executing tests fork before any CUDA use so a device fault cannot crash the pytest parent.
 """
@@ -59,6 +65,24 @@ def _add16_2d(A: dace.float16[M, N], B: dace.float16[M, N], C: dace.float16[M, N
     # param. The fused map keeps that prefix dim, and the else-branch tail loop must run per ``i``.
     for i, j in dace.map[0:M, 1:N - 1]:
         C[i, j] = A[i, j] + B[i, j]
+
+
+@dace.program
+def _stencil16_2d(A: dace.float16[M, N], B: dace.float16[M, N]):
+    # The fp16 4-point stencil the widened (half2) load path targets: the ``A[i, j-1]`` / ``A[i, j+1]``
+    # reads are the ones whose linear offset the alignment proof can pin from the guarded row-stride
+    # parity, so the mask-free (full-tile) arm must carry an ``Align >= 4`` load.
+    for i, j in dace.map[1:M - 1, 1:N - 1]:
+        B[i, j] = (A[i, j - 1] + A[i, j + 1] + A[i - 1, j] + A[i + 1, j]) * dace.float16(0.25)
+
+
+@dace.program
+def _stencil16_2d_odd(A: dace.float16[M, N], B: dace.float16[M, N]):
+    # Inner extent N-3, which is ODD whenever the row stride N is even -- and an even row stride is
+    # what the widened fp16 path's runtime guard demands. So this is the shape whose masked tail arm
+    # runs even at the W=2 default width (a W=2 tile over an even extent never reaches the else).
+    for i, j in dace.map[1:M - 1, 1:N - 2]:
+        B[i, j] = (A[i, j - 1] + A[i, j + 1]) * dace.float16(0.5)
 
 
 @dace.program
@@ -133,13 +157,79 @@ def test_assume_even_opts_out_of_branched_tail():
 
 
 def test_default_gpu_k1_is_branched_tail():
-    """The GPU K=1 default (widths=(W,), no explicit strategy) IS branched_tail: the fuse pass is in
-    the pipeline so a non-divisible extent works out of the box (one kernel, scalar remainder loop)."""
+    """The GPU K=1 default (widths=(W,), no explicit strategy) IS a branched strategy: the fuse pass
+    is in the pipeline so a non-divisible extent works out of the box (one kernel, no second one).
+    :func:`test_default_gpu_k1_peels_a_masked_tail` pins WHICH branched strategy."""
     from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
 
     default = VectorizeGPU(VectorizeConfig(widths=(2, )))
     assert any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes), \
-        "GPU K=1 default must be branched_tail (fuse pass present)"
+        "GPU K=1 default must be branched (fuse pass present)"
+
+
+def test_default_gpu_k1_peels_a_masked_tail():
+    """The GPU K=1 default is ``branched_masked_tail``, not ``branched_tail``: the split peels the
+    tail in ``masked_branch`` mode (a W-strided MASKED tile slab), which is what makes the fused
+    ``else`` arm a tile op instead of a scalar lane loop. Pinning ``tail_mode`` is the whole
+    difference between the two strategies, so it is what the default has to be pinned on."""
+    from dace.transformation.passes.vectorization.fuse_branched_tail_remainder import FuseBranchedTailRemainder
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SplitMapForTileRemainder
+
+    default = VectorizeGPU(VectorizeConfig(widths=(2, )))
+    assert [p.tail_mode for p in default.passes if isinstance(p, SplitMapForTileRemainder)] == ["masked_branch"], \
+        "GPU K=1 default must peel a MASKED tail (tail_mode='masked_branch')"
+    assert any(isinstance(p, FuseBranchedTailRemainder) for p in default.passes)
+
+    # The explicit opt-in to the scalar-tail variant still peels a scalar tail.
+    scalar = VectorizeGPU(VectorizeConfig(widths=(2, ), remainder_strategy="branched_tail"))
+    assert [p.tail_mode for p in scalar.passes if isinstance(p, SplitMapForTileRemainder)] == ["scalar"]
+
+
+def test_default_gpu_fuses_a_masked_tile_remainder():
+    """Under the DEFAULT config the fp16 stencil fuses to ONE map whose body is one conditional:
+    the ``if`` (full-tile) arm holds MASK-FREE tile ops, and the ``else`` arm holds MASKED tile ops
+    -- no ``Sequential`` map, i.e. no scalar remainder loop for the aligned iteration to skip."""
+    from dace.libraries.tileops import TileMaskGen
+
+    sdfg = _prep(_stencil16_2d)
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    sdfg.validate()
+    assert len(_top_maps(sdfg)) == 1, "the default must fuse to a single map"
+    conds = _conditionals(sdfg)
+    assert len(conds) == 1, f"expected exactly one ConditionalBlock; got {len(conds)}"
+    (if_cond, if_region), (else_pred, else_region) = conds[0].branches
+    assert else_pred is None, "expected an if-branch + a bare else"
+
+    def _kinds(region):
+        return {type(n).__name__ for st in region.all_states() for n, _ in st.all_nodes_recursive()}
+
+    if_kinds, else_kinds = _kinds(if_region), _kinds(else_region)
+    tile_ops = {"TileLoad", "TileBinop", "TileStore"}
+    assert tile_ops <= if_kinds, f"the if-branch must hold vectorized tile ops; got {sorted(if_kinds)}"
+    assert TileMaskGen.__name__ not in if_kinds, "the full-tile arm must be MASK-FREE"
+    assert tile_ops <= else_kinds, f"the else-branch must hold tile ops too; got {sorted(else_kinds)}"
+    assert TileMaskGen.__name__ in else_kinds, "the remainder arm must be MASKED (TileMaskGen present)"
+    assert "MapEntry" not in else_kinds, "the remainder arm must NOT wrap a scalar lane loop"
+    assert "int_floor" not in if_cond.as_string, f"if-condition carries a split residue: {if_cond.as_string}"
+
+
+def test_default_gpu_emits_widened_load_and_no_scalar_tail():
+    """The emitted ``.cu`` under the DEFAULT config: ONE kernel; the full-tile arm carries a
+    mask-free ``Align >= 4`` (half2-capable) ``tile_load``; the remainder arm carries a masked
+    ``tile_load``; and NO scalar tail body or lane loop is emitted anywhere."""
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import SCALAR_TAIL_MARKER
+
+    sdfg = _prep(_stencil16_2d)
+    VectorizeGPU(VectorizeConfig(widths=(2, ))).apply_pass(sdfg, {})
+    sdfg.expand_library_nodes()
+    cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+    assert cu.count("__global__ void") == 1, "the default must emit exactly ONE kernel"
+    assert "dace::tileops::tile_load<dace::float16, 2, false, 4" in cu, \
+        "the mask-free arm must carry a WIDENED (Align >= 4) fp16 load"
+    assert "dace::tileops::tile_load<dace::float16, 2, true" in cu, \
+        "the remainder arm must carry a MASKED fp16 load"
+    assert SCALAR_TAIL_MARKER not in cu, "no scalar-tail body may be emitted"
+    assert "__rem_" not in cu, "no scalar remainder lane loop may be emitted"
 
 
 def test_branched_tail_provably_nondivisible_does_not_raise():
@@ -351,10 +441,49 @@ def test_branched_tail_outer_param_bitexact(width):
     assert _run_in_fork(work) == 0
 
 
+@pytest.mark.gpu
+@pytest.mark.parametrize("width", [2, 4])
+def test_default_masked_tail_stencil_bitexact(width):
+    """The DEFAULT config (no explicit strategy) on a 2D fp16 stencil whose inner extent is ODD, so
+    the masked arm runs at every width -- including the W=2 default, where an even extent would
+    never reach it. One fused kernel, and the WHOLE output is compared, so a remainder arm running
+    on the wrong lanes (or not at all) shows up as a mismatch."""
+
+    def work():
+        import numpy as np
+        import cupy
+        sdfg = _prep(_stencil16_2d_odd)
+        sdfg.name = f"bmt_stencil16_w{width}"
+        VectorizeGPU(VectorizeConfig(widths=(width, ))).apply_pass(sdfg, {})
+        assert len(_top_maps(sdfg)) == 1, "the default must fuse to a single map"
+        assert len(_conditionals(sdfg)) == 1, "the fused body must be one if(full-tile)/else(masked)"
+        sdfg.expand_library_nodes()
+        cu = "\n".join(c.clean_code for c in sdfg.generate_code() if c.language == "cu")
+        assert cu.count("__global__ void") == 1
+        assert "__rem_" not in cu, "no scalar remainder lane loop may be emitted"
+        shutil.rmtree(os.path.join(".dacecache", sdfg.name), ignore_errors=True)
+        csr = sdfg.compile()
+        m, n = 5, 1024  # inner extent n - 3 == 1021: odd, and the row stride n stays even (guarded)
+        rng = np.random.default_rng(300 + width)
+        A = rng.random((m, n)).astype(np.float16)
+        B = np.full((m, n), 7, np.float16)  # non-zero fill: a kernel that clobbers the edges shows
+        csr(A=cupy.asarray(A), B=(dB := cupy.asarray(B)), M=m, N=n)
+        got = cupy.asnumpy(dB)
+        exp = B.copy()
+        # x * 0.5 is exact in binary FP, so the only rounding is the one fp16 add -- bit-exact.
+        exp[1:m - 1, 1:n - 2] = (A[1:m - 1, 0:n - 3] + A[1:m - 1, 2:n - 1]) * np.float16(0.5)
+        assert np.array_equal(got.view(np.uint16), exp.view(np.uint16)), "not bit-exact vs numpy fp16"
+
+    assert _run_in_fork(work) == 0
+
+
 if __name__ == "__main__":
     test_branched_tail_refused_on_cpu()
     test_assume_even_opts_out_of_branched_tail()
     test_default_gpu_k1_is_branched_tail()
+    test_default_gpu_k1_peels_a_masked_tail()
+    test_default_gpu_fuses_a_masked_tile_remainder()
+    test_default_gpu_emits_widened_load_and_no_scalar_tail()
     test_branched_tail_provably_nondivisible_does_not_raise()
     test_branched_tail_structure_if_vector_else_scalar()
     test_branched_tail_emits_single_kernel()
@@ -362,4 +491,6 @@ if __name__ == "__main__":
     test_branched_tail_elementwise_bitexact(4)
     test_branched_tail_neighbor_stencil_bitexact(8)
     test_branched_tail_neighbor_stencil_bitexact(4)
-    print("all branched_tail tests passed")
+    test_default_masked_tail_stencil_bitexact(2)
+    test_default_masked_tail_stencil_bitexact(4)
+    print("all branched-remainder tests passed")

@@ -5,14 +5,16 @@ Threads locked knob config through prep/emit passes, runs ``expand_library_nodes
 lib nodes to ``pure``; tail audit asserts no per-lane scalar leaked. ``device`` knob (CPU/GPU) picks
 reduction-lift form (CPU horizontal SIMD fold vs GPU-placed ``Reduce``) + lifted-libnode finalize
 target. Thin subclasses: :class:`VectorizeCPUMultiDim` (device=CPU), :class:`VectorizeGPUMultiDim`
-(device=GPU, ``target_isa='CUDA'``, ``assume_even=True``, GPU-schedules first).
+(device=GPU, ``target_isa='CUDA'``, K=1 ``remainder_strategy='branched_masked_tail'``, GPU-schedules
+first).
 
 Locked knobs (constructor has full semantics):
 
 * ``target_isa`` ∈ ``{AUTO, AVX512, AVX2, ARM_SVE, ARM_NEON, SCALAR, CUDA}`` (K=1 backend; AUTO
   detects host ISA at expansion).
 * ``widths`` — innermost-last, len ∈ ``{1,2,3}``, powers of 2.
-* ``remainder_strategy`` — ``masked_tail`` (default), ``full_mask``, ``scalar_postamble``.
+* ``remainder_strategy`` — ``masked_tail`` (base default), ``full_mask``, ``scalar_postamble``, and
+  the GPU-only one-kernel pair ``branched_masked_tail`` (the GPU K=1 default) / ``branched_tail``.
 * ``branch_mode`` — ``merge`` (default) or ``fp_factor``.
 
 Every other combo → ``NotImplementedError``.
@@ -249,7 +251,13 @@ class _MultiOutputReductionMapFission(MapFission):
 #: "AUTO" resolves to the host's best ISA at expansion time
 #: (``dace.libraries.tileops._dispatch.detect_host_isa``); the others pin one.
 _VALID_ISAS = ("AUTO", "AVX512", "AVX2", "ARM_SVE", "ARM_NEON", "SCALAR", "CUDA", "CUDA_WARP")
-_VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_tail")
+_VALID_REMAINDER = ("full_mask", "masked_tail", "scalar_postamble", "branched_tail", "branched_masked_tail")
+
+#: The GPU-only one-kernel strategies: ``SplitMapForTileRemainder`` peels a ``__tile_main``
+#: interior + a tail, and ``FuseBranchedTailRemainder`` folds the pair into one branched map. They
+#: differ only in the tail they peel (masked tile vs step-1 scalar), hence the shared handling.
+#: A tuple, not a dict: membership must compare equal for both the enum member and its raw string.
+_BRANCHED_REMAINDER = (RemainderStrategy.BRANCHED_MASKED_TAIL, RemainderStrategy.BRANCHED_TAIL)
 _VALID_BRANCH = ("merge", "fp_factor")
 _VALID_SCALAR_REMAINDER = ("scalar", "tile_k1")
 
@@ -832,21 +840,25 @@ class VectorizeMultiDim(ppl.Pipeline):
         # makes GenerateTileIterationMask skip its mask (no mismatched GPU thread-block sizes).
         if assume_even:
             passes.append(SplitMapForTileRemainder(widths=widths_t, assume_even=True))
-        elif remainder_strategy == RemainderStrategy.BRANCHED_TAIL:
-            # GPU-only branched-tail remainder (ONE kernel: if full-tile -> vectorized tile body /
-            # else -> scalar tail). Reuse the SAME split the scalar_postamble path uses: a
-            # provably-divisible ``__tile_main`` interior (vectorized below) + a step-1
-            # ``__scalar_tail`` (kept scalar). A post pass (appended last, after the tile emitters)
-            # fuses the two maps into one map whose body is an if/else ``ConditionalBlock``.
+        elif remainder_strategy in _BRANCHED_REMAINDER:
+            # GPU-only branched remainder (ONE kernel: if full-tile -> mask-free vectorized tile
+            # body / else -> the remainder body). Reuse the SAME split the other strategies use: a
+            # provably-divisible ``__tile_main`` interior (vectorized mask-free below) plus a tail
+            # that is either a W-strided MASKED tile slab (``branched_masked_tail``, so the aligned
+            # iteration emits no scalar loop at all) or a step-1 ``__scalar_tail``
+            # (``branched_tail``). A post pass (appended last, after the tile emitters) fuses the
+            # two maps into one map whose body is an if/else ``ConditionalBlock``.
             # GPU-only: on CPU the two maps are already one loop nest (no kernel-launch cost to
             # fold away), so the strategy is refused rather than silently downgraded.
+            name = coerce_remainder_strategy(remainder_strategy).value
             if not is_gpu_device:
-                raise NotImplementedError("VectorizeMultiDim: remainder_strategy='branched_tail' is GPU-only "
+                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name!r} is GPU-only "
                                           "(needs device=GPU / target_isa='CUDA').")
             if len(widths_t) != 1:
-                raise NotImplementedError("VectorizeMultiDim: remainder_strategy='branched_tail' supports K=1 "
+                raise NotImplementedError(f"VectorizeMultiDim: remainder_strategy={name!r} supports K=1 "
                                           f"(one tiled dim); got widths={widths_t!r}.")
-            passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode="scalar"))
+            tail_mode = "masked_branch" if remainder_strategy == RemainderStrategy.BRANCHED_MASKED_TAIL else "scalar"
+            passes.append(SplitMapForTileRemainder(widths=widths_t, tail_mode=tail_mode))
         elif remainder_strategy in ("masked_tail", "scalar_postamble"):
             # Split each K-dim tile map into a provably-divisible interior (marked
             # ``__tile_main`` → GenerateTileIterationMask skips its mask → lowered with
@@ -957,13 +969,12 @@ class VectorizeMultiDim(ppl.Pipeline):
             # that would compile against a pointer (or not compile at all).
             _AssertTileOpsLowered(widths=widths_t),
         ]
-        # ``branched_tail`` (GPU-only) post-transform: after the tile emitters vectorized the
-        # ``__tile_main`` interior and left the ``__scalar_tail`` scalar, fuse each pair into ONE
-        # GPU kernel with an if(full-tile)/else(scalar-tail) ``ConditionalBlock`` body -- reusing
-        # the vectorized tile ops UNCHANGED inside the if-branch (no arithmetic-select flatten).
-        # Runs LAST so it sees the fully-lowered tile ops. Gated on the strategy (default off);
-        # the GPU-only + K=1 preconditions were enforced at the split site above.
-        if remainder_strategy == RemainderStrategy.BRANCHED_TAIL:
+        # Branched (GPU-only) post-transform: after the tile emitters lowered the ``__tile_main``
+        # interior mask-free and prepared the tail (masked tile ops, or left scalar), fuse each pair
+        # into ONE GPU kernel with an if(full-tile)/else(remainder) ``ConditionalBlock`` body --
+        # reusing both bodies UNCHANGED (no arithmetic-select flatten). Runs LAST so it sees the
+        # fully-lowered tile ops. The GPU-only + K=1 preconditions were enforced at the split site.
+        if remainder_strategy in _BRANCHED_REMAINDER:
             passes.append(FuseBranchedTailRemainder(widths=widths_t))
         super().__init__(passes)
         self._widths = widths_t
@@ -1442,10 +1453,12 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
     * ``widths = (2,)`` default — half2 processes two fp16 lanes per instruction; a wider
       even width (4, 8) uses the SAME half2 fast path, looping ``i += 2`` (``#pragma unroll``)
       to emit ``width / 2`` consecutive half2 instructions per tile.
-    * ``assume_even = True`` — a GPU kernel emits NO remainder loop: the map extent is
-      an exact multiple of 2, so it is a single ``0:N:2`` strided map with no masked
-      tail (which would otherwise split into two GPU_Device maps of different
-      thread-block sizes). The caller guarantees the even extent.
+    * ``remainder_strategy = "branched_masked_tail"`` at K=1 — a GPU kernel emits NO scalar
+      remainder loop and no second kernel: ONE ``lb:ub:W`` strided map whose body branches on
+      ``i + W - 1 <= ub`` into the mask-free (widened) tile body or the masked tile body. A
+      second masked map would otherwise become a second GPU_Device kernel of a different
+      thread-block size. ``assume_even=True`` opts out to the single unbranched strided map,
+      with the caller guaranteeing the even extent.
 
     The tile ops must run inside a GPU kernel for the ``__device__`` half2 intrinsics to
     apply, so the target map must ALREADY be ``GPU_Device``-scheduled (or a ``Sequential`` map
@@ -1463,10 +1476,10 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         """Build the GPU orchestrator from a :class:`VectorizeConfig`.
 
         The GPU row pins ``device=GPU`` and ``target_isa=CUDA``. The K=1 default remainder
-        handling is ``branched_tail`` (one kernel: if full-tile -> vectorized / else -> scalar
-        remainder loop), so a non-divisible extent works out of the box (``assume_even=False``);
-        pass ``assume_even=True`` to opt into the even fast path (single strided map, no
-        remainder). ``widths`` (innermost must be even) and the remaining flags come from
+        handling is ``branched_masked_tail`` (one kernel: if full-tile -> mask-free widened tile /
+        else -> masked tile, no scalar loop), so a non-divisible extent works out of the box
+        (``assume_even=False``); pass ``assume_even=True`` to opt into the even fast path (single
+        strided map, no remainder). ``widths`` (innermost must be even) and the remaining flags come from
         ``config`` -- GPU callers typically pass ``VectorizeConfig(widths=(2,), expand_tile_nodes=False)``.
 
         The input SDFG must ALREADY be GPU-offloaded (its maps ``GPU_Device``-scheduled). This
@@ -1476,20 +1489,22 @@ class VectorizeGPUMultiDim(VectorizeMultiDim):
         :param config: The vectorizer configuration; its ``device`` / ``target_isa`` /
             ``assume_even`` are overridden with the GPU values.
         """
-        # GPU multidim DEFAULT (K=1): the ``branched_tail`` remainder strategy -- one kernel with
-        # ``if(full-tile) -> vectorized tile body / else -> scalar remainder loop`` -- so
+        # GPU multidim DEFAULT (K=1): the ``branched_masked_tail`` remainder strategy -- one kernel
+        # with ``if(full-tile) -> mask-free (widened) tile body / else -> MASKED tile body`` -- so
         # vectorization works out of the box on ANY extent (assume_even=False, no RAISE on a
-        # provably-non-divisible extent, no second remainder kernel). Applied only when the caller
-        # left the base default (``masked_tail``) and the tile is single-dim; ``branched_tail`` is
-        # K=1-only, so a K>1 request keeps the even-extent fast path. An explicit non-default
-        # strategy (masked_tail via another route, full_mask, scalar_postamble) is honored as given.
+        # provably-non-divisible extent, no second remainder kernel) AND an aligned iteration emits
+        # no scalar remainder loop. This is the ONLY place the device picks a strategy for the
+        # caller: the base :class:`VectorizeMultiDim` default (``masked_tail``) stays untouched, so
+        # the CPU path is unaffected. Applied only when the caller left that base default and the
+        # tile is single-dim; the branched strategies are K=1-only, so a K>1 request keeps the
+        # even-extent fast path. Any explicitly requested strategy is honored as given.
         resolved = config
         if (len(config.widths) == 1 and not config.assume_even
                 and coerce_remainder_strategy(config.remainder_strategy) == RemainderStrategy.MASKED_TAIL):
-            resolved = dataclasses.replace(config, remainder_strategy=RemainderStrategy.BRANCHED_TAIL)
-        # ``branched_tail`` handles the non-divisible extent itself, so it must NOT run under
+            resolved = dataclasses.replace(config, remainder_strategy=RemainderStrategy.BRANCHED_MASKED_TAIL)
+        # A branched strategy handles the non-divisible extent itself, so it must NOT run under
         # ``assume_even`` (which would instead RAISE on the provably-non-divisible case). Every
         # other strategy keeps the even-extent fast path (single strided map, no remainder).
-        branched = coerce_remainder_strategy(resolved.remainder_strategy) == RemainderStrategy.BRANCHED_TAIL
+        branched = coerce_remainder_strategy(resolved.remainder_strategy) in _BRANCHED_REMAINDER
         super().__init__(
             dataclasses.replace(resolved, device=DeviceType.GPU, target_isa=ISA.CUDA, assume_even=not branched))
