@@ -26,9 +26,19 @@ def scaled_add(x: dace.float64[N], y: dace.float64[N]):
 @pytest.fixture
 def private_cache(tmp_path, monkeypatch):
     """Point the caches at this test. PCH off: it is ~125 MB, tmp is often a RAM disk, and a failed
-    per-test build would change the recording key and defeat the replay under test. Covered below."""
+    per-test build would change the recording key and defeat the replay under test. Covered below.
+
+    Under the nanobind interface the fixture also warms the helper-archive cache: the first build
+    into a cold cache publishes ``libnanobind-static.a``, which ADDS a flag to every later build's
+    cmake command -- and with it a second recording key, so the cache only converges on the second
+    build of a shape. Warming keeps the keys stable, preserving the "second build replays" semantics
+    these tests assert. The warmup's own recordings are dropped so the first measured build still
+    runs CMake."""
     monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
     with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+        if dace.Config.get('compiler', 'interface') == 'nanobind':
+            build_and_check(tmp_path, 'archwarmup')
+            shutil.rmtree(os.path.join(str(tmp_path / 'cache'), 'commands'), ignore_errors=True)
         yield
 
 
@@ -51,10 +61,15 @@ def make(name, gpu=False):
 @contextlib.contextmanager
 def own_build_folder(tmp_path, name):
     """One fresh build folder per program. Pins ``cache=name`` too, since CI's ``DACE_cache=single``
-    shares one directory across SDFGs and these tests need a fresh folder."""
-    with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
-        with dace.config.set_temporary('cache', value='name'):
-            yield
+    shares one directory across SDFGs and these tests need a fresh folder. Pins the development
+    folder mode too: these tests inspect ``build/`` after compiling, and the production mode CI runs
+    under deletes it (the env var must go first, as it beats ``set_temporary``)."""
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
+        with dace.config.set_temporary('compiler', 'build_folder_mode', value='development'):
+            with dace.config.set_temporary('default_build_folder', value=str(tmp_path / name)):
+                with dace.config.set_temporary('cache', value='name'):
+                    yield
 
 
 def build_and_check(tmp_path, name, gpu=False):
