@@ -254,7 +254,7 @@ class _ConfigData(threading.local):
         # NOTE: will only work if a specific key is accessed!
         envvar = 'DACE_' + '_'.join(key_hierarchy)
         if envvar in os.environ:
-            return os.environ[envvar]
+            return self.cast_env_value(os.environ[envvar], key_hierarchy)
 
         # Traverse the key hierarchy
         current_conf = self._config
@@ -262,6 +262,29 @@ class _ConfigData(threading.local):
             current_conf = current_conf[key]
 
         return current_conf
+
+    def cast_env_value(self, raw: str, key_hierarchy):
+        """A ``DACE_*`` override cast to the type the schema declares for that key.
+
+        An environment variable is always a string, so returning it verbatim handed every numeric
+        config to its consumer as ``str`` -- and the failure then surfaced arbitrarily far away, at
+        the first arithmetic or comparison rather than at the override. Measured instance:
+        ``DACE_compiler_max_stack_array_size=0`` reached ``codegen/targets/cpu.py`` and raised
+        ``TypeError: '>' not supported between instances of 'Integer' and 'str'``.
+
+        A key ABSENT from the schema passes through raw, so unknown/experimental keys keep working.
+        """
+        try:
+            declared = self.get_metadata(*key_hierarchy).get('type')
+        except KeyError:
+            return raw  # not in the schema: no declared type to cast to
+        if declared == 'bool':
+            return _env2bool(raw)
+        if declared == 'int':
+            return int(raw)
+        if declared == 'float':
+            return float(raw)
+        return raw
 
     def get_bool(self, *key_hierarchy):
         res = self.get(*key_hierarchy)
