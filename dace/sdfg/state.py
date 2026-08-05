@@ -932,6 +932,12 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     for oedge in graph.memlet_tree(edge) if not isinstance(oedge.dst, nd.ExitNode)
                     and not oedge.data.is_empty() and oedge.data.data not in descs
                 }
+                connector_to_look = "OUT_" + edge.dst_conn[3:]
+                for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
+                    outermost = self.graph.memlet_path(oedge)[-1].data
+                    if ((not outermost.is_empty()) and (outermost.data not in descs)
+                            and (outermost.data not in additional_descs)):
+                        additional_descs[outermost.data] = sdfg.arrays[outermost.data]
 
             else:
                 # Case is ignored.
