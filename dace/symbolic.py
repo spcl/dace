@@ -9,7 +9,7 @@ import threading
 import pickle
 import re
 import types
-from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Union, TYPE_CHECKING, List
+from typing import Any, Callable, Dict, FrozenSet, Iterable, Optional, Set, Tuple, Type, Union, TYPE_CHECKING, List
 import numpy
 import sympy.abc
 import sympy.printing.str
@@ -1810,19 +1810,65 @@ _builtin_userfunctions.update(_CAST_CLASSES)
 
 
 class bitwise_and(DaceFunction):
-    pass
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a bitwise AND.
+
+        :param x: Left operand.
+        :param y: Right operand.
+        :return: The folded literal if both operands are concrete integers, else ``None``.
+        """
+        # Fold concrete integers, exactly as ``left_shift``/``right_shift`` do. Without this the
+        # expression stays unevaluated and any consumer that unparses it to Python source and
+        # ``eval``s it (e.g. ``replacements.utils.sym_type``) raises ``NameError: bitwise_and``.
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) & int(y))
 
 
 class bitwise_or(DaceFunction):
-    pass
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a bitwise OR.
+
+        :param x: Left operand.
+        :param y: Right operand.
+        :return: The folded literal if both operands are concrete integers, else ``None``.
+        """
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) | int(y))
 
 
 class bitwise_xor(DaceFunction):
-    pass
+
+    @classmethod
+    def eval(cls, x, y):
+        """
+        Evaluates a bitwise XOR.
+
+        :param x: Left operand.
+        :param y: Right operand.
+        :return: The folded literal if both operands are concrete integers, else ``None``.
+        """
+        if x.is_Integer and y.is_Integer:
+            return sympy.Integer(int(x) ^ int(y))
 
 
 class bitwise_invert(DaceFunction):
-    pass
+
+    @classmethod
+    def eval(cls, x):
+        """
+        Evaluates a bitwise NOT.
+
+        :param x: Operand.
+        :return: The folded literal if the operand is a concrete integer, else ``None``.
+        """
+        if x.is_Integer:
+            return sympy.Integer(~int(x))
 
 
 class left_shift(DaceFunction):
@@ -1922,6 +1968,20 @@ class __left_shift(left_shift):
 
 class __right_shift(right_shift):
     pass
+
+
+# Symbolic counterpart of every Python bitwise/shift operator, keyed by the ``ast`` operator class
+# name. Holds the ``__``-prefixed variants so a parsed expression prints back as the operator and
+# therefore round-trips. Lives at module level because a ``__``-prefixed name written inside a class
+# body -- e.g. the serialized-SDFG parser's ``_binops`` table below -- would be name-mangled.
+BITWISE_OPERATOR_FUNCTIONS: Dict[str, Type[DaceFunction]] = {
+    'BitAnd': __bitwise_and,
+    'BitOr': __bitwise_or,
+    'BitXor': __bitwise_xor,
+    'Invert': __bitwise_invert,
+    'LShift': __left_shift,
+    'RShift': __right_shift,
+}
 
 
 class ROUND(DaceFunction):
@@ -2579,13 +2639,33 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         return _SerializedSymbolicParser._negate(a)
 
     _binops = {
-        ast.Add: _binop_add,
-        ast.Sub: _binop_sub,
-        ast.Mult: _binop_mul,
-        ast.Div: _binop_div,
-        ast.Pow: _binop_pow,
-        ast.Mod: _binop_mod,
-        ast.FloorDiv: lambda a, b: int_floor(a, b),
+        ast.Add:
+        _binop_add,
+        ast.Sub:
+        _binop_sub,
+        ast.Mult:
+        _binop_mul,
+        ast.Div:
+        _binop_div,
+        ast.Pow:
+        _binop_pow,
+        ast.Mod:
+        _binop_mod,
+        ast.FloorDiv:
+        lambda a, b: int_floor(a, b),
+        # A hand-written or hand-edited SDFG may spell a subset/range with the bitwise and shift
+        # operators rather than the serializer's function form; without these the parser raised
+        # ``KeyError: <class 'ast.BitAnd'>``. Mirrors what ``pystr_to_symbolic`` mints.
+        ast.BitAnd:
+        BITWISE_OPERATOR_FUNCTIONS['BitAnd'],
+        ast.BitOr:
+        BITWISE_OPERATOR_FUNCTIONS['BitOr'],
+        ast.BitXor:
+        BITWISE_OPERATOR_FUNCTIONS['BitXor'],
+        ast.LShift:
+        BITWISE_OPERATOR_FUNCTIONS['LShift'],
+        ast.RShift:
+        BITWISE_OPERATOR_FUNCTIONS['RShift'],
     }
     _unaryops = {
         ast.UAdd: lambda a: +a,

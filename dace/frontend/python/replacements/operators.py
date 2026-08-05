@@ -10,7 +10,7 @@ from dace.frontend.python.replacements.utils import (ProgramVisitor, broadcast_t
 from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
 
 from numbers import Number
-from typing import List, Sequence, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Union
 import warnings
 
 import numpy as np
@@ -83,6 +83,11 @@ def _makeunop(op, opcode):
 
     @oprepo.replaces_operator('symbol', op)
     def _op(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: symbolic.symbol, op2=None):
+        # ``~`` must fold here: sympy's ``Symbol`` derives from ``Boolean``, so the ``eval('~(op1)')``
+        # fallback below silently returns the LOGICAL ``Not(N)`` instead of a bitwise complement.
+        folded = fold_symbolic_operator(op, (op1, ))
+        if folded is not None:
+            return folded
         if opcode in _pyop2symtype.keys():
             try:
                 return _pyop2symtype[opcode](op1)
@@ -722,9 +727,64 @@ _pyop2symtype = {
     "<=": sp.LessThan,
     ">": sp.StrictGreaterThan,
     "<": sp.StrictLessThan,
-    # Binary ops
-    "//": symbolic.int_floor,
 }
+
+#: Operators whose DaCe symbolic counterpart is an explicit function rather than the plain Python
+#: operator, keyed by the DaCe operator name -- the same key ``result_type`` and the ``ufuncs`` table
+#: use, so the operator spelling (``a & b``) and the NumPy spelling (``np.bitwise_and(a, b)``) fold
+#: through one table and cannot drift.
+#:
+#: ``//`` has always needed an entry because sympy's ``/`` is exact division. The bitwise and shift
+#: operators need one for a blunter reason: a sympy ``Symbol`` has no ``__and__``/``__lshift__``
+#: against an ``int``, so the generic ``eval('l & r')`` fallback raises
+#: ``TypeError: unsupported operand type(s) for &: 'symbol' and 'int'``.
+#:
+#: The BARE classes (not the ``__``-prefixed variants) on purpose. ``symstr(..., cpp_mode=True)``
+#: prints both families as C++ operators, so map ranges and subsets lower to ``(N & 3)`` either way.
+#: But when a symbolic operand is inlined into a tasklet body it goes through ``astutils.unparse``,
+#: which prints the function name -- and only the bare names have a ``dace::math`` helper of the same
+#: name (``dace/runtime/include/dace/math.h``). ``__left_shift`` would fail to compile.
+SYMBOLIC_OPERATORS: Dict[str, Callable[..., sp.Basic]] = {
+    'FloorDiv': symbolic.int_floor,
+    'BitAnd': symbolic.bitwise_and,
+    'BitOr': symbolic.bitwise_or,
+    'BitXor': symbolic.bitwise_xor,
+    'Invert': symbolic.bitwise_invert,
+    'LShift': symbolic.left_shift,
+    'RShift': symbolic.right_shift,
+}
+
+
+def is_symbolic_operand(operand: Any) -> bool:
+    """
+    Checks whether an operand carries no data container, i.e. it is a symbol, a symbolic expression
+    or a compile-time constant. Only such operands may be folded into a symbolic expression; anything
+    backed by an array or a scalar has to keep the element-wise data path.
+
+    :param operand: Operand to check.
+    :return: True if the operand is symbolic or constant.
+    """
+    return isinstance(operand, (Number, np.bool_, sp.Basic))
+
+
+def fold_symbolic_operator(operator: str, operands: Sequence[Any]) -> Optional[sp.Basic]:
+    """
+    Folds an operator applied to symbolic or constant operands into a DaCe symbolic expression.
+
+    This is the single junction shared by the Python operator route (``a & b``) and the NumPy ufunc
+    route (``np.bitwise_and(a, b)``), so both spellings produce the same symbolic expression.
+
+    :param operator: DaCe operator name, e.g. ``'BitAnd'``.
+    :param operands: Operands of the operator.
+    :return: The folded symbolic expression, or None if the operator has no symbolic counterpart or
+             any operand is backed by a data container.
+    """
+    func = SYMBOLIC_OPERATORS.get(operator)
+    if func is None:
+        return None
+    if not all(is_symbolic_operand(operand) for operand in operands):
+        return None
+    return func(*operands)
 
 
 def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, left_operand: str, right_operand: str,
@@ -748,6 +808,9 @@ def _const_const_binop(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, le
 
     # Support for SymPy expressions
     if isinstance(left, sp.Basic) or isinstance(right, sp.Basic):
+        folded = fold_symbolic_operator(operator, (left, right))
+        if folded is not None:
+            return folded
         if opcode in _pyop2symtype.keys():
             try:
                 return _pyop2symtype[opcode](left, right)

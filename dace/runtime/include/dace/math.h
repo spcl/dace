@@ -164,7 +164,9 @@ static DACE_CONSTEXPR DACE_HDFI T bitwise_xor(const T& left_operand,
   return left_operand ^ right_operand;
 }
 
-template <typename T, typename T2>
+// Unary: only ``T`` is deducible. A second template parameter (copied from the binary helpers
+// above) made every call ``bitwise_invert(x)`` fail with "couldn't deduce template parameter 'T2'".
+template <typename T>
 static DACE_CONSTEXPR DACE_HDFI T bitwise_invert(const T& value) {
   return ~value;
 }
