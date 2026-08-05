@@ -261,13 +261,24 @@ def relocate_nodes(
     for empty_edge in list(filter(lambda e: e.data.is_empty(), state.in_edges(from_node))):
         helpers.redirect_edge(state, empty_edge, new_dst=to_node)
 
-    # We now ensure that there is only one empty Memlet from the `to_node` to any other node.
+    # We now ensure that there is only one empty Memlet between `to_node` and any other node.
     #  Although it is allowed, we try to prevent it.
+    #  Deduplicate per direction, keyed on the OTHER endpoint: keying the incoming edges on
+    #  `dst` would compare `to_node` against itself, so every ordering edge after the first
+    #  would be dropped no matter where it came from -- losing the ordering its source
+    #  depends on, and isolating that source if the empty Memlet was its only edge.
     empty_targets: Set[nodes.Node] = set()
-    for empty_edge in list(filter(lambda e: e.data.is_empty(), state.all_edges(to_node))):
+    for empty_edge in list(filter(lambda e: e.data.is_empty(), state.out_edges(to_node))):
         if empty_edge.dst in empty_targets:
             state.remove_edge(empty_edge)
-        empty_targets.add(empty_edge.dst)
+        else:
+            empty_targets.add(empty_edge.dst)
+    empty_sources: Set[nodes.Node] = set()
+    for empty_edge in list(filter(lambda e: e.data.is_empty(), state.in_edges(to_node))):
+        if empty_edge.src in empty_sources:
+            state.remove_edge(empty_edge)
+        else:
+            empty_sources.add(empty_edge.src)
 
     # Relocation of the edges that carry data.
     for edge_to_move in list(state.in_edges(from_node)):

@@ -302,6 +302,80 @@ def fusion_indirect_access(A: dace.float32[100], B: dace.float32[100], idx: dace
     out[:] = tmp[idx]
 
 
+def make_empty_memlet_ordering_sdfg(ordering_only: bool, both: bool = False):
+    """Two fusable Maps with an empty memlet into the first MapEntry.
+
+    An empty memlet transfers no data and therefore carries no connector.
+    `find_subsets()` used to subscript that absent connector (`"OUT_" + e.dst_conn[3:]`
+    on `None`), which `can_be_applied()` reported as a swallowed `TypeError` -- so the
+    Maps silently never fused. `get_access_set()` additionally reported nodes reachable
+    only through such an edge, for which there is no subset to find at all.
+
+    `tmp` is read AND written by the first Map and is the intermediate, which is what
+    routes `has_read_write_dependency()` into `find_subsets()`.
+
+    :param ordering_only: order a node that has no data edge at all against the Map,
+        instead of putting the ordering edge on the intermediate's read node.
+    :param both: use both ordering edges at once. `relocate_nodes()` used to deduplicate
+        the empty Memlets of `all_edges()` by `dst`, which for an INCOMING edge is the
+        scope node itself -- so the second ordering edge was dropped whatever its source,
+        isolating a node whose only edge it was.
+    """
+    sdfg = dace.SDFG(unique_name("empty_memlet_ordering"))
+    state = sdfg.add_state("state", is_start_block=True)
+
+    for name in ["A", "B"]:
+        sdfg.add_array(name, shape=(20, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("tmp", shape=(20, ), dtype=dace.float64, transient=True)
+
+    A, B = (state.add_access(name) for name in ["A", "B"])
+    tmp_read, tmp_inter = (state.add_access("tmp") for _ in range(2))
+
+    _, me1, _ = state.add_mapped_tasklet(
+        "first",
+        map_ranges={"__i": "0:20"},
+        inputs={
+            "__a": dace.Memlet("A[__i]"),
+            "__t": dace.Memlet("tmp[__i]")
+        },
+        code="__out = __a + __t",
+        outputs={"__out": dace.Memlet("tmp[__i]")},
+        input_nodes={
+            "A": A,
+            "tmp": tmp_read
+        },
+        output_nodes={"tmp": tmp_inter},
+        external_edges=True,
+    )
+    state.add_mapped_tasklet(
+        "second",
+        map_ranges={"__i": "0:20"},
+        inputs={"__t": dace.Memlet("tmp[__i]")},
+        code="__out = __t * 2.0",
+        outputs={"__out": dace.Memlet("B[__i]")},
+        input_nodes={"tmp": tmp_inter},
+        output_nodes={"B": B},
+        external_edges=True,
+    )
+
+    if ordering_only or both:
+        sdfg.add_array("C", shape=(20, ), dtype=dace.float64, transient=False)
+        state.add_edge(state.add_access("C"), None, me1, None, dace.Memlet())
+    if not ordering_only or both:
+        # Same node carries both a data edge and an ordering edge.
+        state.add_edge(tmp_read, None, me1, None, dace.Memlet())
+
+    sdfg.validate()
+    return sdfg
+
+
+@pytest.mark.parametrize(('ordering_only', 'both'), [(False, False), (True, False), (False, True)])
+def test_fusion_empty_memlet_ordering(ordering_only, both):
+    """An empty memlet into the MapEntry must not stop the two Maps from fusing."""
+    sdfg = make_empty_memlet_ordering_sdfg(ordering_only, both)
+    apply_fusion(sdfg, removed_maps=1)
+
+
 def make_interstate_transient_fusion_sdfg():
     sdfg = dace.SDFG(unique_name("interstate_transient_fusion"))
     state1 = sdfg.add_state("state1", is_start_block=True)

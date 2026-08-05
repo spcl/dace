@@ -1763,6 +1763,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         The function returns a set that contains all access nodes that were found.
         It is important that this set will also contain views.
 
+        Empty memlets are ignored: they order the node against the scope without
+        transferring data, so they establish no access and have no subset that
+        `find_subsets()` could report.
+
         :param scope_node: The scope node that should be evaluated.
         :param state: The state in which we operate.
         """
@@ -1774,7 +1778,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
         access_set: Set[nodes.AccessNode] = {
             node
-            for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
+            for node in map(other_node, (e for e in get_edges(scope_node) if not e.data.is_empty()))
+            if isinstance(node, nodes.AccessNode)
         }
 
         return access_set
@@ -1802,13 +1807,18 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         """
         # Is the node used for reading or for writing.
         #  This influences how we have to proceed.
+        # Empty memlets are skipped: they only order `node` against the scope, so they
+        #  carry no subset and, having no connector, would make the connector lookup
+        #  below subscript `None`. A node may reach the scope through both a data edge
+        #  and an ordering edge, so this filter is needed even though `get_access_set()`
+        #  already drops the nodes that are reachable ONLY through empty memlets.
         if isinstance(scope_node, nodes.MapEntry):
-            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
+            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:]))
         else:
-            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
+            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node and not e.data.is_empty()]
             get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:]))
