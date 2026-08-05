@@ -1793,7 +1793,7 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
             sdfg.update_cfg_list([])
             if symbol_mapping:
                 from dace.sdfg import dealias  # Avoid circular import
-                replaced_symbols = dealias.remove_symbol_aliases(sdfg, symbol_mapping)
+                dealias.remove_symbol_aliases(sdfg, symbol_mapping)
 
                 symbolic.safe_replace(symbol_mapping, lambda m: sdfg.replace_dict(m))
 
@@ -1824,10 +1824,9 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         if sdfg is not None:
             sdfg.parent_nsdfg_node = s
 
-            # Add "default" undefined symbols if None are given
-            if not symbol_mapping:
-                symbols = sdfg.free_symbols
-                symbol_mapping = {s: s for s in symbols}
+            # After the replacements above, all remaining free symbols refer to parent-scope
+            # names directly, so the effective symbol mapping is the identity.
+            symbol_mapping = {fs: fs for fs in sdfg.free_symbols}
             s.symbol_mapping = symbol_mapping
 
             # Add new global symbols to nested SDFG

@@ -282,15 +282,19 @@ def integrate_nested_sdfg(sdfg: SDFG):
     symbols_to_add: Set[symbolic.SymbolicType] = set()
     # Collect all symbols that need to be added to the nested SDFG
     for parent_name, parent_desc, parent_memlet in to_add_and_view.values():
+        # The parent data name itself may not alias internally-defined names
+        symbols_to_add.add(parent_name)
         for sym in parent_desc.used_symbols(all_symbols=True):
             symbols_to_add.add(str(sym))
         for sym in parent_memlet.used_symbols(all_symbols=True):
             symbols_to_add.add(str(sym))
 
     if symbols_to_add:
-        symbol_aliases = remove_symbol_aliases(sdfg, {sym: sym for sym in symbols_to_add})
-    else:
-        symbol_aliases = {}
+        # Rename internal names that would clash with the symbols introduced from the parent. Since the mapping is
+        # the identity, free symbols used inside are considered the same symbol and are not renamed. Connector arrays
+        # that are about to be integrated are excluded, as they are replaced with views below.
+        introduced = symbols_to_add - set(to_add_and_view.keys())
+        remove_symbol_aliases(sdfg, {sym: sym for sym in introduced})
 
     # Process each data container that needs to be integrated
     visited: Set[str] = set()
@@ -336,7 +340,6 @@ def integrate_nested_sdfg(sdfg: SDFG):
                     parent_desc.strides[i] for i in range(len(parent_desc.shape)) if i not in unsqueezed_dims
                 ]
             except (ValueError, NotImplementedError):
-                print("WARNING")
                 # If unsqueezing fails, we keep the original view descriptor
                 pass
         elif len(view_desc.shape) > len(parent_desc.shape):
@@ -414,59 +417,76 @@ def integrate_nested_sdfg(sdfg: SDFG):
     # Add remaining symbols to symbol mapping using symbols_defined_at
     symtypes = parent_state.symbols_defined_at(parent_node)
     for sym_name, sym_type in symtypes.items():
+        # Skip parent symbols that are shadowed by unrelated internal data containers or constants
+        if sym_name in sdfg.arrays or sym_name in sdfg.constants_prop:
+            continue
         if sym_name not in sdfg.symbols:
             # Add the symbol to the SDFG and the parent node's symbol mapping
-            # TODO: If a data descriptor/symbol already exists with the same name, do something else
             sdfg.add_symbol(sym_name, sym_type)
         parent_node.symbol_mapping[sym_name] = sym_name
-
-    # If any symbols were renamed by remove_symbol_aliases (e.g., H -> H_0),
-    # we need to reverse the renaming to restore the original symbol names,
-    # but ONLY for symbols that were identity-mapped (meaning they should be
-    # shared with the parent). Symbols that were mapped to different values
-    # (like internal symbols mapped to constants) should stay renamed.
-    if symbol_aliases:
-        # Only reverse aliases for symbols that were in the original symbols_to_add set
-        # (i.e., symbols from parent data descriptors that should be shared)
-        reverse_aliases = {v: k for k, v in symbol_aliases.items() if k in symbols_to_add}
-        if reverse_aliases:
-            sdfg.replace_dict(reverse_aliases)
-            # Update the symbol mapping on the parent node
-            symbolic.safe_replace(reverse_aliases, lambda d: _replace_dict_keys(parent_node.symbol_mapping, d))
 
 
 def remove_symbol_aliases(sdfg: SDFG, symbol_mapping: Dict[str, str]) -> Dict[str, str]:
     """
-    Removes symbol aliases from the SDFG based on the provided symbol mapping.
-    This function ensures that all symbols in the SDFG are unique and that
-    aliases are resolved to their original symbols.
+    Ensures that symbols introduced into the SDFG through the values of ``symbol_mapping`` will not
+    alias unrelated names inside the SDFG. Only names that genuinely clash are renamed:
+
+      * Symbols that are (re)defined inside the SDFG (e.g., map parameters, interstate edge
+        assignments, loop variables) and match an introduced symbol.
+      * Data container or constant names that match an introduced symbol.
+      * Symbols used inside the SDFG that match an introduced symbol but are not keys of the
+        mapping. Keys are either identity-mapped (i.e., the same symbol as the parent's) or
+        replaced separately by the caller, so they do not alias.
 
     :param sdfg: The SDFG to operate on.
-    :param symbol_mapping: A dictionary mapping aliases to their original symbols.
-    :return: A dictionary mapping original symbols to their new names, if any renaming was necessary.
+    :param symbol_mapping: A dictionary mapping SDFG symbols to symbolic expressions in the parent scope.
+    :return: A dictionary mapping original names to their new names, if any renaming was necessary.
     """
-    # The following symbols are at risk of aliasing with symbols internal to the SDFG.
-    # We need to ensure that these symbols are not aliased by renaming them in the SDFG to unique names.
-    target_symbols = set().union(*(symbolic.free_symbols_and_functions(v) for v in symbol_mapping.values()))
-    sdfg_symbols = set(sdfg.used_symbols(all_symbols=True))
+    if not symbol_mapping:
+        return {}
+    # The following symbols will be introduced into the SDFG and are at risk of aliasing internal names.
+    target_symbols = {
+        str(s)
+        for s in set().union(*(symbolic.free_symbols_and_functions(v) for v in symbol_mapping.values()))
+    }
+    if not target_symbols:
+        return {}
+
+    # Names that are (re)defined inside the SDFG always clash with introduced symbols
+    defined_symbols: Set[str] = set()
     for state in sdfg.all_states():
         for node in state.nodes():
-            sdfg_symbols.update(node.new_symbols(sdfg, state, {}).keys())
-    if target_symbols & sdfg_symbols:
-        # If there is an intersection, we need to rename the symbols in the SDFG
-        all_symbols = sdfg_symbols | target_symbols | sdfg.arrays.keys() | sdfg.constants_prop.keys()
-        repl_dict = {}
-        for sym in target_symbols:
-            if str(sym) in sdfg_symbols and str(sym) not in repl_dict:
-                new_name = data.find_new_name(str(sym), all_symbols)
-                repl_dict[str(sym)] = new_name
-                all_symbols.add(new_name)
-        sdfg.replace_dict(repl_dict)
-        symbolic.safe_replace(repl_dict, lambda d: _replace_dict_keys(symbol_mapping, d))
-        if sdfg.parent_nsdfg_node is not None:
-            symbolic.safe_replace(repl_dict, lambda d: _replace_dict_keys(sdfg.parent_nsdfg_node.symbol_mapping, d))
-        return repl_dict
-    return {}
+            defined_symbols.update(map(str, node.new_symbols(sdfg, state, {}).keys()))
+    for edge in sdfg.all_interstate_edges():
+        defined_symbols.update(edge.data.assignments.keys())
+    for region in sdfg.all_control_flow_regions():
+        defined_symbols.update(map(str, region.new_symbols({}).keys()))
+
+    used_symbols = set(map(str, sdfg.used_symbols(all_symbols=True)))
+
+    clashing: Set[str] = set()
+    for sym in target_symbols:
+        if sym in defined_symbols or sym in sdfg.arrays or sym in sdfg.constants_prop:
+            clashing.add(sym)
+        elif sym in used_symbols and sym not in symbol_mapping:
+            clashing.add(sym)
+
+    if not clashing:
+        return {}
+
+    taken_names = (used_symbols | defined_symbols | target_symbols | sdfg.arrays.keys() | sdfg.constants_prop.keys()
+                   | symbol_mapping.keys())
+    repl_dict: Dict[str, str] = {}
+    for sym in clashing:
+        new_name = data.find_new_name(sym, taken_names)
+        repl_dict[sym] = new_name
+        taken_names.add(new_name)
+
+    sdfg.replace_dict(repl_dict)
+    symbolic.safe_replace(repl_dict, lambda d: _replace_dict_keys(symbol_mapping, d))
+    if sdfg.parent_nsdfg_node is not None:
+        symbolic.safe_replace(repl_dict, lambda d: _replace_dict_keys(sdfg.parent_nsdfg_node.symbol_mapping, d))
+    return repl_dict
 
 
 def _replace_dict_keys(target_dict: Dict[str, symbolic.SymbolicType], d: Dict[str, str]):
