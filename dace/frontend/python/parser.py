@@ -1037,10 +1037,9 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
         for name, value in closure.closure_constants.items():
             if name in removed_args:
                 continue
-            try:
-                constants[name] = (create_datadescriptor(value), value)
-            except (TypeError, ValueError):
-                continue
+            descriptor = pycommon.closure_constant_descriptor(value)
+            if descriptor is not None:
+                constants[name] = (descriptor, value)
 
         closure_arrays = {
             name: (qualname, desc)

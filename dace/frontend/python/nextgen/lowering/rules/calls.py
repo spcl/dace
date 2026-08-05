@@ -21,6 +21,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.utils import prod
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
+from dace.frontend.python.common import closure_constant_descriptor
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
@@ -199,11 +200,9 @@ def _prepare_callee(
         state.emitter.root.callback_mapping.setdefault(callback_name, original)
         state.context.callback_callables.setdefault(callback_name, function)
     for constant_name, value in closure.closure_constants.items():
-        try:
-            descriptor = data.create_datadescriptor(value)
-        except (TypeError, ValueError):
-            continue
-        state.context.constants.setdefault(constant_name, (descriptor, value))
+        descriptor = closure_constant_descriptor(value)
+        if descriptor is not None:
+            state.context.constants.setdefault(constant_name, (descriptor, value))
     # External arrays the callee references bind inside its inline scope,
     # deduplicated by qualified name across the whole program
     for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items():

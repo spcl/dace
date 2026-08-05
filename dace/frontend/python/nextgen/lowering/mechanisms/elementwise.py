@@ -117,10 +117,13 @@ def _cast_operands(code: str, value: ast.expr, operands: List[Tuple[str, DataAcc
     """
     Apply :func:`operand_casts` to the tasklet code of a binary operator.
 
-    A literal operand needs no cast of its own: it is spelled inline, and C++
-    promotes it against an operand already in the operation's type.
+    A literal operand is cast only when the expression has no data operand at
+    all. Normally it needs none -- it is spelled inline and C++ promotes it
+    against an operand already carrying the operation's type -- but in
+    ``10 ** -2`` there is no such operand, and without the casts the generated
+    code raises an int to an int and stores 0 rather than 0.01.
     """
-    if not isinstance(value, ast.BinOp) or not operands:
+    if not isinstance(value, ast.BinOp):
         return code
     operand_values = state.inference.binary_operand_values(value)
     if operand_values is None:
@@ -135,7 +138,9 @@ def _cast_operands(code: str, value: ast.expr, operands: List[Tuple[str, DataAcc
     # substitutes as ``__in0[__in1]``, and casting the names inside it would
     # cast the index rather than the value it selects.
     for side, cast in zip(('left', 'right'), casts):
-        if cast is None or not state.inference.infer(getattr(value, side)).is_data:
+        if cast is None:
+            continue
+        if operands and not state.inference.infer(getattr(value, side)).is_data:
             continue
         function = ast.parse(cast, mode='eval').body
         setattr(rewritten, side, ast.Call(func=function, args=[getattr(rewritten, side)], keywords=[]))

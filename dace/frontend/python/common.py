@@ -49,6 +49,38 @@ class InvalidOperandTypes(TypeError):
     """
 
 
+def closure_constant_descriptor(value: Any) -> Optional[data.Data]:
+    """
+    The descriptor a closure constant is registered under, or None when the
+    value cannot be described at all.
+
+    A scalar value :attr:`SDFG.constants` could not materialize under the
+    descriptor gets an opaque one instead. ``create_datadescriptor`` answers
+    what a value DENOTES as a type specification, which for anything that is
+    one -- ``a_type = dace.int8`` passed through a parametrized test's closure
+    and used only in annotations -- is not what it holds: the pair then makes
+    ``SDFG.constants`` cast the typeclass object itself to int8. ``None`` fails
+    the same way, through a ``void`` descriptor whose type is not callable.
+    Such names are compile-time objects, so they belong with the others that
+    have no dataflow representation and never reach generated code. Their
+    values stay available to the frontend either way -- the descriptor decides
+    only what is code-generatable.
+
+    :param value: The closure constant's value.
+    """
+    try:
+        descriptor = data.create_datadescriptor(value)
+    except (TypeError, ValueError):
+        return None
+    if isinstance(descriptor, data.Scalar):
+        from dace import dtypes
+        try:
+            descriptor.dtype.type(value)
+        except Exception:
+            return data.Scalar(dtypes.pyobject())
+    return descriptor
+
+
 def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
     """ Finds the first key in a dictionary with the input value. """
     for k, v in dict.items():
