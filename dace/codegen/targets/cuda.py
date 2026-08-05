@@ -671,9 +671,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
             self._dispatcher.defined_vars.add(dataname, DefinedType.Pointer, ctypedef)
 
             if nodedesc.pool:
-                cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                if cudastream != 'nullptr':
-                    cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                 result_alloc.write(
                     f'DACE_GPU_CHECK({self.backend}MallocAsync((void**)&{dataname}, {arrsize_malloc}, {cudastream}));\n'
                 )
@@ -820,9 +818,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
         if nodedesc.storage == dtypes.StorageType.GPU_Global:
             if nodedesc.pool:
                 if (sdfg, dataname) not in self.pool_release:  # If pooled, will be freed somewhere else
-                    cudastream = getattr(node, '_cuda_stream', 'nullptr')
-                    if cudastream != 'nullptr':
-                        cudastream = f'__state->gpu_context->streams[{cudastream}]'
+                    cudastream = common.gpu_stream_expr(getattr(node, '_cuda_stream', 'nullptr'))
                     callsite_stream.write(
                         f'DACE_GPU_CHECK(%sFreeAsync(%s, %s));\n' % (self.backend, dataname, cudastream), cfg, state_id,
                         node)
@@ -1069,8 +1065,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                     elif e.dst._cuda_stream != cudastream:
                         syncwith[e.dst._cuda_stream] = e._cuda_event
 
-                if cudastream != 'nullptr':
-                    cudastream = '__state->gpu_context->streams[%d]' % cudastream
+                cudastream = common.gpu_stream_expr(cudastream)
 
             if memlet.wcr is not None:
                 raise NotImplementedError('Accumulate %s to %s not implemented' % (src_location, dst_location))
@@ -1289,7 +1284,7 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
             else:
                 # Synchronize with other streams as necessary
                 for streamid, event in syncwith.items():
-                    syncstream = '__state->gpu_context->streams[%d]' % streamid
+                    syncstream = common.gpu_stream_expr(streamid)
                     callsite_stream.write(
                         '''
     DACE_GPU_CHECK({backend}EventRecord(__state->gpu_context->events[{ev}], {src_stream}));
@@ -1475,15 +1470,17 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 del self.pool_release[sd, name]
 
             if state.nosync == False:
-                streams_to_sync = set()
+                # Ordered set: the default stream is named by a string, so a plain set would order the
+                # synchronizations below by hash and make the emitted code depend on PYTHONHASHSEED.
+                streams_to_sync = {}
                 for node in state.sink_nodes():
-                    if hasattr(node, '_cuda_stream') and node._cuda_stream != 'nullptr':
-                        streams_to_sync.add(node._cuda_stream)
+                    if hasattr(node, '_cuda_stream'):
+                        streams_to_sync[node._cuda_stream] = None
                     else:
                         # Synchronize sink-node copies at the end of the state
                         for e in state.in_edges(node):
-                            if hasattr(e.src, '_cuda_stream') and e.src._cuda_stream != 'nullptr':
-                                streams_to_sync.add(e.src._cuda_stream)
+                            if hasattr(e.src, '_cuda_stream'):
+                                streams_to_sync[e.src._cuda_stream] = None
 
                 # Relaxed condition for skipping synchronization:
                 # if ALL the immediately reachable non-empty states (i.e.,
@@ -1492,14 +1489,14 @@ void __dace_alloc_{location}(uint32_t {size}, dace::GPUStream<{type}, {is_pow2}>
                 # then we can skip synchronization.
                 next_states = sdutil.get_next_nonempty_states(sdfg, state)
                 if next_states and len(streams_to_sync) == 1:
-                    if all(self._begin_streams(sdfg, ns) == streams_to_sync for ns in next_states):
+                    if all(self._begin_streams(sdfg, ns) == streams_to_sync.keys() for ns in next_states):
                         # Relax synchronization
-                        streams_to_sync = set()
+                        streams_to_sync = {}
 
                 for stream in streams_to_sync:
                     callsite_stream.write(
-                        'DACE_GPU_CHECK(%sStreamSynchronize(__state->gpu_context->streams[%d]));' %
-                        (self.backend, stream), cfg, state.block_id)
+                        'DACE_GPU_CHECK(%sStreamSynchronize(%s));' % (self.backend, common.gpu_stream_expr(stream)),
+                        cfg, state.block_id)
 
             # After synchronizing streams, generate state footer normally
             callsite_stream.write('\n')
@@ -1873,7 +1870,7 @@ int dace_number_blocks = ((int) ceil({fraction} * dace_number_SMs)) * {occupancy
 
         max_streams = int(Config.get('compiler', 'cuda', 'max_concurrent_streams'))
         if max_streams >= 0:
-            cudastream = '__state->gpu_context->streams[%d]' % scope_entry._cuda_stream
+            cudastream = common.gpu_stream_expr(scope_entry._cuda_stream)
         else:
             cudastream = 'nullptr'
 
