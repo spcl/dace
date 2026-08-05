@@ -757,6 +757,14 @@ class SDFG(ControlFlowRegion):
         if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj['source_files'])
 
+        if ret.parent_sdfg is None:
+            # `to_json` rebuilds the CFG list before writing, but it is derived state that the JSON
+            # does not carry: on the way back in it is only whatever the nested `add_node` calls
+            # happened to accumulate. Left stale, `cfg_id` no longer round-trips, so every
+            # `PatternNode` lookup resolves against the wrong region and `can_be_applied` raises
+            # `NodeNotFoundError` -- which the matcher swallows, silently declining every match.
+            ret.reset_cfg_list()
+
         return ret
 
     def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
