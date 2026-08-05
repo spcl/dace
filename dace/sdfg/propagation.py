@@ -1012,6 +1012,48 @@ def _collect_state_border_memlet_candidates(state: 'SDFGState', border_memlets) 
             border_memlets[direction][node.label].extend(edge.data for edge in edges)
 
 
+def _collect_region_meta_read_candidates(region, candidates) -> None:
+    """
+    Collect reads performed by a control-flow region itself as border input candidates.
+
+    This includes reads on the region's interstate edges (conditions and assignments) as
+    well as meta-code reads such as loop or branch conditions.
+
+    :param region: The control-flow region whose meta reads should be collected.
+    :param candidates: A candidate memlet mapping, typically created with
+                       ``_make_border_memlets(..., as_lists=True)``, which is updated in place.
+    :note: ``candidates`` mapping is updated in-place.
+    """
+    arrays = region.sdfg.arrays
+    memlets = []
+    for edge in region.edges():
+        memlets.extend(edge.data.get_read_memlets(arrays))
+    memlets.extend(region.get_meta_read_memlets())
+    for memlet in memlets:
+        if memlet.data in candidates['in']:
+            candidates['in'][memlet.data].append(memlet)
+
+
+def _merge_meta_read_candidates(region, border_memlets, arrays) -> None:
+    """
+    Merge a region's own meta reads (interstate edges, conditions) into border input memlets.
+
+    :param region: The control-flow region whose meta reads should be merged.
+    :param border_memlets: The accumulated border memlet mapping to update in place.
+    :param arrays: The array descriptor mapping of the containing SDFG.
+    :note: ``border_memlets`` mapping is updated in-place.
+    """
+    candidates = _make_border_memlets(border_memlets, as_lists=True)
+    _collect_region_meta_read_candidates(region, candidates)
+    for connector in border_memlets['in']:
+        propagated = _propagate_border_memlet_candidates(candidates, arrays, 'in', connector)
+        if propagated is None:
+            continue
+        array_name = propagated.data if propagated.data is not None else connector
+        border_memlets['in'][connector] = _merge_border_memlet(border_memlets['in'][connector], propagated,
+                                                               arrays[array_name])
+
+
 def _append_border_memlet_candidates(border_memlets, propagated_memlets) -> None:
     """
     Append propagated child-region memlets to a candidate memlet map.
@@ -1274,6 +1316,9 @@ def propagate_memlets_nested_sdfg(parent_sdfg: 'SDFG', parent_state: 'SDFGState'
             _propagate_state_border_memlets(block, border_memlets, sdfg.arrays)
         elif isinstance(block, AbstractControlFlowRegion):
             block.propagate_memlets(border_memlets)
+
+    # Collect reads performed by the top-level interstate edges of the nested SDFG.
+    _merge_meta_read_candidates(sdfg, border_memlets, sdfg.arrays)
 
     # Make sure any potential NSDFG symbol mapping is correctly reversed
     # when propagating out.

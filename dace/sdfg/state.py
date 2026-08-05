@@ -2709,6 +2709,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         from dace.sdfg import propagation as sdprop
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -3646,6 +3647,7 @@ class LoopRegion(ControlFlowRegion):
             return
 
         candidates = sdprop._make_border_memlets(border_memlets, as_lists=True)
+        sdprop._collect_region_meta_read_candidates(self, candidates)
 
         for block in self.nodes():
             if isinstance(block, SDFGState):
@@ -3898,6 +3900,10 @@ class ConditionalBlock(AbstractControlFlowRegion):
         :note: ``border_memlets`` mapping is updated in-place.
         """
         from dace.sdfg import propagation as sdprop
+
+        # Branch conditions are evaluated regardless of which branch is taken.
+        sdprop._merge_meta_read_candidates(self, border_memlets, self.sdfg.arrays)
+
         has_condition = False
 
         for condition, region in self._branches:
