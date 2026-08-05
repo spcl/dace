@@ -241,7 +241,8 @@ if(DACE_ENABLE_HIP)
     set(LOCAL_HIP_ARCHITECTURES "${DACE_HIP_ARCHITECTURES_DEFAULT}" CACHE STRING "Specified HIP architecture for compilation")
 
   else()
-    # Compile and run a test program
+    # Compile and run a test program to get the HIP architecture.
+    # TODO: Remove once `native` can be used.
     execute_process(
       COMMAND ${HIP_HIPCC_EXECUTABLE} "${CMAKE_SOURCE_DIR}/tools/get_hip_arch.cpp" -o "${CMAKE_CURRENT_BINARY_DIR}/hiparch"
       OUTPUT_VARIABLE _arch_compout RESULT_VARIABLE _arch_res)
