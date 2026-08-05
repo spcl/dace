@@ -125,7 +125,10 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
-        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl"
+        # ``not loop2x_libnodes``: the Syrk/Symm MKL parametrizations moved to the loop2x-libnodes
+        # runner, which now installs oneAPI MKL itself. Running them here too would double the
+        # 104 compile-heavy cases.
+        pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl and not loop2x_libnodes"
         ./codecov
 
     - name: Test FFTW3 FFT lowering
