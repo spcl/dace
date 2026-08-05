@@ -347,6 +347,38 @@ def build_cache_root() -> str:
     return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
 
 
+def nanobind_static_cache_path() -> str:
+    """Cache location of nanobind's prebuilt helper archive (``libnanobind-static.a``).
+
+    The archive is NOT keyed on any DaCe configuration: nanobind compiles its helper library with
+    its own fixed flags, so nothing configurable in DaCe reaches those translation units. If a
+    configuration that DOES influence the archive is ever introduced (e.g. passing extra flags into
+    ``nanobind_add_module``), it MUST be folded into this path. The interpreter and nanobind
+    versions are part of the path already - the archive embeds the active Python's ABI and the
+    active nanobind's sources, and several virtual environments share one cache root.
+    """
+    import nanobind
+    tag = f'{getattr(nanobind, "__version__", "unknown")}-py{sys.version_info.major}.{sys.version_info.minor}'
+    return os.path.join(build_cache_root(), 'nanobind', tag, 'libnanobind-static.a')
+
+
+def publish_nanobind_static(build_folder: str, cache_path: str) -> None:
+    """Copy a freshly built helper archive into the cache (atomic, first writer wins)."""
+    built = os.path.join(build_folder, 'libnanobind-static.a')
+    if not cache_path or not os.path.isfile(built) or os.path.exists(cache_path):
+        return
+    staging = f'{cache_path}.{os.getpid()}'
+    try:
+        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+        shutil.copyfile(built, staging)
+        os.rename(staging, cache_path)
+    except OSError:
+        try:
+            os.remove(staging)
+        except OSError:
+            pass
+
+
 #: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
 #: precompiled header with the same flags the translation unit will get; nothing here reaches the
 #: real build. A wrong entry costs the PCH speedup, never correctness. NVHPC needs its own row --
@@ -626,6 +658,7 @@ def configure_and_compile(
     ]
 
     # Nanobind interface: build the program as a nanobind extension module.
+    nanobind_static_cache = ''
     if get_program_interface(program_folder) == 'nanobind':
         try:
             import nanobind
@@ -637,6 +670,19 @@ def configure_and_compile(
             '-DDACE_NANOBIND_CMAKE_DIR="{}"'.format(nanobind.cmake_dir()),
             '-DPython_EXECUTABLE="{}"'.format(sys.executable),
         ]
+        # Reuse nanobind's helper archive across build folders: its ~12
+        # translation units are byte-identical for every program (nanobind
+        # compiles them with its own fixed flags - no DaCe configuration
+        # reaches them) and dominate a replayed build's remaining cost. The
+        # path carries the interpreter and nanobind versions because the
+        # archive is compiled against the active Python's headers and the
+        # active nanobind's sources - several virtual environments share one
+        # cache root. Advisory like every cache here: a missing archive just
+        # builds (and then publishes) it.
+        if CACHES_SUPPORTED:
+            nanobind_static_cache = nanobind_static_cache_path()
+            if os.path.isfile(nanobind_static_cache):
+                cmake_command.append('-DDACE_NANOBIND_STATIC_LIB="{}"'.format(nanobind_static_cache))
 
     # Get required environments are retrieve the CMake information
     with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:
@@ -716,6 +762,9 @@ def configure_and_compile(
             command_db.publish(
                 build_cache_root(), command_key,
                 command_db.template(command_db.capture(build_folder), build_folder, program_folder, program_name))
+        # A build that had no cached helper archive just produced one.
+        if nanobind_static_cache:
+            publish_nanobind_static(build_folder, nanobind_static_cache)
 
     # Get the names of the library files that were generated.
     #  Currently we are still in the `development` folder mode.
