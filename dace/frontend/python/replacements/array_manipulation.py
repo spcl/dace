@@ -4,7 +4,7 @@ Contains replacements for N-dimensional array transformations.
 """
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.common import InvalidArgumentValues, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, UfuncInput, UfuncOutput
 import dace.frontend.python.memlet_parser as mem_parser
 from dace import data, dtypes, subsets, symbolic
@@ -83,13 +83,13 @@ def _numpy_rot90(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, k=1
     ndim = len(desc.shape)
     axes = tuple(axes)
     if len(axes) != 2:
-        raise ValueError("len(axes) must be 2.")
+        raise InvalidArgumentValues("len(axes) must be 2.")
 
     if axes[0] == axes[1] or abs(axes[0] - axes[1]) == ndim:
-        raise ValueError("Axes must be different.")
+        raise InvalidArgumentValues("Axes must be different.")
 
     if (axes[0] >= ndim or axes[0] < -ndim or axes[1] >= ndim or axes[1] < -ndim):
-        raise ValueError("Axes={} out of range for array of ndim={}.".format(axes, ndim))
+        raise InvalidArgumentValues("Axes={} out of range for array of ndim={}.".format(axes, ndim))
 
     k %= 4
 
@@ -158,7 +158,7 @@ def _transpose(pv: ProgramVisitor,
         axes = tuple(range(len(arr1.shape) - 1, -1, -1))
     else:
         if len(axes) != len(arr1.shape) or sorted(axes) != list(range(len(arr1.shape))):
-            raise ValueError("axes don't match array")
+            raise InvalidArgumentValues("axes don't match array")
         axes = tuple(axes)
 
     if axes == (0, ):  # Special (degenerate) case for 1D "transposition"
@@ -317,8 +317,8 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
     view_bytes = dtype.bytes
 
     if view_bytes < orig_bytes and orig_bytes % view_bytes != 0:
-        raise ValueError("When changing to a smaller dtype, its size must be a divisor of "
-                         "the size of original dtype")
+        raise InvalidArgumentValues("When changing to a smaller dtype, its size must be a divisor of "
+                                    "the size of original dtype")
 
     contigdim = next(i for i, s in enumerate(desc.strides) if s == 1)
 
@@ -326,8 +326,8 @@ def view(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, arr: str, dtype, type
     # raise an exception similar to numpy
     if (not symbolic.issymbolic(desc.shape[contigdim], sdfg.constants) and orig_bytes < view_bytes
             and desc.shape[contigdim] * orig_bytes % view_bytes != 0):
-        raise ValueError('When changing to a larger dtype, its size must be a divisor of '
-                         'the total size in bytes of the last axis of the array.')
+        raise InvalidArgumentValues('When changing to a larger dtype, its size must be a divisor of '
+                                    'the total size in bytes of the last axis of the array.')
 
     # Create new shape and strides for view
     # NOTE: we change sizes by using `(old_size * orig_bytes) // view_bytes`
@@ -527,7 +527,7 @@ def _concat(visitor: ProgramVisitor,
             dtype=None,
             casting: str = 'same_kind'):
     if dtype is not None and out is not None:
-        raise ValueError('Arguments dtype and out cannot be given together')
+        raise InvalidArgumentValues('Arguments dtype and out cannot be given together')
     if casting != 'same_kind':
         raise NotImplementedError('The casting argument is currently unsupported')
     if not isinstance(arrays, (tuple, list)):
@@ -560,7 +560,7 @@ def _concat(visitor: ProgramVisitor,
             other_shape = list(d.shape)
             other_shape[axis] = 0
             if other_shape != first_shape:
-                raise ValueError(f'Array shapes do not match at index {i}')
+                raise InvalidArgumentValues(f'Array shapes do not match at index {i}')
 
     shape[axis] = sum(desc.shape[axis] for desc in descs)
     if out is None:
@@ -601,7 +601,7 @@ def _stack(visitor: ProgramVisitor,
            dtype=None,
            casting: str = 'same_kind'):
     if dtype is not None and out is not None:
-        raise ValueError('Arguments dtype and out cannot be given together')
+        raise InvalidArgumentValues('Arguments dtype and out cannot be given together')
     if casting != 'same_kind':
         raise NotImplementedError('The casting argument is currently unsupported')
     if not isinstance(arrays, (tuple, list)):
@@ -617,14 +617,14 @@ def _stack(visitor: ProgramVisitor,
     shape = descs[0].shape
     for i, d in enumerate(descs[1:]):
         if d.shape != shape:
-            raise ValueError(f'Array shapes are not equal ({shape} != {d.shape} at index {i})')
+            raise InvalidArgumentValues(f'Array shapes are not equal ({shape} != {d.shape} at index {i})')
 
     if axis > len(shape):
-        raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+        raise InvalidArgumentValues(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
     if axis < 0:
         naxis = len(shape) + 1 + axis
         if naxis < 0 or naxis > len(shape):
-            raise ValueError(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
+            raise InvalidArgumentValues(f'axis {axis} is out of bounds for array of dimension {len(shape)}')
         axis = naxis
 
     # Stacking is implemented as a reshape followed by concatenation
@@ -725,7 +725,7 @@ def _split_core(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, ary: str,
     if axis < 0:
         axis = len(desc.shape) + axis
     if axis < 0 or axis >= len(desc.shape):
-        raise ValueError(f'axis {orig_axis} is out of bounds for array of dimension {len(desc.shape)}')
+        raise InvalidArgumentValues(f'axis {orig_axis} is out of bounds for array of dimension {len(desc.shape)}')
 
     # indices_or_sections may only be an integer (not symbolic), list of integers, list of symbols, or an array
     if isinstance(indices_or_sections, str):
@@ -1108,13 +1108,27 @@ def _infer_split_core(input_descs, ary, indices_or_sections, axis, allow_uneven)
         return _split_descriptors(desc, ax, sections)
 
     nsections = _to_int(indices_or_sections)
-    if nsections is None or nsections <= 0 or symbolic.issymbolic(dim_size):
+    if nsections is None:
+        # A split count that is not a compile-time number gives the result
+        # tuple no size, so no lowering path can produce it -- not even a
+        # Python callback, whose outputs still have to be containers the
+        # caller allocated. Reported rather than left untyped, which would
+        # silently hand the statement to that callback.
+        if symbolic.issymbolic(indices_or_sections) or _get_desc(input_descs, indices_or_sections) is not None:
+            raise InvalidArgumentValues(
+                f'Cannot split into {indices_or_sections} sections: the number of sections must be known at compile '
+                'time, since it decides how many arrays the call returns.')
+        return None
+    if nsections <= 0:
+        raise InvalidArgumentValues('Number of sections must be larger than zero.')
+    if symbolic.issymbolic(dim_size):
         return None
 
     section_size = dim_size // nsections
     remainder = dim_size % nsections
     if not allow_uneven and remainder != 0:
-        return None
+        raise InvalidArgumentValues(f'Array split does not result in an equal division: {dim_size} elements along '
+                                    f'axis {ax} into {nsections} sections. Consider using numpy.array_split instead.')
 
     result = []
     for index in range(nsections):

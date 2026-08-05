@@ -20,6 +20,7 @@ import pytest
 
 import dace
 from dace.frontend.common import op_repository as oprepo
+from dace.frontend.python.common import InvalidProgram
 from dace.frontend.python import nextgen
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 
@@ -94,20 +95,21 @@ def test_symbolic_reinterpretation_divides_with_int_floor():
     assert not any('floor' in e.replace('int_floor', '') for e in expressions), expressions
 
 
-def test_invalid_reinterpretation_falls_back():
+def test_invalid_reinterpretation_is_reported():
     """A reinterpretation NumPy rejects (float32 storage is not divisible into
-    float64 elements) is not a view this path can build: the trial raises, the
-    call falls through, and the statement degrades to a callback rather than
-    silently binding a view that reads out of bounds."""
+    float64 elements) is not a view this path can build -- and no other path
+    can build it either, so the trial's :class:`InvalidProgram` propagates
+    instead of degrading the statement to a callback. Falling back would only
+    move the same error to run time, inside a callback that cannot raise
+    through the C boundary."""
 
     @dace.program
     def reint(A: dace.float32[5]):
         C = A.view(dace.float64)
         C[:] += 1
 
-    tree = nextgen.parse_program(reint, np.zeros(5, dtype=np.float32))
-    assert not _nodes_of_type(tree, tn.ViewNode)
-    assert _nodes_of_type(tree, tn.PythonCallbackNode)
+    with pytest.raises(InvalidProgram, match='must be a divisor'):
+        nextgen.parse_program(reint, np.zeros(5, dtype=np.float32))
 
 
 @pytest.mark.parametrize('shape', [(2, 4), (2, 2)])
@@ -166,7 +168,7 @@ if __name__ == '__main__':
     test_reinterpret_smaller_writes_through()
     test_reinterpret_larger_writes_through()
     test_symbolic_reinterpretation_divides_with_int_floor()
-    test_invalid_reinterpretation_falls_back()
+    test_invalid_reinterpretation_is_reported()
     test_view_disagreeing_with_its_window_falls_back((2, 4))
     test_view_disagreeing_with_its_window_falls_back((2, 2))
     test_newly_registered_view_replacement_needs_no_frontend_change()

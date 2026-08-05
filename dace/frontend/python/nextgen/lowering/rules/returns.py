@@ -24,7 +24,7 @@ from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
-from dace.frontend.python.nextgen.lowering.access import resolve_access
+from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 
 
@@ -131,6 +131,25 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
         return return_name
 
     inferred = state.inference.infer(value)
+    if inferred.is_data:
+        # A DATA-valued expression that is not a plain access: ``return -A``,
+        # since ``UnaryOp(op, atom)`` is a canonical atom and nothing hoisted
+        # it out of the return. The scalar tasklet below would type the result
+        # (1,) whatever the operand's shape and leave ``A`` in the code as a
+        # bare name -- a raw pointer where the tasklet expects an element.
+        # Compute it into the return container instead, which is exactly what
+        # the equivalent ``C = -A; return C`` already does.
+        source = inferred.descriptor
+        shape = list(source.shape) if isinstance(source, data.Array) else [1]
+        if not transient:
+            _reject_deferred_size(shape, value, statement, state)
+        if return_name not in state.context.containers:
+            return_name = state.context.add_container(return_name, data.Array(source.dtype, shape), transient=transient)
+        descriptor = state.context.containers[return_name]
+        dispatch.lower_computation(DataAccess(return_name, subsets.Range.from_array(descriptor), descriptor), value,
+                                   statement, state)
+        return return_name
+
     dtype = state.inference.dtype_of(inferred)
     if dtype is None:
         raise UnsupportedFeatureError(f'Cannot determine return value type: {astutils.unparse(value)}',

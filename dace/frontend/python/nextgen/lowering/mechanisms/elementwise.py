@@ -12,12 +12,13 @@ import ast
 import re
 from typing import List, Optional, Tuple
 
-from dace import dtypes, subsets
+from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
-from dace.frontend.python.common import InvalidOperandTypes
+from dace.frontend.python.common import InvalidProgram
+from dace.frontend.python.replacements.utils import sym_type
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import (DataAccess, indexed_subset, resolve_access,
                                                           substitute_data_operands)
@@ -95,8 +96,8 @@ def operand_casts(operand_values: List, operator: Optional[str]) -> Optional[Lis
     Per operand rather than "cast everything to the result type": a comparison
     yields ``bool`` yet must still compare its operands in their promoted type.
 
-    :raises InvalidOperandTypes: If the operand types are invalid for the
-                                 operator (``float & float``).
+    :raises InvalidProgram: If the operand types are invalid for the operator
+                            (``float & float``).
     """
     from dace.frontend.python.replacements.operators import result_type
 
@@ -104,7 +105,7 @@ def operand_casts(operand_values: List, operator: Optional[str]) -> Optional[Lis
         return None
     try:
         _, casting = result_type(operand_values, operator)
-    except InvalidOperandTypes:
+    except InvalidProgram:
         raise
     except Exception:
         return None
@@ -117,11 +118,14 @@ def _cast_operands(code: str, value: ast.expr, operands: List[Tuple[str, DataAcc
     """
     Apply :func:`operand_casts` to the tasklet code of a binary operator.
 
-    A literal operand is cast only when the expression has no data operand at
-    all. Normally it needs none -- it is spelled inline and C++ promotes it
-    against an operand already carrying the operation's type -- but in
-    ``10 ** -2`` there is no such operand, and without the casts the generated
-    code raises an int to an int and stores 0 rather than 0.01.
+    An operand spelled inline -- a literal, or a symbol the generated code
+    declares itself -- is left alone when C++ promotes it on its own, which it
+    does exactly when some other operand already carries the operation's type
+    and that type is not complex. Both halves matter: ``10 ** -2`` has no such
+    operand, so without the casts the generated code raises an int to an int
+    and stores 0 rather than 0.01, and ``std::complex`` defines its arithmetic
+    only between its own type, so ``complex128 + 32`` does not compile however
+    the other operand is typed.
     """
     if not isinstance(value, ast.BinOp):
         return code
@@ -134,17 +138,31 @@ def _cast_operands(code: str, value: ast.expr, operands: List[Tuple[str, DataAcc
     rewritten = ast.parse(code, mode='eval').body
     if not isinstance(rewritten, ast.BinOp):
         return code
+    operation_dtype = state.inference.binary_operation_dtype(value)
+    promotes = (operation_dtype not in (dtypes.complex64, dtypes.complex128)
+                and any(_carries_dtype(operand, operation_dtype) for operand in operand_values))
     # Each side as a WHOLE, rather than by connector name: an indirect read
     # substitutes as ``__in0[__in1]``, and casting the names inside it would
     # cast the index rather than the value it selects.
-    for side, cast in zip(('left', 'right'), casts):
-        if cast is None:
-            continue
-        if operands and not state.inference.infer(getattr(value, side)).is_data:
+    for operand, side, cast in zip(operand_values, ('left', 'right'), casts):
+        if cast is None or (promotes and not isinstance(operand, data.Data)):
             continue
         function = ast.parse(cast, mode='eval').body
         setattr(rewritten, side, ast.Call(func=function, args=[getattr(rewritten, side)], keywords=[]))
     return astutils.unparse(ast.fix_missing_locations(rewritten))
+
+
+def _carries_dtype(operand, dtype: Optional[dtypes.typeclass]) -> bool:
+    """Whether an operand reaches the generated code already typed ``dtype`` --
+    a container through its connector, a symbol through its own declaration. A
+    literal does not: its C++ type comes from how it is spelled."""
+    if dtype is None:
+        return False
+    if isinstance(operand, data.Data):
+        return operand.dtype == dtype
+    if symbolic.issymbolic(operand):
+        return sym_type(operand) == dtype
+    return False
 
 
 def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], statement: ast.stmt,

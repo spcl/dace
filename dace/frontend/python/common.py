@@ -35,17 +35,35 @@ class DaceSyntaxError(Exception):
             return self.message + f'\n  encountered in line {line}{col_suffix}'
 
 
-class InvalidOperandTypes(TypeError):
+class InvalidProgram(Exception):
+    """
+    Marker base for failures no other lowering path could avoid: the program is
+    invalid outright (``numpy.fabs`` of a complex array, which NumPy rejects
+    too), or its result cannot be materialized at all (``numpy.split`` into a
+    symbolic number of parts, whose containers a compiled program's caller
+    could not allocate).
+
+    Distinct from a replacement declining a *form* it does not implement, where
+    falling back to another path -- a Python callback -- is the right answer.
+    Falling back here only moves the failure to run time, across the C callback
+    boundary where an exception cannot propagate and the program carries on
+    with an unwritten result.
+    """
+
+
+class InvalidOperandTypes(InvalidProgram, TypeError):
     """
     The operand types of an operation are invalid, and no other spelling of the
     call could make them valid -- NumPy rejects the same call (``np.fabs`` of a
     complex array, ``&`` between floats).
+    """
 
-    Distinct from a replacement merely being unable to handle a call: a
-    frontend may legitimately fall back to another lowering path (a Python
-    callback, say) when an implementation declines a *form* it does not
-    support, but falling back here would only defer the same error to run
-    time, where it can no longer be reported.
+
+class InvalidArgumentValues(InvalidProgram, ValueError):
+    """
+    The argument VALUES of a call rule it out, whatever the operand types --
+    a ``numpy.split`` whose sections do not divide the array evenly, or whose
+    count is not a compile-time number so the result tuple has no size.
     """
 
 

@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
-from dace.frontend.python.common import InvalidOperandTypes
+from dace.frontend.python.common import InvalidProgram
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
 from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, registry_argument_value,
                                                  supported_data_attribute)
@@ -730,7 +730,7 @@ class InferenceService:
         back as ``kind='data-tuple'``."""
         try:
             result = infer_fn(*args, **kwargs)
-        except InvalidOperandTypes:
+        except InvalidProgram:
             # Not an untyped call: a call NumPy rejects too (``numpy.fabs`` of
             # a complex array). Reporting it untyped sends it to a callback,
             # which raises the same error at run time across the C callback
@@ -1407,7 +1407,7 @@ class InferenceService:
         if infer_fn is not None:
             try:
                 result = infer_fn(*values)
-            except InvalidOperandTypes:
+            except InvalidProgram:
                 raise  # See :meth:`_registry_inference`
             except Exception:
                 result = None
@@ -1438,8 +1438,8 @@ class InferenceService:
         (which casts the tasklet's operands into this type), so the two cannot
         disagree about what the tasklet computes.
 
-        :raises InvalidOperandTypes: If the operand types are invalid for the
-                                     operator (``float & float``).
+        :raises InvalidProgram: If the operand types are invalid for the operator
+                                (``float & float``).
         """
         from dace.frontend.python.replacements.operators import result_type
 
@@ -1448,7 +1448,7 @@ class InferenceService:
             return None
         try:
             restype, _ = result_type(arguments, type(node.op).__name__)
-        except InvalidOperandTypes:
+        except InvalidProgram:
             raise
         except Exception:
             return None

@@ -56,7 +56,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.frontend.python import astutils
-from dace.frontend.python.common import InvalidOperandTypes
+from dace.frontend.python.common import InvalidProgram
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, registry_argument_value,
@@ -901,6 +901,8 @@ def _run_view_trial(function, arguments: List, keywords: dict, data_arguments: s
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
         result = function(shim, scratch, scratch_state, *arguments, **keywords)
+    except InvalidProgram:
+        raise  # See :func:`_expansion_viable`
     except Exception:
         return None
     result = _unwrap_nested_call(result)
@@ -2286,9 +2288,9 @@ def _expansion_viable(name: str,
     holds only the containers this one call names, so the trial would report
     a failure the real expansion never has.
 
-    :class:`InvalidOperandTypes` is exempt in the other direction: it says the
-    operand types are wrong for the operation *anywhere*, so no fallback can
-    succeed either. Reporting non-viability would hand the call to a Python
+    :class:`InvalidProgram` is exempt in the other direction: it says the call
+    fails for reasons no lowering path avoids, so no fallback can succeed
+    either. Reporting non-viability would hand the call to a Python
     callback, which raises the very same error at run time -- across the C
     callback boundary, where an exception cannot propagate and the program
     proceeds with an unwritten result instead.
@@ -2301,7 +2303,7 @@ def _expansion_viable(name: str,
         data_arguments, state, {receiver: receiver_object} if receiver_object is not None else None)
     try:
         result = function(shim, scratch, scratch_state, *arguments, **keywords)
-    except InvalidOperandTypes:
+    except InvalidProgram:
         raise  # The program is wrong, not merely unrepresentable here (see below)
     except Exception:
         return False
@@ -2406,7 +2408,7 @@ def _ufunc_expansion_viable(ufunc_name: str, ufunc_method: Optional[str], argume
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
         result = function(shim, None, scratch, scratch_state, ufunc_name, list(arguments), dict(keywords))
-    except InvalidOperandTypes:
+    except InvalidProgram:
         raise  # See :func:`_expansion_viable`
     except Exception:
         return False
