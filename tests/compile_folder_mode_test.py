@@ -137,7 +137,7 @@ def test_production_folder_mode():
     assert not version_file.exists()
 
     with pytest.raises(NotADirectoryError,
-                       match=re.escape(f'``{build_folder}`` does not appear to be a valid build folder.')):
+                       match=re.escape(f'``{build_folder}`` does not appear to be a valid old-style build folder.')):
         sdfg_compiler.get_folder_mode(build_folder)
 
     assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
@@ -277,6 +277,28 @@ def test_get_binary_name_detects_folder_mode_switch(tmp_path):
     )
 
 
+def test_get_folder_mode_probes_inconsistent_old_style_folder(tmp_path):
+    # An old-style development folder that was generated but never compiled, i.e.
+    #  there is no `FOLDER_MODE` file and no `build` folder. Such a folder is
+    #  inconsistent, thus probing must return `None` and `get_binary_name()` must
+    #  fall back to the configuration instead of raising.
+    build_folder = tmp_path / "old_style_never_compiled"
+    build_folder.mkdir()
+    for sub_folder in ["map", "src", "include", "sample"]:
+        (build_folder / sub_folder).mkdir()
+
+    assert sdfg_compiler.get_folder_mode(build_folder, probe=True) is None
+    with pytest.raises(NotADirectoryError,
+                       match=re.escape(f'The old-style folder ``{build_folder}`` is inconsistent.')):
+        sdfg_compiler.get_folder_mode(build_folder)
+
+    for folder_mode in ["development", "production"]:
+        with dace.config.temporary_config() as conf:
+            conf.set('compiler', 'build_folder_mode', value=folder_mode)
+            lib_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name="some_sdfg", lib_extension="so")
+        assert lib_path == _expected_binary_path(build_folder, "some_sdfg", folder_mode, "so")
+
+
 def test_already_loaded_and_comple_again():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
@@ -296,3 +318,5 @@ if __name__ == '__main__':
     test_build_with_scheme_one_and_then_switch()
     with tempfile.TemporaryDirectory() as tmp_dir:
         test_get_binary_name_detects_folder_mode_switch(pathlib.Path(tmp_dir))
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_get_folder_mode_probes_inconsistent_old_style_folder(pathlib.Path(tmp_dir))
