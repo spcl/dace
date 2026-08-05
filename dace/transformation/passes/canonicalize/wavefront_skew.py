@@ -89,9 +89,36 @@ _SKEW_CANDIDATES: Tuple[Tuple[int, int], ...] = ((1, 1), (1, -1), (2, 1), (2, -1
 
 
 def sym(name: str):
-    """A globally-registered DaCe symbol for ``name`` (never a raw sympy symbol,
-    so assumptions / registration match the symbols already in the SDFG)."""
+    """The pass's own DaCe symbol for ``name`` (never a raw sympy symbol). It carries no
+    assumptions -- the registry does not hand those back -- so it is only ever the ITERATOR
+    spelling, and every expression the pass takes out of the SDFG is re-keyed onto it by
+    :func:`canonical_iterators`."""
     return symbolic.pystr_to_symbolic(name)
+
+
+def canonical_iterators(expr, iters: tuple[str, ...]):
+    """``expr`` with every free symbol NAMED in ``iters`` re-keyed onto :func:`sym`'s object.
+
+    The Python frontend mints a loop iterator with explicit ``nonnegative=None`` /
+    ``positive=None`` assumptions (``frontend/python/newast.py``), so the ``i`` inside a memlet
+    subset is a DIFFERENT sympy symbol from ``sym('i')`` and ``i_subset - sym('i')`` stays an
+    uncancelled ``-i + i``. That residual is never structurally zero and never a number, so
+    every distance looked non-trivial: forward reads degraded to ``'flow'`` (no skew for the
+    5-point Gauss-Seidel), and the loop variables leaked into the emitted runtime guard, where
+    they became program arguments no caller can supply.
+
+    Only the ITERATORS are re-keyed. An offset symbol keeps the object carrying its declared
+    ``positive=True``, which :func:`offset_symbols` reads to decide whether a guard is needed.
+    """
+    e = symbolic.pystr_to_symbolic(expr)
+    mp = {}
+    # sorted: the map is built from a sympy set, whose iteration order is not stable. Every entry is
+    # independent so the result cannot differ, but sorting makes that provable rather than incidental.
+    for s in sorted(e.free_symbols, key=str):
+        name = str(s)
+        if name in iters:
+            mp[s] = sym(name)
+    return e.xreplace(mp) if mp else e
 
 
 class WriteMap:
@@ -293,6 +320,7 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Op
         snap_src[e.dst.data] = e.src.data
     snap_names = dict.fromkeys(snap_src)
 
+    iters = (outer.loop_variable, inner.loop_variable)
     inner_states = dict.fromkeys(inner.all_states())
     copy_set = dict.fromkeys(copy_states)
     snap_reads: List[SnapRead] = []
@@ -310,7 +338,7 @@ def plan_split_snapshots(outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> Op
                 for e in state.out_edges(node):
                     if e.data is None or e.data.subset is None:
                         return None
-                    ridx = point_index(e.data.subset)
+                    ridx = point_index(e.data.subset, iters)
                     if ridx is None:
                         return None
                     snap_reads.append((state, node, e, ridx, snap_src[node.data]))
@@ -359,14 +387,18 @@ def commit_split_snapshots(snap_reads: List[SnapRead], copy_states: List[SDFGSta
             st.remove_node(n)
 
 
-def point_index(subset) -> Optional[List[object]]:
+def point_index(subset, iters: tuple[str, ...]) -> Optional[List[object]]:
     """The per-dimension index of a *point* subset (``start == end`` on every
-    axis); ``None`` if any axis is a range."""
+    axis); ``None`` if any axis is a range.
+
+    This is the single boundary at which memlet subsets enter the pass, so it is where the
+    iterators named in ``iters`` are re-keyed (:func:`canonical_iterators`) -- everything
+    downstream then works in one symbol spelling."""
     idx = []
     for (start, end, _step) in subset.ndrange():
         if start != end:
             return None
-        idx.append(symbolic.pystr_to_symbolic(start))
+        idx.append(canonical_iterators(start, iters))
     return idx
 
 
@@ -469,6 +501,7 @@ def collect_carrier(inner: LoopRegion,
     reads: Dict[str, List[Tuple[List[object], List[Tuple[str, object, object]]]]] = {}
     for state in inner.all_states():
         ctx = None
+        iters: tuple[str, ...] = (u, v)
         for node in state.data_nodes():
             data_name = snap_src.get(node.data, node.data)
             desc = sdfg.arrays.get(data_name)
@@ -478,17 +511,20 @@ def collect_carrier(inner: LoopRegion,
                 ctx = nested_loop_context(state, inner)
                 if ctx is None:
                     return None
+                # An enclosing reduction loop's iterator reaches the distances too, so it needs
+                # the same single spelling as ``u`` / ``v``.
+                iters = (u, v, *(nm for (nm, _, _) in ctx))
             for e in state.in_edges(node):
                 if e.data is None or e.data.subset is None:
                     continue
-                idx = point_index(e.data.subset)
+                idx = point_index(e.data.subset, iters)
                 if idx is None:
                     return None  # non-point write -> refuse
                 writes.setdefault(data_name, []).append(idx)
             for e in state.out_edges(node):
                 if e.data is None or e.data.subset is None:
                     continue
-                idx = point_index(e.data.subset)
+                idx = point_index(e.data.subset, iters)
                 if idx is None:
                     return None  # non-point read of a 2-D carrier -> refuse
                 reads.setdefault(data_name, []).append((idx, ctx))

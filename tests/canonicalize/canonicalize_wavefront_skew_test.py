@@ -202,7 +202,7 @@ def test_wavefront_skew_refuses_when_inner_already_parallel():
     assert not any(l.loop_variable.startswith(_SKEW_P_PREFIX) for l in loops)
 
 
-def test_wavefront_skew_runtime_guard_traps_on_violation():
+def test_wavefront_skew_runtime_guard_traps_on_violation(tmp_path):
     """Negative ``sym_unannot`` violates the wavefront-dep assumption; the
     planted ``std::abort`` fires and the program aborts (subprocess
     isolation prevents the trap from killing the test runner)."""
@@ -226,7 +226,12 @@ def test_wavefront_skew_runtime_guard_traps_on_violation():
         print('BUILT', flush=True)
         sdfg(aa=np.zeros((8, 8)), N=8, sym_unannot=-1)  # negative -> trap
     ''')
-    res = subprocess.run([sys.executable, '-c', src], capture_output=True, timeout=120)
+    # A FILE, not ``python -c``: the child builds a ``@dace.program``, and the frontend reads it back
+    # with ``inspect.getsource``, which has no source to find for a ``-c`` string -- the child then
+    # died on that TypeError before ever reaching the guarded call.
+    script = tmp_path / 'wavefront_guard_child.py'
+    script.write_text(src)
+    res = subprocess.run([sys.executable, str(script)], capture_output=True, timeout=120)
     ctx = f'(rc={res.returncode}, stdout={res.stdout!r}, stderr={res.stderr[-400:]!r})'
     # Non-vacuity: without BUILT any child failure -- an import error, a skew that did not apply --
     # would satisfy the returncode check and the test could never fail.
@@ -1207,13 +1212,13 @@ def test_row_sweep_ti_is_a_genuine_wavefront():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: collect_carrier (wavefront_skew.py:493) refuses a non-point read of a 2-D '
+                   reason='KNOWN GAP: collect_carrier (wavefront_skew.py:529) refuses a non-point read of a 2-D '
                    'carrier, so the row body\'s slice read A[i-1 : i+2, 1:N-1] stops the (t, i) wavefront from '
                    'ever being analysed. tau=(2, 1) is legal and proved parallel by '
                    'test_row_sweep_ti_is_a_genuine_wavefront. Neither reconstruct_wavefront_nest nor '
-                   'normalize_loop_and_map_origin rescues it -- both were measured ON and the refusal is still :493.')
+                   'normalize_loop_and_map_origin rescues it -- both were measured ON and the refusal is still :529.')
 def test_row_sweep_ti_wavefront_is_detected():
-    """Tripwire for the ``:493`` non-point-read refusal. Fails today; ``strict`` makes it fail
+    """Tripwire for the ``:529`` non-point-read refusal. Fails today; ``strict`` makes it fail
     LOUDLY the day the guard learns to derive a distance from a range read, so this file is
     revisited instead of quietly keeping a stale xfail."""
     sdfg = row_sweep_3pt.to_sdfg(simplify=True)
@@ -1337,13 +1342,13 @@ def test_lu_family_ij_is_a_genuine_wavefront(with_scalar_accumulator, label):
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:665) refuses because '
+                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:699) refuses because '
                    'extract_two_level_nest requires exactly ONE inner LoopRegion, and lu\'s outer i loop holds TWO '
                    'sibling j loops (j < i and j >= i). tau=(1, 1) is legal over the merged (i, j) space and proved '
                    'parallel by test_lu_family_ij_is_a_genuine_wavefront. Note the cheaper win here is the j >= i '
                    'loop, which is plain DOALL and is currently left pinned sequential.')
 def test_lu_ij_wavefront_is_detected():
-    """Tripwire for the ``:665`` sibling-loop refusal on lu."""
+    """Tripwire for the ``:699`` sibling-loop refusal on lu."""
     sdfg = lu_factorization.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
@@ -1351,12 +1356,12 @@ def test_lu_ij_wavefront_is_detected():
 
 
 @pytest.mark.xfail(strict=True,
-                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:665) -- ludcmp\'s factorization has the same two '
+                   reason='KNOWN GAP: _try_skew (wavefront_skew.py:699) -- ludcmp\'s factorization has the same two '
                    'sibling inner j loops as lu, so extract_two_level_nest refuses it the same way. tau=(1, 1) is '
                    'legal and proved parallel for ludcmp INDEPENDENTLY (not inherited from lu) by the ludcmp '
                    'parametrisation of test_lu_family_ij_is_a_genuine_wavefront.')
 def test_ludcmp_ij_wavefront_is_detected():
-    """Tripwire for the ``:665`` sibling-loop refusal on ludcmp."""
+    """Tripwire for the ``:699`` sibling-loop refusal on ludcmp."""
     sdfg = ludcmp_factorization.to_sdfg(simplify=True)
     canonicalize(sdfg, validate=False, **CPU_PARAMS)
     assert len(skew_diagonals(sdfg)) == 1, \
