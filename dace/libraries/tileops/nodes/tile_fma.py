@@ -76,6 +76,9 @@ class ExpandTileFMAPure(ExpandTransformation):
 
         operand_dtype = _operand_dtype()
         _cast = "" if operand_dtype == "bool" else f"({operand_dtype})"
+        # Whether the operands are narrower than float, which decides the FMA spelling below.
+        narrow_operand = any(dt.ctype == operand_dtype and dt.bytes < 4
+                             for dt in (dace.float16, dace.bfloat16, dace.int8, dace.uint8, dace.int16, dace.uint16))
 
         def _operand_ref(kind, conn, expr):
             """Return the per-lane C++ reference for one FMA operand.
@@ -101,7 +104,16 @@ class ExpandTileFMAPure(ExpandTransformation):
         c_ref = _operand_ref(node.kind_c, "_c", node.expr_c)
         # Fused single-rounding multiply-add (NOT ``a*b + c``): keeps the pure path
         # bit-for-bit with every ISA backend's native FMA.
-        rhs_expr = f"std::fma({a_ref}, {b_ref}, {c_ref})"
+        #
+        # Sub-fp32 goes through ``double``. ``std::fma`` has no half overload: on the device it is an
+        # AMBIGUOUS-OVERLOAD compile error (float vs long double), and on the host it resolves to an
+        # out-of-line ``fmaf`` call. Widening keeps the SINGLE rounding this path promises -- a half
+        # product is exact in double, so the only rounding is the cast back -- which two chained half
+        # ops would not, and which is what makes the pure result match a native ``__hfma``.
+        if narrow_operand:
+            rhs_expr = f"{operand_dtype}(std::fma(double({a_ref}), double({b_ref}), double({c_ref})))"
+        else:
+            rhs_expr = f"std::fma({a_ref}, {b_ref}, {c_ref})"
         # Output-kind dispatch (design 6.2): all inputs non-Tile and ``_o`` Scalar /
         # length-1 -> a single assignment (no lane loop); otherwise the K-fold loop.
         out_desc = parent_sdfg.arrays[next(e for e in parent_state.out_edges(node) if e.src_conn == "_o").data.data]
@@ -176,6 +188,9 @@ class TileFMA(nodes.LibraryNode):
     :cvar default_implementation: ``"pure"``.
     """
 
+    # The backend below is chosen from the vectorizer's ``target_isa``, not from the target
+    # device, so device auto-selection must not overwrite it.
+    auto_select_implementation = False
     implementations = {
         "pure": ExpandTileFMAPure,
         "cutile": ExpandTileFMACutile,
