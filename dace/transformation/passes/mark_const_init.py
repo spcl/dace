@@ -364,7 +364,13 @@ class MarkConstInit(ppl.Pass):
         array = np.zeros(shape, dtype=desc.dtype.as_numpy_dtype())
         touched = np.zeros(shape, dtype=bool)
         for subset, value in records:
-            index = self._subset_to_index(subset, shape)
+            # Into the descriptor's element space first: a memlet subset is in index space, and a
+            # descriptor with a nonzero ``offset`` (every Fortran array carries -1 per dim for its
+            # 1-based indices) puts the two a constant apart. Reads already offset -- cpp_offset_expr
+            # does ``offset_new(d.offset, False)`` and the readable generator's ``_idx`` helper adds
+            # ``sum(offset[i] * strides[i])`` -- so an unoffset initializer stores the value at an
+            # index nothing ever reads back.
+            index = self._subset_to_index(subset.offset_new(desc.offset, False), shape)
             if index is None:  # symbolic / non-affine subset
                 return None
             if touched[index].any():  # (3) overlapping / conflicting writes
@@ -507,10 +513,15 @@ class MarkConstInit(ppl.Pass):
         if not isinstance(subset, subsets.Range) or len(subset.ranges) != len(shape):
             return None
         index: List[slice] = []
-        for start, stop, step in subset.ranges:
+        for dim, (start, stop, step) in enumerate(subset.ranges):
             try:
                 lo, hi, st = int(start), int(stop), int(step)
             except (TypeError, ValueError):
+                return None
+            # Refuse rather than promote a wrong constant: numpy CLIPS an out-of-range slice
+            # silently, so a subset landing outside the descriptor would otherwise materialize an
+            # initializer that quietly disagrees with what the generated code reads.
+            if lo < 0 or hi >= shape[dim]:
                 return None
             index.append(slice(lo, hi + 1, st))
         return tuple(index)
