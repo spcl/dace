@@ -492,16 +492,21 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             )
 
         assert pure_outputs == set(graph.out_edges(first_map_exit))
-        if len(pure_outputs) != 0:
-            mfhelper.relocate_nodes(
-                from_node=first_map_exit,
-                to_node=second_map_exit,
-                state=graph,
-                sdfg=sdfg,
-                scope_dict=scope_dict,
-                never_consolidate_edges=self.never_consolidate_edges,
-                consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
-            )
+        # UNCONDITIONAL, mirroring the second_map_entry call below: ``relocate_nodes`` is the only
+        # code that moves the EMPTY Memlets off ``first_map_exit``, and those are IN-edges, which
+        # ``pure_outputs`` (out-edges, per the assert above) says nothing about. Gating on it meant
+        # that a first Map whose only output is the intermediate kept its ordering in-edges until
+        # ``graph.remove_node(first_map_exit)`` below deleted them with the node -- an assert failure
+        # with asserts on, and a silently dropped ordering constraint under -O.
+        mfhelper.relocate_nodes(
+            from_node=first_map_exit,
+            to_node=second_map_exit,
+            state=graph,
+            sdfg=sdfg,
+            scope_dict=scope_dict,
+            never_consolidate_edges=self.never_consolidate_edges,
+            consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
+        )
 
         # Now move the input of the second Map, that has no connection to the first
         #  Map, to the first Map. This is needed because we will later delete the
@@ -1545,7 +1550,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         :param subsets_to_check: The list of subsets that should be checked.
         """
-        assert len(subsets_to_check) > 1
+        # Fewer than two subsets means we never saw both sides of the access -- e.g. the node only
+        #  reaches the scope through ORDERING edges, so `find_subsets()` found nothing to compare.
+        #  Point-wise-ness is then unproven, and the caller must treat that as a dependency.
+        if len(subsets_to_check) < 2:
+            return False
 
         # We will check everything against the master subset.
         master_subset = subsets_to_check[0]
@@ -1774,6 +1783,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         Instead it will locate the edges which is immediately inside the
         Map scope.
 
+        :return: The subsets, which is empty if `node` only reaches `scope_node` through edges that
+            are not bound to a scope connector (ORDERING edges, dynamic Map ranges).
+
         :param node: The access node that should be examined.
         :param scope_node: We are only interested in data that flows through this node.
         :param state: The state in which we operate.
@@ -1783,13 +1795,23 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         """
         # Is the node used for reading or for writing.
         #  This influences how we have to proceed.
+        # Only edges bound to a scope connector describe a data access, and only those have an
+        #  `IN_`/`OUT_` counterpart to follow into the scope. An empty Memlet is a pure ORDERING
+        #  edge and carries no connector at all, and a dynamic Map range binds a symbol instead of
+        #  data; neither accesses `node` through `scope_node`, so neither contributes a subset.
         if isinstance(scope_node, nodes.MapEntry):
-            outer_edges_to_inspect = [e for e in state.in_edges(scope_node) if e.src == node]
+            outer_edges_to_inspect = [
+                e for e in state.in_edges(scope_node)
+                if e.src == node and e.dst_conn is not None and e.dst_conn.startswith("IN_")
+            ]
             get_subset = lambda e: e.data.src_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.out_edges_by_connector(scope_node, "OUT_" + e.dst_conn[3:]))
         else:
-            outer_edges_to_inspect = [e for e in state.out_edges(scope_node) if e.dst == node]
+            outer_edges_to_inspect = [
+                e for e in state.out_edges(scope_node)
+                if e.dst == node and e.src_conn is not None and e.src_conn.startswith("OUT_")
+            ]
             get_subset = lambda e: e.data.dst_subset  # noqa: E731 [lambda-assignment]
             get_inner_edges = (  # noqa: E731 [lambda-assignment]
                 lambda e: state.in_edges_by_connector(scope_node, "IN_" + e.src_conn[4:]))
@@ -1797,7 +1819,6 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         found_subsets: List[subsets.Subset] = []
         for edge in outer_edges_to_inspect:
             found_subsets.extend(get_subset(e) for e in get_inner_edges(edge))
-        assert len(found_subsets) > 0, "Could not find any subsets."
         assert not any(subset is None for subset in found_subsets)
 
         found_subsets = copy.deepcopy(found_subsets)
