@@ -17,10 +17,13 @@ The callback contract:
 """
 import ast
 import builtins
+import warnings
 from typing import Optional
 
 from dace import data, dtypes
+from dace.config import Config
 from dace.frontend.python import astutils
+from dace.frontend.python.common import DaceSyntaxError
 from dace.properties import CodeBlock
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt
@@ -29,6 +32,7 @@ from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 
 @rule(OpaqueStmt)
 def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
+    _warn_about_the_callback(statement, state)
     source_to_repository: dict = {}
     input_names = []
     for name in sorted(statement.inputs):
@@ -47,7 +51,10 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
             # annotation on the original statement types it; otherwise
             # register an opaque scalar so later statements can bind and
             # pass the Python object through.
-            descriptor = _declared_descriptor(name, statement, state) or data.Scalar(dtypes.pyobject())
+            descriptor = _declared_descriptor(name, statement, state)
+            if descriptor is None:
+                _report_untyped_result(name, statement, state)
+                descriptor = data.Scalar(dtypes.pyobject())
             container_name = state.context.add_container(name, descriptor)
             state.context.bind(name, container_name)
             output_names.append(container_name)
@@ -155,6 +162,62 @@ def _declared_descriptor(name: str, statement: OpaqueStmt, state: LoweringState)
                 if descriptor is not None:
                     return descriptor
     return None
+
+
+def _callee_name(statement: OpaqueStmt) -> Optional[str]:
+    """The name of the function the opaque statement calls, when it makes a
+    single call -- what the user has to decorate or register to get rid of the
+    callback."""
+    names = set()
+    for original in statement.originals:
+        for node in ast.walk(original):
+            if isinstance(node, ast.Call):
+                names.add(getattr(node.func, 'qualname', None) or astutils.rname(node.func))
+    return next(iter(names)) if len(names) == 1 else None
+
+
+def _warn_about_the_callback(statement: OpaqueStmt, state: LoweringState) -> None:
+    """
+    Report that a statement will run in the Python interpreter.
+
+    Not a diagnostic detail: a callback crosses into the interpreter on every
+    execution of the statement, serializes around it, and cannot propagate an
+    exception back out through the C callback boundary. The classic frontend
+    raises a syntax error for most of what reaches here and warns for the rest,
+    so nothing it accepted degraded silently; this frontend lowers a callback
+    instead of refusing, which makes the warning the only signal the user gets.
+    """
+    callee = _callee_name(statement)
+    subject = f'from function "{callee}"' if callee else 'for a statement'
+    line = getattr(statement, 'lineno', 0)
+    warnings.warn(f'Performance warning: Automatically creating callback to the Python interpreter '
+                  f'{subject}\n  in File "{state.context.filename}", line {line}\n'
+                  f'  reason: {statement.reason}\n'
+                  'To lower it natively, place a @dace.program decorator on the callee, or register a '
+                  'replacement through "dace.frontend.common.op_repository".')
+
+
+def _report_untyped_result(name: str, statement: OpaqueStmt, state: LoweringState) -> None:
+    """
+    Report a callback result no annotation types, which therefore travels as an
+    opaque Python object.
+
+    :raises DaceSyntaxError: If ``frontend.typed_callbacks_only`` is set, the
+                             configured refusal to accept exactly this.
+    """
+    callee = _callee_name(statement)
+    subject = f'of function call "{callee}"' if callee else f'of the value assigned to "{name}"'
+    line = getattr(statement, 'lineno', 0)
+    message = (f'Cannot infer return type {subject}:\n'
+               f'  in File "{state.context.filename}", line {line}\n'
+               'To ensure that the return types can be inferred, try to extract the call to a '
+               'separate statement and annotate the return values. For example: '
+               'a: dace.int32 = call(b, c).\n'
+               'To enforce only callbacks with explicit return types, set the '
+               '`frontend.typed_callbacks_only` configuration entry to True.')
+    if Config.get_bool('frontend', 'typed_callbacks_only'):
+        raise DaceSyntaxError(None, statement, message)
+    warnings.warn(message)
 
 
 def _register_free_globals(statements: list, bound: set, state: LoweringState) -> None:

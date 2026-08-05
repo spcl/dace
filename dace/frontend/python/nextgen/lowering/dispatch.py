@@ -56,6 +56,7 @@ from dace.memlet import Memlet
 from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.frontend.python import astutils
+from dace.frontend.python.common import InvalidOperandTypes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python.nextgen.canonical.cpa import OpaqueStmt, statement_io_sets
 from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, registry_argument_value,
@@ -2284,6 +2285,13 @@ def _expansion_viable(name: str,
     differentiates everything parsed up to its call site — and the scratch
     holds only the containers this one call names, so the trial would report
     a failure the real expansion never has.
+
+    :class:`InvalidOperandTypes` is exempt in the other direction: it says the
+    operand types are wrong for the operation *anywhere*, so no fallback can
+    succeed either. Reporting non-viability would hand the call to a Python
+    callback, which raises the very same error at run time -- across the C
+    callback boundary, where an exception cannot propagate and the program
+    proceeds with an unwritten result instead.
     """
     from dace.frontend.common import op_repository as oprepo  # Deferred: registry population needs replacements
     function = _replacement_implementation(name, receiver, arguments, data_arguments, state, receiver_object)
@@ -2293,6 +2301,8 @@ def _expansion_viable(name: str,
         data_arguments, state, {receiver: receiver_object} if receiver_object is not None else None)
     try:
         result = function(shim, scratch, scratch_state, *arguments, **keywords)
+    except InvalidOperandTypes:
+        raise  # The program is wrong, not merely unrepresentable here (see below)
     except Exception:
         return False
     result = _unwrap_nested_call(result)
@@ -2396,6 +2406,8 @@ def _ufunc_expansion_viable(ufunc_name: str, ufunc_method: Optional[str], argume
     scratch, scratch_state, shim = _replacement_trial_scratch(data_arguments, state)
     try:
         result = function(shim, None, scratch, scratch_state, ufunc_name, list(arguments), dict(keywords))
+    except InvalidOperandTypes:
+        raise  # See :func:`_expansion_viable`
     except Exception:
         return False
     result = _unwrap_nested_call(result)

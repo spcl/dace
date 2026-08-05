@@ -16,6 +16,8 @@ from dace import dtypes, subsets
 from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
+from dace.frontend.python import astutils
+from dace.frontend.python.common import InvalidOperandTypes
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import (DataAccess, indexed_subset, resolve_access,
                                                           substitute_data_operands)
@@ -75,7 +77,69 @@ def emit_computation(target: DataAccess,
                 ``mechanisms/conflict.py::accumulation_wcr``).
     """
     code, operands = substitute_data_operands(value, state)
+    code = _cast_operands(code, value, operands, state)
     emit_elementwise(target, code, operands, statement, state, wcr=wcr)
+
+
+def operand_casts(operand_values: List, operator: Optional[str]) -> Optional[List[Optional[str]]]:
+    """
+    The per-operand casts ``replacements.operators.result_type`` prescribes for
+    an operation, or None when it has no rule for this operator.
+
+    A tasklet computes in the types of its CONNECTORS: ``__in0 / __in1`` over
+    two ``uint32`` connectors is integer division in the generated C++ however
+    the result container is typed, so ``3 / 5`` stores 0 and not 0.6. These
+    casts -- the same ones the classic frontend emits -- are what make the
+    tasklet compute what NumPy would.
+
+    Per operand rather than "cast everything to the result type": a comparison
+    yields ``bool`` yet must still compare its operands in their promoted type.
+
+    :raises InvalidOperandTypes: If the operand types are invalid for the
+                                 operator (``float & float``).
+    """
+    from dace.frontend.python.replacements.operators import result_type
+
+    if not operator:
+        return None
+    try:
+        _, casting = result_type(operand_values, operator)
+    except InvalidOperandTypes:
+        raise
+    except Exception:
+        return None
+    if not isinstance(casting, (list, tuple)) or len(casting) != len(operand_values):
+        return None
+    return list(casting)
+
+
+def _cast_operands(code: str, value: ast.expr, operands: List[Tuple[str, DataAccess]], state: LoweringState) -> str:
+    """
+    Apply :func:`operand_casts` to the tasklet code of a binary operator.
+
+    A literal operand needs no cast of its own: it is spelled inline, and C++
+    promotes it against an operand already in the operation's type.
+    """
+    if not isinstance(value, ast.BinOp) or not operands:
+        return code
+    operand_values = state.inference.binary_operand_values(value)
+    if operand_values is None:
+        return code
+    casts = operand_casts(operand_values, type(value.op).__name__)
+    if casts is None:
+        return code
+    rewritten = ast.parse(code, mode='eval').body
+    if not isinstance(rewritten, ast.BinOp):
+        return code
+    # Each side as a WHOLE, rather than by connector name: an indirect read
+    # substitutes as ``__in0[__in1]``, and casting the names inside it would
+    # cast the index rather than the value it selects.
+    for side, cast in zip(('left', 'right'), casts):
+        if cast is None or not state.inference.infer(getattr(value, side)).is_data:
+            continue
+        function = ast.parse(cast, mode='eval').body
+        setattr(rewritten, side, ast.Call(func=function, args=[getattr(rewritten, side)], keywords=[]))
+    return astutils.unparse(ast.fix_missing_locations(rewritten))
 
 
 def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], statement: ast.stmt,
@@ -112,10 +176,12 @@ def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], s
     expression = code[len(prefix):].strip()
 
     operands: List[Tuple[str, DataAccess]] = []
+    operand_values: List = []
     for connector, argument in zip(specification['inputs'], arguments):
         access = resolve_access(argument, state)
         if access is not None:
             operands.append((connector, access))
+            operand_values.append(access.descriptor)
             continue
         inferred = state.inference.infer(argument)
         if inferred.kind not in ('constant', 'symbolic'):
@@ -124,6 +190,19 @@ def emit_ufunc(target: DataAccess, ufunc_name: str, arguments: List[ast.expr], s
                                           statement,
                                           category='ufunc')
         expression = re.sub(rf'\b{connector}\b', f'({inferred.value})', expression)
+        operand_values.append(inferred.value)
+
+    # The same hazard :func:`_cast_operands` covers for Python operators:
+    # ``numpy.divide`` of two ``uint32`` arrays produces ``float64``, but its
+    # table code is ``__in1 / __in2`` and two uint32 connectors divide as
+    # integers. Table code names its operands as bare connectors, so a name
+    # substitution reaches exactly the operand.
+    casts = operand_casts(operand_values, specification.get('operator'))
+    if casts is not None:
+        data_connectors = dict(operands)
+        for connector, cast in zip(specification['inputs'], casts):
+            if cast is not None and connector in data_connectors:
+                expression = re.sub(rf'\b{connector}\b', f'{cast}({connector})', expression)
     emit_elementwise(target, expression, operands, statement, state)
 
 

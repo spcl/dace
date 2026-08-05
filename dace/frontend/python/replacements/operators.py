@@ -4,7 +4,7 @@ Contains operator replacements (e.g., NumPy Mathematical Functions) for supporte
 """
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
-from dace.frontend.python.common import ListLiteral, StringLiteral, TupleLiteral
+from dace.frontend.python.common import InvalidOperandTypes, ListLiteral, StringLiteral, TupleLiteral
 from dace.frontend.python.replacements.utils import (ProgramVisitor, broadcast_together, cast_str, np_result_type,
                                                      representative_num, sym_type)
 from dace import data, dtypes, subsets, symbolic, Memlet, SDFG, SDFGState
@@ -203,7 +203,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             restype = eval('dtypes.float{}'.format(4 * datatypes[0].bytes))
         elif (operator in ('Fabs', 'Cbrt', 'Angles', 'SignBit', 'Spacing', 'Modf', 'Floor', 'Ceil', 'Trunc')
               and coarse_types[0] == 3):
-            raise TypeError("ufunc '{}' not supported for complex input".format(operator))
+            raise InvalidOperandTypes("ufunc '{}' not supported for complex input".format(operator))
         elif operator in ('Ceil', 'Floor', 'Trunc') and coarse_types[0] < 2 and numpy_version < '2.1.0':
             restype = dtypes.float64
             casting[0] = cast_str(restype)
@@ -213,8 +213,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             casting[0] = cast_str(restype)
         elif operator in ('Frexp'):
             if coarse_types[0] == 3:
-                raise TypeError("ufunc '{}' not supported for complex "
-                                "input".format(operator))
+                raise InvalidOperandTypes("ufunc '{}' not supported for complex "
+                                          "input".format(operator))
             restype = [None, dtypes.int32]
             if coarse_types[0] < 2:
                 restype[0] = dtypes.float64
@@ -222,7 +222,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
             else:
                 restype[0] = datatypes[0]
         elif _is_op_bitwise(operator) and coarse_types[0] > 1:
-            raise TypeError("unsupported operand type for {}: '{}'".format(operator, datatypes[0]))
+            raise InvalidOperandTypes("unsupported operand type for {}: '{}'".format(operator, datatypes[0]))
         elif _is_op_boolean(operator):
             restype = dtypes.bool_
             if operator == 'SignBit' and coarse_types[0] < 2:
@@ -283,7 +283,7 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
                 else:
                     restype = dtypes.complex128
             elif (operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) == 3):
-                raise TypeError("ufunc '{}' not supported for complex input".format(operator))
+                raise InvalidOperandTypes("ufunc '{}' not supported for complex input".format(operator))
             elif (operator in ('Heaviside', 'Arctan2', 'Hypot') and max(type1, type2) < 2):
                 restype = dtypes.float64
             # All other arithmetic operators and cases of the above operators
@@ -307,8 +307,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
             # Only integers may be arguments of bitwise and shifting operations
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             restype = np_result_type(dtypes_for_result)
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -320,8 +320,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator in ('Gcd', 'Lcm'):
             if max(type1, type2) > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             restype = np_result_type(dtypes_for_result)
             if dtype1 != restype:
                 left_cast = cast_str(restype)
@@ -330,8 +330,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator and operator in ('CopySign', 'NextAfter'):
             if max(type1, type2) > 2:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             if max(type1, type2) < 2:
                 restype = dtypes.float64
             else:
@@ -343,8 +343,8 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
 
         elif operator and operator in ('Ldexp'):
             if max(type1, type2) > 2 or type2 > 1:
-                raise TypeError("unsupported operand type(s) for {}: "
-                                "'{}' and '{}'".format(operator, dtype1, dtype2))
+                raise InvalidOperandTypes("unsupported operand type(s) for {}: "
+                                          "'{}' and '{}'".format(operator, dtype1, dtype2))
             if type1 < 2:
                 restype = dtypes.float64
                 left_cast = cast_str(restype)

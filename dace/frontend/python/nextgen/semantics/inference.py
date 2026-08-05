@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
+from dace.frontend.python.common import InvalidOperandTypes
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
 from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, registry_argument_value,
                                                  supported_data_attribute)
@@ -729,6 +730,13 @@ class InferenceService:
         back as ``kind='data-tuple'``."""
         try:
             result = infer_fn(*args, **kwargs)
+        except InvalidOperandTypes:
+            # Not an untyped call: a call NumPy rejects too (``numpy.fabs`` of
+            # a complex array). Reporting it untyped sends it to a callback,
+            # which raises the same error at run time across the C callback
+            # boundary -- where it cannot propagate, so the program keeps
+            # going with an unwritten result. Report it now instead.
+            raise
         except Exception:
             return None
         if isinstance(result, data.Data):
@@ -1352,7 +1360,11 @@ class InferenceService:
         if registry_result is not None:
             return registry_result
 
-        result_dtype = self._result_dtype(operands, boolean_result)
+        result_dtype = None
+        if isinstance(node, ast.BinOp) and not boolean_result:
+            result_dtype = self.binary_operation_dtype(node)
+        if result_dtype is None:
+            result_dtype = self._result_dtype(operands, boolean_result)
         shape: Tuple[Any, ...] = ()
         for operand in data_operands:
             operand_shape = tuple(operand.descriptor.shape) if isinstance(operand.descriptor, data.Array) else ()
@@ -1395,6 +1407,8 @@ class InferenceService:
         if infer_fn is not None:
             try:
                 result = infer_fn(*values)
+            except InvalidOperandTypes:
+                raise  # See :meth:`_registry_inference`
             except Exception:
                 result = None
         if not isinstance(result, data.Data):
@@ -1405,6 +1419,64 @@ class InferenceService:
                                           node,
                                           category='type-inference')
         return Inferred(kind='data', descriptor=result)
+
+    def binary_operation_dtype(self, node: ast.BinOp) -> Optional[dtypes.typeclass]:
+        """
+        The dtype a binary operator's arithmetic is performed in, as
+        ``replacements.operators.result_type`` defines it -- the authority the
+        classic frontend and the ufunc replacements share -- or None when it
+        cannot answer for these operands.
+
+        Only that function knows the rules an operator imposes on top of plain
+        promotion: true division of two integers is ``float64`` (C's ``/``
+        would truncate), and a bitwise operator rejects floats outright.
+        Neither is the promotion itself C's: ``complex64 + float64`` is
+        ``complex128``, where picking the wider of two 8-byte types drops the
+        imaginary part.
+
+        Shared by inference (which types the result container) and lowering
+        (which casts the tasklet's operands into this type), so the two cannot
+        disagree about what the tasklet computes.
+
+        :raises InvalidOperandTypes: If the operand types are invalid for the
+                                     operator (``float & float``).
+        """
+        from dace.frontend.python.replacements.operators import result_type
+
+        arguments = self.binary_operand_values(node)
+        if arguments is None:
+            return None
+        try:
+            restype, _ = result_type(arguments, type(node.op).__name__)
+        except InvalidOperandTypes:
+            raise
+        except Exception:
+            return None
+        return restype if isinstance(restype, dtypes.typeclass) else None
+
+    def binary_operand_values(self, node: ast.BinOp) -> Optional[List[Any]]:
+        """
+        A binary operator's operands in the form
+        ``replacements.operators.result_type`` takes them -- the descriptor of
+        a data operand, the value itself of a compile-time one -- or None if
+        any operand is neither.
+
+        A compile-time operand passes as its VALUE, which is what makes a
+        literal weak under NEP 50: ``int32_array + 1`` stays int32 rather than
+        widening, and a widened result would rebind the name of every
+        ``i += 1`` counter to a differently-typed container.
+        """
+        values: List[Any] = []
+        for operand in (self.infer(node.left), self.infer(node.right)):
+            if operand.is_data:
+                values.append(operand.descriptor)
+            elif operand.kind == 'constant' and isinstance(operand.value, (numbers.Number, numpy.bool_)):
+                values.append(operand.value)
+            elif operand.kind == 'symbolic':
+                values.append(operand.value)
+            else:
+                return None
+        return values
 
     def _result_dtype(self, operands: List[Inferred], boolean_result: bool) -> dtypes.typeclass:
         """
@@ -1418,6 +1490,9 @@ class InferenceService:
         Widening here is not merely imprecise: it made every ``i += 1`` counter
         rebind its name to a differently-typed container, which inside a loop
         is a loop-carried rebinding and forced the whole loop into a callback.
+
+        The fallback for operators :meth:`binary_operation_dtype` cannot answer
+        for (comparisons, and operands the registry's own rule does not type).
         """
         if boolean_result:
             return dtypes.bool_

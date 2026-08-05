@@ -35,6 +35,20 @@ class DaceSyntaxError(Exception):
             return self.message + f'\n  encountered in line {line}{col_suffix}'
 
 
+class InvalidOperandTypes(TypeError):
+    """
+    The operand types of an operation are invalid, and no other spelling of the
+    call could make them valid -- NumPy rejects the same call (``np.fabs`` of a
+    complex array, ``&`` between floats).
+
+    Distinct from a replacement merely being unable to handle a call: a
+    frontend may legitimately fall back to another lowering path (a Python
+    callback, say) when an implementation declines a *form* it does not
+    support, but falling back here would only defer the same error to run
+    time, where it can no longer be reported.
+    """
+
+
 def inverse_dict_lookup(dict: Dict[str, Any], value: Any):
     """ Finds the first key in a dictionary with the input value. """
     for k, v in dict.items():

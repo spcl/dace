@@ -856,6 +856,17 @@ def prepare_name_target(target: ast.Name, inferred: Inferred, state: LoweringSta
             # and its dtype, and the whole chain fell back.
             return DataAccess(binding.container, subsets.Range.from_array(existing), existing)
 
+    if binding is not None and binding.kind == 'container' and getattr(statement, 'augmented_op', None) is not None:
+        existing = state.context.containers[binding.container]
+        if _writable_as(existing, result_descriptor):
+            # An augmented assignment READS its target in the same statement,
+            # so the name cannot be rebound: the read resolves to whichever
+            # container the name ends up bound to, and a fresh one holds
+            # nothing. Python and NumPy define the form as an in-place update
+            # anyway -- ``B **= A`` on an int64 ``B`` stays int64 however the
+            # right-hand side promotes -- so the value converts on the way in.
+            return DataAccess(binding.container, subsets.Range.from_array(existing), existing)
+
     container_name = state.context.add_container(target.id, result_descriptor)
     state.context.bind(target.id, container_name)
     return DataAccess(container_name, subsets.Range.from_array(result_descriptor), result_descriptor)

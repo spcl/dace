@@ -5,6 +5,7 @@ Contains replacements for NumPy ufuncs.
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
 from dace.frontend.python import astutils
+from dace.frontend.python.common import InvalidOperandTypes
 from dace.frontend.python.nested_call import NestedCall
 from dace.frontend.python.replacements.utils import (ProgramVisitor, Shape, UfuncInput, UfuncOutput, broadcast_together,
                                                      normalize_axes, representative_num, sym_type)
@@ -2022,8 +2023,28 @@ def _infer_ufunc_descriptor(input_descs: Dict[str, data.Data], ufunc_name: str, 
     if out_shape is None:
         return None
 
+    np_function = getattr(np, ufunc_name, None)
+    if np_function is None:
+        return None
     try:
-        sample_result = getattr(np, ufunc_name)(*sample_args)
+        sample_result = np_function(*sample_args)
+    except TypeError as error:
+        # NumPy is the oracle for the result type here, so its own refusal of
+        # these operand types (``numpy.fabs`` of a complex array) is a verdict
+        # on the program, not a shortfall of this inference. Reporting the
+        # call untyped would send it to a Python callback, where the same
+        # error is raised at run time across the C callback boundary -- it
+        # cannot propagate there, and the program continues with an unwritten
+        # result.
+        #
+        # Only for a real ufunc: called with the right number of NumPy scalars
+        # it can raise ``TypeError`` for nothing but the operand types, while
+        # an ordinary function (``numpy.clip``, not a ufunc in NumPy 2) may
+        # also be rejecting the call's shape, which is this inference's
+        # shortfall and not the program's.
+        if not isinstance(np_function, np.ufunc):
+            return None
+        raise InvalidOperandTypes(str(error)) from error
     except Exception:
         return None
 
