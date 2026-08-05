@@ -157,8 +157,10 @@ class NestInnermostMapBodyIntoNSDFG(ppl.Pass):
         # re-scan the entire SDFG -- the quadratic that made this pass slow on wide SDFGs). The cache
         # is sound ONLY because nothing is nested in this phase: the SDFG is constant throughout.
         scan_cache: dict = {}
-        selected = []  # (state, map_entry, body_nodes) to nest in phase 2
-        candidates = []  # (state, map_entry) every vectorizable map -- flattened in phase 3
+        # Annotated: an untyped list infers its elements as ``Any``, which silently disables the type
+        # checker over every loop below that consumes them.
+        selected: list[tuple[dace.SDFGState, dace.nodes.MapEntry, set[dace.nodes.Node]]] = []
+        candidates: list[tuple[dace.SDFGState, dace.nodes.MapEntry]] = []
         for n, g in list(sdfg.all_nodes_recursive()):
             if not isinstance(n, dace.nodes.MapEntry):
                 continue
