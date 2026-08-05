@@ -63,7 +63,8 @@ def test_hoisted_shape_element_keeps_its_compile_time_value():
     a = np.random.rand(2, 3, 4, 5)
     tree = nextgen.parse_program(padded, a)
     _assert_no_callbacks(tree)
-    assert tuple(tree.containers['b'].shape) == (2, 5, 6, 5)
+    # ``b`` is returned, so it carries the return container's name
+    assert tuple(tree.containers['__return'].shape) == (2, 5, 6, 5)
     assert not [node for node in tree.preorder_traversal() if isinstance(node, tn.AssignNode)]
 
     expected = np.zeros((2, 5, 6, 5))

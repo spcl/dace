@@ -165,7 +165,8 @@ def test_sum_axis0():
         return s
 
     tree = nextgen.parse_program(sum_axis)
-    assert tuple(tree.containers['s'].shape) == (12, )
+    # ``s`` is returned, so it carries the return container's name
+    assert tuple(tree.containers['__return'].shape) == (12, )
     maps = _nodes_of_type(tree, tn.MapScope)
     # Initialization map over the kept dimension + full-rank WCR map
     assert len(maps) == 2
@@ -188,7 +189,8 @@ def test_method_max_axis1_first_slice_init():
         return m
 
     tree = nextgen.parse_program(max_axis)
-    assert tuple(tree.containers['m'].shape) == (N, )
+    # ``m`` is returned, so it carries the return container's name
+    assert tuple(tree.containers['__return'].shape) == (N, )
     tasklets = _nodes_of_type(tree, tn.TaskletNode)
     # max has no identity: the initialization reads the first slice along axis 1
     init = [t for t in tasklets if t.in_memlets and t.out_memlets['__out'].wcr is None]
@@ -209,8 +211,9 @@ def test_sum_negative_axis():
         return s
 
     tree = nextgen.parse_program(sum_last_axis)
-    # axis=-1 on a 2-D array reduces the second dimension
-    assert tuple(tree.containers['s'].shape) == (N, )
+    # axis=-1 on a 2-D array reduces the second dimension. ``s`` is returned,
+    # so it carries the return container's name.
+    assert tuple(tree.containers['__return'].shape) == (N, )
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
 
 

@@ -371,6 +371,27 @@ def _remove_name_collisions(sdfg: SDFG) -> None:
             nsdfg.replace_dict(replacements)
 
 
+def _viewed_container(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view: dace.nodes.AccessNode) -> str:
+    """
+    The name of the container a viewing edge aliases.
+
+    Usually the access node on the other end of the edge, but a view bound
+    inside a dataflow scope is fed through the scope's entry (or writes back
+    through its exit), and a scope node holds no container. The memlet names
+    the viewed container in that case -- it has to, since it is what the edge
+    carries across the scope boundary.
+
+    :param state: The state the view resides in.
+    :param edge: The viewing edge, as returned by ``sdutil.get_view_edge``.
+    :param view: The view access node.
+    :return: The viewed container's name.
+    """
+    viewed_node = sdutil.get_view_node(state, view)
+    if isinstance(viewed_node, dace.nodes.AccessNode):
+        return viewed_node.data
+    return edge.data.data
+
+
 def _make_view_node(state: SDFGState, edge: gr.MultiConnectorEdge[Memlet], view_name: str,
                     viewed_name: str) -> tn.ViewNode:
     """
@@ -450,8 +471,7 @@ def _prepare_schedule_tree_edges(
                 if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.src)
                     if e is vedge:
-                        viewed_node = sdutil.get_view_node(state, e.src)
-                        result[e] = _make_view_node(state, e, e.src.data, viewed_node.data)
+                        result[e] = _make_view_node(state, e, e.src.data, _viewed_container(state, e, e.src))
                         scope = state.entry_node(e.dst if mtree.downwards else e.src)
                         scope_to_edges[scope].append(e)
                         continue
@@ -460,8 +480,7 @@ def _prepare_schedule_tree_edges(
                 if isinstance(desc, dace.data.View):
                     vedge = sdutil.get_view_edge(state, e.dst)
                     if e is vedge:
-                        viewed_node = sdutil.get_view_node(state, e.dst)
-                        result[e] = _make_view_node(state, e, e.dst.data, viewed_node.data)
+                        result[e] = _make_view_node(state, e, e.dst.data, _viewed_container(state, e, e.dst))
                         scope = state.entry_node(e.dst if mtree.downwards else e.src)
                         scope_to_edges[scope].append(e)
                         continue

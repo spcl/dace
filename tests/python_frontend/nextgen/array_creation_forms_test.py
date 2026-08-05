@@ -64,7 +64,8 @@ def test_strides_reach_the_descriptor():
 
     tree = nextgen.parse_program(strided_local)
     assert not _nodes_of_type(tree, tn.PythonCallbackNode)
-    assert tuple(tree.containers['A'].strides) == (1, 2)
+    # ``A`` is returned, so it carries the return container's name
+    assert tuple(tree.containers['__return'].strides) == (1, 2)
     # ``return A`` hands back A's own layout, so the return container keeps it.
     assert tuple(tree.containers['__return'].strides) == (1, 2)
     result = tree.as_sdfg().compile()()

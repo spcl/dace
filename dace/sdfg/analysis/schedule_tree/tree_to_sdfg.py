@@ -570,22 +570,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             return
 
         if isinstance(outer_map_entry, SDFG):
-            # Copy data descriptor from parent SDFG and add input connector
+            # Make the container resolvable in the nested SDFG and add an input
+            # connector for it, unless it stays local to the body.
             if memlet_data not in sdfg.arrays:
-                parent_sdfg: SDFG = self._parent_sdfg_with_array(memlet_data, sdfg)
-
-                # Add support for NView nodes
-                use_nview = self._apply_nview_array_override(memlet_data, sdfg)
-                if not use_nview:
-                    sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
-
-                    # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                    if parent_sdfg.arrays[memlet_data].transient:
-                        sdfg.arrays[memlet_data].transient = False
-
-                # Dev note: nview.target and memlet_data are identical
-                assert memlet_data not in outer_to_connect["inputs"]
-                outer_to_connect["inputs"].add(memlet_data)
+                if self._crosses_nested_boundary(memlet_data, sdfg):
+                    # Dev note: nview.target and memlet_data are identical
+                    assert memlet_data not in outer_to_connect["inputs"]
+                    outer_to_connect["inputs"].add(memlet_data)
         else:
             assert outer_map_entry is None
 
@@ -640,21 +631,12 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                                                         memlet=memlet)
 
             if isinstance(outer_map_entry, SDFG):
-                if name not in sdfg.arrays:
-                    parent_sdfg = self._parent_sdfg_with_array(name, sdfg)
-
-                    # Support for NView nodes
-                    use_nview = self._apply_nview_array_override(name, sdfg)
-                    if not use_nview:
-                        sdfg.add_datadesc(name, parent_sdfg.arrays[name].clone())
-
-                        # Transients passed into a nested SDFG become non-transient inside that nested SDFG
-                        if parent_sdfg.arrays[name].transient:
-                            sdfg.arrays[name].transient = False
-
-                # Add out_connector in any case if not yet present, e.g. write after read
-                # Dev not: name and nview.target are identical
-                outer_to_connect["outputs"].add(name)
+                # Add out_connector in any case if not yet present, e.g. write
+                # after read -- but only for containers that actually cross the
+                # body's boundary.
+                # Dev note: name and nview.target are identical
+                if self._crosses_nested_boundary(name, sdfg):
+                    outer_to_connect["outputs"].add(name)
 
             # connect outside the scope
             # only re-use cached write-only nodes, e.g. don't create a cycle for
@@ -757,13 +739,11 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
                 # ``Memlet.from_array`` below needs the descriptor to exist
                 # BEFORE _connect_map_input ever runs, so its normal
                 # "not yet present" gate never fires for this case.
-                parent_sdfg = self._parent_sdfg_with_array(memlet_data, sdfg)
-                if not self._apply_nview_array_override(memlet_data, sdfg):
-                    sdfg.add_datadesc(memlet_data, parent_sdfg.arrays[memlet_data].clone())
-                    if parent_sdfg.arrays[memlet_data].transient:
-                        sdfg.arrays[memlet_data].transient = False
-                    if isinstance(outer_map_entry, SDFG):
+                if isinstance(outer_map_entry, SDFG):
+                    if self._crosses_nested_boundary(memlet_data, sdfg):
                         outer_to_connect["inputs"].add(memlet_data)
+                elif not self._apply_nview_array_override(memlet_data, sdfg):
+                    self._import_nested_datadesc(memlet_data, sdfg)
             self._connect_map_input(map_entry, connector, memlet_data,
                                     Memlet.from_array(memlet_data, sdfg.arrays[memlet_data]), outer_map_entry,
                                     outer_to_connect, access_cache, sdfg)
@@ -1442,6 +1422,33 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
             return
         self._import_nested_datadesc(name, sdfg)
 
+    def _crosses_nested_boundary(self, name: str, sdfg: SDFG) -> bool:
+        """
+        Make a container resolvable inside the nested SDFG a map body became,
+        and report whether it crosses that body's boundary as a connector.
+
+        Not everything a body touches does. A body-local transient must not:
+        routing it through the scope's connectors would allocate ONE instance
+        shared by every concurrent iteration. Neither must a view whose subset
+        depends on the map parameters (``__anf0 = view A[0:20, i]``): its
+        viewing edge would then be attached outside the map as well, where
+        ``i`` does not exist. :meth:`_ensure_nested_container` keeps the first
+        as a transient of the body and rebuilds the second inside it from its
+        (imported) source, and a transient is never a connector -- so both
+        report False.
+
+        :param name: The container the body reads or writes.
+        :param sdfg: The nested SDFG the body is being emitted into.
+        :return: True if ``name`` must be registered on the body's boundary.
+        """
+        assert self._dataflow_stack and self._dataflow_stack[-1][0] is sdfg
+        if name not in sdfg.arrays and self._apply_nview_array_override(name, sdfg):
+            # An NView is a boundary contract by construction: the descriptor
+            # it installs is exactly what the connector carries.
+            return True
+        self._ensure_nested_container(name, sdfg)
+        return not sdfg.arrays[name].transient
+
     def _import_nested_datadesc(self, name: str, sdfg: SDFG) -> None:
         """Clone a container from the closest enclosing SDFG that has it into
         ``sdfg``, as the non-transient a nested-SDFG connector requires."""
@@ -1589,6 +1596,17 @@ def _connect_view_edges(sdfg: SDFG, bindings: 'dict[str, tn.ViewNode]') -> None:
             for view_node in to_process:
                 binding = bindings.get(view_node.data)
                 if binding is None or scopes.get(view_node) is not None:
+                    continue
+                if sdfg.parent is not None and not sdfg.arrays[view_node.data].transient:
+                    # A non-transient inside a nested SDFG is one of its
+                    # connectors, and a view that crosses a boundary was
+                    # already bound on the other side of it -- either as the
+                    # view itself or, when it is the SOURCE another view was
+                    # rebuilt from, as the container that source names. Binding
+                    # it again in here would import ITS source as a second
+                    # connector, so the same memory would reach the body twice
+                    # under two names, and the two aliasing paths would be
+                    # unioned into one nonsensical memlet on the way out.
                     continue
                 if (any(e.dst_conn == 'views' for e in state.in_edges(view_node))
                         or any(e.src_conn == 'views' for e in state.out_edges(view_node))):

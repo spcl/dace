@@ -17,6 +17,7 @@ from dace.frontend.python.nextgen.canonical.passes import default_passes
 from dace.frontend.python.nextgen.common import (CanonicalViolationError, FrontendError, TreeVerificationError,
                                                  UnsupportedFeatureError)
 from dace.frontend.python.nextgen.lowering.emitter import TreeEmitter
+from dace.frontend.python.nextgen.lowering.mechanisms.return_elision import elide_return_copies
 from dace.frontend.python.nextgen.lowering.parse_cache import warm_nested_parses
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.pipeline import CanonicalizationPipeline, PipelineContext
@@ -97,6 +98,11 @@ def build_schedule_tree(name: str,
         state.lower_body(program.body)
     finally:
         state.progress.done()
+
+    # A returned program-local array can carry the return container's name
+    # instead of being copied into it. Done on the finished tree, where every
+    # use of the container is visible.
+    elide_return_copies(root)
 
     # Stage 4: verification of the output contract
     verify_tree(root)
