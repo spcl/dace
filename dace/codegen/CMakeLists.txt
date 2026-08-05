@@ -290,7 +290,15 @@ endforeach()
 if(DACE_ENABLE_NANOBIND)
   find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
   find_package(nanobind CONFIG REQUIRED HINTS ${DACE_NANOBIND_CMAKE_DIR})
-  nanobind_add_module(${DACE_PROGRAM_NAME} NB_STATIC ${DACE_CPP_FILES} ${DACE_OBJECTS})
+  # NOMINSIZE: nanobind otherwise appends its size optimization (-Os) to every translation unit
+  # of the module -- including the generated kernels -- and it lands after (and thus overrides)
+  # the optimization level selected via compiler.build_type.
+  # PROTECT_STACK: nanobind otherwise appends -fno-stack-protector, which diverges from what the
+  # ctypes path compiles (the compiler's default, typically -fstack-protector-strong) and makes
+  # GCC decline the precompiled runtime header (a PCH is only honored when the SSP setting
+  # matches). Both flags trade a slightly larger binding for kernels that compile exactly like
+  # the rest of DaCe's generated code.
+  nanobind_add_module(${DACE_PROGRAM_NAME} NB_STATIC NOMINSIZE PROTECT_STACK ${DACE_CPP_FILES} ${DACE_OBJECTS})
   if(DACE_NANOBIND_STATIC_LIB)
     # Link a prebuilt, machine-cached copy of nanobind's helper archive instead of compiling its
     # ~12 translation units per build folder. The `nanobind-static` target stays alive so its
@@ -303,8 +311,10 @@ if(DACE_ENABLE_NANOBIND)
     # translation units. If a configuration that DOES influence them is ever introduced (e.g.
     # forwarding extra flags into nanobind_add_module), the cache path on the Python side
     # (compiler.nanobind_static_cache_path) MUST start keying on it.
-    file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/dace_nb_stub.cpp "")
-    set_target_properties(nanobind-static PROPERTIES SOURCES ${CMAKE_CURRENT_BINARY_DIR}/dace_nb_stub.cpp)
+    # The stub is a file shipped with DaCe, NOT one written here at configure time: recorded
+    # builds (command_db) replay into fresh build folders without running CMake, so every
+    # compiled source must exist at a configure-independent path.
+    set_target_properties(nanobind-static PROPERTIES SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tools/nanobind_stub.cpp)
     target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_NANOBIND_STATIC_LIB})
   endif()
   target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_LIBS})
