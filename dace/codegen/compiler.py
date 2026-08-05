@@ -17,6 +17,7 @@ import shutil
 import shlex
 import signal
 import subprocess
+import tempfile
 from typing import Callable, Iterator, List, Literal, Set, Tuple, TypeVar, Union, Optional, overload
 import warnings
 from functools import lru_cache
