@@ -664,7 +664,11 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
         maybe_an_old_style_folder = (object_folder / "build").is_dir()
         for sub_folder in ["map", "src", "include", "sample"]:
             if (object_folder / sub_folder).is_dir() != maybe_an_old_style_folder:
-                raise NotADirectoryError(f'Expected that folder ``{object_folder}`` contains ``{sub_folder}``')
+                if probe:
+                    # TODO: This is an inconsistent folder, currently it is not an error
+                    #   but should it be one?
+                    return None
+                raise NotADirectoryError(f'The old-style folder ``{object_folder}`` is inconsistent.')
 
         if maybe_an_old_style_folder:
             # All expected folders where found, so expect that this is a 'development' format folder.
@@ -674,7 +678,7 @@ def get_folder_mode(object_folder: Union[pathlib.Path, str], probe: bool = False
             return None
         else:
             # Up for discussion what to do here.
-            raise NotADirectoryError(f'``{object_folder}`` does not appear to be a valid build folder.')
+            raise NotADirectoryError(f'``{object_folder}`` does not appear to be a valid old-style build folder.')
 
 
 def get_binary_name(
