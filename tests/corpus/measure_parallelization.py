@@ -58,6 +58,7 @@ from dace.transformation.passes.parallelize import parallelize
 from dace.transformation.passes.vectorization.config import VectorizeConfig
 from dace.transformation.passes.vectorization.enums import ISA
 from dace.transformation.passes.vectorization.vectorize_multi_dim import VectorizeCPUMultiDim
+from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.libraries.standard.nodes import Reduce
 from dace.libraries.standard.nodes.scan import Scan
 from dace.sdfg import nodes as nd
@@ -336,11 +337,14 @@ CORPORA: Dict[str, Tuple[Callable, Callable]] = {
 #: * ``canon``          -- the production canonicalize recipe.
 #: * ``canon+vec``      -- canonicalize, then the multi-dimensional CPU vectorizer.
 #: * ``parallelize+vec``-- the lighter ``parallelize`` recipe, then the vectorizer.
+#: * ``autoopt``        -- upstream ``auto_optimize`` for CPU: the baseline canonicalize is
+#:                         measured AGAINST, so the two recipes are counted by one metric on
+#:                         one SDFG build.
 #:
 #: The vectorizer runs at a fixed width with the scalar ISA so the measurement
 #: is machine-independent: what is being compared is how much of each corpus
 #: each recipe leaves parallel, not the throughput of a particular target.
-CONFIGS = ('canon', 'canon+vec', 'parallelize+vec')
+CONFIGS = ('canon', 'canon+vec', 'parallelize+vec', 'autoopt')
 
 
 def _vectorize(sdfg):
@@ -365,6 +369,11 @@ def apply_config(sdfg, config: str, params: Dict):
     elif config == 'parallelize+vec':
         parallelize(sdfg, validate=True, validate_all=False, peel_limit=params.get('peel_limit', 4))
         _vectorize(sdfg)
+    elif config == 'autoopt':
+        # ``expand=False``: expanding library nodes to their fast vendor calls swaps the construct
+        # being counted for an opaque call, which is not a parallelism difference. The comparison is
+        # what each recipe leaves parallel in the SDFG, so both sides keep their library nodes.
+        auto_optimize(sdfg, dace.DeviceType.CPU, validate=True, validate_all=False, expand=False)
     else:
         raise ValueError(f'unknown config {config!r}')
     return sdfg
