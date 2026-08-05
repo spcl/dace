@@ -33,6 +33,7 @@ from dace.transformation.passes.constant_propagation import ConstantPropagation
 from dace.transformation.passes.pattern_matching import PatternMatchAndApplyRepeated
 from dace.transformation.passes.prune_symbols import RemoveUnusedSymbols
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
+from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
 from dace.transformation.passes.canonicalize.normalize_map_body import NormalizeMapBody
 from dace.transformation.passes.canonicalize.lift_loop_carried_reduction import LiftLoopCarriedReduction
 from dace.transformation.passes.canonicalize.fuse_chained_scalar_reductions import FuseChainedScalarReductions
@@ -623,7 +624,14 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # statements -- replicate a conditional / gather-scatter NestedSDFG per
     # independent output so it can fission later (SplitStatements subsumes the
     # former ConditionalComponentFission and also handles forward-read anti-deps).
-    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])),
+    #
+    # ConvertLengthOneArraysToScalars leads the stage: the frontend spells a scalar temporary as a
+    # ``(1,)`` transient Array, and every consumer downstream of here -- the statement split's
+    # dependency walk, fission, WCR handling -- keys on the descriptor, so the two spellings take
+    # different paths for the same value. Normalize to Scalar first. TRANSIENTS ONLY
+    # (``preserve_abi`` left clear): a signature-level length-1 array is the caller's contract and
+    # is not touched.
+    s += [('prep', PatternMatchAndApplyRepeated([MoveIfIntoMap()])), ('prep', ConvertLengthOneArraysToScalars()),
           ('prep', SplitStatements(break_anti_dependence=break_anti_dependence))]
 
     # WCRToAugAssign BEFORE lower: rewrite every conflict-free (injective) WCR back to
