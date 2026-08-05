@@ -68,6 +68,7 @@ from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeli
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
+from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
 from dace.transformation.passes.canonicalize.induction_variable_substitution import (InductionVariableSubstitution,
                                                                                      LoopCarriedRotationSubstitution)
@@ -158,6 +159,17 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
     in the extended matcher.
 
     :param label: The owning stage label.
+    ``TrivialLoopElimination`` -> ``DeadStateElimination`` -> ``LiftTrivialIf`` close the loop the
+    other three leave open. Substituting the one value of a single-iteration loop can collapse an
+    in-body BOUNDARY guard to a constant: CloudSC peels the last level off ``for jk in 1..klev``, the
+    trivial remainder splices in with ``jk := klev``, and ``if jk < klev`` becomes ``False``. The
+    branch is then unreachable, but validation is STRUCTURAL and checks its memlets anyway -- the
+    guarded ``plu[jk, jl]`` reads as ``plu[klev, jl]``, the dimension SIZE as an index into
+    ``plu[klev, klon]``, and the SDFG is rejected. These three already exist and already run, but only
+    inside ``SimplifyPass``, which deliberately never runs mid-pipeline -- so the dead branch survived
+    to the next phase's validation. Running them here fixes the whole family, not just the
+    trivial-loop instance: constant and symbol propagation collapse guards the same way.
+
     :returns: ``(stage_label, pass)`` pairs for the cleanup, in order.
     """
     # Order rationale:
@@ -203,7 +215,8 @@ def _structural_cleanup(label: str) -> List[Tuple[str, ppl.Pass]]:
                                                   InlineSDFG()])), (label, RemoveViews()),
             (label, CleanAccessNodeToScalarSliceToTaskletPattern()),
             (label, CleanTaskletToScalarSliceToAccessNodePattern()), (label, SinkStateIntoLoop()),
-            (label, EmptyStateElimination())]
+            (label, EmptyStateElimination()), (label, PatternMatchAndApplyRepeated([TrivialLoopElimination()])),
+            (label, DeadStateElimination()), (label, LiftTrivialIf())]
 
 
 def _coalesce() -> List[Tuple[str, ppl.Pass]]:
