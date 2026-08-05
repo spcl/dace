@@ -222,6 +222,61 @@ def test_build_with_scheme_one_and_then_switch():
     )
 
 
+def _expected_binary_path(
+    build_folder: pathlib.Path,
+    sdfg_name: str,
+    folder_mode: str,
+    lib_extension: str,
+) -> pathlib.Path:
+    if folder_mode == "development":
+        return build_folder / "build" / f"lib{sdfg_name}.{lib_extension}"
+    assert folder_mode == "production"
+    return build_folder / f"lib{sdfg_name}.{lib_extension}"
+
+
+def _test_get_binary_name_detects_folder_mode_switch_impl(
+    build_folder: pathlib.Path,
+    version1: str,
+    version2: str,
+) -> None:
+    sdfg_name = "some_sdfg"
+    lib_extension = "so"
+    build_folder.mkdir()
+
+    with dace.config.temporary_config() as conf:
+        # The configuration keeps naming `version1`; after the switch only the
+        #  `FOLDER_MODE` file knows about `version2`, so `get_binary_name()` must
+        #  take the mode from the folder and not from the configuration.
+        conf.set('compiler', 'build_folder_mode', value=version1)
+
+        sdfg_compiler.generate_program_folder(None, [], str(build_folder), folder_mode=version1)
+        assert sdfg_compiler.get_folder_mode(build_folder) == version1
+
+        lib1_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name=sdfg_name, lib_extension=lib_extension)
+        assert lib1_path == _expected_binary_path(build_folder, sdfg_name, version1, lib_extension)
+
+        # Now switch the folder to the second mode; the configuration still says `version1`.
+        sdfg_compiler.generate_program_folder(None, [], str(build_folder), folder_mode=version2)
+        assert sdfg_compiler.get_folder_mode(build_folder) == version2
+
+        lib2_path = sdfg_compiler.get_binary_name(build_folder, sdfg_name=sdfg_name, lib_extension=lib_extension)
+        assert lib2_path == _expected_binary_path(build_folder, sdfg_name, version2, lib_extension)
+        assert lib1_path != lib2_path
+
+
+def test_get_binary_name_detects_folder_mode_switch(tmp_path):
+    _test_get_binary_name_detects_folder_mode_switch_impl(
+        build_folder=tmp_path / "dev_to_prod",
+        version1="development",
+        version2="production",
+    )
+    _test_get_binary_name_detects_folder_mode_switch_impl(
+        build_folder=tmp_path / "prod_to_dev",
+        version1="production",
+        version2="development",
+    )
+
+
 def test_already_loaded_and_comple_again():
     _test_build_with_scheme_one_and_then_switch_impl(
         version1="development",
@@ -234,7 +289,10 @@ def test_already_loaded_and_comple_again():
 
 
 if __name__ == '__main__':
+    import tempfile
     test_development_folder_mode()
     test_production_folder_mode()
     test_already_loaded_and_comple_again()
     test_build_with_scheme_one_and_then_switch()
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        test_get_binary_name_detects_folder_mode_switch(pathlib.Path(tmp_dir))
