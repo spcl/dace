@@ -683,18 +683,45 @@ def analyze_happens_before_fusion(
     if ordering_edges is None:
         return None
 
-    # Data that does not cross the scope nodes is invisible to the subset analysis below,
-    #  so an inner AccessNode to non-transient data (which the other Map might also touch)
-    #  makes the analysis incomplete. Refuse instead of guessing.
+    # The subset analysis below reads only the edges that cross the scope nodes, so it never
+    #  books what an AccessNode *inside* a body touches, and a side effect is not expressed as
+    #  a Memlet at all. Refuse what it can never be completed for, and remember the rest.
+    inner_data: List[Dict[str, None]] = []  # `dict` as an ordered set, one entry per Map
     for map_entry in (first_map_entry, second_map_entry):
+        scope_data: Dict[str, None] = {}
         for node in state.scope_subgraph(map_entry, False, False).nodes():
-            if isinstance(node, nodes.AccessNode) and not sdfg.arrays[node.data].transient:
+            if isinstance(node, nodes.AccessNode):
+                # Non-transient data is reachable from outside this state entirely, so the
+                #  "does the other Map name it too" test below would not bound the hazard.
+                if not sdfg.arrays[node.data].transient:
+                    return None
+                data = _dealias(state, node)
+                if data is None:
+                    return None
+                scope_data[data] = None
+            # A side effect takes part in an ordering that no Memlet describes, so dropping the
+            #  happens-before edge would silently turn a whole-Map ordering of the effects into a
+            #  per-iteration interleaving of them, with nothing below able to notice.
+            elif isinstance(node, nodes.CodeNode) and node.has_side_effects(sdfg):
                 return None
+        inner_data.append(scope_data)
 
     first_reads, first_writes = _scope_boundary_accesses(state, first_map_entry, None)
     second_reads, second_writes = _scope_boundary_accesses(state, second_map_entry, param_repl)
     # An access the scan could not read hides every hazard it takes part in.
     if first_reads is None or second_reads is None:
+        return None
+
+    # An inner access is invisible above, so it is only harmless while the OTHER Map does not
+    #  name the same data -- otherwise the two share a buffer through a hazard that the subset
+    #  test never gets to see, and the ordering edge would be deleted with nothing put in its
+    #  place. Transience is NOT the discriminator: sibling Map scopes sharing even a
+    #  `Scope`-lifetime transient get ONE allocation, folded up to their common parent scope by
+    #  `framecode.py`, so it is exactly as shared as a global would be.
+    first_inner, second_inner = inner_data[0].keys(), inner_data[1].keys()
+    first_touched = first_inner | first_reads.keys() | first_writes.keys()
+    second_touched = second_inner | second_reads.keys() | second_writes.keys()
+    if not first_inner.isdisjoint(second_touched) or not second_inner.isdisjoint(first_touched):
         return None
     params = [symbolic.pystr_to_symbolic(param) for param in first_map_entry.map.params]
 

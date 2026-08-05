@@ -1,5 +1,9 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
-from typing import Tuple
+import ctypes
+import os
+import sys
+import tempfile
+from typing import Any, Dict, Tuple
 
 import numpy as np
 import pytest
@@ -9,7 +13,7 @@ from dace.sdfg import nodes
 from dace.transformation import dataflow as dftrans
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 
-from tests.helpers.isolation import exit_code
+from tests.helpers.isolation import call_in_child, exit_code
 
 from .map_fusion_vertical_test import count_nodes, unique_name
 
@@ -552,7 +556,170 @@ def test_horizontal_fusion_rejects_a_dynamic_map_range_bound_by_tasklets():
     assert count_nodes(state, nodes.MapEntry) == 2
 
 
+def _make_inner_transient_hazard_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapEntry, nodes.MapEntry]:
+    """Two Maps whose only link is an ordering edge, over a transient neither one exports.
+
+    ``tmp`` is written by an AccessNode inside the first body and read by an AccessNode inside the
+    second, so it never crosses a MapEntry/MapExit connector and the boundary scan behind
+    ``analyze_happens_before_fusion()`` books nothing for it. The RAW between the two Maps rests
+    entirely on the empty-Memlet ordering edge ``exit(first) -> entry(second)``, and the second Map
+    reads ``tmp`` REVERSED, so no per-iteration ordering could stand in for it.
+
+    ``tmp`` needs a State lifetime for this to be one buffer before fusion too: a ``Scope``-lifetime
+    transient is allocated per scope, which would make the unfused SDFG read its own private copy.
+    """
+    sdfg = dace.SDFG(unique_name("horizontal_inner_transient"))
+    state = sdfg.add_state(is_start_block=True)
+    sdfg.add_array("a", shape=(8, ), dtype=dace.float64)
+    sdfg.add_array("o", shape=(8, ), dtype=dace.float64)
+    sdfg.add_array("tmp",
+                   shape=(8, ),
+                   dtype=dace.float64,
+                   transient=True,
+                   lifetime=dace.dtypes.AllocationLifetime.State)
+
+    first_entry, first_exit = state.add_map("first_map", {"__i": "0:8"})
+    write = state.add_tasklet("write", {"__in"}, {"__out"}, "__out = __in + 1.0")
+    tmp_write = state.add_access("tmp")
+    state.add_memlet_path(state.add_read("a"), first_entry, write, dst_conn="__in", memlet=dace.Memlet("a[__i]"))
+    state.add_edge(write, "__out", tmp_write, None, dace.Memlet("tmp[__i]"))
+    state.add_nedge(tmp_write, first_exit, dace.Memlet())  # ordering only, keeps `tmp_write` in scope
+
+    second_entry, second_exit = state.add_map("second_map", {"__j": "0:8"})
+    tmp_read = state.add_access("tmp")
+    read = state.add_tasklet("read", {"__in"}, {"__out"}, "__out = __in")
+    state.add_nedge(second_entry, tmp_read, dace.Memlet())  # ordering only, keeps `tmp_read` in scope
+    state.add_edge(tmp_read, None, read, "__in", dace.Memlet("tmp[7 - __j]"))
+    state.add_memlet_path(read, second_exit, state.add_write("o"), src_conn="__out", memlet=dace.Memlet("o[__j]"))
+
+    state.add_nedge(first_exit, second_entry, dace.Memlet())
+    sdfg.validate()
+    return sdfg, state, first_entry, second_entry
+
+
+def test_horizontal_fusion_refuses_an_inner_shared_transient():
+    """Regression: the happens-before plan must not drop an ordering edge it cannot replace.
+
+    ``analyze_happens_before_fusion()`` used to reject an inner AccessNode only when its data was
+    NON-transient. A transient that both bodies touch internally is just as invisible to the
+    boundary scan, so the analysis returned "remove this ordering edge, add nothing back" -- a
+    silent race, and here a deterministic wrong answer: every element the fused Map reads before
+    it has been written comes back stale. Transience was never the discriminator, since two sibling
+    Map scopes sharing even a ``Scope``-lifetime transient get one allocation folded up to the
+    state; naming the same data is.
+    """
+    sdfg, state, first_entry, second_entry = _make_inner_transient_hazard_sdfg()
+    param_repl = mfhelper.find_parameter_remapping(first_entry.map, second_entry.map)
+    assert param_repl is not None
+
+    assert mfhelper.analyze_happens_before_fusion(
+        state=state,
+        sdfg=sdfg,
+        first_map_entry=first_entry,
+        second_map_entry=second_entry,
+        param_repl=param_repl,
+    ) is None, "a hazard the boundary scan cannot see must not produce a fusion plan"
+
+    assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True) == 0
+    assert count_nodes(state, nodes.MapEntry) == 2
+    # The ordering edge is the whole dependency; losing it is the miscompile.
+    assert any(edge.data.is_empty() and edge.dst is second_entry for edge in state.in_edges(second_entry))
+
+    a = np.arange(1.0, 9.0, dtype=np.float64)
+    o = np.zeros(8, dtype=np.float64)
+    kwargs = {"a": a.copy(), "o": o, "tmp": np.zeros(8, dtype=np.float64)}
+    code = exit_code(sdfg, kwargs, [(o, a[::-1] + 1.0)], exact=True)
+    assert code >= 0, f"kernel killed by signal {-code}"
+    assert code == 0, f"the second Map did not read what the first one wrote (code {code})"
+
+
+def _make_side_effect_ordering_sdfg() -> Tuple[dace.SDFG, dace.SDFGState, nodes.MapEntry, nodes.MapEntry]:
+    """Two Sequential Maps of side-effecting tasklets, ordered only by an empty Memlet.
+
+    Each body prints; nothing else observes the ordering. Sequential is load-bearing -- a parallel
+    schedule would make the print order nondeterministic and the oracle below meaningless.
+    """
+    sdfg = dace.SDFG(unique_name("horizontal_side_effects"))
+    state = sdfg.add_state(is_start_block=True)
+    for name in ("A", "B"):
+        sdfg.add_array(name, shape=(4, ), dtype=dace.float64)
+    sdfg.add_array("t", shape=(4, ), dtype=dace.float64, transient=True)
+
+    first_entry, first_exit = state.add_map("first_map", {"__i": "0:4"}, schedule=dace.ScheduleType.Sequential)
+    first = state.add_tasklet("io_a", {"__in"}, {"__out"},
+                              'printf("A%d ", (int)__in); __out = __in;',
+                              language=dace.Language.CPP)
+    first.side_effects = True
+    state.add_memlet_path(state.add_read("A"), first_entry, first, dst_conn="__in", memlet=dace.Memlet("A[__i]"))
+    state.add_memlet_path(first, first_exit, state.add_access("t"), src_conn="__out", memlet=dace.Memlet("t[__i]"))
+
+    second_entry, second_exit = state.add_map("second_map", {"__j": "0:4"}, schedule=dace.ScheduleType.Sequential)
+    second = state.add_tasklet("io_b", {}, {"__out"},
+                               'printf("B%d ", (int)__j); __out = 1.0;',
+                               language=dace.Language.CPP)
+    second.side_effects = True
+    state.add_nedge(second_entry, second, dace.Memlet())
+    state.add_memlet_path(second, second_exit, state.add_write("B"), src_conn="__out", memlet=dace.Memlet("B[__j]"))
+
+    state.add_nedge(first_exit, second_entry, dace.Memlet())
+    sdfg.validate()
+    return sdfg, state, first_entry, second_entry
+
+
+def stdout_of_compiled_sdfg(sdfg: dace.SDFG, kwargs: Dict[str, Any]) -> str:
+    """Child body: compile and call ``sdfg``, handing back what its tasklets printed.
+
+    A side effect is by definition in no Memlet, so the only oracle for its ordering is the effect
+    itself. ``printf`` writes to fd 1 from inside the compiled library, past anything Python could
+    intercept, so fd 1 is redirected around the call and the C streams flushed before restoring it.
+    """
+    csdfg = sdfg.compile()
+    with tempfile.TemporaryFile(mode="w+") as sink:
+        sys.stdout.flush()
+        saved = os.dup(1)
+        os.dup2(sink.fileno(), 1)
+        try:
+            csdfg(**kwargs)
+            ctypes.CDLL(None).fflush(None)
+        finally:
+            os.dup2(saved, 1)
+            os.close(saved)
+        sink.seek(0)
+        return sink.read().strip()
+
+
+def test_horizontal_fusion_refuses_to_reorder_side_effects():
+    """Regression: a side effect is a hazard the Memlet scan cannot see, so it must block the plan.
+
+    ``_scope_boundary_accesses()`` derives hazards from data Memlets alone, so a
+    ``side_effects=True`` tasklet contributed nothing and the ordering edge was removed with no
+    replacement. That does not merely leave the effects unordered against a write: the whole-Map
+    ordering of the two print streams degenerates into a per-iteration interleaving of them.
+    """
+    sdfg, state, first_entry, second_entry = _make_side_effect_ordering_sdfg()
+    param_repl = mfhelper.find_parameter_remapping(first_entry.map, second_entry.map)
+    assert param_repl is not None
+
+    assert mfhelper.analyze_happens_before_fusion(
+        state=state,
+        sdfg=sdfg,
+        first_map_entry=first_entry,
+        second_map_entry=second_entry,
+        param_repl=param_repl,
+    ) is None, "a Map holding a side-effecting node must not get a fusion plan"
+
+    assert sdfg.apply_transformations_repeated(dftrans.MapFusionHorizontal, validate_all=True) == 0
+    assert count_nodes(state, nodes.MapEntry) == 2
+    assert any(edge.data.is_empty() and edge.dst is second_entry for edge in state.in_edges(second_entry))
+
+    kwargs = {"A": np.arange(4.0, dtype=np.float64), "B": np.zeros(4, dtype=np.float64)}
+    printed = call_in_child(stdout_of_compiled_sdfg, sdfg, kwargs)
+    assert printed == "A0 A1 A2 A3 B0 B1 B2 B3", f"the two effect streams were interleaved: {printed!r}"
+
+
 if __name__ == '__main__':
+    test_horizontal_fusion_refuses_an_inner_shared_transient()
+    test_horizontal_fusion_refuses_to_reorder_side_effects()
     test_horizontal_fusion_relocates_a_multi_edge_connector_once()
     test_horizontal_fusion_preserves_distinct_ordering_in_edges()
     test_vertical_map_fusion_common_ancestor_is_required()
