@@ -181,6 +181,31 @@ def test_reduce_global_None(A: dace.float64[10, 5, 3]):
     return np.mean(A, axis=my_none)
 
 
+def test_reduction_into_its_own_operand():
+    """A reduction whose result is written back into the array it reduces.
+
+    The result has to be computed against the operand as it stood: reducing
+    straight into ``tmp[i]`` destroys that element's contribution (the
+    accumulator is initialized to the identity first) and races the map's own
+    reads against its accumulation, which is silently wrong rather than
+    detectably so.
+    """
+
+    @dace.program
+    def running_sum(A: dace.float64[20]):
+        tmp = np.copy(A)
+        for i in range(20):
+            tmp[i] = np.sum(tmp)
+        return tmp
+
+    A = np.ones((20, ))
+    expected = np.copy(A)
+    for i in range(20):
+        expected[i] = expected.sum()
+
+    assert np.allclose(running_sum(np.copy(A)), expected)
+
+
 def test_scalar_reduction():
 
     gamma = 1.4
@@ -280,6 +305,7 @@ if __name__ == '__main__':
 
     test_mean_reduce_symbolic_shape()
 
+    test_reduction_into_its_own_operand()
     test_scalar_reduction()
     test_degenerate_reduction_explicit()
     test_degenerate_reduction_implicit()

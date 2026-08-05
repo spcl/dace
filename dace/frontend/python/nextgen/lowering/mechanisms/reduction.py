@@ -47,6 +47,10 @@ def emit_reduction(target: DataAccess,
                                       statement,
                                       category='reduction')
 
+    if target.container == source.container:
+        _emit_aliased_reduction(target, ufunc_name, source, statement, state, axis)
+        return
+
     if axis is not None:
         rank = len(source.subset.ranges)
         normalized_axis = axis + rank if axis < 0 else axis
@@ -104,6 +108,33 @@ def emit_reduction(target: DataAccess,
     }
     with state.emitter.scope(tn.MapScope(node=map_node, children=[])):
         state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+
+
+def _emit_aliased_reduction(target: DataAccess, ufunc_name: str, source: DataAccess, statement: ast.stmt,
+                            state: LoweringState, axis: Optional[int]) -> None:
+    """
+    Reduce into a temporary of the target's own shape, then copy it into the
+    target, for a reduction that writes into the container it reads
+    (``tmp[i] = numpy.sum(tmp)``).
+
+    The direct form below cannot express this. It initializes the target with
+    the identity and then folds every source element into it through a WCR --
+    so the target's own previous value is destroyed before it is read, and the
+    map's reads race with its accumulation. NumPy evaluates the whole reduction
+    against the operand as it stood, and staging the result restores that: the
+    temporary is written only after every read of the source has happened.
+    """
+    line = getattr(statement, 'lineno', 0)
+    descriptor = (data.Scalar(target.descriptor.dtype) if target.is_scalar_access else data.Array(
+        target.descriptor.dtype, list(nondegenerate_shape(target.subset))))
+    container = state.context.add_container(f'__reduce_alias_{line}', descriptor)
+    staged = DataAccess(container, subsets.Range.from_array(descriptor), descriptor)
+    emit_reduction(staged, ufunc_name, source, statement, state, axis=axis)
+    state.emitter.emit(
+        tn.CopyNode(target=target.container,
+                    memlet=Memlet(data=container,
+                                  subset=subsets.Range.from_array(descriptor),
+                                  other_subset=copy.deepcopy(target.subset))))
 
 
 def _emit_broadcast_reduction(target: DataAccess, ufunc_name: str, source: DataAccess, statement: ast.stmt,
