@@ -1175,6 +1175,7 @@ class VectorizeMultiDim(ppl.Pipeline):
         # nodes must already carry the chosen ISA (e.g. ``cuda``) to avoid the ``pure`` default.
         # Cheap + idempotent.
         self._select_tile_implementations(sdfg)
+        self._align_tile_arrays(sdfg)
         # Finalize the lifted NON-tile lib nodes (Einsum, Reduce) UNCONDITIONALLY, even when
         # tile-node expansion is deferred: a deferred GPU SDFG must return with its ``Reduce``
         # GPU-placed + ``GPUAuto``/cub-stamped so the caller's later ``expand_library_nodes()``
@@ -1361,6 +1362,52 @@ class VectorizeMultiDim(ppl.Pipeline):
             if isinstance(node, _TILE_NODE_TYPES):
                 node.target_isa = self._target_isa
                 node.implementation = select_tile_implementation(node, parent)
+
+    def _align_tile_arrays(self, sdfg: dace.SDFG) -> None:
+        """Declare the natural vector alignment on every register tile a tile op touches.
+
+        The codegen emits no alignment attribute for ``alignment == 0``, and the tile-op backends
+        prove their reinterpret width from the descriptor -- so without this the widened path is
+        never legal and every fp16 tile copies element by element. Stamped here, once the tiles are
+        final, rather than at the ~11 sites that create them.
+
+        :param sdfg: SDFG whose tile arrays are annotated in place.
+        """
+        for sd in sdfg.all_sdfgs_recursive():
+            for state in sd.states():
+                for node in state.nodes():
+                    if not isinstance(node, _TILE_NODE_TYPES):
+                        continue
+                    for edge in state.in_edges(node) + state.out_edges(node):
+                        if edge.data is None or edge.data.data is None:
+                            continue  # empty memlet: an ordering edge, no array behind it
+                        desc = sd.arrays.get(edge.data.data)
+                        # Array only: a tile op also takes Scalar broadcast operands, and Scalar
+                        # exposes ``alignment`` read-only -- it has no declaration to attribute.
+                        if not isinstance(desc, dace.data.Array) or not desc.transient:
+                            continue
+                        if desc.storage != dace.dtypes.StorageType.Register:
+                            continue
+                        desc.alignment = tile_alignment_bytes(desc)
+
+
+def tile_alignment_bytes(desc: dace.data.Data) -> int:
+    """Alignment to declare for a register tile: its own byte size, rounded DOWN to a power of two
+    and capped at 16 (the widest host/device vector access).
+
+    The tile-op codegen reads this number back to decide how wide a reinterpret it may emit, so it
+    must be something the DECLARATION really provides -- under-promising costs a narrower load,
+    over-promising is a misaligned access that faults. A symbolic extent yields no provable size, so
+    the element's own alignment is all that is claimed.
+    """
+    nbytes = desc.dtype.bytes
+    for dim in desc.shape:
+        if dace.symbolic.issymbolic(dim):
+            return desc.dtype.bytes
+        nbytes *= int(dim)
+    if nbytes <= 0:
+        return desc.dtype.bytes
+    return min(16, 1 << (nbytes.bit_length() - 1))
 
 
 def _has_gpu_device_map(sdfg: dace.SDFG) -> bool:

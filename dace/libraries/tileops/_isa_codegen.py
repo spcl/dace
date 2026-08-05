@@ -501,14 +501,26 @@ def make_ite_tasklet(node, parent_state, parent_sdfg, suffix: str) -> nodes.Task
 
 
 # Byte alignment the allocator guarantees for the base of an array, per storage class. The GPU
-# figure is the cudaMalloc/cudaMallocAsync contract (256 B); Register tiles are declared
-# DACE_ALIGN(64) by the CPU codegen that emits the device-function body. Anything else is unknown
-# and gets no assumption.
+# figure is the cudaMalloc/cudaMallocAsync contract (256 B). Anything else is unknown and gets no
+# assumption. Register is NOT here on purpose -- see :func:`base_align_bytes`.
 _BASE_ALIGN_BYTES = {
     dace.dtypes.StorageType.GPU_Global: 256,
     dace.dtypes.StorageType.CPU_Pinned: 256,
-    dace.dtypes.StorageType.Register: 64,
 }
+
+
+def base_align_bytes(arr) -> int:
+    """Bytes the allocation guarantees for ``arr``'s base address.
+
+    A Register array is a declared local, so its guarantee is whatever the descriptor asked the
+    codegen to emit -- ``alignment == 0`` means no attribute at all, i.e. only the element's natural
+    alignment. Reading the descriptor rather than assuming the old blanket ``DACE_ALIGN(64)`` is
+    what keeps the widened reinterpret below a PROVEN fact: over-promising here is a misaligned
+    device access, which faults, not merely slow code.
+    """
+    if arr.storage == dace.dtypes.StorageType.Register:
+        return arr.alignment if arr.alignment > 0 else arr.dtype.bytes
+    return _BASE_ALIGN_BYTES.get(arr.storage, 0)
 
 
 def _enclosing_param_ranges(node, parent_state, parent_sdfg) -> Tuple[dict, list]:
@@ -586,6 +598,40 @@ def _even_extent_substitutions(even: list) -> dict:
     return subs
 
 
+def _guarded_stride_divisors(parent_sdfg) -> dict:
+    """``{symbol: modulus}`` for the stride-parity facts guarded anywhere up ``parent_sdfg``'s chain.
+
+    The facts are read off the guard tasklets ``SplitMapForTileRemainder`` emitted, so every entry
+    here is backed by a host-side ``abort`` that runs before the kernel: the proof below widens an
+    access only on divisibility the program itself verifies. No guard -> no entry -> the symbolic
+    stride stays undecidable and the caller keeps the per-element path.
+
+    Guards live on the SDFG that owns the tiled MAP, which is usually an ancestor of the one that
+    owns the tile ops, hence the walk. A name a NestedSDFG boundary REBINDS (``symbol_mapping``
+    sends a different outer expression to it) means something else on the two sides, so it is
+    refused from there outward rather than translated -- a wrong translation would be exactly the
+    unchecked promise this is built to avoid.
+    """
+    from dace.sdfg.sdfg import SDFG
+    from dace.transformation.passes.vectorization.split_map_for_tile_remainder import guarded_stride_divisors
+
+    facts, sdfg, rebound = {}, parent_sdfg, set()
+    while isinstance(sdfg, SDFG):
+        for name, modulus in guarded_stride_divisors(sdfg).items():
+            if name not in rebound:
+                facts.setdefault(name, modulus)
+        nsdfg_node = sdfg.parent_nsdfg_node
+        if nsdfg_node is None:
+            break
+        for inner, outer in nsdfg_node.symbol_mapping.items():
+            outer_name = str(dace.symbolic.pystr_to_symbolic(outer))
+            if outer_name != str(inner):
+                rebound.add(str(inner))
+                rebound.add(outer_name)
+        sdfg = sdfg.parent_sdfg
+    return facts
+
+
 def _base_offset_is_visible(sdfg, name: str) -> bool:
     """True if the memlet offset seen INSIDE ``sdfg`` is the whole offset from the allocation.
 
@@ -643,9 +689,15 @@ def _linear_base_offset(node, parent_state, parent_sdfg, edge):
     offset = dace.symbolic.pystr_to_symbolic(sum(s * st for s, st in zip(subset.min_element(), arr.strides)))
     ranges, even = _enclosing_param_ranges(node, parent_state, parent_sdfg)
     at_base, at_end = offset, offset
+    # Match params against the symbols the offset ACTUALLY holds, by name. A freshly built
+    # ``pystr_to_symbolic(param)`` carries the default int32 dtype while the subset's symbol is
+    # int64, and a DaCe symbol hashes on its dtype -- so ``sym in offset.free_symbols`` is silently
+    # False and every param stays un-substituted, which leaves the residue undecidable for reasons
+    # that have nothing to do with the shape.
+    by_name = {str(s): s for s in offset.free_symbols}
     for idx, (param, (start, end, step)) in enumerate(ranges.items()):
-        sym = dace.symbolic.pystr_to_symbolic(param)
-        if sym not in offset.free_symbols:
+        sym = by_name.get(param)
+        if sym is None:
             continue
         if dace.symbolic.simplify(offset.diff(sym)).is_nonnegative is not True:
             return None
@@ -655,7 +707,33 @@ def _linear_base_offset(node, parent_state, parent_sdfg, edge):
         at_end = at_end.subs(sym, end)
     size = dace.symbolic.pystr_to_symbolic(arr.total_size)
     subs = _even_extent_substitutions(even)
+    _add_stride_substitutions(subs, _guarded_stride_divisors(parent_sdfg), (at_base, at_end, size))
     return tuple(e.subs(subs) for e in (at_base, at_end, size))
+
+
+def _add_stride_substitutions(subs: dict, facts: dict, exprs) -> None:
+    """Fold the guarded stride-parity facts into ``subs`` as ``symbol -> modulus * t``.
+
+    Same shape as :func:`_even_extent_substitutions` and for the same reason: a residue modulo a
+    chunk is only decidable once the symbol carrying the row stride is written as a multiple of it.
+    ``N -> 2*t`` is what turns heat3d's ``N**2*i + N*j + k`` from an unknown parity into a KNOWN
+    odd one -- which is a widened load with a one-element shift, not a refusal.
+
+    ``t`` is POSITIVE, not merely non-negative, because the guard checks ``stride >= modulus`` as
+    well as the divisibility; that is what proves the widened window still ends inside the
+    allocation. An extent fact already pinning the symbol wins: it carries an offset too, so it is
+    strictly the stronger statement.
+    """
+    pinned = {str(s) for s in subs}
+    by_name = {}
+    for expr in exprs:
+        for sym in expr.free_symbols:
+            by_name.setdefault(str(sym), sym)
+    for n, (name, modulus) in enumerate(sorted(facts.items())):
+        sym = by_name.get(name)
+        if sym is None or name in pinned:
+            continue
+        subs[sym] = modulus * dace.symbolic.symbol(f"__dace_align_s{n}", positive=True, integer=True)
 
 
 def _array_align_shift(node, parent_state, parent_sdfg, edge, vlen: int, allow_shift: bool) -> Tuple[int, int]:
@@ -681,7 +759,7 @@ def _array_align_shift(node, parent_state, parent_sdfg, edge, vlen: int, allow_s
     """
     arr = parent_sdfg.arrays[edge.data.data]
     elem_bytes = arr.dtype.bytes
-    base_bytes = _BASE_ALIGN_BYTES.get(arr.storage, 0)
+    base_bytes = base_align_bytes(arr)
     if base_bytes < elem_bytes:
         return elem_bytes, 0
     offsets = _linear_base_offset(node, parent_state, parent_sdfg, edge)

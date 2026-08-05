@@ -54,6 +54,19 @@ def aligned_new_value(desc: data.Data) -> int:
     return 64 if desc.alignment == 0 else desc.alignment
 
 
+def register_align_attribute(desc: data.Data) -> str:
+    """``"  DACE_ALIGN(n)"`` for a Register declaration, or ``""`` when the descriptor asks for none.
+
+    Unlike the heap path, 0 means NO attribute rather than the old blanket 64. A register array is a
+    local: over-aligning one costs stack frame for nothing (measured on an sm_89 fp16 tile that
+    spills -- 112 B of frame at ``__align__(64)`` against 16 B at 16 or natural, same register
+    count), and only a consumer that reinterpret-casts the tile to a wider type actually needs a
+    guarantee. That consumer is the vectorizer, which now sets the alignment it needs on the
+    descriptor -- so the number travels with the data instead of being assumed here.
+    """
+    return f'  DACE_ALIGN({desc.alignment})' if desc.alignment > 0 else ''
+
+
 #: C++ spelling of each ``codegen_params.loop_index_type`` value. ``auto`` deduces from the lower
 #: bound (for the usual ``0`` that is ``int``); the others state the width outright, as exact-width
 #: ``<cstdint>`` types -- ``long long`` is only guaranteed to be AT LEAST 64 bits, so it does not
@@ -1161,9 +1174,10 @@ class CPUCodeGen(TargetCodeGenerator):
             ctypedef = dtypes.pointer(nodedesc.dtype).ctype
             if nodedesc.start_offset != 0:
                 raise NotImplementedError('Start offset unsupported for registers')
+            align = register_align_attribute(nodedesc)
             if node.setzero:
                 declaration_stream.write(
-                    "%s %s[%s]  DACE_ALIGN(64) = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                    "%s %s[%s]%s = {0};\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), align),
                     cfg,
                     state_id,
                     node,
@@ -1171,7 +1185,7 @@ class CPUCodeGen(TargetCodeGenerator):
                 define_var(name, DefinedType.Pointer, ctypedef)
                 return
             declaration_stream.write(
-                "%s %s[%s]  DACE_ALIGN(64);\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize)),
+                "%s %s[%s]%s;\n" % (nodedesc.dtype.ctype, name, cpp.sym2cpp(arrsize), align),
                 cfg,
                 state_id,
                 node,
