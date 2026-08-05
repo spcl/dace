@@ -287,6 +287,78 @@ def test_deeply_nested_symbol_clash():
         assert 'k' not in str(gme.map.range[0][1])
 
 
+def test_integrate_parent_data_clash_with_inner_registered_symbol():
+    """Parent array name 'C' clashes with a registered (but unused) internal symbol 'C'."""
+    sdfg = dace.SDFG('parent')
+    sdfg.add_array('C', [2, 10], dace.float64)
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state()
+    inner = _inner_with_map(range_end='10', param='p')
+    inner.add_symbol('C', dace.int32)  # Registered but unused
+
+    node = state.add_nested_sdfg(inner, {'inA'}, {'outB'}, {})
+    r = state.add_read('C')
+    w = state.add_write('B')
+    state.add_edge(r, None, node, 'inA', dace.Memlet('C[0, 0:10]'))
+    state.add_edge(node, 'outB', w, None, dace.Memlet.from_array('B', sdfg.arrays['B']))
+    node.integrate_into_parent()
+
+    # Connectors may not refer to registered symbols
+    sdfg.validate()
+
+
+def test_integrate_new_name_clash_with_defined_symbol():
+    """The fallback name chosen for an integrated parent array clashes with an inner map param."""
+    sdfg = dace.SDFG('parent')
+    sdfg.add_array('inA', [2, 10], dace.float64)  # Same name as the inner connector
+    sdfg.add_array('B', [10], dace.float64)
+    state = sdfg.add_state()
+    # 'inA_0' is the natural fallback name for integrating parent array 'inA'
+    inner = _inner_with_map(range_end='10', param='inA_0')
+
+    node = state.add_nested_sdfg(inner, {'inA'}, {'outB'}, {})
+    r = state.add_read('inA')
+    w = state.add_write('B')
+    state.add_edge(r, None, node, 'inA', dace.Memlet('inA[0, 0:10]'))
+    state.add_edge(node, 'outB', w, None, dace.Memlet.from_array('B', sdfg.arrays['B']))
+    node.integrate_into_parent()
+
+    # No data container in the inner SDFG may alias a map parameter
+    assert not (_all_map_params(inner) & inner.arrays.keys())
+    sdfg.validate()
+
+
+def test_symbol_rename_target_clash_with_grandchild():
+    """Renaming a clashing inner name must not collide with names defined in a grandchild SDFG."""
+    sdfg, state = _parent()
+    sdfg.add_symbol('k', dace.int32)
+
+    # Grandchild defines 'k_0', the natural rename fallback for 'k'
+    grand = _inner_with_map(range_end='N', param='k_0')
+    grand.add_symbol('N', dace.int32)
+
+    mid = dace.SDFG('mid')
+    mid.add_array('inA', [10], dace.float64)
+    mid.add_array('outB', [10], dace.float64)
+    mid.add_symbol('N', dace.int32)
+    mid.add_transient('k', [10], dace.float64)  # Clashes with mapping value symbol 'k'
+    mstate = mid.add_state(is_start_block=True)
+    gnode = mstate.add_nested_sdfg(grand, {'inA'}, {'outB'}, {'N': 'N'})
+    r = mstate.add_read('inA')
+    w = mstate.add_write('outB')
+    mstate.add_edge(r, None, gnode, 'inA', dace.Memlet.from_array('inA', mid.arrays['inA']))
+    mstate.add_edge(gnode, 'outB', w, None, dace.Memlet.from_array('outB', mid.arrays['outB']))
+
+    node = state.add_nested_sdfg(mid, {'inA'}, {'outB'}, {'N': 'k'})
+    _connect(state, node)
+
+    # The renamed transient may not alias any name defined in the SDFG subtree
+    new_names = set(mid.arrays.keys()) - {'inA', 'outB'}
+    subtree_names = _all_map_params(grand) | grand.arrays.keys()
+    assert not (new_names & subtree_names)
+    sdfg.validate()
+
+
 if __name__ == '__main__':
     import sys
     import traceback
