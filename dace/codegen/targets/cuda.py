@@ -586,6 +586,7 @@ void __dace_gpu_set_all_streams({sdfg_state_name} *__state, gpuStream_t stream)
 
             # No wrapping: hipcc is one driver, with no separate host compiler to forward to.
             flags = ' '.join([Config.get('compiler', 'cuda', 'hip_args')] + forwarded_host_args())
+            options.append("-DCMAKE_HIP_FLAGS=\"{}\"".format(flags))
 
         if Config.get('compiler', 'cpu', 'executable'):
             host_compiler = make_absolute(Config.get("compiler", "cpu", "executable"))
