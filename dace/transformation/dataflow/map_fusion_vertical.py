@@ -1762,9 +1762,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         else:
             get_edges = lambda node: state.out_edges(node)  # noqa: E731 [lambda-assignment]
             other_node = lambda e: e.dst  # noqa: E731 [lambda-assignment]
+        # Ordering edges excluded: an empty Memlet transfers no data, so the node it connects is not
+        # ACCESSED through the scope node at all. Counting one as an access reports a node with no
+        # subset to describe it, which then reads as an unanalyzable access and refuses the fusion.
         access_set: Set[nodes.AccessNode] = {
             node
-            for node in map(other_node, get_edges(scope_node)) if isinstance(node, nodes.AccessNode)
+            for node, edge in ((other_node(e), e) for e in get_edges(scope_node))
+            if isinstance(node, nodes.AccessNode) and not edge.data.is_empty()
         }
 
         return access_set
