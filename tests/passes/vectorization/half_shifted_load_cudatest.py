@@ -15,7 +15,8 @@ reads 10 aligned words instead of 20 halves.
 Covered:
   * the odd-offset load emits the shifted template argument, the even-offset one the plain aligned
     argument, and an odd-offset STORE stays scalar (widening it would clobber the neighbours);
-  * an unprovable (symbolic-stride) offset still declines;
+  * a symbolic row stride widens only where a host-side ``stride % 2`` abort backs it, and
+    declines again the moment that guard is removed;
   * the emitted SASS for a heat3d kernel has NO ``LDG.E.U16`` and does not grow;
   * bit-exact vs the NumPy fp16 oracle, boundary iterations included.
 
@@ -33,13 +34,15 @@ import pytest
 import dace
 from dace.transformation.passes.canonicalize.finalize import offload_to_gpu
 from dace.transformation.passes.vectorization.config import VectorizeConfig
+from dace.transformation.passes.vectorization.split_map_for_tile_remainder import STRIDE_GUARD_PREFIX
 from dace.transformation.passes.vectorization.vectorize_gpu import VectorizeGPU
 
 N = dace.symbol("N")
 tsteps = dace.symbol("tsteps")
 
-# Constant so the row stride is a literal: a symbolic stride leaves every offset's parity unknown
-# (see ``test_symbolic_stride_declines``), which is a separate, still-open precondition.
+# Constant so the row stride is a literal and the parity needs no runtime promise at all; the
+# symbolic-stride counterpart buys the same parity with a guard (see
+# ``test_symbolic_stride_widens_only_under_its_guard``).
 NC = 128
 H = dace.float16
 # Module-level so the frontend folds them as literals; ``C8`` written inline inside the
@@ -168,15 +171,36 @@ def test_heat3d_widens_every_load():
     assert ", 4, 1" in loads and ", 4" in loads, f"expected both residues among the loads, got {set(loads)}"
 
 
-def test_symbolic_stride_declines():
-    """An ``N``-column array leaves ``N*i + j`` with an unknown parity, so neither a divisibility
-    nor a residue is decidable and the load stays per-element. Assuming otherwise would emit an
-    invalid unaligned 32-bit load. The default GPU path is ``branched_tail``, which guards the
-    partial tile at runtime instead of constraining the extent, so nothing pins ``N``."""
-    cu = _device_code(_vectorized(_stencil3_2d_symbolic))
-    loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", cu)
+def test_symbolic_stride_widens_only_under_its_guard():
+    """An ``N``-column array leaves ``N*i + j`` with an unknown parity, and an unbacked guess there
+    would emit an invalid unaligned 32-bit load. The default GPU path is ``branched_tail``, which
+    guards the partial tile at runtime instead of constraining the extent, so nothing pins ``N``
+    via the extent -- ``SplitMapForTileRemainder`` pins it directly instead, with a host-side
+    ``N % 2`` abort, and the widening rests on THAT.
+
+    The claim and the check are the same object, so deleting the guard tasklet must take the
+    widening with it: that is the property keeping a misaligned device access out of reach."""
+    sdfg = _vectorized(_stencil3_2d_symbolic)
+    guards = [(st, n) for st in sdfg.states() for n in st.nodes()
+              if isinstance(n, dace.nodes.Tasklet) and n.label.startswith(STRIDE_GUARD_PREFIX)]
+    assert len(guards) == 1, f"expected exactly one guarded stride symbol, got {[n.label for _, n in guards]}"
+    guard_state, guard_tasklet = guards[0]
+    assert guard_tasklet.label == "tile_stride_div_N_2", f"guard names the wrong fact: {guard_tasklet.label}"
+    code = guard_tasklet.code.as_string
+    assert "(N) % 2 != 0" in code and "(N) < 2" in code, f"guard does not check N's parity: {code}"
+    assert "abort()" in code, f"a violated stride promise must trap, not warn: {code}"
+
+    loads = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", _device_code(sdfg))
     assert loads, "no fp16 width-2 tile_load emitted"
-    assert all(a == "" for a in loads), f"a symbolic row stride must not be claimed aligned, got {set(loads)}"
+    assert set(loads) == {", 4", ", 4, 1"}, \
+        f"the guarded symbolic stride must widen both residues, got {set(loads)}"
+
+    # Same SDFG minus the check: the fact must not survive it.
+    guard_state.remove_node(guard_tasklet)
+    unguarded = re.findall(r"tile_load<dace::float16, 2, false([^>]*)>", _device_code(sdfg))
+    assert unguarded, "no fp16 width-2 tile_load emitted"
+    assert all(a == "" for a in unguarded), \
+        f"a symbolic row stride was claimed aligned with no runtime check behind it, got {set(unguarded)}"
 
 
 def test_symbolic_stride_widens_under_assume_even():
@@ -272,7 +296,7 @@ if __name__ == "__main__":
     else:
         test_odd_neighbour_load_is_shifted_even_is_plain()
         test_heat3d_widens_every_load()
-        test_symbolic_stride_declines()
+        test_symbolic_stride_widens_only_under_its_guard()
         test_symbolic_stride_widens_under_assume_even()
         test_heat3d_sass_has_no_16bit_load()
         test_heat3d_bitexact_including_boundaries()
