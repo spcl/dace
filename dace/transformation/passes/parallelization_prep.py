@@ -20,7 +20,7 @@ imports pull in).
 """
 import ast
 import copy
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import sympy
 
@@ -726,19 +726,28 @@ class BestEffortLoopPeeling(ppl.Pass):
             return False
         ivar = loop.loop_variable
         parent = loop.parent_graph
+        # Whether the loop is its region's entry, asked BEFORE the first clone joins ``parent``: a
+        # clone lands disconnected, so from then on the region has several source blocks and
+        # ``start_block`` refuses to guess between them unless an entry was pinned at construction
+        # (a region whose entry is merely the unique source has none). The chain head then inherits
+        # the role via ``is_start_block`` below, so the region is never momentarily entry-less.
+        is_start = parent.start_block is loop
         # Drop a range segment that is provably empty at a boundary split point.
         want_before = symbolic.simplify(x - start) != 0  # x != start -> [start, x-1] is non-empty
         want_after = symbolic.simplify(x - end) != 0  # x != end   -> [x+1, end] is non-empty
         if not middle_singleton and not want_before:
             return False  # [x, end] would be the whole loop -> nothing to split
 
+        chain: List[LoopRegion] = []
+
         def clone_segment() -> LoopRegion:
             seg = copy.deepcopy(loop)
             seg.label = _unique_block_label(sdfg, loop.label)
-            parent.add_node(seg)  # register so the next unique-label query sees it
+            # Registers the clone so the next unique-label query sees it, and marks the head of the
+            # chain as the region entry when the loop it replaces was one.
+            parent.add_node(seg, is_start_block=is_start and not chain)
             return seg
 
-        chain = []
         if want_before:
             before = clone_segment()
             before.loop_condition = CodeBlock(f'{ivar} < ({x})')  # [start, x-1]
@@ -763,7 +772,6 @@ class BestEffortLoopPeeling(ppl.Pass):
 
         in_edges = list(parent.in_edges(loop))
         out_edges = list(parent.out_edges(loop))
-        is_start = parent.start_block is loop
         for ie in in_edges:
             parent.add_edge(ie.src, chain[0], ie.data)
             parent.remove_edge(ie)
@@ -773,8 +781,6 @@ class BestEffortLoopPeeling(ppl.Pass):
             parent.add_edge(chain[-1], oe.dst, oe.data)
             parent.remove_edge(oe)
         parent.remove_node(loop)
-        if is_start:
-            parent.start_block = parent.node_id(chain[0])
         parent.reset_cfg_list()
         return True
 
