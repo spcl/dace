@@ -13,11 +13,11 @@ The third assertion uses ``sdfg.compile()`` end-to-end. Per the project rule,
 the reference is an unfolded scalar Python evaluation — not a different
 SDFG variant.
 """
-import os
-
 import numpy as np
+import pytest
 
 import dace
+from dace.config import set_temporary
 from dace.properties import CodeBlock
 from dace.sdfg.state import ConditionalBlock, ControlFlowRegion
 from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg import (
@@ -25,8 +25,18 @@ from dace.transformation.passes.vectorization.same_write_set_if_else_to_ite_cfg 
     _symbol_has_external_consumer,
 )
 
-# This pass emits ``merge(...)`` tasklets which need ``dace/ITE.h``.
-os.environ.setdefault("DACE_compiler_cpu_args", "")
+
+@pytest.fixture(autouse=True)
+def blank_cpu_args():
+    """This pass emits ``merge(...)`` tasklets which need ``dace/ITE.h``.
+
+    Scoped to this module rather than written into ``os.environ`` at import time: a marker
+    expression only DESELECTS, so the module is still imported in every xdist worker of every
+    lane, and ``Config.get`` reads the environment ahead of the config -- which pinned empty
+    compiler flags process-wide and left nothing able to restore them.
+    """
+    with set_temporary('compiler', 'cpu', 'args', value=''):
+        yield
 
 
 def _build_same_write_if_else_sdfg():
