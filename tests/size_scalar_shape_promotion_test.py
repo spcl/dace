@@ -154,10 +154,11 @@ def test_size_symbol_is_assigned_before_the_allocation():
     sym = str(next(iter(sdfg.arrays['b'].free_symbols)))
     lines = sdfg.generate_code()[0].clean_code.splitlines()
 
-    alloc = next(i for i, line in enumerate(lines) if 'new double' in line and sym in line)
+    # an aligned heap array reads ``new (std::align_val_t(64)) double`` and frees through ``::operator delete[](b, ..)``
+    alloc = next(i for i, line in enumerate(lines) if 'b = new' in line and sym in line)
     assign = next(i for i, line in enumerate(lines) if line.strip().startswith(f'{sym} = '))
     assert assign < alloc
-    assert any('delete[] b' in line for line in lines), 'the array is never freed'
+    assert any('delete[] b' in line or 'delete[](b' in line for line in lines), 'the array is never freed'
 
 
 def test_a_size_one_array_is_read_through_a_subscript():
