@@ -3825,6 +3825,13 @@ class ProgramVisitor(ExtNodeVisitor):
             # Self-copy check
             if result in self.views and new_name == self.views[result][1].data:
                 read_rng = self.views[result][1].subset
+                # The view's subset was parsed from a string, so its symbols carry the default dtype;
+                # identity includes the dtype, so put both sides on one instance per name first.
+                pool = symbolic.symbols_in([new_rng])
+                remap = {sym: pool[name] for name, sym in read_rng.symbols.items() if name in pool}
+                if remap:
+                    read_rng = copy.deepcopy(read_rng)
+                    read_rng.replace(remap)
                 try:
                     needs_copy = not (new_rng.intersects(read_rng) == False)
                 except TypeError:
