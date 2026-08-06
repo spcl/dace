@@ -238,6 +238,11 @@ class SymbolAccessSets(ppl.ControlFlowRegionPass):
         return result
 
 
+def has_wcr_in_edge(state: SDFGState, anode: nd.AccessNode) -> bool:
+    """Whether ``anode`` is the destination of a conflict-resolved write, which reads its prior value."""
+    return any(e.data is not None and e.data.wcr is not None for e in state.in_edges(anode))
+
+
 @properties.make_properties
 @transformation.explicit_cf_compatible
 class AccessSets(ppl.Pass):
@@ -280,6 +285,8 @@ class AccessSets(ppl.Pass):
                     for anode in block.data_nodes():
                         if block.in_degree(anode) > 0:
                             writeset.add(anode.data)
+                            if has_wcr_in_edge(block, anode):
+                                readset.add(anode.data)
                         if block.out_degree(anode) > 0:
                             readset.add(anode.data)
                 elif isinstance(block, AbstractControlFlowRegion):
@@ -287,6 +294,8 @@ class AccessSets(ppl.Pass):
                         for anode in state.data_nodes():
                             if state.in_degree(anode) > 0:
                                 writeset.add(anode.data)
+                                if has_wcr_in_edge(state, anode):
+                                    readset.add(anode.data)
                             if state.out_degree(anode) > 0:
                                 readset.add(anode.data)
                     if isinstance(block, LoopRegion):
