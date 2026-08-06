@@ -2937,6 +2937,22 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             self.start_block = len(self.nodes()) - 1
             self._cached_start_block = node
 
+    def remove_node(self, node: ControlFlowBlock):
+        # The region owns this invariant, so callers never have to re-pin the start block by hand.
+        # ``_start_block`` is a node ID and removing a block renumbers every later one, so leaving
+        # the ID alone would silently make it name a DIFFERENT block; resolve it to the block it
+        # currently points at and re-derive the ID afterwards. A stale ``_cached_start_block``
+        # is worse still: ``start_block`` returns it without checking, handing callers a block
+        # that is no longer in the graph (``nx.immediate_dominators`` then raises "start is not
+        # in G" from deep inside an unrelated pass).
+        pinned = None
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
+            pinned = self.node(self._start_block)
+        if node is self._cached_start_block:
+            self._cached_start_block = None
+        super().remove_node(node)
+        self._start_block = None if (pinned is None or pinned is node) else self.node_id(pinned)
+
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
         state = SDFGState(label)

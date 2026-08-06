@@ -1381,11 +1381,6 @@ class SDFG(ControlFlowRegion):
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
 
-    def remove_node(self, node: SDFGState):
-        if node is self._cached_start_block:
-            self._cached_start_block = None
-        return super().remove_node(node)
-
     def states(self):
         """ Returns the states in this SDFG, recursing into state scope blocks. """
         return list(self.all_states())
