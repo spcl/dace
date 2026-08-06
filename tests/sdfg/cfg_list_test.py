@@ -107,8 +107,12 @@ def test_deep_region_read_first_resolves():
     assert innermost.root_sdfg.cfg_list[innermost.cfg_id] is innermost
 
 
-def test_rebuild_is_deferred_and_happens_once(monkeypatch):
-    """The rebuild is O(tree); attaching must only MARK, and repeated reads must not re-run it."""
+def test_reads_do_not_rebuild(monkeypatch):
+    """Registration is eager, so reading ``cfg_list``/``cfg_id`` must never rebuild.
+
+    The rebuild is O(tree); a read-triggered one would put it on every ``cfg_id`` lookup, and
+    pattern matching reads that per candidate.
+    """
     calls = []
     original = AbstractControlFlowRegion.reset_cfg_list
     monkeypatch.setattr(AbstractControlFlowRegion, 'reset_cfg_list', lambda self:
@@ -119,11 +123,11 @@ def test_rebuild_is_deferred_and_happens_once(monkeypatch):
     loop = LoopRegion('outer', 'i < 20', 'i', 'i = 0', 'i = i + 1')
     loop.add_state('body', is_start_block=True)
     sdfg.add_node(loop, is_start_block=True)
-    assert calls == [], 'attaching a region must not rebuild the CFG list'
+    calls.clear()  # the attach itself registers; only reads are under test here
 
     for _ in range(10):
         assert sdfg.cfg_list[loop.cfg_id] is loop
-    assert len(calls) == 1, f'CFG list rebuilt {len(calls)} times for one structural change'
+    assert calls == [], f'reading the CFG list rebuilt it {len(calls)} times'
 
 
 def test_map_fusion_applies_inside_a_loop_region():

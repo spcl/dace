@@ -1376,10 +1376,6 @@ class SDFG(ControlFlowRegion):
     @parent_sdfg.setter
     def parent_sdfg(self, value):
         self._parent_sdfg = value
-        # Linking a nested SDFG grows the outer tree's CFG list.  ``add_nested_sdfg`` merges the two
-        # lists itself, but ``SDFGState.add_node`` (the deserialization path) only sets this, so mark
-        # here too -- see ``ControlFlowBlock.parent_graph`` for why marking beats rebuilding.
-        self.invalidate_cfg_list()
 
     @parent_nsdfg_node.setter
     def parent_nsdfg_node(self, value):
