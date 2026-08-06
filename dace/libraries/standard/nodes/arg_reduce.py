@@ -49,7 +49,7 @@ class ExpandArgReducePure(ExpandTransformation):
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         node.validate(parent_sdfg, parent_state)
         in_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == '_in')
-        val_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_val')
+        val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == '_out_val'), None)
         idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
 
         in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
@@ -80,16 +80,12 @@ class ExpandArgReducePure(ExpandTransformation):
                 f"{in_dtype.ctype} __best = _in[0];\n"
                 f"for ({idx_dtype.ctype} __i = 1; __i < {n_str}; ++__i) {{\n"
                 f"    if (_in[{access}] {op} __best) {{ __best = _in[{access}]; __bidx = __i; }}\n"
-                f"}}\n"
-                f"_out_val = __best;\n"
-                f"_out_idx = __bidx;")
+                f"}}\n" + (f"_out_val = __best;\n" if val_edge is not None else "") + f"_out_idx = __bidx;")
         return nodes.Tasklet(
             label=f"{node.label}_pure",
             inputs={'_in': dace.pointer(in_dtype)},
-            outputs={
-                '_out_val': None,
-                '_out_idx': None
-            },
+            outputs={c: None
+                     for c in (('_out_val', '_out_idx') if val_edge is not None else ('_out_idx', ))},
             code=code,
             language=dace.dtypes.Language.CPP,
         )
@@ -111,7 +107,7 @@ class ExpandArgReduceOpenMP(ExpandTransformation):
     def expansion(node: "ArgReduce", parent_state: dace.SDFGState, parent_sdfg: dace.SDFG) -> nodes.Tasklet:
         node.validate(parent_sdfg, parent_state)
         in_edge = next(e for e in parent_state.in_edges(node) if e.dst_conn == '_in')
-        val_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_val')
+        val_edge = next((e for e in parent_state.out_edges(node) if e.src_conn == '_out_val'), None)
         idx_edge = next(e for e in parent_state.out_edges(node) if e.src_conn == '_out_idx')
 
         in_dtype = parent_sdfg.arrays[in_edge.data.data].dtype
@@ -141,16 +137,12 @@ class ExpandArgReduceOpenMP(ExpandTransformation):
                 f"#pragma omp parallel for reduction(__ar_best : __best)\n"
                 f"for ({it} __i = 1; __i < {n_str}; ++__i) {{\n"
                 f"    if (_in[{access}] {op} __best.v) {{ __best.v = _in[{access}]; __best.i = __i; }}\n"
-                f"}}\n"
-                f"_out_val = __best.v;\n"
-                f"_out_idx = __best.i;")
+                f"}}\n" + (f"_out_val = __best.v;\n" if val_edge is not None else "") + f"_out_idx = __best.i;")
         return nodes.Tasklet(
             label=f"{node.label}_openmp",
             inputs={'_in': dace.pointer(in_dtype)},
-            outputs={
-                '_out_val': None,
-                '_out_idx': None
-            },
+            outputs={c: None
+                     for c in (('_out_val', '_out_idx') if val_edge is not None else ('_out_idx', ))},
             code=code,
             language=dace.dtypes.Language.CPP,
         )
@@ -200,11 +192,16 @@ class ArgReduce(nodes.LibraryNode):
         self.op = op
 
     def validate(self, sdfg: dace.SDFG, state: dace.SDFGState) -> None:
-        """Require exactly ``_in`` and both ``_out_val`` / ``_out_idx`` connected."""
+        """Require ``_in`` and ``_out_idx``; ``_out_val`` is optional.
+
+        An arg-reduce is asked for its INDEX -- ``np.argmax`` returns only that, and a lifted
+        ``if a[i] > best`` loop whose value carrier is dead afterwards produces only ``_out_idx``.
+        Demanding both would force such a caller to materialize a value nothing reads.
+        """
         in_conns = {e.dst_conn for e in state.in_edges(self) if e.dst_conn is not None}
         out_conns = {e.src_conn for e in state.out_edges(self) if e.src_conn is not None}
         if in_conns != {'_in'}:
             raise ValueError(f"{self.label}: ArgReduce requires exactly one input '_in', got {sorted(in_conns)}")
-        if out_conns != {'_out_val', '_out_idx'}:
-            raise ValueError(f"{self.label}: ArgReduce requires outputs '_out_val' and '_out_idx', "
+        if '_out_idx' not in out_conns or not out_conns <= {'_out_val', '_out_idx'}:
+            raise ValueError(f"{self.label}: ArgReduce requires output '_out_idx' and allows '_out_val', "
                              f"got {sorted(out_conns)}")
