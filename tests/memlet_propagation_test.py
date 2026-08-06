@@ -1,7 +1,7 @@
 # Copyright 2019-2022 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
-from dace.sdfg.propagation import propagate_memlets_sdfg
+from dace.sdfg import propagation
 
 
 def test_conditional():
@@ -74,7 +74,7 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
             A[i, ind[i, j]] += 1
 
     sdfg = sparse.to_sdfg(simplify=False)
-    propagate_memlets_sdfg(sdfg)
+    propagation.propagate_memlets_sdfg(sdfg)
 
     # Verify all memlet subsets and volumes in the main state of the program, i.e. around the NSDFG.
     map_state = sdfg.states()[1]
@@ -106,8 +106,27 @@ def test_nsdfg_memlet_propagation_with_one_sparse_dimension():
         raise RuntimeError('Expected subset of outer out memlet to be [0:M, 0:N], found ' + str(outer_out.subset))
 
 
+def test_undefined_symbol_propagation():
+    N = dace.symbol('N')
+    k = dace.symbol('k')
+    array = dace.data.Array(dace.float64, [20])
+    map_range = dace.subsets.Range([(0, N - 1, 1)])
+    expected_memlet = dace.Memlet('A[0:20]', volume=N)
+
+    for undefined_variables in ({'k'}, {k}):
+        propagated_memlet = propagation.propagate_subset([dace.Memlet('A[i + k]')],
+                                                         array, ['i'],
+                                                         map_range,
+                                                         undefined_variables=undefined_variables)
+        assert propagated_memlet == expected_memlet
+
+    propagated_memlet = propagation.propagate_subset([dace.Memlet('A[i + k]')], array, ['i'], map_range)
+    assert propagated_memlet == dace.Memlet('A[k:N + k]', volume=N)
+
+
 if __name__ == '__main__':
     test_conditional()
     test_conditional_nested()
     test_runtime_conditional()
     test_nsdfg_memlet_propagation_with_one_sparse_dimension()
+    test_undefined_symbol_propagation()
