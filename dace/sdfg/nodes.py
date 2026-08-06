@@ -1547,10 +1547,12 @@ class LibraryNode(CodeNode):
             except KeyError:
                 config_override = False
         # If not explicitly set, try the node default
+        from_library_default = False
         if target_implementation is None:
             target_implementation = type(self).default_implementation
             # If no node default, try library default
             if target_implementation is None:
+                from_library_default = True
                 import dace.library  # Avoid cyclic dependency
                 lib = dace.library._DACE_REGISTERED_LIBRARIES[type(self)._dace_library_name]
                 target_implementation = lib.default_implementation
@@ -1561,7 +1563,17 @@ class LibraryNode(CodeNode):
                     if target_implementation is None:
                         raise ValueError("No implementation or default implementation specified.")
         if target_implementation not in self.implementations.keys():
-            raise KeyError("Unknown implementation for node {}: {}".format(type(self).__name__, target_implementation))
+            # A LIBRARY-wide default names one vendor backend for a whole package, so it can name an
+            # implementation a particular node does not have (``linalg`` defaults to the LAPACK-backed
+            # ``OpenBLAS`` for Cholesky/Solve/Inv, which ``TensorDot`` does not implement). That default
+            # was meant for the node's siblings, so fall back to this node's portable lowering instead of
+            # failing to expand. An implementation set on the node itself, or a node-class default, is a
+            # deliberate choice and still raises -- a typo there must not be silently downgraded.
+            if from_library_default and 'pure' in self.implementations:
+                target_implementation = 'pure'
+            else:
+                raise KeyError("Unknown implementation for node {}: {}".format(
+                    type(self).__name__, target_implementation))
         transformation_type = type(self).implementations[target_implementation]
         cfg_id = actual_state.parent_graph.cfg_id
         state_id = actual_state.block_id

@@ -24,17 +24,13 @@ import os
 from dace import SDFG, dtypes
 from dace.config import Config
 from dace.sdfg import infer_types, nodes
-from dace.sdfg.state import LoopRegion
 from dace.libraries.blas.environments import openblas
-from dace.transformation.auto.auto_optimize import (apply_gpu_storage, make_transients_persistent,
+from dace.transformation.auto.auto_optimize import (apply_cpu_library_parallelism, apply_gpu_storage,
+                                                    libnode_is_sequential, make_transients_persistent,
                                                     move_small_arrays_to_stack, set_fast_implementations)
 from dace.transformation.passes.gpu_block_size_selection import select_gpu_device_block_size
 from dace.transformation.passes.length_one_array_scalar_conversion import ConvertLengthOneArraysToScalars
-from dace.libraries.standard.nodes.reduce import Reduce
-from dace.libraries.standard.nodes.arg_reduce import ArgReduce
 from dace.libraries.standard.nodes.scan import Scan
-from dace.libraries.standard.nodes.copy_node import CopyLibraryNode, select_copy_implementation
-from dace.libraries.standard.nodes.memset_node import MemsetLibraryNode, select_memset_implementation
 from dace.transformation.dataflow import OTFMapFusion
 
 #: Map the canonicalize target string to the codegen device type.
@@ -99,44 +95,6 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
     return prio
 
 
-def libnode_is_sequential(node: nodes.LibraryNode, state, sdfg: SDFG) -> bool:
-    """Whether ``node`` is re-entered inside an outer parallel/repeated scope and so must NOT open
-    its own (nested) parallel region -- it lowers to its efficient single-core expansion instead.
-
-    The storage-derived ``node.schedule`` is NOT a reliable signal here: DaCe's schedule inference
-    (:func:`~dace.sdfg.infer_types.set_default_schedule_and_storage_types`) sets a library node's
-    schedule from the *storage* of its neighbouring memlets (``CPU_Heap`` ->
-    ``ScheduleType.CPU_Multicore`` via ``STORAGEDEFAULT_SCHEDULE``), NOT from the parallelism of the
-    enclosing scope, so a ``Reduce`` nested in a parallel map can carry ``CPU_Multicore`` rather than
-    ``Sequential`` and would then wrongly open a nested ``#pragma omp parallel`` per outer iteration
-    -- the "constant parallel reductions" catastrophe. Determine sequentiality from SCOPE instead:
-    a libnode is sequential if it has a parallel parent map or an enclosing loop (both re-enter it).
-
-    A ``NestedSDFG`` node carries no ``schedule`` property of its own (only ``Map`` /
-    ``LibraryNode`` do), so "lives inside a sequential nested SDFG" is not a distinct case to probe
-    for here: :func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes` -- now
-    LibraryNode-aware (a library node is a "special tasklet") -- walks OUT across every nested-SDFG
-    boundary up to the root and yields every enclosing ``MapEntry`` / ``LoopRegion`` regardless of
-    how many nsdfg levels separate ``node`` from them, so a parallel map or loop several nsdfg levels
-    up is still found by the loop below; deep nesting is handled by the existing helper rather than a
-    bespoke climb. A genuinely top-level node (no enclosing parallel map / loop) returns ``False`` and
-    is free to open its own OpenMP / device-parallel region.
-    """
-    # Function-local import: ``dace.transformation.helpers`` pulls in a chain that re-enters the
-    # canonicalize package, so a top-level import here would be a cycle when ``finalize`` is imported
-    # as the package's first submodule.
-    from dace.transformation.helpers import get_parent_map_and_loop_scopes
-    if node.schedule == dtypes.ScheduleType.Sequential:
-        return True
-    for scope in get_parent_map_and_loop_scopes(sdfg, node, state):
-        if isinstance(scope, nodes.MapEntry):
-            if scope.map.schedule != dtypes.ScheduleType.Sequential:
-                return True
-        elif isinstance(scope, LoopRegion):
-            return True
-    return False
-
-
 def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType, small_dim: int = _SMALL_MATMUL_DIM):
     """Select library-node implementations for the canonicalize perf tail.
 
@@ -169,49 +127,22 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
         if sequential and node.schedule != dtypes.ScheduleType.Sequential:
             node.schedule = dtypes.ScheduleType.Sequential
 
-        # ``Reduce``: parallel -> OpenMP privatized ``reduction(op:var)``; sequential -> the efficient
-        # single-core ``pure`` reduction (a plain accumulate loop, never a contended ``omp atomic`` /
-        # nested ``omp parallel``). ``find_fast_library`` omits both, so it would otherwise resolve to
-        # ``pure`` anyway; the explicit pick makes the top-level case parallel.
-        if isinstance(node, Reduce) and device == dtypes.DeviceType.CPU:
-            if sequential:
-                # ``pure-seq`` needs an ``identity`` the lifted node may not carry, so ``pure`` is the
-                # robust single-core choice (it lowers to a plain accumulate loop when Sequential).
-                node.implementation = 'pure'
-            elif 'OpenMP' in impls:
-                node.implementation = 'OpenMP'
+        # The CPU parallel-lowering rule for Reduce / ArgReduce / Scan / Copy / Memset lives in
+        # :func:`~dace.transformation.auto.auto_optimize.apply_cpu_library_parallelism`, shared with
+        # ``set_fast_implementations`` so the canonicalize and auto_optimize paths cannot drift onto
+        # different implementations of the same node. It has the last word on the types it governs
+        # (hence the ``continue``): a small Reduce would otherwise be clobbered by the matmul-size
+        # override below, which only means to catch GEMMs.
+        if device == dtypes.DeviceType.CPU and apply_cpu_library_parallelism(node, state, sdfg):
             continue
-        # ``ArgReduce``: parallel -> ``OpenMP`` (a ``declare reduction`` over the (value, index)
-        # pair -- argmax is associative on the PAIR, not on the value); sequential -> ``pure``.
-        if isinstance(node, ArgReduce) and device == dtypes.DeviceType.CPU:
-            node.implementation = 'pure' if sequential else ('OpenMP' if 'OpenMP' in impls else node.implementation)
-            continue
-        # ``Scan``: parallel -> ``CPU`` (OpenMP 5.0 ``#pragma omp parallel for simd reduction(inscan,..)``
-        # + ``#pragma omp scan``); sequential -> the serial ``pure`` scan.
-        if isinstance(node, Scan):
-            if device == dtypes.DeviceType.CPU:
-                node.implementation = 'pure' if sequential else ('CPU' if 'CPU' in impls else node.implementation)
-                continue
-            # GPU: a top-level parallel scan -> host-launched ``cub::DeviceScan``; a sequential
-            # (device-level, or map-/loop-nested) scan MUST stay ``pure`` -- ``ExpandCUDA`` emits a
-            # HOST-side ``cub::DeviceScan`` call that cannot be issued from inside a kernel (and it
-            # rejects stride>1). Guarding on ``sequential`` mirrors the Reduce branch; without it a
-            # device-level scan that ``set_fast_implementations`` correctly left ``pure`` was clobbered
-            # to an uncompilable in-kernel ``cub::DeviceScan``.
-            if device == dtypes.DeviceType.GPU:
-                node.implementation = 'pure' if sequential else ('CUDA' if 'CUDA' in impls else node.implementation)
-                continue
-        # ``Copy`` / ``Memset`` on CPU: a top-level node stays ``Auto`` (its own size gate routes a
-        # large/symbolic contiguous transfer to the element map, which DaCe parallelizes across
-        # OpenMP threads at top level). A sequential (nested) node asks its OWN selector for a
-        # concrete expansion -- ``MemcpyCPU`` / ``CPU`` for a small contiguous transfer, else the
-        # element map (``MappedTasklet`` / ``pure``), which DaCe schedules sequentially when nested
-        # so it opens no OpenMP region; the contiguous-only single-call forms would RAISE otherwise.
-        if isinstance(node, CopyLibraryNode) and device == dtypes.DeviceType.CPU:
-            node.implementation = select_copy_implementation(node, state) if sequential else 'Auto'
-            continue
-        if isinstance(node, MemsetLibraryNode) and device == dtypes.DeviceType.CPU:
-            node.implementation = select_memset_implementation(node, state) if sequential else 'Auto'
+        # GPU ``Scan``: a top-level parallel scan -> host-launched ``cub::DeviceScan``; a sequential
+        # (device-level, or map-/loop-nested) scan MUST stay ``pure`` -- ``ExpandCUDA`` emits a
+        # HOST-side ``cub::DeviceScan`` call that cannot be issued from inside a kernel (and it
+        # rejects stride>1). Guarding on ``sequential`` mirrors the CPU rule; without it a
+        # device-level scan that ``set_fast_implementations`` correctly left ``pure`` was clobbered
+        # to an uncompilable in-kernel ``cub::DeviceScan``.
+        if isinstance(node, Scan) and device == dtypes.DeviceType.GPU:
+            node.implementation = 'pure' if sequential else ('CUDA' if 'CUDA' in impls else node.implementation)
             continue
         if 'pure' not in impls:
             continue

@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+# Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
+"""Rank-side entry point of the ONE distributed job over the four in-repo corpora --
+polybench, npbench, tsvc, tsvc_2_5, 277 kernels -- at the ``paper`` preset.
+
+Launched by ``tests/perf/submit_corpus_perf.sh`` as ``X`` nodes x 4 ranks. A rank works out
+which kernels it owns, hands itself a private build folder, and drives the two measurement
+drivers that already exist:
+
+  * ``tests.passes.canonicalize.canonicalize_perf_corpus_test`` -- the six timed arms
+    (``dace-autoopt`` and ``dace-canon`` on each of g++/clang++, plus ``dace-simplify+gcc-autopar``
+    and ``dace-simplify+llvm-autopar`` on sequential post-simplify C++), each correctness-gated
+    against the corpus reference and each required to PROVE its pass engaged, plus ``seq-cpp`` as
+    the tsvc/tsvc_2_5 speedup denominator. Resumable through one JSON per kernel.
+  * ``tests.corpus.measure_parallelization`` -- residual sequential loops per kernel, plus
+    optional ``--check`` compile+run value-preservation.
+
+Rank -> work is round-robin over the POOLED kernel list: ``corpus_suite.kernels()`` in its
+fixed order, rank ``r`` of ``n`` takes ``kernels[r::n]``, and that rank runs EVERY arm of every
+kernel it owns. Two reasons, both load-bearing:
+
+  * load balance -- one corpus per rank leaves the tsvc rank with 151 kernels while the npbench
+    rank does 24, so the job is as long as its slowest corpus.
+  * measurement validity -- all arms of a kernel MUST be timed on the same node. Arms split
+    across nodes differ by thermal/DVFS state and memory locality as well as by pipeline, and
+    the speedup stops being attributable to the pipeline.
+
+The perf driver applies exactly that rule itself when handed ``--shard r/n`` with no ``--suite``,
+so the slicing lives in ONE place and cannot drift into double-measuring or silently skipping
+kernels. The order is fixed, so a re-submission lines up with the per-kernel JSONs already on
+disk and resumes.
+
+``--aggregate`` is the post-step once every rank has exited: it folds the per-rank CSVs into one
+parallelism report and one speedup CSV + Markdown table, then hands the same per-kernel JSONs to
+``tests/perf/plot_corpus_perf.py`` for the figure. Run bare (no launcher) this script is rank 0 of
+1, i.e. the whole pooled list::
+
+    python tests/perf/corpus_perf_job.py --preset S --limit 2
+"""
+import signal
+
+# Slurm's ``slurmstepd`` starts every task with SIGCHLD BLOCKED (regression from 2025-04, fixed
+# upstream 2025-12 and never backported, so all of 25.05 and 25.11.0 carry it). A signal mask
+# survives fork+exec and ``subprocess`` does NOT reset it (measured), so the block reaches cmake,
+# whose KWSys learns its helpers exited by RECEIVING SIGCHLD and otherwise waits in ``select()``
+# forever -- the "stuck configure" that is really a lost wakeup.
+#
+# This module is the only place a fix works: ``pthread_sigmask`` is PER-THREAD, and the rank entry
+# point is exec'd directly by srun/mpirun with no shell in between, before any thread pool exists,
+# so unblocking here clears the mask for the rank and for every process it forks. Wrappers do not
+# help -- ``setsid``/``nohup``/``unshare``/``timeout``/``setpriv``/``env --ignore-signal=CHLD`` all
+# still hang here, and the uutils ``env`` ignores ``--default-signal`` while reporting success.
+# DaCe already fixes its own compile forks in-process (``dace.codegen.compiler``
+# ``build_subprocess_sigmask``, PR #2466); this is belt and braces around everything else.
+SIGCHLD_WAS_BLOCKED = signal.SIGCHLD in signal.pthread_sigmask(signal.SIG_BLOCK, [])
+signal.pthread_sigmask(signal.SIG_UNBLOCK, {signal.SIGCHLD})
+
+import argparse
+import os
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+#: The four in-repo corpora. Deliberately not ``measure_parallelization``'s ``all``, which also
+#: selects the out-of-tree ``hpcagent`` corpus.
+SUITES = ('poly', 'np', 'tsvc', 'tsvc25')
+#: Ranks per node the submit script requests.
+RANKS_PER_NODE = 4
+#: Free space one rank's build scratch is assumed to need. A shard's objects and shared libraries
+#: run to a few hundred MB; 4 GiB a rank leaves headroom and still fits in a compute node's
+#: /dev/shm. Below it the in-memory root is REFUSED -- a filled tmpfs fakes corpus failures.
+SCRATCH_NEED_GIB = 4
+
+PARALLELISM_DRIVER = 'tests.corpus.measure_parallelization'
+PERF_DRIVER = 'tests.passes.canonicalize.canonicalize_perf_corpus_test'
+#: The plotter, run as a SCRIPT by ``--aggregate`` rather than imported: it must stay readable
+#: without dace, and importing the perf driver here would re-probe seven toolchains to draw a plot.
+PLOT_SCRIPT = 'tests/perf/plot_corpus_perf.py'
+#: Results live OUTSIDE the repo: a sweep writes one JSON per kernel plus a figure and two tables,
+#: and ``tests/perf/`` holds exactly the three scripts and their README. ``--out`` / ``OUT_DIR``
+#: override, and the submit script exports the same default so both agree.
+DEFAULT_OUT = Path.home() / '.cache' / 'dace-corpus-perf-results'
+
+
+def sigchld_state() -> str:
+    """Assert SIGCHLD is deliverable in this rank; return the line describing how it got that way.
+
+    Runs at rank start rather than trusting the unblock above: a mask that is still set here means
+    every compile in this job is about to hang, and finding that out in the first second beats
+    finding it out after an hour of apparently-running cmake.
+    """
+    if signal.SIGCHLD in signal.pthread_sigmask(signal.SIG_BLOCK, []):
+        raise SystemExit('FATAL: SIGCHLD is still blocked after the entry-point unblock; cmake will '
+                         'hang in select() instead of compiling. Refusing to start.')
+    return 'blocked by the launcher, cleared at entry' if SIGCHLD_WAS_BLOCKED else 'already clear at entry'
+
+
+def rank_and_size() -> tuple[int, int]:
+    """This process's ``(rank, size)`` as reported by the launcher; ``(0, 1)`` when run bare."""
+    for rank_var, size_var in (('SLURM_PROCID', 'SLURM_NTASKS'), ('OMPI_COMM_WORLD_RANK', 'OMPI_COMM_WORLD_SIZE')):
+        if os.environ.get(rank_var) and os.environ.get(size_var):
+            return int(os.environ[rank_var]), int(os.environ[size_var])
+    return 0, 1
+
+
+def local_ranks(size: int) -> int:
+    """Ranks sharing this node -- what the scratch root has to have room for, all of them at once."""
+    for var in ('SLURM_NTASKS_PER_NODE', 'OMPI_COMM_WORLD_LOCAL_SIZE'):
+        if os.environ.get(var):
+            return int(os.environ[var])
+    return min(size, RANKS_PER_NODE)
+
+
+def free_gib(path: Path) -> float:
+    """Free space on the filesystem holding ``path``, in GiB; 0 when the path does not exist."""
+    if not path.is_dir():
+        return 0.0
+    stat = os.statvfs(path)
+    return stat.f_bavail * stat.f_frsize / 1024**3
+
+
+def scratch_root(ranks_here: int) -> tuple[Path, str]:
+    """``(root, why)`` for the per-rank build scratch: in memory when it demonstrably fits.
+
+    tmpfs makes the compiles RAM-bound rather than disk-bound, which is the right answer on a
+    compute node with hundreds of GB. It is the WRONG answer when the tmpfs is small -- filling one
+    has already produced fake corpus failures here -- so ``/dev/shm`` is taken only when it has room
+    for every rank on this node, and ``$HOME/.cache`` (on disk) is the fallback. ``DACE_JOB_SCRATCH``
+    overrides the choice outright.
+    """
+    override = os.environ.get('DACE_JOB_SCRATCH')
+    if override:
+        return Path(override), 'DACE_JOB_SCRATCH'
+    need = SCRATCH_NEED_GIB * ranks_here
+    free = free_gib(Path('/dev/shm'))
+    if free >= need:
+        return Path('/dev/shm/dace-corpus-perf'), f'in memory, /dev/shm has {free:.1f} GiB >= {need} GiB needed'
+    return Path.home() / '.cache' / 'dace-corpus-perf', f'/dev/shm has {free:.1f} GiB of the {need} GiB needed'
+
+
+def isolate_rank(rank: int, build_root: Path) -> None:
+    """Point this rank at its OWN build folder and TMPDIR, exported to the driver processes.
+
+    Ranks sharing one ``.dacecache`` load libraries other ranks are still writing, which is why
+    ``DACE_cache_distaware`` is forced rather than merely defaulted. ``/tmp`` is refused whatever
+    its free space says: it is the small tmpfs everything else on the box shares, and a compile
+    sweep that fills it fakes corpus failures.
+    """
+    if build_root.is_relative_to('/tmp'):
+        raise SystemExit(f'FATAL: build root {build_root} is under /tmp; set DACE_JOB_SCRATCH elsewhere')
+    mine = build_root / f'rank{rank:04d}'
+    (mine / 'tmp').mkdir(parents=True, exist_ok=True)
+    os.environ['DACE_default_build_folder'] = str(mine / 'dacecache')
+    os.environ['TMPDIR'] = str(mine / 'tmp')
+    prior = os.environ.get('DACE_cache_distaware')
+    if prior not in (None, '1'):
+        print(f'[rank {rank}] WARNING: DACE_cache_distaware={prior} overridden to 1; ranks share this node', flush=True)
+    os.environ['DACE_cache_distaware'] = '1'
+
+
+def announce(rank: int, size: int, preset: str, arms: str, why: str) -> None:
+    """Print, and where it matters assert, the rank's whole measurement context in its first lines."""
+    tag = f'[rank {rank}/{size}]'
+    root = os.environ['DACE_default_build_folder']
+    print(
+        f'{tag} host={socket.gethostname()} preset={preset} CANON_PERF_ARMS={arms} '
+        f"omp={os.environ.get('OMP_NUM_THREADS', '')} kernels=pooled shard {rank}/{size}",
+        flush=True)
+    print(f'{tag} SIGCHLD {sigchld_state()}', flush=True)
+    if root.startswith('/dev/shm'):
+        print(f'{tag} scratch={root} ({why})', flush=True)
+    else:
+        print(
+            f'{tag} WARNING: build scratch is ON DISK, not memory-backed -- {why}. Compiles are '
+            f'disk-bound and the sweep is slower; point DACE_JOB_SCRATCH at a tmpfs with room '
+            f'to restore it. scratch={root}',
+            flush=True)
+    if os.environ.get('DACE_cache_distaware') != '1':
+        raise SystemExit('FATAL: DACE_cache_distaware is not 1; ranks on this node would load each '
+                         "other's half-written libraries")
+    print(f"{tag} DACE_cache_distaware=1 TMPDIR={os.environ['TMPDIR']}", flush=True)
+
+
+def drive(cmd: list[str], repo: Path) -> int:
+    """Run one driver in the repo root (its modules import ``tests.*``); return its exit code."""
+    print('+ ' + ' '.join(cmd), flush=True)
+    return subprocess.call(cmd, cwd=str(repo))
+
+
+def measure(rank: int, size: int, args: argparse.Namespace, repo: Path, out: Path) -> int:
+    """Run the selected facets over this rank's shard; return the worst driver exit code."""
+    worst = 0
+    # Both drivers truncate BEFORE sharding, so a bare ``--limit N`` would hand rank 0 everything
+    # and the other ranks nothing. Scaling by the rank count keeps the smoke run's shape honest:
+    # every rank measures about N kernels, and they are still disjoint.
+    limit = ['--limit', str(args.limit * size)] if args.limit else []
+    shard = ['--shard', f'{rank}/{size}']
+    if args.facet in ('parallelism', 'both'):
+        # This driver has no pooled mode, so the same shard rule is applied to each corpus in turn.
+        # It counts loops and maps statically rather than timing anything, so splitting a kernel's
+        # measurements across nodes costs nothing here -- unlike the perf facet below.
+        for suite in SUITES:
+            cmd = [
+                sys.executable, '-m', PARALLELISM_DRIVER, suite, *shard, '--csv',
+                str(out / f'parallelism_rank{rank:04d}.csv'), *limit
+            ]
+            worst = max(worst, drive(cmd + (['--check'] if args.check else []), repo))
+    if args.facet in ('perf', 'both'):
+        # ONE invocation and no ``--suite``: the driver pools all four corpora and keeps
+        # ``kernels[rank::size]``, so every arm of a kernel is timed by this rank, on this node.
+        # Per-rank Markdown because every rank renders the shared result dir, and one shared path
+        # would have the ranks overwriting each other's table mid-write.
+        cmd = [
+            sys.executable, '-m', PERF_DRIVER, *shard, '--markdown',
+            str(out / 'ranks' / f'speedup_rank{rank:04d}.md'), *limit
+        ]
+        cmd += ['--force'] if args.force else []
+        worst = max(worst, drive(cmd, repo))
+    return worst
+
+
+def aggregate(repo: Path, out: Path, perf_dir: Path) -> int:
+    """Fold the per-rank outputs into one report. Non-zero when a kernel errored or miscompiled."""
+    shards = sorted(str(p) for p in out.glob('parallelism_rank*.csv'))
+    worst = 0
+    if shards:
+        worst = max(worst, drive([sys.executable, '-m', PARALLELISM_DRIVER, '--summarize'] + shards, repo))
+    if perf_dir.is_dir():
+        # ``--no-run`` re-exports the per-kernel JSON the ranks wrote; no second gather path. The
+        # arms are read back out of that JSON, so ``CANON_PERF_ARMS`` is deliberately NOT set for
+        # this step: gathering needs no toolchain and should not re-probe seven arms to copy numbers.
+        worst = max(
+            worst,
+            drive([
+                sys.executable, '-m', PERF_DRIVER, '--no-run', '--csv',
+                str(out / 'speedup.csv'), '--markdown',
+                str(out / 'speedup_table.md')
+            ], repo))
+    print(f'=== aggregated into {out}', flush=True)
+    return worst
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument('--facet', choices=('parallelism', 'perf', 'both'), default='both', help='which measurement to run')
+    ap.add_argument('--preset', default='paper', help='corpus_suite dataset preset to time (default paper)')
+    ap.add_argument('--out', default=None, help=f'results directory (default {DEFAULT_OUT})')
+    ap.add_argument('--limit',
+                    type=int,
+                    default=None,
+                    help='smoke runs: measure about N kernels PER RANK (N x ranks of the pooled list, '
+                    'and N per corpus per rank for the parallelism facet)')
+    ap.add_argument('--check', action='store_true', help='parallelism facet also compiles+runs and checks values')
+    ap.add_argument('--force', action='store_true', help='re-time kernels that already have a result file')
+    ap.add_argument('--aggregate', action='store_true', help='post-step: fold the per-rank outputs into one report')
+    args = ap.parse_args()
+
+    repo = Path(__file__).resolve().parents[2]  # tests/perf/<this file> -> the repo root
+    out = Path(args.out or os.environ.get('CORPUS_PERF_OUT') or DEFAULT_OUT)
+    perf_dir = out / 'perf_json'
+    (out / 'ranks').mkdir(parents=True, exist_ok=True)
+    perf_dir.mkdir(parents=True, exist_ok=True)
+    # The perf harness reads both at import time; the ranks share the result dir (their kernels are
+    # disjoint, so their JSON file names are too) which is what makes the aggregation a re-export.
+    os.environ['CANON_PERF_DIR'] = str(perf_dir)
+    os.environ['CANON_PERF_PRESETS'] = args.preset
+
+    if args.aggregate:
+        return aggregate(repo, out, perf_dir)
+
+    # The six arms ARE this job, so the perf driver's full table is on unless the environment
+    # already said otherwise (``CANON_PERF_ARMS=0`` drops it to the plain g++ pair, for a smoke run
+    # on a box without a polyhedral clang). The driver reads this at import, which is what lets it
+    # probe every arm and abort before a node allocation is spent on a silently-disabled one.
+    arms = os.environ.setdefault('CANON_PERF_ARMS', '1')
+
+    rank, size = rank_and_size()
+    root, why = scratch_root(local_ranks(size))
+    isolate_rank(rank, root)
+    announce(rank, size, args.preset, arms, why)
+    return measure(rank, size, args, repo, out)
+
+
+if __name__ == '__main__':
+    sys.exit(main())

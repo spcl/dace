@@ -91,6 +91,9 @@ setup(
             'ipykernel',
             'nbconvert',
             'pytest-timeout',
+            # Plotting the corpus perf results (tests/perf/plot_corpus_perf.py); analysis only,
+            # never imported by dace itself.
+            'matplotlib',
         ],
         'ml-testing': [
             'coverage', 'pytest-cov', 'scipy', 'absl-py', 'opt_einsum', 'pymlir', 'click', 'ipykernel', 'nbconvert',

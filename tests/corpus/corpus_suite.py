@@ -181,3 +181,40 @@ def compiled_call(ctx: Dict, sdfg: dace.SDFG) -> Tuple[object, Dict]:
     call = _NB._map_call(c["program"], work, ctx['params'])
     symbols = {k: v for k, v in ctx['params'].items() if not isinstance(v, float)}
     return cs, {**call, **{k: v for k, v in symbols.items() if k not in call}}
+
+
+def numpy_reference(ctx: Dict) -> Dict[str, np.ndarray]:
+    """The NUMPY reference outputs for ``ctx`` -- the denominator polybench and npbench SHARE.
+
+    polybench's other reference (the untransformed SDFG, ``_PB.reference``) is kept and is what
+    ``make`` still puts in ``ctx['ref']``; this is the second one, so the two can be cross-checked.
+    tsvc / tsvc_2_5 have no numpy reference at all -- their oracles are scalar python loops, which
+    is exactly why they divide by ``seq-cpp`` -- so asking for one raises instead of quietly
+    handing back a different KIND of number.
+    """
+    suite = ctx['suite']
+    if suite == 'poly':
+        return _PB.numpy_reference(ctx['k'], ctx['arrays'], ctx['psize'])
+    if suite == 'np':
+        return _NB.reference_outputs(ctx['c'], ctx['arrays'], ctx['params'])
+    raise ValueError(f"{suite} has no numpy reference; its oracle is a scalar python loop")
+
+
+def numpy_call(ctx: Dict) -> Tuple[Callable, Dict]:
+    """``(fn, kwargs)`` for repeated *timed* invocation of the numpy reference (cf.
+    :func:`compiled_call`, which does the same for a compiled arm).
+
+    The copies and the argument-name resolution happen HERE, once, outside the timed region.
+    For polybench, ``_PB.restore_inputs(kwargs, ctx['arrays'])`` resets the arrays to their
+    pristine values between repetitions -- the kernels write their inputs, so repetition 2 would
+    otherwise measure whatever repetition 1 left behind.
+    Time it WITHOUT pinning BLAS threads: the agreed np+poly baseline is PARALLEL numpy.
+    """
+    suite = ctx['suite']
+    if suite == 'poly':
+        return _PB.numpy_call(ctx['k'], ctx['arrays'], ctx['psize'])
+    if suite == 'np':
+        ref = ctx['c']['reference']
+        work = {k: (v.copy() if isinstance(v, np.ndarray) else v) for k, v in ctx['arrays'].items()}
+        return ref, _NB._map_call(ref, work, ctx['params'])
+    raise ValueError(f"{suite} has no numpy reference; its oracle is a scalar python loop")

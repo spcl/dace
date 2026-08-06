@@ -9,23 +9,32 @@ Each polybench kernel module in this package declares, at module level:
 * ``init_array`` -- ``init_array(*arrays, **lowercase_symbol_values)`` filling them,
 * a single ``@dace.program`` kernel.
 
-Unlike npbench these kernels carry no numpy oracle (the original suite validated
-against a C dump), so correctness here is *value-preserving*: a transform pipeline
-is compared against the untransformed baseline SDFG run on identical inputs.
+There are TWO references, and they are both kept:
+
+* :func:`reference` runs the untransformed baseline SDFG -- compiled C++, a DaCe-vs-DaCe
+  ground truth. It is what the corpus has always compared against (*value preservation*).
+* :func:`numpy_reference` runs the in-repo numpy formulation from
+  :mod:`tests.corpus.polybench.polybench_numpy`, so polybench and npbench can share ONE
+  honest denominator -- parallel numpy -- instead of secretly dividing by compiled C++.
+  :func:`numpy_call` hands a perf harness the same reference as ``(fn, kwargs)``, timeable
+  exactly like an arm. WARNING: Not every kernel's numpy reference is array-level; see
+  ``polybench_numpy.VECTORIZATION`` before putting one in a "vs numpy" figure.
 
 The legacy absl ``polybench.main`` harness is gone -- the kernels import it only
 inside their ``if __name__ == '__main__'`` blocks (CLI use), so loading a module
 pulls in no extra dependency.
 """
 import importlib
+import inspect
 import pkgutil
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
 import dace
 from dace.frontend.python.parser import DaceProgram
+from tests.corpus.polybench import polybench_numpy
 
 #: Smallest dataset (``sizes`` index 0) -- keeps the corpus sweep fast.
 DEFAULT_SIZE_INDEX: int = 0
@@ -68,7 +77,7 @@ def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
     pkg = importlib.import_module(_this_package())
     kernels: List[PolybenchKernel] = []
     for info in pkgutil.walk_packages(pkg.__path__, prefix=pkg.__name__ + "."):
-        if info.name.rsplit(".", 1)[-1] in ("polybench", "__init__"):
+        if info.name.rsplit(".", 1)[-1] in ("polybench", "polybench_numpy", "__init__"):
             continue
         try:
             mod = importlib.import_module(info.name)
@@ -124,6 +133,55 @@ def reference(kernel: PolybenchKernel, call_arrays: Dict[str, np.ndarray], psize
     base = fresh_sdfg(kernel)
     out = {n: a.copy() for n, a in call_arrays.items()}
     base.compile()(**out, **psize)
+    return out
+
+
+def numpy_call(kernel: PolybenchKernel, call_arrays: Dict[str, np.ndarray],
+               psize: Dict[str, int]) -> Tuple[Callable[..., None], Dict[str, object]]:
+    """``(fn, kwargs)`` for repeated *timed* invocation of this kernel's numpy reference.
+
+    Shaped like :func:`tests.corpus.corpus_suite.compiled_call` so a perf harness can treat the
+    denominator exactly like an arm: the copies and the name resolution happen HERE, once, outside
+    the timed region. The reference's parameters are resolved by name against the input arrays and
+    the dataset symbols, the same rule the tsvc_2_5 oracle adapter uses.
+
+    WARNING: The polybench kernels write their inputs, so repetition ``k+1`` would otherwise see what
+    repetition ``k`` left behind; call :func:`restore_inputs` between repetitions (outside the
+    timed region) when the kernel's result depends on its input state.
+    WARNING: Time it WITHOUT pinning BLAS threads: the agreed baseline is *parallel* numpy.
+    """
+    fn = polybench_numpy.REFERENCES[kernel.name]
+    pool: Dict[str, object] = {**{n: a.copy() for n, a in call_arrays.items()}, **psize}
+    return fn, {p: pool[p] for p in inspect.signature(fn).parameters}
+
+
+def restore_inputs(kwargs: Dict[str, object], call_arrays: Dict[str, np.ndarray]) -> None:
+    """Reset the array arguments in ``kwargs`` to their pristine input values, IN PLACE.
+
+    In place rather than re-copying so a timing loop reuses one allocation per array; run it
+    between repetitions but outside the timed region, or the memcpy lands in the denominator.
+
+    ARRAY arguments only, as the name says: npbench passes some of its inputs as python/numpy
+    scalars (``cavity_flow`` dt/dx/dy, ``compute`` a/b/c), which are immutable and cannot be
+    written back into. They are pass-by-value, so a callee cannot have changed them either.
+    """
+    for name, pristine in call_arrays.items():
+        target = kwargs.get(name)
+        if isinstance(target, np.ndarray) and isinstance(pristine, np.ndarray):
+            np.copyto(target, pristine)
+
+
+def numpy_reference(kernel: PolybenchKernel, call_arrays: Dict[str, np.ndarray],
+                    psize: Dict[str, int]) -> Dict[str, np.ndarray]:
+    """Run the numpy reference on copies of the inputs; return the resulting arrays.
+
+    The second ground truth, alongside :func:`reference`'s untransformed SDFG: same inputs, same
+    output dict shape, so the two can be cross-checked against each other kernel by kernel.
+    """
+    out = {n: a.copy() for n, a in call_arrays.items()}
+    fn = polybench_numpy.REFERENCES[kernel.name]
+    pool: Dict[str, object] = {**out, **psize}
+    fn(**{p: pool[p] for p in inspect.signature(fn).parameters})
     return out
 
 
