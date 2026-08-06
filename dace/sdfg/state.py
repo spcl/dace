@@ -3932,13 +3932,15 @@ class ConditionalBlock(AbstractControlFlowRegion):
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
-        # Same subtree repair ``add_node`` performs: a branch is routinely a deep copy, and
-        # ``ControlFlowBlock.__deepcopy__`` resolves ``_sdfg`` through the memo, so every block copied
-        # without its owning SDFG comes back owner-less. Insertion is what establishes ownership.
+        # A branch is reached only through this list, never through ``nodes()``, so the generic
+        # ``add_node`` bookkeeping never runs for it. Two things have to happen here instead.
+        # First the subtree repair: a branch is routinely a deep copy, and
+        # ``ControlFlowBlock.__deepcopy__`` resolves ``_sdfg`` through the memo, so every block
+        # copied without its owning SDFG comes back owner-less. Insertion establishes ownership.
         for block in branch.all_control_flow_blocks():
             block.sdfg = self.sdfg
-        # A branch never passes through ``add_node``, so it would stay out of the CFG list and
-        # report ``cfg_id`` 0 -- colliding with the root and with every other branch.
+        # Then registration: otherwise the branch stays out of the CFG list and reports ``cfg_id``
+        # 0 -- colliding with the root and with every other unregistered region.
         self.reset_cfg_list()
 
     def remove_branch(self, branch: ControlFlowRegion):
