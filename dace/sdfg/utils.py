@@ -1681,6 +1681,7 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     :param validate: If True, validates the SDFG prior to generating code.
     :return: Compiled SDFG.
     :note: This method can be used only if the module mpi4py is installed.
+    :note: Only rank 0 builds, so every rank is pinned to its folder, whatever ``cache`` would name.
     :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
@@ -1695,6 +1696,7 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
 
     # Broadcasts build folder.
     folder = comm.bcast(folder, root=0)
+    sdfg.build_folder = folder
 
     # Loads compiled SDFG.
     if rank > 0:
