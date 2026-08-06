@@ -42,7 +42,6 @@ import argparse
 import copy
 import csv
 import functools
-import inspect
 import time
 from typing import Callable, Dict, List, Tuple
 
@@ -65,12 +64,11 @@ from dace.sdfg import nodes as nd
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.interstate import LoopToMap
 
+from tests.corpus import corpus_suite as _CS
 from tests.corpus.npbench import npbench as _NB
 from tests.corpus.polybench import polybench as _PB
 from tests.corpus.tsvc import tsvc as _TS
-from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
 from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
-from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 
 # hpcagent_bench is out-of-tree and absent in CI. At module scope it broke COLLECTION for every
 # consumer, which aborts the whole run; only the hpcagent sweep needs it, so it imports locally.
@@ -195,11 +193,8 @@ def _tsvc_names() -> List[str]:
 def tsvc_reference(name):
     """``(arrays, call_kwargs, ref)`` for one tsvc kernel: the inputs, and what the numpy oracle
     makes of them. Shared with the non-vacuity test, which asserts ``ref != arrays``."""
-    k = _TS.collect(name=name)[0]
-    arrays, ck = _TS.make_inputs(k, seed=1234)
-    ref = {n: a.copy() for n, a in arrays.items()}
-    _TS_REF[k.name](**ref, **ck)  # numpy oracle writes outputs into ref in place
-    return arrays, ck, ref
+    ctx = _CS.make('tsvc', name, 'S')
+    return ctx['arrays'], ctx['params'], ctx['ref']
 
 
 def _tsvc_case(name):
@@ -219,28 +214,10 @@ def _tsvc25_names() -> List[str]:
     return [p.name for p in _T25.collect()]
 
 
-def _tsvc25_oracle(program):
-    base = program.name.rsplit("tsvc_2_5_", 1)[-1]
-    return vars(_T25_REF)["ref_" + (base[4:] if base.startswith("ext_") else base)]
-
-
 def tsvc25_reference(program):
     """``(arrays, scalars, ref)`` for one tsvc_2_5 kernel. Shared with the non-vacuity test."""
-    arrays, scalars = _T25.make_inputs(program)
-    oracle = _tsvc25_oracle(program)
-    pool = {
-        **{
-            n: a.copy()
-            for n, a in arrays.items()
-        },
-        **scalars,
-        **{
-            s.lower(): v
-            for s, v in _T25.SIZES.items()
-        }, "n": _T25.SIZES["LEN_1D"]
-    }
-    oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
-    return arrays, scalars, {n: pool[n] for n in arrays}
+    ctx = _CS.make('tsvc25', program.name, 'S')
+    return ctx['arrays'], ctx['scalars'], ctx['ref']
 
 
 def _tsvc25_case(name):
@@ -384,17 +361,22 @@ def sweep(corpus: str,
           check: bool = False,
           verbose: bool = True,
           config: str = 'canon',
-          shard: Tuple[int, int] = (0, 1)) -> Dict:
+          shard: Tuple[int, int] = (0, 1),
+          limit: int = 0) -> Dict:
     """Measure one corpus. :returns: a result dict with per-kernel rows.
 
     ``shard=(index, count)`` keeps only every ``count``-th kernel starting at ``index``,
     so a batch job can fan the corpus out over ranks without any rank-to-kernel table.
     Round-robin rather than contiguous blocks: kernel cost varies by an order of
     magnitude and neighbours in the (sorted) name list tend to be similar sizes.
+
+    ``limit`` truncates the corpus to its first ``limit`` kernels BEFORE sharding, so a
+    smoke run of a batch job exercises the same fan-out over a corpus small enough to finish.
     """
     names_fn, case_fn = CORPORA[corpus]
     index, total = shard
-    names = names_fn()[index::total]
+    names = names_fn()
+    names = (names[:limit] if limit else names)[index::total]
     params = cpu_params(peel_limit)
     rows: Dict[str, Dict] = {}
     t0 = time.perf_counter()
@@ -566,6 +548,7 @@ def main() -> None:
                     choices=list(CONFIGS) + ['all'],
                     help='pipeline configuration to measure (default canon)')
     ap.add_argument('--shard', default='0/1', help='"i/n": measure only every n-th kernel starting at i')
+    ap.add_argument('--limit', type=int, default=0, help='only the first N kernels of the corpus (smoke runs)')
     ap.add_argument('--csv', default=None, help='append per-kernel rows to this CSV')
     ap.add_argument('--summarize', nargs='+', default=None, help='report on existing CSVs instead of measuring')
     args = ap.parse_args()
@@ -576,7 +559,12 @@ def main() -> None:
     configs = list(CONFIGS) if args.config == 'all' else [args.config]
     for config in configs:
         for corpus in targets:
-            res = sweep(corpus, peel_limit=args.peel, check=args.check, config=config, shard=(index, total))
+            res = sweep(corpus,
+                        peel_limit=args.peel,
+                        check=args.check,
+                        config=config,
+                        shard=(index, total),
+                        limit=args.limit)
             if args.csv:
                 write_csv(res, args.csv)
             summarize(res)

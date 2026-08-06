@@ -14,6 +14,7 @@ Source contracts:
 * Each kernel pairs with a numpy oracle in ``reference_python``.
 """
 from math import sqrt, exp
+from typing import Dict, Optional
 
 import dace
 import numpy as np
@@ -1211,23 +1212,27 @@ SIZES = {
 }
 
 
-def make_inputs(program, seed: int = 1234):
+def make_inputs(program, seed: int = 1234, sizes: Optional[Dict[str, int]] = None):
     """Allocate inputs for one kernel from its ``@dace.program`` annotations.
 
-    Array extents are the kernel's declared shapes evaluated at :data:`SIZES`;
+    Array extents are the kernel's declared shapes evaluated at ``sizes``;
     float arrays are random, integer arrays are a permutation of ``range(n)`` so
     gather/scatter indices stay in bounds, and scalars are random floats. The
     same values feed both the numpy oracle and the compiled SDFG.
 
+    :param sizes: symbol table the extents are evaluated at, defaulting to :data:`SIZES`.
+        A caller that runs the kernel at another dataset size passes the same table it
+        binds the SDFG's symbols to.
     :returns: ``(arrays, scalars)`` keyed by parameter name.
     """
     import inspect
+    sizes = sizes if sizes is not None else SIZES
     rng = np.random.default_rng(seed)
     arrays, scalars = {}, {}
     for name, par in inspect.signature(program.f).parameters.items():
         ann = par.annotation
         if getattr(ann, "shape", None):  # dace array descriptor
-            shape = tuple(int(dace.symbolic.evaluate(d, SIZES)) for d in ann.shape)
+            shape = tuple(int(dace.symbolic.evaluate(d, sizes)) for d in ann.shape)
             if np.issubdtype(ann.dtype.as_numpy_dtype(), np.integer):
                 arrays[name] = rng.permutation(shape[0]).astype(ann.dtype.as_numpy_dtype())
             else:

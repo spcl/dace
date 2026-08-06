@@ -1,36 +1,95 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-"""Unified adapter over the polybench and npbench corpora.
+"""Unified adapter over the polybench, npbench, tsvc and tsvc_2_5 corpora.
 
-The two corpus loaders expose different APIs (polybench is size-indexed with an
+The four corpus loaders expose different APIs (polybench is size-indexed with an
 untransformed-SDFG baseline; npbench is descriptor-dict based with a real numpy
-reference). This module dispatches both behind one interface so the canonicalize
-numerical and performance corpus tests can iterate the *combined* suite uniformly.
+reference; tsvc and tsvc_2_5 are symbol-parametrized kernel registries with a
+scalar numpy oracle each). This module dispatches all four behind one interface so
+the canonicalize numerical and performance corpus tests can iterate the *combined*
+suite uniformly.
 
 Datasets are selected by a named preset. polybench carries five sizes
 (mini..extra-large); npbench carries one fused dataset that the loader clamps via
-``cap``. The presets below pick a small/fast shape (``S``) and a larger,
-performance-realistic shape (``paper``) for each suite, sized to stay
+``cap``; tsvc sweeps one extent per kernel regime; tsvc_2_5 evaluates its declared
+extents at a symbol table. The presets below pick a small/fast shape (``S``) and a
+larger, performance-realistic shape (``paper``) for each suite, sized to stay
 CI-tractable.
 """
+import inspect
 from typing import Callable, Dict, List, Tuple
 
+import numpy as np
+
+import dace
+from dace.frontend.python.parser import DaceProgram
 from tests.corpus.npbench import npbench as _NB
 from tests.corpus.polybench import polybench as _PB
+from tests.corpus.tsvc import tsvc as _TS
+from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
+from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
+from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 
 #: preset -> polybench ``sizes`` index (0=mini .. 4=extra-large).
 _POLY_PRESET = {'S': 0, 'paper': 2}
 #: preset -> npbench integer-symbol clamp (npbench's fused dataset is perf-sized,
 #: e.g. N=400000; clamp to a CI-tractable shape that still exercises real loops).
 _NP_PRESET = {'S': 32, 'paper': 256}
+#: preset -> tsvc swept extent, ``(1d regime, 2d regime)``; the non-swept extent
+#: follows from ``tsvc.regime_sizes``. ``S`` is the corpus's own default length.
+#: ``paper`` scales it, bounded by the one kernel that is quadratic in ``LEN_1D``
+#: (s176) -- the numpy oracles are scalar Python loops, so the reference run, not
+#: the compiled kernel, is what a large extent costs.
+_TSVC_PRESET = {'S': (64, 16), 'paper': (1024, 128)}
+#: preset -> tsvc_2_5 overrides on its ``SIZES`` symbol table. Only the ``LEN_*``
+#: extents scale: the rest are tuned strides, thresholds and tile sizes that must
+#: keep their values (and ``LEN_R7`` must stay a multiple of 7 -- its kernels
+#: reroll by 7).
+_T25_PRESET = {'S': {}, 'paper': {'LEN_1D': 1024, 'LEN_2D': 128, 'LEN_3D': 32, 'LEN_R7': 7 * 144}}
 
 PRESETS = ('S', 'paper')
 
+#: One seed for every corpus draw: a reference and its candidate must see identical
+#: inputs, and a rerun must reproduce a failure.
+_SEED = 1234
+
 
 def kernels() -> List[Tuple[str, str]]:
-    """All ``(suite, name)`` pairs across both corpora, polybench then npbench."""
+    """All ``(suite, name)`` pairs, in corpus order: polybench, npbench, tsvc, tsvc_2_5."""
     out = [('poly', k.name) for k in _PB.collect()]
     out += [('np', c["name"]) for c in _NB.collect()]
+    out += [('tsvc', k.name) for k in _TS.collect()]
+    out += [('tsvc25', p.name) for p in _T25.collect()]
     return out
+
+
+def t25_program(name: str) -> DaceProgram:
+    """The tsvc_2_5 ``@dace.program`` with this name."""
+    return [p for p in _T25.collect() if p.name == name][0]
+
+
+def t25_reference(program: DaceProgram, arrays: Dict[str, np.ndarray], scalars: Dict[str, float],
+                  sizes: Dict[str, int]) -> Dict[str, np.ndarray]:
+    """Run the tsvc_2_5 numpy oracle on copies of ``arrays``; return what it wrote.
+
+    The oracle is ``ref_`` + the kernel name with any module prefix and ``ext_`` dropped,
+    and it takes its arguments by name: arrays, scalars, and the lowercased symbol values
+    it declares (the ``iv_*`` oracles take the trip count as ``n``).
+    """
+    base = program.name.rsplit('tsvc_2_5_', 1)[-1]
+    oracle = vars(_T25_REF)['ref_' + (base[4:] if base.startswith('ext_') else base)]
+    pool = {
+        **{
+            n: a.copy()
+            for n, a in arrays.items()
+        },
+        **scalars,
+        **{
+            s.lower(): v
+            for s, v in sizes.items()
+        }, 'n': sizes['LEN_1D']
+    }
+    oracle(**{p: pool[p] for p in inspect.signature(oracle).parameters})
+    return {n: pool[n] for n in arrays}
 
 
 def make(suite: str, name: str, preset: str = 'S') -> Dict:
@@ -40,32 +99,78 @@ def make(suite: str, name: str, preset: str = 'S') -> Dict:
         arrays, psize = _PB.make_inputs(k, size_index=_POLY_PRESET[preset], cap=None)
         ref = _PB.reference(k, arrays, psize)
         return dict(suite=suite, name=name, k=k, arrays=arrays, psize=psize, ref=ref)
-    c = _NB.collect(name)[0]
-    arrays, params = _NB.make_inputs(c, cap=_NP_PRESET[preset])
-    ref = _NB.reference_outputs(c, arrays, params)
-    return dict(suite=suite, name=name, c=c, arrays=arrays, params=params, ref=ref)
+    if suite == 'np':
+        c = _NB.collect(name)[0]
+        arrays, params = _NB.make_inputs(c, cap=_NP_PRESET[preset])
+        ref = _NB.reference_outputs(c, arrays, params)
+        return dict(suite=suite, name=name, c=c, arrays=arrays, params=params, ref=ref)
+    if suite == 'tsvc':
+        k = _TS.collect(name=name)[0]
+        l1, l2 = _TS.regime_sizes(k.regime, _TSVC_PRESET[preset][0 if k.regime == '1d' else 1])
+        arrays = _TS.allocate(k, l1, l2, np.random.default_rng(_SEED))
+        params = {**_TS.scalar_params(k, l1), **_TS.symbols(k, l1, l2)}
+        ref = {n: a.copy() for n, a in arrays.items()}
+        _TS_REF[name](**ref, **params)  # the scalar oracle writes its outputs into ref in place
+        return dict(suite=suite, name=name, k=k, arrays=arrays, params=params, ref=ref)
+    p = t25_program(name)
+    sizes = {**_T25.SIZES, **_T25_PRESET[preset]}
+    arrays, scalars = _T25.make_inputs(p, seed=_SEED, sizes=sizes)
+    ref = t25_reference(p, arrays, scalars, sizes)
+    return dict(suite=suite, name=name, k=p, arrays=arrays, scalars=scalars, params=sizes, ref=ref)
 
 
 def build(ctx: Dict, transform: Callable, tag: str):
     """Fresh SDFG for ``ctx``'s kernel, apply ``transform`` in place, unique-name it."""
-    s = _PB.fresh_sdfg(ctx['k']) if ctx['suite'] == 'poly' else _NB.fresh_sdfg(ctx['c'])
+    suite = ctx['suite']
+    if suite == 'poly':
+        s = _PB.fresh_sdfg(ctx['k'])
+    elif suite == 'np':
+        s = _NB.fresh_sdfg(ctx['c'])
+    elif suite == 'tsvc':
+        # The loader's builder deep-copies the program's SDFG (a prior variant may have
+        # mutated it); its tag is only a name uniquifier, which ``build`` applies below.
+        s = _TS.to_sdfg(ctx['k'], 'corpus', simplify=True)
+    else:
+        s = ctx['k'].to_sdfg(simplify=True)  # re-parsed per call, so already private
     transform(s)
     s.name = f"{s.name}_{tag}"
     return s
 
 
-def run_matches(ctx: Dict, sdfg) -> bool:
+def call_symbols(ctx: Dict, sdfg: dace.SDFG) -> Dict:
+    """Non-array call kwargs for a tsvc / tsvc_2_5 SDFG. Mutates ``sdfg``, so call it
+    BEFORE compiling: a transform can leave a hoisted guard symbol free but unregistered,
+    and the compiled signature is what the symbol has to appear in."""
+    if ctx['suite'] == 'tsvc':
+        return dict(ctx['params'])
+    free = {str(s) for s in sdfg.free_symbols}
+    for s in free - set(sdfg.symbols):
+        sdfg.add_symbol(s, dace.int64)
+    return {**ctx['scalars'], **{s: v for s, v in ctx['params'].items() if s in free}}
+
+
+def run_matches(ctx: Dict, sdfg: dace.SDFG) -> bool:
     """Compile + run ``sdfg`` and compare to the reference for this suite."""
     if ctx['suite'] == 'poly':
         return _PB.outputs_match(ctx['ref'], _PB.run(sdfg, ctx['arrays'], ctx['psize']))
-    return _NB.outputs_match(ctx['ref'], _NB.run_outputs(ctx['c'], sdfg, ctx['arrays'], ctx['params']))
+    if ctx['suite'] == 'np':
+        return _NB.outputs_match(ctx['ref'], _NB.run_outputs(ctx['c'], sdfg, ctx['arrays'], ctx['params']))
+    kwargs = call_symbols(ctx, sdfg)
+    got = {n: a.copy() for n, a in ctx['arrays'].items()}
+    sdfg.compile()(**got, **kwargs)
+    # polybench's comparison is the dtype-aware one: integers exactly (a gather index is a
+    # read-only input, but an argmax index is an OUTPUT), floats at a per-precision tolerance.
+    return bool(_PB.outputs_match(ctx['ref'], got))
 
 
-def compiled_call(ctx: Dict, sdfg) -> Tuple[object, Dict]:
+def compiled_call(ctx: Dict, sdfg: dace.SDFG) -> Tuple[object, Dict]:
     """Return ``(compiled_sdfg, call_kwargs)`` for repeated *timed* invocation.
 
     The kwargs carry fresh input copies + the dataset symbols the SDFG needs.
     """
+    if ctx['suite'] in ('tsvc', 'tsvc25'):
+        kwargs = call_symbols(ctx, sdfg)  # may register symbols -> must precede the compile
+        return sdfg.compile(), {**{n: a.copy() for n, a in ctx['arrays'].items()}, **kwargs}
     cs = sdfg.compile()
     if ctx['suite'] == 'poly':
         return cs, {**{n: v.copy() for n, v in ctx['arrays'].items()}, **ctx['psize']}
