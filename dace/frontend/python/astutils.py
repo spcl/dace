@@ -216,6 +216,16 @@ class ExtUnparser(astunparse.Unparser):
         else:
             super()._Constant(t)
 
+    def _Attribute(self, t):
+        self.dispatch(t.value)
+        # Special case: 3.__abs__() is a syntax error, so if t.value is an integer literal
+        # then we need to add an extra space to get 3 .__abs__(). astunparse checks this via
+        # ``ast.Num``, which was removed in Python 3.12; an int Constant is the same check.
+        if isinstance(t.value, ast.Constant) and isinstance(t.value.value, int):
+            self.write(" ")
+        self.write(".")
+        self.write(t.attr)
+
     def _Subscript(self, t):
         self.dispatch(t.value)
         self.write('[')
