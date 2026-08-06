@@ -250,15 +250,24 @@ def _arange(pv: ProgramVisitor,
     else:
         start, stop, step = args
 
-    if isinstance(start, str):
-        raise TypeError(f'Cannot compile numpy.arange with a scalar start value "{start}" (only constants and symbolic '
-                        'expressions are supported). Please use numpy.linspace instead.')
-    if isinstance(stop, str):
-        raise TypeError(f'Cannot compile numpy.arange with a scalar stop value "{stop}" (only constants and symbolic '
-                        'expressions are supported). Please use numpy.linspace instead.')
-    if isinstance(step, str):
-        raise TypeError(f'Cannot compile numpy.arange with a scalar step value "{step}" (only constants and symbolic '
-                        'expressions are supported). Please use numpy.linspace instead.')
+    # A string bound is a name, not a value. An SDFG symbol names a symbolic extent directly; a size-1
+    # container (``K = nclusters; np.arange(K)``) is read into a symbol on an interstate edge, the same
+    # mechanism ``numpy.full`` uses to size its output. Any other data would take the extent from array
+    # contents, which cannot size the output.
+    for kind, value in (('start', start), ('stop', stop), ('step', step)):
+        if not isinstance(value, str):
+            continue
+        if value not in sdfg.symbols and not (value in sdfg.arrays and sdfg.arrays[value].total_size == 1):
+            raise TypeError(f'Cannot compile numpy.arange with a scalar {kind} value "{value}" (only constants and '
+                            'symbolic expressions are supported). Please use numpy.linspace instead.')
+
+    (start, stop, step), promoted = promote_size_scalars_in_shape(pv, sdfg, (start, stop, step))
+    if promoted:
+        # Promotion opens a state to carry the symbol assignment; the map has to follow it.
+        state = pv.last_block
+    start, stop, step = [symbolic.pystr_to_symbolic(v) if isinstance(v, str) else v for v in (start, stop, step)]
+    # Type inference below reads the call arguments, which have no case for a name.
+    args = (stop, ) if len(args) == 1 else (start, stop, step)[:len(args)]
 
     actual_step = step
     if isinstance(start, Number) and isinstance(stop, Number):

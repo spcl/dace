@@ -12,6 +12,32 @@ from .. import environments
 import warnings
 
 
+def refuse_broadcast_batches(node, state, sdfg) -> None:
+    """Refuse a broadcast batch dimension for the fixed-stride BLAS lowerings.
+
+    ``cublas*StridedBatched`` and ``*gemm_batch`` advance each operand by one matrix per batch
+    element. A dimension of extent 1 on one side must instead be re-read for every element, which
+    no single stride expresses, so such a call would read past the end of the smaller operand.
+    The pure expansion handles it by indexing that dimension at 0.
+
+    :param node: The library node being expanded.
+    :param state: The state the node lives in.
+    :param sdfg: The SDFG the state belongs to.
+    :raise ValueError: If either operand carries a batch dimension that must broadcast.
+    """
+    (_, _, shape_a, _, _, _), (_, _, shape_b, _, _, _), _ = _get_matmul_operands(node, state, sdfg)
+    batch_a, batch_b = shape_a[:-2], shape_b[:-2]
+    if not batch_a or not batch_b:
+        return
+    offset = len(batch_a) - len(batch_b)
+    paired = zip(batch_a[offset:], batch_b) if offset >= 0 else zip(batch_a, batch_b[-offset:])
+    for d0, d1 in paired:
+        if equal(d0, d1) is not True:
+            raise ValueError(f'{type(node).__name__} cannot broadcast batch dimensions {batch_a} against {batch_b}: '
+                             'this expansion walks a fixed batch stride. Use the "pure" implementation, or '
+                             'materialize both operands at the same batch shape.')
+
+
 @dace.library.expansion
 class ExpandBatchedMatMulPure(ExpandTransformation):
 
@@ -81,21 +107,32 @@ class ExpandBatchedMatMulPure(ExpandTransformation):
         map_params['__in'] = '0:%s' % symstr(shape_b[-1])
         map_params['__ik'] = '0:%s' % symstr(shape_a[-1])
 
-        # Build memlet access patterns
+        def batch_indices(operand_shape) -> str:
+            """The operand's batch subscripts, following NumPy's broadcasting rules.
+
+            Batch dimensions align to the RIGHT against the output's, and a dimension of extent 1
+            broadcasts, so it is read at 0 for every output batch element. Taking the output index
+            for such a dimension -- or aligning from the left -- reads past the end of the operand.
+            """
+            num_operand_batch = len(operand_shape) - 2
+            offset = num_batch_dims - num_operand_batch
+            subscripts = []
+            for j, dim in enumerate(operand_shape[:-2]):
+                broadcast = equal(dim, 1) is True
+                subscripts.append('0' if broadcast else '__i%d' % (offset + j))
+            return ', '.join(subscripts)
+
         # For A: if 2D, use [M, K]; if 3D+, use [batch_indices..., M, K]
         if len(array_a.shape) == 2:
             memlet_a = '__im, __ik'
         else:
-            # Use output batch indices
-            a_batch_indices = ', '.join(['__i%d' % i for i in range(len(array_a.shape) - 2)])
-            memlet_a = f'{a_batch_indices}, __im, __ik'
+            memlet_a = f'{batch_indices(array_a.shape)}, __im, __ik'
 
         # For B: if 2D, use [K, N]; if 3D+, use [batch_indices..., K, N]
         if len(array_b.shape) == 2:
             memlet_b = '__ik, __in'
         else:
-            b_batch_indices = ', '.join(['__i%d' % i for i in range(len(array_b.shape) - 2)])
-            memlet_b = f'{b_batch_indices}, __ik, __in'
+            memlet_b = f'{batch_indices(array_b.shape)}, __ik, __in'
 
         # For C: always has batch dimensions
         c_indices = ', '.join(['__i%d' % i for i in range(num_batch_dims)]) + ', __im, __in'
@@ -125,6 +162,7 @@ class ExpandBatchedMatMulMKL(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _,
                                              _), _ = _get_matmul_operands(node, state, sdfg)
         cdesc: dt.Array = sdfg.arrays[state.out_edges(node)[0].data.data]
@@ -199,6 +237,7 @@ class ExpandBatchedMatMulOpenBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
         (_, adesc, ashape, astrides, _, _), (_, bdesc, bshape, bstrides, _,
                                              _), _ = _get_matmul_operands(node, state, sdfg)
         cdesc = sdfg.arrays[state.out_edges(node)[0].data.data]
@@ -250,6 +289,7 @@ class ExpandBatchedMatMulCuBLAS(ExpandTransformation):
     @staticmethod
     def expansion(node, state, sdfg):
         node.validate(sdfg, state)
+        refuse_broadcast_batches(node, state, sdfg)
 
         # Find inputs and output
         adesc, bdesc, cdesc = None, None, None
@@ -463,10 +503,12 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size0 = subset.size()
+                full0 = memlet.subset.size()
             if dst_conn == '_b':
                 subset = dc(memlet.subset)
                 subset.squeeze()
                 size1 = subset.size()
+                full1 = memlet.subset.size()
         out_edges = state.out_edges(self)
         if len(out_edges) != 1:
             raise ValueError("Expected exactly one output from "
@@ -483,6 +525,24 @@ class BatchedMatMul(dace.sdfg.nodes.LibraryNode):
         if len(size0) <= 2 and len(size1) <= 2:
             raise ValueError(
                 "Batched matrix-matrix product requires at least one input to have batch dimensions (3D or higher)")
+
+        # Batch dimensions follow NumPy's broadcasting rules: they align to the RIGHT, and a
+        # dimension of extent 1 stretches. Only a genuine mismatch is rejected here -- whether a
+        # given expansion can express a broadcast is the expansion's business, not the node's
+        # (the pure lowering indexes a broadcast dimension at 0; the BLAS ones walk a fixed batch
+        # stride and refuse, see ``refuse_broadcast_batches``).
+        # ``squeeze()`` drops EVERY extent-1 dimension and cannot tell an index singleton from a
+        # slice singleton, so a broadcast batch axis disappears from ``size0``/``size1`` before it
+        # can be examined -- ``(2,1,M,K) @ (1,3,K,N)`` arrives here looking like batch 2 vs batch 3.
+        # The batch analysis therefore reads the UNSQUEEZED extents.
+        batch0, batch1 = full0[:-2], full1[:-2]
+        if batch0 and batch1:
+            offset = len(batch0) - len(batch1)
+            paired = zip(batch0[offset:], batch1) if offset >= 0 else zip(batch0, batch1[-offset:])
+            for d0, d1 in paired:
+                if equal(d0, d1) is False and equal(d0, 1) is not True and equal(d1, 1) is not True:
+                    raise ValueError(f'Batch dimensions of the two inputs do not broadcast, got {batch0} and '
+                                     f'{batch1}: {d0} and {d1} differ and neither is 1')
 
         # Validate K-dimension compatibility
         res = equal(size0[-1], size1[-2])

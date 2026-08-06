@@ -1690,9 +1690,18 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         # Find scopes this node is situated in
         sdict = self.scope_dict()
         scope_list = []
+        seen = {id(node)}
         curnode = node
         while sdict[curnode] is not None:
             curnode = sdict[curnode]
+            # A scope chain is a path to the top of the state, so revisiting a node means the
+            # scope structure is cyclic -- a malformed graph some transformation produced. Without
+            # this the walk appends forever: the SDFG stops changing while memory grows without
+            # bound, which reads as a hang rather than as the invalid graph it is.
+            if id(curnode) in seen:
+                raise ValueError(f'Cyclic scope structure in state "{self.label}": node {curnode} is its own '
+                                 f'ancestor on the scope path from {node}. The state is malformed.')
+            seen.add(id(curnode))
             scope_list.append(curnode)
 
         # Add the scope symbols top-down

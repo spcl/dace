@@ -4,7 +4,7 @@ Contains linear algebra function and operator replacements.
 """
 import dace  # noqa
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import StringLiteral
+from dace.frontend.python.common import DaceSyntaxError, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
@@ -14,6 +14,37 @@ from typing import Optional, Sequence, Union
 import warnings
 
 import numpy as np
+
+
+def check_batched_matmul_support(visitor: ProgramVisitor, shape_a: Sequence, shape_b: Sequence) -> None:
+    """
+    Refuses batched matrix multiplications whose batch dimensions do not broadcast.
+
+    NumPy aligns the leading dimensions to the RIGHT and stretches any of extent 1. The pure
+    expansion of ``BatchedMatMul`` reproduces that by reading a stretched dimension at 0; the BLAS
+    expansions walk a fixed batch stride and refuse a broadcast themselves. What no expansion can
+    do is combine dimensions that genuinely differ, so only that is rejected here.
+
+    Supported: ``(*B, M, K) @ (*B, K, N)``, either operand a plain ``(M, K)`` / ``(K, N)`` matrix,
+    and broadcast forms such as ``(B, 1, M, K) @ (1, C, K, N) -> (B, C, M, N)``.
+
+    :param visitor: The program visitor, used to locate the error in the source.
+    :param shape_a: Shape of the first operand.
+    :param shape_b: Shape of the second operand.
+    :raise DaceSyntaxError: If a pair of batch dimensions neither matches nor broadcasts.
+    """
+    batch_a, batch_b = tuple(shape_a[:-2]), tuple(shape_b[:-2])
+    if not batch_a or not batch_b:
+        return
+    offset = len(batch_a) - len(batch_b)
+    paired = zip(batch_a[offset:], batch_b) if offset >= 0 else zip(batch_a, batch_b[-offset:])
+    for dim_a, dim_b in paired:
+        if symbolic.equal(dim_a, dim_b) is False and symbolic.equal(dim_a, 1) is not True and symbolic.equal(
+                dim_b, 1) is not True:
+            raise DaceSyntaxError(
+                visitor, None, f'Batched matmul of shapes {tuple(shape_a)} and {tuple(shape_b)} is not supported: '
+                f'batch dimensions {batch_a} and {batch_b} do not broadcast -- {dim_a} and {dim_b} differ and '
+                'neither is 1.')
 
 
 @oprepo.replaces_operator('Array', 'MatMult')
@@ -38,6 +69,8 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
             raise SyntaxError('Matrix dimension mismatch %s != %s' % (arr1.shape[-1], arr2.shape[-2]))
 
         from dace.libraries.blas.nodes.matmul import _get_batchmm_opts
+
+        check_batched_matmul_support(visitor, arr1.shape, arr2.shape)
 
         # Determine batched multiplication (supports N-D tensors)
         bopt = _get_batchmm_opts(arr1.shape, arr1.strides, arr2.shape, arr2.strides, None, None)
@@ -108,6 +141,32 @@ def _matmult(visitor: ProgramVisitor, sdfg: SDFG, state: SDFGState, op1: str, op
     state.add_edge(tasklet, '_c', acc3, None, Memlet.from_array(op3, arr3))
 
     return op3
+
+
+@oprepo.replaces('dace.matmul')
+@oprepo.replaces('numpy.matmul')
+def matmul(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, op_a: str, op_b: str) -> str:
+    """
+    ``numpy.matmul(a, b)``. PEP 465 defines it as exactly what ``a @ b`` computes, so the function
+    spelling delegates to the operator implementation instead of growing a second one.
+
+    Supported ranks: 1-D x 1-D, 1-D x 2-D, 2-D x 1-D, and N-D x M-D with N, M >= 2, whose leading
+    dimensions are batched under the restriction of :func:`check_batched_matmul_support`. Mixing a
+    1-D operand with an operand of rank >= 3 is refused, since the promote-batch-demote result
+    NumPy computes for it has no implementation here.
+    """
+    for op in (op_a, op_b):
+        if not isinstance(op, str) or op not in sdfg.arrays:
+            raise DaceSyntaxError(pv, None, f'Operand "{op}" of numpy.matmul is not an SDFG array')
+
+    rank_a = len(sdfg.arrays[op_a].shape)
+    rank_b = len(sdfg.arrays[op_b].shape)
+    if (rank_a == 1) != (rank_b == 1) and max(rank_a, rank_b) > 2:
+        raise DaceSyntaxError(
+            pv, None, f'numpy.matmul of a {rank_a}-D and a {rank_b}-D operand is not supported '
+            '(a 1-D operand may only be combined with a 1-D or 2-D one)')
+
+    return _matmult(pv, sdfg, state, op_a, op_b)
 
 
 @oprepo.replaces('dace.dot')

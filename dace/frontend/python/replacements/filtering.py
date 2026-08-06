@@ -57,7 +57,7 @@ def _array_array_where(visitor: ProgramVisitor,
     (out_shape, all_idx_dict, out_idx, left_idx, right_idx) = broadcast_together(left_shape, right_shape)
 
     # Broadcast condition with broadcasted left+right
-    _, _, _, cond_idx, _ = broadcast_together(cond_shape, out_shape)
+    cond_out_shape, cond_all_idx_dict, cond_out_idx, cond_idx, _ = broadcast_together(cond_shape, out_shape)
 
     # Fix for Scalars
     if isinstance(left_arr, data.Scalar):
@@ -68,8 +68,15 @@ def _array_array_where(visitor: ProgramVisitor,
         cond_idx = subsets.Range([(0, 0, 1)])
 
     if left_arr is None and right_arr is None:
-        raise ValueError('Both x and y cannot be scalars in numpy.where')
-    storage = left_arr.storage if left_arr else right_arr.storage
+        # Both x and y are constants: NumPy broadcasts them against the condition, so the result -- and the
+        # iteration space -- is shaped like `cond`.
+        if cond_arr is None or isinstance(cond_arr, data.Scalar):
+            raise ValueError('numpy.where with scalar x, y and a scalar condition returns a 0-dimensional array, '
+                             'which DaCe cannot represent')
+        out_shape, all_idx_dict, out_idx = cond_out_shape, cond_all_idx_dict, cond_out_idx
+        storage = cond_arr.storage
+    else:
+        storage = left_arr.storage if left_arr else right_arr.storage
 
     out_operand, out_arr = sdfg.add_transient(visitor.get_target_name(),
                                               out_shape,
@@ -78,7 +85,13 @@ def _array_array_where(visitor: ProgramVisitor,
                                               find_new_name=True)
 
     if list(out_shape) == [1]:
-        tasklet = state.add_tasklet('_where_', {'__incond', '__in1', '__in2'}, {'__out'},
+        # Constant operands are inlined in the tasklet code, so they get no connector
+        in_connectors = {'__incond': None}
+        if left_arr:
+            in_connectors['__in1'] = None
+        if right_arr:
+            in_connectors['__in2'] = None
+        tasklet = state.add_tasklet('_where_', in_connectors, {'__out': None},
                                     '__out = {i1} if __incond else {i2}'.format(i1=tasklet_args[1], i2=tasklet_args[2]))
         n0 = state.add_read(cond_operand)
         n3 = state.add_write(out_operand)

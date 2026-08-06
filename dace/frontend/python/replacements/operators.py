@@ -364,11 +364,15 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
     else:  # Operators with 3 or more arguments
         restype = np_result_type(dtypes_for_result)
         coarse_result_type = None
-        if result_type in complex_types:
+        # ``restype``, not ``result_type``: the latter is this module's own function, so every test
+        # below compared a function object against a set of dtypes, never matched, and left
+        # coarse_result_type at 0 (unsigned). Every operand of every 3-or-more-argument ufunc was
+        # therefore cast, even when all of them already had the result's dtype.
+        if restype in complex_types:
             coarse_result_type = 3  # complex
-        elif result_type in float_types:
+        elif restype in float_types:
             coarse_result_type = 2  # float
-        elif result_type in signed_types:
+        elif restype in signed_types:
             coarse_result_type = 1  # signed integer, bool
         else:
             coarse_result_type = 0  # unsigned integer

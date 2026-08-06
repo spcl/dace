@@ -65,9 +65,7 @@ def update_map(op_in_map, uuid, new_misses, average=True):
 def calculate_op_in(op_in_map, work_map, stringify=False, assumptions={}):
     """ Calculates the operational intensity for each SDFG element from work and bytes loaded. """
     for uuid in op_in_map:
-        # work_map entries are (work, depth) tuples, as produced by work_depth.analyze_sdfg;
-        # we only need work.
-        work = work_map[uuid][0].subs(assumptions)
+        work = work_map[uuid].subs(assumptions)
         if work == 0 and op_in_map[uuid] == 0:
             op_in_map[uuid] = 0
         elif work != 0 and op_in_map[uuid] == 0:
@@ -643,7 +641,7 @@ def analyze_sdfg_op_in(sdfg: SDFG,
                 # save cache misses
                 curr_cache_misses = dict(curr_op_in_map)
 
-                work_measurements.append(work_map[get_uuid(sdfg)][0].subs(assumptions))
+                work_measurements.append(work_map[get_uuid(sdfg)].subs(assumptions))
                 # put curr values in cache_miss_measurements
                 for k, v in curr_cache_misses.items():
                     if k in cache_miss_measurements:

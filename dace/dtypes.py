@@ -11,7 +11,7 @@ import types
 from sympy import Float, Integer
 from collections import OrderedDict
 from functools import lru_cache, wraps
-from typing import Any, Dict, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from dace.config import Config
 
@@ -336,6 +336,10 @@ class typeclass(object):
             2. Enabling declaration syntax: `dace.float32[M,N]`
             3. Enabling extensions such as `dace.struct` and `dace.vector`
     """
+
+    #: Class-level default so `to_string`/`to_json` stay defined for the subclasses that build
+    #: themselves without `typeclass.__init__` (`struct`, `pointer`, `vector`).
+    typename: Optional[str] = None
 
     def __init__(self, wrapped_type, typename=None):
         # Convert python basic types
@@ -728,6 +732,9 @@ class struct(typeclass):
         # self._data = fields_and_types
         self.type = ctypes.Structure
         self.name = name
+        # `ctypes.Structure` is the same wrapped type for every struct, so the struct's own name is
+        # the only string that identifies it.
+        self.typename = name
         # TODO: Assuming no alignment! Get from ctypes
         # self.bytes = sum(t.bytes for t in fields_and_types.values())
         self.ctype = name
