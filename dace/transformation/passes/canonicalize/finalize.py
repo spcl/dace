@@ -36,15 +36,12 @@ from dace.transformation.dataflow import OTFMapFusion
 #: Map the canonicalize target string to the codegen device type.
 _TARGET_DEVICE = {'cpu': dtypes.DeviceType.CPU, 'gpu': dtypes.DeviceType.GPU}
 
-#: Per-dimension matmul extent at or below which canonicalization picks the inlined
-#: ``'pure'`` expansion (a fusible/vectorizable sequential loop nest) over a BLAS call.
-_SMALL_MATMUL_DIM = 256
-
-#: The row-wise (ikj) ``'pure'`` variant is selected only for *tiny* matmuls -- every
-#: dimension at most this. Its win (a vectorizable row update with a sequential K loop) is
-#: a register/cache-blocking effect that only pays off at very small sizes; a larger
-#: "small" matmul keeps the plain ``'pure'`` nest.
-_ROWWISE_MATMUL_DIM = 64
+#: Per-dimension matmul extent at or below which canonicalization picks an inlined expansion over
+#: a BLAS call. MEASURED against OpenBLAS at 64/128/256 cubed: OpenBLAS wins at every one of them
+#: (0.1/13/25 ms against 36/48/75 ms for plain ``'pure'``), because the plain nest emits one
+#: ``reduce_atomic`` per multiply-add. So the override is worth taking only where the BLAS call
+#: overhead really dominates, and only in the ``'rowwise'`` form, which carries no atomic.
+_SMALL_MATMUL_DIM = 32
 
 
 def _all_matmul_extents_small(state, node, limit: int) -> bool:
@@ -79,7 +76,7 @@ def canonicalize_fast_library_priority(device: dtypes.DeviceType):
       / device sort).
 
     Only impls whose environment is available on this host are listed, so forcing a pick never selects
-    an unbuilt library. ``MatMul``/``Gemm`` still get the tiny-matmul ``pure``/``rowwise`` override in
+    an unbuilt library. ``MatMul``/``Gemm`` still get the tiny-matmul ``rowwise`` override in
     :func:`canonicalize_set_fast_implementations`.
     """
     if device == dtypes.DeviceType.GPU:
@@ -103,10 +100,11 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
     OpenMP, cuBLAS/cuSolverDn/cuTENSOR/CUB, never MKL -- so EVERY library node the pipeline introduces
     (Reduce, Scan, Transpose, TensorTranspose, Symm, Cholesky, Solve, ...) lowers to its fast expansion
     rather than the serial ``pure`` loop. Then OVERRIDES any GEMM/MatMul whose every dimension is a
-    known constant at most ``small_dim`` to the inlined ``'pure'`` expansion. A tiny matmul's
-    BLAS/cuBLAS call is pure overhead, and -- unlike an opaque library call -- a sequential loop nest
-    is fusible/vectorizable and keeps a loop of small matmuls sequential instead of issuing serialized
-    library calls. Symbolic- or large-dimensioned matmuls keep the fast BLAS implementation.
+    known constant at most ``small_dim`` to the inlined ``'rowwise'`` expansion. A tiny matmul's
+    BLAS/cuBLAS call is pure overhead, and -- unlike an opaque library call -- a loop nest is
+    fusible/vectorizable and keeps a loop of small matmuls sequential instead of issuing serialized
+    library calls. Symbolic- or large-dimensioned matmuls keep the fast BLAS implementation, and so
+    does a node with no ``'rowwise'`` expansion.
     """
     set_fast_implementations(sdfg, device, blocklist=['MKL'], find_fast_library_fn=canonicalize_fast_library_priority)
     for node, state in sdfg.all_nodes_recursive():
@@ -146,14 +144,12 @@ def canonicalize_set_fast_implementations(sdfg: SDFG, device: dtypes.DeviceType,
             continue
         if 'pure' not in impls:
             continue
-        if _all_matmul_extents_small(state, node, small_dim):
-            # Prefer the row-wise (ikj) pure expansion for TINY GEMMs (every dim <= 64): a
-            # vectorizable row update with a sequential K accumulation. Larger small matmuls,
-            # and nodes without a 'rowwise' impl (e.g. MatMul), keep the plain 'pure' nest.
-            if 'rowwise' in impls and _all_matmul_extents_small(state, node, _ROWWISE_MATMUL_DIM):
-                node.implementation = 'rowwise'
-            else:
-                node.implementation = 'pure'
+        # Only the row-wise (ikj) expansion: a vectorizable row update with a sequential K
+        # accumulation and no atomic. The plain 'pure' nest is deliberately NOT selectable here --
+        # it reduces through one ``reduce_atomic`` per multiply-add and measured slower than
+        # OpenBLAS at every size tried. A node without 'rowwise' (e.g. MatMul) keeps its BLAS call.
+        if 'rowwise' in impls and _all_matmul_extents_small(state, node, small_dim):
+            node.implementation = 'rowwise'
 
 
 def finalize_transient_storage(sdfg: SDFG, device: dtypes.DeviceType) -> None:
