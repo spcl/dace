@@ -298,6 +298,14 @@ def result_type(arguments: Sequence[Union[str, Number, symbolic.symbol, sp.Basic
                 raise TypeError("unsupported operand type(s) for {}: "
                                 "'{}' and '{}'".format(operator, dtype1, dtype2))
             restype = np_result_type(dtypes_for_result)
+            # numpy shifts bools into int8 (``True << True == 2``); the other bitwise ops keep bool.
+            if operator in ('LShift', 'RShift') and restype == dtypes.bool_:
+                restype = dtypes.int8
+            # A signed/unsigned mix with no common integer type (e.g. int32 & uint64) promotes to
+            # float64 here, which numpy's bitwise ufuncs reject and C++ cannot express at all.
+            if restype != dtypes.bool_ and not np.issubdtype(restype.type, np.integer):
+                raise TypeError("unsupported operand type(s) for {}: "
+                                "'{}' and '{}'".format(operator, dtype1, dtype2))
             if dtype1 != restype:
                 left_cast = cast_str(restype)
             if dtype2 != restype:

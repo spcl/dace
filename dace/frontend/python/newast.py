@@ -86,6 +86,11 @@ augassign_ops = {
     'BitAnd': '&'
 }
 
+# Augmented bitwise operators, by their emitted symbol. The augassign path builds its tasklet code
+# directly instead of going through the operator replacements, so it has to ask for the result type
+# itself to reject the operand combinations numpy rejects.
+bitwise_augassign_ops = {'<<': 'LShift', '>>': 'RShift', '|': 'BitOr', '^': 'BitXor', '&': 'BitAnd'}
+
 # Mappings for determining variable name based on operator
 _UNOP_TO_NAME = {ast.UAdd: 'pos', ast.USub: 'neg', ast.Not: 'not', ast.Invert: 'inv'}
 _BINOP_TO_NAME = {
@@ -3103,6 +3108,14 @@ class ProgramVisitor(ExtNodeVisitor):
                     if str(sym) not in self.sdfg.symbols:
                         self.sdfg.add_symbol(str(sym), self.globals[str(sym)].dtype)
                 operand = symbolic.symstr(operand)
+
+        if op in bitwise_augassign_ops:
+            bitwise_args = [self.sdfg.arrays[wtarget_name]]
+            if op_name is not None:
+                bitwise_args.append(self.sdfg.arrays[op_name])
+            elif isinstance(operand, (Number, numpy.bool_)):
+                bitwise_args.append(operand)
+            replacements.operators.result_type(bitwise_args, bitwise_augassign_ops[op])
 
         indirect_indices = indirect_indices or {}
         tasklet_code = ''
