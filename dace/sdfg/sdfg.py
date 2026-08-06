@@ -49,6 +49,9 @@ class NestedDict(dict):
         super(NestedDict, self).__init__(mapping)
 
     def __getitem__(self, key):
+        # Fast path: an unqualified name has no members to walk, and this is on every sdfg.arrays[...]
+        if type(key) is str and '.' not in key:
+            return super(NestedDict, self).__getitem__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__getitem__(token)
@@ -63,6 +66,8 @@ class NestedDict(dict):
         super(NestedDict, self).__setitem__(key, val)
 
     def __contains__(self, key):
+        if type(key) is str and '.' not in key:  # fast path, as in __getitem__
+            return super(NestedDict, self).__contains__(key)
         tokens = key.split('.') if isinstance(key, str) else [key]
         token = tokens.pop(0)
         result = super(NestedDict, self).__contains__(token)

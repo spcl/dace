@@ -24,6 +24,7 @@ from dace.codegen.dispatcher import DefinedType
 from dace.codegen.prettycode import CodeIOStream
 from dace.config import Config
 from dace.frontend.python import astutils
+from dace.transformation.passes.analysis import scopes as scope_analysis
 from dace.frontend.python.astutils import ExtNodeTransformer, rname, unparse
 from dace.sdfg import nodes, graph as gr, propagation
 from dace.properties import LambdaProperty
@@ -636,14 +637,7 @@ def _check_range_conflicts(subset, a, itersym, b, step):
 
 
 def _check_map_conflicts(map, edge):
-    for itervar, (_, _, mapskip) in zip(map.params, map.range):
-        itersym = symbolic.pystr_to_symbolic(itervar)
-        a = sp.Wild('a', exclude=[itersym])
-        b = sp.Wild('b', exclude=[itersym])
-        if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
-            return False
-    # If matches all map params, good to go
-    return True
+    return not write_conflicted_map_params(map, edge)
 
 
 def _check_neighbor_conflicts(dfg, edge):
@@ -673,8 +667,10 @@ def _check_neighbor_conflicts(dfg, edge):
 
 def write_conflicted_map_params(map, edge):
     result = []
+    # Symbol identity includes the dtype, so the iterator must be the instance the subset carries.
+    itersyms = symbolic.symbols_in([edge.data.subset])
     for itervar, (_, _, mapskip) in zip(map.params, map.range):
-        itersym = symbolic.pystr_to_symbolic(itervar)
+        itersym = symbolic.resolve_symbol(itervar, itersyms)
         a = sp.Wild('a', exclude=[itersym])
         b = sp.Wild('b', exclude=[itersym])
         if not _check_range_conflicts(edge.data.subset, a, itersym, b, mapskip):
@@ -942,7 +938,7 @@ def unparse_tasklet(sdfg, cfg, state_id, dfg, node, function_stream, callsite_st
             memlets[vconn] = (memlet, False, None, conntype)
 
     # To prevent variables-redefinition, build dictionary with all the previously defined symbols
-    defined_symbols = state_dfg.symbols_defined_at(node)
+    defined_symbols = scope_analysis.defined_at(codegen._frame.symbol_scopes, state_dfg, node)
 
     defined_symbols.update({
         k: v.dtype if hasattr(v, 'dtype') else dtypes.typeclass(type(v))

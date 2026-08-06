@@ -105,7 +105,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
             #  for that. Clone the descriptor because the operation is inplace.
             inner_desc = nested_sdfg.sdfg.arrays[edge.dst_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if (not symbolic.same_value(outer_desc.shape, inner_desc.shape)
+                    or not symbolic.same_value(outer_desc.strides, inner_desc.strides)):
                 return False
 
         for edge in state.out_edges(nested_sdfg):
@@ -124,7 +125,8 @@ class InlineMultistateSDFG(transformation.SingleStateTransformation):
 
             inner_desc = nested_sdfg.sdfg.arrays[edge.src_conn].clone()
             symbolic.safe_replace(nested_sdfg.symbol_mapping, lambda m: replace_properties_dict(inner_desc, m))
-            if (outer_desc.shape != inner_desc.shape or outer_desc.strides != inner_desc.strides):
+            if (not symbolic.same_value(outer_desc.shape, inner_desc.shape)
+                    or not symbolic.same_value(outer_desc.strides, inner_desc.strides)):
                 return False
 
         if not helpers.isolate_nested_sdfg(state, nsdfg_node=nested_sdfg, test_if_applicable=True):
