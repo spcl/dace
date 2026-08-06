@@ -294,9 +294,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                         access_set = None
                         for node in container_dict[node_data]:
                             for e in graph.out_edges(node):
-                                if e.dst in map_entries:
+                                if e.dst in map_entries and e.dst_conn is not None:
                                     # get corresponding inner memlet and join its subset to our access set
                                     for oe in graph.out_edges(e.dst):
+                                        # An ordering edge has no connector and accesses no
+                                        # element, so it names no data to add to the access set.
+                                        if oe.src_conn is None:
+                                            continue
                                         if oe.src_conn[3:] == e.dst_conn[2:]:
                                             current_subset = dcpy(oe.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
@@ -306,9 +310,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                                                 warnings.warn("SubgraphFusion::Disjoint Access found")
                                                 return False
                             for e in graph.in_edges(node):
-                                if e.src in map_exits:
+                                if e.src in map_exits and e.src_conn is not None:
                                     for ie in graph.in_edges(e.src):
                                         # get corresponding inner memlet and join its subset to our access set
+                                        if ie.dst_conn is None:
+                                            continue
                                         if ie.dst_conn[2:] == e.src_conn[3:]:
                                             current_subset = dcpy(ie.data.subset)
                                             current_subset.pop(invariant_dimensions[node_data])
@@ -845,6 +851,11 @@ class SubgraphFusion(transformation.SubgraphTransformation):
             # TODO: dynamic map range -- this is fairly unrealistic in such a setting
             for edge in graph.in_edges(map_entry):
                 src = edge.src
+                # An ordering edge carries no connector, so it names no connector pair to
+                # rewire; it is re-anchored to the fused entry by the connector-less loop
+                # below, exactly as its outgoing counterpart is.
+                if edge.dst_conn is None:
+                    continue
                 out_edges = [
                     e for e in graph.out_edges(map_entry) if (e.src_conn and e.src_conn[3:] == edge.dst_conn[2:])
                 ]
@@ -881,6 +892,13 @@ class SubgraphFusion(transformation.SubgraphTransformation):
                     for out_edge in out_edges:
                         mm = dcpy(out_edge.data)
                         self.copy_edge(graph, out_edge, new_src=src, new_src_conn=None, new_data=mm)
+
+            for edge in graph.in_edges(map_entry):
+                # An ordering edge into the entry is a dependency, not an access: it has no
+                # connector to rewire, but dropping it would drop the sequencing it encodes,
+                # so it is re-anchored onto the fused entry.
+                if not edge.dst_conn:
+                    self.copy_edge(graph, edge, new_dst=global_map_entry)
 
             for edge in graph.out_edges(map_entry):
                 # special case: for nodes that have no data connections

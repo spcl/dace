@@ -30,16 +30,23 @@ from dace.transformation import transformation
 def _merge_assignments(first: Dict[str, str], second: Dict[str, str]) -> Optional[Dict[str, str]]:
     """Merge the assignments of two consecutive interstate edges onto one edge.
 
-    The assignments on a single interstate edge are **not ordered** -- they are
-    all evaluated against the symbol state on entry to the edge. Across the two
-    original edges they *are* ordered: ``second`` sees the values ``first``
-    wrote. So the merge is value-preserving exactly when no right-hand side in
-    ``second`` reads a symbol ``first`` assigns; otherwise that read would
-    silently change from the updated value to the stale one.
+    Across the two original edges the assignments are ordered: ``second`` sees
+    the values ``first`` wrote. On one edge they are not: an assignment may not
+    read a symbol the same edge writes at all -- validation rejects that shape
+    as a race (``validation.py``, "Race condition: inter-state assignment"),
+    because codegen emits the assignments of one edge sequentially in an
+    unspecified order. So a symbol written by either side and read by the other
+    blocks the merge, in **both** directions:
+
+    * ``second`` reads what ``first`` writes -- the read would silently change
+      from the updated value to the stale one;
+    * ``first`` reads what ``second`` writes -- sequentially that read sees the
+      old value, on the merged edge it may see the new one.
 
     A left-hand-side collision needs no guard: ``second`` overwrites ``first``
     both when run in sequence and in the merged dict, so the resulting value is
-    the same either way.
+    the same either way -- and the overwritten right-hand side is not carried
+    onto the merged edge, so it cannot race.
 
     :param first: Assignments of the edge entering the empty state.
     :param second: Assignments of the edge leaving it.
@@ -48,8 +55,15 @@ def _merge_assignments(first: Dict[str, str], second: Dict[str, str]) -> Optiona
     if not second:
         return dict(first)
     if first:  # membership-only: no need to copy the keys into a set first
+        # ``free_symbols_and_functions`` is the scan validation itself uses, so the guard
+        # accepts exactly the merges validation accepts.
         for rhs in second.values():
-            if any(str(s) in first for s in symbolic.pystr_to_symbolic(rhs).free_symbols):
+            if any(s in first for s in symbolic.free_symbols_and_functions(rhs)):
+                return None
+        for lhs, rhs in first.items():
+            if lhs in second:  # dropped by the overwrite below; never reaches the merged edge
+                continue
+            if any(s in second for s in symbolic.free_symbols_and_functions(rhs)):
                 return None
     merged = dict(first)
     merged.update(second)

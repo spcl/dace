@@ -59,7 +59,7 @@ sees a clean shape.
 import ast
 from typing import Any, Dict, Optional, Tuple
 
-from dace import SDFG
+from dace import SDFG, symbolic
 from dace.frontend.python import astutils
 from dace.sdfg import nodes
 from dace.sdfg.sdfg import InterstateEdge
@@ -339,7 +339,44 @@ def _find_destination(edge_region: ControlFlowRegion, key: str, rhs: str, sdfg: 
         return None  # L5: at least one step crossed a ConditionalBlock branch
     if not _meets_binding_rule(dest, edge_region, sdfg):
         return None
+    if not _lands_without_race(dest, _direct_child(dest, edge_region), key, rhs):
+        return None
     return dest
+
+
+def _lands_without_race(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str) -> bool:
+    """Whether ``key = rhs`` can join the edges it would land on without racing them.
+
+    The assignments on one interstate edge are unordered -- they all read the symbol state on
+    entry -- so validation rejects an edge where one assignment's rhs reads a symbol another
+    assignment on that same edge writes. Every guard above examines ``child``'s interior and its
+    predecessors; none looks at what the DESTINATION edge already assigns, which is how a hoisted
+    ``ip_index = ip[i]`` came to share an edge with the loop's own ``i = i + 1`` (TSVC s353).
+
+    Self-reference is not a race: ``k = k + 1`` reads the pre-edge value, and validation excludes
+    it for the same reason.
+
+    :param dest: The region the assignment would be placed in.
+    :param child: The block the assignment must dominate within ``dest``.
+    :param key: The assigned symbol name.
+    :param rhs: The assignment's right-hand-side expression.
+    :returns: ``True`` if the placement is race-free on every edge it would touch.
+    """
+    if child is None:
+        return True
+    rhs_syms = symbolic.free_symbols_and_functions(rhs)
+    for e in dest.in_edges(child):
+        existing = e.data.assignments
+        # Our rhs would read a symbol this edge already writes.
+        if any(s in existing for s in rhs_syms if s != key):
+            return False
+        # An assignment already on this edge reads the symbol we would write.
+        for other_key, other_rhs in existing.items():
+            if other_key == key:
+                continue
+            if key in symbolic.free_symbols_and_functions(other_rhs):
+                return False
+    return True
 
 
 def _place_assignment_at(dest: ControlFlowRegion, child: ControlFlowRegion, key: str, rhs: str):

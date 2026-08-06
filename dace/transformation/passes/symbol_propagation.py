@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from dace.sdfg.state import (
+    AbstractControlFlowRegion,
     ControlFlowBlock,
     ControlFlowRegion,
     ConditionalBlock,
@@ -53,6 +54,35 @@ def _mutated_scalar_names(sdfg: SDFG) -> Set[str]:
             if isinstance(desc, dt.Scalar):
                 mutated.add(n.data)
     return mutated
+
+
+def _meta_read_symbols(blk: ControlFlowBlock) -> Set[str]:
+    """Symbols read by a region's OWN meta code -- a conditional's branch conditions, a loop's
+    init / condition / update statements.
+
+    ``free_symbols`` answers "what must be supplied from OUTSIDE this block", so it subtracts
+    every symbol the region binds internally. A symbol that a region reads in its meta code and
+    *also* rebinds on an interstate edge inside its body therefore reads as "not free" -- yet the
+    meta code runs BEFORE the body, so that read is live and must keep the assignment feeding it
+    alive (argmax's ``if __rd0_best == __rd0_best`` over a branch body doing
+    ``__rd0_best = x[...]``; a ``while udiff > 1e-30`` over a body recomputing ``udiff``).
+    Counting these reads explicitly is what stops the dead-iedge sweep from deleting a LIVE
+    assignment and stranding the meta code on an undefined symbol.
+
+    :param blk: The control-flow block to inspect.
+    :returns: The names of symbols read by the block's own meta code blocks (empty for states).
+    """
+    if not isinstance(blk, AbstractControlFlowRegion):
+        return set()
+    names: Set[str] = set()
+    for code in blk.get_meta_codeblocks():
+        if code is None:
+            continue
+        try:
+            names |= {str(s) for s in code.get_free_symbols()}
+        except Exception:
+            pass
+    return names
 
 
 def _is_array_access(value: Optional[str]) -> bool:
@@ -286,6 +316,7 @@ class SymbolPropagation(ppl.Pass):
             used_in_ir: Set[str] = set()
             for blk in sd.all_control_flow_blocks():
                 used_in_ir |= {str(s) for s in blk.free_symbols}
+                used_in_ir |= _meta_read_symbols(blk)
             for e in sd.all_interstate_edges():
                 for rhs in e.data.assignments.values():
                     used_in_ir |= _free_symbols(rhs)

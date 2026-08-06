@@ -43,6 +43,27 @@ def test_dependent_assignment_blocks_merge():
     assert empty in sdfg.nodes()
 
 
+def test_first_reads_what_second_writes_blocks_merge():
+    """``k := k + 7`` overwrites what the first edge's ``m := k + 1`` reads.
+
+    Sequentially the read sees the old ``k``; on one edge the assignments are emitted in an
+    unspecified order, so validation rejects the merged edge as a race.
+    """
+    sdfg, empty = _chain({'m': 'k + 1'}, {'k': 'k + 7'})
+    assert EmptyStateElimination().apply_pass(sdfg, {}) is None
+    assert empty in sdfg.nodes()
+    sdfg.validate()
+
+
+def test_indirect_read_of_second_write_blocks_merge():
+    """TSVC s353 shape: ``ip_index := A[k]`` next to the loop's own ``k := k + 1``."""
+    sdfg, empty = _chain({'ip_index': 'A[k]'}, {'k': 'k + 1'})
+    sdfg.add_symbol('ip_index', dace.int64)
+    assert EmptyStateElimination().apply_pass(sdfg, {}) is None
+    assert empty in sdfg.nodes()
+    sdfg.validate()
+
+
 def test_lhs_collision_merges_to_second():
     """Both edges write ``m``; the later write wins either way."""
     sdfg, empty = _chain({'m': '1'}, {'m': '2'})
@@ -86,6 +107,8 @@ def test_merged_chain_is_value_preserving():
 if __name__ == '__main__':
     test_independent_assignments_merge()
     test_dependent_assignment_blocks_merge()
+    test_first_reads_what_second_writes_blocks_merge()
+    test_indirect_read_of_second_write_blocks_merge()
     test_lhs_collision_merges_to_second()
     test_conditional_successor_edge_is_kept()
     test_start_state_assignment_is_kept()

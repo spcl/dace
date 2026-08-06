@@ -271,16 +271,10 @@ def _determine_schedule_from_storage(state: SDFGState, node: nodes.Node) -> Opti
     if not constraints:  # No constraints found
         child_schedule = None
     elif len(constraints) > 1:
-        if dtypes.ScheduleType.GPU_Device in constraints:
-            # Mixed host/GPU storage around the node (e.g. an autodiff backward map reading
-            # GPU-resident gradients and a host-resident parameter): schedule on the GPU;
-            # explicit copy insertion downstream resolves the host-side operands.
-            child_schedule = dtypes.ScheduleType.GPU_Device
-        else:
-            raise validation.InvalidSDFGNodeError(
-                f'Cannot determine default schedule for node {node}. '
-                'Multiple arrays that point to it say that it should be the following schedules: '
-                f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
+        raise validation.InvalidSDFGNodeError(
+            f'Cannot determine default schedule for node {node}. '
+            'Multiple arrays that point to it say that it should be the following schedules: '
+            f'{constraints}', state.parent, state.parent.node_id(state), state.node_id(node))
     else:
         child_schedule = next(iter(constraints))
 

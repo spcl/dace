@@ -936,10 +936,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    outermost = self.graph.memlet_path(oedge)[-1].data
-                    if ((not outermost.is_empty()) and (outermost.data not in descs)
-                            and (outermost.data not in additional_descs)):
-                        additional_descs[outermost.data] = sdfg.arrays[outermost.data]
+                    last = self.graph.memlet_path(oedge)[-1]
+                    if last.data.is_empty():
+                        continue
+                    # Name the destination by the node the path LANDS ON, not by the terminal
+                    # memlet: a source-relative outgoing memlet still names the inner transient,
+                    # which is already in ``descs``, so trusting it drops the outer array -- and
+                    # its shape/stride symbols -- from the arglist, and codegen then emits a
+                    # signature referencing an undeclared identifier.
+                    dest = last.dst.data if isinstance(last.dst, nd.AccessNode) else last.data.data
+                    if dest not in descs and dest not in additional_descs:
+                        additional_descs[dest] = sdfg.arrays[dest]
 
             else:
                 # Case is ignored.
@@ -2955,7 +2962,12 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         node.sdfg = sdfg
         if isinstance(node, AbstractControlFlowRegion):
             for n in node.all_control_flow_blocks():
-                n.sdfg = self.sdfg
+                n.sdfg = sdfg
+            # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
+            # reports 0 -- the same id as the root and as every other unregistered region.
+            # Appending instead would assign positions in insertion order while this assigns
+            # them in tree order, so the next reset would silently renumber.
+            self.reset_cfg_list()
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -3925,6 +3937,9 @@ class ConditionalBlock(AbstractControlFlowRegion):
         # without its owning SDFG comes back owner-less. Insertion is what establishes ownership.
         for block in branch.all_control_flow_blocks():
             block.sdfg = self.sdfg
+        # A branch never passes through ``add_node``, so it would stay out of the CFG list and
+        # report ``cfg_id`` 0 -- colliding with the root and with every other branch.
+        self.reset_cfg_list()
 
     def remove_branch(self, branch: ControlFlowRegion):
         self._branches = [(c, b) for c, b in self._branches if b is not branch]

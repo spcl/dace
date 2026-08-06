@@ -312,18 +312,23 @@ def tuple_to_symexpr(val):
 
 
 def symbolic_range_tuple(value):
-    """Coerce a whole ``(start, end, step[, tile])`` range tuple to symbolic bounds.
+    """Coerce an assigned range entry so its bounds stay symbolic.
 
     ``Range`` promises symbolic bounds -- ``ndrange()`` is annotated ``SymbolicType`` and callers
     act on it, calling ``.match()``, ``.subs()`` or ``.free_symbols`` without checking. A raw
     Python ``int`` reaching a bound therefore does not fail where it was stored but much later,
     in an unrelated pass, as ``'int' object has no attribute 'match'``.
+
+    A ``(start, end, step[, tile])`` tuple is coerced element-wise. A single expression is also
+    accepted and coerced as-is: the indirection rewrite in the Python frontend assigns one index
+    expression per dimension (``newsubset[dim] = r.subs(...)``), so rejecting that shape would
+    break a legitimate caller rather than catch a mistake.
     """
-    if not isinstance(value, (tuple, list)):
-        raise TypeError(f'Expected a 3- or 4-tuple range, got {type(value).__name__}')
-    if len(value) not in (3, 4):
-        raise ValueError('Expected 3-tuple or 4-tuple')
-    return tuple(tuple_to_symexpr(v) for v in value)
+    if isinstance(value, (tuple, list)):
+        if len(value) not in (3, 4):
+            raise ValueError('Expected 3-tuple or 4-tuple')
+        return tuple(tuple_to_symexpr(v) for v in value)
+    return tuple_to_symexpr(value)
 
 
 @dace.serialize.serializable
