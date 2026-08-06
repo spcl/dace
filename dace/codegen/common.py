@@ -100,6 +100,18 @@ def unparse_interstate_edge(code_ast: Union[ast.AST, str], sdfg: SDFG, symbols=N
     return strio.getvalue().strip()
 
 
+def gpu_stream_expr(stream: Union[int, str]) -> str:
+    """Renders a ``_cuda_stream`` annotation as the C expression naming that stream.
+
+    The annotation indexes the context's stream array, except for ``'nullptr'``: the legacy default
+    stream lives outside it. Going through here keeps that stream an ordinary one, passed to work
+    and synchronized like any other.
+    """
+    if stream == 'nullptr':
+        return 'nullptr'
+    return f'__state->gpu_context->streams[{stream}]'
+
+
 @lru_cache()
 def get_gpu_backend() -> str:
     """

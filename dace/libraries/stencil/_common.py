@@ -201,7 +201,7 @@ def generate_boundary_conditions(node, shape, field_accesses, field_to_desc, ite
                     if i != len(indices) - 1:
                         cond_global.add(f"_i{i} >= {offset_str}")
                     elif offset >= veclen:
-                        offset_str = sym2cpp((shape[i] - offset) // veclen)
+                        offset_str = sym2cpp(dace.symbolic.int_floor(shape[i] - offset, veclen))
                         cond_global.add(f"_i{i} >= {offset_str}")
                 else:
                     continue

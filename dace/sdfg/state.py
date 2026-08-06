@@ -725,7 +725,7 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                     freesyms |= codesyms
                     continue
 
-            if hasattr(n, 'used_symbols'):
+            if isinstance(n, nd.NestedSDFG):
                 freesyms |= n.used_symbols(all_symbols)
             else:
                 freesyms |= n.free_symbols
@@ -921,16 +921,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+                # Same case as above, but for outgoing Memlets. Every edge on the matching connector
+                #   is inspected, since the data can go to more than one destination, and each is
+                #   followed to where it lands: one hop still names the inner transient whenever the
+                #   write leaves through more than one exit, as it does in a tiled map.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                    outermost = self.graph.memlet_path(oedge)[-1].data
+                    if ((not outermost.is_empty()) and (outermost.data not in descs)
+                            and (outermost.data not in additional_descs)):
+                        additional_descs[outermost.data] = sdfg.arrays[outermost.data]
 
             else:
                 # Case is ignored.
@@ -1212,8 +1213,13 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 edge.data.replace_dict(repl, replace_keys=replace_keys)
 
             # Replace in states
-            for state in self.nodes():
-                state.replace_dict(repl, symrepl)
+            for block in self.nodes():
+                # A nested region owns interstate edges of its own, so ``replace_keys`` must reach it:
+                # dropping it renames an assignment's uses but not its target, splitting one symbol in two.
+                if isinstance(block, AbstractControlFlowRegion):
+                    block.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
+                else:
+                    block.replace_dict(repl, symrepl)
 
 
 @make_properties
@@ -1313,11 +1319,8 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
                 continue
             setattr(result, k, copy.deepcopy(v, memo))
 
-        for k in ('_parent_graph', '_sdfg'):
-            if id(getattr(self, k)) in memo:
-                setattr(result, k, memo[id(getattr(self, k))])
-            else:
-                setattr(result, k, None)
+        result._parent_graph = memo.get(id(self._parent_graph))
+        result._sdfg = memo.get(id(self._sdfg))
 
         return result
 
@@ -2244,12 +2247,12 @@ class SDFGState(OrderedMultiDiConnectorGraph[nd.Node, mm.Memlet], ControlFlowBlo
         cur_memlet._is_data_src = (isinstance(src_node, nd.AccessNode) and src_node.data == cur_memlet.data)
 
         # Verify that connectors exist
-        if (not memlet.is_empty() and hasattr(edges[0].src, "out_connectors") and isinstance(edges[0].src, nd.CodeNode)
+        if (not memlet.is_empty() and isinstance(edges[0].src, nd.CodeNode)
                 and not isinstance(edges[0].src, nd.LibraryNode)
                 and (src_conn is None or src_conn not in edges[0].src.out_connectors)):
             raise ValueError("Output connector {} does not exist in {}".format(src_conn, edges[0].src.label))
-        if (not memlet.is_empty() and hasattr(edges[-1].dst, "in_connectors")
-                and isinstance(edges[-1].dst, nd.CodeNode) and not isinstance(edges[-1].dst, nd.LibraryNode)
+        if (not memlet.is_empty() and isinstance(edges[-1].dst, nd.CodeNode)
+                and not isinstance(edges[-1].dst, nd.LibraryNode)
                 and (dst_conn is None or dst_conn not in edges[-1].dst.in_connectors)):
             raise ValueError("Input connector {} does not exist in {}".format(dst_conn, edges[-1].dst.label))
 
@@ -2888,8 +2891,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         return super().add_edge(src, dst, data)
 
     def _ensure_unique_block_name(self, proposed: Optional[str] = None) -> str:
-        if self._labels is None or len(self._labels) != self.number_of_nodes():
-            self._labels = set(s.label for s in self.nodes())
+        # Ledger of issued names, refreshed every call: in-place renames keep the node count, so a
+        # count guard rots.
+        self._labels = (self._labels or set()) | {s.label for s in self.nodes()}
         return dt.find_new_name(proposed or 'block', self._labels)
 
     def add_node(self,
@@ -3780,7 +3784,7 @@ class LoopRegion(ControlFlowRegion):
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
 
-        super().replace_dict(repl, symrepl, replace_in_graph)
+        super().replace_dict(repl, symrepl, replace_in_graph, replace_keys)
 
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
@@ -3957,7 +3961,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
             replace_properties_dict(self, repl, symrepl)
 
         for cond, region in self._branches:
-            region.replace_dict(repl, symrepl, replace_in_graph)
+            region.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
             if cond is not None:
                 replace_in_codeblock(cond, repl)
 

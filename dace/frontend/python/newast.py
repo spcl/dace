@@ -702,7 +702,7 @@ class TaskletTransformer(ExtNodeTransformer):
         if name is not None:
             name += '_' + str(tasklet_ast.lineno)
         else:
-            name = getattr(tasklet_ast, 'name', 'tasklet_%d' % tasklet_ast.lineno)
+            name = tasklet_ast.name if isinstance(tasklet_ast, ast.FunctionDef) else 'tasklet_%d' % tasklet_ast.lineno
 
         if self.lang is None:
             self.lang = dtypes.Language.Python
@@ -1375,11 +1375,11 @@ class ProgramVisitor(ExtNodeVisitor):
             v: self.sdfg.process_grids[v]
             for k, v in self.variables.items() if v in self.sdfg.process_grids
         })
-        try:
+        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
+        # ImportError, so the availability question belongs in one place (see the helper's docstring).
+        if preprocessing.mpi4py_is_usable():
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-        except (ImportError, ModuleNotFoundError):
-            pass
 
         return result
 
@@ -2738,10 +2738,9 @@ class ProgramVisitor(ExtNodeVisitor):
         # Looking for the first argument in a tasklet annotation: @dace.tasklet(STRING HERE)
         langInf = None
         side_effects = None
-        if isinstance(node, ast.FunctionDef) and hasattr(node, 'decorator_list') and isinstance(
-                node.decorator_list, list) and len(node.decorator_list) > 0 and hasattr(
-                    node.decorator_list[0], 'args') and isinstance(node.decorator_list[0].args, list) and len(
-                        node.decorator_list[0].args) > 0 and hasattr(node.decorator_list[0].args[0], 'value'):
+        if isinstance(node, ast.FunctionDef) and len(node.decorator_list) > 0 and hasattr(
+                node.decorator_list[0], 'args') and isinstance(node.decorator_list[0].args, list) and len(
+                    node.decorator_list[0].args) > 0 and hasattr(node.decorator_list[0].args[0], 'value'):
 
             langArg = node.decorator_list[0].args[0].value
             langInf = dtypes.Language[langArg]
@@ -4422,8 +4421,8 @@ class ProgramVisitor(ExtNodeVisitor):
         func: Callable[..., Any]
         _, func, _ = self.closure.callbacks[funcname]
 
-        skip_args = getattr(node, 'skip_args', [])
-        skip_kwargs = getattr(node, 'skip_keywords', [])
+        skip_args = node.skip_args
+        skip_kwargs = node.skip_keywords
 
         # Infer the type of the function arguments and return value
         argtypes = []
@@ -4482,19 +4481,19 @@ class ProgramVisitor(ExtNodeVisitor):
             for child in ast.iter_child_nodes(anode):
                 if child is node:
                     parent = anode
-                    parent_is_toplevel = getattr(anode, 'toplevel', False)
+                    parent_is_toplevel = anode.toplevel
                     break
                 if hasattr(child, 'func') and hasattr(child.func, 'oldnode'):
                     # Check if the AST node is part of a failed parse
                     if child.func.oldnode is node:
                         parent = anode
-                        parent_is_toplevel = getattr(anode, 'toplevel', False)
+                        parent_is_toplevel = anode.toplevel
                         break
                 if hasattr(child, 'elts'):  # Tuples, e.g., in multiple return values
                     for subchild in child.elts:
                         if subchild is node:
                             parent = anode
-                            parent_is_toplevel = getattr(anode, 'toplevel', False)
+                            parent_is_toplevel = anode.toplevel
                             break
                     if parent is not None:
                         break
@@ -4738,10 +4737,8 @@ class ProgramVisitor(ExtNodeVisitor):
             try:
                 if hasattr(func, "name"):
                     name = func.name
-                elif hasattr(func, "__class__"):
-                    name = func.__class__.__name__
                 else:
-                    name = "call"
+                    name = type(func).__name__
                 call_region = FunctionCallRegion(label=f"{name}_{node.lineno}", arguments=[])
                 self.cfg_target.add_node(call_region, ensure_unique_name=True)
                 self._on_block_added(call_region)
@@ -5215,8 +5212,8 @@ class ProgramVisitor(ExtNodeVisitor):
             # Check for SDFG as fallback
             func = oprepo.Replacements.getop(op1type, opname, otherclass=op2type)
             if func is None:
-                op1name = getattr(op1type, '__name__', op1type)
-                op2name = getattr(op2type, '__name__', op2type)
+                op1name = op1type.__name__ if isinstance(op1type, type) else op1type
+                op2name = op2type.__name__ if isinstance(op2type, type) else op2type
                 raise DaceSyntaxError(self, node, f'Operator {opname} is not defined for types {op1name} and {op2name}')
 
         self._add_state('%s_%d' % (type(node).__name__, node.lineno))

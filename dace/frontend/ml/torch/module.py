@@ -133,6 +133,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             self.inputs_to_skip = inputs_to_skip or []
 
             self.function = None
+            self._gradient_buffers: Optional[List[str]] = None
 
             #: hooks that are executed after onnx graph is imported to an SDFG
             self.post_onnx_hooks: OrderedDict[str, Callable[[DaceModule], None]] = collections.OrderedDict()
@@ -462,7 +463,7 @@ if TORCH_AVAILABLE and ONNX_AVAILABLE:
             """
 
             assert self.sdfg is not None
-            if hasattr(self, '_gradient_buffers'):
+            if self._gradient_buffers is not None:
                 return self._gradient_buffers
 
             buffers = []

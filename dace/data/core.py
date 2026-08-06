@@ -155,7 +155,7 @@ class Data:
 
     @property
     def veclen(self):
-        return self.dtype.veclen if hasattr(self.dtype, "veclen") else 1
+        return self.dtype.veclen
 
     @property
     def ctype(self):
@@ -193,7 +193,9 @@ class Data:
         for dim in dimensions:
             strides[dim] = total_size
             if not only_first_aligned or first:
-                dimsize = (((self.shape[dim] + alignment - 1) // alignment) * alignment)
+                # int_ceil, never `//`: `(N + a - 1) // a` builds sympy `floor(...)`, whose argument
+                # sym2cpp prints WITHOUT the floor, truncating each term (N=1, a=8 gives 0, not 8).
+                dimsize = symbolic.int_ceil(self.shape[dim], alignment) * alignment
             else:
                 dimsize = self.shape[dim]
             total_size *= dimsize
@@ -370,9 +372,11 @@ class Array(Data):
          the first element, e.g., in the case of halo or "ghost cells" in stencils).
        * The ``total_size`` property determines how large the total allocation size is. Normally, it is the product of
          the ``shape`` elements, but if pre- or post-padding is involved it may be larger.
-       * ``alignment`` provides alignment guarantees (in bytes) of the first element in the allocated array. This is
-         used by allocators in the code generator to ensure certain addresses are expected to be aligned, e.g., for
-         vectorization.
+       * ``alignment`` serves as an alignment _hint_ that might or might not be honored, depending on the backend and
+         selected standard. A value of ``0``, the default, indicates "default alignment", a negative value indicates
+         no alignment requirements.
+         The GPU backend ignores the alignment hint entirely. The CPU backend will use aligned ``new`` allocations if
+         requested and C++17 and later is used, otherwise normal ``new`` expressions are used.
        * Lastly, a property called ``offset`` controls the logical access of the array, i.e., what would be the first
          element's index after padding and alignment. This mimics a language feature prominent in scientific languages
          such as FORTRAN, where one could set an array to begin with 1, or any arbitrary index. By default this is set
@@ -426,7 +430,7 @@ class Array(Data):
                          default=False,
                          desc='This pointer may alias with other pointers in the same function')
 
-    alignment = Property(dtype=int, default=0, desc='Allocation alignment in bytes (0 uses compiler-default)')
+    alignment = Property(dtype=int, default=0, desc='Allocation alignment hint in bytes.')
 
     start_offset = Property(dtype=int, default=0, desc='Allocation offset elements for manual alignment (pre-padding)')
     optional = Property(dtype=bool,

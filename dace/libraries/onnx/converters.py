@@ -15,8 +15,9 @@ Key Functions:
 - clean_onnx_name: Sanitize ONNX names for valid DaCe identifiers
 """
 
+import functools
 import re
-from typing import Union
+from typing import Callable, Dict, Union
 
 import onnx
 from dace import config, dtypes as dt
@@ -105,29 +106,30 @@ def convert_onnx_proto(attribute):
     raise NotImplementedError("No conversion implemented for {} (type {})".format(attribute, type(attribute)))
 
 
-def convert_attribute_proto(proto):
-    #  we cache the reverse map as an attribute of the method
-    if hasattr(convert_attribute_proto, "inv_map"):
-        inv_map = convert_attribute_proto.inv_map
-    else:
-        inv_map = {}
-        for k, v in onnx.AttributeProto.AttributeType.items():
-            if k == "FLOAT":
-                inv_map[v] = lambda attr: get_proto_attr(attr, "f")
-            elif k == "FLOATS":
-                inv_map[v] = lambda attr: list(get_proto_attr(attr, "floats"))
-            elif k == "INT":
-                inv_map[v] = lambda attr: get_proto_attr(attr, "i")
-            elif k == "INTS":
-                inv_map[v] = lambda attr: list(get_proto_attr(attr, "ints"))
-            elif k == "STRING":
-                inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode('utf-8')
-            elif k == "STRINGS":
-                inv_map[v] = lambda attr: list(map(lambda x: x.decode('utf-8'), get_proto_attr(attr, "strings")))
-            elif k == "TENSOR":
-                inv_map[v] = lambda attr: to_array(get_proto_attr(attr, "t"))
+@functools.cache
+def attribute_proto_converters() -> Dict[int, Callable]:
+    """Maps ONNX AttributeProto type enums to the function extracting their value."""
+    inv_map = {}
+    for k, v in onnx.AttributeProto.AttributeType.items():
+        if k == "FLOAT":
+            inv_map[v] = lambda attr: get_proto_attr(attr, "f")
+        elif k == "FLOATS":
+            inv_map[v] = lambda attr: list(get_proto_attr(attr, "floats"))
+        elif k == "INT":
+            inv_map[v] = lambda attr: get_proto_attr(attr, "i")
+        elif k == "INTS":
+            inv_map[v] = lambda attr: list(get_proto_attr(attr, "ints"))
+        elif k == "STRING":
+            inv_map[v] = lambda attr: get_proto_attr(attr, "s").decode('utf-8')
+        elif k == "STRINGS":
+            inv_map[v] = lambda attr: list(map(lambda x: x.decode('utf-8'), get_proto_attr(attr, "strings")))
+        elif k == "TENSOR":
+            inv_map[v] = lambda attr: to_array(get_proto_attr(attr, "t"))
+    return inv_map
 
-        convert_attribute_proto.inv_map = inv_map
+
+def convert_attribute_proto(proto):
+    inv_map = attribute_proto_converters()
 
     onnx_type = get_proto_attr(proto, "type")
 
@@ -162,30 +164,25 @@ ONNX_DTYPES_TO_DACE_TYPE_CLASS = {
 }
 
 
-def typeclass_to_onnx_tensor_type_int(dtype: typeclass) -> int:
-    #  we cache the reverse map as an attribute of the method
-    if not hasattr(typeclass_to_onnx_tensor_type_int, "inv_map"):
-        typeclass_to_onnx_tensor_type_int.inv_map = {
-            v: getattr(onnx.TensorProto.DataType, k.upper())
-            for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()
-        }
+@functools.cache
+def typeclass_to_onnx_tensor_type_map() -> Dict[typeclass, int]:
+    return {v: getattr(onnx.TensorProto.DataType, k.upper()) for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
 
-    return typeclass_to_onnx_tensor_type_int.inv_map[dtype]
+
+def typeclass_to_onnx_tensor_type_int(dtype: typeclass) -> int:
+    return typeclass_to_onnx_tensor_type_map()[dtype]
+
+
+@functools.cache
+def onnx_tensor_type_to_typeclass_map() -> Dict[int, typeclass]:
+    return {
+        v: ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
+        for k, v in onnx.TensorProto.DataType.items() if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS
+    }
 
 
 def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
-    #  we cache the reverse map as an attribute of the method
-    if hasattr(onnx_tensor_type_to_typeclass, "inv_map"):
-        inv_map = onnx_tensor_type_to_typeclass.inv_map
-    else:
-        k: str
-        v: int
-        inv_map = {}
-        for k, v in onnx.TensorProto.DataType.items():
-            if k.lower() in ONNX_DTYPES_TO_DACE_TYPE_CLASS:
-                inv_map[v] = ONNX_DTYPES_TO_DACE_TYPE_CLASS[k.lower()]
-
-        onnx_tensor_type_to_typeclass.inv_map = inv_map
+    inv_map = onnx_tensor_type_to_typeclass_map()
 
     if elem_type not in inv_map:
         raise ValueError("Got unsupported ONNX tensor type: {}".format({
@@ -196,12 +193,13 @@ def onnx_tensor_type_to_typeclass(elem_type: int) -> typeclass:
     return inv_map[elem_type]
 
 
+@functools.cache
+def typeclass_to_onnx_str_map() -> Dict[typeclass, str]:
+    return {v: k for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
+
+
 def typeclass_to_onnx_str(dtype: typeclass) -> str:
-    #  we cache the reverse map as an attribute of the method
-    if hasattr(typeclass_to_onnx_str, "inv_map"):
-        inv_map = typeclass_to_onnx_str.inv_map
-    else:
-        inv_map = {v: k for k, v in ONNX_DTYPES_TO_DACE_TYPE_CLASS.items()}
+    inv_map = typeclass_to_onnx_str_map()
 
     if dtype not in inv_map:
         raise ValueError("Attempted to convert unsupported dace type to ONNX type: {}".format(dtype))
