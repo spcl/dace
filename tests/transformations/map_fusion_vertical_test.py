@@ -3463,6 +3463,138 @@ def test_ordering_edge_beside_an_inout_read():
     assert np.allclose(res["a"], ref), "fusing beside the ordering edge changed the result"
 
 
+def _make_partially_written_shared_intermediate_sdfg() -> dace.SDFG:
+    """Builds the mark/search pattern of CloudSC's selection sort.
+
+    The mark Map contains a NestedSDFG that writes a single element
+    `A[i - 1, idx[i - 1] - 1]` per iteration, but its connector Memlet claims the
+    whole array (a frontend's conservative widening for a data dependent index).
+    The search Map contains a NestedSDFG that reads full rows of `A`, again with a
+    whole array connector Memlet. `A` is non transient, i.e. shared data, and
+    Fortran layout, matching the original bug.
+    """
+    N = dace.symbol("N")
+
+    # The inner mark SDFG: writes one element, the connector claims the full array.
+    inner_mark = dace.SDFG("mark_inner")
+    inner_mark.add_symbol("i", dace.int32)
+    inner_mark.add_symbol("N", dace.int32)
+    inner_mark.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    inner_mark.add_scalar("idx_at", dace.int32, transient=False)
+    istate = inner_mark.add_state()
+    ia = istate.add_access("A")
+    iidx = istate.add_access("idx_at")
+    t = istate.add_tasklet("mark", {"_in_idx": dace.int32}, {"_out": dace.bool_}, "_out = 0")
+    istate.add_edge(iidx, None, t, "_in_idx", dace.Memlet("idx_at[0]"))
+    istate.add_edge(t, "_out", ia, None, dace.Memlet("A[i - 1, idx_at - 1]"))
+
+    # The inner search SDFG: reads one row, the connector claims the full array.
+    inner_search = dace.SDFG("search_inner")
+    inner_search.add_symbol("j", dace.int32)
+    inner_search.add_symbol("N", dace.int32)
+    inner_search.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    inner_search.add_array("B", (N, ), dace.int32)
+    istate2 = inner_search.add_state()
+    ia2 = istate2.add_access("A")
+    ib2 = istate2.add_access("B")
+    t2i = istate2.add_tasklet("search", {"_a": dace.pointer(dace.bool_)}, {"_b": dace.int32},
+                              "_b = _a[0] + _a[1] + _a[2] + _a[3] + _a[4]")
+    istate2.add_edge(ia2, None, t2i, "_a", dace.Memlet("A[j - 1, 0:5]"))
+    istate2.add_edge(t2i, "_b", ib2, None, dace.Memlet("B[j - 1]"))
+
+    sdfg = dace.SDFG(unique_name("partial_write_shared_intermediate"))
+    sdfg.add_array("A", (N, 5), dace.bool_, strides=(1, N))
+    sdfg.add_array("idx", (N, ), dace.int32)
+    sdfg.add_array("B", (N, ), dace.int32)
+
+    # `A[:, :] = True`
+    s0 = sdfg.add_state("init")
+    a0 = s0.add_access("A")
+    me0, mx0 = s0.add_map("init_map", {"ii": "0:N", "jj": "0:5"})
+    t0 = s0.add_tasklet("one", {}, {"_o": dace.bool_}, "_o = 1")
+    s0.add_edge(me0, None, t0, None, dace.Memlet())
+    s0.add_edge(t0, "_o", mx0, "IN_1", dace.Memlet("A[ii, jj]"))
+    s0.add_edge(mx0, "OUT_1", a0, None, dace.Memlet("A[0:N, 0:5]"))
+    mx0.add_in_connector("IN_1")
+    mx0.add_out_connector("OUT_1")
+
+    s1 = sdfg.add_state("main")
+    a1 = s1.add_access("A")
+    idx1 = s1.add_access("idx")
+    b1 = s1.add_access("B")
+
+    me1, mx1 = s1.add_map("mark_map", {"i": "1:N + 1"})
+    me1.add_in_connector("IN_1")
+    me1.add_out_connector("OUT_1")
+    mx1.add_in_connector("IN_1")
+    mx1.add_out_connector("OUT_1")
+    nsdfg = s1.add_nested_sdfg(inner_mark, {"idx_at": dace.int32}, {"A": dace.bool_},
+                               symbol_mapping={
+                                   "i": "i",
+                                   "N": "N"
+                               })
+    # Pinned: `generate_code` inlines host nested SDFGs, and inlining this one drops the `idx_at`
+    # descriptor while leaving `idx_at` in the `A[i - 1, idx_at - 1]` subset, so the SDFG still
+    # validates but `arglist()` raises `KeyError: 'idx_at'` (a separate InlineSDFG bug). Pinning also
+    # keeps the shape this test is about -- a NestedSDFG producer -- intact through compilation.
+    nsdfg.no_inline = True
+    s1.add_edge(idx1, None, me1, "IN_1", dace.Memlet("idx[0:N]"))
+    s1.add_edge(me1, "OUT_1", nsdfg, "idx_at", dace.Memlet("idx[i - 1]"))
+    s1.add_edge(nsdfg, "A", mx1, "IN_1", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(mx1, "OUT_1", a1, None, dace.Memlet("A[0:N, 0:5]"))
+
+    me2, mx2 = s1.add_map("search_map", {"j": "1:N + 1"})
+    me2.add_in_connector("IN_2")
+    me2.add_out_connector("OUT_2")
+    mx2.add_in_connector("IN_1")
+    mx2.add_out_connector("OUT_1")
+    nsdfg2 = s1.add_nested_sdfg(inner_search, {"A": dace.bool_}, {"B": dace.int32}, symbol_mapping={"j": "j", "N": "N"})
+    nsdfg2.no_inline = True
+    s1.add_edge(a1, None, me2, "IN_2", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(me2, "OUT_2", nsdfg2, "A", dace.Memlet("A[0:N, 0:5]"))
+    s1.add_edge(nsdfg2, "B", mx2, "IN_1", dace.Memlet("B[0:N]"))
+    s1.add_edge(mx2, "OUT_1", b1, None, dace.Memlet("B[0:N]"))
+
+    sdfg.add_edge(s0, s1, dace.InterstateEdge())
+    sdfg.validate()
+    return sdfg
+
+
+def test_map_fusion_partial_write_of_shared_intermediate_not_fused():
+    """A NestedSDFG producer that only partially writes its shared intermediate must
+    not be fused.
+
+    The connector Memlets of both Maps claim the whole array, so the claim based
+    coverage test sees a pointwise producer/consumer pair. But the mark NestedSDFG
+    writes a single element per iteration, so the privatized per-iteration buffer
+    is mostly undefined; the search Map then reads garbage and the shared mode
+    write back copies it over the whole shared array (the CloudSC `llindex1`/
+    `iorder` segfault). The fusion must be refused; without the guard this test
+    fails on the numerics comparison (or crashes).
+    """
+    sdfg = _make_partially_written_shared_intermediate_sdfg()
+
+    n = 8
+    idx = np.array([5, 4, 3, 2, 1, 5, 4, 3], dtype=np.int32)
+    A_ref = np.zeros((n, 5), dtype=np.bool_, order="F")
+    B_ref = np.full(n, -1, dtype=np.int32)
+    compile_and_run_sdfg(sdfg, A=A_ref, idx=idx, B=B_ref, N=n)
+    assert np.all(B_ref == 4), "reference broken"
+
+    maps_before = count_nodes(sdfg, nodes.MapEntry)
+    with dace.config.temporary_config():
+        dace.Config.set("optimizer", "match_exception", value=True)
+        applied = sdfg.apply_transformations_repeated(MapFusionVertical(strict_dataflow=True))
+    assert applied == 0, "partial write of a shared intermediate must not be fused"
+    assert count_nodes(sdfg, nodes.MapEntry) == maps_before
+
+    A_res = np.zeros((n, 5), dtype=np.bool_, order="F")
+    B_res = np.full(n, -1, dtype=np.int32)
+    compile_and_run_sdfg(sdfg, A=A_res, idx=idx, B=B_res, N=n)
+    assert np.array_equal(A_ref, A_res)
+    assert np.array_equal(B_ref, B_res)
+
+
 def test_map_fusion_is_deprecated() -> None:
     with pytest.deprecated_call(match="MapFusion is deprecated"):
         MapFusion()

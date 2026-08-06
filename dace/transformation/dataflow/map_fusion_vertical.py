@@ -753,6 +753,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             #  to avoid it to recompute it again later.
             reduced_intermediate_shape_cache: Dict[subsets.Subset, Tuple[int, ...]] = {}
 
+            # NestedSDFG producers together with the edge that connects them to the
+            #  first MapExit, needed for the shared-mode write-coverage check below.
+            nsdfg_producer_leaves: List[Tuple[nodes.NestedSDFG, graph.MultiConnectorEdge[dace.Memlet]]] = []
+
             # Now check the constraints we have on the producers.
             #   - The source of the producer can not be a view (we do not handle this)
             #   - The edge shall also not be a reduction edge.
@@ -799,6 +803,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 outer_edge=final_producer_edge,
                         ):
                             return None
+                        nsdfg_producer_leaves.append((final_producer, final_producer_edge))
 
                 producer_subsets.append(producer_edge.data.dst_subset)
                 assert producer_subsets[-1] not in reduced_intermediate_shape_cache
@@ -942,6 +947,27 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  TODO(phimuell): Lift this restriction, the exclusive branch handles it.
                 if producer_edges[0].data.data != intermediate_node.data:
                     return None
+
+                # In shared mode the intermediate is privatized into a per-iteration buffer
+                #  that the fused Map writes back to the shared data. If a NestedSDFG producer
+                #  claims (through its connector Memlet) to write the whole intermediate but
+                #  actually only writes part of it -- e.g. a single element behind a
+                #  data-dependent index, for which a frontend conservatively widened the
+                #  Memlet -- the unwritten part of the privatized buffer is undefined and
+                #  would be copied back over the shared data (and read by the consumer).
+                #  The claim-based coverage test above cannot see this, because it compares
+                #  the widened connector Memlets, which trivially cover each other. Refuse
+                #  the fusion in that case (CloudSC `llindex1`/`iorder` selection sort).
+                for nsdfg_producer, producer_leaf_edge in nsdfg_producer_leaves:
+                    if not self._nsdfg_producer_fully_defines_intermediate(
+                            nsdfg=nsdfg_producer,
+                            producer_leaf_edge=producer_leaf_edge,
+                            intermediate_node=intermediate_node,
+                            first_map_exit=first_map_exit,
+                            sdfg=sdfg,
+                    ):
+                        return None
+
                 shared_outputs.add(out_edge)
             else:
                 # The intermediate can be removed, as it is not used anywhere else.
@@ -2103,6 +2129,88 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 return True
 
         # There is no reason for us to allow it.
+        return False
+
+    def _nsdfg_producer_fully_defines_intermediate(
+        self,
+        nsdfg: nodes.NestedSDFG,
+        producer_leaf_edge: graph.MultiConnectorEdge[dace.Memlet],
+        intermediate_node: nodes.AccessNode,
+        first_map_exit: nodes.MapExit,
+        sdfg: SDFG,
+    ) -> bool:
+        """Check if a NestedSDFG producer fully defines the intermediate it claims to write.
+
+        The connector Memlet of a NestedSDFG producer is a *claim*; frontends widen it
+        conservatively (e.g. to the whole array when the write index is data dependent).
+        In shared mode the intermediate is privatized into a fresh per-iteration buffer
+        that is written back to the shared data, so the claim must actually be fulfilled
+        by the NestedSDFG's body -- otherwise undefined data is read back and copied over
+        the shared intermediate.
+
+        This check is only applied when the claimed write covers the *whole*
+        intermediate (the case in which inner and outer coordinates coincide, because
+        the connector passes the full array). Partial claims are left to the regular
+        claim-based machinery. For a whole-array claim at least one inner write --
+        translated through the NestedSDFG's symbol mapping -- must cover the whole
+        intermediate. Subsets referencing anything but outer symbols and Map
+        parameters (e.g. a data container used as index) make coverage undecidable
+        and are refused.
+
+        :note: Writes are unioned across states, which over-approximates conditional
+            control flow (a write behind a branch counts). This is conservative in the
+            permissive direction only for bodies whose alternative branches each fully
+            define the intermediate anyway.
+
+        :param nsdfg: The NestedSDFG that produces the intermediate.
+        :param producer_leaf_edge: The edge connecting the NestedSDFG to the first
+            MapExit (the leaf of the producer Memlet tree).
+        :param intermediate_node: The intermediate AccessNode.
+        :param first_map_exit: The exit of the first (producing) Map.
+        :param sdfg: The SDFG in which the fusion is performed.
+        """
+        intermediate_desc = intermediate_node.desc(sdfg)
+        claimed = producer_leaf_edge.data.dst_subset
+        if claimed is None:
+            return False
+        if isinstance(claimed, subsets.Indices):
+            claimed = subsets.Range.from_indices(claimed)
+        full_range = subsets.Range.from_array(intermediate_desc)
+
+        # Only whole-array claims are handled here; partial claims use the regular machinery.
+        if not (full_range.covers(claimed) and claimed.covers(full_range)):
+            return True
+
+        inner_sdfg = nsdfg.sdfg
+        inner_data = producer_leaf_edge.src_conn
+        if inner_sdfg is None or inner_data not in inner_sdfg.arrays:
+            return False
+
+        # Symbols a translated inner write may legitimately reference.
+        allowed_symbols = set(map(str, sdfg.symbols)) | set(map(str, first_map_exit.map.params))
+
+        for inner_state in inner_sdfg.states():
+            for inner_node in inner_state.nodes():
+                if not (isinstance(inner_node, nodes.AccessNode) and inner_node.data == inner_data):
+                    continue
+                for inner_edge in inner_state.in_edges(inner_node):
+                    if inner_edge.data.is_empty():
+                        continue
+                    if inner_edge.data.data == inner_data:
+                        write_subset = inner_edge.data.dst_subset
+                    else:
+                        write_subset = inner_edge.data.other_subset
+                    if write_subset is None:
+                        # No subset means the whole container is written.
+                        write_subset = subsets.Range.from_array(inner_node.desc(inner_sdfg))
+                    write_subset = copy.deepcopy(write_subset)
+                    if isinstance(write_subset, subsets.Indices):
+                        write_subset = subsets.Range.from_indices(write_subset)
+                    symbolic.safe_replace(mapping=nsdfg.symbol_mapping, replace_callback=write_subset.replace)
+                    if not set(map(str, write_subset.free_symbols)).issubset(allowed_symbols):
+                        return False
+                    if write_subset.covers(full_range):
+                        return True
         return False
 
     def _updated_inner_strides_of_nested_sdfg(
