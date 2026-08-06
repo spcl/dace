@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.replacements.array_creation import _infer_arange
 import numpy as np
 from common import compare_numpy_output
@@ -379,27 +378,31 @@ def test_zeros_symbolic_size_scalar():
 
 
 def test_ones_scalar_size_scalar():
+    """An array whose size comes from a scalar argument rather than a symbol.
+
+    The scalar is promoted to a symbol, so ``a`` is a transient sized at call
+    time; only the reduction escapes, and a scalar the caller can allocate.
+    """
 
     @dace.program
     def ones_scalar_size(k: dace.int32):
         a = np.ones(k, dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20
+    out = ones_scalar_size(20)
+    assert out == 20
 
 
 def test_ones_scalar_size():
+    """Two-dimensional counterpart of :func:`test_ones_scalar_size_scalar`."""
 
     @dace.program
     def ones_scalar_size(k: dace.int32):
         a = np.ones((k, k), dtype=np.uint32)
         return np.sum(a)
 
-    with pytest.raises(DaceSyntaxError):
-        out = ones_scalar_size(20)
-        assert out == 20 * 20
+    out = ones_scalar_size(20)
+    assert out == 20 * 20
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import dace
 import numpy as np
 import pytest
 
-from dace.frontend.python.common import DaceSyntaxError, SDFGConvertible
+from dace.frontend.python.common import SDFGConvertible
 from dace.transformation.pass_pipeline import FixedPointPipeline
 
 
@@ -675,7 +675,14 @@ def test_constant_proper_use_2():
     assert np.allclose(arr, 2)
 
 
-def test_constant_misuse():
+def test_constant_runtime_value():
+    """A run-time value passed where a ``dace.compiletime`` parameter is declared.
+
+    The annotation asks for a value known at parse time and the caller has none
+    to give, but nothing in the callee actually needs one: ``a_bool`` only
+    decides a branch, which is expressible at run time. So the call lowers to an
+    ordinary conditional and computes what Python would.
+    """
 
     @dace.program
     def bad_function(scal: dace.compiletime, arr):
@@ -691,8 +698,11 @@ def test_constant_misuse():
     arr = np.ones((12), np.float64)
     scal = 2
 
-    with pytest.raises(DaceSyntaxError):
-        program(arr, scal)
+    regression = np.ones((12), np.float64)
+    program.f(regression, scal)
+
+    program(arr, scal)
+    assert np.allclose(arr, regression)
 
 
 def test_constant_field():
@@ -748,5 +758,5 @@ if __name__ == '__main__':
     test_constant_propagation_2()
     test_constant_proper_use()
     test_constant_proper_use_2()
-    test_constant_misuse()
+    test_constant_runtime_value()
     test_constant_field()

@@ -22,6 +22,7 @@ from dace.memlet import Memlet
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
+from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.nextgen.common import FrontendError, UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access
@@ -80,6 +81,29 @@ def _reject_deferred_size(shape, value: ast.expr, statement: ast.Return, state: 
         'write into a caller-allocated output.', state.context.filename, statement)
 
 
+def _reject_disagreeing_shape(return_name: str, shape, value: ast.expr, statement: ast.Return, state: LoweringState):
+    """
+    Refuse a second ``return`` that hands back a different shape from the first
+    (``if c: return <20 elements>`` against ``else: return <30 elements>``).
+
+    A compiled program has ONE return container, and its caller allocates the
+    memory before the call -- so a size chosen at run time has nowhere to live.
+    Without this the later ``return`` simply copied its own extent into the
+    container the first one sized, writing past the end of it.
+
+    Raised as :class:`~dace.frontend.python.common.DaceSyntaxError`, the class
+    the stable frontend raises for the same program and the one callers already
+    catch, rather than this frontend's own hierarchy.
+    """
+    existing = state.context.containers.get(return_name)
+    if existing is None or list(existing.shape) == list(shape):
+        return
+    raise DaceSyntaxError(
+        None, statement, f'Return value "{astutils.unparse(value)}" has shape {tuple(shape)}, but an earlier return '
+        f'in the same program has shape {tuple(existing.shape)}. A compiled program returns one container, whose '
+        'memory its caller allocates before the call, so every return must agree on the shape.')
+
+
 def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.Return, state: LoweringState) -> str:
     # Compile-time Python sequences materialize as constant containers first
     if isinstance(value, ast.Name):
@@ -112,6 +136,7 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
         shape = access.numpy_shape or [1]
         if not transient:
             _reject_deferred_size(shape, value, statement, state)
+        _reject_disagreeing_shape(return_name, shape, value, statement, state)
         if return_name not in state.context.containers:
             source = access.descriptor
             if isinstance(source, data.Array) and list(source.shape) == list(shape):
@@ -143,6 +168,7 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
         shape = list(source.shape) if isinstance(source, data.Array) else [1]
         if not transient:
             _reject_deferred_size(shape, value, statement, state)
+        _reject_disagreeing_shape(return_name, shape, value, statement, state)
         if return_name not in state.context.containers:
             return_name = state.context.add_container(return_name, data.Array(source.dtype, shape), transient=transient)
         descriptor = state.context.containers[return_name]
@@ -156,6 +182,7 @@ def _materialize_return_value(return_name: str, value: ast.expr, statement: ast.
                                       state.context.filename,
                                       statement,
                                       category='type-inference')
+    _reject_disagreeing_shape(return_name, [1], value, statement, state)
     if return_name not in state.context.containers:
         return_name = state.context.add_container(return_name, data.Array(dtype, [1]), transient=transient)
     tasklet = nodes.Tasklet(f'return_{statement.lineno}', set(), {'__out'}, f'__out = {astutils.unparse(value)}')

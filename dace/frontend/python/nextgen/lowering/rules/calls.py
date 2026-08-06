@@ -736,6 +736,28 @@ def _sdfg_call_argument(argument: ast.expr, state: LoweringState) -> Any:
     return inferred.value
 
 
+def _sdfg_call_argument(argument: ast.expr, state: LoweringState) -> str:
+    """
+    The text an SDFG call passes for one argument: the repository container a
+    name is bound to, or the argument as written when it denotes no container.
+
+    A name and the container behind it part ways as soon as the name is
+    rebound -- ``new_sym = anotherarray`` binds ``new_sym`` to the closure's
+    ``__g_anotherarray`` -- and the consumer of this call
+    (:meth:`~dace.sdfg.analysis.schedule_tree.tree_to_sdfg.
+    ScheduleTreeToSDFG.visit_SDFGCallNode`) matches the text against the
+    caller's containers to tell a data argument from a symbolic one. Handing it
+    the source name makes a container argument look symbolic, and the callee's
+    parameter is then added as a symbol of an SDFG that already has a data
+    descriptor under that name.
+    """
+    if isinstance(argument, ast.Name):
+        binding = state.context.resolve(argument.id)
+        if binding is not None and binding.kind == 'container' and binding.container in state.context.containers:
+            return binding.container
+    return astutils.unparse(argument)
+
+
 def _lower_sdfg_call(target: Optional[ast.expr], call: ast.Call, sdfg: Any, statement: ast.stmt,
                      state: LoweringState) -> None:
     """
@@ -748,10 +770,10 @@ def _lower_sdfg_call(target: Optional[ast.expr], call: ast.Call, sdfg: Any, stat
     arguments: Dict[str, str] = {}
     argument_names = list(getattr(sdfg, 'arg_names', None) or [])
     for name, argument in zip(argument_names, call.args):
-        arguments[name] = astutils.unparse(argument)
+        arguments[name] = _sdfg_call_argument(argument, state)
     for keyword in call.keywords:
         if keyword.arg is not None:
-            arguments[keyword.arg] = astutils.unparse(keyword.value)
+            arguments[keyword.arg] = _sdfg_call_argument(keyword.value, state)
 
     return_targets: List[str] = []
     result_copy: Optional[tn.CopyNode] = None

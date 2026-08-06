@@ -59,6 +59,20 @@ def merge_branches(before: BindingSnapshot, branch_ends: List[BindingSnapshot],
     :param state: The active lowering state.
     :raises UnsupportedFeatureError: If the bindings cannot be merged soundly.
     """
+    # A path that ends in a ``return`` never reaches the join, so what it bound
+    # cannot be read afterwards and must not constrain the merge. Without this,
+    # ``if c: tmp = <20 elements>; return tmp`` against ``else: tmp = <30
+    # elements>; return tmp[0:20]`` refused on a shape mismatch for a name
+    # nothing can observe, and the control-flow rule re-lowered the whole chain
+    # -- its ``return`` statements included -- as one Python callback. A
+    # ``return`` cannot execute in a callback, so the program's result was
+    # simply never written.
+    returning = [_path_returns(scope) for scope in branch_scopes]
+    if all(returning):
+        return  # No path reaches the join; the caller's restored state stands
+    branch_ends = [end for end, ends_in_return in zip(branch_ends, returning) if not ends_in_return]
+    branch_scopes = [scope for scope, ends_in_return in zip(branch_scopes, returning) if not ends_in_return]
+
     names = set(before.bindings)
     for end in branch_ends:
         names.update(end.bindings)
@@ -137,6 +151,21 @@ def merge_branches(before: BindingSnapshot, branch_ends: List[BindingSnapshot],
                                                        other_subset=Range.from_array(merged_descriptor)))
             scope.add_child(merge_node)
         state.context.bind(name, merged)
+
+
+def _path_returns(scope: Optional[tn.ScheduleTreeScope]) -> bool:
+    """
+    Whether control leaves a branch path through a ``return`` rather than
+    falling out of its scope.
+
+    Only an unconditional tail return counts: a ``return`` nested inside the
+    path's own control flow leaves the fall-through alive, and that path does
+    reach the join. ``None`` is the implicit fall-through of a chain without
+    ``else``, which by construction returns nothing.
+    """
+    if scope is None or not scope.children:
+        return False
+    return isinstance(scope.children[-1], tn.ReturnNode)
 
 
 def _same_binding(a: Binding, b: Binding, a_static, b_static) -> bool:

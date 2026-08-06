@@ -4,7 +4,6 @@ Tests for numpy advanced indexing syntax. See also:
 https://numpy.org/devdocs/reference/arrays.indexing.html
 """
 import dace
-from dace.frontend.python.common import DaceSyntaxError
 import numpy as np
 import pytest
 
@@ -212,6 +211,11 @@ def test_index_boolarr_rhs():
 
 
 def test_index_multiboolarr():
+    """Two boolean masks selecting along both axes at once.
+
+    NumPy pairs the masks elementwise -- ``A[B, B]`` is the diagonal restricted
+    to the positions where ``B`` holds -- so this scatters into those entries.
+    """
 
     @dace.program
     def indexing_test(A: dace.float64[20, 20], B: dace.bool[20]):
@@ -220,11 +224,13 @@ def test_index_multiboolarr():
     A = np.ndarray((20, 20), dtype=np.float64)
     for i in range(20):
         A[i, :] = np.arange(0, 20)
-    B = A[:, 1] > 0
+    B = (A[:, 1] > 0).copy()
 
-    # Advanced indexing with multiple boolean arrays should be disallowed
-    with pytest.raises(DaceSyntaxError):
-        indexing_test(A, B)
+    regression = np.copy(A)
+    regression[B, B] = 2
+
+    indexing_test(A, B)
+    assert np.allclose(A, regression)
 
 
 def test_index_boolarr_fixed():

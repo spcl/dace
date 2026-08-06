@@ -3,8 +3,6 @@
 
 import dace
 import numpy as np
-import pytest
-from dace.frontend.python.common import DaceSyntaxError
 
 rng = np.random.default_rng(42)
 
@@ -111,7 +109,13 @@ def test_reassignment_while():
 
 def test_reassignment_view():
     """
-    Tests the disallowed behavior of reassigning to a view
+    Tests conditionally rebinding a name between two closure arrays, then
+    writing through it.
+
+    The two branches bind ``new_sym`` to different containers, so the name
+    merges through a reference that each branch re-points. The write inside
+    ``func`` therefore has to land in whichever array the taken branch chose,
+    and leave the other one alone.
     """
     anarray = np.ones((3, ))
     anotherarray = np.ones((3, ))
@@ -130,11 +134,10 @@ def test_reassignment_view():
             new_sym = anarray
         func(new_sym)
 
-    with pytest.raises(DaceSyntaxError):
-        testf(maybe_none=1.0)
+    testf(maybe_none=1.0)
 
-    # assert np.allclose(anarray, 7.0)
-    # assert np.allclose(anotherarray, 1.0)
+    assert np.allclose(anarray, 7.0)
+    assert np.allclose(anotherarray, 1.0)
 
     # Compile-time None can still be used (removed during preprocessing)
     testf()
@@ -143,8 +146,8 @@ def test_reassignment_view():
 
 if __name__ == "__main__":
 
-    test_reassignment_simple()
+    # test_reassignment_simple()
     test_reassignment_if()
-    test_reassignment_for()
-    test_reassignment_while()
-    test_reassignment_view()
+    # test_reassignment_for()
+    # test_reassignment_while()
+    # test_reassignment_view()
