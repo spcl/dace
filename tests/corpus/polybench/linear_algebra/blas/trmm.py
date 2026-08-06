@@ -10,6 +10,9 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{M: 20, N: 30}, {M: 60, N: 80}, {M: 200, N: 240}, {M: 1000, N: 1200}, {M: 2000, N: 2600}]
 
+#: ported from npbench bench_info trmm.json benchmark.parameters.paper
+paper_sizes = {M: 1000, N: 1200}
+
 args = [
     ([M, M], datatype),
     ([M, N], datatype),

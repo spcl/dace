@@ -11,12 +11,13 @@ suite uniformly.
 Datasets are selected by a named preset. polybench carries five sizes
 (mini..extra-large); npbench carries one fused dataset that the loader clamps via
 ``cap``; tsvc sweeps one extent per kernel regime; tsvc_2_5 evaluates its declared
-extents at a symbol table. The presets below pick a small/fast shape (``S``) and a
-larger, performance-realistic shape (``paper``) for each suite, sized to stay
-CI-tractable.
+extents at a symbol table. The presets below pick a small/fast shape (``S``, the
+CI-tractable one) and each suite's own published shape (``paper``, what a reported
+speedup has to be measured at).
 """
 import inspect
-from typing import Callable, Dict, List, Tuple
+import os
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -29,22 +30,47 @@ from tests.corpus.tsvc.tsvc_numpy import REFERENCES as _TS_REF
 from tests.corpus.tsvc_2_5 import tsvc_2_5 as _T25
 from tests.corpus.tsvc_2_5 import tsvc_2_5_numpy as _T25_REF
 
-#: preset -> polybench ``sizes`` index (0=mini .. 4=extra-large).
-_POLY_PRESET = {'S': 0, 'paper': 2}
-#: preset -> npbench integer-symbol clamp (npbench's fused dataset is perf-sized,
-#: e.g. N=400000; clamp to a CI-tractable shape that still exercises real loops).
-_NP_PRESET = {'S': 32, 'paper': 256}
+
+def int_or_none(value: str) -> Optional[int]:
+    """``''`` -> ``None`` (npbench's "no clamp"), anything else -> its integer value."""
+    return int(value) if value.strip() else None
+
+
+#: ``paper`` means each suite's OWN published shape, not a CI-tractable stand-in: on a 72-thread
+#: node the previous clamps put whole kernels in the tens of microseconds, where OpenMP fork/join
+#: dominates and a speedup number measures the runtime rather than the code. Every one of the four
+#: is env-overridable so dialling a sweep back is an export, not an edit and a redeploy.
+#: preset -> polybench ``sizes`` index (0=mini .. 4=extra-large). LARGE, not EXTRA-LARGE: the
+#: time-stepped kernels (heat_3d, seidel_2d, adi, fdtd_2d) carry TSTEPS as well as N, so index 4
+#: costs minutes per kernel per arm and six arms times 50 reps does not fit a 4 h job.
+_POLY_PRESET = {'S': 0, 'paper': int(os.environ.get('CORPUS_POLY_PAPER_INDEX', '3'))}
+#: preset -> npbench integer-symbol clamp. ``None`` = npbench's own fused dataset, which is already
+#: the perf-sized one (N=400000 for azimint, 4096 for spmv). Note a small native size is NOT the
+#: clamp: permute_3d really is N=128 upstream.
+_NP_PRESET = {'S': 32, 'paper': int_or_none(os.environ.get('CORPUS_NP_PAPER_CAP', ''))}
 #: preset -> tsvc swept extent, ``(1d regime, 2d regime)``; the non-swept extent
 #: follows from ``tsvc.regime_sizes``. ``S`` is the corpus's own default length.
-#: ``paper`` scales it, bounded by the one kernel that is quadratic in ``LEN_1D``
-#: (s176) -- the numpy oracles are scalar Python loops, so the reference run, not
-#: the compiled kernel, is what a large extent costs.
-_TSVC_PRESET = {'S': (64, 16), 'paper': (1024, 128)}
+#: ``paper`` is TSVC's own LEN_1D. The bound is s176, the one kernel quadratic in LEN_1D: the numpy
+#: oracles are scalar Python loops, so its CORRECTNESS run (once per kernel, not per rep) costs
+#: O(LEN_1D**2) interpreter iterations while every other kernel's is linear and free.
+_TSVC_PRESET = {
+    'S': (64, 16),
+    'paper': (int(os.environ.get('CORPUS_TSVC_PAPER_LEN1D',
+                                 '32000')), int(os.environ.get('CORPUS_TSVC_PAPER_LEN2D', '256'))),
+}
 #: preset -> tsvc_2_5 overrides on its ``SIZES`` symbol table. Only the ``LEN_*``
 #: extents scale: the rest are tuned strides, thresholds and tile sizes that must
 #: keep their values (and ``LEN_R7`` must stay a multiple of 7 -- its kernels
 #: reroll by 7).
-_T25_PRESET = {'S': {}, 'paper': {'LEN_1D': 1024, 'LEN_2D': 128, 'LEN_3D': 32, 'LEN_R7': 7 * 144}}
+_T25_PRESET = {
+    'S': {},
+    'paper': {
+        'LEN_1D': int(os.environ.get('CORPUS_T25_PAPER_LEN1D', '32000')),
+        'LEN_2D': int(os.environ.get('CORPUS_T25_PAPER_LEN2D', '256')),
+        'LEN_3D': int(os.environ.get('CORPUS_T25_PAPER_LEN3D', '64')),
+        'LEN_R7': 7 * int(os.environ.get('CORPUS_T25_PAPER_R7_BLOCKS', '4096')),
+    },
+}
 
 PRESETS = ('S', 'paper')
 
@@ -96,12 +122,12 @@ def make(suite: str, name: str, preset: str = 'S') -> Dict:
     """Build inputs + reference for one kernel at ``preset``; return a context dict."""
     if suite == 'poly':
         k = _PB.collect(name)[0]
-        arrays, psize = _PB.make_inputs(k, size_index=_POLY_PRESET[preset], cap=None)
+        arrays, psize = _PB.make_inputs(k, size_index=_POLY_PRESET[preset], cap=None, paper=(preset == 'paper'))
         ref = _PB.reference(k, arrays, psize)
         return dict(suite=suite, name=name, k=k, arrays=arrays, psize=psize, ref=ref)
     if suite == 'np':
         c = _NB.collect(name)[0]
-        arrays, params = _NB.make_inputs(c, cap=_NP_PRESET[preset])
+        arrays, params = _NB.make_inputs(c, cap=_NP_PRESET[preset], preset=preset)
         ref = _NB.reference_outputs(c, arrays, params)
         return dict(suite=suite, name=name, c=c, arrays=arrays, params=params, ref=ref)
     if suite == 'tsvc':

@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'N': 400000, 'npt': 1000}
+PAPER_SIZES = {'N': 1000000, 'npt': 1000}
 INPUT_ARGS = ('N', 'npt')
 ARRAY_ARGS = ('data', 'radius', 'res')
 SCALARS = {}
@@ -54,6 +55,7 @@ def kernel(data: dc_float[N], radius: dc_float[N]):
 CORPUS = dict(name='azimint_naive',
               dwarf='map_reduce',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

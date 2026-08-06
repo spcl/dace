@@ -30,6 +30,8 @@ sizes = [{
     NJ: 2300,
     NK: 2600
 }]
+#: ported from npbench bench_info gemm.json parameters.paper
+paper_sizes = {NI: 2000, NJ: 2300, NK: 2600}
 
 args = [([NI, NJ], datatype), ([NI, NK], datatype), ([NK, NJ], datatype), ([1], datatype), ([1], datatype)]
 

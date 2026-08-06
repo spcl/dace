@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'M': 4096, 'N': 4096, 'nnz': 8192}
+PAPER_SIZES = {'M': 131072, 'N': 131072, 'nnz': 262144}
 INPUT_ARGS = ('M', 'N', 'nnz')
 # initialize returns the CSR triplet (indptr, indices, data) then x, y -- name them
 # so both the numpy reference (A_data/A_indices/A_indptr/x/y) and the dace kernel
@@ -56,6 +57,7 @@ def kernel(A_data: dc_float[nnz], A_indices: dc.uint32[nnz], A_indptr: dc.uint32
 CORPUS = dict(name='spmv',
               dwarf='sparse_linear_algebra',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

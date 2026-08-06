@@ -12,6 +12,7 @@ def rng_complex(shape, rng, datatype):
 
 
 SIZES = {'Nkz': 2, 'NE': 4, 'Nqz': 2, 'Nw': 2, 'N3D': 2, 'NA': 6, 'NB': 2, 'Norb': 3}
+PAPER_SIZES = {'Nkz': 4, 'NE': 10, 'Nqz': 4, 'Nw': 3, 'N3D': 3, 'NA': 20, 'NB': 4, 'Norb': 4}
 INPUT_ARGS = ('Nkz', 'NE', 'Nqz', 'Nw', 'N3D', 'NA', 'NB', 'Norb')
 ARRAY_ARGS = ('neigh_idx', 'dH', 'G', 'D', 'Sigma')
 SCALARS = {}
@@ -70,6 +71,7 @@ def kernel(neigh_idx: dc.int32[NA, NB], dH: dc_complex_float[NA, NB, N3D, Norb, 
 CORPUS = dict(name='scattering_self_energies',
               dwarf='dense_linear_algebra',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

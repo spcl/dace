@@ -16,6 +16,7 @@ def rng_complex(shape, rng, datatype):
 # to 16, which would collapse 50 and 150 to an equal 16 and wrongly trip the square
 # ``np.linalg.inv`` branch -- so keep NR != NM with distinct sub-cap sizes.
 SIZES = {'NR': 8, 'NM': 12, 'slab_per_bc': 2, 'num_int_pts': 32}
+PAPER_SIZES = {'NR': 500, 'NM': 1000, 'slab_per_bc': 2, 'num_int_pts': 32}
 INPUT_ARGS = ('NR', 'NM', 'slab_per_bc', 'num_int_pts')
 ARRAY_ARGS = ('Ham', 'int_pts', 'Y', 'P0', 'P1')
 SCALARS = {}
@@ -72,6 +73,7 @@ def kernel(Ham: dc_complex_float[slab_per_bc + 1, NR, NR], int_pts: dc_complex_f
 CORPUS = dict(name='contour_integral',
               dwarf='dense_linear_algebra',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

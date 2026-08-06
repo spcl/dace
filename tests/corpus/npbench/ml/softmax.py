@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'N': 16, 'H': 16, 'SM': 128}
+PAPER_SIZES = {'N': 64, 'H': 16, 'SM': 512}
 INPUT_ARGS = ('N', 'H', 'SM')
 ARRAY_ARGS = ('x', 'out')
 SCALARS = {}
@@ -49,6 +50,7 @@ def softmax_gpu(x: dc_float[N, H, SM, SM], out: dc_float[N, H, SM, SM]):
 CORPUS = dict(name='softmax',
               dwarf='ml',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

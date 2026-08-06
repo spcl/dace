@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'M': 2000, 'N': 2000}
+PAPER_SIZES = {'M': 12500, 'N': 12500}
 INPUT_ARGS = ('M', 'N')
 ARRAY_ARGS = ('array_1', 'array_2', 'a', 'b', 'c', 'out')
 SCALARS = {}
@@ -40,6 +41,7 @@ def kernel(array_1: dc.int64[M, N], array_2: dc.int64[M, N], a: dc.int64, b: dc.
 CORPUS = dict(name='compute',
               dwarf='map_reduce',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

@@ -8,6 +8,16 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'xmin': -2.0, 'xmax': 0.5, 'XN': 200, 'ymin': -1.25, 'ymax': 1.25, 'YN': 200, 'maxiter': 40, 'horizon': 2.0}
+PAPER_SIZES = {
+    'xmin': -2.25,
+    'xmax': 0.75,
+    'XN': 1000,
+    'ymin': -1.25,
+    'ymax': 1.25,
+    'YN': 1000,
+    'maxiter': 200,
+    'horizon': 2.0
+}
 INPUT_ARGS = ('XN', 'YN')
 ARRAY_ARGS = ('Z_out', 'N_out')
 SCALARS = {}
@@ -97,6 +107,7 @@ def kernel(xmin: dc_float, xmax: dc_float, ymin: dc_float, ymax: dc_float, maxit
 CORPUS = dict(name='mandelbrot2',
               dwarf='map_reduce',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

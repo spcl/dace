@@ -14,7 +14,7 @@ groups, see below). Three files, nothing else.
 ## The six arms
 
 One row per column of the figure. Every arm is built from the SAME base flag string
-(`-ffp-contract=off` included) and adds only its own flags, runs at the same `OMP_NUM_THREADS`, is
+(`-ffp-contract=fast` included) and adds only its own flags, runs at the same `OMP_NUM_THREADS`, is
 value-compared against the corpus reference, and is timed on the same rank as every other arm of
 the same kernel.
 
@@ -129,7 +129,7 @@ cmake/compiler child inherits. Do not vary them between compared arms.
 
 | var | why |
 |:--|:--|
-| `DACE_compiler_cpu_args` | the ONE base flag string. `-ffp-contract=off`: bit-exact comparison dies under FP contraction |
+| `DACE_compiler_cpu_args` | the ONE base flag string. `-ffp-contract=` must be explicit (gcc defaults to `fast`, clang to `on`, so omitting it makes the compiler columns incomparable); `-ffast-math` is rejected, since associative math lets each compiler reassociate reductions differently |
 | `OMP_NUM_THREADS` | cores / 4, so 4 ranks do not oversubscribe. Identical for every arm, and gcc's `-ftree-parallelize-loops` is derived from it. `OMP_PROC_BIND=close`, `OMP_PLACES=cores` |
 | `CANON_PERF_ARMS` | `1` = the six arms (the job). `0` before submitting drops to the two g++ DaCe pipelines, for a smoke run on a box without a polyhedral clang |
 | `DACE_cache_distaware` | `1`, plus a per-rank build folder; without it ranks load libraries other ranks are still writing |

@@ -241,9 +241,21 @@ _PROBE_SRC = ('void probe_scop(double *__restrict__ A, double *__restrict__ B, d
 #: The ONE base flag set EVERY arm is built with; an arm adds only its own flags on top, so the
 #: comparison differs in nothing else. Defaults to the string ``submit_corpus_perf.sh`` pins, and
 #: defers to that pin when the job already exported it.
+#:
+#: NOT -ffast-math: it implies -freciprocal-math and -fassociative-math, which let each compiler
+#: reassociate reductions its own way, so the gcc and clang columns of the same pipeline stop
+#: computing the same expression and the table compares two different programs. The individually
+#: safe relaxations are named instead -- no errno on math calls, no FP traps, no signed-zero
+#: distinction -- none of which changes the association order.
+#:
+#: -ffp-contract is pinned EXPLICITLY, and the value matters less than the pin: gcc defaults to
+#: ``fast`` while clang defaults to ``on`` for C++, so leaving it out silently fuses differently in
+#: the two compiler columns. ``fast`` lets both emit FMA, which is what an -O3 -march=native
+#: measurement should be showing. Correctness stays checkable because the corpus compares floats at
+#: a per-precision tolerance (``polybench.outputs_match``), not bit-exactly.
 _BASE_ARGS = os.environ.get(
-    'DACE_compiler_cpu_args',
-    '-std=c++14 -fPIC -Wall -Wextra -O3 -march=native -ffast-math -fno-finite-math-only -ffp-contract=off')
+    'DACE_compiler_cpu_args', '-std=c++20 -fPIC -Wall -Wextra -O3 -march=native -fno-math-errno '
+    '-fno-trapping-math -fno-signed-zeros -ffp-contract=fast')
 
 #: One knob per compiler column and one per external pass, all overridable so a variant (a
 #: different thread count, ``-polly-vectorizer``, another GCC) is a sweep, not an edit.
@@ -252,13 +264,17 @@ _CLANG = os.environ.get('CANON_PERF_CLANG_CXX', 'clang++')
 #: gcc's auto-parallelizer takes its thread count as a compile-time flag. It is a HEURISTIC input,
 #: not the runtime width: the emitted GOMP_parallel still runs on OMP_NUM_THREADS threads.
 _THREADS = os.environ.get('OMP_NUM_THREADS', '4')
-#: MEASURED on g++ 15.2: with Graphite in the same command line, parloops stops parallelizing a
-#: 4096x4096 affine nest somewhere between 33 and 48, and emits NO GOMP_parallel at 48 or 72 --
-#: silently turning the gcc autopar arm into plain -O3. Without Graphite it parallelizes at 72, so
-#: the interaction is Graphite's, not the thread count's. -floop-parallelize-all does not override
-#: it and neither does --param parloops-min-per-thread. Capping only the compile-time hint keeps
-#: Graphite AND the parallelization, and costs nothing at run time.
-_AUTOPAR_HINT_CAP = int(os.environ.get('CANON_PERF_GCC_AUTOPAR_HINT_CAP', '32'))
+#: The hint is the FULL runtime width by default, so the arm asks gcc for the parallelism the job
+#: actually runs with. The cap exists because of a MEASURED suppression: on g++ 15.2 (x86), with
+#: Graphite in the same command line, parloops stops parallelizing a 4096x4096 affine nest somewhere
+#: between 33 and 48 and emits NO GOMP_parallel at 48 or 72 -- silently turning this arm into plain
+#: -O3. Without Graphite it parallelizes at 72, so the interaction is Graphite's, not the thread
+#: count's, and neither -floop-parallelize-all nor --param parloops-min-per-thread overrides it.
+#: That is compiler-and-target specific, so it is not defaulted around: ``probe_arm`` refuses to
+#: register an autopar arm whose probe object has no GOMP_parallel undefined symbol, which turns
+#: suppression into a launch failure rather than a fabricated column. Set
+#: CANON_PERF_GCC_AUTOPAR_HINT_CAP to fall back to a working width if a toolchain trips it.
+_AUTOPAR_HINT_CAP = int(os.environ.get('CANON_PERF_GCC_AUTOPAR_HINT_CAP', _THREADS))
 _AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 #: Graphite is folded into the gcc autopar arm and Polly into the llvm one -- the user's table has
 #: six columns, and a polyhedral restructuring nobody then parallelizes answers no question the
@@ -404,16 +420,24 @@ def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
     Probes EVERY arm before registering any, so an unusable toolchain stops the sweep up front
     instead of after hours of compiling.
     """
-    if '-ffp-contract=off' not in _BASE_ARGS:
-        raise RuntimeError('every arm needs -ffp-contract=off in DACE_compiler_cpu_args; bit-exact '
-                           f'comparison dies under FP contraction. Got: {_BASE_ARGS!r}')
+    # The VALUE is a choice; the explicit pin is not. gcc defaults -ffp-contract to fast and clang to
+    # on, so an override that drops the flag makes the two compiler columns of one pipeline fuse
+    # differently and the table stops comparing like with like.
+    if '-ffp-contract=' not in _BASE_ARGS:
+        raise RuntimeError('every arm needs an explicit -ffp-contract= in DACE_compiler_cpu_args; the '
+                           'gcc and clang defaults differ, so omitting it makes the compiler columns '
+                           f'incomparable. Got: {_BASE_ARGS!r}')
+    if '-ffast-math' in _BASE_ARGS:
+        raise RuntimeError('-ffast-math must not be in DACE_compiler_cpu_args: it enables associative '
+                           'math, so each compiler reassociates reductions its own way and the columns '
+                           f'no longer evaluate the same expression. Got: {_BASE_ARGS!r}')
     # gcc bakes its thread count into the object, so it cannot merely happen to match the runtime
     # OMP_NUM_THREADS the other arms get -- an override that forgets this races 2 machines.
     if any(arm.executable == _GCC and arm.markers and f'-ftree-parallelize-loops={_AUTOPAR_HINT}' not in arm.flags
            for arm in arms):
         raise RuntimeError(f"the gcc autopar arm must compile with -ftree-parallelize-loops={_AUTOPAR_HINT} "
-                           f"(OMP_NUM_THREADS={_THREADS} capped at {_AUTOPAR_HINT_CAP}, above which Graphite "
-                           f"suppresses parallelization entirely); got flags {_GCC_AUTOPAR_FLAGS!r}")
+                           f"(OMP_NUM_THREADS={_THREADS}, capped at {_AUTOPAR_HINT_CAP} by "
+                           f"CANON_PERF_GCC_AUTOPAR_HINT_CAP); got flags {_GCC_AUTOPAR_FLAGS!r}")
     evidence = {arm.label: probe_arm(arm) for arm in arms}
     _PIPELINES.clear()  # a registration is the WHOLE table: every arm's toolchain is pinned, none implicit
     _ARMS.clear()

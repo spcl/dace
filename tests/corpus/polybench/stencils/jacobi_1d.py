@@ -24,6 +24,8 @@ sizes = [{
     tsteps: 1000,
     N: 4000
 }]
+#: ported from npbench bench_info jacobi_1d.json parameters.paper
+paper_sizes = {tsteps: 4000, N: 32000}
 args = [([N], datatype), ([N], datatype)]  #, N, tsteps]
 
 

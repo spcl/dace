@@ -26,6 +26,19 @@ SIZES = {
     'maxiter': 60,
     'horizon': 2.0
 }
+# xn/yn are not in the upstream paper row (it only carries XN/YN); mirror them like SIZES does.
+PAPER_SIZES = {
+    'xmin': -2.25,
+    'xmax': 0.75,
+    'xn': 1000,
+    'XN': 1000,
+    'ymin': -1.25,
+    'ymax': 1.25,
+    'yn': 1000,
+    'YN': 1000,
+    'maxiter': 200,
+    'horizon': 2.0
+}
 INPUT_ARGS = ('XN', 'YN')
 ARRAY_ARGS = ('Z_out', 'N_out')
 SCALARS = {}
@@ -89,6 +102,7 @@ def kernel(xmin: dc_float, xmax: dc_float, ymin: dc_float, ymax: dc_float, maxit
 CORPUS = dict(name='mandelbrot1',
               dwarf='map_reduce',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

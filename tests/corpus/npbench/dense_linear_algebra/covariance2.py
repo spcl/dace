@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'M': 500, 'N': 600}
+PAPER_SIZES = {'M': 1200, 'N': 1400}
 INPUT_ARGS = ('M', 'N')
 ARRAY_ARGS = ('float_n', 'data', 'out')
 SCALARS = {}
@@ -43,6 +44,7 @@ def kernel(float_n: dc_float, data: dc_float[N, M]):
 CORPUS = dict(name='covariance2',
               dwarf='dense_linear_algebra',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

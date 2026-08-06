@@ -19,6 +19,9 @@ sizes = [{
     N: 4000,
 }]
 
+#: ported from the npbench bench_info paper row
+paper_sizes = {N: 16000}
+
 args = [([N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([N, N], datatype)]
 
 

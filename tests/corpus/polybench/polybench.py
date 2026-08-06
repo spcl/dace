@@ -93,9 +93,20 @@ def collect(name: Optional[str] = None) -> List[PolybenchKernel]:
     return kernels
 
 
+def paper_size_row(mod) -> Dict[str, int]:
+    """The module's ``paper_sizes`` row, or its largest ``sizes`` entry as a fallback.
+
+    polybench's own five sizes are mini..extra-large, none of which is the shape the papers
+    report; the ``paper_sizes`` row carries that (ported from the npbench repo's ``bench_info``
+    descriptors, which pin a ``paper`` dataset per kernel).
+    """
+    return vars(mod).get('paper_sizes') or mod.sizes[-1]
+
+
 def make_inputs(kernel: PolybenchKernel,
                 size_index: int = DEFAULT_SIZE_INDEX,
-                cap: Optional[int] = SIZE_CAP) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
+                cap: Optional[int] = SIZE_CAP,
+                paper: bool = False) -> Tuple[Dict[str, np.ndarray], Dict[str, int]]:
     """Allocate + initialize one input set; return ``(call_arrays, symbol_values)``.
 
     ``call_arrays`` maps each kernel parameter name to its ndarray (``args`` order is
@@ -103,13 +114,15 @@ def make_inputs(kernel: PolybenchKernel,
     symbol (e.g. ``N``) to its concrete value. ``cap`` clamps dataset symbols (default
     ``SIZE_CAP`` for a fast value-preserving check); pass ``cap=None`` for the full
     ``sizes[size_index]`` preset (the perf/speedup test needs realistic sizes).
+    ``paper=True`` takes the published ``paper_sizes`` row instead of ``sizes[size_index]``.
     """
     mod = _module(kernel)
     program = _program(mod)
     # Clamp dataset symbols to a small size for a fast numerical-correctness check
     # (the same value feeds the baseline and the candidate run, so value-preservation
     # is unaffected); polybench ``mini`` is still up to ~2000 on some kernels.
-    psize = {str(k): (int(v) if cap is None else min(int(v), cap)) for k, v in mod.sizes[size_index].items()}
+    row = paper_size_row(mod) if paper else mod.sizes[size_index]
+    psize = {str(k): (int(v) if cap is None else min(int(v), cap)) for k, v in row.items()}
     arrays = []
     for shape, dtype in mod.args:
         concrete = [psize[str(s)] if isinstance(s, dace.symbol) else s for s in shape]

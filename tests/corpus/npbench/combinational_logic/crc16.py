@@ -8,6 +8,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'N': 1600}
+PAPER_SIZES = {'N': 1000000}
 INPUT_ARGS = ('N', )
 ARRAY_ARGS = ('data', 'crc')
 SCALARS = {}
@@ -74,6 +75,7 @@ def kernel(data: dace.uint8[N], crc: dace.int64[1]):
 CORPUS = dict(name='crc16',
               dwarf='combinational_logic',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

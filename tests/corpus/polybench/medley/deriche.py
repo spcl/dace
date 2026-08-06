@@ -26,6 +26,9 @@ sizes = [{
     H: 4320,
 }]
 
+#: ported from the npbench bench_info paper row
+paper_sizes = {W: 7680, H: 4320}
+
 args = [
     ([W, H], datatype),
     ([W, H], datatype),

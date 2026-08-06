@@ -36,23 +36,22 @@ set -euo pipefail
 
 NODES="${1:-1}"
 RANKS_PER_NODE=4
-# The three scripts travel together, so they are found relative to THIS file; the repo root is
-# walked up to rather than counted, because the drivers run as ``python -m tests....`` from it and
-# a hardcoded depth silently breaks the moment this folder is renamed or moved.
-#
-# Under sbatch, BASH_SOURCE is NOT this file: Slurm copies the script into its spool
-# (/var/spool/slurmd/job<id>/slurm_script) and runs the copy, so the walk-up finds no checkout and
-# the job dies before it starts. The submitting side therefore exports the folder it resolved, and
-# the batch side takes that.
-HERE="${CORPUS_JOB_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+# The job folder is named OUTRIGHT rather than derived from BASH_SOURCE, because under sbatch
+# BASH_SOURCE is not this file: Slurm copies the script into its spool
+# (/var/spool/slurmd/job<id>/slurm_script) and runs the copy, so anything relative to the script's
+# own path resolves inside the spool and the job dies before it starts. Repointing this at another
+# checkout is a one-line edit here.
+cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/canon_corpus_perf_job
+HERE=$(pwd)
+
+# The repo root is walked up to rather than counted: the drivers run as ``python -m tests....`` from
+# it, and a hardcoded depth breaks silently the moment this folder is renamed or moved.
 REPO="$HERE"
 while [ "$REPO" != "/" ] && [ ! -f "$REPO/dace/__init__.py" ]; do REPO="$(dirname "$REPO")"; done
 [ -f "$REPO/dace/__init__.py" ] || {
     echo "FATAL: no dace checkout above $HERE" >&2
-    [ -n "${SLURM_JOB_ID:-}" ] && echo "  (running from Slurm's spool copy; set CORPUS_JOB_HOME=/path/to/canon_corpus_perf_job)" >&2
     exit 1
 }
-export CORPUS_JOB_HOME="$HERE"
 # Results NEXT TO the scripts (one JSON per kernel, plus a figure and two tables), so a finished run
 # is one directory to copy off the cluster. Only the build scratch is memory-backed, and it is
 # throwaway. The job script defaults to the same path, so bare and via-here runs land in one place.
@@ -62,26 +61,19 @@ mkdir -p "$OUT"
 # Node count is an argument, so it cannot be an #SBATCH line: re-submit ourselves with it. The
 # site settings go on the command line too, where they beat the #SBATCH defaults in the header.
 if [ -z "${SLURM_JOB_ID:-}" ] && command -v sbatch >/dev/null 2>&1; then
-    # --export carries CORPUS_JOB_HOME to the batch side, which runs Slurm's spool COPY of this
-    # script and so cannot find the folder from its own path.
     exec sbatch --nodes="$NODES" --ntasks-per-node="$RANKS_PER_NODE" \
         --account="${ACCOUNT:-g34}" --partition="${PARTITION:-normal}" --time="${TIMELIMIT:-04:00:00}" \
-        --export="ALL,CORPUS_JOB_HOME=$HERE" \
         --output="$OUT/dace-corpus-perf-%j.out" --error="$OUT/dace-corpus-perf-%j.out" "$0" "$@"
 fi
 
 # Held FIXED across every arm under comparison -- an A/B with a moving thread count or a moving
-# compiler flag set measures nothing. -ffp-contract=off because bit-exact comparison dies under FP
-# contraction. OMP_NUM_THREADS is exported before any python starts: the harness derives gcc's
-# compile-time -ftree-parallelize-loops=N from it, and the preflight below refuses to launch if the
-# two ever disagree.
+# compiler flag set measures nothing. OMP_NUM_THREADS is exported before any python starts: the
+# harness derives gcc's compile-time -ftree-parallelize-loops=N from it, and its per-arm probe
+# refuses to launch if that ever stops emitting a parallel region.
 #
 # DERIVED from the node, not hardcoded: this same script is the local smoke test, and a fixed 72
 # (a 288-core CSCS node / 4 ranks, which the formula reproduces there) is 4.5x oversubscription on
-# a 16-core box. It is also not merely a runtime knob -- MEASURED on g++ 15.2 here, an autopar
-# probe over a 4096x4096 affine nest emits GOMP_parallel at -ftree-parallelize-loops=4..33 and
-# NOTHING at 48 and above, so a too-large thread count silently empties the gcc autopar arm. The
-# preflight catches that (it refuses to launch), but the default should not walk into it.
+# a 16-core box.
 CORES="${SLURM_CPUS_ON_NODE:-$(nproc)}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-$((CORES / RANKS_PER_NODE > 0 ? CORES / RANKS_PER_NODE : 1))}"
 export OPENBLAS_NUM_THREADS="$OMP_NUM_THREADS"
@@ -101,6 +93,24 @@ export OMPI_MCA_pml=ob1
 export OMPI_MCA_btl=self,vader
 export UCX_VFS_ENABLE=n
 export DACE_cache_distaware=1
+
+# A spack-installed compiler puts its OpenMP runtime in its OWN prefix, which is on the link line
+# and NOT on the loader path. So the build succeeds and the kernel dies at ctypes.CDLL with
+# "libomp.so: cannot open shared object file" -- reported per kernel as an ERR, which reads like a
+# corpus failure rather than a missing search path. Ask each compiler where its own runtime lives
+# instead of guessing a prefix: -print-file-name answers with the absolute path when it resolves and
+# echoes the argument back unchanged when it does not, hence the leading-slash test. Both runtimes
+# go on the path because the six arms span both toolchains (clang links libomp, gcc libgomp).
+omp_runtime_dir() {
+    lib="$("$1" -print-file-name="$2" 2>/dev/null || true)"
+    case "$lib" in
+    /*) [ -e "$lib" ] && dirname "$lib" ;;
+    esac
+}
+for d in "$(omp_runtime_dir "${CANON_PERF_CLANG_CXX:-clang++}" libomp.so)" \
+    "$(omp_runtime_dir "${CANON_PERF_GCC_CXX:-g++}" libgomp.so)"; do
+    [ -n "$d" ] && export LD_LIBRARY_PATH="$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+done
 
 # Build scratch, decided HERE and exported, so the path in the log is the path every rank and every
 # cmake/compiler child inherits rather than something each rank defaults to on its own. In memory

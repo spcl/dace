@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'N': 8, 'W': 14, 'H': 14, 'C1': 32, 'C2': 8}
+PAPER_SIZES = {'N': 8, 'W': 56, 'H': 56, 'C1': 256, 'C2': 64}
 INPUT_ARGS = ('N', 'W', 'H', 'C1', 'C2')
 ARRAY_ARGS = ('input', 'conv1', 'conv2', 'conv3', 'out')
 SCALARS = {}
@@ -126,6 +127,7 @@ def kernel(out: dc_float[N, H, W, C1], input: dc_float[N, H, W, C1], conv1: dc_f
 CORPUS = dict(name='resnet',
               dwarf='ml',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

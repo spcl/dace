@@ -9,6 +9,9 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{N: 40}, {N: 120}, {N: 400}, {N: 2000}, {N: 4000}]
 
+#: ported from npbench bench_info trisolv.json benchmark.parameters.paper
+paper_sizes = {N: 16000}
+
 args = [([N, N], datatype), ([N], datatype), ([N], datatype)]
 
 

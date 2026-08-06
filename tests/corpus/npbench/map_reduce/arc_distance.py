@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'N': 100000}
+PAPER_SIZES = {'N': 10000000}
 INPUT_ARGS = ('N', )
 ARRAY_ARGS = ('theta_1', 'phi_1', 'theta_2', 'phi_2', 'distance_matrix')
 SCALARS = {}
@@ -43,6 +44,7 @@ def kernel(theta_1: dc_float[N], phi_1: dc_float[N], theta_2: dc_float[N], phi_2
 CORPUS = dict(name='arc_distance',
               dwarf='map_reduce',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

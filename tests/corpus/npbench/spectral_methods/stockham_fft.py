@@ -14,6 +14,7 @@ def rng_complex(shape, rng, datatype):
 # N = R**K is derived (not an independent dataset symbol); keeping it out of SIZES
 # avoids the size-cap clobbering it out of sync with the R**K-sized arrays.
 SIZES = {'R': 2, 'K': 15}
+PAPER_SIZES = {'R': 4, 'K': 10}
 INPUT_ARGS = ('R', 'K')
 ARRAY_ARGS = ('x', 'y')
 SCALARS = {}
@@ -94,6 +95,7 @@ def kernel(x: dc_complex_float[R**K], y: dc_complex_float[R**K]):
 CORPUS = dict(name='stockham_fft',
               dwarf='spectral_methods',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

@@ -9,6 +9,8 @@ datatype = dace.float64
 
 # Dataset sizes
 sizes = [{tsteps: 20, N: 10}, {tsteps: 40, N: 20}, {tsteps: 100, N: 40}, {tsteps: 500, N: 120}, {tsteps: 1000, N: 200}]
+#: ported from npbench bench_info heat_3d.json parameters.paper
+paper_sizes = {tsteps: 500, N: 120}
 args = [
     ([N, N, N], datatype),
     ([N, N, N], datatype)  #, N, tsteps

@@ -13,6 +13,8 @@ dc_complex_float = dc.complex128
 # steps; a few timesteps keep the correctness check meaningful and stable (the same
 # small Nt feeds the numpy reference and the SDFG).
 SIZES = {'N': 25, 'tEnd': 2.0, 'dt': 0.05, 'softening': 0.1, 'G': 1.0, 'Nt': 3}
+# Nt = ceil(tEnd/dt) at the paper N/tEnd/dt, unlike the S row's stability-driven override above.
+PAPER_SIZES = {'N': 100, 'tEnd': 10.0, 'dt': 0.01, 'softening': 0.1, 'G': 1.0, 'Nt': 1000}
 INPUT_ARGS = ('N', 'tEnd', 'dt')
 ARRAY_ARGS = ('mass', 'pos', 'vel')
 SCALARS = {}
@@ -162,6 +164,7 @@ def kernel(mass: dc_float[N], pos: dc_float[N, 3], vel: dc_float[N, 3], dt: dc_f
 CORPUS = dict(name='nbody',
               dwarf='n_body_methods',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

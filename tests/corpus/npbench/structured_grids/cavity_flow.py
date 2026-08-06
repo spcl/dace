@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'ny': 61, 'nx': 61, 'nt': 25, 'nit': 5, 'rho': 1.0, 'nu': 0.1}
+PAPER_SIZES = {'ny': 101, 'nx': 101, 'nt': 700, 'nit': 50, 'rho': 1.0, 'nu': 0.1}
 INPUT_ARGS = ('ny', 'nx')
 ARRAY_ARGS = ('u', 'v', 'p', 'dx', 'dy', 'dt')
 SCALARS = {}
@@ -134,6 +135,7 @@ def kernel(nt: dc.int64, u: dc_float[ny, nx], v: dc_float[ny, nx], dt: dc_float,
 CORPUS = dict(name='cavity_flow',
               dwarf='structured_grids',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

@@ -30,6 +30,8 @@ sizes = [{
     NX: 2000,
     NY: 2600
 }]
+#: ported from npbench bench_info fdtd_2d.json parameters.paper
+paper_sizes = {TMAX: 500, NX: 1000, NY: 1200}
 args = [
     ([NX, NY], datatype),  # ex
     ([NX, NY], datatype),  # ey

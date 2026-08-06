@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'N': 2000}
+PAPER_SIZES = {'N': 12500}
 INPUT_ARGS = ('N', )
 ARRAY_ARGS = ('a', 'out')
 SCALARS = {}
@@ -41,6 +42,7 @@ def kernel(a: dc_float[N, N]):
 CORPUS = dict(name='go_fast',
               dwarf='map_reduce',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

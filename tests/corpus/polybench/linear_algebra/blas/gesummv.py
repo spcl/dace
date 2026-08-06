@@ -9,6 +9,9 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{N: 30}, {N: 90}, {N: 250}, {N: 1300}, {N: 2800}]
 
+#: ported from the npbench bench_info paper row
+paper_sizes = {N: 11200}
+
 args = [([N, N], datatype), ([N, N], datatype), ([N], datatype), ([N], datatype), ([N], datatype), ([1], datatype),
         ([1], datatype)]
 

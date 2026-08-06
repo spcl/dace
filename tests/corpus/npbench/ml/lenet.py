@@ -13,6 +13,9 @@ dc_complex_float = dc.complex128
 # H_pool2=1, hence C_before_fc1 = 16*1*1 = 16. H/W stay <= the harness size cap so they
 # are not clamped out of sync with C_before_fc1.
 SIZES = {'N': 4, 'H': 16, 'W': 16, 'C_before_fc1': 16}
+# C_before_fc1 for the paper H/W: H_conv1=252,H_pool1=126,H_conv2=122,H_pool2=61 (same for W),
+# so C_before_fc1 = 16*61*61 = 59536, via the same conv/pool chain as SIZES above.
+PAPER_SIZES = {'N': 16, 'H': 256, 'W': 256, 'C_before_fc1': 59536}
 INPUT_ARGS = ('N', 'H', 'W')
 ARRAY_ARGS = ('input', 'conv1', 'conv1bias', 'conv2', 'conv2bias', 'fc1w', 'fc1b', 'fc2w', 'fc2b', 'fc3w', 'fc3b',
               'out')
@@ -143,6 +146,7 @@ def kernel(input: dc_float[N, H, W, 1], conv1: dc_float[5, 5, 1, 6], conv1bias: 
 CORPUS = dict(name='lenet',
               dwarf='ml',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

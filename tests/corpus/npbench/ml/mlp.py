@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'C_in': 3, 'N': 8, 'S0': 30000, 'S1': 2000, 'S2': 2000}
+PAPER_SIZES = {'C_in': 3, 'N': 8, 'S0': 30000, 'S1': 10000, 'S2': 1000}
 INPUT_ARGS = ('C_in', 'N', 'S0', 'S1', 'S2')
 ARRAY_ARGS = ('input', 'w1', 'b1', 'w2', 'b2', 'w3', 'b3', 'out')
 SCALARS = {}
@@ -61,6 +62,7 @@ def kernel(input: dc_float[N, C_in], w1: dc_float[C_in, S0], b1: dc_float[S0], w
 CORPUS = dict(name='mlp',
               dwarf='ml',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,

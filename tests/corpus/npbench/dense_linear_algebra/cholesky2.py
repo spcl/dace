@@ -7,6 +7,7 @@ dc_float = dc.float64
 dc_complex_float = dc.complex128
 
 SIZES = {'N': 1000}
+PAPER_SIZES = {'N': 2000}
 INPUT_ARGS = ('N', )
 ARRAY_ARGS = ('A', )
 SCALARS = {}
@@ -47,6 +48,7 @@ def kernel(A: dc_float[N, N]):
 CORPUS = dict(name='cholesky2',
               dwarf='dense_linear_algebra',
               sizes=SIZES,
+              paper_sizes=PAPER_SIZES,
               input_args=INPUT_ARGS,
               array_args=ARRAY_ARGS,
               scalars=SCALARS,
