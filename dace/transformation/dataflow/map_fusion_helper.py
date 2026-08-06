@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import itertools
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import sympy
@@ -50,6 +51,14 @@ def find_parameter_remapping(
     second_params: List[str] = second_map.params
 
     if len(first_params) != len(second_params):
+        return None
+
+    # A duplicated parameter collapses the `param -> range` dicts below, so the second pass
+    #  would map the same name twice; a `params`/`range` length mismatch makes the `zip()`
+    #  drop entries, so a name in the intersection is missing from the dict.
+    if len(set(first_params)) != len(first_params) or len(set(second_params)) != len(second_params):
+        return None
+    if len(first_params) != first_map.range.dims() or len(second_params) != second_map.range.dims():
         return None
 
     if simplify_ranges:
@@ -372,6 +381,87 @@ def relocate_nodes(
     assert len(from_node.out_connectors) == 0
 
 
+def safe_exit_node(
+    state: dace.SDFGState,
+    entry_node: nodes.EntryNode,
+) -> Optional[nodes.ExitNode]:
+    """The exit node of `entry_node`'s scope, or `None` if the scope is no longer intact.
+
+    `SDFGState.exit_node()` raises a bare `StopIteration` when the exit node was removed and a
+    `KeyError` when the entry node itself is gone -- both reachable from a stale match, and the
+    former turns into a `RuntimeError` if it escapes into the matcher's generator (PEP 479).
+    """
+    try:
+        return state.exit_node(entry_node)
+    except (KeyError, StopIteration):
+        return None
+
+
+def scope_connectors_are_sound(
+    state: dace.SDFGState,
+    node: Union[nodes.MapEntry, nodes.MapExit],
+) -> bool:
+    """`True` if `node`'s connectors and edges are shaped the way the rewrite assumes.
+
+    `relocate_nodes()` walks the in-edges of a scope node and moves the whole `IN_x`/`OUT_x`
+    group at once. A connector without an edge is therefore never visited (and trips the final
+    "everything was relocated" checks *after* the graph was rewritten), and a data edge without
+    a connector has no counterpart to follow into the scope. Both shapes are already rejected by
+    `SDFGState` validation, so refusing them here costs no valid SDFG.
+    """
+    bound_in_conns = {e.dst_conn for e in state.in_edges(node)}
+    bound_out_conns = {e.src_conn for e in state.out_edges(node)}
+    in_conns, out_conns = node.in_connectors, node.out_connectors
+
+    for conn in in_conns:
+        if conn not in bound_in_conns:
+            return False
+        if conn.startswith("IN_") and ("OUT_" + conn[3:]) not in out_conns:
+            return False
+    for conn in out_conns:
+        if conn not in bound_out_conns:
+            return False
+        if conn.startswith("OUT_") and ("IN_" + conn[4:]) not in in_conns:
+            return False
+
+    # The other direction: an edge naming a connector that was never declared is relocated as a
+    #  dynamic map range, which then collides on the target node.
+    if any(conn is not None and conn not in in_conns for conn in bound_in_conns):
+        return False
+    if any(conn is not None and conn not in out_conns for conn in bound_out_conns):
+        return False
+
+    # An empty Memlet is an ordering edge and legitimately carries no connector.
+    if None in bound_in_conns and any(e.dst_conn is None and not e.data.is_empty() for e in state.in_edges(node)):
+        return False
+    if None in bound_out_conns and any(e.src_conn is None and not e.data.is_empty() for e in state.out_edges(node)):
+        return False
+    return True
+
+
+def map_scope_data_is_known(
+    state: dace.SDFGState,
+    sdfg: dace.SDFG,
+    map_entry: nodes.MapEntry,
+    map_exit: nodes.MapExit,
+) -> bool:
+    """`True` if every array name the Map scope mentions still has a descriptor in `sdfg`.
+
+    A name that another transformation deleted surfaces as a `KeyError` deep inside the rewrite
+    (`AccessNode.desc()`, `Memlet.try_initialize()`, `sdfg.arrays[...]`), so it is refused here.
+    """
+    scope = state.scope_subgraph(map_entry)
+    boundary_edges = list(state.in_edges(map_entry)) + list(state.out_edges(map_exit))
+    for edge in itertools.chain(scope.edges(), boundary_edges):
+        if edge.data is not None and edge.data.data is not None and edge.data.data not in sdfg.arrays:
+            return False
+    boundary_nodes = (e.src for e in state.in_edges(map_entry))
+    for node in itertools.chain(scope.nodes(), boundary_nodes, (e.dst for e in state.out_edges(map_exit))):
+        if isinstance(node, nodes.AccessNode) and node.data not in sdfg.arrays:
+            return False
+    return True
+
+
 def is_node_reachable_from(
     graph: dace.SDFGState,
     begin: nodes.Node,
@@ -459,8 +549,10 @@ def find_happens_before_connection(
     :param first_map_entry: Entry of the Map that must be the upstream one.
     :param second_map_entry: Entry of the Map that must be the downstream one.
     """
-    first_map_exit: nodes.MapExit = state.exit_node(first_map_entry)
-    second_map_exit: nodes.MapExit = state.exit_node(second_map_entry)
+    first_map_exit: Optional[nodes.MapExit] = safe_exit_node(state, first_map_entry)
+    second_map_exit: Optional[nodes.MapExit] = safe_exit_node(state, second_map_entry)
+    if first_map_exit is None or second_map_exit is None:
+        return None
 
     # `first` has to be the upstream Map. If it is the downstream one we bail out; the
     #  matcher also offers the swapped pair, which is the one that is handled.
@@ -538,7 +630,9 @@ def _scope_boundary_accesses(
     :param map_entry: The entry node of the Map.
     :param param_repl: Renaming applied to the subsets, see `find_parameter_remapping()`.
     """
-    map_exit: nodes.MapExit = state.exit_node(map_entry)
+    map_exit: Optional[nodes.MapExit] = safe_exit_node(state, map_entry)
+    if map_exit is None:
+        return None, None
     reads: Dict[str, List[Tuple[nodes.Node, subsets.Subset]]] = {}
     writes: Dict[str, List[Tuple[nodes.Node, subsets.Subset]]] = {}
 
@@ -637,23 +731,29 @@ def _is_iteration_private(
 
     pinned: Set[sympy.Symbol] = set()
     for (first_begin, first_end, _), (second_begin, second_end, _) in zip(first_subset.ranges, second_subset.ranges):
-        first_begin, first_end = sympy.sympify(first_begin), sympy.sympify(first_end)
-        second_begin, second_end = sympy.sympify(second_begin), sympy.sympify(second_end)
-        # Only a single point in this dimension, and the same one on both sides, tells
-        #  us anything about iterations that are not the same.
-        if symbolic.simplify(first_begin - first_end) != 0 or symbolic.simplify(second_begin - second_end) != 0:
-            continue
-        if symbolic.simplify(first_begin - second_begin) != 0:
-            continue
-        for param in params:
-            if param not in first_begin.free_symbols:
+        # A bound sympy can not handle leaves this dimension unproven, which only costs a refusal.
+        try:
+            first_begin = symbolic.pystr_to_symbolic(first_begin)
+            first_end = symbolic.pystr_to_symbolic(first_end)
+            second_begin = symbolic.pystr_to_symbolic(second_begin)
+            second_end = symbolic.pystr_to_symbolic(second_end)
+            # Only a single point in this dimension, and the same one on both sides, tells
+            #  us anything about iterations that are not the same.
+            if symbolic.simplify(first_begin - first_end) != 0 or symbolic.simplify(second_begin - second_end) != 0:
                 continue
-            if any(other in first_begin.free_symbols for other in params if other is not param):
+            if symbolic.simplify(first_begin - second_begin) != 0:
                 continue
-            # Injective in `param` iff shifting it by one always moves the point.
-            step = symbolic.simplify(first_begin.subs(param, param + 1) - first_begin)
-            if step != 0 and not step.free_symbols:
-                pinned.add(param)
+            for param in params:
+                if param not in first_begin.free_symbols:
+                    continue
+                if any(other in first_begin.free_symbols for other in params if other is not param):
+                    continue
+                # Injective in `param` iff shifting it by one always moves the point.
+                step = symbolic.simplify(first_begin.subs(param, param + 1) - first_begin)
+                if step != 0 and not step.free_symbols:
+                    pinned.add(param)
+        except (TypeError, ValueError, AttributeError, sympy.SympifyError, sympy.PolynomialError):
+            continue
     return all(param in pinned for param in params)
 
 
@@ -727,11 +827,11 @@ def analyze_happens_before_fusion(
 
     # An ordering edge must end up in front of the second Map's access, and a nested scope
     #  is ordered as a whole, i.e. after its exit resp. before its entry.
-    def order_source(node: nodes.Node) -> nodes.Node:
-        return state.exit_node(node) if isinstance(node, nodes.EntryNode) else node
+    def order_source(node: nodes.Node) -> Optional[nodes.Node]:
+        return safe_exit_node(state, node) if isinstance(node, nodes.EntryNode) else node
 
-    def order_target(node: nodes.Node) -> nodes.Node:
-        return state.entry_node(node) if isinstance(node, nodes.ExitNode) else node
+    def order_target(node: nodes.Node) -> Optional[nodes.Node]:
+        return state.scope_dict().get(node) if isinstance(node, nodes.ExitNode) else node
 
     inner_pairs: List[Tuple[nodes.Node, nodes.Node]] = []
     # Read/read is not a hazard, the other three combinations are (WAW, RAW, WAR).
@@ -742,7 +842,11 @@ def analyze_happens_before_fusion(
                 for second_node, second_subset in second_side.get(data, []):
                     if not _is_iteration_private(first_subset, second_subset, params):
                         return None
-                    inner_pairs.append((order_source(first_node), order_target(second_node)))
+                    ordered_pair = (order_source(first_node), order_target(second_node))
+                    # A broken nested scope leaves nothing to attach the ordering edge to.
+                    if ordered_pair[0] is None or ordered_pair[1] is None:
+                        return None
+                    inner_pairs.append(ordered_pair)
 
     return ordering_edges, list(dict.fromkeys(inner_pairs))
 
@@ -751,9 +855,11 @@ def dynamic_map_range_edge(
     state: dace.SDFGState,
     map_entry: nodes.MapEntry,
     symbol: str,
-) -> graph.MultiConnectorEdge:
-    """The single edge that binds dynamic-map-range `symbol` on `map_entry`."""
-    return next(iter(state.in_edges_by_connector(map_entry, symbol)))
+) -> Optional[graph.MultiConnectorEdge]:
+    """The single edge that binds dynamic-map-range `symbol` on `map_entry`, if there is one."""
+    # A dangling connector yields no edge; a bare `StopIteration` escaping into the matcher's
+    #  generator would be converted into a `RuntimeError` by PEP 479.
+    return next(iter(state.in_edges_by_connector(map_entry, symbol)), None)
 
 
 def dynamic_map_range_binding_agrees(
@@ -765,6 +871,8 @@ def dynamic_map_range_binding_agrees(
     """`True` if both Maps bind dynamic-map-range `symbol` to provably the same value."""
     edge = dynamic_map_range_edge(state, map_entry, symbol)
     other_edge = dynamic_map_range_edge(state, other_map_entry, symbol)
+    if edge is None or other_edge is None:
+        return False
     data = edge.data.data
     if (data != other_edge.data.data or edge.src_conn != other_edge.src_conn
             or edge.data.subset != other_edge.data.subset):
@@ -785,7 +893,12 @@ def dynamic_map_ranges_agree(
 ) -> bool:
     """`True` if every dynamic-map-range symbol both Maps bind is bound to the same value."""
     shared = first_map_entry.dynamic_input_connectors & second_map_entry.dynamic_input_connectors
-    return all(dynamic_map_range_binding_agrees(state, first_map_entry, second_map_entry, symbol) for symbol in shared)
+    if not all(dynamic_map_range_binding_agrees(state, first_map_entry, second_map_entry, symbol) for symbol in shared):
+        return False
+    # The second Map's bindings are moved onto the first Map by `relocate_nodes()`, and a name
+    #  that is already an OUT connector there can neither be added nor renamed.
+    return all(symbol not in first_map_entry.out_connectors
+               for symbol in second_map_entry.dynamic_input_connectors - shared)
 
 
 def can_topologically_be_fused(
@@ -816,10 +929,10 @@ def can_topologically_be_fused(
     :param permissive: Currently unused.
 
     :note: It is invalid to call this function after nodes have been removed from the SDFG.
+    :note: `only_inner_maps` and `only_toplevel_maps` are mutually exclusive; the transformations
+        reject the combination in their constructor, i.e. it is a configuration error and never
+        reported from here.
     """
-    if only_inner_maps and only_toplevel_maps:
-        raise ValueError(
-            "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance.")
 
     # Ensure that both have the same schedule
     if first_map_entry.map.schedule != second_map_entry.map.schedule:

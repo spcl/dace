@@ -1,7 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ State fusion transformation """
 
-from typing import Dict, List
+import warnings
+from typing import Dict, List, Optional
 
 from dace import graphlib as nx
 
@@ -12,6 +13,7 @@ from dace.sdfg import utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, SDFGState
 from dace.sdfg.validation import InvalidSDFGEdgeError
 from dace.transformation import transformation
+from dace.transformation.interstate.state_fusion import MATCH_ERRORS, is_fusible_state_shape, is_start_block
 
 
 # Helper class for finding connected component correspondences
@@ -51,6 +53,45 @@ def in_state_order(state: SDFGState, node_iter) -> List[nodes.Node]:
     #  the identical order in O(n + m log m).
     order = {node: i for i, node in enumerate(state.nodes())}
     return sorted(node_iter, key=order.__getitem__)
+
+
+def mismatched_data_edges(state: SDFGState, owner_sdfg):
+    """Yield ``(eid, edge, src_an, dst_an, name)`` for every edge of ``state`` whose
+    ``memlet.data`` matches neither memlet-path endpoint nor the edge connectors.
+
+    Mirrors the rule the SDFG validator applies (``validation.py:750``) but evaluated on a single
+    state -- O(|edges|) instead of a full-SDFG walk. Tasklet / MapEntry / MapExit / NestedSDFG
+    endpoints are skipped: connector-name vs memlet-data alignment for those is enforced by
+    higher-level passes and is not the bug class this hunts.
+    """
+    for eid, e in enumerate(state.edges()):
+        if e.data is None or e.data.is_empty() or e.data.data is None:
+            continue
+        name = e.data.data
+        # Resolve the memlet-PATH endpoints, exactly as the authoritative validator does
+        # (validation.py:715-718): a write-through edge ``inner_producer -> MapExit`` has
+        # ``memlet.data`` naming the OUTER array at the end of the path, not the immediate scratch
+        # source. Checking the immediate ``e.src``/``e.dst`` here false-flagged those valid edges
+        # (MapFusionVertical's shared-intermediate write-through on nbody / vadv).
+        try:
+            path = state.memlet_path(e)
+            path_src, path_dst = path[0].src, path[-1].dst
+        except (ValueError, StopIteration, AssertionError, KeyError):
+            path_src, path_dst = e.src, e.dst
+        src_an = path_src if isinstance(path_src, nodes.AccessNode) else None
+        dst_an = path_dst if isinstance(path_dst, nodes.AccessNode) else None
+        if src_an is None and dst_an is None:
+            continue
+        # Structures: memlet.data is the structure's root, member access via connector. The full
+        # SDFG validator special-cases this; skip rather than risk a false positive.
+        if any(an is not None and isinstance(owner_sdfg.arrays.get(an.data), dt.Structure) for an in (src_an, dst_an)):
+            continue
+        # A copy between two AccessNodes ``A[i] -> B[0]`` is recorded with ``memlet.data == 'A'``
+        # (one side); the other side lives in ``other_subset``. So this is an OR, not an AND.
+        src_match = (src_an is not None and (name == src_an.data or name == e.src_conn))
+        dst_match = (dst_an is not None and (name == dst_an.data or name == e.dst_conn))
+        if not (src_match or dst_match):
+            yield eid, e, src_an, dst_an, name
 
 
 @transformation.explicit_cf_compatible
@@ -161,7 +202,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # Simple all-pairs check
         for ea in edges_a:
             for eb in edges_b:
-                result = subsets.intersects(subset_a(ea), subset_b(eb))
+                sa, sb = subset_a(ea), subset_b(eb)
+                # ``subsets.intersects`` only knows Range/Indices, but a SubsetUnion is a legal
+                # ``Memlet.subset`` (properties.py) and would raise AttributeError. Indeterminate
+                # is the conservative answer, and it is what this function already returns True on.
+                if isinstance(sa, subsets.SubsetUnion) or isinstance(sb, subsets.SubsetUnion):
+                    return True
+                result = subsets.intersects(sa, sb)
                 if result is True or result is None:
                     return True
         return False
@@ -251,10 +298,24 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         return False
 
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
+        # We keep the recorded connections alive, such that `apply()` can use them later.
+        self.connections_to_make.clear()
+        try:
+            if self.check_fusible(graph, sdfg, permissive):
+                return True
+        except MATCH_ERRORS as e:
+            # Every reproducible shape is refused structurally in ``check_fusible``; a match that
+            # still trips a library invariant is an upstream defect. Refuse it, but say so, so a
+            # swallowed defect stays visible instead of silently disabling fusion.
+            warnings.warn(f'{type(self).__name__}: refusing match, unexpected subgraph: {e!r}')
+        # A refused match must never leave a HALF-filled recorder behind: ``apply`` would then wire
+        # an incomplete set of happens-before edges, i.e. drop an ordering.
+        self.connections_to_make.clear()
+        return False
+
+    def check_fusible(self, graph, sdfg, permissive: bool) -> bool:
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
-        # We keep it alive, such that `apply()` can use it later.
-        self.connections_to_make.clear()
 
         # Do not fuse states that carry a side-effect node: state fusion preserves only dataflow
         # order, so a side effect (I/O, a trap guard, a stateful library / MPI call) whose order
@@ -283,28 +344,33 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         if out_edges[0].data.assignments:
             if not in_edges:
                 return False
-            # Fail if symbol is set before the state to fuse
-            new_assignments = set(out_edges[0].data.assignments.keys())
-            if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
-                return False
-            # Fail if symbol is used in the dataflow of that state
-            if len(new_assignments & first_state.free_symbols) > 0:
-                return False
-            # Fail if assignments have free symbols that are updated in the
-            # first state
-            freesyms = out_edges[0].data.free_symbols
-            if freesyms and any(n.data in freesyms for n in first_state.nodes()
-                                if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0):
-                return False
-            # Fail if symbols assigned on the first edge are free symbols on the
-            # second edge
-            symbols_used = set(out_edges[0].data.free_symbols)
-            for e in in_edges:
-                if e.data.assignments.keys() & symbols_used:
+            # Reading free symbols parses the assignment RHS and the states' code. An edge (or a
+            # state) that does not parse must never be absorbed into a predecessor edge.
+            try:
+                # Fail if symbol is set before the state to fuse
+                new_assignments = set(out_edges[0].data.assignments.keys())
+                if any((new_assignments & set(e.data.assignments.keys())) for e in in_edges):
                     return False
-                # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
-                if new_assignments & set(e.data.free_symbols):
+                # Fail if symbol is used in the dataflow of that state
+                if len(new_assignments & first_state.free_symbols) > 0:
                     return False
+                # Fail if assignments have free symbols that are updated in the
+                # first state
+                freesyms = out_edges[0].data.free_symbols
+                if freesyms and any(n.data in freesyms for n in first_state.nodes()
+                                    if isinstance(n, nodes.AccessNode) and first_state.in_degree(n) > 0):
+                    return False
+                # Fail if symbols assigned on the first edge are free symbols on the
+                # second edge
+                symbols_used = set(freesyms)
+                for e in in_edges:
+                    if e.data.assignments.keys() & symbols_used:
+                        return False
+                    # Also fail in the inverse; symbols assigned on the second edge are free symbols on the first edge
+                    if new_assignments & set(e.data.free_symbols):
+                        return False
+            except (SyntaxError, ValueError, TypeError):
+                return False
 
         # There can be no state that have output edges pointing to both the
         # first and the second state. Such a case will produce a multi-graph.
@@ -312,6 +378,12 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             for _, dst, _ in graph.out_edges(src):
                 if dst == second_state:
                     return False
+
+        # Structural well-formedness of BOTH states, above the permissive branch on purpose:
+        # permissive relaxes the race checks, not whether the states are shapes ``apply`` can
+        # rebuild (it re-runs scope_dict / topological_sort / memlet_path on them).
+        if not is_fusible_state_shape(first_state, sdfg) or not is_fusible_state_shape(second_state, sdfg):
+            return False
 
         if not permissive:
             # Strict mode that inhibits state fusion if Python callbacks are involved
@@ -471,14 +543,52 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             # itself re-writes -- both silent WAR miscompiles. ``first_out_data`` counts only
             # REAL data writers; an empty-memlet happens-before sink from a prior fusion is
             # not a producer (peeled-pattern regression).
+            def ordering_endpoints(readers) -> Optional[List[nodes.Node]]:
+                """Where each reader's READ actually completes, deduplicated.
+
+                The read happens at the consumer, not at the access node, and a scope entry
+                stands in for its exit (an edge out of an entry is *inside* the scope, which
+                would drag the second state's subgraph in with it). ``None`` means a scope
+                had no exit, so no endpoint exists and the caller must refuse.
+                """
+                endpoints = []
+                for rn in readers:
+                    for e in first_state.out_edges(rn):
+                        cons = e.dst
+                        if isinstance(cons, nodes.EntryNode):
+                            cons = next(
+                                (v for v in first_state.scope_children()[cons] if isinstance(v, nodes.ExitNode)), None)
+                            if cons is None:
+                                return None
+                        elif isinstance(cons, nodes.LibraryNode):
+                            # A library node's own ``validate`` pins its degree by counting EVERY
+                            # edge -- ``Reduce``: "must have one output" -- so an ordering edge
+                            # hung off it is read as a second output. That miscount is shared by
+                            # ~20 library nodes, so route around it rather than fix one: the
+                            # node's outputs complete no earlier than the node, which makes them
+                            # equivalent ordering endpoints and needs no library change at all.
+                            succs = [se.dst for se in first_state.out_edges(cons)]
+                            endpoints.extend(succs if succs else [cons])
+                            continue
+                        endpoints.append(cons)
+                return list(dict.fromkeys(endpoints))
+
             def _ordered_by_existing_dataflow(readers, we) -> bool:
+                # The read completes at the reader's CONSUMER, so the path has to start
+                # there too. Starting at the access node asks whether it reaches the producer
+                # through ANY ONE of its outgoing branches, which says nothing about its
+                # sibling consumers: in correlation, `data -> Reduce -> ... -> mean` exempted
+                # the sibling `data -> subtract map`, whose WAR edge was then never recorded.
+                consumers = ordering_endpoints(readers)
+                if not consumers:
+                    return False
                 for a in (nx.ancestors(second_state._nx, we.src) | {we.src}):
                     if not isinstance(a, nodes.AccessNode) or a.data not in first_out_data:
                         continue
                     if second_state.in_degree(a) != 0:
                         continue  # re-written inside the second state: not a merge point
                     producers = [n for n in first_output if n.data == a.data and _has_data_write(n)]
-                    if producers and all(any(nx.has_path(first_state._nx, r, p) for p in producers) for r in readers):
+                    if producers and all(any(nx.has_path(first_state._nx, c, p) for p in producers) for c in consumers):
                         return True
                 return False
 
@@ -509,14 +619,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                         # recurses through every successor of an EntryNode) -- a silent
                         # miscompile that ``validate()`` does not catch. The exit also orders
                         # the map's internal reads, which is exactly what the WAR needs.
-                        consumers = []
-                        for rn in first_readers[wnode.data]:
-                            for e in first_state.out_edges(rn):
-                                cons = e.dst
-                                if isinstance(cons, nodes.EntryNode):
-                                    cons = first_state.exit_node(cons)
-                                consumers.append(cons)
-                        consumers = list(dict.fromkeys(consumers))
+                        consumers = ordering_endpoints(first_readers[wnode.data])
+                        if consumers is None:
+                            return False
                         if consumers:
                             self.connections_to_make.append(('war', consumers, [wnode]))
                         break
@@ -719,8 +824,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         first_state: SDFGState = self.first_state
         second_state: SDFGState = self.second_state
 
-        # This will populate `self.connections_to_make`.
-        self.can_be_applied(graph, 0, sdfg)
+        # This will populate `self.connections_to_make`. A False verdict means the recorder stopped
+        # early, so that list is INCOMPLETE -- wiring a partial set of happens-before edges drops an
+        # ordering (a silent miscompile), so decline instead. Nothing is mutated before this point.
+        if not self.can_be_applied(graph, 0, sdfg):
+            return
 
         # Remove interstate edge(s)
         edges = graph.edges_between(first_state, second_state)
@@ -732,22 +840,32 @@ class StateFusionExtended(transformation.MultiStateTransformation):
 
         # Special case 1: first state is empty
         if first_state.is_empty():
+            # Ask BEFORE the removal: ``remove_node`` clears the region's start-block pin, and the
+            # getter then raises on a region left without exactly one source block.
+            was_start = is_start_block(graph, first_state)
             sdutil.change_edge_dest(graph, first_state, second_state)
             graph.remove_node(first_state)
-            if graph.start_block == first_state:
+            if was_start:
                 graph.start_block = graph.node_id(second_state)
             return
 
         # Special case 2: second state is empty
         if second_state.is_empty():
+            was_start = is_start_block(graph, second_state)
             sdutil.change_edge_src(graph, second_state, first_state)
             sdutil.change_edge_dest(graph, second_state, first_state)
             graph.remove_node(second_state)
-            if graph.start_block == second_state:
+            if was_start:
                 graph.start_block = graph.node_id(first_state)
             return
 
         # Normal case: both states are not empty
+
+        # Edges that ALREADY break the memlet.data rule before the merge are the caller's, not
+        # ours. Snapshot them so the post-apply check fires on damage this merge caused and does
+        # not turn a malformed input state into an ``apply`` crash.
+        preexisting = {(e.src, e.dst, name) for _, e, _, _, name in mismatched_data_edges(first_state, sdfg)}
+        preexisting |= {(e.src, e.dst, name) for _, e, _, _, name in mismatched_data_edges(second_state, sdfg)}
 
         # Find source/sink (data) nodes
         first_input = [node for node in first_state.source_nodes() if isinstance(node, nodes.AccessNode)]
@@ -761,9 +879,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         ]
 
         # NOTE: We exclude Views from the process of merging common data nodes because it may lead to double edges.
+        # The lookup only asks "is this a View", and a descriptor that is gone is not one.
         second_mid = [
             x for x in list(nx.topological_sort(second_state._nx)) if isinstance(x, nodes.AccessNode)
-            and second_state.out_degree(x) > 0 and not isinstance(sdfg.arrays[x.data], dt.View)
+            and second_state.out_degree(x) > 0 and not isinstance(sdfg.arrays.get(x.data), dt.View)
         ]
 
         # Merge second state to first state
@@ -817,7 +936,13 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             if node not in top2:
                 continue
 
-            candidates = [x for x in order if x.data == node.data and x in top and x not in merged_nodes]
+            # ``order`` / ``top`` are snapshots taken before the merges below, so a candidate they
+            # still list may already have been removed. Ask the graph (O(1) dict lookup): querying
+            # a removed node raises KeyError.
+            candidates = [
+                x for x in order
+                if x.data == node.data and x in top and x not in merged_nodes and x in first_state._nodes
+            ]
             source_node = first_state.in_degree(node) == 0
 
             # If not source node, try to connect every memlet-intersecting candidate
@@ -873,9 +998,10 @@ class StateFusionExtended(transformation.MultiStateTransformation):
             merged_nodes.add(n)
 
         # Redirect edges and remove second state
+        was_start = is_start_block(graph, second_state)
         sdutil.change_edge_src(graph, second_state, first_state)
         graph.remove_node(second_state)
-        if graph.start_block == second_state:
+        if was_start:
             graph.start_block = graph.node_id(first_state)
 
         # Technically unneeded, but better to keep track.
@@ -887,24 +1013,16 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # for paranoid debug runs. Pinned by the s118-class regression where
         # the merger left an edge whose ``memlet.data`` referenced a node
         # that was no longer in the fused state's data flow.
-        self._post_apply_check(first_state, sdfg)
+        self._post_apply_check(first_state, preexisting)
 
-    def _post_apply_check(self, fused_state: SDFGState, owner_sdfg) -> None:
+    def _post_apply_check(self, fused_state: SDFGState, preexisting) -> None:
         """Cheap structural validation focused on the failure modes the
-        merger historically produced.
+        merger historically produced: a cyclic fused state, and an edge whose
+        ``memlet.data`` names neither memlet-path endpoint.
 
-        For every edge in ``fused_state`` whose memlet carries a data
-        reference, require that ``memlet.data`` match either ``src.data``
-        or ``dst.data`` when those endpoints are ``AccessNode`` instances.
-        Mirror the rule the SDFG validator at ``validation.py:750`` uses,
-        but evaluated on this one fused state -- O(|edges|) instead of
-        a full-SDFG walk.
-
-        Tasklet/MapEntry/MapExit/NestedSDFG endpoints are skipped: the
-        connector-name vs memlet-data alignment for those is enforced by
-        higher-level passes (codegen, schedule inference) and is not the
-        bug class this check is hunting.
-
+        :param preexisting: ``(src, dst, memlet.data)`` triples that already broke the
+                            data rule in the two input states. Those are the caller's
+                            damage, not the merge's, and must not raise.
         :raises InvalidSDFGEdgeError: when an offending edge is found.
         """
         ssdfg = fused_state.sdfg
@@ -919,50 +1037,17 @@ class StateFusionExtended(transformation.MultiStateTransformation):
                 'StateFusionExtended produced a cyclic state: the RAW/WAR/WAW ordering edges '
                 'cannot be linearized (unsolvable dependency combination)', ssdfg, state_id, None)
 
-        for eid, e in enumerate(fused_state.edges()):
-            if e.data is None or e.data.is_empty() or e.data.data is None:
+        for eid, e, src_an, dst_an, name in mismatched_data_edges(fused_state, ssdfg):
+            if (e.src, e.dst, name) in preexisting:
                 continue
-            name = e.data.data
-            # Resolve the memlet-PATH endpoints, exactly as the authoritative
-            # validator does (validation.py:715-718): a write-through edge
-            # ``inner_producer -> MapExit`` has ``memlet.data`` naming the OUTER
-            # array at the end of the path, not the immediate scratch source.
-            # Checking the immediate ``e.src``/``e.dst`` here false-flagged those
-            # valid edges (MapFusionVertical's shared-intermediate write-through
-            # on nbody / vadv).
-            try:
-                path = fused_state.memlet_path(e)
-                path_src, path_dst = path[0].src, path[-1].dst
-            except Exception:
-                path_src, path_dst = e.src, e.dst
-            src_an = path_src if isinstance(path_src, nodes.AccessNode) else None
-            dst_an = path_dst if isinstance(path_dst, nodes.AccessNode) else None
-            # Structures: memlet.data is the structure's root, member access
-            # via connector. The full SDFG validator special-cases this; we
-            # skip rather than risk a false positive.
-            for an in (src_an, dst_an):
-                if an is not None and isinstance(ssdfg.arrays.get(an.data), dt.Structure):
-                    break
-            else:
-                if src_an is None and dst_an is None:
-                    continue
-                # Mirror the SDFG validator's edge rule (validation.py:750):
-                # memlet.data must match SRC's AccessNode data/conn, or
-                # DST's. A copy between two AccessNodes ``A[i] -> B[0]`` is
-                # recorded with ``memlet.data == 'A'`` (one side); the other
-                # side lives in ``other_subset``. So the check is a logical
-                # OR across the two endpoints, not an AND.
-                src_match = (src_an is not None and (name == src_an.data or name == e.src_conn))
-                dst_match = (dst_an is not None and (name == dst_an.data or name == e.dst_conn))
-                if not (src_match or dst_match):
-                    raise InvalidSDFGEdgeError(
-                        f"StateFusionExtended produced an invalid edge: memlet.data={name!r} "
-                        f"does not match src={getattr(src_an, 'data', None)!r} or "
-                        f"dst={getattr(dst_an, 'data', None)!r}",
-                        ssdfg,
-                        state_id,
-                        eid,
-                    )
+            raise InvalidSDFGEdgeError(
+                f"StateFusionExtended produced an invalid edge: memlet.data={name!r} "
+                f"does not match src={(src_an.data if src_an is not None else None)!r} or "
+                f"dst={(dst_an.data if dst_an is not None else None)!r}",
+                ssdfg,
+                state_id,
+                eid,
+            )
 
         if self.strict_validate:
             ssdfg.validate()

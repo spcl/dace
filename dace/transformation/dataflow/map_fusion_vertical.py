@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 import copy
+import warnings
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple, Union
 
 import itertools
@@ -181,6 +182,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             raise ValueError(
                 "Specified `assume_always_shared` and `require_exclusive_intermediates` at the same time which is contradictory."
             )
+        # A configuration error belongs to the constructor; reporting it from `can_be_applied()`
+        #  would turn it into a matcher crash.
+        if self.only_inner_maps and self.only_toplevel_maps:
+            raise ValueError(
+                "Only one of `only_inner_maps` and `only_toplevel_maps` is allowed per MapFusionVertical instance.")
 
     @classmethod
     def expressions(cls) -> Any:
@@ -221,6 +227,30 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         sdfg: dace.SDFG,
         permissive: bool = False,
     ) -> bool:
+        """Tests if the matched Maps can be merged serially, see `can_be_applied_impl()`.
+
+        Matching must never crash, not even on a malformed or half-rewritten state, so this
+        wrapper is the outermost safety net for what the structural guards inside can still
+        not rule out cheaply -- `SDFGState.scope_dict()` raises for a cycle anywhere in the
+        state, even one completely disjoint from the matched Maps. What it catches is reported
+        so a swallowed defect stays visible, and `apply()` is deliberately NOT wrapped: an
+        `apply()` that raises after this returned `True` is a real bug in the matcher.
+        """
+        try:
+            return self.can_be_applied_impl(graph, expr_index, sdfg, permissive)
+        except (ValueError, RuntimeError, KeyError, StopIteration, TypeError, AttributeError,
+                AssertionError) as exception:
+            warnings.warn(f"MapFusionVertical.can_be_applied() refused a malformed match:"
+                          f" {type(exception).__name__}: {exception}")
+            return False
+
+    def can_be_applied_impl(
+        self,
+        graph: dace.SDFGState,
+        expr_index: int,
+        sdfg: dace.SDFG,
+        permissive: bool = False,
+    ) -> bool:
         """Tests if the matched Maps can be merged serially.
 
         The two Maps are mergeable iff:
@@ -230,13 +260,28 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         """
         # NOTE: The after this point it is not legal to access the matched nodes
         first_map_exit: nodes.MapExit = self.first_map_exit
-        first_map_entry: nodes.MapEntry = graph.entry_node(first_map_exit)
         second_map_entry: nodes.MapEntry = self.second_map_entry
-        second_map_exit: nodes.MapExit = graph.exit_node(second_map_entry)
+        if not isinstance(first_map_exit, nodes.MapExit) or not isinstance(second_map_entry, nodes.MapEntry):
+            return False
+        if not isinstance(self.array, nodes.AccessNode):
+            return False
 
-        assert isinstance(first_map_exit, nodes.MapExit)
-        assert isinstance(second_map_entry, nodes.MapEntry)
-        assert isinstance(self.array, nodes.AccessNode)
+        # A match another transformation of the same round invalidated names nodes that are no
+        #  longer in the state; every scope lookup below would then raise instead of refusing.
+        scope: Dict[nodes.Node, Optional[nodes.Node]] = graph.scope_dict()
+        if first_map_exit not in scope or second_map_entry not in scope or self.array not in scope:
+            return False
+        first_map_entry: nodes.MapEntry = scope[first_map_exit]
+        second_map_exit: Optional[nodes.MapExit] = mfhelper.safe_exit_node(graph, second_map_entry)
+        if not isinstance(first_map_entry, nodes.MapEntry) or second_map_exit is None:
+            return False
+
+        # The rewrite moves whole `IN_x`/`OUT_x` groups between the scope nodes, so a connector
+        #  without an edge (or a data edge without a connector) breaks it half way through.
+        if not all(
+                mfhelper.scope_connectors_are_sound(graph, scope_node)
+                for scope_node in (first_map_entry, first_map_exit, second_map_entry, second_map_exit)):
+            return False
 
         # Check the structural properties of the Maps. The function will return
         #  the `dict` that describes how the parameters must be renamed (for caching)
@@ -260,6 +305,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #   we do not do it, because we assume that it was called directly after
         #   `can_be_applied()` has been called.
         for map_entry, map_exit in [(first_map_entry, first_map_exit), (second_map_entry, second_map_exit)]:
+            # A name whose descriptor is gone makes `try_initialize()` below, and every
+            #  `desc()` further down, raise instead of refusing.
+            if not mfhelper.map_scope_data_is_known(graph, sdfg, map_entry, map_exit):
+                return False
             inner_subgraph = graph.scope_subgraph(map_entry)
             for edge in inner_subgraph.edges():
                 edge.data.try_initialize(sdfg, graph, edge)
@@ -668,6 +717,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             intermediate_desc: dace.data.Data = intermediate_node.desc(sdfg)
             if self.is_view(intermediate_desc, sdfg):
                 return None
+            # Reducing the intermediate is only implemented for these two, see
+            #  `compute_offset_subset()`; a Stream or a Structure would reach `apply()` and
+            #  raise there. The View test above has to stay first, a View *is* an Array.
+            if not isinstance(intermediate_desc, (data.Scalar, data.Array)):
+                return None
+
+            # A data edge without a connector has no `IN_`/`OUT_` pair to follow into the scope.
+            if out_edge.src_conn is None or not out_edge.src_conn.startswith("OUT_"):
+                return None
 
             # It can happen that multiple edges converges at the `IN_` connector
             #  of the first MapExit, but there is only one edge leaving the exit.
@@ -675,9 +733,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             # TODO(phimuell): Handle this case properly.
             #   To handle this we need to associate a consumer edge (the outgoing edges
             #   of the second Map) with exactly one producer.
+            # The zero case is refused for the same reason: `handle_intermediate_set()` needs
+            #  exactly one pre-exit edge to size the new intermediate from.
             producer_edges: List[graph.MultiConnectorEdge[dace.Memlet]] = list(
                 state.in_edges_by_connector(first_map_exit, "IN_" + out_edge.src_conn[4:]))
-            if len(producer_edges) > 1:
+            if len(producer_edges) != 1:
                 return None
 
             # Maps a producer subset to the reduced intermediate shape. This is needed
@@ -713,8 +773,13 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 #  memory layout, i.e. the strides. This change is not captured by the
                 #  data dependency checks. Thus we have to check them separately here.
                 for final_producer_edge in state.memlet_tree(producer_edge).leaves():
-                    assert not final_producer_edge.data.is_empty()
-                    final_producer = final_producer_edge.dst
+                    # An ordering edge someone routed through a data connector describes no write.
+                    if final_producer_edge.data.is_empty():
+                        continue
+                    # The leaves of a WRITE tree are oriented `producer -> MapExit`, so the
+                    #  producing node is `.src`; `.dst` is always a scope node (which made this
+                    #  guard dead code and let a rank mismatch assert inside `apply()` instead).
+                    final_producer = final_producer_edge.src
                     if isinstance(final_producer, nodes.NestedSDFG):
                         if not self._check_if_nested_sdfg_can_be_handled(
                                 state=state,
@@ -766,8 +831,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 found_second_map = True
 
                 # The output of the top Map can not define a dynamic Map range in the
-                #  second Map.
-                if not intermediate_consumer_edge.dst_conn.startswith("IN_"):
+                #  second Map, and a non-empty edge with no connector at all describes an
+                #  access the rewrite has no `OUT_` counterpart to follow.
+                if (intermediate_consumer_edge.dst_conn is None
+                        or not intermediate_consumer_edge.dst_conn.startswith("IN_")):
                     return None
 
                 # Now we look at all edges that leave the second MapEntry, i.e., the
@@ -781,7 +848,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                 has_found_a_consumer = False
                 for inner_consumer_edge in state.out_edges_by_connector(
                         second_map_entry, "OUT_" + intermediate_consumer_edge.dst_conn[3:]):
-                    assert not inner_consumer_edge.data.is_empty()
+                    # An empty Memlet on a data connector is a shape the rewrite can not express.
+                    if inner_consumer_edge.data.is_empty():
+                        return None
                     consumer_subset = inner_consumer_edge.data.src_subset
                     if consumer_subset is None:
                         return None
@@ -820,10 +889,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                                 return None
 
                     has_found_a_consumer = True
+
+                # A dead `IN_x` on the second MapEntry (its `OUT_x` lost its consumer to DCE)
+                #  leaves nothing to reroute, which `handle_intermediate_set()` can not express.
+                if not has_found_a_consumer:
+                    return None
             # Only ordering edges reach the second Map, so `has_found_a_consumer` is never bound.
             if not found_second_map:
                 return None
-            assert has_found_a_consumer
 
             # After we have ensured coverage, we have to decide if the intermediate
             #  node can be removed (`\mathbb{E}`) or has to be restored (`\mathbb{S}`).
@@ -852,6 +925,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                             begin=intermediate_node,  # is ignored itself.
                     ):
                         return None
+
+                # In shared mode the pre-exit Memlet is reused verbatim to rebuild the
+                #  intermediate behind the second Map, which only works while it names the
+                #  intermediate. A "reversed" Memlet -- `data` names the inner buffer and
+                #  `other_subset` the intermediate -- would assert inside `apply()`.
+                #  TODO(phimuell): Lift this restriction, the exclusive branch handles it.
+                if producer_edges[0].data.data != intermediate_node.data:
+                    return None
                 shared_outputs.add(out_edge)
             else:
                 # The intermediate can be removed, as it is not used anywhere else.
@@ -1385,8 +1466,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         :param state: The state on which we operate.
         :param sdfg: The SDFG on which we operate.
         """
-        first_map_exit: nodes.MapExit = state.exit_node(first_map_entry)
-        second_map_exit: nodes.MapExit = state.exit_node(second_map_entry)
+        first_map_exit: Optional[nodes.MapExit] = mfhelper.safe_exit_node(state, first_map_entry)
+        second_map_exit: Optional[nodes.MapExit] = mfhelper.safe_exit_node(state, second_map_entry)
+        if first_map_exit is None or second_map_exit is None:
+            return True
 
         # Get the read and write sets of the different maps, note that Views
         #  are not resolved yet.
@@ -1407,10 +1490,14 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  Note that `len(real_read_map_1) <= len(read_map_1)` holds because of Views.
         resolved_sets: List[Set[str]] = []
         for unresolved_set in [read_map_1, write_map_1, read_map_2, write_map_2]:
-            resolved_sets.append({
-                self.track_view(node, state, sdfg).data if self.is_view(node, sdfg) else node.data
-                for node in unresolved_set.values()
-            })
+            resolved_names: Set[str] = set()
+            for node in unresolved_set.values():
+                tracked = self.track_view(node, state, sdfg) if self.is_view(node, sdfg) else node
+                # A broken view chain hides what the access really touches.
+                if tracked is None:
+                    return True
+                resolved_names.add(tracked.data)
+            resolved_sets.append(resolved_names)
             # If the resolved and unresolved names do not have the same length.
             #  Then different views point to the same location, which we forbid
             if len(unresolved_set) != len(resolved_sets[-1]):
@@ -1480,23 +1567,24 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         for data_to_inspect in datas_to_inspect:
             # Now get all subsets of the data container that the first Map reads
             #  from or writes to and check if they are pointwise.
-            all_subsets: List[subsets.Subset] = []
-            all_subsets.extend(
-                self.find_subsets(
-                    node=read_map_1[data_to_inspect],
-                    scope_node=first_map_entry,
-                    state=state,
-                    sdfg=sdfg,
-                    param_repl=None,
-                ))
-            all_subsets.extend(
-                self.find_subsets(
-                    node=write_map_1[data_to_inspect],
-                    scope_node=first_map_exit,
-                    state=state,
-                    sdfg=sdfg,
-                    param_repl=None,
-                ))
+            read_subsets = self.find_subsets(
+                node=read_map_1[data_to_inspect],
+                scope_node=first_map_entry,
+                state=state,
+                sdfg=sdfg,
+                param_repl=None,
+            )
+            write_subsets = self.find_subsets(
+                node=write_map_1[data_to_inspect],
+                scope_node=first_map_exit,
+                state=state,
+                sdfg=sdfg,
+                param_repl=None,
+            )
+            # An access that could not be described leaves point-wise-ness unproven.
+            if read_subsets is None or write_subsets is None:
+                return True
+            all_subsets: List[subsets.Subset] = read_subsets + write_subsets
             if not self.test_if_subsets_are_point_wise(all_subsets):
                 return True
             del all_subsets
@@ -1511,26 +1599,26 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         #  are pointwise, i.e., in each iteration the same locations are accessed.
         #  Essentially they all boil down to `a += 1`.
         for inout_data_name in fused_inout_data_names:
-            all_subsets = []
             # The subsets that define reading are given by the first MapEntry node
-            all_subsets.extend(
-                self.find_subsets(
-                    node=read_map_1[inout_data_name],
-                    scope_node=first_map_entry,
-                    state=state,
-                    sdfg=sdfg,
-                    param_repl=None,
-                ))
+            read_subsets = self.find_subsets(
+                node=read_map_1[inout_data_name],
+                scope_node=first_map_entry,
+                state=state,
+                sdfg=sdfg,
+                param_repl=None,
+            )
             #  While the subsets defining writing are given by the second MapExit
             #  node, there we also have to apply renaming.
-            all_subsets.extend(
-                self.find_subsets(
-                    node=write_map_2[inout_data_name],
-                    scope_node=second_map_exit,
-                    state=state,
-                    sdfg=sdfg,
-                    param_repl=param_repl,
-                ))
+            write_subsets = self.find_subsets(
+                node=write_map_2[inout_data_name],
+                scope_node=second_map_exit,
+                state=state,
+                sdfg=sdfg,
+                param_repl=param_repl,
+            )
+            if read_subsets is None or write_subsets is None:
+                return True
+            all_subsets = read_subsets + write_subsets
             # Now we can test if these subsets are point wise
             if not self.test_if_subsets_are_point_wise(all_subsets):
                 return True
@@ -1780,7 +1868,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         state: dace.SDFGState,
         sdfg: SDFG,
         param_repl: Optional[Dict[str, str]],
-    ) -> List[subsets.Subset]:
+    ) -> Optional[List[subsets.Subset]]:
         """Finds all subsets that access `node` within `scope_node`.
 
         The function will not start a search for all consumer/producers.
@@ -1788,7 +1876,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         Map scope.
 
         :return: The subsets, which is empty if `node` only reaches `scope_node` through edges that
-            are not bound to a scope connector (ORDERING edges, dynamic Map ranges).
+            are not bound to a scope connector (ORDERING edges, dynamic Map ranges). `None` if an
+            access could not be described at all, which the caller has to treat as a dependency.
 
         :param node: The access node that should be examined.
         :param scope_node: We are only interested in data that flows through this node.
@@ -1823,7 +1912,10 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         found_subsets: List[subsets.Subset] = []
         for edge in outer_edges_to_inspect:
             found_subsets.extend(get_subset(e) for e in get_inner_edges(edge))
-        assert not any(subset is None for subset in found_subsets)
+        # A blanked Memlet on a real connector describes an access with no subset. Dropping it
+        #  would hide that access, so report "unanalyzable" instead.
+        if any(subset is None for subset in found_subsets):
+            return None
 
         found_subsets = copy.deepcopy(found_subsets)
         if param_repl:
@@ -1847,12 +1939,15 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         view: nodes.AccessNode,
         state: dace.SDFGState,
         sdfg: SDFG,
-    ) -> nodes.AccessNode:
+    ) -> Optional[nodes.AccessNode]:
         """Find the original data of a View.
 
         Given the View `view`, the function will trace the view back to the original
         access node. For convenience, if `view` is not a `View` the argument will be
         returned.
+
+        :return: The AccessNode the View ultimately refers to, or `None` if the view chain is
+            broken, i.e. nothing in this state defines the View.
 
         :param view: The view that should be traced.
         :param state: The state in which we operate.
@@ -1865,7 +1960,8 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         # This is the node that defines the view.
         defining_node = dace.sdfg.utils.get_last_view_node(state, view)
-        assert isinstance(defining_node, nodes.AccessNode)
+        if not isinstance(defining_node, nodes.AccessNode):
+            return None
         assert not self.is_view(defining_node, sdfg)
         return defining_node
 
@@ -1897,12 +1993,19 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         intermediate_data_outside: str = intermediate.data
         inner_sdfg = nsdfg.sdfg
         inner_data = outer_edge.dst_conn if is_incomming_edge else outer_edge.src_conn
-        assert inner_data in inner_sdfg.arrays
+        # A connector with no matching inner array is a shape we can not reason about.
+        if inner_sdfg is None or inner_data not in inner_sdfg.arrays:
+            return False
         inner_desc = inner_sdfg.arrays[inner_data]
 
         # We do not allow that the data is used as input and output.
         # TODO(phimuell): In this situation it should be enough.
-        if intermediate_data_outside in nsdfg.in_connectors and intermediate_data_outside in nsdfg.out_connectors:
+        # On the write side `apply()` splits the InOut connector before renaming
+        #  (`_split_inout_for_intermediate`), so the read and the write end up on separate
+        #  connectors and the ambiguity this guards against is gone by the time the strides
+        #  are modified. The read side has no such split and stays refused.
+        if (is_incomming_edge and intermediate_data_outside in nsdfg.in_connectors
+                and intermediate_data_outside in nsdfg.out_connectors):
             return False
 
         # The inner data is an array or a scalar.
