@@ -20,31 +20,13 @@ def canonicalize_index_symbols(*index_groups: list[list[Union[tuple, None]]]) ->
     Reads and writes come from different edges, so a non-itervar symbol (e.g. an outer loop
     variable) can show up as two distinct sympy instances of the same name (one plain, one
     assumption-flavored). sp.Min/sp.Max/subtraction over such pairs then never cancels, even
-    though they denote the same value. Unify by name using symbolic.symbol_merge_key.
+    though they denote the same value.
     """
-    by_name: Dict[str, list] = {}
-    for group in index_groups:
-        for edge_indices in group:
-            for entry in edge_indices:
-                if entry is None:
-                    continue
-                for expr in entry:
-                    for s in expr.free_symbols:
-                        by_name.setdefault(s.name, []).append(s)
-
-    repl = {}
-    for symbols in by_name.values():
-        if len(symbols) > 1:
-            keep = min(symbols, key=symbolic.symbol_merge_key)
-            repl.update({s: keep for s in symbols if s is not keep})
-    if not repl:
-        return
-
-    for group in index_groups:
-        for edge_indices in group:
-            for i, entry in enumerate(edge_indices):
-                if entry is not None:
-                    edge_indices[i] = (entry[0].xreplace(repl), entry[1].xreplace(repl))
+    slots = [(edge_indices, i) for group in index_groups for edge_indices in group
+             for i, entry in enumerate(edge_indices) if entry is not None]
+    flat = symbolic.equalize_symbols_across(*[x for edge_indices, i in slots for x in edge_indices[i]])
+    for (edge_indices, i), lo, hi in zip(slots, flat[::2], flat[1::2]):
+        edge_indices[i] = (lo, hi)
 
 
 @properties.make_properties

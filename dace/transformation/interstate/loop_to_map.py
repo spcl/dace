@@ -391,22 +391,12 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
             return False
         indices.append((x1, x2))
 
-    # One name can reach us as SEVERAL sympy symbols -- identity folds in the assumptions and the DaCe
-    # dtype -- and each instance then occupies its own monomial that no choice of ``lam_d`` can cancel,
-    # so a certificate that exists is never found. s114's read ``aa[j,i]`` and write ``aa[i,j]`` carry
-    # three different instances of ``i`` between them. The clash is across DIMENSIONS as much as within
-    # one, so the whole system has to agree on one instance per name, not each pair on its own.
-    by_name: Dict[str, List[sp.Symbol]] = {}
-    for x1, x2 in indices:
-        for s in list(x1.free_symbols) + list(x2.free_symbols):
-            by_name.setdefault(s.name, []).append(s)
-    repl = {}
-    for group in by_name.values():
-        if len(group) > 1:
-            keep = min(group, key=symbolic.symbol_merge_key)
-            repl.update({s: keep for s in group if s is not keep})
-    if repl:
-        indices = [(x1.xreplace(repl), x2.xreplace(repl)) for x1, x2 in indices]
+    # One name can reach us as SEVERAL sympy symbols, and each instance then occupies its own monomial
+    # that no choice of ``lam_d`` can cancel, so a certificate that exists is never found: s114's read
+    # ``aa[j,i]`` and write ``aa[i,j]`` carry three different instances of ``i`` between them. The clash
+    # is across DIMENSIONS as much as within one, hence the whole group at once, not pair by pair.
+    flat = symbolic.equalize_symbols_across(*[x for pair in indices for x in pair])
+    indices = list(zip(flat[::2], flat[1::2]))
 
     eqs = [sp.expand(x1.subs(itersym, p) - x2.subs(itersym, q)) for x1, x2 in indices]
     params = {s for x1, x2 in indices for s in (set(x1.free_symbols) | set(x2.free_symbols)) if str(s) != str(itersym)}

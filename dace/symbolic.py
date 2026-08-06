@@ -3810,6 +3810,37 @@ def equalize_symbols(a: sympy.Expr, b: sympy.Expr) -> Tuple[sympy.Expr, sympy.Ex
     return a, b
 
 
+def equalize_symbols_across(*exprs: sympy.Expr) -> Tuple[sympy.Expr, ...]:
+    """The input expressions rewritten so every same-named free symbol is ONE instance across ALL of
+    them, chosen by :func:`symbol_merge_key`.
+
+    Use this before any operation that goes through symbol identity rather than name -- subtraction
+    that should cancel, ``.match`` against a ``Wild(exclude=[sym])``, ``sym in expr.free_symbols``,
+    ``expr.coeff(sym)`` -- whenever the expressions come from different sources (two memlets, a subset
+    against a reparsed loop bound). See :func:`equalize_symbol` for why one name yields several
+    instances; none of those operations raises when it happens, they just quietly answer wrong.
+
+    ⛔ Equalizing PAIRWISE is not the same as equalizing a GROUP, so this is not
+    :func:`equalize_symbols` applied repeatedly: three expressions equalized in pairs can still
+    disagree, and a linear system over them then puts one name in two monomials, making a solution
+    that exists unreachable. Unlike the 2-argument form, which keeps the FIRST expression's instance,
+    this picks the group's :func:`symbol_merge_key` minimum so the result does not depend on argument
+    order.
+    """
+    equalized = tuple(equalize_symbol(e) for e in exprs)
+    by_name: Dict[str, List[sympy.Symbol]] = {}
+    for e in equalized:
+        for s in e.free_symbols:
+            by_name.setdefault(s.name, []).append(s)
+    repl = {}
+    for group in by_name.values():
+        keep = min(group, key=symbol_merge_key)
+        repl.update({s: keep for s in group if s is not keep})
+    if not repl:
+        return equalized
+    return tuple(e.xreplace(repl) for e in equalized)
+
+
 def inequal_symbols(a: Union[sympy.Expr, Any], b: Union[sympy.Expr, Any]) -> bool:
     """
     Compares 2 symbolic expressions and returns True if they are not equal.
