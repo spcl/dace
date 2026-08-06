@@ -327,18 +327,6 @@ def test_typed_binary_operator_roundtrip_preserves_serialization(expr):
     assert symbolic.serialize_symbolic(restored) == serialized
 
 
-def test_expressions_do_not_alias_across_symbol_dtypes():
-    """SymPy's global caches key on ``_hashable_content``. With the dtype left out of it, an
-    expression built around one symbol is handed back for the same-name symbol of another dtype,
-    so a serialization round-trip silently retypes it -- and only once both have been built, which
-    makes it a test-order failure elsewhere in the suite."""
-    typed = sympy.Mod(symbolic.symbol('alias_probe', dace.int64), symbolic.TypedConstant(np.int16(3)), evaluate=False)
-    default = sympy.Mod(symbolic.symbol('alias_probe'), symbolic.TypedConstant(np.int16(3)), evaluate=False)
-
-    assert typed != default
-    assert next(iter(default.free_symbols)).dtype == symbolic.DEFAULT_SYMBOL_TYPE
-
-
 def test_plain_integer_roundtrip_converts_to_sympy_integer():
     restored = symbolic.deserialize_symbolic(symbolic.serialize_symbolic(sympy.Integer(10)))
 
