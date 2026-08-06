@@ -1353,6 +1353,14 @@ class ControlFlowBlock(BlockGraphView, abc.ABC):
     @parent_graph.setter
     def parent_graph(self, parent: Optional['ControlFlowRegion']):
         self._parent_graph = parent
+        # Attaching a region changes the tree's CFG list, but nothing registers it here: the region
+        # keeps the private ``[self]`` its constructor made, so ``cfg_id`` reports 0 and every
+        # ``cfg_list[cfg_id]`` lookup resolves to the ROOT instead.  Every attach path (``add_node``,
+        # ``add_branch``) runs through this setter, so it is the one place that sees them all.
+        # Rebuilding here would be O(tree) per attach -- just mark the chain and let the next read
+        # rebuild once.  Plain blocks never enter the list, so they skip it.
+        if isinstance(self, AbstractControlFlowRegion):
+            self.invalidate_cfg_list()
 
     @property
     def block_id(self) -> int:
@@ -2657,6 +2665,10 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
     start blocks there are, etc.
     """
 
+    #: Whether :attr:`cfg_list` needs rebuilding.  Class-level default so instances restored without
+    #: running ``__init__`` (``__deepcopy__`` skips ``_cfg_list``, unpickling) still read a value.
+    _cfg_list_stale: bool = False
+
     def __init__(self,
                  label: str = '',
                  sdfg: Optional['SDFG'] = None,
@@ -2739,6 +2751,19 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             raise RuntimeError('Root CFG is not of type SDFG')
         return self.cfg_list[0]
 
+    def invalidate_cfg_list(self) -> None:
+        """
+        Mark this region and every ancestor as needing a CFG-list rebuild.
+
+        O(depth) and allocation-free, so it is cheap enough to run on every attach; the rebuild
+        itself is deferred to the next :attr:`cfg_list` read.  Marking the ancestors (not just
+        ``self``) is what lets a read on the ROOT see a region attached deep in the tree.
+        """
+        cfg = self
+        while cfg is not None:
+            cfg._cfg_list_stale = True
+            cfg = cfg.parent_sdfg if isinstance(cfg, dace.SDFG) else cfg._parent_graph
+
     def reset_cfg_list(self) -> List['AbstractControlFlowRegion']:
         """
         Reset the CFG list when changes have been made to the SDFG's CFG tree.
@@ -2746,6 +2771,9 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
         :return: The newly updated CFG list.
         """
+        # Cleared before delegating upwards: a region detached from its tree is absent from the
+        # rebuilt list, and would otherwise stay marked and rebuild on every single read.
+        self._cfg_list_stale = False
         if isinstance(self, dace.SDFG) and self.parent_sdfg is not None:
             return self.parent_sdfg.reset_cfg_list()
         elif self._parent_graph is not None:
@@ -2755,6 +2783,7 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             all_cfgs = list(self.all_control_flow_regions(recursive=True))
             for g in all_cfgs:
                 g._cfg_list = all_cfgs
+                g._cfg_list_stale = False
         return self._cfg_list
 
     def update_cfg_list(self, cfg_list):
@@ -3164,6 +3193,10 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
 
     @property
     def cfg_list(self) -> List['ControlFlowRegion']:
+        # Rebuild once here rather than on every attach (see ``parent_graph``); a stale list is what
+        # makes transformations silently decline valid matches.
+        if self._cfg_list_stale:
+            self.reset_cfg_list()
         return self._cfg_list
 
     @property

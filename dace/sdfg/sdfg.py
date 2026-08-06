@@ -740,17 +740,6 @@ class SDFG(ControlFlowRegion):
         if 'source_files' in json_obj:  # This will only happen on the root SDFG, once deserialization is complete
             ret.rematerialize_debuginfo_files(json_obj['source_files'])
 
-        # ``add_node`` above does not register a control-flow region in the shared CFG list, so every
-        # region deserialized here keeps the private ``[self]`` its constructor made and reports
-        # ``cfg_id == 0``.  Consumers resolve that index against the ROOT list and get the wrong graph
-        # -- pattern matching then declines every match inside a LoopRegion with NodeNotFoundError.
-        # ``__deepcopy__`` already repairs the tree this way; do the same, ONCE, for the whole tree.
-        # Gate on the context, not on ``parent_sdfg``: a nested SDFG's parent linkage is only
-        # established when its NestedSDFG node is attached, so it still reads None here and would
-        # re-walk the tree once per nested SDFG.
-        if context['sdfg'] is None:
-            ret.reset_cfg_list()
-
         return ret
 
     def hash_sdfg(self, jsondict: Optional[Dict[str, Any]] = None) -> str:
@@ -1387,6 +1376,10 @@ class SDFG(ControlFlowRegion):
     @parent_sdfg.setter
     def parent_sdfg(self, value):
         self._parent_sdfg = value
+        # Linking a nested SDFG grows the outer tree's CFG list.  ``add_nested_sdfg`` merges the two
+        # lists itself, but ``SDFGState.add_node`` (the deserialization path) only sets this, so mark
+        # here too -- see ``ControlFlowBlock.parent_graph`` for why marking beats rebuilding.
+        self.invalidate_cfg_list()
 
     @parent_nsdfg_node.setter
     def parent_nsdfg_node(self, value):
