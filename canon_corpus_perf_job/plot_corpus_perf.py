@@ -8,19 +8,31 @@ builds, compiles or re-times a kernel: a plot that could trigger a measurement w
 fresh number into an old sweep, and the two would no longer be the same machine state.
 
     python plot_corpus_perf.py                       # the job's default results directory
-    python canon_corpus_perf_job/plot_corpus_perf.py --results DIR --suite tsvc --arm dace-canon-gcc --preset paper
+    python canon_corpus_perf_job/plot_corpus_perf.py --results DIR --suite tsvc --arm dace-canon-gcc
 
-Shape of the figure, and why:
+TWO figures, never one. The corpora split into two groups with DIFFERENT denominators:
 
-* One panel per (corpus, denominator). The denominator is PER CORPUS -- polybench/npbench divide by
-  the timed corpus reference, tsvc/tsvc_2_5 by the ``seq-cpp`` arm -- so "3x over numpy" and "3x
-  over optimized sequential C++" never share an axis, and each panel names what it divides by.
+* ``np`` + ``poly`` divide by the timed numpy reference. That reference is PARALLEL -- numpy
+  dispatches gemm/2mm/3mm/syrk/cholesky into a threaded OpenBLAS -- so the claim is "x times the
+  parallel numpy baseline".
+* ``tsvc`` + ``tsvc25`` divide by the ``seq-cpp`` arm: single-threaded C++ from the same
+  post-simplify SDFG. The claim is "x times optimized SEQUENTIAL C++".
+
+3x over threaded numpy and 3x over single-core C++ are different claims. One shared axis invites a
+comparison that is not valid, so each group gets its own image file, its own geomean table and a
+caption naming its denominator in words. There is deliberately NO combined geomean anywhere.
+
+Other rules the figures obey:
+
 * y is the SIGNED symmetric speedup ``s``: 0 parity, +1 = 2x faster, -1 = 2x slower. Every tick
   also carries its raw ratio (``+2 (3.00x)``) so ``+2`` cannot be read as "2x".
-* Every geomean -- legend and table alike -- is taken over the RAW ratio. The signed scale spans
-  zero and negatives, where a geometric mean is undefined.
+* Every geomean -- legend and table alike -- is taken over the RAW ratio, then converted for
+  display. The signed scale spans zero and negatives, where a geometric mean is undefined.
+* A ``python-scalar`` reference (the tsvc oracles, and polybench kernels whose numpy form is a
+  scalar loop, e.g. seidel_2d) is NEVER a denominator; such kernels are dropped and counted.
 * Arms whose value check failed, arms that errored, and kernels with no verifiable denominator are
   DROPPED and counted in the report. A missing bar is a fact; a substituted 1.0 would be a lie.
+* Result files written by the pre-six-arm labels are reported as STALE, not mixed in.
 
 It deliberately does not import the timing harness: that module pulls in dace and the corpora, and
 probes every compiler arm at import time when ``CANON_PERF_ARMS`` is set. Reading JSON must not
@@ -32,6 +44,7 @@ import json
 import math
 import statistics
 import sys
+import textwrap
 from collections.abc import Iterable
 from pathlib import Path
 from typing import NamedTuple
@@ -57,13 +70,14 @@ CORPUS_SIZE = {'poly': 30, 'np': 24, 'tsvc': 151, 'tsvc25': 72}
 #: The speedup denominator per corpus; mirrors ``DENOMINATOR`` in the timing harness. ``reference``
 #: is the timed corpus oracle, ``seq-cpp`` the sequential-C++ arm built from the same SDFG.
 CORPUS_DENOMINATOR = {'poly': 'reference', 'np': 'reference', 'tsvc': 'seq-cpp', 'tsvc25': 'seq-cpp'}
-#: Reference kinds that may never be a timing denominator. The tsvc oracles are scalar Python loops:
-#: dividing by CPython would yield speedups in the hundreds and silently invalidate the figure.
+#: Reference kinds that may never be a timing denominator. The tsvc oracles are scalar Python loops,
+#: and so is polybench's seidel_2d; dividing by CPython would yield speedups in the hundreds and
+#: silently invalidate the figure.
 REFUSED_KINDS = ('python-scalar', 'unknown', '')
 #: How each denominator kind reads in a panel title -- the claim the panel's numbers make.
 DENOM_PHRASE = {
-    'numpy': 'timed numpy reference',
-    'dace-untransformed': 'timed untransformed-SDFG reference',
+    'numpy': 'the timed parallel numpy reference',
+    'dace-untransformed': 'the timed untransformed-SDFG reference',
     'sequential-c++': 'seq-cpp (sequential C++, same SDFG)',
 }
 #: Arm plotting order: the six comparison arms, then the sequential denominator arm, then the
@@ -73,6 +87,10 @@ ARM_ORDER = ('dace-autoopt-gcc', 'dace-autoopt-llvm', 'dace-canon-gcc', 'dace-ca
              'dace-simplify+llvm-autopar', 'seq-cpp', 'auto-opt', 'auto-opt+llvm', 'canon', 'canon+gcc', 'canon+llvm',
              'gcc-autopar', 'llvm-autopar', 'canon-serial+gcc-autopar', 'canon-serial+llvm-autopar', 'gcc-graphite',
              'clang-polly')
+#: The arm labels the current job writes. A record carrying none of them predates the six-arm table:
+#: its numbers were taken under different flags and are reported as stale rather than plotted next
+#: to fresh ones.
+CURRENT_ARMS = ARM_ORDER[:7]
 #: The harness's own "too fast to time reliably" floor. Not applied by default (dropping data is the
 #: reader's call, not the plotter's) but kernels below it are counted, since a ratio between two
 #: sub-millisecond timings is per-call overhead, not a speedup.
@@ -82,8 +100,47 @@ PALETTE = tuple(TAB10(i) for i in range(TAB10.N))
 LINESTYLES = ('-', '--', ':', '-.')
 MARKERS = ('o', 's', '^', 'D', 'v', 'P', 'X', '*')
 #: Above this many kernels a panel drops the connecting lines (six polylines over 151 kernels is
-#: spaghetti) and its tick labels; colour + marker shape still separate the arms.
+#: spaghetti) and its tick labels; colour + marker shape still separate the arms, and each arm's
+#: geomean is drawn as a thin horizontal line so the panel still reads at 151x6 points.
 DENSE_PANEL = 40
+
+#: Exclusion categories, so the report can say WHY in three numbers before it says it in prose.
+CAT_PY_SCALAR = 'python-scalar reference'
+CAT_NO_DENOM = 'denominator not measured'
+CAT_FOREIGN = "denominator belongs to the other figure"
+CAT_STALE = 'pre-six-arm result file'
+CAT_MISCOMPILE = 'value check FAILED'
+CAT_UNTIMED = 'arm not timed'
+CAT_TOO_FAST = 'denominator below --min-ms'
+CAT_UNGROUPED = 'corpus has no denominator group'
+
+
+class Group(NamedTuple):
+    """One figure: the corpora that share ONE denominator, and what that denominator is in words."""
+    slug: str  # goes into the file name, so the two images are told apart on disk
+    suites: tuple[str, ...]
+    kind: str  # the only denominator kind this figure may draw; anything else is excluded
+    title: str
+    caption: str
+
+
+#: The two figures. A corpus appears in exactly one of them, and no number crosses between them.
+GROUPS = (
+    Group(
+        'numpy-reference', ('np', 'poly'), 'numpy', 'npbench + polybench, speedup over the timed parallel numpy reference',
+        'Denominator: each kernel\'s own numpy reference, timed like any other arm at the machine default thread '
+        'count. numpy dispatches gemm / 2mm / 3mm / syrk / cholesky into a THREADED OpenBLAS, so this axis is a '
+        'comparison against parallel numpy, not against one core. Kernels whose numpy form is a scalar Python loop '
+        '(seidel_2d) carry a python-scalar reference, are never divided by it, and are absent by construction. '
+        'These numbers are NOT comparable with the seq-cpp figure: the two divide by different things.'),
+    Group(
+        'seq-cpp', ('tsvc', 'tsvc25'), 'sequential-c++', 'tsvc + tsvc_2_5, speedup over sequential C++ (the seq-cpp arm)',
+        'Denominator: the seq-cpp arm -- single-threaded C++ generated from the same post-simplify SDFG, -O3, no '
+        'autopar, no polyhedral flags, timed on the same rank as every other arm of the same kernel. The tsvc and '
+        'tsvc_2_5 python oracles are scalar loops used for the value check only; they are never timed and never '
+        'divided by. These numbers are NOT comparable with the numpy-reference figure: the baseline here is one '
+        'core, there it is threaded numpy.'),
+)
 
 
 class Point(NamedTuple):
@@ -101,6 +158,7 @@ class Excluded(NamedTuple):
     suite: str
     kernel: str
     arm: str
+    category: str
     why: str
 
 
@@ -112,7 +170,7 @@ class Denominator(NamedTuple):
 
 
 class Report(NamedTuple):
-    """Everything the figure and the table are rendered from."""
+    """Everything the figures and the tables are rendered from."""
     preset: str
     mode: str
     sources: list[Path]
@@ -163,7 +221,7 @@ def tick_label(value: float, _pos: float = 0.0) -> str:
         signed_s = f'{value:+.1f}'
     else:
         signed_s = f'{value:+.0f}'
-    return f'{signed_s} ({ratio_of(value):.3g}×)'
+    return f'{signed_s} ({ratio_of(value):.3g}x)'
 
 
 def result_files(roots: list[Path]) -> list[Path]:
@@ -222,37 +280,71 @@ def load_records(files: list[Path]) -> tuple[dict[tuple[str, str], dict], list[s
     return records, notes
 
 
-def denominator(record: dict, preset: str, mode: str) -> tuple[Denominator | None, str]:
-    """The verified denominator for one kernel/preset, or ``(None, why not)``.
+def preset_of(record: dict, preset: str) -> dict:
+    """The record's entry for one preset, or an empty dict; a partial sweep has records without it."""
+    return (record.get('presets') or {}).get(preset) or {}
+
+
+def stale_record(record: dict, preset: str) -> bool:
+    """True if this record predates the six-arm table, i.e. carries none of the current arm labels.
+
+    Such a sweep was taken under different flags and a different arm set. Its numbers are real, but
+    putting them on the same axis as fresh ones would compare two machines states, so they are
+    reported instead. ``--denominator baseline`` is the mode that can still read them.
+    """
+    pipelines = preset_of(record, preset).get('pipelines') or {}
+    return bool(pipelines) and not any(arm in CURRENT_ARMS for arm in pipelines)
+
+
+def reference_kind(record: dict, preset: str) -> str:
+    """What this kernel's own reference IS, per the harness's ``reference_kind()``, or ``''``."""
+    pres = preset_of(record, preset)
+    ref = pres.get('reference') or {}
+    recorded = pres.get('denominator') or {}
+    if str(recorded.get('source') or 'reference') != 'reference':
+        return str(ref.get('kind') or '')
+    return str(ref.get('kind') or recorded.get('kind') or '')
+
+
+def denominator(record: dict, preset: str, mode: str) -> tuple[Denominator | None, str, str]:
+    """The verified denominator for one kernel/preset, or ``(None, category, why not)``.
 
     ``mode='corpus'`` is the paper rule: the timed corpus reference for polybench/npbench, the
     ``seq-cpp`` arm for tsvc/tsvc_2_5. ``mode='baseline'`` divides by the record's own ``baseline``
     arm instead -- the only thing a pre-arms sweep on disk can support, and a different claim, which
-    is why it is a separate mode and ends up in the panel title.
+    is why it is a separate mode and ends up in the figure caption.
     """
-    pres = (record.get('presets') or {}).get(preset) or {}
+    pres = preset_of(record, preset)
     pipes = pres.get('pipelines') or {}
     if mode == 'baseline':
         label = str(record.get('baseline') or '')
         entry = pipes.get(label) or {}
         if entry.get('correct') is True and (entry.get('min_ms') or 0.0) > 0.0:
-            return Denominator(float(entry['min_ms']), f'arm {label}', label), ''
-        return None, f'baseline arm {label!r} was not measured'
+            return Denominator(float(entry['min_ms']), f'arm {label}', label), '', ''
+        return None, CAT_NO_DENOM, f'baseline arm {label!r} was not measured'
     source = CORPUS_DENOMINATOR.get(str(record.get('suite')), 'reference')
     if source == 'reference':
-        ref = pres.get('reference') or {}
-        recorded = pres.get('denominator') or {}  # newer schema: what the job itself divided by
-        kind = str(ref.get('kind') or recorded.get('kind') or '')
-        min_ms = ref.get('min_ms') or recorded.get('min_ms')
-        if not min_ms:
-            return None, 'no timed corpus reference in the result file'
+        kind = reference_kind(record, preset)
+        # Kind first: a python-scalar oracle is refused whatever it timed at, and that is a
+        # different fact from "the reference was never run".
         if kind in REFUSED_KINDS:
-            return None, f'reference kind {kind!r} is not a valid timing denominator'
-        return Denominator(float(min_ms), kind, ''), ''
+            return None, CAT_PY_SCALAR, f'reference kind {kind or "missing"!r} is not a valid timing denominator'
+        min_ms = (pres.get('reference') or {}).get('min_ms') or (pres.get('denominator') or {}).get('min_ms')
+        if not min_ms:
+            return None, CAT_NO_DENOM, 'no timed corpus reference in the result file'
+        return Denominator(float(min_ms), kind, ''), '', ''
     entry = pipes.get(source) or {}
     if entry.get('correct') is True and (entry.get('min_ms') or 0.0) > 0.0:
-        return Denominator(float(entry['min_ms']), 'sequential-c++', source), ''
-    return None, f'{source} arm (this corpus denominator) was not measured'
+        return Denominator(float(entry['min_ms']), 'sequential-c++', source), '', ''
+    return None, CAT_NO_DENOM, f'{source} arm (this corpus denominator) was not measured'
+
+
+def group_of(suite: str) -> Group | None:
+    """The figure a corpus belongs to. A corpus in no group is reported, never folded into one."""
+    for group in GROUPS:
+        if suite in group.suites:
+            return group
+    return None
 
 
 def collect(records: dict[tuple[str, str], dict], preset: str, mode: str, suites: list[str], arms: list[str],
@@ -263,25 +355,42 @@ def collect(records: dict[tuple[str, str], dict], preset: str, mode: str, suites
     for (suite, kernel), record in sorted(records.items()):
         if suites and suite not in suites:
             continue
-        den, why = denominator(record, preset, mode)
+        group = group_of(suite)
+        if group is None:
+            excluded.append(
+                Excluded(suite, kernel, '', CAT_UNGROUPED, 'corpus ' + repr(suite) + ' is in neither denominator group'))
+            continue
+        if mode == 'corpus' and stale_record(record, preset):
+            arm_names = ' '.join(sorted((preset_of(record, preset).get('pipelines') or {})))
+            excluded.append(
+                Excluded(suite, kernel, '', CAT_STALE, f'stale result file: arms {arm_names} predate the six-arm table'))
+            continue
+        den, category, why = denominator(record, preset, mode)
         if den is None:
-            excluded.append(Excluded(suite, kernel, '', why))
+            excluded.append(Excluded(suite, kernel, '', category, why))
+            continue
+        if mode == 'corpus' and den.kind != group.kind:
+            excluded.append(
+                Excluded(suite, kernel, '', CAT_FOREIGN,
+                         f'denominator kind {den.kind!r} is not the {group.kind!r} this figure divides by'))
             continue
         if den.min_ms < min_ms:
-            excluded.append(Excluded(suite, kernel, '', f'denominator {den.min_ms:.4f} ms below --min-ms'))
+            excluded.append(
+                Excluded(suite, kernel, '', CAT_TOO_FAST, f'denominator {den.min_ms:.4f} ms below --min-ms'))
             continue
-        pipelines = ((record.get('presets') or {}).get(preset) or {}).get('pipelines') or {}
+        pipelines = preset_of(record, preset).get('pipelines') or {}
         for arm, entry in pipelines.items():
             if arms and arm not in arms:
                 continue
             if arm == den.label:
                 continue  # the denominator is the axis of its own panel, not a flat series on it
             if entry.get('correct') is False:
-                excluded.append(Excluded(suite, kernel, arm, 'value check FAILED (miscompile)'))
+                excluded.append(Excluded(suite, kernel, arm, CAT_MISCOMPILE, 'value check FAILED (miscompile)'))
                 continue
             value = entry.get('min_ms')
             if not value or value <= 0.0:
-                excluded.append(Excluded(suite, kernel, arm, f"not timed: {entry.get('error') or 'no min_ms'}"))
+                excluded.append(
+                    Excluded(suite, kernel, arm, CAT_UNTIMED, f"not timed: {entry.get('error') or 'no min_ms'}"))
                 continue
             points.append(Point(suite, kernel, arm, den.kind, den.min_ms / float(value), den.min_ms))
     return points, excluded
@@ -304,13 +413,13 @@ def facet_keys(points: list[Point]) -> list[tuple[str, str]]:
 def short_path(path: Path, keep: int = 3) -> str:
     """A results root, short enough for a figure title; the full path stays in the table."""
     parts = path.parts
-    return str(path) if len(parts) <= keep else '…/' + '/'.join(parts[-keep:])
+    return str(path) if len(parts) <= keep else '.../' + '/'.join(parts[-keep:])
 
 
 def short_name(kernel: str, keep: int = 26) -> str:
     """A tick-sized kernel name. tsvc_2_5 kernels carry their module path
     (``tests_corpus_tsvc_2_5_tsvc_2_5_ext_gather_load``); the TAIL is what distinguishes them."""
-    return kernel if len(kernel) <= keep else '…' + kernel[-keep:]
+    return kernel if len(kernel) <= keep else '...' + kernel[-keep:]
 
 
 def median_signed(kernel: str, by_arm: dict[str, dict[str, float]]) -> float:
@@ -336,9 +445,10 @@ def draw_facet(ax: Axes, suite: str, kind: str, points: list[Point], arms: list[
         if not per_kernel:
             continue
         index = ARM_ORDER.index(arm) if arm in ARM_ORDER else len(ARM_ORDER) + arms.index(arm)
+        colour = PALETTE[index % len(PALETTE)]
         ys = [signed(per_kernel[k]) if k in per_kernel else float('nan') for k in kernels]
         gm, n = geomean(per_kernel.values())
-        gm_s = f'{gm:.2f}×' if math.isfinite(gm) else '--'
+        gm_s = f'{gm:.2f}x' if math.isfinite(gm) else '--'
         ax.plot(xs,
                 ys,
                 marker=MARKERS[index % len(MARKERS)],
@@ -346,8 +456,12 @@ def draw_facet(ax: Axes, suite: str, kind: str, points: list[Point], arms: list[
                 linewidth=0.0 if dense else 0.9,
                 linestyle='none' if dense else LINESTYLES[(index // len(PALETTE)) % len(LINESTYLES)],
                 alpha=0.85,
-                color=PALETTE[index % len(PALETTE)],
+                color=colour,
                 label=f'{arm}   geomean {gm_s} (n={n})')
+        if math.isfinite(gm):
+            # The geomean as a thin rule: at 151 kernels x 6 arms the cloud is the distribution and
+            # this line is the number the table reports, on the same axis.
+            ax.axhline(signed(gm), color=colour, linewidth=0.8, alpha=0.45, zorder=0)
     ax.axhline(0.0, color='0.3', linewidth=1.0, linestyle='--')
     if symlog:
         # linthresh 1 keeps the +-1 band (parity to 2x either way) linear; the subs put labelled
@@ -357,15 +471,14 @@ def draw_facet(ax: Axes, suite: str, kind: str, points: list[Point], arms: list[
         ax.tick_params(axis='y', which='minor', labelsize=6)
     ax.yaxis.set_major_formatter(FuncFormatter(tick_label))
     ax.grid(axis='y', alpha=0.25, linewidth=0.5)
-    ax.set_ylabel('signed speedup\n0 = parity', fontsize=8)
+    ax.set_ylabel('signed speedup s\n0 = parity, +1 = 2x faster, -1 = 2x slower', fontsize=7.5)
     ax.tick_params(labelsize=7)
     on_disk = CORPUS_SIZE.get(suite)
     coverage = f'{len(kernels)}/{on_disk}' if on_disk else str(len(kernels))
-    ax.set_title(
-        f'{SUITE_TITLE.get(suite, suite)}  ·  speedup vs {DENOM_PHRASE.get(kind, kind)}'
-        f'  ·  {coverage} kernels plotted',
-        fontsize=9,
-        loc='left')
+    ax.set_title(f'{SUITE_TITLE.get(suite, suite)}  -  speedup vs {DENOM_PHRASE.get(kind, kind)}'
+                 f'  -  {coverage} kernels plotted',
+                 fontsize=9,
+                 loc='left')
     if not dense:
         ax.set_xticks(xs, [short_name(k) for k in kernels], rotation=90, fontsize=5.5)
     else:
@@ -375,63 +488,75 @@ def draw_facet(ax: Axes, suite: str, kind: str, points: list[Point], arms: list[
     # Headroom for the legend: it carries the geomeans, so it must not sit on top of the points.
     low, high = ax.get_ylim()
     ax.set_ylim(low, high + 0.30 * (high - low))
-    ax.legend(loc='upper left', fontsize=6.5, ncols=min(3, len(by_arm)), framealpha=0.9)
+    # Two columns, not three: the arm labels carry their geomean, and three of them overflow the
+    # axes at the 9 in width a small corpus gets.
+    ax.legend(loc='upper left',
+              fontsize=6.0,
+              ncols=min(2, len(by_arm)),
+              framealpha=0.9,
+              title='thin horizontal rule = that arm\'s geomean of the raw ratio',
+              title_fontsize=6.0)
 
 
-def render(report: Report, out_path: Path, sort_by: str, symlog: bool, dpi: int) -> Path:
-    """Draw every panel into one figure and write it. Returns the path written."""
-    facets = facet_keys(report.points)
-    arms = order_arms(p.arm for p in report.points)
-    widest = max(len({p.kernel for p in report.points if (p.suite, p.kind) == key}) for key in facets)
+def render_group(group: Group, report: Report, points: list[Point], out_path: Path, sort_by: str, symlog: bool,
+                 dpi: int) -> Path:
+    """Draw ONE group's panels into ONE figure and write it. Returns the path written."""
+    facets = facet_keys(points)
+    arms = order_arms(p.arm for p in points)
+    widest = max(len({p.kernel for p in points if (p.suite, p.kind) == key}) for key in facets)
     width = min(24.0, max(9.0, 0.09 * widest + 6.0))
     fig, axes = plt.subplots(len(facets),
                              1,
-                             figsize=(width, 3.0 * len(facets) + 1.4),
+                             figsize=(width, 3.2 * len(facets) + 2.2),
                              squeeze=False,
                              constrained_layout=True)
     for ax, (suite, kind) in zip(axes[:, 0], facets, strict=True):
-        panel = [p for p in report.points if p.suite == suite and p.kind == kind]
+        panel = [p for p in points if p.suite == suite and p.kind == kind]
         draw_facet(ax, suite, kind, panel, arms, sort_by, symlog)
     sources = ', '.join(short_path(s) for s in report.sources)
-    kernels = len({(p.suite, p.kernel) for p in report.points})
+    kernels = len({(p.suite, p.kernel) for p in points})
+    mode = '' if report.mode == 'corpus' else f' - denominator mode `{report.mode}`'
     fig.suptitle(
-        f'DaCe corpus perf — preset `{report.preset}` — denominator mode `{report.mode}`\n'
-        f'{len(report.points)} measurements over {kernels} kernels · '
-        f'geomeans are over the RAW ratio · {sources}',
+        f'{group.title}\n'
+        f'preset `{report.preset}`{mode} - {len(points)} measurements over {kernels} kernels - '
+        f'geomeans are over the RAW ratio - {sources}',
         fontsize=10)
+    fig.supxlabel(textwrap.fill(group.caption, width=int(width * 13)), fontsize=7.5)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
     return out_path
 
 
-def coverage_lines(report: Report) -> list[str]:
+def coverage_lines(group: Group, report: Report, points: list[Point]) -> list[str]:
     """Per corpus: what is plotted, what is on disk, what the corpus holds. Absence is a result."""
     plotted: dict[str, set[str]] = {}
-    for p in report.points:
+    for p in points:
         plotted.setdefault(p.suite, set()).add(p.kernel)
-    suites = sorted(set(plotted) | set(report.kernels_on_disk),
-                    key=lambda s: (SUITES.index(s) if s in SUITES else len(SUITES), s))
     out = [
-        '', '## Coverage', '', '| suite | kernels plotted | result files on disk | in corpus | absent |',
+        '', '## Coverage', '', '| suite | kernels plotted | result files on disk | in corpus | no result file |',
         '|:--|--:|--:|--:|--:|'
     ]
-    for suite in suites:
+    for suite in group.suites:
         have = len(plotted.get(suite, ()))
         on_disk = report.kernels_on_disk.get(suite, 0)
         total = CORPUS_SIZE.get(suite)
         absent = str(total - on_disk) if total else '?'
         out.append(f'| {suite} | {have} | {on_disk} | {total or "?"} | {absent} |')
+    out += ['', 'A killed or partial sweep shows up as `no result file`; those kernels are absent, never imputed.']
     return out
 
 
-def geomean_lines(report: Report) -> list[str]:
-    """Geomean per (corpus, arm) and per arm within one denominator kind. Never pooled across kinds:
-    a numpy denominator and a sequential-C++ denominator answer different questions."""
+def geomean_lines(group: Group, points: list[Point]) -> list[str]:
+    """Geomean per (corpus, arm) and per arm within THIS figure's single denominator.
+
+    There is no cross-figure row and no all-corpora row anywhere: the other figure divides by
+    something else, so a pooled geomean would blend two denominators into one meaningless number.
+    """
     per_corpus: dict[tuple[str, str, str], list[float]] = {}
     per_kind: dict[tuple[str, str], list[float]] = {}
     corpora: dict[tuple[str, str], set[str]] = {}
-    for p in report.points:
+    for p in points:
         per_corpus.setdefault((p.suite, p.kind, p.arm), []).append(p.ratio)
         per_kind.setdefault((p.kind, p.arm), []).append(p.ratio)
         corpora.setdefault((p.kind, p.arm), set()).add(p.suite)
@@ -444,55 +569,80 @@ def geomean_lines(report: Report) -> list[str]:
     ]
     for (suite, kind, arm), ratios in sorted(per_corpus.items()):
         gm, n = geomean(ratios)
-        out.append(f'| {suite} | {kind} | {arm} | {gm:.3f}× | {signed(gm):+.3f} | {n} |')
+        out.append(f'| {suite} | {kind} | {arm} | {gm:.3f}x | {signed(gm):+.3f} | {n} |')
     out += [
-        '', '## Geomean per arm, within one denominator', '',
-        'Pooled over the corpora that share a denominator only. There is deliberately no all-corpora row.', '',
+        '', f'## Geomean per arm over this figure ({" + ".join(group.suites)})', '',
+        'Pooled over the corpora on THIS figure only, which share one denominator. There is deliberately '
+        'no row pooling these with the other figure: the denominators differ.', '',
         '| denominator | arm | geomean | signed | n | corpora |', '|:--|:--|--:|--:|--:|:--|'
     ]
     for (kind, arm), ratios in sorted(per_kind.items()):
         gm, n = geomean(ratios)
         where = ' '.join(sorted(corpora[(kind, arm)]))
-        out.append(f'| {kind} | {arm} | {gm:.3f}× | {signed(gm):+.3f} | {n} | {where} |')
+        out.append(f'| {kind} | {arm} | {gm:.3f}x | {signed(gm):+.3f} | {n} | {where} |')
     return out
 
 
-def excluded_lines(report: Report, limit: int) -> list[str]:
-    """What was measured but not drawn, grouped by reason, with a bounded example listing."""
-    if not report.excluded and not report.notes:
-        return ['', '## Excluded', '', 'Nothing: every result file contributed.']
+def excluded_lines(excluded: list[Excluded], points: list[Point], limit: int) -> list[str]:
+    """What was measured but not drawn: the category counts first, then the reasons in detail."""
+    if not excluded:
+        return ['', '## Excluded from this figure', '', 'Nothing: every result file in this group contributed.']
+    by_cat: dict[str, list[Excluded]] = {}
+    for e in excluded:
+        by_cat.setdefault(e.category, []).append(e)
+    out = [
+        '', '## Excluded from this figure', '', '| category | kernels | arm entries |', '|:--|--:|--:|'
+    ]
+    for cat, items in sorted(by_cat.items(), key=lambda kv: (-len(kv[1]), kv[0])):
+        kernels = len({(e.suite, e.kernel) for e in items if not e.arm})
+        out.append(f'| {cat} | {kernels} | {sum(1 for e in items if e.arm)} |')
     by_why: dict[str, list[Excluded]] = {}
-    for e in report.excluded:
+    for e in excluded:
         by_why.setdefault(e.why, []).append(e)
-    out = ['', '## Excluded (measured, deliberately not drawn)', '', '| reason | count | examples |', '|:--|--:|:--|']
+    out += ['', '| reason | count | examples |', '|:--|--:|:--|']
     for why, items in sorted(by_why.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         shown = ', '.join(f'{e.suite}:{e.kernel}' + (f'/{e.arm}' if e.arm else '') for e in items[:limit])
         more = f' ... and {len(items) - limit} more' if len(items) > limit else ''
         out.append(f'| {why} | {len(items)} | {shown}{more} |')
-    slow = {(p.suite, p.kernel) for p in report.points if p.den_ms < MIN_TIMEABLE_MS}
+    slow = {(p.suite, p.kernel) for p in points if p.den_ms < MIN_TIMEABLE_MS}
     if slow:
         out += [
             '', f"{len(slow)} plotted kernels have a denominator below the harness's {MIN_TIMEABLE_MS} ms timeable "
             'floor -- their ratio is per-call overhead as much as speedup. `--min-ms 0.5` drops them.'
         ]
-    for note in report.notes:
-        out += ['', f'note: {note}']
     return out
 
 
-def table_lines(report: Report, figure: Path | None, limit: int) -> list[str]:
-    """The whole Markdown report: provenance, coverage, geomeans, exclusions."""
+def python_scalar_line(group: Group, records: dict[tuple[str, str], dict], preset: str) -> str:
+    """How many of this figure's kernels have a scalar-Python reference, and what happened to them."""
+    scalar = [k for (s, k), r in records.items() if s in group.suites and reference_kind(r, preset) == 'python-scalar']
+    if not scalar:
+        return 'No kernel in this group carries a python-scalar reference.'
+    if group.kind == 'sequential-c++':
+        return (f'{len(scalar)} of this group\'s kernels carry a python-scalar reference (the tsvc oracles). '
+                'It is a correctness oracle only: it is never timed, and every bar here divides by seq-cpp.')
+    return (f'{len(scalar)} of this group\'s kernels carry a python-scalar reference and are therefore ABSENT '
+            'from the figure: dividing by a CPython scalar loop would read as a speedup in the hundreds.')
+
+
+def table_lines(group: Group, report: Report, records: dict[tuple[str, str], dict], points: list[Point],
+                excluded: list[Excluded], figure: Path | None, limit: int) -> list[str]:
+    """One figure's whole Markdown report: provenance, caption, coverage, geomeans, exclusions."""
     sources = ', '.join(f'`{s}`' for s in report.sources)
-    provenance = f'sources {sources} · denominator mode `{report.mode}` · {len(report.points)} measurements'
+    provenance = f'sources {sources} - denominator mode `{report.mode}` - {len(points)} measurements'
     if figure is not None:
-        provenance += f' · figure `{figure}`'
+        provenance += f' - figure `{figure}`'
     out = [
-        f'# Corpus speedup — preset `{report.preset}`', '', provenance, '',
-        'Speedup = `denominator_min_ms / arm_min_ms` (best-of-N), so `>1x` means the arm is faster. '
-        'The denominator is per corpus and is named in every row; numbers against different '
-        'denominators are different claims and are never pooled.'
+        f'# {group.title} -- preset `{report.preset}`', '', provenance, '', group.caption, '',
+        python_scalar_line(group, records, report.preset), '',
+        'Speedup = `denominator_min_ms / arm_min_ms` (best-of-N), so `>1x` means the arm is faster.'
     ]
-    return out + coverage_lines(report) + geomean_lines(report) + excluded_lines(report, limit) + ['']
+    out += coverage_lines(group, report, points)
+    out += geomean_lines(group, points)
+    out += excluded_lines(excluded, points, limit)
+    for note in report.notes:
+        out += ['', f'note: {note}']
+    return out + ['']
 
 
 def split_csv(values: list[str] | None) -> list[str]:
@@ -513,9 +663,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument('--denominator',
                     choices=('corpus', 'baseline'),
                     default='corpus',
-                    help='corpus: the paper rule (timed reference for poly/np, seq-cpp for tsvc*). '
+                    help='corpus: the paper rule (timed numpy reference for np/poly, seq-cpp for tsvc*). '
                     'baseline: divide by the record\'s own baseline arm, the only denominator a '
-                    'pre-arms sweep carries. Named in the figure either way')
+                    'pre-six-arm sweep carries. Named in the figure either way')
     ap.add_argument('--min-ms',
                     type=float,
                     default=0.0,
@@ -524,8 +674,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     'harness\'s timeable floor). Default 0: plot everything, report the fast ones')
     ap.add_argument('--sort', choices=('speedup', 'name'), default='speedup', help='kernel order within a panel')
     ap.add_argument('--symlog', action='store_true', help='symmetric-log y axis, for corpora with huge outliers')
-    ap.add_argument('--out', metavar='PATH', default='', help='figure path (default <results>/corpus_speedup.png)')
-    ap.add_argument('--table', metavar='PATH', default='', help='Markdown table path (default: next to the figure)')
+    ap.add_argument('--out',
+                    metavar='PREFIX',
+                    default='',
+                    help='path PREFIX for the two figures; each group appends its own slug and '
+                    'extension (default <results>/corpus_speedup_<preset>)')
     ap.add_argument('--examples', type=int, default=8, metavar='N', help='exclusions listed per reason in the table')
     ap.add_argument('--dpi', type=int, default=160)
     return ap.parse_args(argv)
@@ -549,16 +702,17 @@ def choose_preset(records: dict[tuple[str, str], dict], requested: str) -> tuple
     return '', f'several presets present {present}; pick one with --preset'
 
 
-def no_figure_reason(records: dict[tuple[str, str], dict], excluded: list[Excluded], suites: list[str]) -> str:
-    """Why nothing was drawn. Refusing to draw is a correct outcome, but the three causes -- an empty
-    selection, an unverifiable denominator, an arm nobody measured -- need different fixes."""
-    considered = sum(1 for suite, _kernel in records if not suites or suite in suites)
+def no_figure_reason(group: Group, excluded: list[Excluded], considered: int) -> str:
+    """Why this group drew nothing. Refusing to draw is a correct outcome, but the causes -- no
+    results at all, no verifiable denominator, an arm nobody measured -- need different fixes."""
     if considered == 0:
-        return 'NO FIGURE: --suite matched none of the result files on disk.'
+        return f'{group.slug}: no result file for {" ".join(group.suites)} under --results/--suite.'
     if sum(1 for e in excluded if not e.arm) >= considered:
-        return ('NO FIGURE: no kernel had a verifiable denominator under this mode. The table lists why; '
-                '--denominator baseline plots a pre-arms sweep against its own baseline arm.')
-    return 'NO FIGURE: the --arm selection matched no measured arm. The table lists what is there.'
+        stale = sum(1 for e in excluded if e.category == CAT_STALE)
+        extra = ' All of them are pre-six-arm files; --denominator baseline reads those.' if stale else ''
+        return (f'{group.slug}: none of the {considered} kernels had a verifiable denominator. '
+                f'The table lists why.{extra}')
+    return f'{group.slug}: the --arm selection matched no measured arm. The table lists what is there.'
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -581,23 +735,38 @@ def main(argv: list[str] | None = None) -> int:
         on_disk[suite] = on_disk.get(suite, 0) + 1
     report = Report(preset, args.denominator, roots, on_disk, points, excluded, notes)
 
-    out_path = Path(args.out) if args.out else roots[0] / f'corpus_speedup_{preset}.png'
-    table_path = Path(args.table) if args.table else out_path.with_suffix('.md')
-    figure: Path | None = None
-    if points:
-        figure = render(report, out_path, args.sort, args.symlog, args.dpi)
-    table_path.parent.mkdir(parents=True, exist_ok=True)
-    table_path.write_text('\n'.join(table_lines(report, figure, args.examples)))
-
+    prefix = Path(args.out) if args.out else roots[0] / f'corpus_speedup_{preset}'
     for note in notes:
         print(f'note: {note}')
-    print(f'preset {preset} · denominator {args.denominator} · {len(records)} result files · '
-          f'{len(points)} measurements · {len(excluded)} excluded')
-    print(f'table  {table_path}')
-    if figure is None:
-        print(no_figure_reason(records, excluded, suites), file=sys.stderr)
+    print(f'preset {preset} - denominator {args.denominator} - {len(records)} result files - '
+          f'{len(points)} measurements - {len(excluded)} excluded')
+
+    drawn = 0
+    for group in GROUPS:
+        if suites and not set(group.suites) & set(suites):
+            continue
+        group_points = [p for p in points if p.suite in group.suites]
+        group_excluded = [e for e in excluded if e.suite in group.suites]
+        considered = sum(1 for suite, _kernel in records if suite in group.suites and (not suites or suite in suites))
+        figure: Path | None = None
+        if group_points:
+            figure = render_group(group, report, group_points, Path(f'{prefix}_{group.slug}.png'), args.sort,
+                                  args.symlog, args.dpi)
+            drawn += 1
+        table_path = Path(f'{prefix}_{group.slug}.md')
+        table_path.parent.mkdir(parents=True, exist_ok=True)
+        table_path.write_text('\n'.join(
+            table_lines(group, report, records, group_points, group_excluded, figure, args.examples)))
+        kernels = len({(p.suite, p.kernel) for p in group_points})
+        print(f'[{group.slug}] {len(group_points)} measurements over {kernels} kernels - '
+              f'{len(group_excluded)} excluded - table {table_path}')
+        if figure is None:
+            print(no_figure_reason(group, group_excluded, considered), file=sys.stderr)
+        else:
+            print(f'[{group.slug}] figure {figure}')
+    if drawn == 0:
+        print('NO FIGURE: neither group had a plottable measurement; see the tables above.', file=sys.stderr)
         return 1
-    print(f'figure {figure}')
     return 0
 
 

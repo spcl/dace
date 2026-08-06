@@ -79,10 +79,11 @@ PERF_DRIVER = 'tests.passes.canonicalize.canonicalize_perf_corpus_test'
 #: Resolved as a SIBLING of this file, so the three scripts travel together whatever the folder is
 #: called -- this one has already been at two paths in this tree.
 PLOT_SCRIPT = Path(__file__).resolve().with_name('plot_corpus_perf.py')
-#: Results live OUTSIDE the repo: a sweep writes one JSON per kernel plus a figure and two tables,
-#: and the job folder holds exactly the three scripts and their README. ``--out`` / ``OUT_DIR``
-#: override, and the submit script exports the same default so both agree.
-DEFAULT_OUT = Path.home() / '.cache' / 'dace-corpus-perf-results'
+#: Results land NEXT TO the scripts: one JSON per kernel, a figure and two tables, all in the folder
+#: that produced them, so a finished run is one directory to copy off the cluster. Only the build
+#: scratch goes to memory-backed storage, and that is throwaway. ``--out`` / ``OUT_DIR`` override,
+#: and the submit script defaults to the same path so both agree.
+DEFAULT_OUT = Path(__file__).resolve().with_name('corpus_perf_results')
 
 
 def repo_root() -> Path:
@@ -245,8 +246,7 @@ def plot(repo: Path, out: Path, preset: str) -> None:
     """
     code = drive([sys.executable, str(PLOT_SCRIPT), '--results', str(out), '--preset', preset], repo)
     if code:
-        print(f'=== NO FIGURE (plotter exit {code}) -- the measurements above stand; see its message above',
-              flush=True)
+        print(f'=== NO FIGURE (plotter exit {code}) -- the measurements above stand; see its message above', flush=True)
 
 
 def aggregate(repo: Path, out: Path, perf_dir: Path, preset: str) -> int:

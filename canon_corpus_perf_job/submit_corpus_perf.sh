@@ -17,7 +17,7 @@
 # ONE flag picks the measured table: CANON_PERF_ARMS=1, the six arms plus the ``seq-cpp``
 # denominator. See README.md for the arm x SDFG x compiler x baseline matrix.
 #
-# Env: PYTHON (interpreter), OUT_DIR (results), OMP_NUM_THREADS (default cores/ranks-per-node),
+# Env: PYTHON (interpreter), OUT_DIR (results, default next to the scripts), OMP_NUM_THREADS (default cores/ranks-per-node),
 # REPS (best-of repetitions, default 50), DACE_JOB_SCRATCH (build scratch root), ACCOUNT /
 # PARTITION / TIMELIMIT (site-specific sbatch settings -- the #SBATCH defaults below are CSCS
 # values, override them for another site).
@@ -46,9 +46,10 @@ while [ "$REPO" != "/" ] && [ ! -f "$REPO/dace/__init__.py" ]; do REPO="$(dirnam
     echo "FATAL: no dace checkout above $HERE" >&2
     exit 1
 }
-# Results OUTSIDE the repo (one JSON per kernel, plus a figure and two tables); the job script
-# defaults to the same path, so running it bare and running it through here land in one place.
-OUT="${OUT_DIR:-$HOME/.cache/dace-corpus-perf-results}"
+# Results NEXT TO the scripts (one JSON per kernel, plus a figure and two tables), so a finished run
+# is one directory to copy off the cluster. Only the build scratch is memory-backed, and it is
+# throwaway. The job script defaults to the same path, so bare and via-here runs land in one place.
+OUT="${OUT_DIR:-$HERE/corpus_perf_results}"
 mkdir -p "$OUT"
 
 # Node count is an argument, so it cannot be an #SBATCH line: re-submit ourselves with it. The

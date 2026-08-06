@@ -1,0 +1,3 @@
+# A sweep writes its results next to the scripts, so the folder is one directory to copy off the
+# cluster. They are outputs, not sources.
+corpus_perf_results/
