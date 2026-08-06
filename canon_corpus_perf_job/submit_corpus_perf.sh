@@ -128,35 +128,16 @@ mkdir -p "$TMPDIR"
 # A batch script does NOT inherit the interactive PATH, so a bare ``python`` is /usr/bin/python and
 # ``import dace`` dies in 5s looking like a corpus bug. Resolve it once and fail loudly.
 #
-# The probe is not a nicety. setup.py declares python_requires='>=3.10', and an unusable
-# /usr/bin/python3 announces itself as "No module named 'dataclasses'" -- an error that reads like a
-# missing PyPI package and invites installing the 3.6 backport of that name, which fixes nothing
-# (dataclasses has been stdlib since 3.7; the wheel is a shim stdlib shadows on every version dace
-# supports). So probe the interpreter for BOTH failure modes at once -- too old, and a stdlib too
-# stripped to supply dataclasses -- by importing the module that actually fails. Demanding a printed
-# token rather than a zero exit matters: PYTHON= pointed at a non-interpreter exits 0 happily.
-py_ok() {
-    [ -x "$1" ] || return 1
-    [ "$("$1" -c 'import sys, dataclasses; print("ok" if sys.version_info[:2] >= (3, 10) else "old")' 2>/dev/null)" = ok ]
-}
-# Bare python3 is tried first but is exactly what breaks under sbatch (no interactive PATH, so it
-# resolves to the system interpreter, not the module-loaded one), hence the versioned fallbacks.
-PY="${PYTHON:-}"
-if [ -z "$PY" ]; then
-    for cand in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do
-        found="$(command -v "$cand" || true)"
-        if py_ok "$found"; then
-            PY="$found"
-            break
-        fi
-    done
-fi
-py_ok "$PY" || {
-    echo "FATAL: '$PY' cannot run dace (needs >= 3.10 with a complete stdlib)" >&2
-    [ -x "$PY" ] && echo "  it reports: $("$PY" -V 2>&1)" >&2
-    echo "  set PYTHON=/path/to/python3.1x, or module-load it before sbatch: a batch script gets no" >&2
-    echo "  interactive PATH, so 'python3' is the system one even when yours is newer." >&2
-    echo "  Do NOT pip install 'dataclasses' -- that is a Python 3.6 backport of a stdlib module." >&2
+# VERSIONED name, never bare ``python3``: setup.py declares python_requires='>=3.10', and a bare
+# python3 under sbatch is the system interpreter, which here is old enough that dace dies on
+# "import dataclasses" (stdlib only since 3.7). That error reads like a missing PyPI package and
+# invites installing the wheel of that name -- a 3.6 backport stdlib shadows on every version dace
+# supports, so it cannot help. Naming the version removes the ambiguity outright.
+PY="${PYTHON:-python3.11}"
+command -v "$PY" >/dev/null 2>&1 || {
+    echo "FATAL: no '$PY' on PATH" >&2
+    echo "  a batch script gets no interactive PATH, so module-load it before sbatch (the module" >&2
+    echo "  environment is exported to the job) or set PYTHON= to another >= 3.10 interpreter." >&2
     exit 1
 }
 
@@ -168,7 +149,17 @@ py_ok "$PY" || {
 # ``env -u`` because the harness registers the arms itself at import; one probe pass is enough.
 echo "== preflight: arms=$CANON_PERF_ARMS omp=$OMP_NUM_THREADS py=$PY"
 (cd "$REPO" && env -u CANON_PERF_ARMS "$PY" - "$CANON_PERF_ARMS") <<'PY'
+import importlib.util
 import sys
+
+# Named BEFORE importing dace, and all at once. The perf driver is a dual-entry file -- a pytest
+# module that also runs as a script -- so it imports pytest at top level even though the job never
+# invokes pytest, and the plotter imports matplotlib. Discovering those one traceback at a time
+# costs a queue wait each. ``find_spec`` only resolves the module, it does not import it, so this
+# stays cheap enough to sit ahead of the expensive dace import.
+missing = [m for m in ('numpy', 'pytest', 'matplotlib') if importlib.util.find_spec(m) is None]
+if missing:
+    raise SystemExit(f"FATAL: missing modules: {' '.join(missing)}\n  pip install {' '.join(missing)}")
 
 import dace
 from tests.passes.canonicalize.canonicalize_perf_corpus_test import ARMS, arms_requested, register_arms
