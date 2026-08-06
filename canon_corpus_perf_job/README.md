@@ -1,12 +1,13 @@
 # Corpus perf job
 
-ONE job: four in-repo corpora, six arms, one figure. Three files, nothing else.
+ONE job: four in-repo corpora, six arms, TWO figures (the corpora split into two denominator
+groups, see below). Three files, nothing else.
 
 | file | what it does |
 |:--|:--|
 | `submit_corpus_perf.sh` | sbatch submission. Pins the environment, probes every arm, fans out `X` nodes x 4 ranks, aggregates |
 | `corpus_perf_job.py` | the rank. Picks its kernels, takes a private build folder, unblocks SIGCHLD, drives the measurement |
-| `plot_corpus_perf.py` | the figure, from the aggregated results |
+| `plot_corpus_perf.py` | the two figures, from the aggregated results |
 
 (`cloudsc/` next door is an unrelated job.)
 
@@ -41,7 +42,7 @@ denominator below.
 
 | corpus | kernels | denominator | what the denominator is |
 |:--|--:|:--|:--|
-| `poly` | 30 | corpus reference | timed untransformed-SDFG oracle, `g++` + base flags (polybench ships no numpy oracle) |
+| `poly` | 30 | corpus reference | timed numpy reference (`polybench_numpy`). `seidel_2d`'s numpy form is a scalar Python loop: labelled `python-scalar`, never timed, never divided by |
 | `np` | 24 | corpus reference | timed numpy reference |
 | `tsvc` | 151 | `seq-cpp` | sequential C++ from the same post-simplify SDFG |
 | `tsvc25` | 72 | `seq-cpp` | sequential C++ from the same post-simplify SDFG |
@@ -171,24 +172,43 @@ Exit code is non-zero if any kernel errored or miscompiled.
 
 ## Plot
 
-`plot_corpus_perf.py` reads the per-kernel JSON above and NEVER re-measures anything.
+`plot_corpus_perf.py` reads the per-kernel JSON above and NEVER re-measures anything. It writes
+**TWO figures**, because the four corpora split into two groups with different denominators:
+
+| figure file | corpora | denominator |
+|:--|:--|:--|
+| `<prefix>_numpy-reference.png` | `np` + `poly` | the timed **parallel** numpy reference |
+| `<prefix>_seq-cpp.png` | `tsvc` + `tsvc25` | the `seq-cpp` arm: **sequential** C++ |
+
+They are separate files on purpose. 3x over threaded numpy and 3x over single-core C++ are
+different claims: the numpy reference dispatches gemm / 2mm / 3mm / syrk / cholesky into a threaded
+OpenBLAS, while `seq-cpp` is single-core by construction. One shared axis would invite a comparison
+that is not valid, so each figure carries a caption naming its denominator in words, gets its own
+geomean table, and there is NO geomean anywhere that pools the two.
 
 ```bash
 python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR"
-python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR" --suite tsvc,tsvc25 --symlog
+python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR" --suite tsvc,tsvc25
 python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR" --arm dace-canon-gcc,dace-canon-llvm
 ```
 
-Writes `<results>/corpus_speedup_<preset>.png` plus the same name `.md`: coverage per corpus, then
-the geomean per corpus and arm and per arm within one denominator, raw ratio with `n`.
+Default prefix is `<results>/corpus_speedup_<preset>`; each figure appends its own slug and writes
+`.png` plus `.md` beside it. `--suite` selecting one group writes that figure only.
 
-* One panel per (corpus, denominator), each titled with what it divides by, because a speedup over
-  numpy and a speedup over sequential C++ are different claims. `--denominator baseline` instead
-  divides by the record's own `speedup_vs_baseline` arm -- the only denominator a pre-six-arm sweep
-  on disk carries, and labelled as such in the figure.
-* Every y tick prints the signed value AND its raw ratio (`+2 (3×)`), so `+2` cannot be read as 2x.
+* Each `.md` holds: coverage per corpus, geomean per (corpus, arm) and per arm over THAT figure,
+  `n` beside every geomean, then the exclusions by category and by reason.
+* Geomeans are over the RAW ratio and only then converted to the signed scale, which spans zero and
+  negatives, where a geometric mean is undefined.
+* Every y tick prints the signed value AND its raw ratio (`+2 (3x)`), so `+2` cannot be read as 2x.
+  `--yscale linear` turns off the default symlog, which keeps `+-1` linear but stops a 1000x
+  outlier from flattening the panel.
+* `python-scalar` references are never a denominator: the tsvc/tsvc25 oracles (their bars divide by
+  `seq-cpp`, so they still plot) and polybench `seidel_2d` (dropped, and counted in the `.md`).
 * Miscompiled arms, errored arms and kernels whose denominator cannot be verified are dropped and
-  counted in the `.md`, never replaced by 1.0. A partial sweep plots what exists; nothing plottable
-  writes no figure, prints the reason and exits non-zero.
-* `--preset` `--suite` `--arm` `--min-ms` `--sort` `--symlog` subset or rescale it; `--results` is
+  counted, never replaced by 1.0. A partial or killed sweep plots what exists and reports what is
+  absent; nothing plottable writes no figure, prints the reason and exits non-zero.
+* Result files predating the six-arm labels (e.g. `tests/passes/canonicalize/perf_results/`) are
+  reported as STALE and refused, not mixed in. `--denominator baseline` is the mode that reads them,
+  against their own baseline arm, and says so in the figure.
+* `--preset` `--suite` `--arm` `--min-ms` `--sort` `--yscale` subset or rescale; `--results` is
   repeatable (duplicate kernels resolve to the newest timestamp, reported).

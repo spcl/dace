@@ -57,10 +57,10 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.ticker import FuncFormatter
 
-#: Where the job writes its results, i.e. ``corpus_perf_job.DEFAULT_OUT`` -- outside the repo,
-#: because a sweep produces one JSON per kernel and the job folder holds only its three scripts.
-#: Not imported from there: this script must stay readable on a box with no dace and no corpora.
-DEFAULT_RESULTS = Path.home() / '.cache' / 'dace-corpus-perf-results'
+#: Where the job writes its results, i.e. ``corpus_perf_job.DEFAULT_OUT``: beside the scripts, so a
+#: finished run is one directory. Resolved from THIS file rather than imported -- the plotter must
+#: stay readable on a box with no dace and no corpora, and the two defaults have to agree.
+DEFAULT_RESULTS = Path(__file__).resolve().with_name('corpus_perf_results')
 #: Corpus tags in figure order.
 SUITES = ('poly', 'np', 'tsvc', 'tsvc25')
 SUITE_TITLE = {'poly': 'polybench', 'np': 'npbench', 'tsvc': 'tsvc', 'tsvc25': 'tsvc_2_5'}
@@ -127,14 +127,16 @@ class Group(NamedTuple):
 #: The two figures. A corpus appears in exactly one of them, and no number crosses between them.
 GROUPS = (
     Group(
-        'numpy-reference', ('np', 'poly'), 'numpy', 'npbench + polybench, speedup over the timed parallel numpy reference',
+        'numpy-reference', ('np', 'poly'), 'numpy',
+        'npbench + polybench, speedup over the timed parallel numpy reference',
         'Denominator: each kernel\'s own numpy reference, timed like any other arm at the machine default thread '
         'count. numpy dispatches gemm / 2mm / 3mm / syrk / cholesky into a THREADED OpenBLAS, so this axis is a '
         'comparison against parallel numpy, not against one core. Kernels whose numpy form is a scalar Python loop '
         '(seidel_2d) carry a python-scalar reference, are never divided by it, and are absent by construction. '
         'These numbers are NOT comparable with the seq-cpp figure: the two divide by different things.'),
     Group(
-        'seq-cpp', ('tsvc', 'tsvc25'), 'sequential-c++', 'tsvc + tsvc_2_5, speedup over sequential C++ (the seq-cpp arm)',
+        'seq-cpp', ('tsvc', 'tsvc25'), 'sequential-c++',
+        'tsvc + tsvc_2_5, speedup over sequential C++ (the seq-cpp arm)',
         'Denominator: the seq-cpp arm -- single-threaded C++ generated from the same post-simplify SDFG, -O3, no '
         'autopar, no polyhedral flags, timed on the same rank as every other arm of the same kernel. The tsvc and '
         'tsvc_2_5 python oracles are scalar loops used for the value check only; they are never timed and never '
@@ -358,12 +360,14 @@ def collect(records: dict[tuple[str, str], dict], preset: str, mode: str, suites
         group = group_of(suite)
         if group is None:
             excluded.append(
-                Excluded(suite, kernel, '', CAT_UNGROUPED, 'corpus ' + repr(suite) + ' is in neither denominator group'))
+                Excluded(suite, kernel, '', CAT_UNGROUPED,
+                         'corpus ' + repr(suite) + ' is in neither denominator group'))
             continue
         if mode == 'corpus' and stale_record(record, preset):
             arm_names = ' '.join(sorted((preset_of(record, preset).get('pipelines') or {})))
             excluded.append(
-                Excluded(suite, kernel, '', CAT_STALE, f'stale result file: arms {arm_names} predate the six-arm table'))
+                Excluded(suite, kernel, '', CAT_STALE,
+                         f'stale result file: arms {arm_names} predate the six-arm table'))
             continue
         den, category, why = denominator(record, preset, mode)
         if den is None:
@@ -375,8 +379,8 @@ def collect(records: dict[tuple[str, str], dict], preset: str, mode: str, suites
                          f'denominator kind {den.kind!r} is not the {group.kind!r} this figure divides by'))
             continue
         if den.min_ms < min_ms:
-            excluded.append(
-                Excluded(suite, kernel, '', CAT_TOO_FAST, f'denominator {den.min_ms:.4f} ms below --min-ms'))
+            excluded.append(Excluded(suite, kernel, '', CAT_TOO_FAST,
+                                     f'denominator {den.min_ms:.4f} ms below --min-ms'))
             continue
         pipelines = preset_of(record, preset).get('pipelines') or {}
         for arm, entry in pipelines.items():
@@ -475,10 +479,11 @@ def draw_facet(ax: Axes, suite: str, kind: str, points: list[Point], arms: list[
     ax.tick_params(labelsize=7)
     on_disk = CORPUS_SIZE.get(suite)
     coverage = f'{len(kernels)}/{on_disk}' if on_disk else str(len(kernels))
-    ax.set_title(f'{SUITE_TITLE.get(suite, suite)}  -  speedup vs {DENOM_PHRASE.get(kind, kind)}'
-                 f'  -  {coverage} kernels plotted',
-                 fontsize=9,
-                 loc='left')
+    ax.set_title(
+        f'{SUITE_TITLE.get(suite, suite)}  -  speedup vs {DENOM_PHRASE.get(kind, kind)}'
+        f'  -  {coverage} kernels plotted',
+        fontsize=9,
+        loc='left')
     if not dense:
         ax.set_xticks(xs, [short_name(k) for k in kernels], rotation=90, fontsize=5.5)
     else:
@@ -516,11 +521,10 @@ def render_group(group: Group, report: Report, points: list[Point], out_path: Pa
     sources = ', '.join(short_path(s) for s in report.sources)
     kernels = len({(p.suite, p.kernel) for p in points})
     mode = '' if report.mode == 'corpus' else f' - denominator mode `{report.mode}`'
-    fig.suptitle(
-        f'{group.title}\n'
-        f'preset `{report.preset}`{mode} - {len(points)} measurements over {kernels} kernels - '
-        f'geomeans are over the RAW ratio - {sources}',
-        fontsize=10)
+    subtitle = (f'preset `{report.preset}`{mode} - {len(points)} measurements over {kernels} kernels - '
+                f'geomeans are over the RAW ratio - {sources}')
+    # Wrapped against the figure width: an unwrapped provenance line is simply clipped off the page.
+    fig.suptitle(f'{group.title}\n' + textwrap.fill(subtitle, width=int(width * 13)), fontsize=10)
     fig.supxlabel(textwrap.fill(group.caption, width=int(width * 13)), fontsize=7.5)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi)
@@ -590,9 +594,7 @@ def excluded_lines(excluded: list[Excluded], points: list[Point], limit: int) ->
     by_cat: dict[str, list[Excluded]] = {}
     for e in excluded:
         by_cat.setdefault(e.category, []).append(e)
-    out = [
-        '', '## Excluded from this figure', '', '| category | kernels | arm entries |', '|:--|--:|--:|'
-    ]
+    out = ['', '## Excluded from this figure', '', '| category | kernels | arm entries |', '|:--|--:|--:|']
     for cat, items in sorted(by_cat.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         kernels = len({(e.suite, e.kernel) for e in items if not e.arm})
         out.append(f'| {cat} | {kernels} | {sum(1 for e in items if e.arm)} |')
@@ -673,7 +675,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                     help=f'drop kernels whose denominator is faster than this ({MIN_TIMEABLE_MS} is the '
                     'harness\'s timeable floor). Default 0: plot everything, report the fast ones')
     ap.add_argument('--sort', choices=('speedup', 'name'), default='speedup', help='kernel order within a panel')
-    ap.add_argument('--symlog', action='store_true', help='symmetric-log y axis, for corpora with huge outliers')
+    ap.add_argument('--yscale',
+                    choices=('symlog', 'linear'),
+                    default='symlog',
+                    help='symlog (default): one arm 1000x slower than the reference otherwise flattens '
+                    'the whole panel onto the parity line. The +-1 band stays linear either way')
     ap.add_argument('--out',
                     metavar='PREFIX',
                     default='',
@@ -751,7 +757,7 @@ def main(argv: list[str] | None = None) -> int:
         figure: Path | None = None
         if group_points:
             figure = render_group(group, report, group_points, Path(f'{prefix}_{group.slug}.png'), args.sort,
-                                  args.symlog, args.dpi)
+                                  args.yscale == 'symlog', args.dpi)
             drawn += 1
         table_path = Path(f'{prefix}_{group.slug}.md')
         table_path.parent.mkdir(parents=True, exist_ok=True)

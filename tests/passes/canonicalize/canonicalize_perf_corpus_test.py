@@ -249,14 +249,22 @@ _BASE_ARGS = os.environ.get(
 #: different thread count, ``-polly-vectorizer``, another GCC) is a sweep, not an edit.
 _GCC = os.environ.get('CANON_PERF_GCC_CXX', 'g++')
 _CLANG = os.environ.get('CANON_PERF_CLANG_CXX', 'clang++')
-#: gcc's auto-parallelizer takes its thread count as a compile-time flag, so it MUST be pinned to
-#: the same value the OpenMP arms get at run time or the arms race different machines.
+#: gcc's auto-parallelizer takes its thread count as a compile-time flag. It is a HEURISTIC input,
+#: not the runtime width: the emitted GOMP_parallel still runs on OMP_NUM_THREADS threads.
 _THREADS = os.environ.get('OMP_NUM_THREADS', '4')
+#: MEASURED on g++ 15.2: with Graphite in the same command line, parloops stops parallelizing a
+#: 4096x4096 affine nest somewhere between 33 and 48, and emits NO GOMP_parallel at 48 or 72 --
+#: silently turning the gcc autopar arm into plain -O3. Without Graphite it parallelizes at 72, so
+#: the interaction is Graphite's, not the thread count's. -floop-parallelize-all does not override
+#: it and neither does --param parloops-min-per-thread. Capping only the compile-time hint keeps
+#: Graphite AND the parallelization, and costs nothing at run time.
+_AUTOPAR_HINT_CAP = int(os.environ.get('CANON_PERF_GCC_AUTOPAR_HINT_CAP', '32'))
+_AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 #: Graphite is folded into the gcc autopar arm and Polly into the llvm one -- the user's table has
 #: six columns, and a polyhedral restructuring nobody then parallelizes answers no question the
 #: figure asks. Polly IS the llvm arm's polyhedral engine, so ``-polly -polly-parallel`` is both.
 _GCC_AUTOPAR_FLAGS = os.environ.get(
-    'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={_THREADS} -floop-parallelize-all '
+    'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={_AUTOPAR_HINT} -floop-parallelize-all '
     '-fgraphite-identity -floop-nest-optimize')
 _LLVM_AUTOPAR_FLAGS = os.environ.get('CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp -mllvm -polly -mllvm -polly-parallel')
 
@@ -401,10 +409,11 @@ def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
                            f'comparison dies under FP contraction. Got: {_BASE_ARGS!r}')
     # gcc bakes its thread count into the object, so it cannot merely happen to match the runtime
     # OMP_NUM_THREADS the other arms get -- an override that forgets this races 2 machines.
-    if any(arm.executable == _GCC and arm.markers and f'-ftree-parallelize-loops={_THREADS}' not in arm.flags
+    if any(arm.executable == _GCC and arm.markers and f'-ftree-parallelize-loops={_AUTOPAR_HINT}' not in arm.flags
            for arm in arms):
-        raise RuntimeError(f"the gcc autopar arm must compile for exactly OMP_NUM_THREADS={_THREADS} "
-                           f"threads; got flags {_GCC_AUTOPAR_FLAGS!r}")
+        raise RuntimeError(f"the gcc autopar arm must compile with -ftree-parallelize-loops={_AUTOPAR_HINT} "
+                           f"(OMP_NUM_THREADS={_THREADS} capped at {_AUTOPAR_HINT_CAP}, above which Graphite "
+                           f"suppresses parallelization entirely); got flags {_GCC_AUTOPAR_FLAGS!r}")
     evidence = {arm.label: probe_arm(arm) for arm in arms}
     _PIPELINES.clear()  # a registration is the WHOLE table: every arm's toolchain is pinned, none implicit
     _ARMS.clear()

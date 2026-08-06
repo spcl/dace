@@ -207,9 +207,11 @@ def drive(cmd: list[str], repo: Path) -> int:
 def measure(rank: int, size: int, args: argparse.Namespace, repo: Path, out: Path) -> int:
     """Run the selected facets over this rank's shard; return the worst driver exit code."""
     worst = 0
-    # Both drivers truncate BEFORE sharding, so a bare ``--limit N`` would hand rank 0 everything
-    # and the other ranks nothing. Scaling by the rank count keeps the smoke run's shape honest:
-    # every rank measures about N kernels, and they are still disjoint.
+    # Both drivers take ``--limit`` as "the first N of each corpus, BEFORE sharding", so a bare N
+    # would leave each rank with N/size kernels -- at ``--limit 1`` on 4 ranks, three ranks with
+    # nothing to do and a smoke run that proves nothing about the fan-out. Scaling by the rank count
+    # makes it N per corpus PER RANK, which is what a smoke run is asking for, and the shards stay
+    # disjoint either way.
     limit = ['--limit', str(args.limit * size)] if args.limit else []
     shard = ['--shard', f'{rank}/{size}']
     if args.facet in ('parallelism', 'both'):
@@ -279,8 +281,7 @@ def main() -> int:
     ap.add_argument('--limit',
                     type=int,
                     default=None,
-                    help='smoke runs: measure about N kernels PER RANK (N x ranks of the pooled list, '
-                    'and N per corpus per rank for the parallelism facet)')
+                    help='smoke runs: measure N kernels of EACH corpus PER RANK (both facets)')
     ap.add_argument('--check', action='store_true', help='parallelism facet also compiles+runs and checks values')
     ap.add_argument('--force', action='store_true', help='re-time kernels that already have a result file')
     ap.add_argument('--aggregate', action='store_true', help='post-step: fold the per-rank outputs into one report')
