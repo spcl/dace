@@ -1,5 +1,6 @@
 # Copyright 2019-2025 ETH Zurich and the DaCe authors. All rights reserved.
 
+import ast
 from dataclasses import dataclass
 from dace.sdfg.state import (
     AbstractControlFlowRegion,
@@ -100,10 +101,34 @@ def _is_array_access(value: Optional[str]) -> bool:
       ``__tmp0_size(i)`` whose body named an out-of-scope ``A_indptr``). The kernel already stages
       the bound through ``dc.define_local_scalar``; folding it back defeats exactly that.
 
+    A struct MEMBER read spells the same thing with a dot instead of brackets -- ``np.argmax``
+    reduces into a ``_val_and_idx`` struct and then reads ``b_slice.idx`` -- so the bracket test
+    alone let that through. Propagated, it landed in a tasklet carrying no memlet for ``b_slice``
+    and codegen emitted ``b[b_idx(0)] = b_slice.idx;`` against an undeclared name.
+
     :param value: The assignment RHS string, or ``None``.
-    :returns: Whether the RHS contains a subscripted data access.
+    :returns: Whether the RHS reads a data container, by subscript or by struct member.
     """
-    return value is not None and ("[" in value or "]" in value)
+    if value is None:
+        return False
+    if "[" in value or "]" in value:
+        return True
+    return _reads_struct_member(value)
+
+
+def _reads_struct_member(value: str) -> bool:
+    """True iff ``value`` reads an attribute off a plain name (``b_slice.idx``).
+
+    Attribute access on a name is how a struct member is spelled, but it is also how a qualified
+    call is spelled (``math.floor(x)``), and refusing those would stop propagating ordinary integer
+    arithmetic. So an attribute that is the callee of a call does not count.
+    """
+    try:
+        tree = ast.parse(value.strip(), mode='eval')
+    except (SyntaxError, ValueError):
+        return False  # not parseable as an expression -> leave it to the other filters
+    callees = {id(node.func) for node in ast.walk(tree) if isinstance(node, ast.Call)}
+    return any(isinstance(node, ast.Attribute) and id(node) not in callees for node in ast.walk(tree))
 
 
 def _resolve(value, table: Dict[str, Any]):

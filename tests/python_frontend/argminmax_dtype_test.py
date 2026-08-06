@@ -15,12 +15,18 @@ def argmax_kernel(a: dace.float64[N], b: dace.int64[1]):
     b[0] = np.argmax(a)
 
 
-def test_argminmax_struct_dtype_stringifies():
+def test_argminmax_builds_no_struct():
+    """argmax/argmin reduce through two scalars, never a struct.
+
+    A struct needed a Custom WCR, which the OpenMP reduction expansion refuses, whose hand-written
+    combine broke ties nondeterministically under a parallel reduction, and whose member read was
+    not a symbolic expression -- propagating it emitted an undeclared name and the kernel stopped
+    compiling under canonicalize. The stringification this used to reach through argmax is covered
+    directly by :func:`test_struct_pointer_vector_stringify`.
+    """
     sdfg = argmax_kernel.to_sdfg(simplify=False)
-    structs = [desc.dtype for desc in sdfg.arrays.values() if isinstance(desc.dtype, dtypes.struct)]
-    assert structs, 'np.argmax no longer builds a struct dtype -- this test guards the wrong construct'
-    for dtype in structs:
-        assert dtype.to_string() == dtype.name
+    structs = [name for name, desc in sdfg.arrays.items() if isinstance(desc.dtype, dtypes.struct)]
+    assert not structs, f'np.argmax built struct-typed containers: {structs}'
 
 
 def test_struct_pointer_vector_stringify():
@@ -38,6 +44,6 @@ def test_argmax_matches_numpy():
 
 
 if __name__ == '__main__':
-    test_argminmax_struct_dtype_stringifies()
+    test_argminmax_builds_no_struct()
     test_struct_pointer_vector_stringify()
     test_argmax_matches_numpy()

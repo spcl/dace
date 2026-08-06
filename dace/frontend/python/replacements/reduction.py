@@ -295,66 +295,72 @@ def _argminmax(pv: ProgramVisitor,
     if not reduced_shape:
         reduced_shape = [1]
 
-    val_and_idx = dtypes.struct('_val_and_idx', idx=result_type, val=a_arr.dtype)
-
-    # HACK: since identity cannot be specified for structs, we have to init the output array
-    reduced_structs, reduced_struct_arr = pv.add_temp_transient(reduced_shape, val_and_idx)
-
-    code = "__init = _val_and_idx(val={}, idx=-1)".format(
-        dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype))
-
     reduced_expr = ','.join('__i%d' % i for i in range(len(a_arr.shape)) if i != axis)
     reduced_maprange = {'__i%d' % i: '0:%s' % n for i, n in enumerate(a_arr.shape) if i != axis}
     if not reduced_expr:
         reduced_expr = '0'
         reduced_maprange = {'__i0': '0:1'}
-    nest.add_state().add_mapped_tasklet(name="_arg{}_convert_".format(func),
-                                        map_ranges=reduced_maprange,
-                                        inputs={},
-                                        code=code,
-                                        outputs={'__init': Memlet.simple(reduced_structs, reduced_expr)},
-                                        external_edges=True)
 
+    # Two scalar reductions, no struct. A ``_val_and_idx`` struct needs a Custom WCR, which
+    # ``ExpandReduceOpenMP`` refuses (it falls back to the serial expansion), whose combine has to
+    # hand-break ties and got it wrong under parallel reduction, and whose member read
+    # (``best.idx``) is not a symbolic expression -- propagating it emitted an undeclared name.
+    # Reducing the extremum and then the smallest index attaining it uses only builtin WCRs, is
+    # first-occurrence by construction whatever order the reduction runs in, and returns scalars.
+    extremum, _ = pv.add_temp_transient(reduced_shape, a_arr.dtype)
+    # Both reductions need their identity written first: a fresh transient is zero-filled, and
+    # ``min(0, ...)`` / ``max(0, ...)`` would clamp every all-positive / all-negative input.
     nest.add_state().add_mapped_tasklet(
-        name="_arg{}_reduce_".format(func),
+        name="_arg{}_value_init_".format(func),
+        map_ranges=reduced_maprange,
+        inputs={},
+        code="__out = {}".format(dtypes.min_value(a_arr.dtype) if func == 'max' else dtypes.max_value(a_arr.dtype)),
+        outputs={'__out': Memlet.simple(extremum, reduced_expr)},
+        external_edges=True)
+    nest.add_state().add_mapped_tasklet(
+        name="_arg{}_value_".format(func),
         map_ranges={
             '__i%d' % i: '0:%s' % n
             for i, n in enumerate(a_arr.shape)
         },
         inputs={'__in': Memlet.simple(a, ','.join('__i%d' % i for i in range(len(a_arr.shape))))},
-        code="__out = _val_and_idx(idx={}, val=__in)".format("__i%d" % axis),
-        outputs={
-            '__out':
-            Memlet.simple(reduced_structs,
-                          reduced_expr,
-                          wcr_str=("lambda x, y:"
-                                   "_val_and_idx(val={}(x.val, y.val), "
-                                   "idx=(y.idx if x.val {} y.val else x.idx))").format(
-                                       func, '<' if func == 'max' else '>'))
+        code="__out = __in",
+        outputs={'__out': Memlet.simple(extremum, reduced_expr, wcr_str="lambda x, y: {}(x, y)".format(func))},
+        external_edges=True)
+
+    # ``result_type``'s largest value is the identity: any real index is smaller, so a min-reduction
+    # over the indices attaining the extremum yields the FIRST one, as numpy specifies.
+    outidx, _ = pv.add_temp_transient(reduced_shape, result_type, output_index=0 if return_both else None)
+    nest.add_state().add_mapped_tasklet(name="_arg{}_index_init_".format(func),
+                                        map_ranges=reduced_maprange,
+                                        inputs={},
+                                        code="__out = {}".format(dtypes.max_value(result_type)),
+                                        outputs={'__out': Memlet.simple(outidx, reduced_expr)},
+                                        external_edges=True)
+    nest.add_state().add_mapped_tasklet(
+        name="_arg{}_index_".format(func),
+        map_ranges={
+            '__i%d' % i: '0:%s' % n
+            for i, n in enumerate(a_arr.shape)
         },
+        inputs={
+            '__in': Memlet.simple(a, ','.join('__i%d' % i for i in range(len(a_arr.shape)))),
+            '__best': Memlet.simple(extremum, reduced_expr)
+        },
+        code="__out = {} if __in == __best else {}".format('__i%d' % axis, dtypes.max_value(result_type)),
+        outputs={'__out': Memlet.simple(outidx, reduced_expr, wcr_str="lambda x, y: min(x, y)")},
         external_edges=True)
 
     if return_both:
-        outidx, outidxarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, result_type, output_index=0)
-        outval, outvalarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, a_arr.dtype, output_index=1)
-
-        nest.add_state().add_mapped_tasklet(name="_arg{}_extract_".format(func),
+        outval, _ = pv.add_temp_transient(reduced_shape, a_arr.dtype, output_index=1)
+        nest.add_state().add_mapped_tasklet(name="_arg{}_value_out_".format(func),
                                             map_ranges=reduced_maprange,
-                                            inputs={'__in': Memlet.simple(reduced_structs, reduced_expr)},
-                                            code="__out_val = __in.val\n__out_idx = __in.idx",
-                                            outputs={
-                                                '__out_val': Memlet.simple(outval, reduced_expr),
-                                                '__out_idx': Memlet.simple(outidx, reduced_expr)
-                                            },
+                                            inputs={'__in': Memlet.simple(extremum, reduced_expr)},
+                                            code="__out = __in",
+                                            outputs={'__out': Memlet.simple(outval, reduced_expr)},
                                             external_edges=True)
-
         return nest, (outval, outidx)
-
-    else:
-        # map to result_type
-        out, outarr = pv.add_temp_transient(sdfg.arrays[reduced_structs].shape, result_type)
-        nest(elementwise)("lambda x: x.idx", reduced_structs, out_array=out)
-        return nest, out
+    return nest, outidx
 
 
 @oprepo.replaces_method('Array', 'argmax')
