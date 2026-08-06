@@ -34,6 +34,8 @@ Usage::
     python -m tests.passes.canonicalize.canonicalize_perf_corpus_test --force --csv perf.csv
     # only kernels matching a substring:
     python -m tests.passes.canonicalize.canonicalize_perf_corpus_test --only gemm
+    # one corpus, every 4th kernel starting at 1 (how the batch job fans ranks out):
+    python -m tests.passes.canonicalize.canonicalize_perf_corpus_test --suite poly --shard 1/4
     # as a CI gate (per-kernel speedup test, ``perf`` marker):
     pytest -m perf tests/passes/canonicalize/canonicalize_perf_corpus_test.py
 """
@@ -51,6 +53,7 @@ import json
 import math
 import signal
 import socket
+import sys
 
 import numpy as np
 import pytest
@@ -95,6 +98,11 @@ _RESULTS_DIR = os.environ.get('CANON_PERF_DIR', os.path.join(os.path.dirname(os.
                                                              'perf_results'))
 #: Re-measure even when a result file already exists.
 _FORCE = os.environ.get('CANON_PERF_FORCE', '') not in ('', '0', 'false', 'False')
+#: Dataset presets to measure, defaulting to every preset the corpus adapter defines.
+#: ``CANON_PERF_PRESETS=paper`` (comma-separated) halves the compiles of a sweep that only wants
+#: the performance-realistic shape -- and the paper-preset compiles are what the sweep costs.
+_ONLY_PRESETS = [p for p in os.environ.get('CANON_PERF_PRESETS', '').split(',') if p]
+PRESETS = tuple(p for p in CS.PRESETS if not _ONLY_PRESETS or p in _ONLY_PRESETS)
 #: Also save each pipeline's SDFG BEFORE library-node expansion to ``<dir>/sdfg/``
 #: (opt-in; ``--save-sdfg`` from the script sets this too).
 _SAVE_SDFG = os.environ.get('CANON_PERF_SAVE_SDFG', '') not in ('', '0', 'false', 'False')
@@ -162,8 +170,34 @@ def _save_pre_expansion(ctx, suite, name, preset):
             continue
 
 
+#: cupy's default allocator calls ``cudaMalloc`` per array, so a GPU pipeline would time driver
+#: allocation instead of the kernel. Set once, and only if a pipeline already pulled cupy in --
+#: importing it here would cost a CUDA init on the CPU-only sweeps this harness usually runs.
+_CUPY_POOLED = False
+
+
+def _pool_cupy():
+    """Route cupy device + pinned allocations through pools. No-op without cupy or a device."""
+    global _CUPY_POOLED
+    cupy = sys.modules.get('cupy')
+    if _CUPY_POOLED or cupy is None:
+        return
+    _CUPY_POOLED = True
+    try:
+        cupy.cuda.set_allocator(cupy.cuda.MemoryPool().malloc)
+        cupy.cuda.set_pinned_memory_allocator(cupy.cuda.PinnedMemoryPool().malloc)
+    except Exception:  # no device, driver mismatch -- pooling is an optimization, never fatal
+        pass
+
+
 def _time_all_reps(ctx, sdfg):
-    """All timed repetitions for one compiled SDFG, in milliseconds."""
+    """All timed repetitions for one compiled SDFG, in milliseconds.
+
+    The call arguments are built ONCE per pipeline and reused across every repetition -- there is
+    no per-rep allocation to pool away, and re-initializing them per rep would both change what is
+    measured and put the memcpy inside the timed region.
+    """
+    _pool_cupy()
     cs, kw = CS.compiled_call(ctx, sdfg)
     with dace.profile(repetitions=_REPS, warmup=_WARMUP, print_results=False) as prof:
         cs(**kw)
@@ -189,7 +223,7 @@ def _measure_kernel(suite, name):
                   baseline=_BASELINE,
                   presets={})
     measured_any = False
-    for preset in CS.PRESETS:
+    for preset in PRESETS:
         pres = dict(shape=None, pipelines={}, speedup_vs_baseline={})
         try:
             ctx = CS.make(suite, name, preset)
@@ -368,7 +402,7 @@ def export_markdown(md_path, results_dir=None):
         "Speedup = `auto-opt_min / pipeline_min` (best-of-N); **>1× means faster than auto-opt**. "
         "Only numerically-correct pipelines are timed — ✓ verified, ✗ miscompile, · not measured.",
     ]
-    for preset in CS.PRESETS:
+    for preset in PRESETS:
         out += [
             "",
             f"## preset `{preset}`",
@@ -409,7 +443,7 @@ def export_markdown(md_path, results_dir=None):
 # Script entry point: run the (resumable) sweep, print a table, optional CSV.
 # ---------------------------------------------------------------------------
 def _print_tables():
-    for preset in CS.PRESETS:
+    for preset in PRESETS:
         print(
             f"\n### preset={preset}  (best-of-{_REPS}, warmup={_WARMUP}, "
             f"OMP={os.environ.get('OMP_NUM_THREADS')})",
@@ -441,9 +475,19 @@ def _print_tables():
         print(f"# geomean speedup vs {_BASELINE}: canon={_geomean(cspeed):.3f}x (n={len(cspeed)})", flush=True)
 
 
-def _run_sweep(only=None, force=False):
+def _run_sweep(only: str = '', force: bool = False, suite: str = '', shard: tuple = (0, 1), limit: int = 0) -> None:
+    """Measure every selected kernel, skipping the ones that already have a result file.
+
+    ``suite`` restricts to one corpus tag and ``shard=(i, n)`` keeps every ``n``-th kernel
+    starting at ``i`` -- the same fan-out primitive ``tests.corpus.measure_parallelization``
+    takes, so a batch job shards both facets the same way. ``limit`` truncates the selection
+    BEFORE sharding, for smoke runs.
+    """
     os.makedirs(_RESULTS_DIR, exist_ok=True)
-    kernels = [(s, n) for s, n in CS.kernels() if not only or only in n]
+    kernels = [(s, n) for s, n in CS.kernels() if (not suite or s == suite) and (not only or only in n)]
+    if limit:
+        kernels = kernels[:limit]
+    kernels = kernels[shard[0]::shard[1]]
     for i, (suite, name) in enumerate(kernels, 1):
         path = _result_path(suite, name)
         if os.path.exists(path) and not force:
@@ -475,6 +519,9 @@ if __name__ == '__main__':
                     help='write a Markdown speedup table (default <dir>/speedup_table.md)')
     ap.add_argument('--force', action='store_true', help='re-measure even if a result file exists')
     ap.add_argument('--only', metavar='SUBSTR', help='only kernels whose name contains SUBSTR')
+    ap.add_argument('--suite', metavar='TAG', default='', help='only one corpus (poly, np, tsvc, tsvc25)')
+    ap.add_argument('--shard', metavar='I/N', default='0/1', help='only every N-th selected kernel starting at I')
+    ap.add_argument('--limit', metavar='N', type=int, default=0, help='only the first N selected kernels')
     ap.add_argument('--dir', metavar='PATH', help=f'results directory (default {_RESULTS_DIR})')
     ap.add_argument('--no-run', action='store_true', help='skip measuring; only (re)export CSV / tables')
     ap.add_argument('--save-sdfg',
@@ -486,7 +533,8 @@ if __name__ == '__main__':
     if args.save_sdfg:
         _SAVE_SDFG = True
     if not args.no_run:
-        _run_sweep(only=args.only, force=args.force)
+        index, total = (int(p) for p in args.shard.split('/'))
+        _run_sweep(only=args.only or '', force=args.force, suite=args.suite, shard=(index, total), limit=args.limit)
     _print_tables()
     md_out = args.markdown or os.path.join(_RESULTS_DIR, 'speedup_table.md')
     export_markdown(md_out)
