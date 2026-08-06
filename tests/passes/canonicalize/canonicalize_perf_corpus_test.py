@@ -414,6 +414,38 @@ def toolchain_env(arm: Arm) -> Iterator[None]:
                 os.environ[k] = old
 
 
+def resolve_autopar_hint(arm: Arm) -> Arm:
+    """Return ``arm`` with the largest ``-ftree-parallelize-loops`` width that actually parallelizes.
+
+    MEASURED on g++ 15.2 (x86) and again on g++ 16.1 (aarch64): with Graphite in the same command
+    line, parloops stops parallelizing a known-good affine nest above roughly 33 threads and emits
+    NO ``GOMP_parallel`` at all, silently turning this arm into plain ``-O3``. Without Graphite it
+    parallelizes at 72, so the interaction is Graphite's rather than the thread count's, and neither
+    ``-floop-parallelize-all`` nor ``--param parloops-min-per-thread`` overrides it. The cliff moves
+    with the compiler build, so it cannot be defaulted around with a fixed cap.
+
+    The width is a HEURISTIC input, not the runtime width -- the emitted parallel region still runs
+    on ``OMP_NUM_THREADS`` threads -- so lowering it costs nothing measurable and keeps the arm
+    honest. Probes descending widths and takes the first that emits a parallel region; raising is
+    left to the caller when none does.
+    """
+    hint = _AUTOPAR_HINT
+    for candidate in [w for w in (hint, 48, 32, 24, 16, 8, 4) if w <= hint]:
+        probe = arm._replace(
+            flags=arm.flags.replace(f'-ftree-parallelize-loops={hint}', f'-ftree-parallelize-loops={candidate}'))
+        try:
+            evidence = probe_arm(probe)
+        except RuntimeError:
+            continue
+        if candidate != hint:
+            print(f'NOTE: {arm.label} parallelizes at -ftree-parallelize-loops={candidate}, not '
+                  f'{hint}: this g++ build suppresses parloops above that width when Graphite is on. '
+                  f'Runtime width is unchanged at OMP_NUM_THREADS={_THREADS}.')
+        _EVIDENCE[probe.label] = evidence
+        return probe
+    return arm
+
+
 def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
     """Make ``arms`` the whole measured table; return ``label -> engagement evidence``.
 
@@ -431,13 +463,11 @@ def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
         raise RuntimeError('-ffast-math must not be in DACE_compiler_cpu_args: it enables associative '
                            'math, so each compiler reassociates reductions its own way and the columns '
                            f'no longer evaluate the same expression. Got: {_BASE_ARGS!r}')
-    # gcc bakes its thread count into the object, so it cannot merely happen to match the runtime
-    # OMP_NUM_THREADS the other arms get -- an override that forgets this races 2 machines.
-    if any(arm.executable == _GCC and arm.markers and f'-ftree-parallelize-loops={_AUTOPAR_HINT}' not in arm.flags
-           for arm in arms):
-        raise RuntimeError(f"the gcc autopar arm must compile with -ftree-parallelize-loops={_AUTOPAR_HINT} "
-                           f"(OMP_NUM_THREADS={_THREADS}, capped at {_AUTOPAR_HINT_CAP} by "
-                           f"CANON_PERF_GCC_AUTOPAR_HINT_CAP); got flags {_GCC_AUTOPAR_FLAGS!r}")
+    # The gcc autopar width is resolved against THIS compiler before anything is probed for real:
+    # the Graphite suppression cliff moves between g++ builds, and a width past it turns the arm
+    # into plain -O3. Only the compile-time heuristic moves; the runtime width stays OMP_NUM_THREADS.
+    arms = tuple(
+        resolve_autopar_hint(a) if a.executable == _GCC and '-ftree-parallelize-loops=' in a.flags else a for a in arms)
     evidence = {arm.label: probe_arm(arm) for arm in arms}
     _PIPELINES.clear()  # a registration is the WHOLE table: every arm's toolchain is pinned, none implicit
     _ARMS.clear()

@@ -44,6 +44,16 @@ RANKS_PER_NODE=4
 cd /capstor/scratch/cscs/ybudanaz/aarch64/dace/canon_corpus_perf_job
 HERE=$(pwd)
 
+# Both toolchains come from spack, and a batch script inherits none of the interactive module
+# environment, so without these the arms fall back to whatever /usr/bin holds -- a different
+# compiler than the one the run is supposed to be measuring. Sourcing spack's setup first because
+# `spack load` is a shell function, not an executable, so it does not exist in a bare bash.
+if command -v spack >/dev/null 2>&1 || [ -n "${SPACK_ROOT:-}" ]; then
+    [ -n "${SPACK_ROOT:-}" ] && [ -f "$SPACK_ROOT/share/spack/setup-env.sh" ] && . "$SPACK_ROOT/share/spack/setup-env.sh"
+    spack load gcc@16.1.0
+    spack load llvm@22.1.7
+fi
+
 # The repo root is walked up to rather than counted: the drivers run as ``python -m tests....`` from
 # it, and a hardcoded depth breaks silently the moment this folder is renamed or moved.
 REPO="$HERE"
