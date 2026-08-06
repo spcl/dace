@@ -780,10 +780,25 @@ class Range(Subset):
 
     def __setitem__(self, key, value):
         # ``__init__`` coerces every bound; this path did not, so ``r[i] = (0, n - 1, 1)``
-        # quietly put Python ints into a container whose contract says symbolic.
+        # quietly put Python ints into a container whose contract says symbolic. A 4-tuple
+        # carries the tile size, which lives in its own list rather than in ``ranges``.
         if isinstance(key, slice):
-            return self.ranges.__setitem__(key, [symbolic_range_tuple(v) for v in value])
-        return self.ranges.__setitem__(key, symbolic_range_tuple(value))
+            entries = [symbolic_range_tuple(v) for v in value]
+            if any(len(e) == 4 for e in entries):
+                self.tile_sizes[key] = [
+                    e[3] if len(e) == 4 else old for e, old in zip(entries, self.tile_sizes[key])
+                ]
+            return self.ranges.__setitem__(key, [e[:3] for e in entries])
+        if isinstance(value, (tuple, list)):
+            value = symbolic_range_tuple(value)
+            if len(value) == 4:
+                self.tile_sizes[key] = value[3]
+            value = value[:3]
+        else:
+            # Single-index write (e.g. the frontend replacing one dimension by an
+            # expression): still coerce so no raw Python number slips in.
+            value = tuple_to_symexpr(value)
+        return self.ranges.__setitem__(key, value)
 
     def __eq__(self, other):
         if not isinstance(other, Range):

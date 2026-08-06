@@ -1492,6 +1492,8 @@ class int_floor(DaceFunction):
         if y.is_Number:
             if y == 1:
                 return x
+            if y == -1:
+                return -x
             # Exact division is not a rounding operation at all -- return the quotient itself, so the
             # expression stays comparable and simplifiable instead of hiding behind an int_floor node.
             quotient = x / y
@@ -2526,6 +2528,20 @@ class PythonOpToSympyConverter(ast.NodeTransformer):
         return ast.copy_location(new_node, node)
 
 
+def _construct_function_uncached(func, *args, **kwargs):
+    # Construct without SymPy's ``@cacheit`` constructor caches (both
+    # ``Function.__new__`` and ``Application.__new__`` are cached, and ``eval``
+    # implementations re-enter them): DaCe symbol equality ignores dtype, so a
+    # cache entry built from an equal-named, different-dtype symbol would
+    # silently substitute that symbol into the result. Symbol-free arguments
+    # hash soundly and keep the regular (evaluating) constructors.
+    if (isinstance(func, type) and issubclass(func, sympy.core.function.Application)
+            and not (set(kwargs) - {'evaluate'}) and not kwargs.get('evaluate', False)
+            and any(isinstance(arg, sympy.Basic) and arg.free_symbols for arg in args)):
+        return sympy.Basic.__new__(func, *args)
+    return func(*args, **kwargs)
+
+
 class _SerializedSymbolicParser(ast.NodeVisitor):
     """
     Parser for the deterministic expression strings produced by
@@ -2632,7 +2648,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
 
     @staticmethod
     def _binop_mod(a, b):
-        return sympy.Mod(a, b, evaluate=False)
+        return _construct_function_uncached(sympy.Mod, a, b, evaluate=False)
 
     @staticmethod
     def _unary_minus(a):
@@ -2652,7 +2668,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         ast.Mod:
         _binop_mod,
         ast.FloorDiv:
-        lambda a, b: int_floor(a, b),
+        lambda a, b: _construct_function_uncached(int_floor, a, b),
         # A hand-written or hand-edited SDFG may spell a subset/range with the bitwise and shift
         # operators rather than the serializer's function form; without these the parser raised
         # ``KeyError: <class 'ast.BitAnd'>``. Mirrors what ``pystr_to_symbolic`` mints.
@@ -2670,8 +2686,8 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
     _unaryops = {
         ast.UAdd: lambda a: +a,
         ast.USub: _unary_minus,
-        ast.Not: lambda a: sympy.Not(a),
-        ast.Invert: lambda a: bitwise_invert(a),
+        ast.Not: lambda a: _construct_function_uncached(sympy.Not, a),
+        ast.Invert: lambda a: _construct_function_uncached(bitwise_invert, a),
     }
     _comparators = {
         ast.Eq: sympy.Eq,
@@ -2785,20 +2801,22 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
         if isinstance(node.op, ast.And):
             result = values[0]
             for value in values[1:]:
-                result = AND(result, value)
+                result = _construct_function_uncached(AND, result, value)
             return result
         result = values[0]
         for value in values[1:]:
-            result = OR(result, value)
+            result = _construct_function_uncached(OR, result, value)
         return result
 
     def visit_Compare(self, node):
         if len(node.ops) != 1 or len(node.comparators) != 1:
             raise NotImplementedError('Chained comparisons are not supported in symbolic deserialization')
-        return self._comparators[type(node.ops[0])](self.visit(node.left), self.visit(node.comparators[0]))
+        return _construct_function_uncached(self._comparators[type(node.ops[0])], self.visit(node.left),
+                                            self.visit(node.comparators[0]))
 
     def visit_IfExp(self, node):
-        return IfExpr(self.visit(node.test), self.visit(node.body), self.visit(node.orelse))
+        return _construct_function_uncached(IfExpr, self.visit(node.test), self.visit(node.body),
+                                            self.visit(node.orelse))
 
     def visit_Call(self, node):
         if isinstance(node.func, ast.Name) and node.func.id == '__dace_typed_const__':
@@ -2848,9 +2866,7 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
             return _cast_symbolic_value(args[0], func)
 
         kwargs = {kw.arg: self.visit(kw.value) for kw in node.keywords}
-        if kwargs:
-            return func(*args, **kwargs)
-        return func(*args)
+        return _construct_function_uncached(func, *args, **kwargs)
 
     def visit_Attribute(self, node):
         if isinstance(node.value, ast.Name) and node.value.id == 'dace':
@@ -2858,7 +2874,9 @@ class _SerializedSymbolicParser(ast.NodeVisitor):
                 return getattr(dtypes, node.attr)
             except AttributeError as ex:
                 raise TypeError(f'Unknown DaCe dtype "{node.attr}"') from ex
-        return Attr(self.visit(node.value), sympy_symbol(node.attr))
+        # Uncached: a symbol-bearing function expression built through SymPy's cache can come
+        # back with an equal-named symbol of the wrong dtype.
+        return _construct_function_uncached(Attr, self.visit(node.value), symbol(node.attr))
 
     def generic_visit(self, node):
         raise TypeError(f'Unsupported node in symbolic deserialization: {type(node).__name__}')
@@ -2886,7 +2904,7 @@ def _cast_symbolic_value(value, dtype: dtypes.typeclass):
         return TypedConstant(value, dtype=dtype)
     # Non-constant composite expressions are preserved as explicit casts so they
     # can round-trip even when no constant/symbol dtype rewrite is possible.
-    return sympy.Function(f'dace.{dtype.to_string()}')(value)
+    return _construct_function_uncached(sympy.Function(f'dace.{dtype.to_string()}'), value)
 
 
 class DaceSympySerializer(sympy.printing.str.StrPrinter):
