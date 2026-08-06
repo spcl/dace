@@ -14,6 +14,39 @@ import copy
 from typing import Union, Optional, Dict, Any
 
 
+def canonicalize_index_symbols(*index_groups: list[list[Union[tuple, None]]]) -> None:
+    """Collapse same-named free symbols across all (a, b) index pairs onto one instance each, in place.
+
+    Reads and writes come from different edges, so a non-itervar symbol (e.g. an outer loop
+    variable) can show up as two distinct sympy instances of the same name (one plain, one
+    assumption-flavored). sp.Min/sp.Max/subtraction over such pairs then never cancels, even
+    though they denote the same value. Unify by name using symbolic.symbol_merge_key.
+    """
+    by_name: Dict[str, list] = {}
+    for group in index_groups:
+        for edge_indices in group:
+            for entry in edge_indices:
+                if entry is None:
+                    continue
+                for expr in entry:
+                    for s in expr.free_symbols:
+                        by_name.setdefault(s.name, []).append(s)
+
+    repl = {}
+    for symbols in by_name.values():
+        if len(symbols) > 1:
+            keep = min(symbols, key=symbolic.symbol_merge_key)
+            repl.update({s: keep for s in symbols if s is not keep})
+    if not repl:
+        return
+
+    for group in index_groups:
+        for edge_indices in group:
+            for i, entry in enumerate(edge_indices):
+                if entry is not None:
+                    edge_indices[i] = (entry[0].xreplace(repl), entry[1].xreplace(repl))
+
+
 @properties.make_properties
 @xf.explicit_cf_compatible
 class LoopLocalMemoryReduction(ppl.Pass):
@@ -187,6 +220,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
         b = sp.Wild("b", exclude=[itersym])
 
         for rb, re, _ in subset.ndrange():
+            # Constant-index subsets carry plain Python ints, which have no .match.
+            rb = symbolic.pystr_to_symbolic(str(rb)) if isinstance(rb, int) else rb
+            re = symbolic.pystr_to_symbolic(str(re)) if isinstance(re, int) else re
+            # Subsets may carry an assumption-flavored instance of the iteration symbol
+            # (e.g. nonnegative), which Wild(exclude=[itersym]) does NOT exclude; the
+            # match then silently misbinds b := a*i+b. Unify by name first.
+            rb = rb.xreplace({s: itersym for s in rb.free_symbols if s.name == itervar})
+            re = re.xreplace({s: itersym for s in re.free_symbols if s.name == itervar})
             m = rb.match(a * itersym + b)
             if m is not None and rb == re:
                 indices.append((m[a], m[b]))
@@ -203,12 +244,14 @@ class LoopLocalMemoryReduction(ppl.Pass):
         uncond_write_indices = list()
         all_write_indices = list()
 
+        # Empty memlets are ordering edges: they access no element, so they carry no indices.
         read_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
+                         for e in st.out_edges(an) if not e.data.is_empty())
         uncond_write_edges = set(e for st in loop.all_states() for an in st.data_nodes()
-                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an))
+                                 if an.data == array_name and an not in self.cond_unique for e in st.in_edges(an)
+                                 if not e.data.is_empty())
         all_write_edges = set(e for st in loop.all_states() for an in st.data_nodes() if an.data == array_name
-                              for e in st.in_edges(an))
+                              for e in st.in_edges(an) if not e.data.is_empty())
 
         for edge in read_edges:
             eri = self._get_edge_indices(edge.data.src_subset, loop)
@@ -221,6 +264,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
         for edge in all_write_edges:
             ewi = self._get_edge_indices(edge.data.dst_subset, loop)
             all_write_indices.append(ewi)
+
+        canonicalize_index_symbols(read_indices, uncond_write_indices, all_write_indices)
 
         return read_indices, uncond_write_indices, all_write_indices
 
@@ -494,8 +539,8 @@ class LoopLocalMemoryReduction(ppl.Pass):
                 replacement.update(sdfg.constants)
 
                 for acc in access_nodes:
-                    write_subsets = set(e.data.dst_subset for e in k2.in_edges(acc))
-                    read_subsets = set(e.data.src_subset for e in k2.out_edges(acc))
+                    write_subsets = set(e.data.dst_subset for e in k2.in_edges(acc) if not e.data.is_empty())
+                    read_subsets = set(e.data.src_subset for e in k2.out_edges(acc) if not e.data.is_empty())
                     for s in write_subsets.union(read_subsets):
                         s2 = copy.deepcopy(s)
                         s2.replace(replacement)
@@ -624,9 +669,9 @@ class LoopLocalMemoryReduction(ppl.Pass):
 
         # Replace all read and write edges in the loop with modulo accesses.
         read_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name
-                         for e in st.out_edges(an))
+                         for e in st.out_edges(an) if not e.data.is_empty())
         write_edges = set(e for st in sdfg.all_states() for an in st.data_nodes() if an.data == array_name
-                          for e in st.in_edges(an))
+                          for e in st.in_edges(an) if not e.data.is_empty())
 
         # XXX: We use abs() because pystr_to_symbolic() rewrites modulo operations, e.g. (-i + 32) % 31 -> Mod(1 - i, 31), which changes the behavior as C++ modulo differs from Python for negative numbers.
         for edge in read_edges:
