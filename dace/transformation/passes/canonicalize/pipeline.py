@@ -589,9 +589,10 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # in-nsdfg WCR into a write-only output connector (plain map-exit edge) is rewritten to
     # the seeded-local + map-exit-WCR shape the frontend already emits for the equivalent
     # polybench reduction (symm). Downstream then treats it like any map-exit reduction:
-    # WCRToAugAssign keeps the scalar WCR, MapToForLoop's map-exit-WCR refusal keeps it a
-    # parallel map, MapFusionVertical's seeded-reduction guard fires -- so it is neither
-    # severed nor double-counted. Idempotent, so the vectorizer can also run it standalone.
+    # WCRToAugAssign keeps the scalar WCR and MapToForLoop's map-exit-WCR refusal keeps it a
+    # parallel map, so it is neither severed nor double-counted. (This used to also credit
+    # MapFusionVertical's seeded-reduction guard, which is dead code -- see its docstring.)
+    # Idempotent, so the vectorizer can also run it standalone.
     s += [('normalize_reduction', NormalizeWCR())]
 
     # A loop with a ``break`` / ``continue`` is not splittable and its induction variable
@@ -1382,14 +1383,13 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # terminal ``LoopToMap`` above. Two maps that were not yet fuseable at that point
     # can become fuseable only afterwards: ``NormalizeWCRSource`` reshapes a reduction
     # consumer's WCR from the seeded privatized-accumulator form (IN-wcr / plain
-    # copy-out -- which MapFusionVertical's ``_second_map_is_seeded_reduction`` guard
-    # rightly refuses) into a plain map-exit WCR that IS fuseable, and the terminal
+    # copy-out) into a plain map-exit WCR that IS fuseable, and the terminal
     # LoopToMap lifts residual loops into fresh maps adjacent to existing ones. With no
     # fuse after those stages, such producer->consumer pairs stay split (polybench
     # ``syrk``: the ``alpha*A*A`` product map + the ``C += ...`` k-reduction map, both
     # over the same ``0:i+1`` slice, stayed as two maps == two fork/joins per k step).
     # Re-run vertical+horizontal fusion in final map form so every fuseable pair is
-    # fused; the seeded-reduction / dependency guards still refuse the unsafe ones. The
+    # fused; the dependency guards still refuse the unsafe ones. The
     # following SymbolDedup cleans up the duplicate index symbols fusion introduces.
     s += [('end', PatternMatchAndApplyRepeated([DistributeTaskletIntoMap(),
                                                 MapFusionVertical(),

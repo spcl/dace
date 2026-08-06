@@ -205,8 +205,17 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         edge's WCR from its IN edge -- silently turning the copy-out into a live
         accumulate and thereby promoting the per-iteration accumulator into a running
         one across any enclosing scope (e.g. a reduction nested in a parallel outer
-        map becomes a cross-iteration sum). Fusion into such a map is therefore
-        refused so the copy-out semantics are preserved.
+        map becomes a cross-iteration sum).
+
+        ⚠ NOT WIRED. The call in ``can_be_applied_impl`` was dropped in 53ae31594 (a WIP
+        commit whose own message says it was not reviewed) and this is now dead code. It
+        cannot simply be restored: the test above matches the shape of ANY reduction whose
+        copy-out is plain, e.g. the ``out[0] += lsum`` of an inner product, not only
+        ``LoopToReduce``'s seeded accumulator. Restoring it verbatim refuses the
+        producer-into-reduction fusion that ``test_fusion_with_empty_memlet`` both expects
+        and verifies numerically, and refused nothing at all on the polybench and tsvc_2_5
+        corpora. Narrowing it to the seeded accumulator, or deleting it, needs a
+        reproduction of the miscompile described above; neither has one yet.
         """
         for oedge in graph.out_edges(map_exit):
             if oedge.data is None or oedge.data.wcr is not None:
