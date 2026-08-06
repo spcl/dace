@@ -4,6 +4,8 @@ import ctypes.util
 import functools
 import glob
 import os
+import shutil
+import subprocess
 import warnings
 
 import dace.library
@@ -102,7 +104,38 @@ def _standalone_libopenblas():
     lib = _scan_ld_library_path()
     if lib:
         return lib, _include_dir_for(os.path.dirname(lib))
+    root = _spack_openblas_prefix()
+    if root:
+        for libdir in (os.path.join(root, 'lib'), os.path.join(root, 'lib64')):
+            lib = _libopenblas_in(libdir)
+            if lib:
+                return lib, _include_dir_for(libdir)
     return None, None
+
+
+@functools.lru_cache(maxsize=1, typed=True)
+def _spack_openblas_prefix() -> str | None:
+    """Install prefix of a spack-managed OpenBLAS, or ``None``.
+
+    Last resort, after the env vars and the loader paths: an OpenBLAS that is merely *installed*
+    under spack, never ``spack load``ed, is on no search path at all and every earlier probe misses
+    it. Asking spack costs a subprocess, so it runs once per process and only once nothing cheaper
+    found a library. A spack that is absent, slow, or reports several matching installs leaves the
+    detection exactly where it was.
+    """
+    exe = shutil.which('spack')
+    if not exe:
+        return None
+    try:
+        out = subprocess.run([exe, 'location', '-i', 'openblas'],
+                             capture_output=True,
+                             text=True,
+                             timeout=30,
+                             check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    prefix = out.stdout.strip()
+    return prefix if out.returncode == 0 and os.path.isdir(prefix) else None
 
 
 def _openblas_present() -> bool:

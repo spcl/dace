@@ -87,8 +87,8 @@ The order is fixed, so a re-submission lines up with the per-kernel JSONs alread
 ## Submit
 
 ```bash
-sbatch tests/perf/submit_corpus_perf.sh          # 1 node,  4 ranks
-sbatch tests/perf/submit_corpus_perf.sh 4        # 4 nodes, 16 ranks
+sbatch canon_corpus_perf_job/submit_corpus_perf.sh          # 1 node,  4 ranks
+sbatch canon_corpus_perf_job/submit_corpus_perf.sh 4        # 4 nodes, 16 ranks
 ```
 
 Arg 1 = node count. Everything after it goes to the rank script: `--preset` `--facet` `--limit`
@@ -100,8 +100,8 @@ No Slurm? The same script falls back to `mpirun`, then to a single rank, so it i
 smoke test:
 
 ```bash
-bash tests/perf/submit_corpus_perf.sh 1 --preset S --limit 2       # smoke run
-python tests/perf/corpus_perf_job.py --preset S --limit 2          # bare: rank 0 of 1
+bash canon_corpus_perf_job/submit_corpus_perf.sh 1 --preset S --limit 2       # smoke run
+python canon_corpus_perf_job/corpus_perf_job.py --preset S --limit 2          # bare: rank 0 of 1
 ```
 
 Before any rank starts, the submit script runs one ~2 s preflight on the node that will do the
@@ -137,7 +137,7 @@ cmake/compiler child inherits. Do not vary them between compared arms.
 | `MPI4PY_RC_INITIALIZE=0` `OMPI_MCA_pml=ob1` `OMPI_MCA_btl=self,vader` `UCX_VFS_ENABLE=n` | every python invocation |
 | `REPS` | best-of repetitions, default 50 (exported as `CANON_PERF_REPS`) |
 | `PYTHON` | interpreter. A batch script does not inherit the interactive PATH; the preflight dies loudly if `import dace` fails |
-| `OUT_DIR` | results (default `tests/perf/corpus_perf_results`) |
+| `OUT_DIR` | results (default `canon_corpus_perf_job/corpus_perf_results`) |
 | `ACCOUNT` `PARTITION` `TIMELIMIT` | sbatch settings, CSCS defaults (`g34` / `normal` / `04:00:00`) |
 
 ## Time budget
@@ -164,7 +164,7 @@ parallelism_rank<NNNN>.csv        per-rank, per-kernel loop/map counts
 The post-step runs automatically once the ranks exit. Re-run it alone with:
 
 ```bash
-python tests/perf/corpus_perf_job.py --out "$OUT_DIR" --aggregate
+python canon_corpus_perf_job/corpus_perf_job.py --out "$OUT_DIR" --aggregate
 ```
 
 Exit code is non-zero if any kernel errored or miscompiled.
@@ -174,9 +174,9 @@ Exit code is non-zero if any kernel errored or miscompiled.
 `plot_corpus_perf.py` reads the per-kernel JSON above and NEVER re-measures anything.
 
 ```bash
-python tests/perf/plot_corpus_perf.py --results "$OUT_DIR"
-python tests/perf/plot_corpus_perf.py --results "$OUT_DIR" --suite tsvc,tsvc25 --symlog
-python tests/perf/plot_corpus_perf.py --results "$OUT_DIR" --arm dace-canon-gcc,dace-canon-llvm
+python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR"
+python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR" --suite tsvc,tsvc25 --symlog
+python canon_corpus_perf_job/plot_corpus_perf.py --results "$OUT_DIR" --arm dace-canon-gcc,dace-canon-llvm
 ```
 
 Writes `<results>/corpus_speedup_<preset>.png` plus the same name `.md`: coverage per corpus, then

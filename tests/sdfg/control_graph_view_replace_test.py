@@ -20,7 +20,8 @@ left four references naming the old symbol. That is a silent miscompile whenever
 away: ``TrivialLoopElimination`` substituted its eliminated iterator this way, and the leftovers dangled
 the instant ``UniqueLoopIterators`` renamed the iterator, surfacing as
 ``SDFG.arglist() -> KeyError: '_loop_it_1'`` on polybench nussinov (see
-``tests/corpus/nussinov_canonicalize_test.py``, which documents the same root from the caller's side).
+``tests/passes/canonicalize/nussinov_canonicalize_test.py``, which documents the same root from the
+caller's side).
 
 The fix routes ``replace`` through ``replace_dict``, which every subclass already overrides correctly.
 

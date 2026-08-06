@@ -3,9 +3,9 @@
 """Rank-side entry point of the ONE distributed job over the four in-repo corpora --
 polybench, npbench, tsvc, tsvc_2_5, 277 kernels -- at the ``paper`` preset.
 
-Launched by ``tests/perf/submit_corpus_perf.sh`` as ``X`` nodes x 4 ranks. A rank works out
-which kernels it owns, hands itself a private build folder, and drives the two measurement
-drivers that already exist:
+Launched by ``submit_corpus_perf.sh`` beside it as ``X`` nodes x 4 ranks. A rank works out which
+kernels it owns, hands itself a private build folder, and drives the two measurement drivers that
+already exist:
 
   * ``tests.passes.canonicalize.canonicalize_perf_corpus_test`` -- the six timed arms
     (``dace-autoopt`` and ``dace-canon`` on each of g++/clang++, plus ``dace-simplify+gcc-autopar``
@@ -32,10 +32,10 @@ disk and resumes.
 
 ``--aggregate`` is the post-step once every rank has exited: it folds the per-rank CSVs into one
 parallelism report and one speedup CSV + Markdown table, then hands the same per-kernel JSONs to
-``tests/perf/plot_corpus_perf.py`` for the figure. Run bare (no launcher) this script is rank 0 of
+``canon_corpus_perf_job/plot_corpus_perf.py`` for the figure. Run bare (no launcher) this script is rank 0 of
 1, i.e. the whole pooled list::
 
-    python tests/perf/corpus_perf_job.py --preset S --limit 2
+    python canon_corpus_perf_job/corpus_perf_job.py --preset S --limit 2
 """
 import signal
 
@@ -76,11 +76,26 @@ PARALLELISM_DRIVER = 'tests.corpus.measure_parallelization'
 PERF_DRIVER = 'tests.passes.canonicalize.canonicalize_perf_corpus_test'
 #: The plotter, run as a SCRIPT by ``--aggregate`` rather than imported: it must stay readable
 #: without dace, and importing the perf driver here would re-probe seven toolchains to draw a plot.
-PLOT_SCRIPT = 'tests/perf/plot_corpus_perf.py'
+#: Resolved as a SIBLING of this file, so the three scripts travel together whatever the folder is
+#: called -- this one has already been at two paths in this tree.
+PLOT_SCRIPT = Path(__file__).resolve().with_name('plot_corpus_perf.py')
 #: Results live OUTSIDE the repo: a sweep writes one JSON per kernel plus a figure and two tables,
-#: and ``tests/perf/`` holds exactly the three scripts and their README. ``--out`` / ``OUT_DIR``
+#: and the job folder holds exactly the three scripts and their README. ``--out`` / ``OUT_DIR``
 #: override, and the submit script exports the same default so both agree.
 DEFAULT_OUT = Path.home() / '.cache' / 'dace-corpus-perf-results'
+
+
+def repo_root() -> Path:
+    """The dace checkout above this script, found by walking up rather than by a fixed depth.
+
+    The drivers are run as ``python -m tests....`` from the repo root, so getting this wrong makes
+    every rank fail at import. A hardcoded ``parents[N]`` encodes how deep the job folder happens to
+    sit, which is exactly the thing that changes when the folder is renamed or moved.
+    """
+    for parent in Path(__file__).resolve().parents:
+        if (parent / 'dace' / '__init__.py').is_file() and (parent / 'tests').is_dir():
+            return parent
+    raise SystemExit(f'FATAL: no dace checkout above {__file__}; run this script from inside the repo')
 
 
 def sigchld_state() -> str:
@@ -220,7 +235,21 @@ def measure(rank: int, size: int, args: argparse.Namespace, repo: Path, out: Pat
     return worst
 
 
-def aggregate(repo: Path, out: Path, perf_dir: Path) -> int:
+def plot(repo: Path, out: Path, preset: str) -> None:
+    """Draw the figure from the JSONs the ranks wrote. Deliberately cannot fail the job.
+
+    A sweep that measured everything and could not draw a picture has still produced its numbers,
+    and the plotter exits non-zero precisely when it REFUSES to draw (no kernel with a verifiable
+    denominator) -- an honest outcome that must not be reported as a failed measurement job. Its own
+    message says which of the two it was.
+    """
+    code = drive([sys.executable, str(PLOT_SCRIPT), '--results', str(out), '--preset', preset], repo)
+    if code:
+        print(f'=== NO FIGURE (plotter exit {code}) -- the measurements above stand; see its message above',
+              flush=True)
+
+
+def aggregate(repo: Path, out: Path, perf_dir: Path, preset: str) -> int:
     """Fold the per-rank outputs into one report. Non-zero when a kernel errored or miscompiled."""
     shards = sorted(str(p) for p in out.glob('parallelism_rank*.csv'))
     worst = 0
@@ -237,6 +266,7 @@ def aggregate(repo: Path, out: Path, perf_dir: Path) -> int:
                 str(out / 'speedup.csv'), '--markdown',
                 str(out / 'speedup_table.md')
             ], repo))
+        plot(repo, out, preset)  # same JSONs, one read-only pass; never re-measures
     print(f'=== aggregated into {out}', flush=True)
     return worst
 
@@ -256,7 +286,7 @@ def main() -> int:
     ap.add_argument('--aggregate', action='store_true', help='post-step: fold the per-rank outputs into one report')
     args = ap.parse_args()
 
-    repo = Path(__file__).resolve().parents[2]  # tests/perf/<this file> -> the repo root
+    repo = repo_root()
     out = Path(args.out or os.environ.get('CORPUS_PERF_OUT') or DEFAULT_OUT)
     perf_dir = out / 'perf_json'
     (out / 'ranks').mkdir(parents=True, exist_ok=True)
@@ -267,7 +297,7 @@ def main() -> int:
     os.environ['CANON_PERF_PRESETS'] = args.preset
 
     if args.aggregate:
-        return aggregate(repo, out, perf_dir)
+        return aggregate(repo, out, perf_dir, args.preset)
 
     # The six arms ARE this job, so the perf driver's full table is on unless the environment
     # already said otherwise (``CANON_PERF_ARMS=0`` drops it to the plain g++ pair, for a smoke run

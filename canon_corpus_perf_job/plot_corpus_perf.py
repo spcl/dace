@@ -7,8 +7,8 @@ for a job run, ``tests/passes/canonicalize/perf_results/`` for a bare driver run
 builds, compiles or re-times a kernel: a plot that could trigger a measurement would silently mix a
 fresh number into an old sweep, and the two would no longer be the same machine state.
 
-    python tests/perf/plot_corpus_perf.py --results tests/perf/corpus_perf_results
-    python tests/perf/plot_corpus_perf.py --results DIR --suite tsvc --arm dace-canon-gcc --preset paper
+    python plot_corpus_perf.py                       # the job's default results directory
+    python canon_corpus_perf_job/plot_corpus_perf.py --results DIR --suite tsvc --arm dace-canon-gcc --preset paper
 
 Shape of the figure, and why:
 
@@ -44,6 +44,10 @@ import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
 from matplotlib.ticker import FuncFormatter
 
+#: Where the job writes its results, i.e. ``corpus_perf_job.DEFAULT_OUT`` -- outside the repo,
+#: because a sweep produces one JSON per kernel and the job folder holds only its three scripts.
+#: Not imported from there: this script must stay readable on a box with no dace and no corpora.
+DEFAULT_RESULTS = Path.home() / '.cache' / 'dace-corpus-perf-results'
 #: Corpus tags in figure order.
 SUITES = ('poly', 'np', 'tsvc', 'tsvc25')
 SUITE_TITLE = {'poly': 'polybench', 'np': 'npbench', 'tsvc': 'tsvc', 'tsvc25': 'tsvc_2_5'}
@@ -501,8 +505,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap.add_argument('--results',
                     action='append',
                     metavar='PATH',
-                    help='job --out dir, results dir or single result JSON; repeatable '
-                    '(default tests/perf/corpus_perf_results)')
+                    help=f'job --out dir, results dir or single result JSON; repeatable '
+                    f'(default {DEFAULT_RESULTS})')
     ap.add_argument('--preset', metavar='NAME', default='', help='dataset preset to plot (default paper, if present)')
     ap.add_argument('--suite', action='append', metavar='TAG', help='only these corpora (repeatable or comma-list)')
     ap.add_argument('--arm', action='append', metavar='LABEL', help='only these arms (repeatable or comma-list)')
@@ -559,8 +563,7 @@ def no_figure_reason(records: dict[tuple[str, str], dict], excluded: list[Exclud
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    repo = Path(__file__).resolve().parents[1]
-    roots = [Path(r).expanduser() for r in (args.results or [str(repo / 'tests' / 'perf' / 'corpus_perf_results')])]
+    roots = [Path(r).expanduser() for r in (args.results or [str(DEFAULT_RESULTS)])]
     files = result_files(roots)
     if not files:
         print(f'no result JSON under {[str(r) for r in roots]}; run the job first', file=sys.stderr)

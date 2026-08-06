@@ -3,19 +3,19 @@
 #
 # ONE job for the four in-repo corpora (polybench 30, npbench 24, tsvc 151, tsvc_2_5 72 = 277
 # kernels) at the ``paper`` preset, over the SIX comparison arms of the paper table. X nodes x 4
-# ranks. It only pins the environment and fans the ranks out; tests/perf/corpus_perf_job.py picks
+# ranks. It only pins the environment and fans the ranks out; corpus_perf_job.py picks
 # each rank's kernels and drives the measurement.
 #
-#   sbatch tests/perf/submit_corpus_perf.sh            # 1 node  = 4 ranks
-#   sbatch tests/perf/submit_corpus_perf.sh 4          # 4 nodes = 16 ranks
-#   bash   tests/perf/submit_corpus_perf.sh 1 --preset S --limit 2   # no SLURM: mpirun locally
+#   sbatch submit_corpus_perf.sh            # 1 node  = 4 ranks
+#   sbatch submit_corpus_perf.sh 4          # 4 nodes = 16 ranks
+#   bash   submit_corpus_perf.sh 1 --preset S --limit 2   # no SLURM: mpirun locally
 #
 # Arg 1 is the node count (default 1); every later argument is forwarded to the rank script
 # (--preset/--facet/--limit/--check/--force/--out). Without SLURM it falls back to mpirun, and
 # without mpirun to a single rank, so the same script is the local smoke test.
 #
 # ONE flag picks the measured table: CANON_PERF_ARMS=1, the six arms plus the ``seq-cpp``
-# denominator. See tests/perf/README.md for the arm x SDFG x compiler x baseline matrix.
+# denominator. See README.md for the arm x SDFG x compiler x baseline matrix.
 #
 # Env: PYTHON (interpreter), OUT_DIR (results), OMP_NUM_THREADS (default cores/ranks-per-node),
 # REPS (best-of repetitions, default 50), DACE_JOB_SCRATCH (build scratch root), ACCOUNT /
@@ -36,8 +36,19 @@ set -euo pipefail
 
 NODES="${1:-1}"
 RANKS_PER_NODE=4
-REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="${OUT_DIR:-$REPO/tests/perf/corpus_perf_results}"
+# The three scripts travel together, so they are found relative to THIS file; the repo root is
+# walked up to rather than counted, because the drivers run as ``python -m tests....`` from it and
+# a hardcoded depth silently breaks the moment this folder is renamed or moved.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$HERE"
+while [ "$REPO" != "/" ] && [ ! -f "$REPO/dace/__init__.py" ]; do REPO="$(dirname "$REPO")"; done
+[ -f "$REPO/dace/__init__.py" ] || {
+    echo "FATAL: no dace checkout above $HERE" >&2
+    exit 1
+}
+# Results OUTSIDE the repo (one JSON per kernel, plus a figure and two tables); the job script
+# defaults to the same path, so running it bare and running it through here land in one place.
+OUT="${OUT_DIR:-$HOME/.cache/dace-corpus-perf-results}"
 mkdir -p "$OUT"
 
 # Node count is an argument, so it cannot be an #SBATCH line: re-submit ourselves with it. The
@@ -53,7 +64,15 @@ fi
 # contraction. OMP_NUM_THREADS is exported before any python starts: the harness derives gcc's
 # compile-time -ftree-parallelize-loops=N from it, and the preflight below refuses to launch if the
 # two ever disagree.
-export OMP_NUM_THREADS=72
+#
+# DERIVED from the node, not hardcoded: this same script is the local smoke test, and a fixed 72
+# (a 288-core CSCS node / 4 ranks, which the formula reproduces there) is 4.5x oversubscription on
+# a 16-core box. It is also not merely a runtime knob -- MEASURED on g++ 15.2 here, an autopar
+# probe over a 4096x4096 affine nest emits GOMP_parallel at -ftree-parallelize-loops=4..33 and
+# NOTHING at 48 and above, so a too-large thread count silently empties the gcc autopar arm. The
+# preflight catches that (it refuses to launch), but the default should not walk into it.
+CORES="${SLURM_CPUS_ON_NODE:-$(nproc)}"
+export OMP_NUM_THREADS="${OMP_NUM_THREADS:-$((CORES / RANKS_PER_NODE > 0 ? CORES / RANKS_PER_NODE : 1))}"
 export OPENBLAS_NUM_THREADS="$OMP_NUM_THREADS"
 export OMP_PROC_BIND=close
 export OMP_PLACES=cores
@@ -123,7 +142,7 @@ if arms_requested(sys.argv[1]):  # importing already probed the smoke-run pair, 
         print(f'  arm {label}: {line}')
 PY
 
-JOB=("$PY" "$REPO/tests/perf/corpus_perf_job.py" --out "$OUT" "${@:2}")
+JOB=("$PY" "$HERE/corpus_perf_job.py" --out "$OUT" "${@:2}")
 echo "repo=$REPO nodes=$NODES ranks/node=$RANKS_PER_NODE omp=$OMP_NUM_THREADS scratch=$DACE_JOB_SCRATCH out=$OUT"
 
 if [ -n "${SLURM_JOB_ID:-}" ]; then
@@ -137,4 +156,4 @@ else
 fi
 
 # Every rank has exited by here, so the gather is a plain re-export of what they wrote.
-"$PY" "$REPO/tests/perf/corpus_perf_job.py" --out "$OUT" --aggregate "${@:2}"
+"$PY" "$HERE/corpus_perf_job.py" --out "$OUT" --aggregate "${@:2}"
