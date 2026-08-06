@@ -207,7 +207,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         one across any enclosing scope (e.g. a reduction nested in a parallel outer
         map becomes a cross-iteration sum).
 
-        ⚠ NOT WIRED. The call in ``can_be_applied_impl`` was dropped in 53ae31594 (a WIP
+        NOT WIRED. The call in ``can_be_applied_impl`` was dropped in 53ae31594 (a WIP
         commit whose own message says it was not reviewed) and this is now dead code. It
         cannot simply be restored: the test above matches the shape of ANY reduction whose
         copy-out is plain, e.g. the ``out[0] += lsum`` of an inner product, not only
