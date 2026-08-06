@@ -374,8 +374,7 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
     if len(nd1) != len(nd2) or len(nd1) == 0:
         return False
     p, q = sp.Dummy('p'), sp.Dummy('q')
-    eqs = []
-    params: Set[str] = set()
+    indices = []
     for (b1, e1, _), (b2, e2, _) in zip(nd1, nd2):
         if b1 != e1 or b2 != e2:  # only point subsets participate in the collision system
             return False
@@ -390,8 +389,27 @@ def _collision_forces_same_iteration(sub1: subsets.Subset, sub2: subsets.Subset,
         # p != q -- TSVC s114's OUTER transpose anti-dependence, a genuine carried dependence.
         if any(str(s) in varying for s in x1.free_symbols) or any(str(s) in varying for s in x2.free_symbols):
             return False
-        eqs.append(sp.expand(x1.subs(itersym, p) - x2.subs(itersym, q)))
-        params |= {s for s in (set(x1.free_symbols) | set(x2.free_symbols)) if str(s) != str(itersym)}
+        indices.append((x1, x2))
+
+    # One name can reach us as SEVERAL sympy symbols -- identity folds in the assumptions and the DaCe
+    # dtype -- and each instance then occupies its own monomial that no choice of ``lam_d`` can cancel,
+    # so a certificate that exists is never found. s114's read ``aa[j,i]`` and write ``aa[i,j]`` carry
+    # three different instances of ``i`` between them. The clash is across DIMENSIONS as much as within
+    # one, so the whole system has to agree on one instance per name, not each pair on its own.
+    by_name: Dict[str, List[sp.Symbol]] = {}
+    for x1, x2 in indices:
+        for s in list(x1.free_symbols) + list(x2.free_symbols):
+            by_name.setdefault(s.name, []).append(s)
+    repl = {}
+    for group in by_name.values():
+        if len(group) > 1:
+            keep = min(group, key=symbolic.symbol_merge_key)
+            repl.update({s: keep for s in group if s is not keep})
+    if repl:
+        indices = [(x1.xreplace(repl), x2.xreplace(repl)) for x1, x2 in indices]
+
+    eqs = [sp.expand(x1.subs(itersym, p) - x2.subs(itersym, q)) for x1, x2 in indices]
+    params = {s for x1, x2 in indices for s in (set(x1.free_symbols) | set(x2.free_symbols)) if str(s) != str(itersym)}
     monomials = [p, q] + sorted(params, key=str)
     # Require every equation affine (total degree <= 1) in {p, q, params}; bail conservatively
     # on anything non-linear (e.g. ``A[i*i]``) where a linear certificate would be unsound.
