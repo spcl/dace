@@ -452,6 +452,7 @@ def is_node_reachable_from(
     graph: dace.SDFGState,
     begin: nodes.Node,
     end: nodes.Node,
+    ignore_empty_edges: bool = False,
 ) -> bool:
     """Test if the node `end` can be reached from `begin`.
 
@@ -462,10 +463,13 @@ def is_node_reachable_from(
     :param graph: The graph to operate on.
     :param begin: The start of the DFS.
     :param end: The node that should be located.
+    :param ignore_empty_edges: Do not traverse empty Memlets, i.e. only follow real
+        data flow. Used to tell an ordering-only connection apart from a data one.
     """
 
     def next_nodes(node: nodes.Node) -> Iterable[nodes.Node]:
-        return (edge.dst for edge in graph.out_edges(node))
+        return (edge.dst for edge in graph.out_edges(node)
+                if not (ignore_empty_edges and edge.data is not None and edge.data.is_empty()))
 
     to_visit: List[nodes.Node] = [begin]
     seen: Set[nodes.Node] = set()

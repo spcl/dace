@@ -546,16 +546,21 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             )
 
         assert pure_outputs == set(graph.out_edges(first_map_exit))
-        if len(pure_outputs) != 0:
-            mfhelper.relocate_nodes(
-                from_node=first_map_exit,
-                to_node=second_map_exit,
-                state=graph,
-                sdfg=sdfg,
-                scope_dict=scope_dict,
-                never_consolidate_edges=self.never_consolidate_edges,
-                consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
-            )
+        # UNCONDITIONAL, mirroring the second_map_entry call below: ``relocate_nodes`` is the only
+        # code that moves the EMPTY Memlets off ``first_map_exit``, and those are IN-edges, which
+        # ``pure_outputs`` (out-edges, per the assert above) says nothing about. Gating on it meant
+        # that a first Map whose only output is the intermediate kept its ordering in-edges until
+        # ``graph.remove_node(first_map_exit)`` below deleted them with the node -- an assert failure
+        # with asserts on, and a silently dropped ordering constraint under -O.
+        mfhelper.relocate_nodes(
+            from_node=first_map_exit,
+            to_node=second_map_exit,
+            state=graph,
+            sdfg=sdfg,
+            scope_dict=scope_dict,
+            never_consolidate_edges=self.never_consolidate_edges,
+            consolidate_edges_only_if_not_extending=self.consolidate_edges_only_if_not_extending,
+        )
 
         # Now move the input of the second Map, that has no connection to the first
         #  Map, to the first Map. This is needed because we will later delete the
@@ -1652,7 +1657,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
 
         :param subsets_to_check: The list of subsets that should be checked.
         """
-        assert len(subsets_to_check) > 1
+        # Fewer than two subsets means we never saw both sides of the access -- e.g. the node only
+        #  reaches the scope through ORDERING edges, so `find_subsets()` found nothing to compare.
+        #  Point-wise-ness is then unproven, and the caller must treat that as a dependency.
+        if len(subsets_to_check) < 2:
+            return False
 
         # We will check everything against the master subset.
         master_subset = subsets_to_check[0]
