@@ -3,7 +3,7 @@
 
 from dace import sdfg as sd
 from dace import dtypes
-from dace.sdfg import utils as sdutil
+from dace.sdfg import dealias, utils as sdutil
 from dace.sdfg.state import ControlFlowRegion, ConditionalBlock
 from dace.properties import CodeBlock
 from dace.sdfg.nodes import MapEntry, MapExit, NestedSDFG
@@ -154,6 +154,7 @@ class ConditionMapInterchange(transformation.MultiStateTransformation):
                     )
 
                 state.remove_nodes_from(body)
+                dealias.integrate_nested_sdfg(nsdfg.sdfg)
 
         # Wrap all states in the nested SDFGs with the conditional block
         for state in all_states:

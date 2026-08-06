@@ -29,6 +29,8 @@ jobs:
       uses: actions/setup-python@v6
       with:
         python-version: ${{ matrix.python-version }}
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@v7
     - name: Install dependencies
       run: |
         # Make dependency setup faster
@@ -37,8 +39,9 @@ jobs:
         # Install dependencies
         sudo apt-get update
         sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
-        pip install flake8 pytest-xdist coverage
-        pip install -e ".[testing]"
+        uv venv
+        . ./.venv/bin/activate
+        uv pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
         chmod +x codecov
 
@@ -59,6 +62,7 @@ jobs:
         else
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
+        . ./.venv/bin/activate
         pytest -n auto --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "not gpu and not autodiff and not torch and not onnx and not tensorflow and not mkl and not sve and not papi and not mlir and not lapack and not mpi and not scalapack and not datainstrument and not long and not sequential"
         ./codecov
 

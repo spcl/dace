@@ -85,13 +85,10 @@ class GPUTransformMap(transformation.SingleStateTransformation):
     def apply(self, graph: SDFGState, sdfg: SDFG):
         if self.expr_index == 0:
             map_entry = self.map_entry
-            nsdfg_node = helpers.nest_state_subgraph(sdfg,
-                                                     graph,
-                                                     graph.scope_subgraph(map_entry),
-                                                     full_data=self.fullcopy)
+            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, graph.scope_subgraph(map_entry))
         else:
             cnode = self.reduce
-            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]), full_data=self.fullcopy)
+            nsdfg_node = helpers.nest_state_subgraph(sdfg, graph, SubgraphView(graph, [cnode]))
 
         # Avoiding import loops
         from dace.transformation.interstate import GPUTransformSDFG
