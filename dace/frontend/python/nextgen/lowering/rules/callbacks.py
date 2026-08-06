@@ -17,6 +17,7 @@ The callback contract:
 """
 import ast
 import builtins
+import copy
 import warnings
 from typing import Optional
 
@@ -52,11 +53,18 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
             # register an opaque scalar so later statements can bind and
             # pass the Python object through.
             descriptor = _declared_descriptor(name, statement, state)
+            untyped_call = False
             if descriptor is None:
                 _report_untyped_result(name, statement, state)
                 descriptor = data.Scalar(dtypes.pyobject())
+                # Only a CALL's result is worth reporting later: it is the one
+                # opaque value the user can type, through an annotation or a
+                # return hint. A dict literal has no return type to declare.
+                untyped_call = _callee_name(statement) is not None
             container_name = state.context.add_container(name, descriptor)
             state.context.bind(name, container_name)
+            if untyped_call:
+                state.context.untyped_call_results.add(container_name)
             output_names.append(container_name)
         source_to_repository[name] = output_names[-1]
 
@@ -151,17 +159,56 @@ def _outline(renamed: list,
 
 
 def _declared_descriptor(name: str, statement: OpaqueStmt, state: LoweringState) -> Optional[data.Data]:
-    """The annotation-declared descriptor of an output written by one of the
-    opaque statement's original assignments, or None."""
+    """
+    The descriptor an annotation declares for an output of the opaque
+    statement, or None if nothing types it.
+
+    Two spellings elucidate a callback result, and both are offered by the
+    error raised when neither is present (see
+    :mod:`~dace.frontend.python.nextgen.lowering.mechanisms.opaque_values`):
+    an annotation on the assignment itself (``a: dace.float64[20] =
+    callee(b)``), and a return type hint on the callee (``def callee(b) ->
+    dace.float64[20]``). The first is read off the statement; the second off
+    the resolved callee object.
+    """
     from dace.frontend.python.nextgen.lowering.rules.assign import annotation_descriptor
     for original in statement.originals:
         for node in ast.walk(original):
-            if (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+            if not (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
                     and node.targets[0].id == name):
-                descriptor = annotation_descriptor(getattr(node, 'annotation', None), state)
-                if descriptor is not None:
-                    return descriptor
+                continue
+            descriptor = annotation_descriptor(getattr(node, 'annotation', None), state)
+            if descriptor is not None:
+                return descriptor
+            descriptor = _return_hint_descriptor(node.value, state)
+            if descriptor is not None:
+                return descriptor
     return None
+
+
+def _return_hint_descriptor(value: ast.expr, state: LoweringState) -> Optional[data.Data]:
+    """
+    The descriptor declared by the return type hint of the function ``value``
+    calls, or None if it is not a call, the callee does not resolve, or it
+    carries no usable hint.
+    """
+    if not isinstance(value, ast.Call):
+        return None
+    try:
+        _, callee = state.inference.resolve_callee(value.func)
+    except Exception:
+        return None
+    hint = getattr(callee, '__annotations__', {}).get('return') if callee is not None else None
+    if hint is None:
+        return None
+    try:
+        descriptor = data.create_datadescriptor(hint)
+    except Exception:
+        return None
+    if not isinstance(descriptor, data.Data) or descriptor.dtype is None or isinstance(
+            descriptor.dtype, dtypes.pyobject):
+        return None
+    return copy.deepcopy(descriptor)
 
 
 def _callee_name(statement: OpaqueStmt) -> Optional[str]:

@@ -103,6 +103,16 @@ class ProgramContext:
         #: stage can recover the callable from the name alone.
         self.callback_callables: Dict[str, Any] = {}
 
+        #: Containers holding the result of a CALL whose return type could not
+        #: be inferred and which no annotation declared. They are ``pyobject``
+        #: like any other opaque value, but unlike a dict literal or a binding
+        #: the join merge gave up on, the user can fix them -- by annotating
+        #: the binding or hinting the callee's return type -- so a use that
+        #: needs a real type is reported against them rather than deferred to
+        #: the interpreter. See
+        #: :mod:`~dace.frontend.python.nextgen.lowering.mechanisms.opaque_values`.
+        self.untyped_call_results: Set[str] = set()
+
         #: Source-name binding table.
         self.bindings: Dict[str, Binding] = {}
 

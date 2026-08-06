@@ -64,7 +64,8 @@ from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normal
 from dace.frontend.python.nextgen.lowering.access import (DataAccess, nondegenerate_shape, resolve_access,
                                                           scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
-from dace.frontend.python.nextgen.lowering.mechanisms import creation, elementwise, reduction, static_values, streams
+from dace.frontend.python.nextgen.lowering.mechanisms import (creation, elementwise, opaque_values, reduction,
+                                                              static_values, streams)
 from dace.frontend.python.nextgen.semantics.indexing import array_index_slots, index_slots, substitute_slots
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
 
@@ -166,6 +167,11 @@ def lower_computation(target: DataAccess,
     try:
         value = static_values.fold_static_subscripts(value, state)
         if _consumes_pyobject(value, state):
+            # Passing an opaque object on to another callback is fine, but
+            # subscripting one is not: no later step can give the result a
+            # shape, so the callback would only defer a Python TypeError to
+            # where it cannot propagate.
+            opaque_values.reject_opaque_slice(value, statement, state)
             fallback_to_callback(statement,
                                  state,
                                  'operates on an opaque Python object',

@@ -22,7 +22,7 @@ from dace.frontend.python import iterators
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access, resolve_symbol_names
-from dace.frontend.python.nextgen.lowering.mechanisms import static_values
+from dace.frontend.python.nextgen.lowering.mechanisms import opaque_values, static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.context import BindingSnapshot
 from dace.frontend.python.nextgen.semantics.joins import merge_branches
@@ -68,12 +68,14 @@ def _lower_if_chain(statement: ast.If, before: BindingSnapshot,
         branch_ends.append(state.context.snapshot())
         state.context.restore(before)
 
+    opaque_values.reject_opaque_condition(statement.test, statement, state)
     condition = CodeBlock(astutils.unparse(resolve_symbol_names(statement.test, state)))
     _lower_branch(tn.IfScope(condition=condition, children=[]), statement.body)
 
     orelse = statement.orelse
     while len(orelse) == 1 and isinstance(orelse[0], ast.If):
         elif_statement = orelse[0]
+        opaque_values.reject_opaque_condition(elif_statement.test, elif_statement, state)
         condition = CodeBlock(astutils.unparse(resolve_symbol_names(elif_statement.test, state)))
         _lower_branch(tn.ElifScope(condition=condition, children=[]), elif_statement.body)
         orelse = elif_statement.orelse
@@ -90,6 +92,7 @@ def _lower_if_chain(statement: ast.If, before: BindingSnapshot,
 def lower_while(statement: ast.While, state: LoweringState) -> None:
 
     def _emit(state: LoweringState) -> None:
+        opaque_values.reject_opaque_condition(statement.test, statement, state)
         condition = astutils.unparse(resolve_symbol_names(statement.test, state))
         loop = LoopRegion(f'while_{statement.lineno}', condition_expr=condition)
         with state.emitter.scope(tn.WhileScope(loop=loop, children=[])):

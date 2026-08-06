@@ -1063,6 +1063,61 @@ def test_disallowed_callback_slice():
                 callback_in_condition.to_sdfg()
 
 
+def test_annotated_callback_result_in_condition():
+    """An annotation on the binding gives the callback result a type, so the
+    condition that reads it is expressible in the compiled program."""
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return 42.0
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        c: dace.float64 = callbackfunc(arr)
+        if arr[0] < c:
+            return arr + 1
+        else:
+            return arr
+
+    arr = np.full(20, 3.0)
+    assert np.allclose(callback_in_condition(arr.copy()), arr + 1)
+
+
+def test_annotated_callback_result_slice():
+    """The same annotation gives the result a shape, so it can be sliced."""
+
+    @dace_inhibitor
+    def callbackfunc(arr):
+        return arr * 2
+
+    @dace.program
+    def callback_slice(arr: dace.float64[20]):
+        a: dace.float64[20] = callbackfunc(arr)
+        return arr + a[:20]
+
+    arr = np.ones(20)
+    assert np.allclose(callback_slice(arr.copy()), arr * 3)
+
+
+def test_callback_return_hint_in_condition():
+    """A return type hint on the callee elucidates the result just as well as
+    an annotation on the binding, and needs no change at the call site."""
+
+    @dace_inhibitor
+    def callbackfunc(arr) -> dace.float64:
+        return 42.0
+
+    @dace.program
+    def callback_in_condition(arr: dace.float64[20]):
+        if arr[0] < callbackfunc(arr):
+            return arr + 1
+        else:
+            return arr
+
+    arr = np.full(20, 3.0)
+    assert np.allclose(callback_in_condition(arr.copy()), arr + 1)
+
+
 @pytest.mark.skip('Test requires GUI')
 def test_matplotlib_with_compute():
     """
@@ -1236,6 +1291,9 @@ if __name__ == '__main__':
     test_custom_generator_with_break()
     test_disallowed_callback_in_condition()
     test_disallowed_callback_slice()
+    test_annotated_callback_result_in_condition()
+    test_annotated_callback_result_slice()
+    test_callback_return_hint_in_condition()
     # test_matplotlib_with_compute()
     test_callback_with_arraylike_closure_object()
     test_callback_with_arraylike_object()
