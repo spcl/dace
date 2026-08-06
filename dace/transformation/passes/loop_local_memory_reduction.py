@@ -202,6 +202,9 @@ class LoopLocalMemoryReduction(ppl.Pass):
         b = sp.Wild("b", exclude=[itersym])
 
         for rb, re, _ in subset.ndrange():
+            # Constant-index subsets carry plain Python ints, which have no .match.
+            rb = symbolic.pystr_to_symbolic(str(rb)) if isinstance(rb, int) else rb
+            re = symbolic.pystr_to_symbolic(str(re)) if isinstance(re, int) else re
             # Subsets may carry an assumption-flavored instance of the iteration symbol
             # (e.g. nonnegative), which Wild(exclude=[itersym]) does NOT exclude; the
             # match then silently misbinds b := a*i+b. Unify by name first.
