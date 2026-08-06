@@ -3288,6 +3288,55 @@ def test_map_fusion_stable_label(forward_fusion: bool):
     assert all(np.allclose(ref[k], res[k]) for k in ref)
 
 
+def test_ordering_edge_beside_an_inout_read():
+    """An ordering edge beside a read of an in/out array must not stop the read/write analysis.
+
+    `a` is read by the first Map and written by the second, so it is an in/out of the fused Map and
+    `has_read_write_dependency()` calls `find_subsets()` on it. `find_subsets()` walked EVERY edge
+    between the AccessNode and the MapEntry, including the empty ordering Memlet, and sliced its
+    `dst_conn` -- which an ordering edge does not have -- raising
+    `TypeError: 'NoneType' object is not subscriptable` from inside `can_be_applied`. The matcher
+    swallowed that as "cannot apply", so the pair silently never fused.
+    """
+    sdfg = SDFG(unique_name("ordering_edge_beside_inout_read"))
+    sdfg.add_array("a", shape=(10, ), dtype=dace.float64, transient=False)
+    sdfg.add_array("t", shape=(10, ), dtype=dace.float64, transient=True)
+    state = sdfg.add_state(is_start_block=True)
+
+    a_read = state.add_access("a")
+    t = state.add_access("t")
+    a_write = state.add_access("a")
+    _, first_entry, _ = state.add_mapped_tasklet("produce",
+                                                 map_ranges={"__i": "0:10"},
+                                                 inputs={"__in": dace.Memlet("a[__i]")},
+                                                 code="__out = __in + 10.0",
+                                                 outputs={"__out": dace.Memlet("t[__i]")},
+                                                 input_nodes={a_read},
+                                                 output_nodes={t},
+                                                 external_edges=True)
+    state.add_mapped_tasklet("consume",
+                             map_ranges={"__i": "0:10"},
+                             inputs={"__in": dace.Memlet("t[__i]")},
+                             code="__out = __in * 2.0",
+                             outputs={"__out": dace.Memlet("a[__i]")},
+                             input_nodes={t},
+                             output_nodes={a_write},
+                             external_edges=True)
+    # The extra empty Memlet `StateFusionExtended` leaves beside the real read of `a`.
+    state.add_nedge(a_read, first_entry, dace.Memlet())
+    sdfg.validate()
+
+    a = np.random.rand(10)
+    ref = (a + 10.0) * 2.0
+
+    # `apply_fusion` runs with `optimizer.match_exception` on, so a raising `can_be_applied` fails.
+    apply_fusion(sdfg, removed_maps=1)
+
+    res = {"a": a.copy()}
+    sdfg(**res)
+    assert np.allclose(res["a"], ref), "fusing beside the ordering edge changed the result"
+
+
 def test_map_fusion_is_deprecated() -> None:
     with pytest.deprecated_call(match="MapFusion is deprecated"):
         MapFusion()

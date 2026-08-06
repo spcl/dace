@@ -292,6 +292,15 @@ def relocate_nodes(
             empty_sources.add(empty_edge.src)
 
     # Relocation of the edges that carry data.
+    #  A passthrough connector may carry MORE THAN ONE edge -- a Map body that writes several
+    #  disjoint slices of the same array through one tasklet output lands every one of them on
+    #  the same `IN_x` (the CLOUDSC shape: five `zqxn2d[i, j, 0..4]` edges on a single MapExit
+    #  connector). The passthrough branch below relocates the whole `IN_x` / `OUT_x` group in
+    #  one go, so the group must be visited ONCE: the extra edges of a group are already
+    #  relocated (and their edge objects stale) by the time the loop reaches them, and handling
+    #  one again mints another connector pair on `to_node` that nothing is attached to --
+    #  'Dangling in-connector IN_x' out of validate().
+    relocated_in_conns: Set[str] = set()
     for edge_to_move in list(state.in_edges(from_node)):
         assert isinstance(edge_to_move.dst_conn, str)
 
@@ -301,19 +310,29 @@ def relocate_nodes(
             #  inside the Map scope to define a variable. We handle it directly.
             dmr_symbol = edge_to_move.dst_conn
 
-            # TODO(phimuell): Check if the symbol is really unused in the target scope.
             if dmr_symbol in to_node.in_connectors:
-                raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
-                                          f" to '{to_node}', but the symbol is already known there, but the"
-                                          " renaming is not implemented.")
+                # `can_topologically_be_fused` already proved the two bindings read the same
+                #  value, so the one being moved is a redundant redefinition -- drop it. A
+                #  disagreeing binding would need renaming, which is not implemented.
+                if not dynamic_map_range_binding_agrees(state, to_node, from_node, dmr_symbol):
+                    raise NotImplementedError(f"Tried to move the dynamic map range '{dmr_symbol}' from {from_node}'"
+                                              f" to '{to_node}', but the symbol is already known there, but the"
+                                              " renaming is not implemented.")
+                source = edge_to_move.src
+                state.remove_edge(edge_to_move)
+                from_node.remove_in_connector(dmr_symbol)
+                if state.degree(source) == 0:
+                    state.remove_node(source)
+                continue
             if not to_node.add_in_connector(dmr_symbol, force=False):
                 raise RuntimeError(  # Might fail because of out connectors.
                     f"Failed to add the dynamic map range symbol '{dmr_symbol}' to '{to_node}'.")
             helpers.redirect_edge(state=state, edge=edge_to_move, new_dst=to_node)
             from_node.remove_in_connector(dmr_symbol)
 
-        else:
+        elif edge_to_move.dst_conn not in relocated_in_conns:
             # We have a Passthrough connection, i.e. there exists a matching `OUT_`.
+            relocated_in_conns.add(edge_to_move.dst_conn)
             old_conn = edge_to_move.dst_conn[3:]  # The connection name without prefix
             new_conn, conn_was_reused = get_new_conn_name(
                 edge_to_move=edge_to_move,
@@ -813,11 +832,27 @@ def analyze_happens_before_fusion(
 
     # An ordering edge must end up in front of the second Map's access, and a nested scope
     #  is ordered as a whole, i.e. after its exit resp. before its entry.
+    # A pass-through (`entry --OUT_x--> exit`) makes the boundary scan name one of the fused
+    #  scope's OWN nodes as the access to order against: `order_source(first_map_entry)` is
+    #  `first_map_exit`, and `order_target(second_map_exit)` is `second_map_entry`. `apply()`
+    #  removes the second Map's entry and exit before adding these edges, so such an endpoint
+    #  would either be resurrected as an orphan without its scope counterpart, or -- for the
+    #  surviving `first_map_exit` -- wire the fused Map's exit back into its own body, a cycle.
+    #  There is no node left that could carry that ordering edge, so report it as unattachable.
+    matched_scope_nodes = {
+        first_map_entry,
+        safe_exit_node(state, first_map_entry),
+        second_map_entry,
+        safe_exit_node(state, second_map_entry),
+    }
+
     def order_source(node: nodes.Node) -> Optional[nodes.Node]:
-        return safe_exit_node(state, node) if isinstance(node, nodes.EntryNode) else node
+        resolved = safe_exit_node(state, node) if isinstance(node, nodes.EntryNode) else node
+        return None if resolved in matched_scope_nodes else resolved
 
     def order_target(node: nodes.Node) -> Optional[nodes.Node]:
-        return state.scope_dict().get(node) if isinstance(node, nodes.ExitNode) else node
+        resolved = state.scope_dict().get(node) if isinstance(node, nodes.ExitNode) else node
+        return None if resolved in matched_scope_nodes else resolved
 
     inner_pairs: List[Tuple[nodes.Node, nodes.Node]] = []
     # Read/read is not a hazard, the other three combinations are (WAW, RAW, WAR).
@@ -829,7 +864,8 @@ def analyze_happens_before_fusion(
                     if not _is_iteration_private(first_subset, second_subset, params):
                         return None
                     ordered_pair = (order_source(first_node), order_target(second_node))
-                    # A broken nested scope leaves nothing to attach the ordering edge to.
+                    # A broken nested scope -- or an access living on one of the fused scope's own
+                    #  nodes -- leaves nothing to attach the ordering edge to.
                     if ordered_pair[0] is None or ordered_pair[1] is None:
                         return None
                     inner_pairs.append(ordered_pair)
@@ -934,6 +970,11 @@ def can_topologically_be_fused(
     elif only_toplevel_maps:
         if scope[first_map_entry] is not None:
             return None
+
+    # A dynamic map range both Maps bind can only survive relocation if both bind it to the
+    #  same value; renaming one of them is not implemented.
+    if not dynamic_map_ranges_agree(first_map_entry, second_map_entry, graph):
+        return None
 
     # We will now check if we can rename the Map parameter of the second Map such that they
     #  match the one of the first Map.
