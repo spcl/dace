@@ -127,9 +127,36 @@ mkdir -p "$TMPDIR"
 
 # A batch script does NOT inherit the interactive PATH, so a bare ``python`` is /usr/bin/python and
 # ``import dace`` dies in 5s looking like a corpus bug. Resolve it once and fail loudly.
-PY="${PYTHON:-$(command -v python3 || true)}"
-[ -x "$PY" ] || {
-    echo "FATAL: no usable interpreter (PY='$PY'); set PYTHON=" >&2
+#
+# The probe is not a nicety. setup.py declares python_requires='>=3.10', and an unusable
+# /usr/bin/python3 announces itself as "No module named 'dataclasses'" -- an error that reads like a
+# missing PyPI package and invites installing the 3.6 backport of that name, which fixes nothing
+# (dataclasses has been stdlib since 3.7; the wheel is a shim stdlib shadows on every version dace
+# supports). So probe the interpreter for BOTH failure modes at once -- too old, and a stdlib too
+# stripped to supply dataclasses -- by importing the module that actually fails. Demanding a printed
+# token rather than a zero exit matters: PYTHON= pointed at a non-interpreter exits 0 happily.
+py_ok() {
+    [ -x "$1" ] || return 1
+    [ "$("$1" -c 'import sys, dataclasses; print("ok" if sys.version_info[:2] >= (3, 10) else "old")' 2>/dev/null)" = ok ]
+}
+# Bare python3 is tried first but is exactly what breaks under sbatch (no interactive PATH, so it
+# resolves to the system interpreter, not the module-loaded one), hence the versioned fallbacks.
+PY="${PYTHON:-}"
+if [ -z "$PY" ]; then
+    for cand in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do
+        found="$(command -v "$cand" || true)"
+        if py_ok "$found"; then
+            PY="$found"
+            break
+        fi
+    done
+fi
+py_ok "$PY" || {
+    echo "FATAL: '$PY' cannot run dace (needs >= 3.10 with a complete stdlib)" >&2
+    [ -x "$PY" ] && echo "  it reports: $("$PY" -V 2>&1)" >&2
+    echo "  set PYTHON=/path/to/python3.1x, or module-load it before sbatch: a batch script gets no" >&2
+    echo "  interactive PATH, so 'python3' is the system one even when yours is newer." >&2
+    echo "  Do NOT pip install 'dataclasses' -- that is a Python 3.6 backport of a stdlib module." >&2
     exit 1
 }
 
