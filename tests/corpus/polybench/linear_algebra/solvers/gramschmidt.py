@@ -8,15 +8,18 @@ N = dace.symbol('N')
 #datatypes = [dace.float64, dace.int32, dace.float32]
 datatype = dace.float64
 
-# Dataset sizes.
-# The small preset is TALL (M >= N): a Gram-Schmidt QR of a wide matrix (M < N, the original
-# PolyBench/C ``{M:20, N:30}``) is intrinsically rank-deficient -- the last N-M columns
-# orthogonalize to a ~0 residual, so ``R[k,k]`` collapses and dividing by it is catastrophically
-# ill-conditioned (a harmless FMA-contraction ULP then amplifies to ~100% relative error). A tall
-# matrix has full column rank, so with the diagonal-dominance ``init_array`` below the QR is
-# well-conditioned and canonicalization is value-preserving with FMA on. Upstream npbench uses the
-# same tall convention (its ``S`` preset is M=70, N=60).
-sizes = [{M: 30, N: 20}, {M: 60, N: 180}, {M: 200, N: 240}, {M: 1000, N: 1200}, {M: 2000, N: 2600}]
+# Dataset sizes, all SQUARE. A Gram-Schmidt QR of a wide matrix (M < N, the original PolyBench/C
+# ``{M:20, N:30}``) is rank-deficient by construction: rank is at most M, so the last N-M columns
+# orthogonalize to a ~0 residual, ``R[k,k]`` collapses to rounding noise and ``Q[:,k] = A[:,k]/R[k,k]``
+# divides by it. Two implementations then disagree by ~100% past column M whatever they do, and a
+# harmless FMA-contraction ULP is enough to trigger it.
+#
+# The diagonal-dominance term in ``init_array`` cannot repair that -- only min(M, N) diagonal entries
+# exist, so the columns past M get no boost and the rank does not change. MEASURED at {M:200, N:240}:
+# raising the boost 100x takes cond from 1.587 to 1.005 while the rank stays 200 of 240. Square is
+# what actually fixes it: full column rank at every preset, cond ~1.7 throughout (30, 120, 220, 1100
+# all measured), so the QR is stable and canonicalization stays value-preserving with FMA on.
+sizes = [{M: 30, N: 30}, {M: 120, N: 120}, {M: 220, N: 220}, {M: 1100, N: 1100}, {M: 2300, N: 2300}]
 
 args = [([M, N], datatype), ([N, N], datatype), ([M, N], datatype)]
 

@@ -483,6 +483,10 @@ class TensorDot(nodes.LibraryNode):
     # select this node's TTGT / cuTENSOR / pure lowering, and a node-class default would shadow it.
     # The library-wide default (``OpenBLAS``, meant for the LAPACK-backed Cholesky/Solve/Inv) is not
     # one of this node's implementations; ``LibraryNode.expand`` falls back to ``pure`` for that case.
+    #
+    # TODO: no corpus kernel reaches TensorDot yet, so the fallback above is the only thing keeping
+    # ``np.tensordot`` working on CPU and it is exercised by tests alone. Pick the lowering here on
+    # merit (TTGT vs pure) once a corpus kernel actually measures it.
     default_implementation = None
 
     left_axes = properties.ListProperty(element_type=int, default=[], desc="Left tensor's contracting modes")
