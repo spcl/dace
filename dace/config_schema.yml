@@ -1464,6 +1464,23 @@ required:
             potentially build time, but disallows executing SDFGs in parallel
             and caching of more than one simultaneous SDFG.
 
+    cache_distaware:
+        type: bool
+        default: true
+        title: Distribution-aware build cache
+        description: >
+            Give every rank of a job its own build folder, named after the rank its launcher
+            (MPI, Flux, Slurm) advertises. Without it, ranks that each compile share one folder
+            and can load a library another rank is still writing.
+
+
+            Only a launcher-started process is affected: with no rank variable in the environment
+            the folder keeps the name it always had, so single-process runs and their caches are
+            untouched. Turn it off to put every rank back in one shared folder, which is only
+            correct when a single rank compiles and the rest wait, as
+            ``dace.sdfg.utils.distributed_compile`` arranges by pinning each rank to the folder
+            rank 0 built in.
+
     store_history:
         type: bool
         default: true

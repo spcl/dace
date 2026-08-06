@@ -1688,6 +1688,8 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
            on *every* rank, so a build failure fails the whole job fast instead
            of deadlocking the other ranks at the build-folder broadcast below
            (rank 0 would never reach the broadcast, leaving the rest blocked).
+    :note: Only rank 0 builds, so every rank is pinned to its folder, whatever ``cache`` or
+           ``cache_distaware`` would otherwise name.
     :todo: Relocate this function to `dace.codegen.compiler`.
     """
 
@@ -1711,6 +1713,10 @@ def distributed_compile(sdfg: SDFG, comm, *, validate: bool = True) -> csdfg.Com
     if error is not None:
         raise RuntimeError("distributed_compile: rank 0 compilation failed; all ranks abort "
                            f"to avoid a collective deadlock. Rank 0 traceback:\n{error}")
+
+    # Pin every rank to the one folder rank 0 built in. Under ``cache_distaware`` each rank would
+    # otherwise name a folder of its own and find nothing there.
+    sdfg.build_folder = folder
 
     # Loads compiled SDFG.
     if rank > 0:
