@@ -39,13 +39,20 @@ RANKS_PER_NODE=4
 # The three scripts travel together, so they are found relative to THIS file; the repo root is
 # walked up to rather than counted, because the drivers run as ``python -m tests....`` from it and
 # a hardcoded depth silently breaks the moment this folder is renamed or moved.
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+#
+# Under sbatch, BASH_SOURCE is NOT this file: Slurm copies the script into its spool
+# (/var/spool/slurmd/job<id>/slurm_script) and runs the copy, so the walk-up finds no checkout and
+# the job dies before it starts. The submitting side therefore exports the folder it resolved, and
+# the batch side takes that.
+HERE="${CORPUS_JOB_HOME:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
 REPO="$HERE"
 while [ "$REPO" != "/" ] && [ ! -f "$REPO/dace/__init__.py" ]; do REPO="$(dirname "$REPO")"; done
 [ -f "$REPO/dace/__init__.py" ] || {
     echo "FATAL: no dace checkout above $HERE" >&2
+    [ -n "${SLURM_JOB_ID:-}" ] && echo "  (running from Slurm's spool copy; set CORPUS_JOB_HOME=/path/to/canon_corpus_perf_job)" >&2
     exit 1
 }
+export CORPUS_JOB_HOME="$HERE"
 # Results NEXT TO the scripts (one JSON per kernel, plus a figure and two tables), so a finished run
 # is one directory to copy off the cluster. Only the build scratch is memory-backed, and it is
 # throwaway. The job script defaults to the same path, so bare and via-here runs land in one place.
@@ -55,8 +62,11 @@ mkdir -p "$OUT"
 # Node count is an argument, so it cannot be an #SBATCH line: re-submit ourselves with it. The
 # site settings go on the command line too, where they beat the #SBATCH defaults in the header.
 if [ -z "${SLURM_JOB_ID:-}" ] && command -v sbatch >/dev/null 2>&1; then
+    # --export carries CORPUS_JOB_HOME to the batch side, which runs Slurm's spool COPY of this
+    # script and so cannot find the folder from its own path.
     exec sbatch --nodes="$NODES" --ntasks-per-node="$RANKS_PER_NODE" \
         --account="${ACCOUNT:-g34}" --partition="${PARTITION:-normal}" --time="${TIMELIMIT:-04:00:00}" \
+        --export="ALL,CORPUS_JOB_HOME=$HERE" \
         --output="$OUT/dace-corpus-perf-%j.out" --error="$OUT/dace-corpus-perf-%j.out" "$0" "$@"
 fi
 
