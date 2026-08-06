@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
-import polybench
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -81,4 +80,5 @@ def gramschmidt(A: datatype[M, N], R: datatype[N, N], Q: datatype[M, N]):
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, [(1, 'R'), (2, 'Q')], init_array, gramschmidt)

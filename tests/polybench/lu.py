@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import numpy as np
 import dace
-import polybench
 
 N = dace.symbol('N')
 
@@ -56,4 +55,5 @@ def lu(A: datatype[N, N]):
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, [(0, 'A')], init_array, lu)

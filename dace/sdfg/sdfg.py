@@ -346,7 +346,11 @@ class InterstateEdge(object):
 
         if replace_keys:
             for name, new_name in repl.items():
-                _replace_dict_keys(self.assignments, name, new_name)
+                # Guard as SDFG.replace_dict does: a non-name replacement (e.g. a symbolic
+                # expression, or a Symbol carrying assumptions that maps a name to itself)
+                # must not become an assignment key -- only rename when new_name is a valid name.
+                if validate_name(new_name):
+                    _replace_dict_keys(self.assignments, name, new_name)
 
         for k, v in self.assignments.items():
             vast = ast.parse(v)
@@ -1376,11 +1380,6 @@ class SDFG(ControlFlowRegion):
     @parent_nsdfg_node.setter
     def parent_nsdfg_node(self, value):
         self._parent_nsdfg_node = value
-
-    def remove_node(self, node: SDFGState):
-        if node is self._cached_start_block:
-            self._cached_start_block = None
-        return super().remove_node(node)
 
     def states(self):
         """ Returns the states in this SDFG, recursing into state scope blocks. """

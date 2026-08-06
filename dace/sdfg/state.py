@@ -924,14 +924,20 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 # Same case as above, but for outgoing Memlets. Every edge on the matching connector
                 #   is inspected, since the data can go to more than one destination, and each is
                 #   followed to where it lands: one hop still names the inner transient whenever the
-                #   write leaves through more than one exit, as it does in a tiled map.
+                #   write leaves through more than one exit, as it does in a tiled map. Prefer the
+                #   destination AccessNode's name over the Memlet's ``data``, which names the inner
+                #   transient for a source-relative Memlet -- that drops the written array, and its
+                #   shape/stride symbols, from the kernel signature.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    outermost = self.graph.memlet_path(oedge)[-1].data
-                    if ((not outermost.is_empty()) and (outermost.data not in descs)
-                            and (outermost.data not in additional_descs)):
-                        additional_descs[outermost.data] = sdfg.arrays[outermost.data]
+                    outermost_edge = self.graph.memlet_path(oedge)[-1]
+                    if outermost_edge.data.is_empty():
+                        continue  # ordering edge, carries no data
+                    dst_name = (outermost_edge.dst.data
+                                if isinstance(outermost_edge.dst, nd.AccessNode) else outermost_edge.data.data)
+                    if dst_name not in descs and dst_name not in additional_descs:
+                        additional_descs[dst_name] = sdfg.arrays[dst_name]
 
             else:
                 # Case is ignored.
@@ -2913,8 +2919,15 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
             sdfg = self.sdfg
         node.sdfg = sdfg
         if isinstance(node, AbstractControlFlowRegion):
+            # ``sdfg``, not ``self.sdfg``: when ``self`` IS the SDFG its own ``sdfg`` attribute is
+            # not the one the subtree belongs to, and the blocks end up detached.
             for n in node.all_control_flow_blocks():
-                n.sdfg = self.sdfg
+                n.sdfg = sdfg
+            # ``cfg_id`` is a position in ``cfg_list``, so a region that is not in the list
+            # reports 0 -- the same id as the root and as every other unregistered region.
+            # Appending instead would assign positions in insertion order while this assigns
+            # them in tree order, so the next reset would silently renumber.
+            self.reset_cfg_list()
         start_block = is_start_block
         if is_start_state is not None:
             warnings.warn('is_start_state is deprecated, use is_start_block instead', DeprecationWarning)
@@ -2923,6 +2936,22 @@ class AbstractControlFlowRegion(OrderedDiGraph[ControlFlowBlock, 'dace.sdfg.Inte
         if start_block:
             self.start_block = len(self.nodes()) - 1
             self._cached_start_block = node
+
+    def remove_node(self, node: ControlFlowBlock):
+        # The region owns this invariant, so callers never have to re-pin the start block by hand.
+        # ``_start_block`` is a node ID and removing a block renumbers every later one, so leaving
+        # the ID alone would silently make it name a DIFFERENT block; resolve it to the block it
+        # currently points at and re-derive the ID afterwards. A stale ``_cached_start_block``
+        # is worse still: ``start_block`` returns it without checking, handing callers a block
+        # that is no longer in the graph (``nx.immediate_dominators`` then raises "start is not
+        # in G" from deep inside an unrelated pass).
+        pinned = None
+        if self._start_block is not None and 0 <= self._start_block < self.number_of_nodes():
+            pinned = self.node(self._start_block)
+        if node is self._cached_start_block:
+            self._cached_start_block = None
+        super().remove_node(node)
+        self._start_block = None if (pinned is None or pinned is node) else self.node_id(pinned)
 
     def add_state(self, label=None, is_start_block=False, *, is_start_state: Optional[bool] = None) -> SDFGState:
         label = self._ensure_unique_block_name(label)
@@ -3851,6 +3880,12 @@ class ConditionalBlock(AbstractControlFlowRegion):
         self._branches.append([condition, branch])
         branch.parent_graph = self
         branch.sdfg = self.sdfg
+        # A branch is reached only through this list, never through ``nodes()``, so the generic
+        # ``add_node`` bookkeeping never runs for it: propagate the SDFG into the branch and
+        # invalidate here instead. Without this the branch's blocks keep ``sdfg is None``.
+        for n in branch.all_control_flow_blocks():
+            n.sdfg = self.sdfg
+        self.reset_cfg_list()
 
     def remove_branch(self, branch: ControlFlowRegion):
         self._branches = [(c, b) for c, b in self._branches if b is not branch]

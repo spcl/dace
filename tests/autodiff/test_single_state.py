@@ -13,6 +13,7 @@ from dace.transformation.interstate import StateFusion
 
 import dace.libraries.onnx as donnx
 from dace.autodiff import add_backward_pass
+from tests.utils import expand_library_nodes_for_autodiff
 
 
 ##################################
@@ -556,7 +557,7 @@ def test_reshape_on_memlet_path():
 
     sdfg = single_state_reshape_memlet_path.to_sdfg(simplify=False)
 
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     sdfg.apply_transformations_repeated([StateFusion])
 
     donnx.default_implementation = old_default
@@ -597,7 +598,7 @@ def test_reshape_reuse_in_same_state():
 
     sdfg = single_state_reshape_same_state.to_sdfg(simplify=False)
 
-    sdfg.expand_library_nodes()
+    expand_library_nodes_for_autodiff(sdfg)
     sdfg.apply_transformations_repeated([StateFusion])
 
     donnx.default_implementation = old_default

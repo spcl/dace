@@ -1,6 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
-import polybench
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -69,4 +68,5 @@ def symm(C: datatype[M, N], A: datatype[M, M], B: datatype[M, N], alpha: datatyp
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, outputs, init_array, symm)

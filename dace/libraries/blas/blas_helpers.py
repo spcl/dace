@@ -1,4 +1,5 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
+import copy
 import numpy as np
 from dace import dtypes, data
 from typing import Any, Dict, Tuple
@@ -213,3 +214,31 @@ def check_access(schedule: dtypes.ScheduleType, *descs: data.Data):
     for desc in descs:
         if not dtypes.can_access(schedule, desc.storage):
             raise ValueError(f"Schedule mismatch: {schedule} cannot access {desc.storage}")
+
+
+def validate_level1_vector_to_vector(node, sdfg, state, op_name: str):
+    """ Shared validation for BLAS Level-1 nodes shaped vector -> vector (COPY, SCAL, ...).
+
+        :param op_name: operation name used in error messages.
+        :return: ``((desc_x, stride_x), (desc_y, stride_y), n)``.
+    """
+    in_edges = state.in_edges(node)
+    out_edges = state.out_edges(node)
+    if len(in_edges) != 1 or len(out_edges) != 1:
+        raise ValueError(f"{op_name} expects one input and one output")
+    in_memlet, out_memlet = in_edges[0].data, out_edges[0].data
+    desc_x = sdfg.arrays[in_memlet.data]
+    desc_y = sdfg.arrays[out_memlet.data]
+
+    sq_in = copy.deepcopy(in_memlet.subset)
+    sq_out = copy.deepcopy(out_memlet.subset)
+    dims_in = sq_in.squeeze()
+    dims_out = sq_out.squeeze()
+    if len(sq_in.size()) != 1 or len(sq_out.size()) != 1:
+        raise ValueError(f"{op_name} only supported on 1-D arrays")
+    if sq_in.num_elements() != sq_out.num_elements():
+        raise ValueError(f"{op_name}: input and output must be the same length")
+
+    stride_x = desc_x.strides[dims_in[0]]
+    stride_y = desc_y.strides[dims_out[0]]
+    return (desc_x, stride_x), (desc_y, stride_y), sq_in.num_elements()

@@ -34,9 +34,21 @@ jobs:
         # Make dependency setup faster
         echo 'set man-db/auto-update false' | sudo debconf-communicate >/dev/null
         sudo dpkg-reconfigure man-db
-        # Install dependencies
+        # Install dependencies (cBLAS / LAPACK / FFTW3 / PAPI).
         sudo apt-get update
-        sudo apt-get install -y libyaml-dev cmake libblas-dev libopenblas-dev liblapacke-dev libpapi-dev papi-tools
+        sudo apt-get install -y libyaml-dev cmake gpg-agent wget \
+          libblas-dev libopenblas-dev liblapacke-dev libfftw3-dev \
+          libpapi-dev papi-tools
+        # Intel oneAPI MKL — add the official Intel apt repo, then install
+        # the dev meta-package so headers (``mkl.h``) and link libs are
+        # both available to the codegen path.  Pinned-key + signed-by
+        # to keep the install reproducible.
+        wget -qO- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB \
+          | gpg --dearmor | sudo tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null
+        echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" \
+          | sudo tee /etc/apt/sources.list.d/oneAPI.list
+        sudo apt-get update
+        sudo apt-get install -y intel-oneapi-mkl intel-oneapi-mkl-devel
         pip install flake8 pytest-xdist coverage
         pip install -e ".[testing]"
         curl -Os https://uploader.codecov.io/latest/linux/codecov
@@ -76,6 +88,51 @@ jobs:
             export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
         fi
         pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "lapack"
+        ./codecov
+
+    - name: Test cBLAS / MKL BLAS extension nodes
+      # Runs the ``mkl``-marked tests: the per-routine BLAS tests
+      # (Dot / Axpy / Gemm / etc.) that exercise the ``MKL`` backend
+      # explicitly.  oneMKL provides ``libmkl_rt`` and ``mkl.h`` for the
+      # MKL path.  The new SCAL/COPY/SWAP + TRSV/TRMV/SYMV +
+      # TRSM/TRMM/SYMM/SYRK extension-node tests drive the ``OpenBLAS``
+      # backend, so they carry the ``lapack`` marker and run in the
+      # "Test OpenBLAS LAPACK" step above instead.
+      run: |
+        # Source Intel oneAPI environment so ``MKLROOT`` / link flags
+        # are populated for the MKL expansion's CMake env.
+        source /opt/intel/oneapi/setvars.sh || true
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "mkl"
+        ./codecov
+
+    - name: Test FFTW3 FFT lowering
+      # ``libfftw3-dev`` is already installed in the "Install dependencies"
+      # step; this step runs the ``fftw``-marked tests for the FFT library's
+      # CPU backend.
+      run: |
+        export NOSTATUSBAR=1
+        export DACE_testing_serialization=1
+        export DACE_testing_deserialize_exception=1
+        export DACE_cache=unique
+        if [ "${{ matrix.simplify }}" = "autoopt" ]; then
+            export DACE_optimizer_automatic_simplification=1
+            export DACE_optimizer_autooptimize=1
+            echo "Auto-optimization heuristics"
+        else
+            export DACE_optimizer_automatic_simplification=${{ matrix.simplify }}
+        fi
+        pytest -n 1 --cov-report=xml --cov=dace --tb=short --timeout_method thread --timeout=300 -m "fftw"
         ./codecov
 
     - name: Run sequential tests

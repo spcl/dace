@@ -241,6 +241,9 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
     for target in frame.targets:
         target.preprocess(sdfg)
 
+    # Ensure symbol-dependent allocations sit after the symbol's definition, not at a dominator preceding it
+    framecode.pad_control_flow_region_boundaries(sdfg)
+
     # Instantiate instrumentation providers
     frame._dispatcher.instrumentation = {
         k: v() if v is not None else None

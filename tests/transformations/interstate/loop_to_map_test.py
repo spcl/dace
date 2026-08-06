@@ -452,7 +452,25 @@ def test_symbol_array_mix_2(parallel):
     body_start.add_edge(t, 'o', body_start.add_write('B'), None, dace.Memlet('B[i]'))
 
     sdfg.apply_transformations_repeated([LoopLifting])
-    assert sdfg.apply_transformations(LoopToMap) == (1 if parallel else 0)
+    # `sym` is written on the body interstate edge (sym = A[i-1]) yet read by the B[i] = sym tasklet
+    # BEFORE that write in program order, so its value carries from iteration i-1 into i -- a loop-carried
+    # scalar dependency that makes the loop non-DOALL for BOTH arms (the non-parallel arm's A[i] write only
+    # adds a second carry). LoopToMap must REFUSE; a lift drops the carry (every B[i] = sym_init = 0) and
+    # miscompiles. (An earlier l2map lifted the parallel arm and silently produced the zeroed result.)
+    assert sdfg.apply_transformations(LoopToMap) == 0
+
+    if parallel:
+        # A is read-only in this arm, so pin the exact sequential semantics too: B[i] = sym-at-entry =
+        # A[i-2] (B[1] = sym's 0.0 init). Guards against any future l2map lifting this and zeroing the carry.
+        A = np.arange(1.0, 21.0)
+        B = np.full(20, -999.0)
+        sdfg(A=A.copy(), B=B)
+        expected = np.full(20, -999.0)
+        sym = 0.0
+        for i in range(1, 20):
+            expected[i] = sym
+            sym = A[i - 1]
+        assert np.allclose(B, expected)
 
 
 @pytest.mark.parametrize('overwrite', (False, True))

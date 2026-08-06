@@ -20,7 +20,7 @@ from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
-from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
+from dace.sdfg.state import ConditionalBlock, ControlFlowBlock, ControlFlowRegion, LoopRegion
 from dace.transformation.passes.analysis import StateReachability, loop_analysis
 
 
@@ -1098,3 +1098,21 @@ def _get_dominator_and_postdominator(sdfg: SDFG, accesses: List[Tuple[SDFGState,
     # raise NotImplementedError
 
     return start_state, end_state
+
+
+def pad_control_flow_region_boundaries(top_sdfg: SDFG):
+    """Add an empty state before and after each loop / conditional block.
+
+    A transient whose shape depends on a symbol assigned *inside* such a block is
+    allocated at the closest common dominator state of its accesses; without a
+    state on the block's boundary that dominator can precede the symbol's
+    definition, emitting ``new T[sym]`` with an undefined ``sym``.  A landing
+    state on either side gives the allocator a valid placement where the symbol
+    is already defined.  Runs before codegen freezes the SDFG.
+    """
+    for cfg in list(top_sdfg.all_control_flow_regions()):
+        for block in list(cfg.nodes()):
+            if isinstance(block, (ConditionalBlock, LoopRegion)):
+                cfg.add_state_before(block, is_start_block=block is cfg.start_block)
+                cfg.add_state_after(block)
+    top_sdfg.reset_cfg_list()

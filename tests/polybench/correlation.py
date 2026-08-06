@@ -1,7 +1,6 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import math
 import dace
-import polybench
 
 M = dace.symbol('M')
 N = dace.symbol('N')
@@ -88,4 +87,5 @@ def correlation(data: datatype[N, M], corr: datatype[M, M], mean: datatype[M], s
 
 
 if __name__ == '__main__':
+    import polybench
     polybench.main(sizes, args, [(1, 'corr')], init_array, correlation)

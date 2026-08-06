@@ -297,8 +297,28 @@ def _approx(val):
     return symbolic.pystr_to_symbolic(val)
 
 
-def _tuple_to_symexpr(val):
+def tuple_to_symexpr(val):
+    """Coerce one range bound to a symbolic expression.
+
+    A ``(main, approx)`` tuple becomes a ``SymExpr``; anything else -- a Python ``int``, a
+    string, an already-symbolic value -- goes through ``pystr_to_symbolic``.
+    """
     return (symbolic.SymExpr(val[0], val[1]) if isinstance(val, tuple) else symbolic.pystr_to_symbolic(val))
+
+
+def symbolic_range_tuple(value):
+    """Coerce a whole ``(start, end, step[, tile])`` range tuple to symbolic bounds.
+
+    ``Range`` promises symbolic bounds -- ``ndrange()`` is annotated ``SymbolicType`` and callers
+    act on it, calling ``.match()``, ``.subs()`` or ``.free_symbols`` without checking. A raw
+    Python ``int`` reaching a bound therefore does not fail where it was stored but much later,
+    in an unrelated pass, as ``'int' object has no attribute 'match'``.
+    """
+    if not isinstance(value, (tuple, list)):
+        raise TypeError(f'Expected a 3- or 4-tuple range, got {type(value).__name__}')
+    if len(value) not in (3, 4):
+        raise ValueError('Expected 3-tuple or 4-tuple')
+    return tuple(tuple_to_symexpr(v) for v in value)
 
 
 @dace.serialize.serializable
@@ -311,7 +331,7 @@ class Range(Subset):
         for r in ranges:
             if len(r) != 3 and len(r) != 4:
                 raise ValueError("Expected 3-tuple or 4-tuple")
-            parsed_ranges.append((_tuple_to_symexpr(r[0]), _tuple_to_symexpr(r[1]), _tuple_to_symexpr(r[2])))
+            parsed_ranges.append((tuple_to_symexpr(r[0]), tuple_to_symexpr(r[1]), tuple_to_symexpr(r[2])))
             if len(r) == 3:
                 parsed_tiles.append(symbolic.pystr_to_symbolic(1))
             else:
@@ -747,7 +767,11 @@ class Range(Subset):
         return self.ranges.__getitem__(key)
 
     def __setitem__(self, key, value):
-        return self.ranges.__setitem__(key, value)
+        # ``__init__`` coerces every bound; this path did not, so ``r[i] = (0, n - 1, 1)``
+        # quietly put Python ints into a container whose contract says symbolic.
+        if isinstance(key, slice):
+            return self.ranges.__setitem__(key, [symbolic_range_tuple(v) for v in value])
+        return self.ranges.__setitem__(key, symbolic_range_tuple(value))
 
     def __eq__(self, other):
         if not isinstance(other, Range):
@@ -940,9 +964,9 @@ class Range(Subset):
             array: array descriptor to check against
 
         Returns:
-            True if the subset is contiguous, False otherwise
-            Returns False on all arrays that are not have a packed layout,
-            meaning that the complete array is contiguously stored in 1D memory.
+            True if the subset is contiguous, False otherwise. Also true for a 1D slice
+            with stride 1 on a non-packed (padded) array, even though the array itself
+            isn't fully packed.
         """
         # Any step size != 1 -> not contiguous
         if any(s != 1 for (_, _, s) in self):
