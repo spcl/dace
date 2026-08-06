@@ -921,16 +921,17 @@ class DataflowGraphView(BlockGraphView, abc.ABC):
                 } if top_source_edge.src.data not in descs else {})
 
             elif isinstance(edge.dst, nd.ExitNode) and isinstance(edge.src, (nd.AccessNode, nd.CodeNode)):
-                # Same case as above, but for outgoing Memlets.
-                # NOTE: We have to use a memlet tree here, because the data could potentially
-                #   go to multiple sources. We have to do it this way, because if we would call
-                #   `memlet_tree()` here, then we would just get the edge back.
+                # Same case as above, but for outgoing Memlets. Every edge on the matching connector
+                #   is inspected, since the data can go to more than one destination, and each is
+                #   followed to where it lands: one hop still names the inner transient whenever the
+                #   write leaves through more than one exit, as it does in a tiled map.
                 additional_descs = {}
                 connector_to_look = "OUT_" + edge.dst_conn[3:]
                 for oedge in self.graph.out_edges_by_connector(edge.dst, connector_to_look):
-                    if ((not oedge.data.is_empty()) and (oedge.data.data not in descs)
-                            and (oedge.data.data not in additional_descs)):
-                        additional_descs[oedge.data.data] = sdfg.arrays[oedge.data.data]
+                    outermost = self.graph.memlet_path(oedge)[-1].data
+                    if ((not outermost.is_empty()) and (outermost.data not in descs)
+                            and (outermost.data not in additional_descs)):
+                        additional_descs[outermost.data] = sdfg.arrays[outermost.data]
 
             else:
                 # Case is ignored.
@@ -1212,8 +1213,13 @@ class ControlGraphView(BlockGraphView, abc.ABC):
                 edge.data.replace_dict(repl, replace_keys=replace_keys)
 
             # Replace in states
-            for state in self.nodes():
-                state.replace_dict(repl, symrepl)
+            for block in self.nodes():
+                # A nested region owns interstate edges of its own, so ``replace_keys`` must reach it:
+                # dropping it renames an assignment's uses but not its target, splitting one symbol in two.
+                if isinstance(block, AbstractControlFlowRegion):
+                    block.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
+                else:
+                    block.replace_dict(repl, symrepl)
 
 
 @make_properties
@@ -3774,7 +3780,7 @@ class LoopRegion(ControlFlowRegion):
         from dace.sdfg.replace import replace_properties_dict
         replace_properties_dict(self, repl, symrepl)
 
-        super().replace_dict(repl, symrepl, replace_in_graph)
+        super().replace_dict(repl, symrepl, replace_in_graph, replace_keys)
 
     def add_break(self, label=None) -> BreakBlock:
         label = self._ensure_unique_block_name(label)
@@ -3951,7 +3957,7 @@ class ConditionalBlock(AbstractControlFlowRegion):
             replace_properties_dict(self, repl, symrepl)
 
         for cond, region in self._branches:
-            region.replace_dict(repl, symrepl, replace_in_graph)
+            region.replace_dict(repl, symrepl, replace_in_graph, replace_keys)
             if cond is not None:
                 replace_in_codeblock(cond, repl)
 

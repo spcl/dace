@@ -1375,11 +1375,11 @@ class ProgramVisitor(ExtNodeVisitor):
             v: self.sdfg.process_grids[v]
             for k, v in self.variables.items() if v in self.sdfg.process_grids
         })
-        try:
+        # Installed is not usable: an mpi4py with no libmpi to dlopen raises RuntimeError, not
+        # ImportError, so the availability question belongs in one place (see the helper's docstring).
+        if preprocessing.mpi4py_is_usable():
             from mpi4py import MPI
             result.update({k: v for k, v in self.globals.items() if isinstance(v, MPI.Comm)})
-        except (ImportError, ModuleNotFoundError):
-            pass
 
         return result
 
@@ -4421,8 +4421,8 @@ class ProgramVisitor(ExtNodeVisitor):
         func: Callable[..., Any]
         _, func, _ = self.closure.callbacks[funcname]
 
-        skip_args = getattr(node, 'skip_args', [])
-        skip_kwargs = getattr(node, 'skip_keywords', [])
+        skip_args = node.skip_args
+        skip_kwargs = node.skip_keywords
 
         # Infer the type of the function arguments and return value
         argtypes = []
@@ -4481,19 +4481,19 @@ class ProgramVisitor(ExtNodeVisitor):
             for child in ast.iter_child_nodes(anode):
                 if child is node:
                     parent = anode
-                    parent_is_toplevel = getattr(anode, 'toplevel', False)
+                    parent_is_toplevel = anode.toplevel
                     break
                 if hasattr(child, 'func') and hasattr(child.func, 'oldnode'):
                     # Check if the AST node is part of a failed parse
                     if child.func.oldnode is node:
                         parent = anode
-                        parent_is_toplevel = getattr(anode, 'toplevel', False)
+                        parent_is_toplevel = anode.toplevel
                         break
                 if hasattr(child, 'elts'):  # Tuples, e.g., in multiple return values
                     for subchild in child.elts:
                         if subchild is node:
                             parent = anode
-                            parent_is_toplevel = getattr(anode, 'toplevel', False)
+                            parent_is_toplevel = anode.toplevel
                             break
                     if parent is not None:
                         break
