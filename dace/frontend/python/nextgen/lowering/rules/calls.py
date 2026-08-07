@@ -203,6 +203,7 @@ def _prepare_callee(
         descriptor = closure_constant_descriptor(value)
         if descriptor is not None:
             state.context.constants.setdefault(constant_name, (descriptor, value))
+            state.context.folded_constants.add(constant_name)
     # External arrays the callee references bind inside its inline scope,
     # deduplicated by qualified name across the whole program
     for reference_name, (qualified_name, descriptor, _, _) in closure.closure_arrays.items():

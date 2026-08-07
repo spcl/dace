@@ -95,6 +95,17 @@ class ProgramContext:
         #: Compile-time constants as (descriptor, value) tuples, shared with the tree root.
         self.constants: Dict[str, Tuple[data.Data, Any]] = dict(constants)
 
+        #: Names among :attr:`constants` whose value inference substitutes at
+        #: every use, so generated code never mentions them. They still reach
+        #: the tree root -- a callback's namespace is built from ALL constants,
+        #: and a statement running in the interpreter may well name one -- but
+        #: carrying them into the SDFG's constant repository would emit a dead
+        #: ``constexpr`` for a ``dace.compiletime`` argument that was supposed
+        #: to fold away. Kept separate from the values because a tree produced
+        #: from an existing SDFG (``sdfg_to_tree``) has genuine scalar
+        #: constants its tasklets DO reference by name, and those must survive.
+        self.folded_constants: Set[str] = set(constants)
+
         #: Python callables of the callbacks preprocessing DETECTED, keyed by
         #: the sanitized name it rewrote the call to (``LOG.append`` becomes
         #: ``LOG_append``). Statements that end up in the interpreter reference

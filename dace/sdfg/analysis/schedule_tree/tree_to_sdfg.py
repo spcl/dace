@@ -1539,12 +1539,14 @@ def from_schedule_tree(
     # (modules, callables); they stay on the tree root only. The same goes for
     # constants keyed by a non-identifier qualname (e.g. 'self.parameter'):
     # preprocessing folds their values inline, so nothing references them by
-    # name, and the dotted name is not a valid C identifier.
+    # name, and the dotted name is not a valid C identifier. ``folded_constants``
+    # names the rest of that same category -- values a frontend substituted at
+    # every use, which would otherwise be emitted as dead declarations.
     result.constants_prop = copy.deepcopy({
         name: entry
         for name, entry in stree.constants.items()
-        if name.isidentifier() and not (isinstance(entry, tuple) and isinstance(entry[0], data.Data)
-                                        and isinstance(entry[0].dtype, dtypes.pyobject))
+        if name.isidentifier() and name not in stree.folded_constants and not (isinstance(entry, tuple) and isinstance(
+            entry[0], data.Data) and isinstance(entry[0].dtype, dtypes.pyobject))
     })
     result.callback_mapping = copy.deepcopy(stree.callback_mapping)
     # Callbacks the tree carries the source of become live callables here, so

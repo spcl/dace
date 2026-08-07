@@ -325,6 +325,7 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         callback_mapping: dict[str, str] | None = None,
         arg_names: list[str] | None = None,
         callback_objects: dict[str, Any] | None = None,
+        folded_constants: set[str] | None = None,
     ) -> None:
         super().__init__(children=children, parent=None)
 
@@ -335,6 +336,12 @@ class ScheduleTreeRoot(ScheduleTreeScope):
         self.callback_mapping = callback_mapping if callback_mapping is not None else dict()
         self.arg_names = arg_names if arg_names is not None else list()
         self.callback_objects = callback_objects if callback_objects is not None else dict()
+        #: Names in :attr:`constants` a frontend already substituted at every
+        #: use. They stay here because a callback's namespace is built from all
+        #: constants, but they are not carried into an SDFG's constant
+        #: repository, where they would be dead declarations. Empty for a tree
+        #: derived from an existing SDFG, whose scalar constants are genuine.
+        self.folded_constants = folded_constants if folded_constants is not None else set()
 
     def as_sdfg(self,
                 validate: bool = True,

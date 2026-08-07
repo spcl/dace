@@ -100,6 +100,11 @@ def _apply_unary_operator(operator: ast.unaryop, value: Any) -> Any:
     raise TypeError(f'Cannot constant-fold unary operator {type(operator).__name__}')
 
 
+def _is_none_literal(node: ast.expr) -> bool:
+    """Whether an expression is the literal ``None``."""
+    return isinstance(node, ast.Constant) and node.value is None
+
+
 @dataclass
 class Inferred:
     """
@@ -360,6 +365,84 @@ class InferenceService:
                                       self.context.filename,
                                       node,
                                       category='type-inference')
+
+    def _identity_with_none(self, node: ast.Compare) -> Optional[Inferred]:
+        """
+        Fold ``x is None`` / ``x is not None`` when the answer is settled at
+        parse time, or None when this is not that comparison.
+
+        ``is`` asks about object identity, and identity with ``None`` is never
+        a run-time question here: a name bound to a container is an array, and
+        an array is not ``None``. Leaving it to the operator registry emits a
+        real comparison, which reaches the C++ compiler as ``double ==
+        nullptr`` and fails to build. (The other direction already worked --
+        preprocessing substitutes a ``None``-valued field as the constant, and
+        ``None is None`` folds.)
+
+        Only single comparisons are folded; a chain (``a is None is b``) is
+        left alone, being vanishingly rare and not worth the special case.
+        """
+        if len(node.ops) != 1 or len(node.comparators) != 1:
+            return None
+        if not isinstance(node.ops[0], (ast.Is, ast.IsNot)):
+            return None
+
+        operands = [node.left, node.comparators[0]]
+        nones = [operand for operand in operands if _is_none_literal(operand)]
+        if not nones:
+            return None
+        others = [operand for operand in operands if not _is_none_literal(operand)]
+        if not others:
+            # ``None is None``: both sides are the singleton.
+            identical = True
+        else:
+            resolved = self._resolves_to_data(others[0])
+            if resolved is None:
+                return None
+            identical = not resolved
+        return Inferred(kind='constant', value=identical is isinstance(node.ops[0], ast.Is))
+
+    def _resolves_to_data(self, node: ast.expr) -> Optional[bool]:
+        """
+        Whether an operand is known to hold data rather than ``None``, or None
+        when that cannot be decided at parse time.
+        """
+        try:
+            inferred = self.infer(node)
+        except UnsupportedFeatureError:
+            return None
+        if inferred.is_data:
+            return self._container_cannot_be_none(node)
+        if inferred.kind == 'constant':
+            return inferred.value is not None
+        return None
+
+    def _container_cannot_be_none(self, node: ast.expr) -> Optional[bool]:
+        """
+        Whether an operand names a container the frontend knows is really
+        there, or None when it may be null while the program runs.
+
+        Being data is not enough. An OPTIONAL array argument is a nullable
+        pointer -- ``linear(x, w, bias=None)`` is the whole point of the
+        feature -- so ``bias is None`` must survive as a real ``bias ==
+        nullptr`` test in generated code rather than folding to False here.
+        The same goes for an argument that leaves ``optional`` unset, which the
+        ``OptionalArrayInference`` pass decides later.
+
+        True is returned only where the frontend can see the answer itself: a
+        closure array is an object it already resolved (so ``self.field`` holds
+        an array, not ``None``), and a descriptor explicitly marked
+        non-optional cannot be null.
+        """
+        if not isinstance(node, ast.Name):
+            return None
+        binding = self.context.resolve(node.id)
+        if binding is None or binding.kind != 'container':
+            return None
+        if binding.container in self.context.closure_containers.values():
+            return True
+        descriptor = self.context.containers.get(binding.container)
+        return True if getattr(descriptor, 'optional', None) is False else None
 
     def resolve_callee(self, func: ast.expr) -> Tuple[str, Optional[Any]]:
         """
@@ -1320,6 +1403,10 @@ class InferenceService:
         return expr.subs(replacements) if replacements else expr
 
     def _infer_operator(self, node: ast.expr) -> Inferred:
+        if isinstance(node, ast.Compare):
+            identity = self._identity_with_none(node)
+            if identity is not None:
+                return identity
         if isinstance(node, ast.BinOp):
             operands = [self.infer(node.left), self.infer(node.right)]
         elif isinstance(node, ast.Compare):

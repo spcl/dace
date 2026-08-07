@@ -306,6 +306,36 @@ def test_optional_argument():
     assert np.allclose(linear.f(x, w, b), linear(x, w, b))
 
 
+def test_optional_argument_runtime_null_check():
+    """
+    An array declared ``optional`` is a nullable pointer, so ``bias is None``
+    is a genuine run-time question and has to reach generated code as a null
+    test -- not fold to False the way an identity check against a container the
+    frontend can see does.
+    """
+
+    @dace.program
+    def linear(A: dace.float64[10], bias):
+        if bias is None:
+            A[:] = 1.0
+        else:
+            A[:] = bias
+
+    sdfg = linear.to_sdfg(bias=dace.data.Array(dace.float64, (10, ), optional=True))
+    assert sdfg.arrays['bias'].optional is True
+    assert 'bias == nullptr' in sdfg.generate_code()[0].clean_code
+
+    compiled = sdfg.compile()
+
+    with_bias = np.zeros(10)
+    compiled(A=with_bias, bias=np.full(10, 7.0))
+    assert np.allclose(with_bias, 7.0)
+
+    without_bias = np.zeros(10)
+    compiled(A=without_bias, bias=None)
+    assert np.allclose(without_bias, 1.0)
+
+
 def test_constant_argument_simple():
 
     @dace.program
@@ -706,6 +736,12 @@ def test_constant_runtime_value():
 
 
 def test_constant_field():
+    """A field read off a ``dace.compiletime`` object, both as a value the
+    callee branches on and as an argument computed at the call site.
+
+    ``ctx.scal`` is known at parse time, so both ``ctx.scal == 1`` uses fold and
+    the guarded write is simply not emitted -- no callback needed.
+    """
 
     def function(ctx: dace.compiletime, arr, somebool):
         a_bool = ctx.scal == 1
@@ -719,8 +755,11 @@ def test_constant_field():
     ns = SimpleNamespace(scal=2)
     arr = np.ones((12), np.float64)
 
-    with pytest.warns(match="Automatically creating callback"):
-        program(arr, ns)
+    regression = np.ones((12), np.float64)
+    program.f(regression, ns)
+
+    program(arr, ns)
+    assert np.allclose(arr, regression)
 
 
 if __name__ == '__main__':
@@ -741,6 +780,7 @@ if __name__ == '__main__':
     test_optional_argument_jit()
     test_optional_argument_jit_kwarg()
     test_optional_argument()
+    test_optional_argument_runtime_null_check()
     test_constant_argument_simple()
     test_constant_argument_default()
     test_constant_argument_object()

@@ -85,6 +85,7 @@ def build_schedule_tree(name: str,
                                containers=context.containers,
                                symbols=context.symbols,
                                constants=context.constants,
+                               folded_constants=context.folded_constants,
                                callback_mapping=dict(callback_mapping or {}),
                                arg_names=list(arg_names or argtypes.keys()))
 
