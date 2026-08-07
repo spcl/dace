@@ -1186,6 +1186,31 @@ def test_nanobind_interface_bool_scalar_binds_via_caster():
     assert 'dace_bool' not in generate_bindings_code(plain)
 
 
+def test_nanobind_interface_bool_symbol_condition():
+    """A bool SYMBOL (used in an interstate condition) is an init argument: the
+    dace_bool binding parameter is passed by its raw name into init_impl and
+    the program call, so the type must convert to bool wherever the name is
+    used - the explicit cast only covers the program-call argument list."""
+    import numpy as np
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = dace.SDFG('bool_symbol_cond_probe')
+        sdfg.add_symbol('cond', dace.bool)
+        sdfg.add_array('__return', [1], dace.float64)
+        start = sdfg.add_state(is_start_block=True)
+        s_true = sdfg.add_state()
+        s_false = sdfg.add_state()
+        for state, val in ((s_true, 1.0), (s_false, 2.0)):
+            t = state.add_tasklet('write', {}, {'out'}, f'out = {val}')
+            w = state.add_write('__return')
+            state.add_edge(t, 'out', w, None, dace.Memlet('__return[0]'))
+        sdfg.add_edge(start, s_true, dace.InterstateEdge(condition='cond'))
+        sdfg.add_edge(start, s_false, dace.InterstateEdge(condition='not cond'))
+
+        csdfg = sdfg.compile()
+        assert csdfg(cond=np.True_)[0] == 1.0  # numpy.bool_ on the symbol path
+        assert csdfg(cond=False)[0] == 2.0
+
+
 def test_nanobind_interface_bool_scalar_numpy_input():
     """A numpy.bool_ scalar argument is accepted end-to-end on the nanobind interface."""
     import numpy as np

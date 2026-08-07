@@ -74,7 +74,13 @@ template <> struct dtype_traits<dace::float16> {
 # a caster rather than per-argument setup code so it slots uniformly into
 # call(), initialize() and user_call's try_cast.
 _DACE_BOOL_CASTER = '''
-struct dace_bool { uint8_t value; };
+// The implicit bool conversion is load-bearing: a bool SYMBOL's binding
+// parameter is passed by its raw name into init_impl (and the workspace
+// methods), where the extern "C" signature takes a plain bool.
+struct dace_bool {
+    uint8_t value;
+    operator bool() const { return value != 0; }
+};
 namespace nanobind { namespace detail {
 template <> struct type_caster<dace_bool> {
     NB_TYPE_CASTER(dace_bool, const_name("bool"))
