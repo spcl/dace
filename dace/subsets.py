@@ -785,9 +785,7 @@ class Range(Subset):
         if isinstance(key, slice):
             entries = [symbolic_range_tuple(v) for v in value]
             if any(len(e) == 4 for e in entries):
-                self.tile_sizes[key] = [
-                    e[3] if len(e) == 4 else old for e, old in zip(entries, self.tile_sizes[key])
-                ]
+                self.tile_sizes[key] = [e[3] if len(e) == 4 else old for e, old in zip(entries, self.tile_sizes[key])]
             return self.ranges.__setitem__(key, [e[:3] for e in entries])
         if isinstance(value, (tuple, list)):
             value = symbolic_range_tuple(value)

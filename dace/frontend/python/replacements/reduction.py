@@ -271,7 +271,6 @@ def _argminmax(pv: ProgramVisitor,
                result_type: dtypes.typeclass = dtypes.int32,
                return_both: bool = False):
     from dace.frontend.python.replacements.array_manipulation import flat  # Avoid import loop
-    from dace.frontend.python.replacements.misc import elementwise  # Avoid import loop
 
     nest = NestedCall(pv, sdfg, state)
 
