@@ -19,6 +19,7 @@ from dace.sdfg.state import LoopRegion
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
 from dace.frontend.python import iterators
+from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.nextgen.canonical import cpa
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.access import DataAccess, resolve_access, resolve_symbol_names
@@ -349,8 +350,8 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
     are canonical in place, not hoisted) — becomes a fresh dynamic-map-range
     symbol fed by a :class:`DynScopeCopyNode`: see :func:`_dynamic_bound`.
     Purely symbolic expressions (``i + 1``) resolve symbolically. Compound
-    expressions that mix data reads with arithmetic (``A_row[i] + 1``) are
-    not symbolizable and fall back to a callback.
+    expressions that mix data reads with arithmetic (``tmp + 1``) have each
+    read promoted first, by :func:`_promote_bound_reads`.
     """
     if node is None:
         return default
@@ -371,6 +372,7 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
         access = resolve_access(node, state)
         if access is not None:
             return _dynamic_bound(node, access, state, dynamic_inputs)
+    node = _promote_bound_reads(node, state, dynamic_inputs)
     expression = astutils.unparse(resolve_symbol_names(node, state))
     try:
         return symbolic.pystr_to_symbolic(expression)
@@ -381,6 +383,49 @@ def _bound(node, default, state: LoweringState, dynamic_inputs: List[tn.DynScope
                                       state.context.filename,
                                       node,
                                       category='dynamic-bound')
+
+
+def _promote_bound_reads(node: ast.expr, state: LoweringState, dynamic_inputs: List[tn.DynScopeCopyNode]) -> ast.expr:
+    """
+    Replace every data read inside a compound ``dace.map`` bound (``tmp + 1``,
+    ``A_row[i] * 2``) with the dynamic-map-range symbol carrying its value.
+
+    Without this the read survives into
+    :func:`~dace.symbolic.pystr_to_symbolic`, which turns any identifier into a
+    free symbol -- including a container's name, which nothing declares. The
+    range then generated a loop over an undeclared variable, and the C++
+    compiler was the first thing to notice.
+
+    Reads that resolve to the same element share one symbol and one copy, so a
+    bound like ``tmp:tmp + 1`` reads ``tmp`` once.
+    """
+
+    class _Promoter(ast.NodeTransformer):
+
+        def visit_Name(self, node: ast.Name) -> ast.expr:
+            return self._promote(node)
+
+        def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+            return self._promote(node)
+
+        def visit_Subscript(self, node: ast.Subscript) -> ast.expr:
+            return self._promote(node)
+
+        def _promote(self, node: ast.expr) -> ast.expr:
+            # Left whole, deliberately: a data read is promoted as one access,
+            # never by descending into the index expression of a subscript.
+            if state.inference.infer(node).kind == 'symbolic':
+                return node
+            try:
+                access = resolve_access(node, state)
+            except UnsupportedFeatureError:
+                return node
+            if access is None:
+                return node
+            symbol = _dynamic_bound(node, access, state, dynamic_inputs)
+            return ast.copy_location(ast.Name(id=symbol.name, ctx=ast.Load()), node)
+
+    return _Promoter().visit(astutils.copy_tree(node))
 
 
 def _dynamic_bound(node: ast.expr, access: DataAccess, state: LoweringState,
@@ -403,11 +448,16 @@ def _dynamic_bound(node: ast.expr, access: DataAccess, state: LoweringState,
             state.context.filename,
             node,
             category='dynamic-bound')
+    memlet = Memlet(data=access.container, subset=access.subset)
+    # The same element read twice in one map header (``tmp:tmp + 1``) is one
+    # value: reuse the symbol rather than copying it in again.
+    for existing in dynamic_inputs:
+        if existing.memlet.data == memlet.data and existing.memlet.subset == memlet.subset:
+            return symbolic.symbol(existing.target, access.descriptor.dtype)
     symbol_name = state.context.fresh_name('__dyn')
     # A repository-only symbol: registered directly in the symbol table (which
     # *is* the tree root's symbol table), without a source-level name binding.
     state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, access.descriptor.dtype)
-    memlet = Memlet(data=access.container, subset=access.subset)
     dynamic_inputs.append(tn.DynScopeCopyNode(target=symbol_name, memlet=memlet))
     return symbolic.symbol(symbol_name, access.descriptor.dtype)
 
@@ -416,13 +466,40 @@ def _index_dtype(bounds: List[ast.expr], state: LoweringState) -> dtypes.typecla
     return dtypes.int64
 
 
+def _reject_in_dataflow_scope(keyword: str, statement: ast.stmt, state: LoweringState) -> None:
+    """
+    Refuse ``break``/``continue`` whose nearest enclosing scope is a dataflow
+    scope (``dace.map``, ``dace.consume``) rather than a loop.
+
+    A map's iterations are independent and may run in any order or in
+    parallel, so there is no "rest of the loop" to abandon. Emitted anyway,
+    the node had no loop to bind to and was simply dropped: the map ran its
+    full range, and every iteration the guard was meant to skip executed. That
+    silently computes the wrong answer whenever the writes stay in bounds --
+    the stable frontend rejects the same program.
+    """
+    scope = state.emitter.current_scope
+    while scope is not None:
+        if isinstance(scope, tn.LoopScope):
+            return
+        if isinstance(scope, tn.DataflowScope):
+            construct = 'dace.consume' if isinstance(scope, tn.ConsumeScope) else 'dace.map'
+            raise DaceSyntaxError(
+                None, statement, f'"{keyword}" is not allowed inside a {construct} scope: its iterations are '
+                f'independent and may run in parallel, so there is no sequential order to {keyword} out of. '
+                'Use a sequential "for" loop, or guard the body with an "if" instead.')
+        scope = scope.parent
+
+
 @rule(ast.Break)
 def lower_break(statement: ast.Break, state: LoweringState) -> None:
+    _reject_in_dataflow_scope('break', statement, state)
     state.emitter.emit(tn.BreakNode())
 
 
 @rule(ast.Continue)
 def lower_continue(statement: ast.Continue, state: LoweringState) -> None:
+    _reject_in_dataflow_scope('continue', statement, state)
     state.emitter.emit(tn.ContinueNode())
 
 

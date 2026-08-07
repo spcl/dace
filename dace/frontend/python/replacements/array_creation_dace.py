@@ -4,7 +4,7 @@ Contains definitions of new data containers (arrays, locals, streams) as per DaC
 array creation functions for NumPy that reuse the same functionality.
 """
 from dace.frontend.common import op_repository as oprepo
-from dace.frontend.python.common import DaceSyntaxError, StringLiteral
+from dace.frontend.python.common import DaceSyntaxError, InvalidOperandTypes, StringLiteral
 from dace.frontend.python.replacements.utils import ProgramVisitor, Shape, Size, sym_type
 from dace import data, dtypes, symbolic, Memlet, SDFG, SDFGState
 
@@ -20,7 +20,16 @@ def _normalize_allocator_shape(shape: Shape):
         return [shape]
     if not isinstance(shape, (list, tuple)):
         return None
-    return list(shape)
+    shape = list(shape)
+    for dimension in shape:
+        if isinstance(dimension, (list, tuple)):
+            # A nested sequence is not a shape in any frontend, and no
+            # descriptor can be built from it. Raised rather than reported as
+            # "cannot infer": that answer sends the allocation to a Python
+            # callback, where the TypeError NumPy raises has no way back across
+            # the callback ABI, so the allocation silently did nothing.
+            raise InvalidOperandTypes(f'Invalid array shape {shape}: dimension {dimension!r} is a sequence, not a size')
+    return shape
 
 
 def infer_array_creation_descriptor(obj: Any,

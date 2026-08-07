@@ -400,6 +400,24 @@ def whole_container_plan(ndim: int) -> IndexPlan:
     return IndexPlan(slots=[IndexSlot(AxisKind.KEEP, axis) for axis in range(ndim)], ndim=ndim)
 
 
+def _is_slice_valued(element: ast.expr) -> bool:
+    """
+    Whether an index element selects a RANGE of an axis rather than one
+    position -- the distinction between an axis that survives into the result
+    shape and one that is dropped.
+
+    Two spellings mean the same thing: the syntactic ``a[1:10:2]``, and a
+    ``slice`` object, which preprocessing embeds as a constant when it comes
+    from a ``dace.compiletime`` argument or a resolved attribute
+    (``self.kslice``). Reading only the first classified the second as an
+    integer index, so the axis was dropped and an elementwise write over it
+    collapsed to a single scalar tasklet.
+    """
+    if isinstance(element, ast.Slice):
+        return True
+    return isinstance(element, ast.Constant) and isinstance(element.value, slice)
+
+
 def build_plan(slice_node: ast.expr, ndim: int, advanced_axes: FrozenSet[int] = frozenset()) -> Optional[IndexPlan]:
     """
     Classify a subscript's index against the base rank.
@@ -444,7 +462,7 @@ def build_plan(slice_node: ast.expr, ndim: int, advanced_axes: FrozenSet[int] = 
             for _ in range(ellipsis_width):
                 consume(is_slice=True)
         else:
-            consume(is_slice=isinstance(element, ast.Slice))
+            consume(is_slice=_is_slice_valued(element))
 
     # Dimensions the subscript never mentions stay whole.
     while axis < ndim:

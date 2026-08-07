@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 import numpy
 from dace import data, dtypes, symbolic
 from dace.frontend.python import astutils
-from dace.frontend.python.common import InvalidProgram
+from dace.frontend.python.common import DaceSyntaxError, InvalidProgram
 from dace.frontend.python.memlet_parser import ParseMemlet, MemletExpr
 from dace.frontend.python.nextgen.common import (UnsupportedFeatureError, normalize_qualname, registry_argument_value,
                                                  supported_data_attribute)
@@ -398,9 +398,31 @@ class InferenceService:
         else:
             resolved = self._resolves_to_data(others[0])
             if resolved is None:
+                self._reject_undecidable_identity(node, others[0])
                 return None
             identical = not resolved
         return Inferred(kind='constant', value=identical is isinstance(node.ops[0], ast.Is))
+
+    def _reject_undecidable_identity(self, node: ast.Compare, operand: ast.expr) -> None:
+        """
+        Refuse ``<nullable array> is None`` anywhere its answer is needed as a
+        VALUE rather than as a branch condition.
+
+        A branch condition survives to generated code intact, where ``is``
+        becomes ``==`` and ``None`` becomes ``nullptr`` -- a real null test on
+        the pointer. A value has to be computed, and the operator registry only
+        knows how to compare arrays ELEMENTWISE: the comparison became a map
+        over ``bias``, producing a 10-element result and, worse, dereferencing
+        the very pointer the test exists to check. Refusing beats emitting a
+        null dereference.
+        """
+        if not self.infer(operand).is_data:
+            return
+        expression = astutils.unparse(node).strip()
+        raise DaceSyntaxError(
+            None, node, f'"{expression}" cannot be computed as a value: "{astutils.unparse(operand).strip()}" may be '
+            'null while the program runs, so the test has to reach generated code as a branch. Use it directly as a '
+            f'condition ("if {expression}: ...") instead of binding it to a name first.')
 
     def _resolves_to_data(self, node: ast.expr) -> Optional[bool]:
         """

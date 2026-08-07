@@ -229,7 +229,11 @@ def _sequence_expression(sequence) -> Optional[ast.expr]:
     """The list/tuple display a compile-time sequence denotes, or None if its
     elements are not expressions this can rebuild."""
     elements = getattr(sequence, 'elements', None)
-    if not elements:
+    # An EMPTY sequence is still a sequence: ``c = []`` denotes ``[]``, and
+    # rebuilding it is what makes ``len(c)`` work in the interpreter. Treating
+    # it as "nothing to expand" left the name undefined in the callback, which
+    # then raised NameError where nothing could see it.
+    if elements is None:
         return None
     rebuilt = []
     for element in elements:

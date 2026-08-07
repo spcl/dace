@@ -27,6 +27,8 @@ Pass order matters and is fixed by :func:`default_passes`:
    one callback, chaining their input/output sets.
 """
 import ast
+import builtins
+import operator
 from typing import List, Optional, Tuple, Union
 
 from dace.frontend.python import astutils, iterators
@@ -799,6 +801,141 @@ def _reads_reference(expression: ast.AST, key: str) -> bool:
     return any(_reference_key(node) == key for node in ast.walk(expression))
 
 
+_STRING_COMPARISONS = {
+    ast.Eq: operator.eq,
+    ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
+    ast.LtE: operator.le,
+    ast.Gt: operator.gt,
+    ast.GtE: operator.ge,
+    ast.In: lambda left, right: left in right,
+    ast.NotIn: lambda left, right: left not in right,
+}
+
+
+class FoldStringComparisons(_BodyTransformer):
+    """
+    Decide a comparison between string literals (``"foo" < "bar"``) here.
+
+    A string lowers to a C character array, and C++ compares those by ADDRESS
+    rather than lexicographically -- so the tasklet ``__out = ("foo" < "bar")``
+    answered a question nobody asked, and the program returned 1 where Python
+    returns False. Nothing about the comparison needs to run: both operands are
+    known, so Python settles it and the result becomes a literal.
+    """
+    name = 'fold-string-comparisons'
+
+    def apply(self, tree: ast.FunctionDef, context) -> ast.FunctionDef:
+        self.context = context
+        _StringComparisonFolder().visit(tree)
+        return tree
+
+
+class _StringComparisonFolder(ast.NodeTransformer):
+
+    def visit_Compare(self, node: ast.Compare) -> ast.expr:
+        self.generic_visit(node)
+        operands = [node.left] + list(node.comparators)
+        if not all(isinstance(operand, ast.Constant) for operand in operands):
+            return node
+        # Only comparisons INVOLVING a string are folded. Numeric ones generate
+        # correct code already, and leaving them alone keeps this pass from
+        # quietly changing how anything else is lowered.
+        if not any(isinstance(operand.value, (str, bytes)) for operand in operands):
+            return node
+        result = _compare_constants(operands, node.ops)
+        if result is None:
+            return node
+        return _located(ast.Constant(value=result), node)
+
+
+def _compare_constants(operands: List[ast.Constant], ops: List[ast.cmpop]) -> Optional[bool]:
+    """Python's answer for a chained comparison of literals, or None if it has no opinion."""
+    left = operands[0].value
+    for op, comparator in zip(ops, operands[1:]):
+        compare = _STRING_COMPARISONS.get(type(op))
+        if compare is None:
+            return None
+        right = comparator.value
+        try:
+            if not compare(left, right):
+                return False
+        except TypeError:
+            # Python itself rejects the comparison ("a" < 1); let the mismatch
+            # surface where it normally would rather than inventing an answer.
+            return None
+        left = right
+    return True
+
+
+class FoldSliceCalls(_BodyTransformer):
+    """
+    Rewrite ``A[slice(2, 10, 2)]`` into ``A[2:10:2]``.
+
+    A ``slice`` object is spelled two ways in Python, and only the syntactic
+    one is an :class:`ast.Slice`. The call form reaches indexing analysis as an
+    ordinary call, which classifies the axis as an INTEGER index and so drops
+    it from the result shape -- an elementwise write then emitted a single
+    scalar tasklet over what is really a four-element strided range, and the
+    generated code assigned to a pointer.
+
+    Folding here, before ANF, also keeps the call from being hoisted into a
+    temporary, which would put it beyond the reach of any later fix.
+
+    Only a call to the *builtin* ``slice`` is folded; a program that binds the
+    name to something else keeps its own meaning.
+    """
+    name = 'fold-slice-calls'
+
+    def apply(self, tree: ast.FunctionDef, context) -> ast.FunctionDef:
+        self.context = context
+        if context.global_vars.get('slice', builtins.slice) is not builtins.slice:
+            return tree
+        if any(
+                isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store) and node.id == 'slice'
+                for node in ast.walk(tree)):
+            return tree
+        _SliceCallFolder().visit(tree)
+        return tree
+
+
+class _SliceCallFolder(ast.NodeTransformer):
+    """Replace ``slice(...)`` calls in subscript index position with ``ast.Slice``."""
+
+    def visit_Subscript(self, node: ast.Subscript) -> ast.Subscript:
+        self.generic_visit(node)
+        elements = node.slice.elts if isinstance(node.slice, ast.Tuple) else [node.slice]
+        folded = [_fold_slice_call(element) for element in elements]
+        if all(new is old for new, old in zip(folded, elements)):
+            return node
+        if isinstance(node.slice, ast.Tuple):
+            node.slice.elts = folded
+        else:
+            node.slice = folded[0]
+        return ast.fix_missing_locations(node)
+
+
+def _fold_slice_call(element: ast.expr) -> ast.expr:
+    """``slice(a, b, c)`` as an :class:`ast.Slice`, or the element unchanged."""
+    if not (isinstance(element, ast.Call) and isinstance(element.func, ast.Name) and element.func.id == 'slice'):
+        return element
+    if element.keywords or not 1 <= len(element.args) <= 3:
+        return element
+
+    def bound(argument: Optional[ast.expr]) -> Optional[ast.expr]:
+        # ``slice(None, 5)`` states an open bound the same way ``[:5]`` does.
+        if argument is None or (isinstance(argument, ast.Constant) and argument.value is None):
+            return None
+        return argument
+
+    if len(element.args) == 1:  # slice(stop)
+        lower, upper, step = None, bound(element.args[0]), None
+    else:
+        lower, upper = bound(element.args[0]), bound(element.args[1])
+        step = bound(element.args[2]) if len(element.args) > 2 else None
+    return _located(ast.Slice(lower=lower, upper=upper, step=step), element)
+
+
 class NormalizeLoops(_BodyTransformer):
     """
     Normalize loop headers:
@@ -1242,6 +1379,8 @@ def default_passes() -> List[_BodyTransformer]:
         RecognizeExplicitDataflow(),
         DetectAccumulations(),
         InlineLambdas(),
+        FoldSliceCalls(),
+        FoldStringComparisons(),
         DesugarStatements(),
         NormalizeLoops(),
         ANFTransform(),

@@ -260,6 +260,12 @@ def emit_cast(target: DataAccess, dtype: dtypes.typeclass, argument: ast.expr, s
     emit_elementwise(target, f'{function}({inferred.value})', [], statement, state)
 
 
+def _is_thread_local(target: DataAccess, state: LoweringState) -> bool:
+    """Whether a write target lives in per-thread storage."""
+    descriptor = state.context.containers.get(target.container)
+    return getattr(descriptor, 'storage', None) == dtypes.StorageType.CPU_ThreadLocal
+
+
 def emit_elementwise(target: DataAccess,
                      expression: str,
                      operands: List[Tuple[str, DataAccess]],
@@ -299,6 +305,14 @@ def emit_elementwise(target: DataAccess,
     # Array result: elementwise map over the dimensions that actually iterate
     map_range = subsets.Range([(0, size - 1, 1) for _, size in iterating])
     map_node = nodes.MapEntry(nodes.Map(f'map_{line}', [param for param, _ in iterating], map_range))
+    if _is_thread_local(target, state):
+        # A thread-local destination is a DIFFERENT array in every thread, so a
+        # parallel map leaves each one holding only the slice of the result its
+        # thread happened to iterate. Whoever reads the array afterwards --
+        # ordinarily the master thread, outside any parallel region -- then sees
+        # a partly uninitialized array. Writing it in one thread is what makes
+        # the whole array well defined.
+        map_node.map.schedule = dtypes.ScheduleType.Sequential
     tasklet = nodes.Tasklet(f'assign_{line}', {connector for connector, _ in operands}, {'__out'}, f'__out = {code}')
 
     in_memlets = {}
