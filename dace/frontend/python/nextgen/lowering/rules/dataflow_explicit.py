@@ -115,6 +115,7 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
                                           category='indirect-memlet')
         code = intrinsic_code
     else:
+        code_statements = [_restore_tasklet_callbacks(s, in_memlets, out_memlets, state) for s in code_statements]
         code = '\n'.join(prelude + [astutils.unparse(s) for s in code_statements] + epilogue)
 
     tasklet = nodes.Tasklet(statement.label,
@@ -128,6 +129,96 @@ def lower_explicit_tasklet(statement: ExplicitTasklet,
     if statement.side_effects is not None:
         tasklet.side_effects = statement.side_effects
     state.emitter.emit(tn.TaskletNode(node=tasklet, in_memlets=in_memlets, out_memlets=out_memlets))
+
+
+def _restore_tasklet_callbacks(code_statement: ast.stmt, in_memlets: Dict[str, Memlet], out_memlets: Dict[str, Memlet],
+                               state: LoweringState) -> ast.stmt:
+    """
+    Rewrite calls to detected Python functions inside explicit tasklet code
+    back into calls through the callback ABI.
+
+    Preprocessing replaces a call to a plain Python function with the resolved
+    object itself, embedded as a constant. Outside a tasklet the callback rules
+    put the source form back; inside one the code goes straight to the code
+    generator, where the object's ``repr`` is not valid syntax. Here the callee
+    becomes a named callback symbol, which code generation emits as an ordinary
+    call and the runtime binds to the original function.
+
+    A tasklet's connectors carry the types the callback ABI needs, so only the
+    directly typeable form is handled: ``<out connector> = f(<args>)``, whose
+    arguments are input connectors or literals. Anything else raises rather
+    than emitting an untyped callback, whose C signature would be wrong.
+    """
+    calls = [
+        node for node in ast.walk(code_statement) if isinstance(node, ast.Call) and _callback_name(node.func, state)
+    ]
+    if not calls:
+        return code_statement
+
+    if not (isinstance(code_statement, ast.Assign) and len(code_statement.targets) == 1
+            and isinstance(code_statement.targets[0], ast.Name) and code_statement.targets[0].id in out_memlets
+            and isinstance(code_statement.value, ast.Call) and len(calls) == 1):
+        raise UnsupportedFeatureError(
+            'A Python callback inside a tasklet must be the whole right-hand side of an assignment to an output '
+            f'connector ("b = f(a)"), so that its argument and return types can be read off the connectors. '
+            f'Cannot lower "{astutils.unparse(code_statement).strip()}".',
+            state.context.filename,
+            code_statement,
+            category='callback-in-tasklet')
+
+    call = code_statement.value
+    name = _callback_name(call.func, state)
+    return_type = _connector_dtype(out_memlets[code_statement.targets[0].id], state)
+    argument_types = []
+    for argument in call.args:
+        if isinstance(argument, ast.Name) and argument.id in in_memlets:
+            argument_types.append(_connector_dtype(in_memlets[argument.id], state))
+        elif isinstance(argument, ast.Constant) and isinstance(argument.value, (bool, int, float, complex)):
+            argument_types.append(dtypes.dtype_to_typeclass(type(argument.value)))
+        else:
+            raise UnsupportedFeatureError(
+                f'Argument "{astutils.unparse(argument)}" of the tasklet callback "{name}" is neither an input '
+                'connector nor a literal, so its type cannot be determined.',
+                state.context.filename,
+                code_statement,
+                category='callback-in-tasklet')
+    if call.keywords:
+        raise UnsupportedFeatureError(f'Tasklet callback "{name}" cannot be called with keyword arguments.',
+                                      state.context.filename,
+                                      code_statement,
+                                      category='callback-in-tasklet')
+
+    state.context.symbols[name] = dtypes.callback(return_type, *argument_types)
+    state.emitter.root.callback_mapping.setdefault(name, name)
+
+    restored = astutils.copy_tree(code_statement)
+    restored.value.func = ast.copy_location(ast.Name(id=name, ctx=ast.Load()), call.func)
+    return ast.fix_missing_locations(restored)
+
+
+def _callback_name(callee: ast.expr, state: LoweringState) -> Optional[str]:
+    """The callback symbol a resolved-object callee stands for, or None."""
+    if not isinstance(callee, ast.Constant):
+        return None
+    qualname = getattr(callee, 'qualname', None)
+    if qualname is None:
+        return None
+    # A callable detected in callee position carries the whole call expression
+    # as its qualified name ("sq(a)"), not just the callee.
+    try:
+        expression = ast.parse(qualname, mode='eval').body
+    except SyntaxError:
+        return None
+    if isinstance(expression, ast.Call):
+        expression = expression.func
+    if not isinstance(expression, ast.Name) or expression.id not in state.context.callback_callables:
+        return None
+    return expression.id
+
+
+def _connector_dtype(memlet: Memlet, state: LoweringState) -> dtypes.typeclass:
+    """The element type a tasklet connector carries."""
+    return state.context.containers[memlet.data].dtype
 
 
 def _lower_indirect_memlet(connector_expression: ast.expr, array_expression: ast.Subscript, reads: List[ast.expr],

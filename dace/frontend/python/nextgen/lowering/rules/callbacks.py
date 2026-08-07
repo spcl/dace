@@ -424,6 +424,18 @@ def _constant_reference(value: object, state: LoweringState) -> str:
     return name
 
 
+def _is_struct_field(node: ast.Attribute, state: LoweringState) -> bool:
+    """Whether an attribute access names a field of a struct-typed container."""
+    if not isinstance(node.value, ast.Name):
+        return False
+    binding = state.context.resolve(node.value.id)
+    if binding is None or binding.kind != 'container':
+        return False
+    descriptor = state.context.containers.get(binding.container)
+    dtype = getattr(descriptor, 'dtype', None)
+    return isinstance(dtype, dtypes.struct) and node.attr in dtype.fields
+
+
 def _rename_to_repository(statements: list, source_to_repository: dict) -> list:
     """Copies of the statements with source names replaced by their repository
     container names."""
@@ -449,12 +461,27 @@ def _reconstitute_source(statement: ast.stmt, state: LoweringState) -> ast.stmt:
       statement) are replaced by their original statements,
     - nested :class:`ExplicitTasklet` markers are restored to their original
       statement (interpreter-executable ``with dace.tasklet:`` blocks), or a
-      synthesized equivalent with-block when no original exists.
+      synthesized equivalent with-block when no original exists,
+    - a field read on a container of struct dtype (``a.x``) becomes the
+      subscript NumPy uses for it (``a['x']``).
     """
     from dace.frontend.python.nextgen.canonical.cpa import ExplicitTasklet, OpaqueStmt
     from dace.frontend.python.nextgen.semantics.inference import is_literal_constant
 
     class _Restorer(ast.NodeTransformer):
+
+        def visit_Attribute(self, node: ast.Attribute) -> ast.expr:
+            # A container declared with a struct dtype (``dace.struct(...)``)
+            # reaches the interpreter as a NumPy structured array, whose fields
+            # are addressed by subscript, not by attribute. Rewriting the access
+            # is what makes the fallback actually run: left as written it raises
+            # AttributeError inside the callback, where the C callback ABI has
+            # no way to propagate it, and the statement silently did nothing.
+            self.generic_visit(node)
+            if not _is_struct_field(node, state):
+                return node
+            subscript = ast.Subscript(value=node.value, slice=ast.Constant(value=node.attr), ctx=node.ctx)
+            return ast.copy_location(subscript, node)
 
         def visit_Call(self, node: ast.Call) -> ast.expr:
             # Detected callables in callee position carry the *full call

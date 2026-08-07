@@ -564,7 +564,13 @@ class DesugarStatements(_BodyTransformer):
         """
         Unpack a tuple-to-tuple assignment (``a, b = c, d``) into temporaries
         followed by individual assignments, or None if the statement is not of
-        that shape. Starred targets are left untouched.
+        that shape.
+
+        A single starred target (``b, *c, d = w, x, y, z``) is handled too: the
+        element count is known from the syntax alone, so the star's share is
+        just the elements the fixed targets leave over, and ``c`` binds to a
+        list of them. Starred *values* (``a, b = *xs, y``) are left untouched --
+        their count depends on a runtime object's length.
 
         Nested sequence elements (``b, (c, d) = x, (y, z)``) are handled by
         re-processing the generated assignments: the nested pair becomes
@@ -575,18 +581,46 @@ class DesugarStatements(_BodyTransformer):
         value = statement.value
         if not isinstance(target, (ast.Tuple, ast.List)) or not isinstance(value, (ast.Tuple, ast.List)):
             return None
-        if len(target.elts) != len(value.elts):
+        if any(isinstance(element, ast.Starred) for element in value.elts):
             return None
-        if any(isinstance(element, ast.Starred) for element in target.elts + value.elts):
+        starred = [index for index, element in enumerate(target.elts) if isinstance(element, ast.Starred)]
+        if len(starred) > 1:
+            # Python itself rejects this ("two starred expressions in assignment").
             return None
+        if not starred and len(target.elts) != len(value.elts):
+            return None
+        if starred and len(value.elts) < len(target.elts) - 1:
+            # Too few values to fill the fixed targets; let the mismatch surface
+            # downstream rather than inventing bindings here.
+            return None
+
         statements: List[ast.stmt] = []
         temporaries: List[str] = []
         for element in value.elts:
             temp = self.context.fresh_name('__unpack')
             temporaries.append(temp)
             statements.append(_assign(temp, element, statement))
-        for element, temp in zip(target.elts, temporaries):
-            statements.append(_located(ast.Assign(targets=[element], value=_name_load(temp, statement)), statement))
+
+        # (target expression, temporaries it binds, whether it binds a list)
+        bindings: List[Tuple[ast.expr, List[str], bool]] = []
+        if starred:
+            position = starred[0]
+            # The star absorbs whatever the fixed targets on either side leave.
+            end = len(temporaries) - (len(target.elts) - position - 1)
+            bindings += [(element, [temp], False) for element, temp in zip(target.elts[:position], temporaries)]
+            bindings.append((target.elts[position].value, temporaries[position:end], True))
+            bindings += [(element, [temp], False)
+                         for element, temp in zip(target.elts[position + 1:], temporaries[end:])]
+        else:
+            bindings = [(element, [temp], False) for element, temp in zip(target.elts, temporaries)]
+
+        for element, temps, as_list in bindings:
+            if as_list:
+                bound = _located(ast.List(elts=[_name_load(temp, statement) for temp in temps], ctx=ast.Load()),
+                                 statement)
+            else:
+                bound = _name_load(temps[0], statement)
+            statements.append(_located(ast.Assign(targets=[element], value=bound), statement))
         return statements
 
     def _desugar_sequence_unpack(self, statement: ast.Assign) -> Optional[List[ast.stmt]]:

@@ -2,7 +2,6 @@
 """ Tests lambda functions. """
 import dace
 import numpy as np
-import pytest
 
 
 def test_inline_lambda_tasklet():
@@ -67,7 +66,6 @@ def test_lambda_global():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_lambda_call_jit():
 
     @dace.program
@@ -82,7 +80,6 @@ def test_lambda_call_jit():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_lambda_nested_call():
 
     @dace.program
@@ -106,5 +103,5 @@ if __name__ == '__main__':
     test_inline_lambda_scalar()
     test_inline_lambda_array()
     test_lambda_global()
-    # test_lambda_call_jit()
-    # test_lambda_nested_call()
+    test_lambda_call_jit()
+    test_lambda_nested_call()

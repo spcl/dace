@@ -224,7 +224,6 @@ def tasklet_callback(A: dace.float64[N, N], B: dace.float64[N, N]):
             b = sq(a)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_callback_tasklet():
     A = np.random.rand(24, 24)
     B = np.random.rand(24, 24)
@@ -1257,7 +1256,7 @@ if __name__ == '__main__':
     test_automatic_callback_method()
     test_callback_from_module()
     test_view_callback()
-    # test_callback_tasklet()
+    test_callback_tasklet()
     test_print()
     test_reorder()
     test_reorder_nested()

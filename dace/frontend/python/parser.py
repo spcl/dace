@@ -42,6 +42,26 @@ def _is_empty(val: Any) -> bool:
     return val is inspect._empty
 
 
+def _is_compiletime_callable(val: Any) -> bool:
+    """
+    Whether an argument given for a parameter without a type hint is a Python
+    function that has to be resolved when the program is parsed, rather than
+    passed to it as data.
+
+    A plain function has no data descriptor worth the name --
+    :func:`~dace.data.create_datadescriptor` can only give it
+    ``callback(None)``, a callback whose return type is unknown -- and a
+    compiled program cannot consume a Python function as a value anyway.
+    Treating it as compile-time is what lets the frontend expand it: inline a
+    lambda, detect a callback, or lower a ``@dace.program`` callee.
+
+    Restricted to plain functions and bound methods. Callable *objects* are
+    left alone: they can carry a ``__descriptor__`` or ``__sdfg__``, and a
+    program may well mean to take one as data.
+    """
+    return inspect.isfunction(val) or inspect.ismethod(val)
+
+
 def _get_cell_contents_or_none(cell):
     try:
         return cell.cell_contents
@@ -802,6 +822,9 @@ class DaceProgram(pycommon.SDFGConvertible, pycommon.ScheduleTreeConvertible):
                                                   f'argument: "{aname}").')
                     elif curarg is None:
                         curarg = given_kwargs[aname]
+
+                if _is_compiletime_callable(curarg):
+                    is_constant = True
 
                 if is_constant:
                     gvar_mapping[aname] = curarg
