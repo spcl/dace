@@ -10,7 +10,13 @@ datatype = dace.float64
 # Dataset sizes
 sizes = [{tsteps: 20, N: 10}, {tsteps: 40, N: 20}, {tsteps: 100, N: 40}, {tsteps: 500, N: 120}, {tsteps: 1000, N: 200}]
 #: ported from npbench bench_info heat_3d.json parameters.paper
-paper_sizes = {tsteps: 500, N: 120}
+#: tsteps REDUCED to 100 (npbench's paper row said tsteps=500). tsteps is a pure outer repetition
+#: count for a stencil -- it multiplies total time without changing the per-step working set,
+#: the memory access pattern, or any RELATIVE speedup the figure reports -- while the paper
+#: rows were wildly inconsistent across the stencils (MEDIUM to beyond-EXTRALARGE) and made
+#: two kernels dominate the sweep: heat_3d took 243min and jacobi_2d 139min of a 10h job.
+#: 100 is the value adi and seidel_2d already used, so the six stencils now agree.
+paper_sizes = {tsteps: 100, N: 120}
 args = [
     ([N, N, N], datatype),
     ([N, N, N], datatype)  #, N, tsteps

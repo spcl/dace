@@ -25,7 +25,13 @@ sizes = [{
     N: 2800
 }]
 #: ported from npbench bench_info jacobi_2d.json parameters.paper
-paper_sizes = {tsteps: 1000, N: 2800}
+#: tsteps REDUCED to 100 (npbench's paper row said tsteps=1000). tsteps is a pure outer repetition
+#: count for a stencil -- it multiplies total time without changing the per-step working set,
+#: the memory access pattern, or any RELATIVE speedup the figure reports -- while the paper
+#: rows were wildly inconsistent across the stencils (MEDIUM to beyond-EXTRALARGE) and made
+#: two kernels dominate the sweep: heat_3d took 243min and jacobi_2d 139min of a 10h job.
+#: 100 is the value adi and seidel_2d already used, so the six stencils now agree.
+paper_sizes = {tsteps: 100, N: 2800}
 args = [
     ([N, N], datatype),
     ([N, N], datatype)  #, N, tsteps

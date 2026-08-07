@@ -334,9 +334,23 @@ _AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 #: Graphite is folded into the gcc autopar arm and Polly into the llvm one -- the user's table has
 #: six columns, and a polyhedral restructuring nobody then parallelizes answers no question the
 #: figure asks. Polly IS the llvm arm's polyhedral engine, so ``-polly -polly-parallel`` is both.
+#:
+#: NO ``-floop-nest-optimize``, deliberately, and this is the one flag choice that decides what this
+#: column means. It is the isl loop-nest scheduler -- the strongest polyhedral transform gcc has --
+#: but on g++ 16.1 / Neoverse V2 it also suppresses parloops above width 40 (see
+#: ``resolve_autopar_hint``), and the width is the arm's REAL runtime thread count. Keeping it means
+#: this arm runs 40 threads while the other five run ``OMP_NUM_THREADS``, so its column is
+#: understated by the width ratio and is not comparable with the rest of the table.
+#:
+#: Every arm running the SAME width is the stronger property, so the scheduler is what gives way:
+#: with only ``-fgraphite-identity`` the probe emits ``GOMP_parallel`` at the full 72 (verified by
+#: disassembly: ``mov w2, 72``) and Graphite still reports its SCoP. The honest reading of this
+#: column is therefore "gcc auto-parallelization, Graphite code generation, no isl rescheduling" --
+#: NOT "gcc's polyhedral optimizer". Set CANON_PERF_GCC_AUTOPAR_FLAGS to put it back and accept the
+#: narrower arm; ``resolve_autopar_hint`` will then step the width down and say so.
 _GCC_AUTOPAR_FLAGS = os.environ.get(
     'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={_AUTOPAR_HINT} -floop-parallelize-all '
-    '-fgraphite-identity -floop-nest-optimize')
+    '-fgraphite-identity')
 _LLVM_AUTOPAR_FLAGS = os.environ.get('CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp -mllvm -polly -mllvm -polly-parallel')
 
 #: What the four DaCe arms lower BLAS/LAPACK/linalg library nodes to. Overridable so a box with no
