@@ -37,7 +37,7 @@ from dace.codegen.codegen import generate_code
 
 from tests.corpus.cloudsc.generate_data_for_cloudsc import (IEEE_CPU_ARGS, build_cloudsc_sdfg, compare_outputs,
                                                             generate_cloudsc_inputs, make_sequential)
-from tests.perf.cloudsc_backend_pipeline import filtered_inputs, run_pipeline
+from tests.perf.cloudsc.cloudsc_backend_pipeline import filtered_inputs, run_pipeline
 
 BACKENDS = ['networkx', 'rustworkx']
 PHASES = ['simplify', 'config_prop_loopunroll', 'codegen', 'compile', 'serialize', 'deserialize']

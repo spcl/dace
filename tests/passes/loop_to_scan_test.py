@@ -1900,8 +1900,8 @@ def test_multi_slot_same_array_five_carries():
     # The point of the fusion: ONE fork/join and ONE ``omp scan`` directive carrying
     # all five accumulators, not five regions with five rounds of intermediate traffic.
     src = "\n".join(c.clean_code for c in sdfg.generate_code())
-    assert len(re.findall(r'#\s*pragma\s+omp\s+parallel', src)) == 1, \
-        f'expected ONE parallel region; got {len(re.findall(r"#\s*pragma\s+omp\s+parallel", src))}\n{src}'
+    n_parallel = len(re.findall(r'#\s*pragma\s+omp\s+parallel', src))
+    assert n_parallel == 1, f'expected ONE parallel region; got {n_parallel}\n{src}'
     scan_pragmas = re.findall(r'#\s*pragma\s+omp\s+scan\s+inclusive\(([^)]*)\)', src)
     assert len(scan_pragmas) == 1, f'expected ONE omp scan directive; got {len(scan_pragmas)}'
     assert len(scan_pragmas[0].split(',')) == 5, f'expected five inscan list items; got {scan_pragmas[0]!r}'
