@@ -245,6 +245,21 @@ def test_generated_guard_has_no_raw_new_and_no_include_in_the_program_body():
     assert '__0__scatter_guard_owner_ip = new' in init, init
 
 
+def test_generated_guard_or_reduce_pass_carries_simd():
+    """The OR-reduce verify pass is bitwise-or, which is simd-safe (see
+    dace/runtime/include/dace/reduction.h); its pragma must carry simd, and never a bare
+    ``if()`` clause (GCC binds a combined construct's ``if()`` to simd, silently devectorizing)."""
+    sdfg = tsvc_vas.to_sdfg(simplify=True)
+    insert_scatter_guard(sdfg, 'ip')
+    code = sdfg.generate_code()[0].clean_code
+
+    reduce_lines = _lines_inside_a_function(code, 'reduction(|:_c)')
+    assert reduce_lines, code
+    for line in reduce_lines:
+        assert line.startswith('#pragma omp parallel for simd'), line
+        assert 'if(' not in line and 'if (' not in line, line
+
+
 def test_tag_array_omitted_when_no_scatter_target_is_visible():
     """No derivable domain (no scatter loop to read a target extent from) -> no tag descriptor;
     the libnode keeps its runtime-sized buffer rather than guessing a bound."""
@@ -442,6 +457,7 @@ if __name__ == '__main__':
     test_guard_refuses_double_emit()
     test_tag_array_is_a_persistent_transient_sized_by_the_scatter_domain()
     test_generated_guard_has_no_raw_new_and_no_include_in_the_program_body()
+    test_generated_guard_or_reduce_pass_carries_simd()
     test_tag_array_omitted_when_no_scatter_target_is_visible()
     test_affine_identity_producer_elides_guard()
     test_strided_affine_producer_elides_guard()

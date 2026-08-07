@@ -122,6 +122,9 @@ def _tagcount_body(ct: str, n: str, src: str, omp: bool, owner: Optional[Tuple[s
     needs an atomic read-modify-write per element plus a pre-cleared (or epoch-stamped) tag array --
     an extra full sweep over the domain, which is at least as wide as ``idx``."""
     par = (lambda clause: f"#pragma omp parallel for{clause}\n") if omp else (lambda clause: "")
+    #: Bitwise-or is simd-safe (see dace/runtime/include/dace/reduction.h), so the OR-reduce
+    #: pass below carries simd -- unlike ``par``, no bare ``if()`` clause is ever appended here.
+    par_simd_reduction = (lambda clause: f"#pragma omp parallel for simd{clause}\n") if omp else (lambda clause: "")
     if owner is None:
         tag, cap, global_code = "_own", "_mx + 1", "#include <memory>"
         alloc = (f"{ct} _mx = 0;\n"
@@ -134,7 +137,7 @@ def _tagcount_body(ct: str, n: str, src: str, omp: bool, owner: Optional[Tuple[s
             f"{par('')}for (long long _i = 0; _i < _N; ++_i) "
             f"{{ const long long _v = {src}[_i]; if (_v >= 0 && _v < _M) {tag}[_v] = _i; }}\n"
             f"long long _c = 0;\n"
-            f"{par(' reduction(|:_c)')}for (long long _i = 0; _i < _N; ++_i) "
+            f"{par_simd_reduction(' reduction(|:_c)')}for (long long _i = 0; _i < _N; ++_i) "
             f"{{ const long long _v = {src}[_i]; if (_v >= 0 && _v < _M) _c |= ({tag}[_v] != _i); }}\n"
             f"{OUTPUT_CONNECTOR_NAME} = _c;\n")
     return body, global_code
