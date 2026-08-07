@@ -16,6 +16,12 @@ set(DACE_CPP_STANDARD "20" CACHE STRING "C++ standard to use for compilation (e.
 set(DACE_CMAKE_FILES "" CACHE STRING "List of additional CMake files to include")
 set(DACE_PCH_DIR "" CACHE STRING "Directory holding a precompiled <dace/dace.h>")
 
+# Nanobind interface (compiler.interface=nanobind): build the program library
+# itself as a nanobind extension module (single artifact, no loader stub).
+option(DACE_ENABLE_NANOBIND "Build the DaCe program as a nanobind extension module" OFF)
+set(DACE_NANOBIND_CMAKE_DIR "" CACHE STRING "Path to nanobind's CMake package directory")
+set(DACE_NANOBIND_STATIC_LIB "" CACHE STRING "Prebuilt nanobind helper archive to link instead of compiling it")
+
 # CUDA
 set(DACE_CUDA_ARCHITECTURES_DEFAULT "" CACHE STRING "Default CUDA architectures in case native not found")
 
@@ -290,8 +296,74 @@ foreach(CMAKE_FILE ${DACE_CMAKE_FILES})
 endforeach()
 
 # Create DaCe library file
-add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
-target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+if(DACE_ENABLE_NANOBIND)
+  find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
+  find_package(nanobind CONFIG REQUIRED HINTS ${DACE_NANOBIND_CMAKE_DIR})
+  # NOMINSIZE: nanobind otherwise appends its size optimization (-Os) to every translation unit
+  # of the module -- including the generated kernels -- and it lands after (and thus overrides)
+  # the optimization level selected via compiler.build_type.
+  # PROTECT_STACK: nanobind otherwise appends -fno-stack-protector, which diverges from what the
+  # ctypes path compiles (the compiler's default, typically -fstack-protector-strong) and makes
+  # GCC decline the precompiled runtime header (a PCH is only honored when the SSP setting
+  # matches). Both flags trade a slightly larger binding for kernels that compile exactly like
+  # the rest of DaCe's generated code.
+  nanobind_add_module(${DACE_PROGRAM_NAME} NB_STATIC NOMINSIZE PROTECT_STACK ${DACE_CPP_FILES} ${DACE_OBJECTS})
+  if(DACE_NANOBIND_STATIC_LIB)
+    # Link a prebuilt, machine-cached copy of nanobind's helper archive instead of compiling its
+    # ~12 translation units per build folder. The helper target stays alive so its
+    # PUBLIC/INTERFACE surface (include directories, compile options, defines) keeps flowing
+    # into the module's own translation units - only its sources are swapped for one empty stub,
+    # and the real symbols come from the cached archive linked additionally.
+    #
+    # Nothing here assumes the helper's NAME: nanobind derives it from the options passed to
+    # nanobind_add_module above (NB_STATIC selects `nanobind-static`, PROTECT_STACK appends
+    # `-ps`, ...), because each variant is COMPILED DIFFERENTLY. The target is therefore
+    # discovered from what the module really links, and a cached candidate (the flag carries
+    # every archive in the cache, one per variant) is accepted only if its file name matches
+    # that target - a leftover archive of another variant must never be linked. No match simply
+    # compiles the helper from source; publishing then heals the cache under the new name.
+    #
+    # The archive is deliberately NOT keyed on any DaCe configuration: nanobind compiles the
+    # helper library with its own fixed flags, so no configurable DaCe setting reaches these
+    # translation units. If a configuration that DOES influence them is ever introduced (e.g.
+    # forwarding configurable flags into nanobind_add_module), the cache path on the Python
+    # side (compiler.nanobind_static_cache_dir) MUST start keying on it.
+    # The stub is a file shipped with DaCe, NOT one written here at configure time: recorded
+    # builds (command_db) replay into fresh build folders without running CMake, so every
+    # compiled source must exist at a configure-independent path.
+    get_target_property(DACE_NB_LINKED_LIBS ${DACE_PROGRAM_NAME} LINK_LIBRARIES)
+    set(DACE_NB_HELPER "")
+    foreach(DACE_NB_LINKED_LIB ${DACE_NB_LINKED_LIBS})
+      if(DACE_NB_LINKED_LIB MATCHES "^nanobind")
+        set(DACE_NB_HELPER ${DACE_NB_LINKED_LIB})
+      endif()
+    endforeach()
+    set(DACE_NB_CACHED_ARCHIVE "")
+    foreach(DACE_NB_CANDIDATE ${DACE_NANOBIND_STATIC_LIB})
+      get_filename_component(DACE_NB_CANDIDATE_NAME ${DACE_NB_CANDIDATE} NAME)
+      if(DACE_NB_HELPER AND DACE_NB_CANDIDATE_NAME STREQUAL
+         "${CMAKE_STATIC_LIBRARY_PREFIX}${DACE_NB_HELPER}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        set(DACE_NB_CACHED_ARCHIVE ${DACE_NB_CANDIDATE})
+      endif()
+    endforeach()
+    if(DACE_NB_CACHED_ARCHIVE)
+      set_target_properties(${DACE_NB_HELPER} PROPERTIES SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tools/nanobind_stub.cpp)
+      target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_NB_CACHED_ARCHIVE})
+    else()
+      message(STATUS "No cached nanobind helper archive matches target '${DACE_NB_HELPER}'; compiling it from source.")
+    endif()
+  endif()
+  target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_LIBS})
+  # Keep the historical library file name; the import machinery resolves
+  # PyInit_<name> from the module name, not from the file name.
+  set_target_properties(${DACE_PROGRAM_NAME} PROPERTIES
+                        OUTPUT_NAME ${DACE_PROGRAM_NAME}
+                        PREFIX "${CMAKE_SHARED_LIBRARY_PREFIX}"
+                        SUFFIX "${CMAKE_SHARED_LIBRARY_SUFFIX}")
+else()
+  add_library(${DACE_PROGRAM_NAME} SHARED ${DACE_CPP_FILES} ${DACE_OBJECTS})
+  target_link_libraries(${DACE_PROGRAM_NAME} PUBLIC ${DACE_LIBS})
+endif()
 
 # Standard C++, not the GNU dialect: CXX_STANDARD on its own emits -std=gnu++NN, which accepts
 # extensions that Clang then rejects.
@@ -300,9 +372,11 @@ set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD ${DACE_CPP_STANDA
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_STANDARD_REQUIRED ON)
 set_property(TARGET ${DACE_PROGRAM_NAME} PROPERTY CXX_EXTENSIONS OFF)
 
-# Create DaCe loader stub
-add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
-target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+# Create DaCe loader stub (not needed on the nanobind path)
+if(NOT DACE_ENABLE_NANOBIND)
+  add_library(dacestub_${DACE_PROGRAM_NAME} SHARED "${CMAKE_SOURCE_DIR}/tools/dacestub.cpp")
+  target_link_libraries(dacestub_${DACE_PROGRAM_NAME} Threads::Threads OpenMP::OpenMP_CXX ${CMAKE_DL_LIBS})
+endif()
 
 # Windows-specific fixes
 if (MSVC_IDE)

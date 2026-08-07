@@ -1,6 +1,15 @@
 # Copyright 2019-2021 ETH Zurich and the DaCe authors. All rights reserved.
 import dace
 import numpy as np
+import pytest
+
+# The nanobind interface forbids a caller-provided `__return` buffer by default
+# (it is opt-in via compiler.nanobind_allow_return_override); this test asserts
+# the always-allow ctypes behavior, so it is ctypes-only. The nanobind behavior
+# (both config states) is covered in tests/codegen/nanobind_interface_test.py.
+skip_return_override_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind forbids a caller-provided __return buffer by default (opt-in)')
 
 
 @dace.program
@@ -38,6 +47,7 @@ def test_nested_ret():
     assert np.allclose(result, A * 2 + 1)
 
 
+@skip_return_override_on_nanobind
 def test_return_override():
     A = np.random.rand(20)
     result = np.random.rand(20)

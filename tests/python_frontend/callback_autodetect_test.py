@@ -8,6 +8,14 @@ import time
 from dace import config
 from dace.frontend.python.common import DaceSyntaxError
 
+skip_arraylike_args_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind ndarray arguments accept numpy/DLPack only (no __array_interface__-style coercion)')
+
+skip_pyobject_return_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind returns arrays only (pyobject returns unsupported by design)')
+
 N = dace.symbol('N')
 
 
@@ -859,6 +867,7 @@ def test_unknown_pyobject():
     assert success_counter == 20
 
 
+@skip_pyobject_return_on_nanobind
 def test_pyobject_return():
     counter = 1
 
@@ -885,6 +894,7 @@ def test_pyobject_return():
     assert obj.q == 2
 
 
+@skip_pyobject_return_on_nanobind
 def test_pyobject_return_tuple():
     counter = 1
 
@@ -1054,6 +1064,7 @@ class _MyArrayLike:
         return dace.float64[10]
 
 
+@skip_arraylike_args_on_nanobind
 def test_callback_with_arraylike_closure_object():
     test = False
 
@@ -1073,6 +1084,7 @@ def test_callback_with_arraylike_closure_object():
     assert test
 
 
+@skip_arraylike_args_on_nanobind
 def test_callback_with_arraylike_object():
     test = False
 
@@ -1090,6 +1102,7 @@ def test_callback_with_arraylike_object():
     assert test
 
 
+@skip_arraylike_args_on_nanobind
 def test_callback_with_arraylike_object_typehints():
     test = False
 
@@ -1107,6 +1120,7 @@ def test_callback_with_arraylike_object_typehints():
     assert test
 
 
+@skip_arraylike_args_on_nanobind
 def test_nested_callback_with_nested_arraylike_object():
     test = False
 

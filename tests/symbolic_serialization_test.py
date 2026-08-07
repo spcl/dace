@@ -321,6 +321,20 @@ def test_dict_property_symbolic_type_json_roundtrip_supports_plain_names():
     sympy.Mod(symbolic.symbol('i'), symbolic.TypedConstant(np.int16(3)), evaluate=False),
 ])
 def test_typed_binary_operator_roundtrip_preserves_serialization(expr):
+    # The parametrized expressions are built at import time with default-dtype
+    # symbols. SymPy's bounded constructor cache keys symbols by name and
+    # assumptions only (dtype is not part of the key), so once the import-time
+    # cache entry is evicted on a long-running worker, any earlier-run test
+    # that built an equal expression with a differently-typed 'i' (this very
+    # file creates symbol('i', dtype=dace.int64)) re-seeds the slot, and
+    # deserialization returns that node - re-serializing with an alien
+    # dtype annotation. Clearing both caches makes this test's own
+    # constructions the cache owners, restoring hermeticity. Existing
+    # expression objects stay valid - the caches only decide whether future
+    # constructions return a cached node or build a fresh one.
+    sympy.core.cache.clear_cache()
+    symbolic.deserialize_symbolic.cache_clear()
+
     serialized = symbolic.serialize_symbolic(expr)
     restored = symbolic.deserialize_symbolic(serialized)
 

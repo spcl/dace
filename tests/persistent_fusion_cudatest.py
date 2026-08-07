@@ -301,7 +301,10 @@ def test_persistent_fusion():
     V = 1024
     E = 2048
     srcnode = 0
-    vtype = np.uint32
+    # The SDFG declares int32 arrays and initializes unreached vertices to -1. The historical
+    # uint32 arrays (with an iinfo(uint32).max sentinel) only worked because ctypes passed the
+    # pointers uninspected and the bit patterns coincide; the nanobind interface checks dtypes.
+    vtype = np.int32
 
     # Generate a random graph
     graph = nx.gnm_random_graph(V, E, seed=42)
@@ -318,7 +321,7 @@ def test_persistent_fusion():
 
     # Regression
     reference = nx.shortest_path(graph, source=srcnode)
-    reference = np.array([len(reference[v]) - 1 if v in reference else np.iinfo(vtype).max for v in range(V)])
+    reference = np.array([len(reference[v]) - 1 if v in reference else -1 for v in range(V)])
 
     print('Breadth-First Search (E = {}, V = {})'.format(E, V))
 

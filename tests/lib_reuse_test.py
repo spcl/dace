@@ -8,6 +8,14 @@ from dace.codegen.exceptions import CompilationError
 from dace.codegen.compiler import load_precompiled_sdfg
 import numpy as np
 
+# A nanobind extension module cannot be reloaded in-process: a recompile renames
+# into its own build folder (so two same-named libs have different parents), and
+# a reload shares the one module file (no per-load copy). These tests assert the
+# ctypes library-reuse semantics, so they are ctypes-only.
+skip_lib_reuse_on_nanobind = pytest.mark.skipif(
+    dace.Config.get('compiler', 'interface') == 'nanobind',
+    reason='nanobind cannot reload a module (recompile renames to its own folder; reload shares one file)')
+
 
 # Dynamically creates DaCe programs with the same name
 def program_generator(size: int, factor: float) -> DaceProgram:
@@ -24,6 +32,7 @@ def program_generator(size: int, factor: float) -> DaceProgram:
     return lib_reuse
 
 
+@skip_lib_reuse_on_nanobind
 def test_reload():
     array_one = np.random.rand(10).astype(np.float64)
     array_two = np.random.rand(20).astype(np.float64)
@@ -55,6 +64,7 @@ def test_reload():
     assert (diff1 < 1e-5 and diff2 < 1e-5)
 
 
+@skip_lib_reuse_on_nanobind
 def test_load_precompiled():
     for folder_mode in ["development", "production"]:
         with dace.config.temporary_config() as conf:

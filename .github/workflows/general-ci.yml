@@ -17,6 +17,10 @@ jobs:
     if: "!contains(github.event.pull_request.labels.*.name, 'no-ci')"
     runs-on: ubuntu-latest
     strategy:
+      # Run every matrix leg to completion: one failing leg must not cancel
+      # the others, their results are needed to tell leg-specific failures
+      # from general ones.
+      fail-fast: false
       matrix:
         python-version: ['3.10','3.14']
         simplify: [0,1,autoopt]
@@ -48,6 +52,8 @@ jobs:
 
     - name: Test with pytest
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -64,6 +70,8 @@ jobs:
 
     - name: Test OpenBLAS LAPACK
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -80,6 +88,8 @@ jobs:
 
     - name: Run sequential tests
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=1
         export DACE_testing_deserialize_exception=1
@@ -96,6 +106,8 @@ jobs:
 
     - name: Run other tests
       run: |
+        export DACE_compiler_interface=nanobind
+        export DACE_compiler_build_folder_mode="production"
         export NOSTATUSBAR=1
         export DACE_testing_serialization=0
         export DACE_testing_deserialize_exception=1

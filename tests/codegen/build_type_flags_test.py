@@ -109,10 +109,15 @@ def test_compile_line_has_exactly_the_build_types_optimization_level(build_type)
 
     sdfg = addone.to_sdfg()
     sdfg.name = f'build_type_flags_{build_type.lower()}'
-    with set_temporary('compiler', 'build_type', value=build_type):
-        sdfg.compile()
-        build_dir = Path(sdfg.build_folder) / 'build'
-        commands = json.loads((build_dir / 'compile_commands.json').read_text())
+    # ``compile_commands.json`` only survives in the development folder mode -- the production mode
+    # CI runs under deletes ``build/`` (the env var must go first, as it beats ``set_temporary``).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
+        with set_temporary('compiler', 'build_folder_mode', value='development'):
+            with set_temporary('compiler', 'build_type', value=build_type):
+                sdfg.compile()
+                build_dir = Path(sdfg.build_folder) / 'build'
+                commands = json.loads((build_dir / 'compile_commands.json').read_text())
 
     expected = [f for f in CMAKE_BUILD_TYPE_FLAGS[build_type] if f.startswith('-O')]
     host = [entry for entry in commands if entry['file'].endswith(('.cpp', '.cxx', '.cc'))]

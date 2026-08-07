@@ -10,6 +10,7 @@ import json
 import os
 
 import numpy as np
+import pytest
 
 import dace
 from dace.config import set_temporary
@@ -24,8 +25,13 @@ def compile_commands_with_empty_cpu_args(tmp_path) -> list:
 
     sdfg = addone.to_sdfg()
     sdfg.build_folder = str(tmp_path / 'build_folder')
-    with set_temporary('compiler', 'cpu', 'args', value=''):
-        csdfg = sdfg.compile()
+    # ``compile_commands.json`` only survives in the development folder mode -- the production mode
+    # CI runs under deletes ``build/`` (the env var must go first, as it beats ``set_temporary``).
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_build_folder_mode', raising=False)
+        with set_temporary('compiler', 'build_folder_mode', value='development'):
+            with set_temporary('compiler', 'cpu', 'args', value=''):
+                csdfg = sdfg.compile()
 
     a = np.zeros(8, np.float64)
     csdfg(a=a)

@@ -36,15 +36,20 @@ def test_external_mem(symbolic):
     else:
         extra_args = {}
 
+    # The nanobind interface stores no symbol values between calls (by
+    # design), so the workspace queries take them per call; ctypes reuses
+    # the values passed to initialize() and accepts no arguments here.
+    ws_args = extra_args if dace.Config.get('compiler', 'interface') == 'nanobind' else {}
+
     # Test workspace size
     csdfg = sdfg.compile()
     csdfg.initialize(a, **extra_args)
-    sizes = csdfg.get_workspace_sizes()
+    sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 20 * 8}
 
     # Test setting the workspace
     wsp = np.random.rand(20)
-    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp)
+    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp, **ws_args)
 
     ref = a + 1
 
@@ -71,15 +76,18 @@ def test_external_twobuffers():
     sdfg = tester.to_sdfg()
     csdfg = sdfg.compile()
 
+    # See test_external_mem: nanobind takes the symbols per call.
+    ws_args = dict(N=20) if dace.Config.get('compiler', 'interface') == 'nanobind' else {}
+
     # Test workspace size
     a = np.random.rand(20)
     csdfg.initialize(a=a, N=20)
-    sizes = csdfg.get_workspace_sizes()
+    sizes = csdfg.get_workspace_sizes(**ws_args)
     assert sizes == {dace.StorageType.CPU_Heap: 22 * 8}
 
     # Test setting the workspace
     wsp = np.random.rand(22)
-    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp)
+    csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp, **ws_args)
 
     ref = a + 1
     ref2 = np.copy(a)
@@ -98,18 +106,37 @@ def test_external_memory_detection_with_gpu_arrays():
     """Regression test for [PR#2461](https://github.com/spcl/dace/pull/2461)"""
     from dace.codegen import compiler
     from dace.codegen.compiled_sdfg import CompiledSDFG, ReloadableDLL
+    from dace.config import set_temporary
 
+    # This probes the CTYPES CompiledSDFG scan and needs the ctypes build
+    # layout (stub library + program library); the nanobind interface builds
+    # an extension module without the stub, so the interface is pinned.
+    # The env var overrides set_temporary, so it must be dropped first.
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_interface', raising=False)
+        with set_temporary('compiler', 'interface', value='ctypes'):
+            _external_memory_detection_with_gpu_arrays_body(CompiledSDFG, ReloadableDLL, compiler)
+
+
+def _external_memory_detection_with_gpu_arrays_body(CompiledSDFG, ReloadableDLL, compiler):
+
+    # NOT named `tester` like the rest of the file: under `cache=unique` the
+    # build folder derives from name+pid, so a shared name would alias this
+    # ctypes build with the other tests' builds in one folder.
     @dace.program
-    def tester(a: dace.float64[20]):
+    def extmem_detection_tester(a: dace.float64[20]):
         workspace = dace.ndarray([20], dace.float64, lifetime=dace.AllocationLifetime.External)
         workspace[:] = a
         workspace += 1
         a[:] = workspace
 
-    sdfg = tester.to_sdfg()
+    sdfg = extmem_detection_tester.to_sdfg()
     csdfg = sdfg.compile()
     assert csdfg.has_gpu_code == False
     binary_name = str(compiler.get_binary_name(sdfg.build_folder, sdfg.name))
+    # ONE shared DLL handle for both probes: a second ReloadableDLL over the
+    # same file triggers the stub's already-loaded file-renaming fallback.
+    lib = ReloadableDLL(binary_name)
 
     def make_probe(gpu_storage: dace.StorageType) -> CompiledSDFG:
         # ``arrays_recursive()`` yields in insertion order: the GPU array
@@ -128,9 +155,7 @@ def test_external_memory_detection_with_gpu_arrays():
                           transient=True,
                           lifetime=dace.AllocationLifetime.External)
         crafted.add_state()
-        # A separate DLL handle over the same binary keeps the probes'
-        #  unloading independent (dlopen reference-counts the library).
-        return CompiledSDFG(crafted, ReloadableDLL(binary_name))
+        return CompiledSDFG(crafted, lib)
 
     external = {dace.StorageType.CPU_Heap, dace.StorageType.CPU_Pinned}
 

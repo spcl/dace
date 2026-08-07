@@ -3,12 +3,17 @@ import dace
 import numpy as np
 import pytest
 
+skip_view_rejection_on_nanobind = pytest.mark.skipif(dace.Config.get('compiler', 'interface') == 'nanobind',
+                                                     reason='nanobind passes views zero-copy via DLPack by design; '
+                                                     'compiler.allow_view_arguments is a ctypes-marshalling concept')
+
 
 @dace.program
 def viewtest(A: dace.float64[20, 20]):
     return A + 1
 
 
+@skip_view_rejection_on_nanobind
 def test_view_argument():
     with dace.config.set_temporary('compiler', 'allow_view_arguments', value=False):
         with pytest.raises(TypeError):
