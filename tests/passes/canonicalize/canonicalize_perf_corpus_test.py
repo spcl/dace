@@ -95,6 +95,7 @@ import datetime
 import functools
 import importlib
 import json
+import multiprocessing
 import math
 import re
 import shlex
@@ -168,6 +169,29 @@ _PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
 #: unbounded. A third of the kernel budget lets the typical seven-arm kernel finish while
 #: still catching an arm that has genuinely run away.
 _PER_ARM_TIMEOUT = int(os.environ.get('CANON_PERF_ARM_TIMEOUT', str(max(60, _PER_KERNEL_TIMEOUT // 3))))
+#: Measure each OpenMP-runtime family in its OWN process. Load-bearing for the LLVM columns, not a
+#: tidiness knob: libgomp and libomp co-resident in one process cost ~34x. MEASURED on this box with
+#: a standalone microbenchmark of DaCe's emitted jacobi_1d body at OMP_NUM_THREADS=72 -- clang alone
+#: 19.15ms, clang with libgomp also loaded 660.17ms, and gcc with libomp also loaded 664.43ms, so
+#: the penalty is symmetric and belongs to the pairing rather than to either compiler. Both runtimes
+#: build a pool of OMP_NUM_THREADS threads and spin against each other.
+#:
+#: The arms used to share one process, gcc first, so every clang arm ran with both runtimes loaded
+#: and the LLVM columns read 50-150x slow for a reason that had nothing to do with LLVM. Grouping by
+#: runtime costs one extra dataset build per kernel and buys back a comparable column.
+#:
+#: NOT a complete fix, and the remaining hole is worth knowing: the spack OpenBLAS is
+#: threads=openmp built with gcc, so it pulls in libgomp. A clang arm on a kernel with BLAS nodes
+#: therefore still meets libgomp inside its own process. numpy is clear -- it ships its own bundled
+#: libscipy_openblas64 and links neither runtime -- so a stencil, which is where this was found, is
+#: fully isolated. Set CANON_PERF_ISOLATE_ARMS=0 to measure everything in one process again.
+_ISOLATE_ARMS = os.environ.get('CANON_PERF_ISOLATE_ARMS', '1') not in ('0', 'false', 'False')
+#: Set in the spawned children so they skip the toolchain probe the parent already ran.
+_IS_CHILD = os.environ.get('CANON_PERF_ARM_CHILD') == '1'
+#: Bumped when the measurement METHOD changes so that results produced by the old one stop counting
+#: as current. 2 == per-runtime process isolation; every record written before it has LLVM columns
+#: contaminated by the co-residency above and must be re-measured rather than skipped.
+MEASUREMENT_EPOCH = 2
 
 #: Where per-kernel result files live (one ``<suite>_<kernel>.json`` each).
 _RESULTS_DIR: str = os.environ.get('CANON_PERF_DIR',
@@ -428,6 +452,11 @@ def arm_tag(label: str) -> str:
     return ''.join(ch for ch in label if ch.isalnum())
 
 
+def arm_omp_runtime(arm: Arm) -> str:
+    """Which OpenMP runtime this arm's compiler links: clang pulls libomp, gcc libgomp."""
+    return 'omp' if arm.executable == _CLANG else 'gomp'
+
+
 def blas_note(arm: Arm) -> str:
     """This arm's BLAS lowering, plus the resolved library when it is not ``pure``.
 
@@ -449,6 +478,10 @@ def probe_arm(arm: Arm) -> str:
     is as misleading as one that ran neither. Nothing falls back -- an arm that quietly degrades to
     plain ``-O3`` under a polyhedral label is a fabricated baseline, worse than having no baseline.
     """
+    if _IS_CHILD:
+        # The parent probed every arm before spawning anything; re-proving it in each child would
+        # recompile the probe nest 7x per kernel for no extra integrity.
+        return f'{os.path.basename(arm.executable)} (probed in parent)'
     exe = shutil.which(arm.executable)
     if exe is None:
         raise RuntimeError(f"arm {arm.label}: compiler {arm.executable!r} is not on PATH")
@@ -875,6 +908,106 @@ def geomeans(records: dict[tuple, dict], preset: str, key: str = 'speedup_vs_ref
     return {k: (geomean(v), len(usable_ratios(v))) for k, v in per.items()}
 
 
+def run_arm(ctx, label: str, deadline: float) -> dict:
+    """Build, correctness-gate and time ONE arm; return its result entry.
+
+    Never raises: a failure is the arm's own ``error`` field, so one bad arm cannot lose the six
+    that worked. Bounded by its own alarm, clamped to the kernel deadline the caller set.
+    """
+    entry: dict[str, Any] = {}
+    arm_t0 = time.perf_counter()
+    try:
+        # Bound EVERY arm, not just the kernel: the kernel alarm is a single shot and the handler
+        # below absorbs it, so without re-arming, every arm after the first timeout ran unbounded.
+        signal.alarm(max(1, int(min(_PER_ARM_TIMEOUT, deadline - time.monotonic()))))
+        # The compiler override has to span the whole arm: ``run_matches`` compiles too, and
+        # correctness must gate the very binary that gets timed.
+        with toolchain_env(_ARMS[label]):
+            sdfg = CS.build(ctx, _PIPELINES[label], arm_tag(label))
+            entry['correct'] = bool(CS.run_matches(ctx, sdfg))
+            if entry['correct']:
+                times = _time_all_reps(ctx, sdfg)
+                entry.update(_aggregate(times))
+                # Per-entry, because the count is adaptive: the record-level ``reps`` is a ceiling.
+                entry['reps'] = int(times.size)
+                entry['times_ms'] = [round(float(x), 6) for x in times]
+        print(
+            f'    {label}: {time.perf_counter() - arm_t0:.1f}s '
+            f'(reps={entry.get("reps", 0)}, min={entry.get("min_ms", "-")}ms)',
+            flush=True)
+    except Exception as e:
+        entry['error'] = f'{type(e).__name__}: {str(e)[:120]}'
+        print(f'    {label}: FAILED {entry["error"]}', flush=True)
+    return entry
+
+
+def arms_worker(suite: str, name: str, preset: str, labels: list[str], budget: float) -> dict:
+    """Child entry point: rebuild the dataset and measure ``labels``. Runs in a SPAWNED process.
+
+    Spawned rather than forked on purpose -- a fork inherits the parent's already-mapped OpenMP
+    runtime, which is the very thing being kept apart. A fresh interpreter loads only the runtime
+    its own arms pull in.
+
+    The dataset is rebuilt here because a ctx holds live numpy arrays that would have to cross the
+    process boundary; re-deriving it costs one allocation and one reference computation per child,
+    which is far below the co-residency penalty it avoids.
+    """
+    signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_Timeout()))
+    ctx = CS.make(suite, name, preset)
+    deadline = time.monotonic() + budget
+    out = {label: run_arm(ctx, label, deadline) for label in labels}
+    signal.alarm(0)
+    return out
+
+
+def measure_arms(ctx, preset: str, labels: list[str], deadline: float) -> dict:
+    """Measure ``labels`` for the kernel in ``ctx``, one process per OpenMP runtime family.
+
+    The grouping is the whole point: libgomp and libomp in one process cost ~34x (see
+    ``_ISOLATE_ARMS``), so the gcc arms and the clang arms must never share an interpreter. Arms are
+    returned in ``labels`` order regardless of which child produced them, so the record's column
+    order does not depend on the grouping.
+
+    Falls back to measuring in-process when isolation is off, when this IS the child, or when a
+    child dies outright -- a lost child would otherwise silently drop a whole family of columns.
+    """
+    if not _ISOLATE_ARMS or _IS_CHILD:
+        return {label: run_arm(ctx, label, deadline) for label in labels}
+    families: dict[str, list[str]] = {}
+    for label in labels:
+        families.setdefault(arm_omp_runtime(_ARMS[label]), []).append(label)
+    budget = max(1.0, deadline - time.monotonic())
+    env = dict(os.environ, CANON_PERF_ARM_CHILD='1')
+    out: dict[str, dict] = {}
+    mp = multiprocessing.get_context('spawn')
+    for family, group in families.items():
+        try:
+            with _child_env(env):
+                with mp.Pool(1) as pool:
+                    out.update(pool.apply(arms_worker, (ctx['suite'], ctx['name'], preset, group, budget)))
+        except Exception as e:
+            # Never lose a family to a crashed child: fall back to measuring it here. The numbers
+            # are then co-resident-contaminated, which is why it says so rather than staying quiet.
+            print(
+                f'    [{family}] child failed ({type(e).__name__}: {str(e)[:80]}); '
+                f'measuring in-process -- these columns are NOT runtime-isolated',
+                flush=True)
+            out.update({label: run_arm(ctx, label, deadline) for label in group})
+    return {label: out[label] for label in labels if label in out}
+
+
+@contextlib.contextmanager
+def _child_env(env: dict) -> Iterator[None]:
+    """Apply ``env`` for the duration of a child spawn: ``spawn`` copies os.environ at fork time."""
+    saved = dict(os.environ)
+    os.environ.update(env)
+    try:
+        yield
+    finally:
+        os.environ.clear()
+        os.environ.update(saved)
+
+
 def _measure_kernel(suite, name):
     """Measure every preset x pipeline for one kernel; return the result record.
 
@@ -886,15 +1019,19 @@ def _measure_kernel(suite, name):
     # Mirrors the alarm the caller arms for this kernel, so the per-arm bound below can tighten
     # that deadline but never extend past it.
     deadline = time.monotonic() + _PER_KERNEL_TIMEOUT
-    result: dict[str, Any] = dict(suite=suite,
-                                  kernel=name,
-                                  host=_HOST,
-                                  timestamp=_now(),
-                                  omp_num_threads=os.environ.get('OMP_NUM_THREADS', ''),
-                                  reps=_REPS,
-                                  warmup=_WARMUP,
-                                  baseline=BASELINE,
-                                  presets={})
+    result: dict[str, Any] = dict(
+        suite=suite,
+        kernel=name,
+        host=_HOST,
+        timestamp=_now(),
+        omp_num_threads=os.environ.get('OMP_NUM_THREADS', ''),
+        reps=_REPS,
+        warmup=_WARMUP,
+        baseline=BASELINE,
+        # Which measurement METHOD produced these numbers; a record
+        # from an older epoch is re-measured, never skipped.
+        epoch=MEASUREMENT_EPOCH,
+        presets={})
     # Provenance travels with every number: which SDFG, which compiler, which flags, and the line
     # proving the credited passes engaged. A speedup that cannot be read back to its toolchain is
     # not a measurement.
@@ -934,41 +1071,8 @@ def _measure_kernel(suite, name):
         pres['reference'] = ref
         if _SAVE_SDFG:
             _save_pre_expansion(ctx, suite, name, preset)
-        for label, fn in _PIPELINES.items():
-            entry = {}
-            try:
-                # The compiler override has to span the whole arm: ``run_matches`` compiles too, and
-                # correctness must gate the very binary that gets timed.
-                arm_t0 = time.perf_counter()
-                # Bound EVERY arm, not just the kernel. The caller arms one alarm for the whole
-                # kernel, and the per-arm ``except`` below absorbs the _Timeout it raises -- so the
-                # alarm is spent on whichever arm happened to be running and every LATER arm then
-                # ran with no bound at all. Re-arming per arm restores the guarantee and keeps one
-                # pathological arm from consuming the budget its siblings needed. Clamped to the
-                # kernel's remaining time so this can only ever tighten the caller's deadline.
-                signal.alarm(max(1, int(min(_PER_ARM_TIMEOUT, deadline - time.monotonic()))))
-                with toolchain_env(_ARMS[label]):
-                    s = CS.build(ctx, fn, arm_tag(label))
-                    entry['correct'] = bool(CS.run_matches(ctx, s))
-                    if entry['correct']:
-                        times = _time_all_reps(ctx, s)
-                        entry.update(_aggregate(times))
-                        # Per-entry, because the count is adaptive now: the record-level ``reps`` is
-                        # only the ceiling, and an expensive kernel's real count is this one.
-                        entry['reps'] = int(times.size)
-                        entry['times_ms'] = [round(float(x), 6) for x in times]
-                        measured_any = True
-                # Per-arm wall clock, printed as it happens. A kernel writes its JSON only after ALL
-                # its arms finish, so without this an expensive one (jacobi_2d: >30min for 7 arms at
-                # the paper shape) is indistinguishable from a hang -- there is no partial output to
-                # read, and a job killed by its time limit leaves nothing at all behind for it.
-                print(
-                    f'    {label}: {time.perf_counter() - arm_t0:.1f}s '
-                    f'(reps={entry.get("reps", 0)}, min={entry.get("min_ms", "-")}ms)',
-                    flush=True)
-            except Exception as e:
-                entry['error'] = f'{type(e).__name__}: {str(e)[:120]}'
-                print(f'    {label}: FAILED {entry["error"]}', flush=True)
+        for label, entry in measure_arms(ctx, preset, list(_PIPELINES), deadline).items():
+            measured_any = measured_any or ('min_ms' in entry)
             pres['pipelines'][label] = entry
         # Back to the KERNEL bound: the last arm left its own alarm armed, and it would
         # otherwise fire while the speedups below are being computed and the record written.
@@ -1071,6 +1175,11 @@ def has_current_arms(path: str, suite: str = '', name: str = '') -> bool:
         with open(path) as f:
             record = json.load(f)
     except (OSError, ValueError):
+        return False
+    # A record from an older measurement method is stale no matter how complete it looks. Epoch 2
+    # is per-runtime process isolation: everything before it timed the clang arms in a process that
+    # also held libgomp, so their numbers carry the ~34x co-residency penalty.
+    if int(record.get('epoch', 1)) < MEASUREMENT_EPOCH:
         return False
     want = set(_PIPELINES)
     for preset in PRESETS:
