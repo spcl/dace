@@ -336,17 +336,28 @@ def _forward_slice(element: ast.Slice, step: int, extent: Any,
     element count -- and hence the forward start -- cannot be derived without
     them.
     """
-    if element.lower is None:
-        try:
-            extent = int(extent)
-        except (TypeError, ValueError):
-            return None  # A symbolic extent cannot supply the omitted default
-        start = extent - 1
+    try:
+        length = int(extent)
+    except (TypeError, ValueError):
+        length = None
+
+    lower = constant_of(element.lower) if element.lower is not None else None
+    upper = constant_of(element.upper) if element.upper is not None else None
+    if (element.lower is not None and lower is None) or (element.upper is not None and upper is None):
+        return None  # A symbolic bound gives no element count
+
+    # Python resolves an omitted bound, a negative bound (counted from the end)
+    # and an over-large start (clamped) against the axis length, so each of
+    # those needs a concrete extent. Note that an EXPLICIT ``-1`` is the last
+    # element, not the "one before the first" sentinel an omitted stop means:
+    # ``a[7:-1:-2]`` on eight elements is empty, where ``a[7::-2]`` is four.
+    if length is None:
+        if lower is None or upper is None or lower < 0 or upper < 0:
+            return None
+        start, stop = lower, upper
     else:
-        start = constant_of(element.lower)
-    stop = constant_of(element.upper) if element.upper is not None else -1
-    if start is None or stop is None:
-        return None
+        start = length - 1 if lower is None else (lower + length if lower < 0 else min(lower, length - 1))
+        stop = -1 if upper is None else max(upper + length, -1) if upper < 0 else upper
     stride = -step
     count = (start - stop + stride - 1) // stride
     if count <= 0:

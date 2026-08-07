@@ -28,6 +28,7 @@ correct without SSA φ-resolution. Symbol promotion of compile-time scalars is
 a planned optimization pass, not a correctness requirement.
 """
 import ast
+import builtins
 import copy
 import numbers
 from typing import Any, Optional, Tuple
@@ -40,6 +41,7 @@ from dace.properties import CodeBlock
 from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
+from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.nextgen.semantics import structures as structure_support
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering import dispatch
@@ -526,6 +528,37 @@ def _create_pythonclass_member(target: ast.Attribute, inferred: Inferred,
     return structure_support.structure_member_path(base_container, member), member_descriptor
 
 
+def _reject_unbound_target(target: ast.expr, statement: ast.stmt, state: LoweringState) -> None:
+    """
+    Refuse an indexed assignment whose base name is bound to nothing at all
+    (``A[...] = B`` with no ``A`` anywhere).
+
+    Python raises ``NameError`` for this, and no fallback can rescue it: the
+    interpreter running the statement in a callback has the same namespace this
+    frontend does, so the callback would raise too -- across the C boundary,
+    where the exception cannot propagate and the program carries on.
+
+    Deliberately narrow. A base that IS bound but not to a container -- a
+    compile-time list, a symbol -- is a form this path does not implement
+    rather than an invalid program, and must keep falling back.
+
+    :raises DaceSyntaxError: If the base name is bound to nothing.
+    """
+    base = target
+    while isinstance(base, (ast.Subscript, ast.Attribute)):
+        base = base.value
+    if not isinstance(base, ast.Name):
+        return
+    name = base.id
+    context = state.context
+    if (context.resolve(name) is not None or name in context.symbols or name in context.constants
+            or name in context.globals or hasattr(builtins, name)):
+        return
+    raise DaceSyntaxError(
+        None, statement, f'Assignment to "{astutils.unparse(target)}", but "{name}" is not defined anywhere in the '
+        'program. Assign it before indexing into it, or pass it in as an argument.')
+
+
 def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: ast.Assign,
                             state: LoweringState) -> None:
     # ``A.flat[idx] = ...`` on a contiguous array: rewrite the base to the
@@ -549,6 +582,7 @@ def _lower_subscript_assign(target: ast.Subscript, value: ast.expr, statement: a
         dispatch.fallback_to_callback(statement, state, reason)
         return
     if target_access is None:
+        _reject_unbound_target(target, statement, state)
         raise UnsupportedFeatureError(f'Assignment to unknown container "{astutils.unparse(target)}"',
                                       state.context.filename,
                                       statement,

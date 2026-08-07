@@ -6,7 +6,7 @@ containers, subsets, and connector-substituted tasklet code.
 import ast
 import copy
 from dataclasses import dataclass
-from typing import Dict, FrozenSet, List, Optional, Tuple
+from typing import Any, Dict, FrozenSet, List, Optional, Tuple
 
 from dace import data, dtypes, subsets, symbolic
 from dace.memlet import Memlet
@@ -15,6 +15,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.sdfg import nodes
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
+from dace.frontend.python.common import DaceSyntaxError
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState
 from dace.frontend.python.nextgen.semantics.indexing import (SOURCE, IndexPlan, build_plan, index_slots,
@@ -185,6 +186,7 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
                 state.context.filename,
                 node,
                 category='data-dependent-subscript')
+        _reject_out_of_range(node, subset, base_descriptor, state)
         plan = build_plan(node.slice, len(subset.ranges))
         return DataAccess(base_container,
                           subset,
@@ -194,6 +196,48 @@ def resolve_access(node: ast.expr, state: LoweringState) -> Optional[DataAccess]
                           unmodeled=plan is None,
                           unmodeled_new_axes=plan is None and bool(expr.new_axes))
     return None
+
+
+def _reject_out_of_range(node: ast.Subscript, subset: subsets.Range, descriptor: data.Data,
+                         state: LoweringState) -> None:
+    """
+    Refuse a subscript whose bounds are known at compile time and fall outside
+    the container.
+
+    Only fully constant bounds against a fully constant dimension are judged;
+    a symbolic extent could be anything at run time and is left alone. Negative
+    indices have already been normalized against the shape by this point
+    (``A[-1]`` on ``float64[5]`` arrives as ``A[4]``), so a negative bound here
+    is genuinely below the array rather than a Python-style wrap.
+
+    Without this the frontend emits the out-of-range memlet and the failure
+    surfaces from SDFG validation as ``Memlet subset out-of-bounds``, naming a
+    generated temporary instead of the user's expression -- and, when the
+    program is never validated, not at all. It is what makes ``b, c, d = a``
+    for a two-element leading axis a reportable error: canonicalization
+    desugars it to ``d = __unpackN[2]``, which this rejects.
+
+    :raises DaceSyntaxError: If a constant bound lies outside the container.
+    """
+    for axis, (bounds, size) in enumerate(zip(subset.ranges, descriptor.shape)):
+        extent = _constant_bound(size)
+        if extent is None:
+            continue
+        start, end = _constant_bound(bounds[0]), _constant_bound(bounds[1])
+        # DaCe ranges are inclusive, so ``end`` addresses an element.
+        if (start is not None and start < 0) or (end is not None and end >= extent):
+            raise DaceSyntaxError(
+                None, node, f'Index out of range in "{astutils.unparse(node)}": axis {axis} of this access spans '
+                f'[{start}, {end}], but the container has {extent} element(s) along it.')
+
+
+def _constant_bound(value: Any) -> Optional[int]:
+    """The integer a subset bound or shape entry denotes, or None if it is
+    symbolic."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _member_index_reads(node: ast.Subscript, state: LoweringState) -> List[str]:
