@@ -56,8 +56,17 @@ _NP_PRESET = {'S': 32, 'paper': int_or_none(os.environ.get('CORPUS_NP_PAPER_CAP'
 _TSVC_PRESET = {
     'S': (64, 16),
     'paper': (int(os.environ.get('CORPUS_TSVC_PAPER_LEN1D',
-                                 '32000')), int(os.environ.get('CORPUS_TSVC_PAPER_LEN2D', '256'))),
+                                 '589824')), int(os.environ.get('CORPUS_TSVC_PAPER_LEN2D', '768'))),
 }
+#: Kernels capped BELOW the preset extent, by kernel name -> max LEN_1D.
+#:
+#: ``s176`` is quadratic in LEN_1D in BOTH directions and is the only one: its body is
+#: ``for j in range(n//2): for i in range(n//2): a[i] += b[i+m-j-1]*c[j]``. At the raised extent the
+#: KERNEL would be ~8.7e10 flops -- larger than any polybench gemm -- so it would dominate the tsvc
+#: sweep on its own, and its scalar-Python oracle (tsvc_numpy.s176_d_single) would be worse still.
+#: Kept at the old 32000 so the rest of the corpus can scale. Only ever LOWERS an extent, and only
+#: for a ``1d`` regime kernel, so ``regime_sizes``' LEN_1D >= LEN_2D + 8 invariant cannot be broken.
+TSVC_LEN1D_CAP = {'s176_d_single': int(os.environ.get('CORPUS_TSVC_S176_LEN1D', '32000'))}
 #: preset -> tsvc_2_5 overrides on its ``SIZES`` symbol table. Only the ``LEN_*``
 #: extents scale: the rest are tuned strides, thresholds and tile sizes that must
 #: keep their values (and ``LEN_R7`` must stay a multiple of 7 -- its kernels
@@ -65,10 +74,10 @@ _TSVC_PRESET = {
 _T25_PRESET = {
     'S': {},
     'paper': {
-        'LEN_1D': int(os.environ.get('CORPUS_T25_PAPER_LEN1D', '32000')),
-        'LEN_2D': int(os.environ.get('CORPUS_T25_PAPER_LEN2D', '256')),
-        'LEN_3D': int(os.environ.get('CORPUS_T25_PAPER_LEN3D', '64')),
-        'LEN_R7': 7 * int(os.environ.get('CORPUS_T25_PAPER_R7_BLOCKS', '4096')),
+        'LEN_1D': int(os.environ.get('CORPUS_T25_PAPER_LEN1D', '589824')),
+        'LEN_2D': int(os.environ.get('CORPUS_T25_PAPER_LEN2D', '768')),
+        'LEN_3D': int(os.environ.get('CORPUS_T25_PAPER_LEN3D', '96')),
+        'LEN_R7': 7 * int(os.environ.get('CORPUS_T25_PAPER_R7_BLOCKS', '73728')),
     },
 }
 
@@ -133,6 +142,7 @@ def make(suite: str, name: str, preset: str = 'S') -> Dict:
     if suite == 'tsvc':
         k = _TS.collect(name=name)[0]
         l1, l2 = _TS.regime_sizes(k.regime, _TSVC_PRESET[preset][0 if k.regime == '1d' else 1])
+        l1 = min(l1, TSVC_LEN1D_CAP.get(name, l1))  # quadratic-in-LEN_1D kernels only; see the dict
         arrays = _TS.allocate(k, l1, l2, np.random.default_rng(_SEED))
         params = {**_TS.scalar_params(k, l1), **_TS.symbols(k, l1, l2)}
         ref = {n: a.copy() for n, a in arrays.items()}
