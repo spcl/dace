@@ -166,9 +166,10 @@ _WARMUP = int(os.environ.get('CANON_PERF_WARMUP', '2'))
 #: machine, and the corpus should be re-shaped rather than the sweep left to absorb it. Enforced
 #: from the probe call ``_time_all_reps`` already makes, so it costs nothing extra and the kernel is
 #: still REPORTED (with reps=1 and an ``over_budget`` flag) rather than dropped -- a silent hole in
-#: the table would hide the very thing this is meant to surface. Set CANON_PERF_MAX_CALL_MS=180000
-#: for a 3-minute budget instead.
-_MAX_CALL_MS = float(os.environ.get('CANON_PERF_MAX_CALL_MS', '60000'))
+#: the table would hide the very thing this is meant to surface. Three minutes leaves room for the
+#: heaviest honest arm (seq-cpp on jacobi_2d measured 4.87s, so the margin is ~37x) while still
+#: catching a kernel whose paper shape has run away. Lower it with CANON_PERF_MAX_CALL_MS.
+_MAX_CALL_MS = float(os.environ.get('CANON_PERF_MAX_CALL_MS', '180000'))
 _MIN_REPS = int(os.environ.get('CANON_PERF_MIN_REPS', '5'))
 _BUDGET_MS = float(os.environ.get('CANON_PERF_BUDGET_MS', '20000'))
 _PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
