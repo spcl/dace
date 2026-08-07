@@ -100,7 +100,7 @@ def _apply_unary_operator(operator: ast.unaryop, value: Any) -> Any:
     raise TypeError(f'Cannot constant-fold unary operator {type(operator).__name__}')
 
 
-def _is_none_literal(node: ast.expr) -> bool:
+def is_none_literal(node: ast.expr) -> bool:
     """Whether an expression is the literal ``None``."""
     return isinstance(node, ast.Constant) and node.value is None
 
@@ -388,10 +388,10 @@ class InferenceService:
             return None
 
         operands = [node.left, node.comparators[0]]
-        nones = [operand for operand in operands if _is_none_literal(operand)]
+        nones = [operand for operand in operands if is_none_literal(operand)]
         if not nones:
             return None
-        others = [operand for operand in operands if not _is_none_literal(operand)]
+        others = [operand for operand in operands if not is_none_literal(operand)]
         if not others:
             # ``None is None``: both sides are the singleton.
             identical = True

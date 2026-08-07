@@ -336,6 +336,61 @@ def test_optional_argument_runtime_null_check():
     assert np.allclose(without_bias, 1.0)
 
 
+def test_optional_argument_null_check_bound_to_name():
+    """
+    The same null test, bound to a name first. ``is`` asks about the pointer,
+    not about the array's contents, so this has to reach generated code as a
+    null test too -- not as an elementwise comparison over ``bias``, which
+    would dereference the pointer being tested.
+    """
+
+    @dace.program
+    def linear(A: dace.float64[10], bias):
+        missing = bias is None
+        if missing:
+            A[:] = 1.0
+        else:
+            A[:] = bias
+
+    sdfg = linear.to_sdfg(bias=dace.data.Array(dace.float64, (10, ), optional=True))
+    assert 'bias == nullptr' in sdfg.generate_code()[0].clean_code
+
+    compiled = sdfg.compile()
+
+    with_bias = np.zeros(10)
+    compiled(A=with_bias, bias=np.full(10, 7.0))
+    assert np.allclose(with_bias, 7.0)
+
+    without_bias = np.zeros(10)
+    compiled(A=without_bias, bias=None)
+    assert np.allclose(without_bias, 1.0)
+
+
+def test_optional_argument_negated_null_check_bound_to_name():
+    """``is not None`` bound to a name, which must invert the same test."""
+
+    @dace.program
+    def linear(A: dace.float64[10], bias):
+        present = bias is not None
+        if present:
+            A[:] = bias
+        else:
+            A[:] = 2.0
+
+    sdfg = linear.to_sdfg(bias=dace.data.Array(dace.float64, (10, ), optional=True))
+    assert 'bias != nullptr' in sdfg.generate_code()[0].clean_code
+
+    compiled = sdfg.compile()
+
+    with_bias = np.zeros(10)
+    compiled(A=with_bias, bias=np.full(10, 3.0))
+    assert np.allclose(with_bias, 3.0)
+
+    without_bias = np.zeros(10)
+    compiled(A=without_bias, bias=None)
+    assert np.allclose(without_bias, 2.0)
+
+
 def test_constant_argument_simple():
 
     @dace.program
@@ -781,6 +836,8 @@ if __name__ == '__main__':
     test_optional_argument_jit_kwarg()
     test_optional_argument()
     test_optional_argument_runtime_null_check()
+    test_optional_argument_null_check_bound_to_name()
+    test_optional_argument_negated_null_check_bound_to_name()
     test_constant_argument_simple()
     test_constant_argument_default()
     test_constant_argument_object()

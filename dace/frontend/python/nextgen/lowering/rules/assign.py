@@ -49,7 +49,7 @@ from dace.frontend.python.nextgen.lowering.access import (DataAccess, lower_indi
                                                           resolve_access, scalar_read_expression)
 from dace.frontend.python.nextgen.lowering.mechanisms import conflict, static_values
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
-from dace.frontend.python.nextgen.semantics.inference import Inferred
+from dace.frontend.python.nextgen.semantics.inference import Inferred, is_none_literal
 
 
 def _aliasing_required(statement: ast.stmt) -> bool:
@@ -73,6 +73,10 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
     if isinstance(target, ast.Name):
         apply_annotation_hint(target.id, statement, state)
         if isinstance(value, ast.Subscript) and _lower_boolean_gather_assign(target, value, statement, state):
+            return
+        # Before inference: a null test is not an operation on the array's
+        # CONTENTS, and typing it as one is what made it an elementwise map.
+        if _bind_as_null_test(target.id, value, state):
             return
 
     # A boolean-mask read in any OTHER position (nested in a computation, a
@@ -163,6 +167,54 @@ def lower_assign(statement: ast.Assign, state: LoweringState) -> None:
                                       state.context.filename,
                                       statement,
                                       category='assign-target')
+
+
+def _bind_as_null_test(name: str, value: ast.expr, state: LoweringState) -> bool:
+    """
+    Bind ``present = bias is not None`` to a symbol defined by an interstate
+    assignment, so the null test reaches generated code as ``bias != nullptr``.
+
+    ``is`` asks whether the POINTER is there, which is a question about the
+    argument rather than about the array's contents. Typed as an ordinary
+    comparison it became an elementwise map over ``bias`` -- a result with the
+    array's shape instead of a boolean, computed by dereferencing the very
+    pointer the test exists to check.
+
+    An interstate assignment is where such a test belongs: it is exactly what a
+    branch condition (``if bias is None:``) already lowers to, and the C++
+    unparser renders ``is``/``is not`` as ``==``/``!=`` and ``None`` as
+    ``nullptr`` there. Binding the name to that symbol lets every later use --
+    a branch, a further boolean expression, an interstate assignment -- read
+    the answer without touching the array.
+
+    :return: True when the name was bound (nothing else to lower).
+    """
+    if not isinstance(value, ast.Compare) or len(value.ops) != 1 or len(value.comparators) != 1:
+        return False
+    if not isinstance(value.ops[0], (ast.Is, ast.IsNot)):
+        return False
+    operands = [value.left, value.comparators[0]]
+    others = [operand for operand in operands if not is_none_literal(operand)]
+    if len(others) != 1 or not isinstance(others[0], ast.Name):
+        return False  # ``None is None`` and non-name operands fold in inference
+    binding = state.context.resolve(others[0].id)
+    if binding is None or binding.kind != 'container':
+        return False
+    descriptor = state.context.containers.get(binding.container)
+    if not isinstance(descriptor, data.Array):
+        # Only an ARRAY argument is a pointer that can be null. A scalar is
+        # passed by value, and a container the frontend resolved itself is
+        # settled at parse time -- both fold in inference.
+        return False
+
+    operator = 'is not' if isinstance(value.ops[0], ast.IsNot) else 'is'
+    test = f'{binding.container} {operator} None'
+    symbol_name = state.context.fresh_name(f'__null_{name.lstrip("_")}_')
+    state.context.symbols[symbol_name] = symbolic.symbol(symbol_name, dtypes.bool_)
+    state.emitter.emit(
+        tn.AssignNode(name=symbol_name, value=CodeBlock(test), edge=InterstateEdge(assignments={symbol_name: test})))
+    state.context.bind_symbol(name, dtypes.bool_, symbol_name=symbol_name)
+    return True
 
 
 def _index_temporary(statement: ast.stmt) -> bool:
