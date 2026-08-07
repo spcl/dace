@@ -803,11 +803,20 @@ def configure_and_compile(
     lib_path = get_binary_name(object_folder=program_folder, sdfg_name=program_name, folder_mode="development")
     libstub_path = _get_stub_library_path(lib_path)
 
-    # In production mode, we are now deleting what we need and relocating it.
+    # In production mode, we are now deleting what we need and relocating it. Relocation must
+    # OVERWRITE: a production folder may be rebuilt in place (same program recompiled into the
+    # same folder), and shutil.move refuses an existing destination. os.replace is safe here -
+    # the build folder lies inside the program folder, so both sides share a filesystem, and on
+    # POSIX replacing a loaded library leaves the existing mapping intact.
+    def _relocate(path: pathlib.Path) -> pathlib.Path:
+        target = pathlib.Path(program_folder) / path.name
+        os.replace(path, target)
+        return target
+
     if folder_mode == "production":
-        lib_path = pathlib.Path(shutil.move(src=lib_path, dst=program_folder))
+        lib_path = _relocate(lib_path)
         if libstub_path.is_file():  # No stub is built on the nanobind path.
-            libstub_path = pathlib.Path(shutil.move(src=libstub_path, dst=program_folder))
+            libstub_path = _relocate(libstub_path)
         program_folder = pathlib.Path(program_folder)
         # TODO: Find out where `sample/` are generated and suppress their generation.
         for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
