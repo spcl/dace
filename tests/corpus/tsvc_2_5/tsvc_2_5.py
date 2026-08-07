@@ -1197,8 +1197,10 @@ SIZES = {
     "SSYM": 3,
     "K": 3,
     # Data thresholds over ``standard_normal`` arrays: 0 leaves ~half the lanes active (both mask
-    # polarities, crossing tile boundaries), 2 puts the first search hit at index 5 of 128 -- past
-    # the start, so a search that always answers 0 is caught.
+    # polarities, crossing tile boundaries). ``KFIND`` is the anchor ``_place_break_at_middle``
+    # builds ``ext_break_capture``'s input around, so the first search hit lands at LEN_1D // 2
+    # (not at the natural random-draw index) -- past the start either way, so a search that
+    # always answers 0 is caught.
     "KMASK": 0,
     "KFIND": 2,
     "M": 4,
@@ -1239,4 +1241,27 @@ def make_inputs(program, seed: int = 1234, sizes: Optional[Dict[str, int]] = Non
                 arrays[name] = rng.standard_normal(shape).astype(ann.dtype.as_numpy_dtype())
         else:  # scalar
             scalars[name] = float(rng.standard_normal())
+    _place_break_at_middle(program.f.__name__, arrays, sizes)
     return arrays, scalars
+
+
+#: See :func:`tests.corpus.tsvc.tsvc._place_break_at_middle` -- the tsvc_2_5 siblings of
+#: ``s481``/``s482``/``s332`` need the same midpoint nudge so their sequential-reference-vs-
+#: canonicalize speedup ratio measures the find-first + clipped-body lowering instead of an early
+#: break the plain random draw already gave the sequential arm for free.
+def _place_break_at_middle(name: str, arrays: Dict[str, np.ndarray], sizes: Dict[str, int]) -> None:
+    """Rewrite the break-predicate array in place so the exit fires at ``LEN_1D // 2``."""
+    mid = sizes["LEN_1D"] // 2
+    if name == 'ext_break_find_first':  # break on d[i] < 0.0
+        d = arrays['d']
+        d[:mid] = np.abs(d[:mid])
+        d[mid] = -abs(d[mid]) - 1.0
+    elif name == 'ext_break_post_body':  # break on c[i] > b[i]
+        b, c = arrays['b'], arrays['c']
+        c[:mid] = np.minimum(c[:mid], b[:mid])
+        c[mid] = b[mid] + 1.0
+    elif name == 'ext_break_capture':  # break on a[i] > KFIND
+        a = arrays['a']
+        kfind = sizes['KFIND']
+        a[:mid] = kfind - np.abs(a[:mid]) - 1.0
+        a[mid] = kfind + abs(a[mid]) + 1.0

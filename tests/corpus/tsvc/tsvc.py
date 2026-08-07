@@ -1927,7 +1927,35 @@ def allocate(kernel: TSVCKernel, l1: int, l2: int, rng: np.random.Generator) -> 
             # inputs against inputs -- green for any miscompilation. Straddling zero also exercises
             # both polarities of every mask the vectorizer generates.
             arrays[name] = np.array((rng.random(shape) * 2.0 - 1.0).astype(np_dtype), copy=True)
+    _place_break_at_middle(kernel, arrays, l1)
     return arrays
+
+
+#: Early-exit kernels whose break condition, under the plain uniform draw above, fires within the
+#: first few indices: the sequential reference does O(few) work while canonicalize's find-first +
+#: min-reduce + clipped-body lowering always does O(3*LEN_1D), so the ratio compares a favorable
+#: case for the sequential arm against an unfavorable one for canonicalize instead of measuring the
+#: lowering itself. Nudging the break to fire at the midpoint (deterministically, not by seed luck)
+#: makes both arms do comparable work. Only the break-predicate array is touched, and only for
+#: indices on the "no exit yet" side of the midpoint plus the midpoint itself; every other index
+#: (including the whole tail past the midpoint, which the break makes unreachable) keeps its
+#: original random draw.
+def _place_break_at_middle(kernel: TSVCKernel, arrays: Dict[str, np.ndarray], l1: int) -> None:
+    """Rewrite the break-predicate array in place so the exit fires at ``l1 // 2``."""
+    mid = l1 // 2
+    if kernel.name == 's481_d_single':  # break on d[i] < 0.0
+        d = arrays['d']
+        d[:mid] = np.abs(d[:mid])
+        d[mid] = -abs(d[mid]) - 1.0
+    elif kernel.name == 's482_d_single':  # break on c[i] > b[i]
+        b, c = arrays['b'], arrays['c']
+        c[:mid] = np.minimum(c[:mid], b[:mid])
+        c[mid] = b[mid] + 1.0
+    elif kernel.name == 's332_d_single':  # break on a[i] > threshold
+        a = arrays['a']
+        threshold = kernel.params.get('threshold', 0)
+        a[:mid] = threshold - np.abs(a[:mid]) - 1.0
+        a[mid] = threshold + abs(a[mid]) + 1.0
 
 
 def scalar_params(kernel: TSVCKernel, l1: int) -> Dict[str, int]:
