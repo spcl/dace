@@ -101,6 +101,12 @@ export CANON_PERF_REPS="${REPS:-50}"
 # it reaches the pytest entry point too. ``CANON_PERF_ARMS=0`` in the caller's environment still
 # wins -- that is the documented smoke-run escape hatch on a box without a polyhedral clang.
 export CANON_PERF_ARMS="${CANON_PERF_ARMS:-1}"
+# Per-kernel wall-clock cap. The default 600s is a fraction too tight for the heaviest stencils
+# even after the tsteps levelling -- heat_3d measured 680s for its seven arms -- and the alarm fires
+# on whichever arm is running when it expires, leaving that arm unmeasured for a reason that has
+# nothing to do with the arm. Raised so a legitimately slow kernel completes; it is still a cap, so
+# a genuinely hung kernel cannot eat the job.
+export CANON_PERF_TIMEOUT="${CANON_PERF_TIMEOUT:-1800}"
 # NOTE the gcc autopar width is deliberately NOT pinned here. ``resolve_autopar_hint`` probes this
 # compiler and takes the largest width that actually emits a parallel region (40 on g++ 16.1.0 /
 # Neoverse V2, where 41 and above silently emit none while Graphite is on). Exporting

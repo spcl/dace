@@ -1061,7 +1061,18 @@ def has_current_arms(path: str, suite: str = '', name: str = '') -> bool:
             return False
         if pres.get('error'):
             continue
-        if not want <= set(pres.get('pipelines') or {}):
+        pipelines = pres.get('pipelines') or {}
+        if not want <= set(pipelines):
+            return False
+        # An arm that TIMED OUT is present but unmeasured, and presence is what the check above
+        # tests -- so without this a transient timeout is baked in permanently: the record looks
+        # complete, every later sweep skips it, and the column stays empty in the figure with
+        # nothing saying why. A timeout is a property of the budget rather than of the kernel (it
+        # fires on whichever arm happens to be running when the per-kernel alarm expires, and
+        # heat_3d legitimately needs more than the default 600s), so it is worth retrying. Other
+        # arm errors are NOT retried: a kernel that fails to build or miscompares under an arm
+        # fails the same way every sweep, and retrying it would burn the budget forever.
+        if any(_Timeout.__name__ in str(e.get('error', '')) for e in pipelines.values()):
             return False
         expect = expected_paper_shape(suite, name, preset) if suite and name else None
         if expect is not None:
