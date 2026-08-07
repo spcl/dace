@@ -15,13 +15,14 @@ from dace.codegen import dispatcher as disp
 from dace.codegen.prettycode import CodeIOStream
 from dace.codegen.common import codeblock_to_cpp, sym2cpp
 from dace.codegen.target import TargetCodeGenerator
+from dace.memlet import Memlet
 from dace.sdfg.type_inference import infer_expr_type
 from dace.sdfg import SDFG, SDFGState, nodes
 from dace.sdfg import scope as sdscope
 from dace.sdfg import utils
 from dace.sdfg.analysis import cfg as cfg_analysis
 from dace.sdfg.state import ControlFlowBlock, ControlFlowRegion, LoopRegion
-from dace.transformation.passes.analysis import StateReachability, loop_analysis
+from dace.transformation.passes.analysis import FindReferenceSources, StateReachability, loop_analysis
 
 
 def _get_or_eval_sdfg_first_arg(func, sdfg):
@@ -553,6 +554,51 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
 
         return False
 
+    def _reference_aliases(self, sources: Dict[str, Set[Union[Memlet, nodes.CodeNode]]]) -> Dict[str, Set[str]]:
+        """
+        Invert :class:`~dace.transformation.passes.analysis.FindReferenceSources`
+        into a map from each container to the references that may point at its
+        storage.
+
+        A reference set makes a reference alias the source's storage, so every
+        access to the reference is an access to the source. Allocation analysis
+        reasons over access nodes, which do not record that relationship: a
+        transient set into a reference inside a branch appears in that branch
+        only, and is therefore freed at its end -- while the reference still
+        points at it and is read after the join. Counting the reference's
+        occurrences as occurrences of the source keeps the source allocated for
+        as long as anything can reach its memory.
+
+        Chains (a reference set from another reference) are followed here to a
+        fixed point rather than through the pass's ``recursive`` property, which
+        dereferences ``.data`` on sources that may be code nodes.
+
+        :param sources: One SDFG's entry of the pass result: reference name ->
+                        the memlets (or code nodes) that set it.
+        :return: Source container name -> names of the references aliasing it.
+        """
+        direct: Dict[str, Set[str]] = collections.defaultdict(set)
+        for reference, reference_sources in sources.items():
+            for source in reference_sources:
+                # A reference set by a tasklet points at memory this SDFG does
+                # not own, so no container's lifetime can cover it.
+                if isinstance(source, nodes.CodeNode) or source.data is None:
+                    continue
+                direct[source.data].add(reference)
+
+        aliases = {source: set(references) for source, references in direct.items()}
+        changed = True
+        while changed:
+            changed = False
+            for source, references in aliases.items():
+                extended = set(references)
+                for reference in references:
+                    extended |= direct.get(reference, set())
+                if extended != references:
+                    aliases[source] = extended
+                    changed = True
+        return aliases
+
     def determine_allocation_lifetime(self, top_sdfg: SDFG):
         """
         Determines where (at which scope/state/SDFG) each data descriptor will be allocated/deallocated.
@@ -562,11 +608,14 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
         # Gather shared transients, free symbols, and first/last appearance
         shared_transients = {}
         fsyms = {}
+        reference_aliases: Dict[int, Dict[str, Set[str]]] = {}
         reachability = StateReachability().apply_pass(top_sdfg, {})
+        reference_sources = FindReferenceSources().apply_pass(top_sdfg, {})
         access_instances: Dict[int, Dict[str, List[Tuple[SDFGState, nodes.AccessNode]]]] = {}
         for sdfg in top_sdfg.all_sdfgs_recursive():
             shared_transients[sdfg.cfg_id] = sdfg.shared_transients(check_toplevel=False, include_nested_data=True)
             fsyms[sdfg.cfg_id] = self.symbols_and_constants(sdfg)
+            reference_aliases[sdfg.cfg_id] = self._reference_aliases(reference_sources.get(sdfg.cfg_id, {}))
 
             #############################################
             # Look for all states in which a scope-allocated array is used in
@@ -675,8 +724,11 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                 # containing state or the SDFG (if used in more than one state)
                 curstate: SDFGState = None
                 multistate = False
+                # A reference pointing at this container accesses its storage,
+                # so it counts as an appearance of the container itself.
+                aliases = reference_aliases[sdfg.cfg_id].get(name, ())
                 for state in sdfg.states():
-                    if any(n.data == name for n in state.data_nodes()):
+                    if any(n.data == name or n.data in aliases for n in state.data_nodes()):
                         if curstate is not None:
                             multistate = True
                             break
@@ -703,6 +755,13 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     if name in block_syms:
                         multistate = True
 
+                # A reference pointing at this container accesses its storage,
+                # so it counts as an appearance of the container itself --
+                # without which a transient set into a reference inside a
+                # branch is freed at the end of that branch, and the read of
+                # the reference after the join is a use-after-free.
+                aliases = reference_aliases[sdfg.cfg_id].get(name, ())
+
                 for state in sdfg.states():
                     if multistate:
                         break
@@ -710,7 +769,7 @@ DACE_EXPORTED void __dace_set_external_memory_{storage.name}({mangle_dace_state_
                     for node in state.nodes():
                         if not isinstance(node, nodes.AccessNode):
                             continue
-                        if node.root_data != name:
+                        if node.root_data != name and node.root_data not in aliases:
                             continue
 
                         # If already found in another state, set scope to SDFG
