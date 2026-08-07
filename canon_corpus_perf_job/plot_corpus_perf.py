@@ -24,6 +24,10 @@ caption naming its denominator in words. There is deliberately NO combined geome
 
 Other rules the figures obey:
 
+* The form is SMALL MULTIPLES OF SCATTER: one panel per arm, one dot per kernel, and never a line
+  joining kernels -- kernels are a categorical axis, so a polyline across them would draw a trend
+  that does not exist. All panels share one kernel order and one y axis, so a kernel sits at the
+  same x in every panel and two arms are compared by looking straight up the column.
 * y is the SIGNED symmetric speedup ``s``: 0 parity, +1 = 2x faster, -1 = 2x slower. Every tick
   also carries its raw ratio (``+2 (3.00x)``) so ``+2`` cannot be read as "2x".
 * Every geomean -- legend and table alike -- is taken over the RAW ratio, then converted for
@@ -55,6 +59,7 @@ matplotlib.use('Agg')  # a cluster node has no display; MUST happen before pyplo
 
 import matplotlib.pyplot as plt
 from matplotlib.axes import Axes
+from matplotlib.lines import Line2D
 from matplotlib.ticker import FuncFormatter
 
 #: Where the job writes its results, i.e. ``corpus_perf_job.DEFAULT_OUT``: beside the scripts, so a
@@ -82,7 +87,7 @@ DENOM_PHRASE = {
 }
 #: Arm plotting order: the six comparison arms, then the sequential denominator arm, then the
 #: labels older sweeps on disk used. Unknown labels are appended alphabetically, so a renamed or
-#: added arm still plots -- the series come from the DATA, this list only fixes order and colour.
+#: added arm still plots -- the series come from the DATA, this list only fixes panel order.
 #: Each autopar arm is immediately followed by its ``-default`` twin (same flags minus the forcing
 #: knob), so the forced/unforced pair reads side by side in every figure and table.
 ARM_ORDER = ('dace-autoopt-gcc', 'dace-autoopt-llvm', 'dace-canon-gcc', 'dace-canon-llvm', 'dace-simplify+gcc-autopar',
@@ -97,14 +102,19 @@ CURRENT_ARMS = ARM_ORDER[:9]
 #: reader's call, not the plotter's) but kernels below it are counted, since a ratio between two
 #: sub-millisecond timings is per-call overhead, not a speedup.
 MIN_TIMEABLE_MS = 0.5
-TAB10 = matplotlib.colormaps['tab10']
-PALETTE = tuple(TAB10(i) for i in range(TAB10.N))
-LINESTYLES = ('-', '--', ':', '-.')
-MARKERS = ('o', 's', '^', 'D', 'v', 'P', 'X', '*')
-#: Above this many kernels a panel drops the connecting lines (six polylines over 151 kernels is
-#: spaghetti) and its tick labels; colour + marker shape still separate the arms, and each arm's
-#: geomean is drawn as a thin horizontal line so the panel still reads at 151x6 points.
-DENSE_PANEL = 40
+#: Slots 1-3 of the documented categorical palette, which are the only three that clear the
+#: all-pairs colourblind gates a scatter/small-multiples figure is held to. Hue therefore encodes
+#: the arm's COMPILER BACKEND, not its identity -- nine arms cannot get nine safe hues, and the
+#: backend is the split the figure is actually read for. Identity is carried by the panel title.
+BACKEND_COLOUR = {'gcc': '#2a78d6', 'llvm': '#eb6834', 'other': '#1baf7a'}
+SURFACE, INK, INK_SOFT, INK_MUTED = '#fcfcfb', '#0b0b0b', '#52514e', '#898781'
+GRID_INK, AXIS_INK, BAND_INK = '#e1e0d9', '#c3c2b7', '#f2f1ec'
+#: Marker area in points^2, interpolated between a 54-kernel and a 223-kernel panel.
+DOT_LARGE, DOT_SMALL = 13.0, 4.5
+#: The raw ratios that get a y tick. A ladder rather than symlog's own decades: the decades snap the
+#: axis out to +-100x for one outlier and leave two thirds of every panel empty, and symlog's minor
+#: subs put a second row of labels between them.
+SPEEDUP_TICKS = (0.01, 0.05, 0.2, 0.5, 1.0, 2.0, 5.0, 20.0, 100.0)
 
 #: Exclusion categories, so the report can say WHY in three numbers before it says it in prose.
 CAT_PY_SCALAR = 'python-scalar reference'
@@ -409,11 +419,15 @@ def order_arms(labels: Iterable[str]) -> list[str]:
     return known + sorted(present - set(known))
 
 
-def facet_keys(points: list[Point]) -> list[tuple[str, str]]:
-    """``(suite, denominator kind)`` panels in corpus order. A suite measured against two different
-    denominators gets two panels rather than one mixed axis."""
-    keys = {(p.suite, p.kind) for p in points}
-    return sorted(keys, key=lambda k: (SUITES.index(k[0]) if k[0] in SUITES else len(SUITES), k[0], k[1]))
+def panel_keys(points: list[Point], arms: list[str]) -> list[tuple[str, str]]:
+    """``(denominator kind, arm)`` panels: ONE arm per panel, in arm order, kinds never mixed.
+
+    Faceting by arm rather than drawing nine series into one axes is what makes 223x9 points
+    readable, and it is also the only encoding the colour rules allow: a scatter is held to the
+    all-pairs colourblind gates, which no ordering of nine hues can pass.
+    """
+    keys = {(p.kind, p.arm) for p in points}
+    return sorted(keys, key=lambda k: (k[0], arms.index(k[1])))
 
 
 def short_path(path: Path, keep: int = 3) -> str:
@@ -422,112 +436,292 @@ def short_path(path: Path, keep: int = 3) -> str:
     return str(path) if len(parts) <= keep else '.../' + '/'.join(parts[-keep:])
 
 
-def short_name(kernel: str, keep: int = 26) -> str:
-    """A tick-sized kernel name. tsvc_2_5 kernels carry their module path
-    (``tests_corpus_tsvc_2_5_tsvc_2_5_ext_gather_load``); the TAIL is what distinguishes them."""
-    return kernel if len(kernel) <= keep else '...' + kernel[-keep:]
-
-
-def median_signed(kernel: str, by_arm: dict[str, dict[str, float]]) -> float:
+def median_signed(ratios: Iterable[float]) -> float:
     """Sort key for a kernel: the median signed speedup over the arms that measured it."""
-    vals = [signed(per_kernel[kernel]) for per_kernel in by_arm.values() if kernel in per_kernel]
-    good = [v for v in vals if math.isfinite(v)]
+    good = [v for v in (signed(r) for r in ratios) if math.isfinite(v)]
     return statistics.median(good) if good else float('-inf')
 
 
-def draw_facet(ax: Axes, suite: str, kind: str, points: list[Point], arms: list[str], sort_by: str,
-               symlog: bool) -> None:
-    """One corpus panel: every arm as a series over that corpus's kernels, one shared denominator."""
-    by_arm: dict[str, dict[str, float]] = {}
+def backend_of(arm: str) -> str:
+    """Which compiler backend an arm's hue stands for; anything else shares the third slot."""
+    if 'llvm' in arm or 'clang' in arm or 'polly' in arm:
+        return 'llvm'
+    if 'gcc' in arm or 'graphite' in arm:
+        return 'gcc'
+    return 'other'
+
+
+class Layout(NamedTuple):
+    """The kernel x axis, computed ONCE and reused by every panel of a figure.
+
+    Sharing it is what lets the reader compare arms: kernel ``k`` is at the same x in all panels,
+    so looking straight up a column is a like-for-like comparison of the arms on one kernel.
+    """
+    slot: dict[tuple[str, str], int]  # (suite, kernel) -> x
+    blocks: list[tuple[str, int, int]]  # suite, first x, one past the last x
+    width: int
+
+
+def kernel_layout(points: list[Point], sort_by: str) -> Layout:
+    """Lay the kernels out along x: one contiguous, separately sorted block per corpus."""
+    ratios: dict[tuple[str, str], list[float]] = {}
     for p in points:
-        by_arm.setdefault(p.arm, {})[p.kernel] = p.ratio
-    kernels = sorted({p.kernel for p in points})
-    if sort_by == 'speedup':
-        kernels.sort(key=lambda k: median_signed(k, by_arm))
-    xs = list(range(len(kernels)))
-    dense = len(kernels) > DENSE_PANEL
-    for arm in arms:
-        per_kernel = by_arm.get(arm)
-        if not per_kernel:
-            continue
-        index = ARM_ORDER.index(arm) if arm in ARM_ORDER else len(ARM_ORDER) + arms.index(arm)
-        colour = PALETTE[index % len(PALETTE)]
-        ys = [signed(per_kernel[k]) if k in per_kernel else float('nan') for k in kernels]
-        gm, n = geomean(per_kernel.values())
-        gm_s = f'{gm:.2f}x' if math.isfinite(gm) else '--'
-        ax.plot(xs,
-                ys,
-                marker=MARKERS[index % len(MARKERS)],
-                markersize=3.2,
-                linewidth=0.0 if dense else 0.9,
-                linestyle='none' if dense else LINESTYLES[(index // len(PALETTE)) % len(LINESTYLES)],
-                alpha=0.85,
-                color=colour,
-                label=f'{arm}   geomean {gm_s} (n={n})')
-        if math.isfinite(gm):
-            # The geomean as a thin rule: at 151 kernels x 6 arms the cloud is the distribution and
-            # this line is the number the table reports, on the same axis.
-            ax.axhline(signed(gm), color=colour, linewidth=0.8, alpha=0.45, zorder=0)
-    ax.axhline(0.0, color='0.3', linewidth=1.0, linestyle='--')
+        ratios.setdefault((p.suite, p.kernel), []).append(p.ratio)
+    suites = sorted({s for s, _ in ratios}, key=lambda s: (SUITES.index(s) if s in SUITES else len(SUITES), s))
+    gap = max(2, len(ratios) // 30)
+    slot: dict[tuple[str, str], int] = {}
+    blocks: list[tuple[str, int, int]] = []
+    x = 0
+    for suite in suites:
+        kernels = sorted(k for s, k in ratios if s == suite)
+        if sort_by == 'speedup':
+            kernels.sort(key=lambda k: median_signed(ratios[(suite, k)]))
+        start = x
+        for kernel in kernels:
+            slot[(suite, kernel)] = x
+            x += 1
+        blocks.append((suite, start, x))
+        x += gap
+    return Layout(slot, blocks, max(1, x - gap))
+
+
+def sym(value: float) -> float:
+    """The symlog(linthresh=1) transform of a signed speedup, and :func:`unsym` its inverse.
+
+    Only used to pad the shared y limits by a constant fraction of the axis, which is otherwise
+    either wrong (padding in data units on a log tail) or left to symlog's decade snapping.
+    """
+    return value if abs(value) <= 1.0 else math.copysign(1.0 + math.log10(abs(value)), value)
+
+
+def unsym(value: float) -> float:
+    return value if abs(value) <= 1.0 else math.copysign(10.0**(abs(value) - 1.0), value)
+
+
+def y_bounds(values: list[float], symlog: bool) -> tuple[float, float]:
+    """Shared y limits: the data, padded by 6% of the axis it is actually drawn on."""
+    low, high = min(values), max(values)
+    if not symlog:
+        pad = 0.06 * (high - low) or 1.0
+        return low - pad, high + pad
+    pad = 0.06 * (sym(high) - sym(low)) or 0.1
+    return unsym(sym(low) - pad), unsym(sym(high) + pad)
+
+
+def block_ticks(layout: Layout, plotted: dict[str, int]) -> tuple[list[float], list[str]]:
+    """One x tick per corpus block, centred, carrying that corpus's coverage."""
+    positions, labels = [], []
+    for suite, start, stop in layout.blocks:
+        on_disk = CORPUS_SIZE.get(suite)
+        coverage = f'{plotted.get(suite, stop - start)}/{on_disk}' if on_disk else str(stop - start)
+        positions.append((start + stop - 1) / 2.0)
+        labels.append(f'{SUITE_TITLE.get(suite, suite)}\n{coverage} kernels')
+    return positions, labels
+
+
+def draw_arm_panel(ax: Axes, arm: str, points: list[Point], layout: Layout, symlog: bool, paired: bool) -> None:
+    """ONE arm: a dot per kernel, its geomean as a horizontal rule, and nothing joining the dots."""
+    colour = BACKEND_COLOUR[backend_of(arm)]
+    forced = not arm.endswith('-default')
+    size = DOT_SMALL + (DOT_LARGE - DOT_SMALL) * max(0.0, min(1.0, (223 - layout.width) / 169.0))
+    for index, (_suite, start, stop) in enumerate(layout.blocks):
+        if index % 2:
+            ax.axvspan(start - 0.5, stop - 0.5, color=BAND_INK, linewidth=0.0, zorder=0)
+    ax.scatter([layout.slot[(p.suite, p.kernel)] for p in points], [signed(p.ratio) for p in points],
+               s=size if forced else size * 1.9,
+               marker='o',
+               facecolors=colour if forced else 'none',
+               edgecolors=colour,
+               linewidths=0.0 if forced else 0.7,
+               alpha=0.85 if forced else 1.0,
+               zorder=4)
+    ax.axhline(0.0, color=AXIS_INK, linewidth=1.1, zorder=3)
+    gm, n = geomean(p.ratio for p in points)
+    if math.isfinite(gm):
+        ax.axhline(signed(gm), color=colour, linewidth=1.4, linestyle=(0, (5, 3)), zorder=5)
     if symlog:
-        # linthresh 1 keeps the +-1 band (parity to 2x either way) linear; the subs put labelled
-        # minor ticks between the decades, which a bare symlog axis leaves empty.
-        ax.set_yscale('symlog', linthresh=1.0, subs=[2, 5])
-        ax.yaxis.set_minor_formatter(FuncFormatter(tick_label))
-        ax.tick_params(axis='y', which='minor', labelsize=6)
+        # linthresh 1 keeps the +-1 band (parity to 2x either way) linear, so the interesting
+        # near-parity kernels are not squeezed onto one row of pixels.
+        ax.set_yscale('symlog', linthresh=1.0)
+    ax.set_yticks([signed(r) for r in SPEEDUP_TICKS])
     ax.yaxis.set_major_formatter(FuncFormatter(tick_label))
-    ax.grid(axis='y', alpha=0.25, linewidth=0.5)
-    ax.set_ylabel('signed speedup s\n0 = parity, +1 = 2x faster, -1 = 2x slower', fontsize=7.5)
-    ax.tick_params(labelsize=7)
-    on_disk = CORPUS_SIZE.get(suite)
-    coverage = f'{len(kernels)}/{on_disk}' if on_disk else str(len(kernels))
-    ax.set_title(
-        f'{SUITE_TITLE.get(suite, suite)}  -  speedup vs {DENOM_PHRASE.get(kind, kind)}'
-        f'  -  {coverage} kernels plotted',
-        fontsize=9,
-        loc='left')
-    if not dense:
-        ax.set_xticks(xs, [short_name(k) for k in kernels], rotation=90, fontsize=5.5)
-    else:
-        # 151 tsvc kernels cannot carry readable tick labels; the job's speedup.csv keeps the names.
-        ax.set_xticks([])
-        ax.set_xlabel(f'{len(kernels)} kernels, sorted by median speedup (names in the job\'s speedup.csv)', fontsize=7)
-    # Headroom for the legend: it carries the geomeans, so it must not sit on top of the points.
-    low, high = ax.get_ylim()
-    ax.set_ylim(low, high + 0.30 * (high - low))
-    # Two columns, not three: the arm labels carry their geomean, and three of them overflow the
-    # axes at the 9 in width a small corpus gets.
-    ax.legend(loc='upper left',
-              fontsize=6.0,
-              ncols=min(2, len(by_arm)),
-              framealpha=0.9,
-              title='thin horizontal rule = that arm\'s geomean of the raw ratio',
-              title_fontsize=6.0)
+    ax.minorticks_off()
+    ax.grid(axis='y', color=GRID_INK, linewidth=0.6, zorder=1)
+    ax.set_axisbelow(False)
+    ax.set_xlim(-1.0, layout.width)
+    ax.set_facecolor(SURFACE)
+    # labelleft on EVERY panel, not just the shared left column: the columns sit a figure width
+    # apart, and tracing a gridline that far is how a reader misreads a value.
+    ax.tick_params(labelsize=7, colors=INK_SOFT, length=2.5, labelleft=True)
+    for side in ('left', 'bottom'):
+        ax.spines[side].set(color=AXIS_INK, linewidth=0.8)
+    for side in ('right', 'top'):
+        ax.spines[side].set_visible(False)
+    variant = ('  -  forcing knob ON' if forced else '  -  compiler cost model decides') if paired else ''
+    gm_s = f'{gm:.2f}x' if math.isfinite(gm) else '--'
+    ax.set_title(f'{arm}\ngeomean {gm_s}  -  n={n}{variant}',
+                 fontsize=8.2,
+                 loc='left',
+                 color=INK,
+                 linespacing=1.4,
+                 pad=4.0)
+
+
+def draw_summary(ax: Axes, panels: list[tuple[str, str]], points: list[Point], symlog: bool) -> None:
+    """The ranking the small multiples cannot show at a glance: one geomean dot per arm, one axis.
+
+    A dot and a stem, never a polyline: these are eight independent numbers, not a trajectory.
+    """
+    labels, spread = [], [0.0]
+    for row, (kind, arm) in enumerate(reversed(panels)):
+        labels.append(arm)
+        gm, _n = geomean(p.ratio for p in points if p.arm == arm and p.kind == kind)
+        if not math.isfinite(gm):
+            continue
+        colour = BACKEND_COLOUR[backend_of(arm)]
+        forced = not arm.endswith('-default')
+        spread.append(signed(gm))
+        ax.plot([0.0, signed(gm)], [row, row], color=colour, linewidth=1.2, alpha=0.5, zorder=2)
+        ax.plot([signed(gm)], [row],
+                marker='o',
+                markersize=7.0,
+                color=colour,
+                markerfacecolor=colour if forced else SURFACE,
+                markeredgewidth=1.3,
+                zorder=3)
+        ax.annotate(f'{gm:.2f}x', (signed(gm), row),
+                    textcoords='offset points',
+                    xytext=(10, -2.5),
+                    fontsize=7.2,
+                    color=INK_SOFT)
+    ax.axvline(0.0, color=AXIS_INK, linewidth=1.1, zorder=1)
+    if symlog:
+        ax.set_xscale('symlog', linthresh=1.0)
+    ax.set_xticks([signed(r) for r in SPEEDUP_TICKS])
+    # Its own limits, not the panels': every geomean lands within a few x of parity, so borrowing
+    # the panels' 0.01x..100x span would squeeze the whole ranking into a tenth of the axis. Set
+    # AFTER set_xticks, which widens the view interval to span whatever ticks it is given.
+    low, high = y_bounds(spread, symlog)
+    ax.set_xlim(low, unsym(sym(high) + 0.15 * (sym(high) - sym(low))))
+    ax.xaxis.set_major_formatter(FuncFormatter(tick_label))
+    ax.set_yticks(range(len(labels)), labels)
+    ax.set_ylim(-0.8, len(labels) - 0.2)
+    ax.minorticks_off()
+    ax.grid(axis='x', color=GRID_INK, linewidth=0.6)
+    ax.set_axisbelow(True)
+    ax.set_facecolor(SURFACE)
+    ax.tick_params(labelsize=7, colors=INK_SOFT, length=2.5)
+    for side in ('left', 'bottom'):
+        ax.spines[side].set(color=AXIS_INK, linewidth=0.8)
+    for side in ('right', 'top'):
+        ax.spines[side].set_visible(False)
+    ax.set_title('geomean per arm  -  all kernels pooled', fontsize=8.2, loc='left', color=INK, pad=4.0)
+
+
+def legend_handles(layout: Layout, arms: list[str]) -> list[Line2D]:
+    """Proxies for the encoding itself: what a dot, a hollow dot and each rule mean."""
+    grey = dict(color='none', markeredgecolor=INK_MUTED, markerfacecolor=INK_MUTED)
+    suites = ' then '.join(SUITE_TITLE.get(s, s) for s, _, _ in layout.blocks)
+    backends = {backend_of(arm) for arm in arms}
+    hue_keys = [
+        Line2D([], [],
+               marker='o',
+               markersize=5,
+               color='none',
+               markerfacecolor=BACKEND_COLOUR[backend],
+               markeredgecolor='none',
+               label=f'dot colour: {backend} backend' if backend != 'other' else 'dot colour: neither')
+        for backend in ('gcc', 'llvm', 'other') if backend in backends
+    ]
+    return [
+        Line2D([], [], marker='o', markersize=5, label='one kernel x this arm', **grey),
+        Line2D([], [],
+               marker='o',
+               markersize=6.5,
+               color='none',
+               markeredgecolor=INK_MUTED,
+               markerfacecolor='none',
+               label='hollow: the `-default` twin of the arm above it'),
+        Line2D([], [],
+               color=INK_MUTED,
+               linestyle=(0, (5, 3)),
+               linewidth=1.4,
+               label="this arm's geomean of the raw "
+               'ratio (the number the table reports)'),
+        Line2D([], [], color=AXIS_INK, linewidth=1.4, label='parity, 1.00x'),
+        *hue_keys,
+        Line2D([], [], color='none', label=f'x: kernels, {suites}, each sorted by median speedup'),
+        Line2D([], [], color='none', label='no line joins kernels -- the x axis is categorical'),
+    ]
 
 
 def render_group(group: Group, report: Report, points: list[Point], out_path: Path, sort_by: str, symlog: bool,
                  dpi: int) -> Path:
     """Draw ONE group's panels into ONE figure and write it. Returns the path written."""
-    facets = facet_keys(points)
     arms = order_arms(p.arm for p in points)
-    widest = max(len({p.kernel for p in points if (p.suite, p.kind) == key}) for key in facets)
-    width = min(24.0, max(9.0, 0.09 * widest + 6.0))
-    fig, axes = plt.subplots(len(facets),
-                             1,
-                             figsize=(width, 3.2 * len(facets) + 2.2),
+    panels = panel_keys(points, arms)
+    layout = kernel_layout(points, sort_by)
+    plotted: dict[str, int] = {}
+    for suite, kernel in {(p.suite, p.kernel) for p in points}:
+        plotted[suite] = plotted.get(suite, 0) + 1
+    ncols = 1 if len(panels) < 2 else 2
+    # Reserved cells: the legend always, the per-arm ranking only when there is more than one arm to
+    # rank -- a lone lollipop restates the panel title in a cell-sized empty box.
+    reserved = 2 if len(panels) > 1 else 1
+    nrows = math.ceil((len(panels) + reserved) / ncols)
+    panel_w = min(11.0, max(4.2, 0.021 * layout.width + 3.6))
+    width = ncols * panel_w + 1.1
+    fig, axes = plt.subplots(nrows,
+                             ncols,
+                             figsize=(width, 2.35 * nrows + 2.4),
                              squeeze=False,
+                             sharex=True,
+                             sharey=True,
                              constrained_layout=True)
-    for ax, (suite, kind) in zip(axes[:, 0], facets, strict=True):
-        panel = [p for p in points if p.suite == suite and p.kind == kind]
-        draw_facet(ax, suite, kind, panel, arms, sort_by, symlog)
+    fig.patch.set_facecolor(SURFACE)
+    cells = [axes[r][c] for r in range(nrows) for c in range(ncols)]
+    positions, labels = block_ticks(layout, plotted)
+    kinds = {kind for kind, _ in panels}
+    twins = {arm.removesuffix('-default') for arm in arms if arm.endswith('-default')}
+    for cell, (kind, arm) in zip(cells, panels, strict=False):
+        draw_arm_panel(cell, arm, [p for p in points if p.arm == arm and p.kind == kind], layout, symlog,
+                       arm.removesuffix('-default') in twins)
+        if len(kinds) > 1:
+            cell.set_xlabel(f'vs {DENOM_PHRASE.get(kind, kind)}', fontsize=6.5, color=INK_SOFT)
+    cells[0].set_ylim(*y_bounds([signed(p.ratio) for p in points], symlog))
+    for column in range(ncols):
+        bottom = max((i for i in range(len(panels)) if i % ncols == column), default=None)
+        if bottom is not None:
+            cells[bottom].set_xticks(positions, labels)
+            cells[bottom].tick_params(axis='x', labelbottom=True, labelsize=7, colors=INK_SOFT)
+    for spare in cells[len(panels):]:
+        spare.set_axis_off()
+    if reserved > 1:
+        # The summary carries speedup on x, so it cannot stay in the shared-axis grid: it is dropped
+        # and rebuilt on its own cell.
+        spec = cells[len(panels)].get_subplotspec()
+        cells[len(panels)].remove()
+        draw_summary(fig.add_subplot(spec), panels, points, symlog)
+    cells[len(panels) + reserved - 1].legend(handles=legend_handles(layout, arms),
+                                             loc='upper left',
+                                             fontsize=7,
+                                             frameon=False,
+                                             labelcolor=INK_SOFT,
+                                             handletextpad=0.9,
+                                             title=f'one panel = one arm, {len(plotted)} '
+                                             f'{"corpus" if len(plotted) == 1 else "corpora"}, shared y axis',
+                                             title_fontsize=7.5,
+                                             alignment='left')
+    for index in range(0, len(panels), ncols):
+        cells[index].set_ylabel('signed speedup s\n0 = parity, +1 = 2x, -1 = half', fontsize=6.8, color=INK_SOFT)
     sources = ', '.join(short_path(s) for s in report.sources)
     kernels = len({(p.suite, p.kernel) for p in points})
     mode = '' if report.mode == 'corpus' else f' - denominator mode `{report.mode}`'
-    subtitle = (f'preset `{report.preset}`{mode} - {len(points)} measurements over {kernels} kernels - '
-                f'geomeans are over the RAW ratio - {sources}')
+    subtitle = (f'preset `{report.preset}`{mode} - {len(points)} measurements over {kernels} kernels in '
+                f'{len(panels)} arm panels - geomeans are over the RAW ratio - {sources}')
     # Wrapped against the figure width: an unwrapped provenance line is simply clipped off the page.
-    fig.suptitle(f'{group.title}\n' + textwrap.fill(subtitle, width=int(width * 13)), fontsize=10)
-    fig.supxlabel(textwrap.fill(group.caption, width=int(width * 13)), fontsize=7.5)
+    fig.suptitle(f'{group.title}\n' + textwrap.fill(subtitle, width=int(width * 13)), fontsize=10, color=INK)
+    fig.supxlabel(textwrap.fill(group.caption, width=int(width * 13)), fontsize=7.5, color=INK_SOFT)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=dpi)
     plt.close(fig)

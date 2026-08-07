@@ -7,11 +7,12 @@ Launched by ``submit_corpus_perf.sh`` beside it as ``X`` nodes x 4 ranks. A rank
 kernels it owns, hands itself a private build folder, and drives the two measurement drivers that
 already exist:
 
-  * ``tests.passes.canonicalize.canonicalize_perf_corpus_test`` -- the six timed arms
+  * ``tests.passes.canonicalize.canonicalize_perf_corpus_test`` -- the eight timed comparison arms
     (``dace-autoopt`` and ``dace-canon`` on each of g++/clang++, plus ``dace-simplify+gcc-autopar``
-    and ``dace-simplify+llvm-autopar`` on sequential post-simplify C++), each correctness-gated
-    against the corpus reference and each required to PROVE its pass engaged, plus ``seq-cpp`` as
-    the tsvc/tsvc_2_5 speedup denominator. Resumable through one JSON per kernel.
+    and ``dace-simplify+llvm-autopar`` on sequential post-simplify C++, each of those two both
+    forced and on the auto-parallelizer's own cost model), each correctness-gated against the corpus
+    reference and each required to PROVE its pass engaged, plus ``seq-cpp`` as the tsvc/tsvc_2_5
+    speedup denominator -- nine labels in all. Resumable through one JSON per kernel.
   * ``tests.corpus.measure_parallelization`` -- residual sequential loops per kernel, plus
     optional ``--check`` compile+run value-preservation.
 
@@ -85,7 +86,7 @@ SCRATCH_NEED_GIB = 4
 PARALLELISM_DRIVER = 'tests.corpus.measure_parallelization'
 PERF_DRIVER = 'tests.passes.canonicalize.canonicalize_perf_corpus_test'
 #: The plotter, run as a SCRIPT by ``--aggregate`` rather than imported: it must stay readable
-#: without dace, and importing the perf driver here would re-probe seven toolchains to draw a plot.
+#: without dace, and importing the perf driver here would re-probe nine toolchains to draw a plot.
 #: Resolved as a SIBLING of this file, so the three scripts travel together whatever the folder is
 #: called -- this one has already been at two paths in this tree.
 PLOT_SCRIPT = Path(__file__).resolve().with_name('plot_corpus_perf.py')
@@ -290,8 +291,10 @@ def aggregate(repo: Path, out: Path, perf_dir: Path, preset: str) -> int:
         worst = max(worst, drive([sys.executable, '-m', PARALLELISM_DRIVER, '--summarize'] + shards, repo))
     if perf_dir.is_dir():
         # ``--no-run`` re-exports the per-kernel JSON the ranks wrote; no second gather path. The
-        # arms are read back out of that JSON, so ``CANON_PERF_ARMS`` is deliberately NOT set for
-        # this step: gathering needs no toolchain and should not re-probe seven arms to copy numbers.
+        # columns are read back out of that JSON, so this step needs no toolchain -- but it INHERITS
+        # whatever ``CANON_PERF_ARMS`` the sweep exported, and a 1 re-probes all nine arms at import,
+        # so a probe that fails afterwards costs a finished run its outputs. The submit script
+        # therefore runs the aggregate step with ``CANON_PERF_ARMS=0``.
         worst = max(
             worst,
             drive([
@@ -336,7 +339,7 @@ def main() -> int:
     if args.aggregate:
         return aggregate(repo, out, perf_dir, args.preset)
 
-    # The six arms ARE this job, so the perf driver's full table is on unless the environment
+    # The nine arms ARE this job, so the perf driver's full table is on unless the environment
     # already said otherwise (``CANON_PERF_ARMS=0`` drops it to the plain g++ pair, for a smoke run
     # on a box without a polyhedral clang). The driver reads this at import, which is what lets it
     # probe every arm and abort before a node allocation is spent on a silently-disabled one.

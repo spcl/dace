@@ -1,6 +1,6 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """End-to-end PERFORMANCE / speedup harness over the four in-repo corpora (polybench,
-npbench, tsvc, tsvc_2_5): time six comparison arms per kernel on the same machine and
+npbench, tsvc, tsvc_2_5): time eight comparison arms per kernel on the same machine and
 report each arm's speedup against that corpus's own denominator.
 
 Design (resumable, one result file per kernel)
@@ -21,8 +21,8 @@ The pytest harness measures ONE kernel per test (``test_speedup[suite-kernel]``)
 * After measuring, it asserts the candidate pipelines are not grossly slower than
   the baseline (the ratio is the only assertion; absolute times are never asserted).
 
-The six arms (opt-in, ``--arms`` or ``CANON_PERF_ARMS=1``)
----------------------------------------------------------
+The eight arms (opt-in, ``--arms`` or ``CANON_PERF_ARMS=1``)
+------------------------------------------------------------
 An *arm* is a (SDFG pipeline, C++ compiler, extra flags) triple, expressed as an ordinary pipeline
 label -- so every arm gets the same correctness gate, the same timing path, the same speedup
 columns. There is exactly ONE job shape, because there is one figure::
@@ -196,7 +196,7 @@ _BUDGET_MS = float(os.environ.get('CANON_PERF_BUDGET_MS', '20000'))
 _PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
 #: Per-ARM cap. The kernel cap alone is not enough: its alarm is spent on whichever arm is
 #: running when it fires, so a single slow arm both loses itself and leaves its siblings
-#: unbounded. A third of the kernel budget lets the typical seven-arm kernel finish while
+#: unbounded. A third of the kernel budget lets the typical nine-arm kernel finish while
 #: still catching an arm that has genuinely run away.
 _PER_ARM_TIMEOUT = int(os.environ.get('CANON_PERF_ARM_TIMEOUT', str(max(60, _PER_KERNEL_TIMEOUT // 3))))
 #: Measure each OpenMP-runtime family in its OWN process. Load-bearing for the LLVM columns, not a
@@ -271,9 +271,9 @@ _PRE_EXPANSION = {
 # ``_PIPELINES`` entry plus a toolchain override around its build -- no second axis, no schema
 # change.
 #
-# There is exactly ONE job shape: the six arms the figure compares, plus ``seq-cpp`` because it is
-# the tsvc/tsvc25 denominator. Only the four DaCe arms are timed by default, since the other three
-# require a toolchain probe that must be allowed to fail loudly.
+# There is exactly ONE job shape: the eight arms the figure compares, plus ``seq-cpp`` because it is
+# the tsvc/tsvc25 denominator. Only the two g++ DaCe arms are timed by default; the full table is
+# opt-in because four of its arms credit an external pass whose probe must be allowed to fail loudly.
 # ---------------------------------------------------------------------------
 
 
@@ -405,8 +405,9 @@ _THREADS = os.environ.get('OMP_NUM_THREADS', '72')
 #:
 #: MEASURED AGAIN on g++ 16.1.0 / aarch64 Neoverse V2 (2026-08-06), which tripped it and stopped a
 #: sweep at OMP_NUM_THREADS=72. Bisected on the probe nest: parallelizes at every hint <= 40 and at
-#: NO hint >= 41, so ``submit_corpus_perf.sh`` pins the cap to 40 there. Two refinements over the
-#: x86 note above. First, the trigger is specifically ``-floop-nest-optimize``, not Graphite in
+#: NO hint >= 41, so ``resolve_autopar_hint`` settles on 40 there. ``submit_corpus_perf.sh``
+#: deliberately does NOT pin the cap: the probe discovers this width, and exporting a site number
+#: would go stale the moment the compiler changes. Two refinements over the x86 note above. First, the trigger is specifically ``-floop-nest-optimize``, not Graphite in
 #: general: at hint=72, ``-fgraphite-identity`` alone still emits GOMP_parallel and
 #: ``-floop-nest-optimize`` alone still suppresses it. Dropping it would buy the full 72 threads at
 #: the cost of the isl scheduling that makes this arm polyhedral at all, so the cap is preferred and
@@ -416,7 +417,7 @@ _THREADS = os.environ.get('OMP_NUM_THREADS', '72')
 _AUTOPAR_HINT_CAP = int(os.environ.get('CANON_PERF_GCC_AUTOPAR_HINT_CAP', _THREADS))
 _AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 #: Graphite is folded into the gcc autopar arm and Polly into the llvm one -- the user's table has
-#: six columns, and a polyhedral restructuring nobody then parallelizes answers no question the
+#: eight columns, and a polyhedral restructuring nobody then parallelizes answers no question the
 #: figure asks. Polly IS the llvm arm's polyhedral engine, so ``-polly -polly-parallel`` is both.
 #:
 #:
@@ -487,7 +488,7 @@ ARMS = (
 #: module is also collected by a plain ``pytest tests/``.
 _DEFAULT_ARMS = (ARMS[0], ARMS[2])
 
-#: Labels this harness used BEFORE the six-arm table, and what each became. DOCUMENTATION only:
+#: Labels this harness used BEFORE the current arm table, and what each became. DOCUMENTATION only:
 #: the per-kernel JSONs already on disk were measured at ``OMP_NUM_THREADS=8`` with neither the
 #: shared flag string nor the codegen pinned, so they are NOT the same measurement and are
 #: deliberately not renamed into the new labels. They still LOAD -- every reader keys off the labels
@@ -503,7 +504,7 @@ LEGACY_LABELS = {
     'gcc-autopar': 'dace-simplify+gcc-autopar',
     'clang-polly': 'dace-simplify+llvm-autopar',  # polly folded INTO the llvm autopar arm
     'llvm-autopar': 'dace-simplify+llvm-autopar',
-    'canon-serial+gcc-autopar': '',  # dropped: canonicalize-then-serialize is not one of the six
+    'canon-serial+gcc-autopar': '',  # dropped: canonicalize-then-serialize is not one of the arms
     'canon-serial+llvm-autopar': '',
 }  # ``seq-cpp`` is absent on purpose: it kept its name and its meaning, so nothing about it moved.
 
@@ -548,7 +549,7 @@ def probe_arm(arm: Arm) -> str:
     """
     if _IS_CHILD:
         # The parent probed every arm before spawning anything; re-proving it in each child would
-        # recompile the probe nest 7x per kernel for no extra integrity.
+        # recompile the probe nest 9x per kernel for no extra integrity.
         return f'{os.path.basename(arm.executable)} (probed in parent)'
     exe = shutil.which(arm.executable)
     if exe is None:
@@ -638,7 +639,7 @@ def resolve_autopar_hint(arm: Arm) -> Arm:
     the arm's REAL runtime width. parloops emits the number as a literal ``num_threads`` argument
     (``mov w2, <N>; bl GOMP_parallel`` on aarch64, verified by disassembling the probe object), so
     the region does NOT widen to ``OMP_NUM_THREADS``. Every step down therefore costs real
-    parallelism and understates this one column against the other five. That is why the search walks
+    parallelism and understates this one column against every other one. That is why the search walks
     a fine ladder near the top and why the chosen width is printed and recorded: a narrower arm is a
     legitimate measurement only when the reader can see how narrow.
 
@@ -712,10 +713,10 @@ def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
 
 
 def arms_requested(value: str) -> bool:
-    """Whether ``value`` (a CLI flag or ``CANON_PERF_ARMS``) asks for the full six-arm table.
+    """Whether ``value`` (a CLI flag or ``CANON_PERF_ARMS``) asks for the full nine-arm table.
 
     Any non-empty, non-false value counts, including the job-shape names this harness used to take
-    -- a batch job that still exports ``CANON_PERF_ARMS=pipelines`` gets the six arms rather than a
+    -- a batch job that still exports ``CANON_PERF_ARMS=pipelines`` gets the full table rather than a
     crash halfway through a node allocation.
     """
     return value not in ('', '0', 'false', 'False')
@@ -1005,7 +1006,7 @@ def restore_affinity() -> None:
 def run_arm(ctx, label: str, deadline: float) -> dict:
     """Build, correctness-gate and time ONE arm; return its result entry.
 
-    Never raises: a failure is the arm's own ``error`` field, so one bad arm cannot lose the six
+    Never raises: a failure is the arm's own ``error`` field, so one bad arm cannot lose the eight
     that worked. Bounded by its own alarm, clamped to the kernel deadline the caller set.
     """
     entry: dict[str, Any] = {}
@@ -1266,12 +1267,12 @@ def has_current_arms(path: str, suite: str = '', name: str = '') -> bool:
 
     Plain file existence is NOT enough. The results directory carries files written before the arm
     table existed -- two pipelines, a different thread count, unpinned flags -- and skipping those
-    would have the sweep silently report stale two-column data under a six-arm heading. A preset
+    would have the sweep silently report stale two-column data under a nine-arm heading. A preset
     whose dataset failed to build carries no pipelines and is left alone: re-running it would only
     fail the same way, every sweep.
 
     Neither is the arm set alone enough, which is the failure this second check exists to stop: a
-    record can hold all seven arms and still be stale because the KERNEL changed under it. Editing a
+    record can hold all nine arms and still be stale because the KERNEL changed under it. Editing a
     ``paper_sizes`` row leaves every arm present and every number measured at the old shape, so the
     sweep would skip it forever and the table would mix shapes without saying so -- exactly what
     happened when the stencil ``tsteps`` were levelled. Comparing the recorded shape against the one
@@ -1514,12 +1515,12 @@ def export_markdown(md_path, results_dir=None):
     speedup vs baseline) plus a geomean + correctness summary line. Returns the path."""
     records = _load_records(results_dir)
     # A record written under a superseded arm table keeps its own baseline label, so its rows are
-    # rendered against THAT baseline and counted here. Silently mixing it into the six-arm columns
+    # rendered against THAT baseline and counted here. Silently mixing it into the current columns
     # would compare measurements taken at a different thread count and different compiler flags.
     stale = sorted(k for k, r in records.items() if r.get('baseline') != BASELINE)
 
     out = [
-        f"# Corpus speedup — six arms, baseline `{BASELINE}`",
+        f"# Corpus speedup — {len(ARMS) - 1} comparison arms, baseline `{BASELINE}`",
         "",
         f"host `{_HOST}` · OMP `{os.environ.get('OMP_NUM_THREADS', '')}` · "
         f"best-of `{_REPS}` (warmup {_WARMUP}) · kernels measured `{len(records)}` · generated `{_now()}`",
@@ -1531,7 +1532,7 @@ def export_markdown(md_path, results_dir=None):
     if stale:
         moved = ', '.join(f"`{old}` -> `{LEGACY_LABELS[old] or 'dropped'}`" for old in labels if old in LEGACY_LABELS)
         out += [
-            "", f"> ⚠ `{len(stale)}` record(s) predate the six-arm table (their `baseline` is not "
+            "", f"> ⚠ `{len(stale)}` record(s) predate the current arm table (their `baseline` is not "
             f"`{BASELINE}`). Their superseded labels get their own columns rather than being folded "
             f"into the arms that replaced them ({moved}); re-run those kernels to refresh."
         ]
@@ -1668,7 +1669,7 @@ if __name__ == '__main__':
                     help='also save each pipeline SDFG before libnode expansion to <dir>/sdfg/')
     ap.add_argument('--arms',
                     action='store_true',
-                    help=f'time all {len(ARMS)} arms (the six compared + seq-cpp) instead of only the '
+                    help=f'time all {len(ARMS)} arms (the eight compared + seq-cpp) instead of only the '
                     'two g++ DaCe pipelines; aborts if a toolchain cannot prove its passes ran')
     args = ap.parse_args()
     if args.dir:
