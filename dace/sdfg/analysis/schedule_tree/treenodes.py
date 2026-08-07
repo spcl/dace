@@ -624,6 +624,11 @@ class PythonCallbackNode(ScheduleTreeNode):
     reason: str
     input_names: List[str] = field(default_factory=list)
     output_names: List[str] = field(default_factory=list)
+    #: Symbols the body reads. A symbol has no container to connect, so its
+    #: VALUE is passed to the callback as an extra scalar argument -- without
+    #: which a body that reads, say, a surrounding loop's variable raises
+    #: ``NameError`` inside the interpreter, where it cannot propagate.
+    symbol_names: List[str] = field(default_factory=list)
     outlined_function_name: Optional[str] = None
     outlined_function_code: Optional[CodeBlock] = None
     outlined_call_code: Optional[CodeBlock] = None

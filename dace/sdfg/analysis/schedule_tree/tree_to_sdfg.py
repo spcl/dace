@@ -1111,7 +1111,13 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         if self._dataflow_stack:
             raise NotImplementedError("Python callbacks inside dataflow scopes are not supported.")
 
+        # A symbol has no container to connect, so its VALUE is appended to the
+        # callback's signature as a scalar and passed straight from the symbol
+        # in scope at the call site. Without it the body would read an
+        # undefined name in the interpreter (see ``PythonCallbackNode``).
+        symbol_names = [name for name in node.symbol_names if name not in node.input_names]
         input_types = [sdfg.arrays[name] for name in node.input_names]
+        input_types.extend(sdfg.symbols[name] if name in sdfg.symbols else dtypes.int64 for name in symbol_names)
         output_types = [sdfg.arrays[name] for name in node.output_names]
         if not output_types:
             return_type = None
@@ -1136,11 +1142,14 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
 
         input_connectors = {f'__in_{name}' for name in node.input_names} | {'__istate'}
         output_connectors = {f'__out_{name}' for name in node.output_names} | {'__ostate'}
-        input_arguments = ', '.join(f'__in_{name}' for name in node.input_names)
+        # Symbols are ordinary variables in the generated scope, so they are
+        # named directly rather than through a connector.
+        passed_inputs = [f'__in_{name}' for name in node.input_names] + list(symbol_names)
+        input_arguments = ', '.join(passed_inputs)
         if callback_type.is_scalar_function() and len(callback_type.return_types) > 0:
             code = f'__out_{node.output_names[0]} = {function_name}({input_arguments})'
         else:
-            all_arguments = [f'__in_{name}' for name in node.input_names]
+            all_arguments = list(passed_inputs)
             all_arguments.extend(f'__out_{name}' for name in node.output_names)
             code = f'{function_name}({", ".join(all_arguments)})'
 
@@ -1149,10 +1158,19 @@ class _StreeToSDFG(tn.ScheduleNodeVisitor):
         tasklet = nodes.Tasklet(f'callback_{id(node)}', input_connectors, output_connectors, code, side_effects=True)
         tasklet.add_in_connector('__istate', dtypes.int32, force=True)
         tasklet.add_out_connector('__ostate', dtypes.int32, force=True)
-        # Avoid casting output pointers to scalars in code generation
+        # Avoid casting pointers to scalars in code generation. The callback's
+        # signature takes every data argument by pointer, including a
+        # single-element one, but a shape-(1,) connector is otherwise rendered
+        # as a value -- and passing it then fails to compile ("cannot convert
+        # 'double' to 'const double*' in argument passing"). Both directions
+        # need it: an input of ``callback(a[0])`` is as much a pointer as an
+        # output.
         for name in node.output_names:
             if tuple(sdfg.arrays[name].shape) == (1, ):
                 tasklet._out_connectors[f'__out_{name}'] = dtypes.pointer(sdfg.arrays[name].dtype)
+        for name in node.input_names:
+            if tuple(sdfg.arrays[name].shape) == (1, ):
+                tasklet._in_connectors[f'__in_{name}'] = dtypes.pointer(sdfg.arrays[name].dtype)
 
         in_memlets = {f'__in_{name}': Memlet.from_array(name, sdfg.arrays[name]) for name in node.input_names}
         in_memlets['__istate'] = Memlet.from_array('__pystate', sdfg.arrays['__pystate'])

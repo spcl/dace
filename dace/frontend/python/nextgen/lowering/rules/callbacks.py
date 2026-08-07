@@ -19,7 +19,7 @@ import ast
 import builtins
 import copy
 import warnings
-from typing import Optional
+from typing import Optional, Sequence
 
 from dace import data, dtypes
 from dace.config import Config
@@ -82,6 +82,7 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
     code = '\n'.join(ast.unparse(original) for original in reconstituted)
     renamed = _rename_to_repository(reconstituted, source_to_repository)
     _register_free_globals(renamed, set(input_names) | set(output_names), state)
+    symbol_names = _referenced_symbols(renamed, state)
 
     # Emission-time batching: if this scope's previous node is already a
     # callback, extend it instead of emitting a second one. Both statement
@@ -90,24 +91,28 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
     # relative order within the merged run is preserved).
     children = state.emitter.current_scope.children
     previous = children[-1] if children else None
-    if isinstance(previous, tn.PythonCallbackNode):
-        _merge_into(previous, statement.reason, code, renamed, input_names, output_names, state)
+    # ``dont_fuse_callbacks`` asks for callbacks to stay separable, which the
+    # state-fusion transformation honours downstream -- but it cannot undo a
+    # merge that already happened here, so the batching is skipped outright.
+    if isinstance(previous, tn.PythonCallbackNode) and not Config.get_bool('frontend', 'dont_fuse_callbacks'):
+        _merge_into(previous, statement.reason, code, renamed, input_names, output_names, symbol_names, state)
         return
 
     function_name = state.context.fresh_name('__nextgen_callback')
-    function_code, call_code = _outline(renamed, function_name, input_names, output_names, state)
+    function_code, call_code = _outline(renamed, function_name, input_names, output_names, state, symbol_names)
     state.emitter.emit(
         tn.PythonCallbackNode(code=CodeBlock(code),
                               reason=statement.reason,
                               input_names=input_names,
                               output_names=output_names,
+                              symbol_names=symbol_names,
                               outlined_function_name=function_name,
                               outlined_function_code=function_code,
                               outlined_call_code=call_code))
 
 
 def _merge_into(previous: tn.PythonCallbackNode, reason: str, code: str, renamed: list, input_names: list,
-                output_names: list, state: LoweringState) -> None:
+                output_names: list, symbol_names: list, state: LoweringState) -> None:
     """Extend an adjacent callback node with another statement run, chaining
     I/O (names the earlier run produced are not inputs of the merged run) and
     rebuilding the outlined scaffolding under the same callback name."""
@@ -121,13 +126,18 @@ def _merge_into(previous: tn.PythonCallbackNode, reason: str, code: str, renamed
     _register_free_globals(renamed, set(merged_inputs) | set(merged_outputs), state)
     previous.code = CodeBlock(f'{previous.code.as_string}\n{code}')
     previous.reason = '; '.join(dict.fromkeys([previous.reason, reason]))
+    merged_symbols = list(previous.symbol_names)
+    merged_symbols.extend(name for name in symbol_names if name not in merged_symbols)
+
     previous.input_names = merged_inputs
     previous.output_names = merged_outputs
+    previous.symbol_names = merged_symbols
     previous.outlined_function_code, previous.outlined_call_code = _outline(previous_renamed + renamed,
                                                                             previous.outlined_function_name,
                                                                             merged_inputs,
                                                                             merged_outputs,
                                                                             state,
+                                                                            merged_symbols,
                                                                             register=False)
 
 
@@ -148,6 +158,7 @@ def _outline(renamed: list,
              input_names: list,
              output_names: list,
              state: LoweringState,
+             symbol_names: Sequence[str] = (),
              register: bool = True):
     """
     Build the outlined callback scaffolding (a function definition over the
@@ -162,10 +173,30 @@ def _outline(renamed: list,
     function_code, call_code = CallbackOutliner.outline(renamed,
                                                         callback_name=function_name,
                                                         input_names=input_names,
-                                                        output_names=output_names)
+                                                        output_names=output_names,
+                                                        symbol_names=symbol_names)
     if register:
         state.emitter.root.callback_mapping[function_name] = function_name
     return function_code, call_code
+
+
+def _referenced_symbols(statements: list, state: LoweringState) -> list:
+    """
+    The symbols a callback body reads, in a stable order.
+
+    A symbol is not a container, so nothing connects it to the callback -- yet
+    the body may well name one, most commonly a surrounding loop's variable
+    (``for n in range(maxiter): N[mask] = n``). Left out, the interpreter
+    raises ``NameError`` inside the callback, where it cannot propagate: the
+    statement silently does nothing. They are therefore passed by value as
+    extra scalar arguments.
+
+    :param statements: The repository-renamed body.
+    :param state: The active lowering state.
+    :return: Symbol names the body reads, sorted.
+    """
+    names = {node.id for statement in statements for node in ast.walk(statement) if isinstance(node, ast.Name)}
+    return sorted(name for name in names if name in state.context.symbols)
 
 
 def _static_expansions(statement: OpaqueStmt, state: LoweringState) -> dict:
@@ -361,13 +392,19 @@ def _register_free_globals(statements: list, bound: set, state: LoweringState) -
             if (name in bound or name in assigned or name in state.context.constants or name in state.context.containers
                     or name in state.context.symbols or hasattr(builtins, name)):
                 continue
-            if name in state.context.globals:
-                value = state.context.globals[name]
-            elif name in state.context.callback_callables:
-                # A callback preprocessing detected: the call was rewritten to
-                # a sanitized name that is a global of no scope, so the
-                # callable only exists in the closure it came from.
+            if name in state.context.callback_callables:
+                # A callback preprocessing detected. Checked BEFORE the globals,
+                # which may hold the same function under the same name: what
+                # preprocessing prepared is the one to call, since it carries
+                # the wrapping the raw object lacks -- an ``async def`` callee
+                # is wrapped to run its coroutine to completion, and calling the
+                # global instead hands the program a coroutine object it never
+                # awaits (``float() argument must be ... not 'coroutine'``).
+                # Only calls preprocessing did NOT detect fall through to the
+                # global, which is then the original object anyway.
                 value = state.context.callback_callables[name]
+            elif name in state.context.globals:
+                value = state.context.globals[name]
             else:
                 continue
             # Always opaque: these constants exist only for the callback

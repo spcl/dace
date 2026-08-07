@@ -62,11 +62,22 @@ class CallbackOutliner:
         return CodeBlock(CallbackOutliner._body_nodes(body))
 
     @staticmethod
-    def outline(body: CallbackBody, *, callback_name: str, input_names: Sequence[str],
-                output_names: Sequence[str]) -> Tuple[CodeBlock, CodeBlock]:
-        """Build outlined function and call-site scaffolding for ``body``."""
+    def outline(body: CallbackBody,
+                *,
+                callback_name: str,
+                input_names: Sequence[str],
+                output_names: Sequence[str],
+                symbol_names: Sequence[str] = ()) -> Tuple[CodeBlock, CodeBlock]:
+        """
+        Build outlined function and call-site scaffolding for ``body``.
+
+        :param symbol_names: Symbols the body reads. They become trailing
+                             parameters, passed by value, since a symbol has no
+                             container to connect.
+        """
         input_names = list(input_names)
         output_names = list(output_names)
+        parameters = input_names + [name for name in symbol_names if name not in input_names]
         function_body = CallbackOutliner._body_nodes(body)
         if output_names:
             returned = ast.Name(id=output_names[0], ctx=ast.Load())
@@ -76,7 +87,7 @@ class CallbackOutliner:
 
         function_def = ast.FunctionDef(name=callback_name,
                                        args=ast.arguments(posonlyargs=[],
-                                                          args=[ast.arg(arg=name) for name in input_names],
+                                                          args=[ast.arg(arg=name) for name in parameters],
                                                           vararg=None,
                                                           kwonlyargs=[],
                                                           kw_defaults=[],
@@ -87,7 +98,7 @@ class CallbackOutliner:
         function_code = CodeBlock([ast.fix_missing_locations(function_def)])
 
         call_expr = ast.Call(func=ast.Name(id=callback_name, ctx=ast.Load()),
-                             args=[ast.Name(id=name, ctx=ast.Load()) for name in input_names],
+                             args=[ast.Name(id=name, ctx=ast.Load()) for name in parameters],
                              keywords=[])
         if not output_names:
             call_stmt: ast.stmt = ast.Expr(value=call_expr)

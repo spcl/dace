@@ -87,17 +87,23 @@ def run_mandelbrot1(device_type: dace.dtypes.DeviceType):
 
     # Compute ground truth and validate
     Z_ref, N_ref = ground_truth(xmin, xmax, ymin, ymax, XN, YN, maxiter)
-    assert np.allclose(Z, Z_ref)
-    assert np.allclose(N, N_ref)
+
+    # The escape counts are the kernel's actual output and must match exactly.
+    assert np.array_equal(N, N_ref)
+
+    # Z is a chaotic iterate, so it is only compared loosely. This kernel's own
+    # ``linspace`` computes ``start + i * dist`` where ``np.linspace`` pins the
+    # endpoints, which puts ``Y[YN // 2]`` one ulp off zero (-2.8e-17 against
+    # 0.0). Sixty rounds of ``z = z**2 + c`` amplify that to ~5e-5 for the few
+    # points sitting exactly on the real axis -- 4 of 15625 here.
+    assert np.allclose(Z, Z_ref, rtol=1e-3, atol=1e-3)
     return sdfg
 
 
-@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 def test_cpu():
     run_mandelbrot1(dace.dtypes.DeviceType.CPU)
 
 
-@pytest.mark.skip(reason="Parsing error (see issue #1139)")
 @pytest.mark.gpu
 def test_gpu():
     run_mandelbrot1(dace.dtypes.DeviceType.GPU)

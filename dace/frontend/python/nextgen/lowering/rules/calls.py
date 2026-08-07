@@ -196,9 +196,22 @@ def _prepare_callee(
     # sites: closure-array descriptor identity drives qualified-name
     # deduplication.
     closure = parse.closure
+    # Two closures can name their callbacks identically -- a helper called ``b``
+    # defined inside each of two factory functions is two different functions
+    # under one name. Registering with ``setdefault`` alone kept whichever
+    # arrived first and pointed BOTH call sites at it, so one of the callbacks
+    # silently ran twice and the other never. Give the newcomer a fresh name and
+    # rewrite the callee body that refers to it.
+    callback_renames: Dict[str, str] = {}
     for callback_name, (original, function, _) in closure.callbacks.items():
+        callable_object = interpreter_callable(function)
+        existing = state.context.callback_callables.get(callback_name)
+        if existing is not None and existing is not callable_object:
+            renamed = data.find_new_name(callback_name, state.context.callback_callables)
+            callback_renames[callback_name] = renamed
+            callback_name = renamed
         state.emitter.root.callback_mapping.setdefault(callback_name, original)
-        state.context.callback_callables.setdefault(callback_name, interpreter_callable(function))
+        state.context.callback_callables.setdefault(callback_name, callable_object)
     for constant_name, value in closure.closure_constants.items():
         descriptor = closure_constant_descriptor(value)
         if descriptor is not None:
@@ -216,7 +229,22 @@ def _prepare_callee(
     # programs, SDFGs, arbitrary constants): resolution, convertibility checks
     # and the parse-cache key itself are identity-based on them.
     body = astutils.copy_tree(parse.canonical_body)
+    if callback_renames:
+        body = [_rename_callback_references(statement, callback_renames) for statement in body]
     return body, parameter_bindings, parse.program_globals, argument_labels, pending_views, pending_symbols
+
+
+def _rename_callback_references(statement: ast.stmt, renames: Dict[str, str]) -> ast.stmt:
+    """Point a callee body's callback references at their deduplicated names."""
+
+    class _Renamer(ast.NodeTransformer):
+
+        def visit_Name(self, node: ast.Name) -> ast.Name:
+            if isinstance(node.ctx, ast.Load) and node.id in renames:
+                node.id = renames[node.id]
+            return node
+
+    return ast.fix_missing_locations(_Renamer().visit(statement))
 
 
 def _declared_parameter_descriptor(callee: Any, parameter: str) -> Optional[data.Data]:
