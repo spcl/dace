@@ -42,12 +42,9 @@ arm is one column that must prove BOTH its passes ran. ``seq-cpp`` (post-simplif
 flags only) is measured alongside them but is not a comparison arm -- it is the tsvc/tsvc25
 speedup denominator.
 
-Each auto-parallelizer is measured BOTH forced and on its own cost model (the ``-default`` arms,
-same flags minus only the forcing knob), because the gap between them is a result: Polly declines
-flat 1-D loops outright, so unforced it emits no parallel region on most of tsvc and the column
-measures sequential code (1.268x vs 7.365x forced), while gcc barely moves (7.975x vs 7.872x). One
-pair alone would either hide that the LLVM column is a policy artefact or hide that Polly can do
-better when told to. See ``_LLVM_AUTOPAR_FLAGS`` and ``ARMS``.
+Each auto-parallelizer is measured BOTH forced and on its own cost model, because the gap is a
+result: forcing takes Polly from 1.209x to 7.572x (unforced it declines flat 1-D loops and times
+sequential code) while gcc barely moves, 8.058x to 8.088x.
 
 Rules that make the numbers mean something:
 
@@ -349,30 +346,9 @@ def serialize(sdfg: dace.SDFG) -> dace.SDFG:
     return sdfg
 
 
-#: Compiled by every probe. TWO shapes on purpose: the flat loop is the shape the corpus is actually
-#: made of, and the nest is the one both polyhedral engines were built for. A probe carrying only
-#: the nest attests a capability the measured kernels never exercise.
-#:
-#: That gap is not hypothetical -- measured on this box with each compiler left to its OWN cost model
-#: (i.e. with the forcing flags both arms now carry removed), the two accept OPPOSITE shapes:
-#:
-#: ===============================  =========  ==========
-#: shape                            g++ 16.1   Polly 22.1
-#: ===============================  =========  ==========
-#: flat 1-D, runtime bound          parallel   declines
-#: flat 1-D, constant 589824        parallel   declines
-#: 2-D nest, constant bounds        declines   parallel
-#: ===============================  =========  ==========
-#:
-#: With the nest alone, an unforced gcc arm would send ``resolve_autopar_hint`` down the width ladder
-#: hunting a width that parallelizes it, find none, and kill an arm that handles the real corpus
-#: fine. Both arms force today, so both shapes parallelize and the probe is green either way -- but
-#: the flat loop stays, because it is what keeps the probe honest if the forcing policy is ever
-#: revisited, and because a probe should look like the code being measured.
-#:
-#: READ THE PROBE LINE NARROWLY REGARDLESS. It proves the pass CAN parallelize something, never that
-#: it did anything to a given kernel. A green probe and a sequential column are consistent, and that
-#: combination is exactly what hid a Polly arm that was timing unparallelized code.
+#: BOTH shapes are needed: unforced, gcc parallelizes the flat loop and declines the nest, Polly the
+#: reverse (see commit 77676aea6). A green probe proves a pass CAN parallelize something, never that
+#: it touched a measured kernel.
 _PROBE_SRC = ('void probe_scop(double *__restrict__ A, double *__restrict__ B, double *__restrict__ C) {\n'
               '    for (int i = 0; i < 4096; i++)\n'
               '        for (int j = 0; j < 4096; j++)\n'
@@ -443,62 +419,23 @@ _AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 #: six columns, and a polyhedral restructuring nobody then parallelizes answers no question the
 #: figure asks. Polly IS the llvm arm's polyhedral engine, so ``-polly -polly-parallel`` is both.
 #:
-#: NO ``-floop-nest-optimize``, deliberately, and this is the one flag choice that decides what this
-#: column means. It is the isl loop-nest scheduler -- the strongest polyhedral transform gcc has --
-#: but on g++ 16.1 / Neoverse V2 it also suppresses parloops above width 40 (see
-#: ``resolve_autopar_hint``), and the width is the arm's REAL runtime thread count. Keeping it means
-#: this arm runs 40 threads while the other five run ``OMP_NUM_THREADS``, so its column is
-#: understated by the width ratio and is not comparable with the rest of the table.
 #:
-#: Every arm running the SAME width is the stronger property, so the scheduler is what gives way:
-#: with only ``-fgraphite-identity`` the probe emits ``GOMP_parallel`` at the full 72 (verified by
-#: disassembly: ``mov w2, 72``) and Graphite still reports its SCoP. The honest reading of this
-#: column is therefore "gcc auto-parallelization, Graphite code generation, no isl rescheduling" --
-#: NOT "gcc's polyhedral optimizer". Set CANON_PERF_GCC_AUTOPAR_FLAGS to put it back and accept the
-#: narrower arm; ``resolve_autopar_hint`` will then step the width down and say so.
+#: NO ``-floop-nest-optimize``: on g++ 16.1 / Neoverse V2 it suppresses parloops above width 40, and
+#: that width is the arm's real thread count, so it would run 40 threads against everyone else's 72.
+#: Read this column as "gcc autopar + Graphite codegen, no isl rescheduling".
 #:
-#: ``-floop-parallelize-all`` parallelizes "regardless of profitability heuristics", and it is KEPT
-#: deliberately, matching ``-polly-parallel-force`` on the llvm arm. Both columns therefore report
-#: what an auto-parallelizer achieves when told to parallelize everything it PROVED SAFE -- forcing
-#: overrides the profitability heuristic only, never the dependence analysis, so neither arm is ever
-#: credited with a loop its compiler could not prove parallel.
 #:
-#: For gcc the flag is nearly free either way: 7.872x forced against 7.975x on gcc's own cost model
-#: over a 16-kernel tsvc+tsvc25 sweep, i.e. inside the noise, because parloops already accepts the
-#: flat 1-D loops this corpus is made of. It is the llvm arm the policy decides (1.268x -> 7.365x,
-#: see ``_LLVM_AUTOPAR_FLAGS``). Forcing on both is what makes the two columns ONE policy instead of
-#: two, which is the only way the pair is comparable.
+#: ``-floop-parallelize-all`` forces past the profitability heuristic (never the dependence
+#: analysis), pairing with ``-polly-parallel-force``; for gcc it is inside the noise, 8.088x against
+#: 8.058x. Commit 77676aea6 has the measurements.
 _GCC_AUTOPAR_FLAGS = os.environ.get(
     'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={_AUTOPAR_HINT} -floop-parallelize-all '
     '-fgraphite-identity')
-#: ``-polly-omp-backend=LLVM`` is NOT optional here, and it is the difference between this column
-#: measuring Polly and measuring an OpenMP runtime fight. Polly defaults to ``GNU``, which emits
-#: ``GOMP_parallel_loop_runtime_start``/``GOMP_parallel_end`` -- **libgomp** -- while the very same
-#: command line links ``-fopenmp``, i.e. clang's **libomp**. Both runtimes then live in one process,
-#: each spins up its own ``OMP_NUM_THREADS`` pool, and they burn cores against each other: measured
-#: ~34x on this box, symmetric (it punishes whichever pair is co-resident, not clang). This arm is
-#: ``blas=pure``, so Polly's own backend choice is the ONLY thing that pulls libgomp in -- nothing
-#: else to blame and nothing else to fix. Verified on the same source, same flags, backend the only
-#: variable: ``GNU`` -> ``GOMP_parallel_end GOMP_loop_runtime_next GOMP_loop_end_nowait``,
-#: ``LLVM`` -> ``__kmpc_fork_call __kmpc_dispatch_init_ __kmpc_dispatch_next_``.
-#:
-#: ``-polly-process-unprofitable`` widens what Polly will CONSIDER a SCoP; ``-polly-parallel-force``
-#: then parallelizes what it proved safe, "ignoring any cost model". Both are needed and neither is
-#: sufficient: with process-unprofitable alone the region becomes a valid SCoP and Polly STILL emits
-#: no parallel code.
-#:
-#: This is the deliberate policy choice, and the table should say so. Left to its own cost model
-#: Polly declines flat 1-D loops -- which is what tsvc is almost entirely made of -- and this arm
-#: then measures SEQUENTIAL code: 1.268x over ``seq-cpp``, with zero ``__kmpc_fork_call`` in the
-#: built objects for s000/s111/s112/s1111. Forcing takes the same 16-kernel sweep to **7.365x**, and
-#: on the arm's own generated code 0 fork calls -> 1 fork call + 2 outlined ``polly_subfn``.
-#:
-#: The refusal is NOT a size judgement, so do not try to fix it with bigger inputs: measured, Polly
-#: emits nothing for a flat loop of 589824 compile-time-constant iterations, and nothing for
-#: 100000000. It declines flat loops structurally, whatever the trip count.
-#:
-#: So this column is the auto-parallelizer's CEILING, not its default behaviour, and it is paired
-#: with ``-floop-parallelize-all`` on the gcc arm so that both columns are the same policy.
+#: ``-polly-omp-backend=LLVM`` keeps libgomp out of a process that already links libomp (two
+#: co-resident runtimes cost ~34x). ``-process-unprofitable`` widens SCoP detection and
+#: ``-parallel-force`` then parallelizes what Polly proved safe -- neither alone emits any parallel
+#: code, and unforced Polly declines flat 1-D loops at any trip count, so this column would otherwise
+#: time sequential code (1.209x vs 7.572x). Commit 77676aea6 and 20ae06d56 have the measurements.
 _LLVM_AUTOPAR_FLAGS = os.environ.get(
     'CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp -mllvm -polly -mllvm -polly-parallel '
     '-mllvm -polly-omp-backend=LLVM -mllvm -polly-process-unprofitable -mllvm -polly-parallel-force')
@@ -511,11 +448,8 @@ _DACE_BLAS = os.environ.get('CANON_PERF_DACE_BLAS', 'OpenBLAS')
 #: ``GOMP_parallel`` as an UNDEFINED SYMBOL of the probe object is a stronger engagement proof than
 #: any diagnostic: it means the compiler really emitted a parallel region.
 _AUTOPAR_MARKER = 'GOMP_parallel'
-#: The same proof for the Polly arm, which pins ``-polly-omp-backend=LLVM`` and therefore emits
-#: libomp's ``__kmpc_fork_call`` rather than any ``GOMP_`` symbol. Kept as a SEPARATE constant, not
-#: folded into a substring both runtimes match: the marker is what stops the two arms silently
-#: swapping runtimes, so a marker that accepted either would be checking nothing. If Polly ever
-#: reverts to the GNU backend, this probe fails loudly instead of quietly re-creating the conflict.
+#: Separate from ``_AUTOPAR_MARKER``, not a substring both runtimes match: a marker accepting either
+#: would not catch Polly reverting to the GNU backend and re-creating the libgomp+libomp conflict.
 _LLVM_AUTOPAR_MARKER = '__kmpc_fork_call'
 #: The polyhedral half of each external arm, reported by its own dump/remark flag. Required
 #: *alongside* the autopar marker: an arm credited with Graphite that only ran ``-ftree-parallelize``
@@ -523,24 +457,15 @@ _LLVM_AUTOPAR_MARKER = '__kmpc_fork_call'
 _GRAPHITE_MARKER = 'Adding SCoP'
 _POLLY_MARKER = 'SCoP begins here'
 
-#: The unforced counterpart of each autopar arm: the SAME flag string minus only its forcing knob, so
-#: the pair differs in exactly one flag and cannot drift apart when either is overridden by env var.
-#: Derived by removal rather than spelled out for that reason -- two independent literals would let a
-#: ``CANON_PERF_GCC_AUTOPAR_FLAGS`` override silently change one half of a paired comparison.
+#: Derived by REMOVAL so the pair always differs in exactly one flag, even under an env override.
 _GCC_AUTOPAR_DEFAULT_FLAGS = _GCC_AUTOPAR_FLAGS.replace(' -floop-parallelize-all', '')
 _LLVM_AUTOPAR_DEFAULT_FLAGS = _LLVM_AUTOPAR_FLAGS.replace(' -mllvm -polly-parallel-force', '')
 
 #: The EIGHT comparison arms + ``seq-cpp``, in column order (the baseline first). An arm with EMPTY
 #: ``flags`` is a plain DaCe pipeline built by the named compiler and claims no external pass; an
-#: arm with flags credits external passes and therefore must prove every one of them ran.
-#:
-#: Each auto-parallelizer appears TWICE, forced and on its own cost model, because the two answer
-#: different questions and the gap between them is a result in its own right rather than a knob to
-#: pick: on a 16-kernel tsvc+tsvc25 sweep Polly measures 1.268x unforced against 7.365x forced, while
-#: gcc barely moves (7.975x against 7.872x). Reporting only the forced pair would hide that the LLVM
-#: column is entirely a policy artefact and the gcc column is not; reporting only the default pair
-#: would show Polly timing sequential code with no indication it could do better. The ``-default``
-#: arms are the compilers' out-of-the-box behaviour; the unsuffixed ones are their ceiling.
+#: arm with flags credits external passes and therefore must prove every one of them ran. Each
+#: auto-parallelizer appears twice: ``-default`` is its out-of-the-box behaviour, the unsuffixed one
+#: its forced ceiling.
 ARMS = (
     Arm(BASELINE, _autoopt, _GCC, '', '', (), _DACE_BLAS, 'legacy'),
     Arm('dace-autoopt-llvm', _autoopt, _CLANG, '', '', (), _DACE_BLAS, 'legacy'),
