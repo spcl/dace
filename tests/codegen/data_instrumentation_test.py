@@ -28,6 +28,9 @@ def test_dump():
         return tmp + 5
 
     sdfg = tester.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dump'
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
     A = np.random.rand(20, 20)
@@ -51,6 +54,9 @@ def test_dump_gpu():
         return tmp + 5
 
     sdfg = tester.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dump_gpu'
     sdfg.apply_gpu_transformations()
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
@@ -81,6 +87,9 @@ def test_dump_gpu_synchronizes():
         return tmp + 5
 
     sdfg = tester.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dump_gpu_synchronizes'
     sdfg.apply_gpu_transformations()
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
@@ -101,6 +110,9 @@ def test_restore():
         return A + 5
 
     sdfg = tester.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_restore'
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
     A = np.random.rand(20, 20)
@@ -126,6 +138,9 @@ def test_restore_gpu():
         return A + 5
 
     sdfg = tester.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_restore_gpu'
     sdfg.apply_gpu_transformations()
 
     # Instrument everything but the return value
@@ -156,6 +171,9 @@ def test_dinstr_versioning():
         B[:] = A + 1
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dinstr_versioning'
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
     A = np.random.rand(20)
@@ -184,6 +202,9 @@ def test_dinstr_in_loop():
         return tmp
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dinstr_in_loop'
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
     A = np.random.rand(20)
@@ -205,6 +226,9 @@ def test_dinstr_strided():
         return tmp + 5
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dinstr_strided'
     sdfg.arrays['tmp'].total_size = 32 * 32
     sdfg.arrays['tmp'].strides = (32, 1)
 
@@ -239,6 +263,9 @@ def test_dinstr_symbolic():
         return tmp + 5
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dinstr_symbolic'
     _instrument(sdfg, dace.DataInstrumentationType.Save)
 
     A = np.random.rand(20, 20)
@@ -266,8 +293,11 @@ def test_dinstr_hooks():
     dreport = sample.to_sdfg().get_instrumented_data()
     assert dreport.keys() == {'arr'}  # dreport['arr'] is now the internal ``arr``
 
-    # Reload latest instrumented data (can be customized if ``restore_from`` is given)
-    with dace.instrument_data(dace.DataInstrumentationType.Restore, filter='a??'):
+    # Reload the instrumented data. ``restore_from`` is explicit: the restore-phase compile is a
+    # new program version, and under the nanobind interface a same-name recompile renames into its
+    # own build folder, where an implicit "latest report" lookup finds nothing (the same post-
+    # rename query unsoundness that refuses SDFG.safe_call).
+    with dace.instrument_data(dace.DataInstrumentationType.Restore, filter='a??', restore_from=dreport):
         result_cd = sample(2.0, 3.0)  # where ``c, d`` are different from ``a, b``
 
     assert np.allclose(result_ab, result_cd)
@@ -284,6 +314,9 @@ def test_dinstr_in_loop_conditional_cpp():
         return tmp
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dinstr_in_loop_conditional_cpp'
 
     # Set instrumentation on all access nodes
     for node, _ in sdfg.all_nodes_recursive():
@@ -314,6 +347,9 @@ def test_dinstr_in_loop_conditional_python():
         return tmp
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_dinstr_in_loop_conditional_python'
 
     # Set instrumentation on all access nodes
     for node, _ in sdfg.all_nodes_recursive():
@@ -344,6 +380,9 @@ def test_symbol_dump():
             A[i + 1] = A[i] + 1
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_symbol_dump'
     for state in sdfg.states():
         state.symbol_instrument = dace.DataInstrumentationType.Save
 
@@ -367,6 +406,9 @@ def test_symbol_dump_conditional():
             A[i + 1] = A[i] + 1
 
     sdfg = dinstr.to_sdfg(simplify=True)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_symbol_dump_conditional'
     for state in sdfg.states():
         state.symbol_instrument = dace.DataInstrumentationType.Save
         state.symbol_instrument_condition = CodeBlock('i == 18', language=dace.Language.Python)
@@ -394,6 +436,9 @@ def test_symbol_restore():
     # only be triggered on SDFG states.
     # TODO(later): Make it so symbols can be instrumented on any Control flow block
     sdfg = dinstr.to_sdfg(simplify=False)
+    # Unique name: same-named programs from other tests share report folders, and the
+    # nanobind collision rename would otherwise write reports the original never sees.
+    sdfg.name = 'di_test_symbol_restore'
     sdfg.start_state.symbol_instrument = dace.DataInstrumentationType.Save
     A = np.ones((20, ))
     sdfg(A, j=15)

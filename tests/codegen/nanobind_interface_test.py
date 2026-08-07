@@ -851,6 +851,58 @@ def test_nanobind_interface_callback_binding():
     assert 'm_sym_' not in code  # symbol values are never stored on the handle
 
 
+def test_nanobind_interface_raw_code_objects_build_ctypes_folder(tmp_path):
+    """generate_program_folder with sdfg=None (raw helper code objects, as
+    parse_state_struct_test's cuda_helper builds) can generate no bindings, so
+    the folder must be a plain ctypes-style artifact regardless of
+    compiler.interface - and must not be refused as an unknown interface."""
+    import ctypes
+    import os
+    from dace.codegen import codeobject, targets, compiler as comp
+    from dace.codegen.ctypes_compiled_sdfg import ReloadableDLL
+
+    helper_code = '''
+    #include <dace/dace.h>
+    extern "C" {
+        DACE_EXPORTED int the_answer() { return 42; }
+    }
+    '''
+    program = codeobject.CodeObject('nb_raw_helper', helper_code, 'cpp', targets.cpu.CPUCodeGen, 'RawHelper')
+    path = str(tmp_path / 'raw_helper')
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        comp.generate_program_folder(None, [program], path)
+        comp.configure_and_compile(path)
+    with open(os.path.join(path, 'INTERFACE')) as fh:
+        assert fh.read().strip() == 'ctypes'
+    # configure_and_compile derives the program name from the folder name.
+    dll = ReloadableDLL(comp.get_binary_name(path, 'raw_helper'))
+    dll.load()
+    fn = dll.get_symbol('the_answer')
+    fn.restype = ctypes.c_int
+    assert fn() == 42
+    dll.unload()
+
+
+def test_nanobind_interface_initialize_returns_state_handle():
+    """initialize() returns the state pointer (ctypes-interface parity): it is
+    the value functions from get_exported_function take as their state
+    argument - SDFG.call_with_instrumented_data passes it to the compiled
+    report setter, and a None return reaches C as a null state and crashes."""
+
+    @dace.program
+    def init_handle_probe(A: dace.float64[10]):
+        A += 1.0
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = init_handle_probe.to_sdfg()
+        csdfg = sdfg.compile()
+        handle = csdfg.initialize(np.zeros(10))
+    import ctypes
+    assert isinstance(handle, ctypes.c_void_p)
+    assert handle.value == csdfg._handle.state_pointer
+    assert handle.value  # non-null
+
+
 def test_nanobind_interface_handle_metadata_binding():
     """The handle exposes the codegen-time call metadata - return-array names
     and callback names - so the Python wrapper does not re-derive them from
