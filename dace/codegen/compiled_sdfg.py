@@ -33,8 +33,9 @@ class CompiledSDFGProtocol(Protocol):
     narrower ctypes form (``get_workspace_sizes`` takes no arguments there;
     the nanobind version accepting per-call symbols is a compatible
     superset) or the loosest common return type (``initialize`` returns the
-    state handle on ctypes and ``None`` on nanobind; ``get_state_struct``
-    returns a ``ctypes.Structure`` vs an address).
+    state handle on BOTH interfaces - a value that functions obtained via
+    ``get_exported_function`` accept as their state argument;
+    ``get_state_struct`` returns a ``ctypes.Structure`` vs an address).
 
     :note: ``isinstance`` checks (via ``runtime_checkable``) verify member
            *presence* only - the behavioral contract is carried by the test

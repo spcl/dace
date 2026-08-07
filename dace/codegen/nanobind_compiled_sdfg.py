@@ -290,7 +290,7 @@ class NanobindCompiledSDFG:
             self._callback_keepalive.append(cfunc)
             kwargs[name] = ctypes.cast(cfunc, ctypes.c_void_p).value
 
-    def initialize(self, *args: Any, **kwargs: Any) -> None:
+    def initialize(self, *args: Any, **kwargs: Any) -> ctypes.c_void_p:
         """Initializes the SDFG state eagerly, without running it.
 
         Accepts the same arguments as :meth:`__call__` (positional arguments in
@@ -299,8 +299,16 @@ class NanobindCompiledSDFG:
         this is optional - :meth:`__call__` initializes on demand - but it is
         required before querying external-memory workspace sizes. Furthermore, it
         is not thread safe.
+
+        :return: The state pointer, matching the ctypes interface: functions
+                 obtained through :meth:`get_exported_function` take it as
+                 their state argument (e.g. ``SDFG.call_with_instrumented_data``
+                 passes it to ``__dace_set_instrumented_data_report``; a
+                 ``None`` return would reach the C side as a null state and
+                 crash there).
         """
         self._handle.initialize(**self._named_call_arguments(args, kwargs))
+        return ctypes.c_void_p(self._handle.state_pointer)
 
     def _named_call_arguments(self, args: Tuple[Any, ...], kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Add the positional arguments to ``kwargs`` and wraps callback callables."""

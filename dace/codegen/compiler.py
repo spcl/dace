@@ -133,7 +133,16 @@ def generate_program_folder(
     # Nanobind interface: emit the bindings source next to the frame code, so
     # it is compiled into the program library (the module *is* the library).
     interface = Config.get('compiler', 'interface')
-    if interface == 'nanobind' and sdfg is not None:
+    if interface not in ('ctypes', 'nanobind'):
+        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
+    if sdfg is None:
+        # Raw code objects without an SDFG (e.g. helper libraries): no bindings can be
+        # generated, so the folder is a plain ctypes-style artifact regardless of the
+        # configured interface - and the marker must say so, or configure_and_compile
+        # would build a nanobind module without a bindings TU and the ctypes-style
+        # loaders (ReloadableDLL) would refuse the folder.
+        interface = 'ctypes'
+    if interface == 'nanobind':
         bindings_folder = os.path.join(src_path, 'cpu')
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f'{sdfg.name}_nanobind.cpp'
@@ -151,10 +160,6 @@ def generate_program_folder(
             with open(bindings_path, 'w') as bindings_file:
                 bindings_file.write(bindings_code)
         filelist.append('cpu,,{}'.format(bindings_name))
-    elif interface == 'ctypes':
-        pass
-    else:
-        raise ValueError(f'Unknown value for `compiler.interface`: `{interface}`')
 
     # Record which interface produced this folder (see `load_precompiled_sdfg`),
     # analogous to the `FOLDER_MODE` file.
@@ -819,11 +824,14 @@ def configure_and_compile(
             libstub_path = _relocate(libstub_path)
         program_folder = pathlib.Path(program_folder)
         # TODO: Find out where `sample/` are generated and suppress their generation.
+        # missing_ok: not every folder has the full layout (raw code-object folders
+        # have no include/, uninstrumented ones may lack entries) - absent simply
+        # means nothing to trim.
         for to_delete in ["include", "src", "build", "sample", "dace_environments.csv", "dace_files.csv"]:
             if (program_folder / to_delete).is_dir():
                 shutil.rmtree(os.path.join(program_folder, to_delete))
             else:
-                (program_folder / to_delete).unlink()
+                (program_folder / to_delete).unlink(missing_ok=True)
 
     return lib_path
 
