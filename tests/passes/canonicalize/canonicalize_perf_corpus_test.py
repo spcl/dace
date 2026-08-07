@@ -209,7 +209,24 @@ _PER_ARM_TIMEOUT = int(os.environ.get('CANON_PERF_ARM_TIMEOUT', str(max(60, _PER
 #: therefore still meets libgomp inside its own process. numpy is clear -- it ships its own bundled
 #: libscipy_openblas64 and links neither runtime -- so a stencil, which is where this was found, is
 #: fully isolated. Set CANON_PERF_ISOLATE_ARMS=0 to measure everything in one process again.
-_ISOLATE_ARMS = os.environ.get('CANON_PERF_ISOLATE_ARMS', '1') not in ('0', 'false', 'False')
+#:
+#: DEFAULT OFF, and this is UNRESOLVED rather than settled. Isolation does fix the llvm columns --
+#: measured on jacobi_1d, autoopt-llvm 59.39ms -> 0.845ms and canon-llvm 60.17ms -> 0.830ms, a 70x
+#: recovery that also makes them the fastest arms, which is what the co-residency was hiding. But it
+#: breaks the gcc columns by the same mechanism in reverse: a spawned child loads OpenBLAS, libgomp
+#: binds and collapses the mask to one core, and the child's libgomp has ALREADY fixed its place
+#: list by the time anything can widen the mask again, so every libgomp arm runs on one core
+#: (autoopt-gcc 1.94ms -> 39.6ms). Reproduced standalone at 40.76ms vs 3.62ms for a child with no
+#: OpenBLAS loaded; restoring the mask helps only a FRESHLY SPAWNED process (8.07ms), never the
+#: process that already initialised libgomp.
+#:
+#: So neither setting currently yields a wholly valid table: OFF gives honest gcc columns and
+#: co-residency-inflated llvm ones, ON gives honest llvm columns and one-core gcc ones. OFF is the
+#: default because it is the state every earlier measurement was taken in, and because a silent 20x
+#: regression on the four gcc arms is worse than the known llvm inflation. The real fix is to stop
+#: the collapse happening at all -- an OpenBLAS not linked against libgomp, or preventing libgomp
+#: from binding the master thread before its place list is built -- not to widen the mask after.
+_ISOLATE_ARMS = os.environ.get('CANON_PERF_ISOLATE_ARMS', '0') not in ('0', 'false', 'False')
 #: Set in the spawned children so they skip the toolchain probe the parent already ran.
 _IS_CHILD = os.environ.get('CANON_PERF_ARM_CHILD') == '1'
 #: Bumped when the measurement METHOD changes so that results produced by the old one stop counting
@@ -944,6 +961,23 @@ def geomeans(records: dict[tuple, dict], preset: str, key: str = 'speedup_vs_ref
     return {k: (geomean(v), len(usable_ratios(v))) for k, v in per.items()}
 
 
+def restore_affinity() -> None:
+    """Put the process back on every CPU it started with.
+
+    Loading an OpenMP-threaded OpenBLAS under OMP_PROC_BIND=close binds the calling thread and
+    shrinks the PROCESS mask to one core (measured: 288 cpus before the load, 1 after). Any DaCe
+    build or reference computation can trigger that, so this runs immediately before each arm is
+    built and timed rather than once at startup -- a restore that happens before the next OpenBLAS
+    load is simply undone by it.
+    """
+    if _FULL_AFFINITY and hasattr(os, 'sched_setaffinity'):
+        try:
+            if frozenset(os.sched_getaffinity(0)) != _FULL_AFFINITY:
+                os.sched_setaffinity(0, set(_FULL_AFFINITY))
+        except OSError:  # a cgroup may forbid widening; measuring narrow beats not measuring
+            pass
+
+
 def run_arm(ctx, label: str, deadline: float) -> dict:
     """Build, correctness-gate and time ONE arm; return its result entry.
 
@@ -951,6 +985,7 @@ def run_arm(ctx, label: str, deadline: float) -> dict:
     that worked. Bounded by its own alarm, clamped to the kernel deadline the caller set.
     """
     entry: dict[str, Any] = {}
+    restore_affinity()
     arm_t0 = time.perf_counter()
     try:
         # Bound EVERY arm, not just the kernel: the kernel alarm is a single shot and the handler
@@ -993,10 +1028,12 @@ def arms_worker(suite: str, name: str, preset: str, labels: list[str], budget: f
     process boundary; re-deriving it costs one allocation and one reference computation per child,
     which is far below the co-residency penalty it avoids.
     """
-    if affinity and hasattr(os, 'sched_setaffinity'):
-        # BEFORE the dataset is built, because CS.make loads OpenBLAS and would otherwise re-shrink
-        # the mask this is undoing. Without it every thread of this child shares one core.
-        os.sched_setaffinity(0, set(affinity))
+    global _FULL_AFFINITY
+    if affinity:
+        # Remember it for restore_affinity(); the restore itself happens per arm, NOT here. Doing it
+        # only at child start is too early: CS.make below loads OpenBLAS, which re-collapses the mask
+        # straight after -- measured as the gcc arms staying 20x slow while the llvm arms recovered.
+        _FULL_AFFINITY = frozenset(affinity)
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_Timeout()))
     ctx = CS.make(suite, name, preset)
     deadline = time.monotonic() + budget
