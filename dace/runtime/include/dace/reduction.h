@@ -2,10 +2,14 @@
 #ifndef __DACE_REDUCTION_H
 #define __DACE_REDUCTION_H
 
+#include <algorithm>
 #include <cstdint>
 
-#include "math.h"  // for ::min, ::max
+// ``types.h`` first: ``math.h`` pulls in ``ITE.h`` before defining ``DACE_CONSTEXPR``,
+// so this header is only self-contained when the macros are already in scope.
 #include "types.h"
+
+#include "math.h"  // for ::min, ::max
 #include "vector.h"
 
 #ifdef __CUDACC__
@@ -545,7 +549,7 @@ struct _wcr_fixed<ReductionType::Exchange, T> {
 #endif
   }
 
-  DACE_HDFI T operator()(const T &a, const T &b) const { return b; }
+  DACE_HDFI T operator()(const T &, const T &b) const { return b; }
 };
 
 //////////////////////////////////////////////////////////////////////////
@@ -611,6 +615,262 @@ struct wcr_fixed<REDTYPE, T, EnableIfScalar<T> > {
     return _wcr_fixed<REDTYPE, T>::reduce_atomic(ptr, scal);
   }
 };
+
+//////////////////////////////////////////////////////////////////////////
+// dace::reduce -- the CPU lowering of the ``Reduce`` library node.
+//
+// Two shapes, mirroring ``dace/scan.hpp``: ``dace::reduce::<op>`` is the PARALLEL one (an OpenMP
+// ``reduction`` clause), ``dace::reduce::seq::<op>`` the SEQUENTIAL one (naked loop, no pragma).
+// CONTRACT: the parallel entries carry no runtime nesting check -- ``ExpandReduceOpenMP`` picks the
+// shape statically from the node's SCOPE. An external caller already inside its own ``omp`` region
+// gets OpenMP's nested default, a one-thread team: correct, slower.
+//
+// Every entry point folds ``n`` elements from ``in``, ``s`` apart, into ``seed`` and RETURNS the
+// result. ``seed`` carries the identity (or the output element's previous contents), so ``n <= 0``
+// returns it untouched and no op needs an identity of its own -- which is what makes ``min``/``max``
+// expressible. The accumulator type is ``seed``'s, i.e. the OUTPUT dtype, so an integer array reduced
+// into a real accumulates in the real type. The index space is walked directly; ``s == 1`` branches
+// only to keep the contiguous case unit-stride for the vectorizer.
+//
+// SEMANTICS GUARANTEED. FP association: the parallel form reassociates (the team splits the range,
+// the runtime combines partials), so a floating-point result MOVES WITH ``OMP_NUM_THREADS``, while
+// the sequential form is a fixed left-to-right fold and is bit-reproducible. min/max and NaN: both
+// forms compare with ``std::min``/``std::max``, ``(b < a) ? b : a`` with the accumulator on the left,
+// so a NaN in the DATA never wins and the result is the min/max over the non-NaN elements at every
+// thread count; a NaN ``seed`` propagates through the SEQUENTIAL form but goes through the runtime's
+// own combiner in the parallel one and is unspecified there. That differs from ``_wcr_fixed<Min>``
+// above, whose ``::min`` lets a NaN through. Integer/bitwise/logical ops are exact and thread-count
+// independent.
+
+namespace reduce {
+
+// THE SUPPORTED ELEMENT TYPES, in one place. Each has an OpenMP reduction: built in, declared below
+// (complex), or declared in ``types.h`` (the low-precision structs, whose combiner promotes to
+// ``float`` and rounds back on store). No other class type: no operator detection, no fallback, just
+// the rejection in ``detail::checked_seed``.
+template <typename T>
+struct is_reducible : std::integral_constant<bool, std::is_arithmetic<T>::value> {};
+template <>
+struct is_reducible<complex64> : std::true_type {};
+template <>
+struct is_reducible<complex128> : std::true_type {};
+template <>
+struct is_reducible<float16> : std::true_type {};
+template <>
+struct is_reducible<bfloat16> : std::true_type {};
+template <>
+struct is_reducible<float8_e4m3fn> : std::true_type {};
+template <>
+struct is_reducible<float8_e5m2> : std::true_type {};
+
+#ifdef _OPENMP
+// Complex needs a user-defined reduction (OpenMP has none for a class type), and only ``+`` / ``*``.
+#pragma omp declare reduction(+ : complex64 : omp_out += omp_in) initializer(omp_priv = complex64(0))
+#pragma omp declare reduction(+ : complex128 : omp_out += omp_in) initializer(omp_priv = complex128(0))
+#pragma omp declare reduction(* : complex64 : omp_out *= omp_in) initializer(omp_priv = complex64(1))
+#pragma omp declare reduction(* : complex128 : omp_out *= omp_in) initializer(omp_priv = complex128(1))
+#endif
+
+namespace detail {
+
+/// Returns ``seed``; the single place an unsupported element type is refused.
+template <typename T, typename U>
+inline T checked_seed(T seed) {
+  static_assert(is_reducible<T>::value && is_reducible<U>::value,
+                "dace::reduce: unsupported element type. Supported: builtin arithmetic types, "
+                "dace::complex64 / complex128, and dace::float16 / bfloat16 / float8_e4m3fn / float8_e5m2.");
+  return seed;
+}
+
+/// Left-to-right fold of ``n`` elements of ``in`` taken ``s`` apart, seeded with ``seed``.
+template <typename T, typename U, typename Op>
+inline T fold(const U *in, long n, long s, T seed, Op op) {
+  T acc = checked_seed<T, U>(seed);
+  if (s == 1) {
+    for (long i = 0; i < n; ++i) acc = op(acc, in[i]);
+  } else {
+    for (long i = 0; i < n; ++i) acc = op(acc, in[i * s]);
+  }
+  return acc;
+}
+
+}  // namespace detail
+
+// --- PARALLEL SHAPE ------------------------------------------------------------
+
+template <typename T, typename U>
+inline T sum(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for simd reduction(+ : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc + in[i]);
+  } else {
+#pragma omp parallel for reduction(+ : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc + in[i * s]);
+  }
+  return acc;
+}
+
+template <typename T, typename U>
+inline T product(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for simd reduction(* : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc * in[i]);
+  } else {
+#pragma omp parallel for reduction(* : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc * in[i * s]);
+  }
+  return acc;
+}
+
+// min/max carry no ``simd``: no vectorizer folds the NaN-swallowing ``(b < a) ? b : a`` without
+// reassociating comparisons, and clang warns about the transformation it refused. Measured free.
+template <typename T, typename U>
+inline T min(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for reduction(min : acc)
+    for (long i = 0; i < n; ++i) acc = std::min<T>(acc, static_cast<T>(in[i]));
+  } else {
+#pragma omp parallel for reduction(min : acc)
+    for (long i = 0; i < n; ++i) acc = std::min<T>(acc, static_cast<T>(in[i * s]));
+  }
+  return acc;
+}
+
+template <typename T, typename U>
+inline T max(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for reduction(max : acc)
+    for (long i = 0; i < n; ++i) acc = std::max<T>(acc, static_cast<T>(in[i]));
+  } else {
+#pragma omp parallel for reduction(max : acc)
+    for (long i = 0; i < n; ++i) acc = std::max<T>(acc, static_cast<T>(in[i * s]));
+  }
+  return acc;
+}
+
+// Names its own reduction: the built-in ``&`` initializes its private copy from an unsigned all-ones
+// literal that clang reports as a signedness change on signed ``T``. Same identity, spelled -1.
+template <typename T, typename U>
+inline T bitwise_and(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+#pragma omp declare reduction(dace_band : T : omp_out = static_cast<T>(omp_out &omp_in)) initializer(omp_priv = static_cast<T>(-1))
+  if (s == 1) {
+#pragma omp parallel for simd reduction(dace_band : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc & in[i]);
+  } else {
+#pragma omp parallel for reduction(dace_band : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc & in[i * s]);
+  }
+  return acc;
+}
+
+template <typename T, typename U>
+inline T bitwise_or(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for simd reduction(| : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc | in[i]);
+  } else {
+#pragma omp parallel for reduction(| : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc | in[i * s]);
+  }
+  return acc;
+}
+
+template <typename T, typename U>
+inline T bitwise_xor(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for simd reduction(^ : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc ^ in[i]);
+  } else {
+#pragma omp parallel for reduction(^ : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc ^ in[i * s]);
+  }
+  return acc;
+}
+
+template <typename T, typename U>
+inline T logical_and(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for simd reduction(&& : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc && in[i]);
+  } else {
+#pragma omp parallel for reduction(&& : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc && in[i * s]);
+  }
+  return acc;
+}
+
+template <typename T, typename U>
+inline T logical_or(const U *in, long n, long s, T seed) {
+  T acc = detail::checked_seed<T, U>(seed);
+  if (s == 1) {
+#pragma omp parallel for simd reduction(|| : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc || in[i]);
+  } else {
+#pragma omp parallel for reduction(|| : acc)
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc || in[i * s]);
+  }
+  return acc;
+}
+
+// --- SEQUENTIAL SHAPE ----------------------------------------------------------
+
+namespace seq {
+
+template <typename T, typename U>
+inline T sum(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a + b); });
+}
+
+template <typename T, typename U>
+inline T product(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a * b); });
+}
+
+template <typename T, typename U>
+inline T min(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return std::min<T>(a, static_cast<T>(b)); });
+}
+
+template <typename T, typename U>
+inline T max(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return std::max<T>(a, static_cast<T>(b)); });
+}
+
+template <typename T, typename U>
+inline T bitwise_and(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a & b); });
+}
+
+template <typename T, typename U>
+inline T bitwise_or(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a | b); });
+}
+
+template <typename T, typename U>
+inline T bitwise_xor(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a ^ b); });
+}
+
+template <typename T, typename U>
+inline T logical_and(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a && b); });
+}
+
+template <typename T, typename U>
+inline T logical_or(const U *in, long n, long s, T seed) {
+  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a || b); });
+}
+
+}  // namespace seq
+}  // namespace reduce
 
 #ifdef __CUDACC__
 struct StridedIteratorHelper {

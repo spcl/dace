@@ -1,12 +1,17 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Readable-codegen correctness for OpenMP scalar reductions (ExpandReduceOpenMP).
 
-The OpenMP reduce expansion emits a native tasklet whose body is a
-``#pragma omp parallel for reduction(op:_out[0])`` loop. The readable connector-inlining must NOT
-rewrite such a body: the pygments C++ lexer folds the ``#pragma`` line into one preprocessor token
-(so a connector named in the clause survives as an undeclared name), and a scalar pointer-base inline
-``&x`` pasted into ``_out[0]`` mis-parses as ``&(x[0])``. The generator therefore keeps the classic
-connector copy for a preprocessor-directive body -- byte-identical to legacy for that tasklet.
+``ExpandReduceOpenMP`` lowers onto the ``dace::reduce`` runtime facility, so the ``reduction``
+clause lives in ``dace/reduction.h`` and the generated file carries only the call: one
+``::dace::reduce::<op>(base, count, stride, seed)`` for a full reduction, and
+``#pragma omp parallel for`` over the kept axes around a ``::dace::reduce::seq::<op>`` call for a
+partial one. Never a per-element ``reduce_atomic``.
+
+What the readable generator must not do to that tasklet is unchanged: a scalar pointer-base inline
+``&x`` pasted into ``_out[0]`` mis-parses as ``&(x[0])``, and a connector named inside a ``#pragma``
+line survives as an undeclared name (the pygments C++ lexer folds the line into one preprocessor
+token). The full-reduction body now has no ``#pragma`` at all, so its connectors ARE inlined -- and
+must inline to the array itself (``out[0] = ::dace::reduce::sum(a, ...)``), not to ``&out[0]``.
 """
 import functools
 import importlib.util
@@ -96,16 +101,66 @@ def _run(sdfg, impl):
 @pytest.mark.parametrize("op", ["sum", "max"])
 @pytest.mark.parametrize("masked", [False, True])
 def test_openmp_reduction_generates_clean(op, masked):
-    """The readable generator must keep the reduction clause + connector copy, never the mangled
-    ``&_out[0]`` / undeclared ``_out`` forms."""
+    """A full reduction lowers to ONE ``dace::reduce`` call, correctly inlined and never atomic."""
     _require_omp_reduce()
     sdfg = _reduce_sdfg(op, masked)
     with use_implementation(EXPERIMENTAL):
         code = generated_code(sdfg)
-    clause_op = {"sum": "+", "max": "max"}[op]  # OpenMP clause names the operator, not the python op
-    assert f"reduction({clause_op}" in code, "reduction clause dropped"
+    # The call, with the operands the shape demands: stride 2 for the masked ``a[0:N:2]`` subset.
+    stride = "2" if masked else "1"
+    call = f"::dace::reduce::{op}(a, (long)("
+    assert call in code, f"{call} missing -- reduce did not lower through the runtime facility"
+    # Pins the stride AND the seed operand: the fold starts from the output element it writes back.
+    assert f"(long)({stride}), out[0])" in code, f"wrong stride/seed: expected {stride} for masked={masked}"
+    assert "out[0] = ::dace::reduce::" in code, "reduction sink is not the output array element"
+    # The clause moved into the header, so the generated file must carry NO reduction pragma and no
+    # per-element atomic for this shape. Asserted at its new home so "clause dropped" stays covered.
+    assert "reduction(" not in code, "a full reduction must not emit its own clause any more"
+    assert "reduce_atomic" not in code, "reduce lowered to a per-element atomic"
+    header = os.path.join(os.path.dirname(os.path.abspath(dace.__file__)), "runtime", "include", "dace", "reduction.h")
+    clause_op = {"sum": "+", "max": "max"}[op]
+    assert f"reduction({clause_op} : acc)" in open(header).read(), "reduction clause dropped from the header"
     # the mangled forms the bug produced must not appear
     assert "&_out[0]" not in code and "&rmax[0]" not in code, "scalar reduction sink mis-inlined as &x[0]"
+    assert "&out[0]" not in code, "scalar reduction sink mis-inlined as &out[0]"
+
+
+def _partial_reduce_sdfg():
+    """``out[i] = sum(a[i, :])`` over float64[8, 16] -- the kept-axis shape of the expansion."""
+    sdfg = dace.SDFG("reduce_partial")
+    sdfg.add_array("a", [8, 16], dace.float64)
+    sdfg.add_array("out", [8], dace.float64)
+    state = sdfg.add_state("main")
+    red = state.add_reduce("lambda x, y: x + y", [1], 0.0)
+    red.implementation = "OpenMP"
+    state.add_edge(state.add_read("a"), None, red, None, dace.Memlet("a[0:8, 0:16]"))
+    state.add_edge(red, None, state.add_write("out"), None, dace.Memlet("out[0:8]"))
+    sdfg.validate()
+    return sdfg
+
+
+def test_openmp_partial_reduction_generates_clean():
+    """A partial reduction keeps its own loop over the kept axis and calls the SEQUENTIAL entry."""
+    _require_omp_reduce()
+    sdfg = _partial_reduce_sdfg()
+    with use_implementation(EXPERIMENTAL):
+        code = generated_code(sdfg)
+    assert "#pragma omp parallel for" in code, "kept-axis loop lost its parallel pragma"
+    assert "::dace::reduce::seq::sum(" in code, "call under a parallel loop must be the sequential entry"
+    assert "::dace::reduce::sum(" not in code, "parallel entry emitted under an enclosing parallel loop"
+    assert "reduce_atomic" not in code, "reduce lowered to a per-element atomic"
+    assert "&_out[0]" not in code and "&out[0]" not in code, "scalar reduction sink mis-inlined as &x[0]"
+
+    def build_and_run():
+        with use_implementation(EXPERIMENTAL):
+            csdfg = sdfg.compile()
+        a = np.random.default_rng(0).random((8, 16))
+        out = np.zeros(8)
+        csdfg(a=a, out=out)
+        return {"out": out, "want": a.sum(axis=1)}
+
+    res = run_isolated(build_and_run)
+    assert np.allclose(res["out"], res["want"], rtol=1e-12, atol=1e-12)
 
 
 @pytest.mark.parametrize("op", ["sum", "max"])
@@ -117,6 +172,11 @@ def test_openmp_reduction_bit_exact(op, masked):
     legacy = _run(sdfg, LEGACY)
     experimental = _run(sdfg, EXPERIMENTAL)
     assert_outputs_equivalent(legacy, experimental, "cpu", label=f"reduce_{op}_{masked}")
+    # An absolute reference too, so the pair cannot agree by being equally wrong.
+    a = np.random.default_rng(0).random(64)
+    reduced = a[0:64:2] if masked else a
+    want = reduced.sum() if op == "sum" else reduced.max()
+    assert np.allclose(experimental["out"], want, rtol=1e-12, atol=1e-12), (experimental["out"], want)
 
 
 # Real corpus kernels whose OpenMP-expanded SCALAR reductions previously mis-compiled under the
@@ -165,6 +225,7 @@ if __name__ == "__main__":
         for masked in (False, True):
             test_openmp_reduction_generates_clean(op, masked)
             test_openmp_reduction_bit_exact(op, masked)
+    test_openmp_partial_reduction_generates_clean()
     for k in _SCALAR_REDUCTION_KERNELS:
         test_scalar_reduction_kernel_compiles(k)
     print("ok")

@@ -19,7 +19,7 @@ from dace import subsets
 import warnings
 from dace.sdfg import scope
 from dace.transformation import transformation as pm
-from dace.symbolic import symstr, issymbolic
+from dace.symbolic import symstr, issymbolic, simplify
 from dace.libraries.standard.environments.cuda import CUDA
 
 from dace.libraries.standard import reduction_planner as red_planner
@@ -107,7 +107,6 @@ class ExpandReducePure(pm.ExpandTransformation):
                         strides=[s for i, s in enumerate(output_data.strides) if i in osqdim],
                         storage=output_data.storage)
 
-        # Rename outer connectors and add to node
         inedge._dst_conn = '_in'
         outedge._src_conn = '_out'
         node.add_in_connector('_in')
@@ -301,7 +300,6 @@ class ExpandReducePureSequentialDim(pm.ExpandTransformation):
             nstate.add_edge(accwrite, None, cast, 'a', dace.Memlet('acc[0]'))
             nstate.add_memlet_path(cast, omx, w, src_conn='o', memlet=outm)
 
-        # Rename outer connectors and add to node
         inedge._dst_conn = '_in'
         outedge._src_conn = '_out'
         node.add_in_connector('_in')
@@ -387,65 +385,63 @@ _OUT = '_reduce_out'
 
 @dace.library.expansion
 class ExpandReduceOpenMP(pm.ExpandTransformation):
-    """
-        OpenMP-based implementation of the reduce node
+    """CPU lowering of the ``Reduce`` node onto the ``dace::reduce`` runtime facility.
+
+    One call per output element into ``dace/reduction.h``: ``::dace::reduce::<op>`` only when this
+    node IS the outermost parallel work, ``::dace::reduce::seq::<op>`` under an enclosing
+    ``omp parallel for`` over the kept axes or any enclosing parallel map / loop -- the entries have
+    no runtime nesting check, so SCOPE decides that here, statically. The ``reduction`` clause is the
+    header's -- no pragma, no per-element atomic here. SHAPES: the reduced axes split into the
+    innermost CONTIGUOUS run (consecutive indices whose strides nest exactly, hence one
+    ``count``/``stride`` walk) plus the rest; the run is the call, the rest are plain C loops around
+    it, and no strided input is ever packed, so a single-axis reduction (the ``LoopToReduce`` shape)
+    and a full dense reduction are each ONE call with no loops. A degenerate reduction, unrecognised
+    WCR, non-scalar dtype or Windows falls back to :class:`ExpandReducePure`.
     """
     environments = []
 
-    #: ReductionType -> (OpenMP reduction-identifier, loop-body expression).
-    #:
-    #: Every identifier here is one OpenMP actually accepts: the grammar is
-    #: ``+ - * & | ^ && || min max``. ``Sub``'s ``-`` is valid but deprecated in
-    #: OpenMP 5.0; note its combiner is a SUM of the per-thread negated copies,
-    #: giving ``initial - sum(x)``.
-    #:
-    #: ``Div`` is absent on purpose -- ``/`` is not in the grammar and
-    #: ``reduction(/: x)`` is rejected for every type, ``float`` included. It is
-    #: handled by ``DIV_ACCUMULATOR`` below instead of being emitted directly.
-    _REDUCTION_TYPE_TO_OPENMP = {
-        # The clause identifier stays lower-case (``reduction(min: ...)`` is the OpenMP spelling);
-        # the BODY calls the runtime's variadic ``Min`` / ``Max`` from ``pyinterop.h``, which is what
-        # codegen emits for min/max elsewhere.  Bare ``min`` / ``max`` do not resolve to a function
-        # in the generated scope, so this only compiled while OpenMP was not the default expansion.
-        dtypes.ReductionType.Max: ('max', '{o} = Max({o}, {i});'),
-        dtypes.ReductionType.Min: ('min', '{o} = Min({o}, {i});'),
-        dtypes.ReductionType.Sum: ('+', '{o} += {i};'),
-        dtypes.ReductionType.Product: ('*', '{o} *= {i};'),
-        dtypes.ReductionType.Bitwise_And: ('&', '{o} &= {i};'),
-        dtypes.ReductionType.Logical_And: ('&&', '{o} = {o} && {i};'),
-        dtypes.ReductionType.Bitwise_Or: ('|', '{o} |= {i};'),
-        dtypes.ReductionType.Logical_Or: ('||', '{o} = {o} || {i};'),
-        dtypes.ReductionType.Bitwise_Xor: ('^', '{o} ^= {i};'),
-        dtypes.ReductionType.Sub: ('-', '{o} -= {i};'),
+    #: ReductionType -> (``dace::reduce`` entry point, seed expression, statement applying the call).
+    #: An associative op seeds from the output element and assigns back, so the ``identity`` write is
+    #: folded in by the call and an empty range is a no-op. ``Sub`` is ``initial - sum(x)`` (what
+    #: OpenMP's deprecated ``-`` does), ``Div`` is ``initial / prod(x)``, the only parallel ``/``.
+    _REDUCTION_TYPE_TO_RUNTIME = {
+        dtypes.ReductionType.Max: ('max', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Min: ('min', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Sum: ('sum', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Product: ('product', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Bitwise_And: ('bitwise_and', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Logical_And: ('logical_and', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Bitwise_Or: ('bitwise_or', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Logical_Or: ('logical_or', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Bitwise_Xor: ('bitwise_xor', '{o}', '{o} = {call};'),
+        dtypes.ReductionType.Sub: ('sum', '({t})0', '{o} -= {call};'),
+        dtypes.ReductionType.Div: ('product', '({t})1', '{o} = {o} / {call};'),
     }
 
-    #: Reductions with no direct OpenMP identifier that are still parallelizable by
-    #: accumulating an associative operation and applying the real one once at the end.
-    #:
-    #: Division is neither associative nor commutative, so ``reduction(/: x)`` cannot
-    #: exist -- but ``a / b / c / d == a / (b * c * d)``, and the sequential meaning of
-    #: a Div Reduce node is exactly ``out = initial; for x: out /= x``, i.e.
-    #: ``out = initial / prod(x)``. So reduce the divisors with ``*`` into a local
-    #: accumulator and divide once. Maps ReductionType -> (accumulator identity,
-    #: OpenMP identifier used to accumulate, body expression, final application).
-    #:
-    #: This rounds once per multiply rather than once per divide, and the product can
-    #: overflow where repeated division would not; both are inherent to parallelizing a
-    #: non-associative operation and match what the sequential form converges to.
-    DIV_ACCUMULATOR = {
-        dtypes.ReductionType.Div: ('1', '*', '{a} *= {i};', '{o} = {o} / {a};'),
-    }
-
-    #: Bitwise reductions are integer-only. C++ has no ``&`` / ``|`` / ``^`` on a
-    #: floating-point operand, and OpenMP rejects those identifiers for ``float`` and
-    #: ``double`` as well ("user defined reduction not found"). Reaching codegen with
-    #: this combination produced a confusing C++ error at build time, so it is refused
-    #: up front instead.
+    #: Integer-only: no ``&`` / ``|`` / ``^`` exists on a floating-point operand, in C++ or in OpenMP.
     BITWISE_REDUCTIONS = (
         dtypes.ReductionType.Bitwise_And,
         dtypes.ReductionType.Bitwise_Or,
         dtypes.ReductionType.Bitwise_Xor,
     )
+
+    @staticmethod
+    def contiguous_tail(raxes, sizes, strides):
+        """Longest suffix of ``raxes`` that is one contiguous walk: consecutive indices whose strides
+        nest exactly (``stride[a] == stride[a + 1] * size[a + 1]``), so the run is addressable as
+        ``count`` elements ``stride`` apart. An unprovable symbolic pair ends it (more loops)."""
+        cut = len(raxes) - 1
+        while cut > 0:
+            outer, inner = raxes[cut - 1], raxes[cut]
+            if inner != outer + 1:
+                break
+            try:
+                if bool(simplify(strides[outer] - strides[inner] * sizes[inner]) != 0):
+                    break
+            except TypeError:
+                break
+            cut -= 1
+        return raxes[cut:]
 
     @staticmethod
     def expansion(node: 'Reduce', state: SDFGState, sdfg: SDFG):
@@ -459,21 +455,20 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         input_data = sdfg.arrays[inedge.data.data]
         output_data = sdfg.arrays[outedge.data.data]
 
-        # Visual C++ compiler not always supported
         if platform.system() == 'Windows':
             warnings.warn('OpenMP reduction expansion not supported on Visual C++')
             return ExpandReducePure.expansion(node, state, sdfg)
 
-        # Get reduction type for OpenMP
+        # Scalar element types only; a struct / vector / pointer dtype has no OpenMP reduction.
+        if type(input_data.dtype) is not dtypes.typeclass or type(output_data.dtype) is not dtypes.typeclass:
+            warnings.warn('Reduction element type %s -> %s is not a scalar type, using the pure expansion' %
+                          (input_data.dtype, output_data.dtype))
+            return ExpandReducePure.expansion(node, state, sdfg)
+
         redtype = detect_reduction_type(node.wcr, openmp=True)
 
-        # A bitwise reduction over a floating-point (or complex) dtype has no meaning in
-        # C++ and no OpenMP reduction identifier. Refuse loudly here: falling through to
-        # the pure expansion only moves the same invalid ``&``/``|``/``^`` on a float into
-        # a tasklet, and emitting the pragma produced "user defined reduction not found"
-        # from the C++ compiler with no hint of the real cause.
         if redtype in ExpandReduceOpenMP.BITWISE_REDUCTIONS:
-            elemtype = sdfg.arrays[outedge.data.data].dtype
+            elemtype = output_data.dtype
             if not numpy.issubdtype(elemtype.type, numpy.integer) and elemtype != dtypes.bool_:
                 raise ValueError('Bitwise reduction "%s" is not defined for non-integral data type %s '
                                  '(reducing into "%s"). Bitwise operators do not exist for floating-point '
@@ -481,105 +476,85 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
                                  'Use a logical reduction (&&, ||) or an integer dtype.' %
                                  (node.wcr, elemtype, outedge.data.data))
 
-        div_accum = ExpandReduceOpenMP.DIV_ACCUMULATOR.get(redtype)
-        if div_accum is None:
-            if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP:
-                warnings.warn('Reduction type not supported for "%s"' % node.wcr)
-                return ExpandReducePure.expansion(node, state, sdfg)
-            omptype, expr = ExpandReduceOpenMP._REDUCTION_TYPE_TO_OPENMP[redtype]
-        else:
-            accum_identity, omptype, expr, apply_expr = div_accum
+        if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_RUNTIME:
+            warnings.warn('Reduction type not supported for "%s"' % node.wcr)
+            return ExpandReducePure.expansion(node, state, sdfg)
+        fname, seed_fmt, stmt = ExpandReduceOpenMP._REDUCTION_TYPE_TO_RUNTIME[redtype]
 
-        # Standardize axes
         axes = node.axes if node.axes is not None else [i for i in range(input_dims)]
         sqaxes = [axis for axis in axes if axis in isqdim]
 
         if not sqaxes:  # Degenerate reduction
             return ExpandReducePure.expansion(node, state, sdfg)
 
+        from dace.codegen.targets.cpp import sym2cpp
+
+        raxes = sorted(axes)
+        sizes = {a: inedge.data.subset.size()[a] for a in raxes}
+        strides = {a: input_data.strides[a] * inedge.data.subset[a][2] for a in raxes}
+        group = ExpandReduceOpenMP.contiguous_tail(raxes, sizes, strides)
+        outer_red = raxes[:len(raxes) - len(group)]
+
         outer_loops = len(axes) != input_dims
 
-        # ``collapse(1)`` is a no-op (the default); only emit the clause when it collapses >1 loop.
+        # SCOPE decides the shape, not ``node.schedule``: that is storage-derived, so a Reduce nested
+        # in a parallel map arrives carrying ``CPU_Multicore``. A re-entered node opens no region.
+        from dace.transformation.auto.auto_optimize import libnode_is_sequential
+        reentered = libnode_is_sequential(node, state, sdfg)
+        parallel_outputs = outer_loops and not reentered
+
         def collapse_clause(ndims):
             return 'collapse(%d) ' % ndims if ndims > 1 else ''
 
-        # Create OpenMP clause
-        if outer_loops:
-            code = ('#pragma omp parallel for ' + collapse_clause(output_dims)).rstrip() + '\n'
-        else:
-            code = ''
-
-        from dace.codegen.targets.cpp import sym2cpp
-
-        # Output loops
+        # Output loops carry a partial reduction's parallelism; ``collapse(1)`` is the no-op default.
+        code = ''
         out_offset = []
         if outer_loops:
+            if parallel_outputs:
+                code += ('#pragma omp parallel for ' + collapse_clause(output_dims)).rstrip() + '\n'
             for i, sz in enumerate(outedge.data.subset.size()):
                 code += 'for (int _o{i} = 0; _o{i} < {sz}; ++_o{i}) {{\n'.format(i=i, sz=sym2cpp(sz))
                 out_offset.append('_o%d * %s' % (i, sym2cpp(output_data.strides[i])))
         else:
             out_offset.append('0')
-
         outexpr = '%s[%s]' % (_OUT, ' + '.join(out_offset))
 
-        # Write identity value first
         if node.identity is not None:
             code += '%s = %s;\n' % (outexpr, sym2cpp(node.identity))
 
-        # For a Div reduction the clause target is a local product accumulator rather than
-        # the output element; the output is divided by it once, after the loops. Declared
-        # inside the output loops (when there are any) so each output element gets its own.
-        if div_accum is None:
-            clause_target = outexpr
-        else:
-            clause_target = '_red_acc'
-            code += '%s %s = %s;\n' % (output_data.dtype.ctype, clause_target, accum_identity)
+        for i, axis in enumerate(outer_red):
+            code += 'for (int _i{i} = 0; _i{i} < {sz}; ++_i{i}) {{\n'.format(i=i, sz=sym2cpp(sizes[axis]))
 
-        # Reduction OpenMP clause (``collapse(1)`` is the no-op default, so drop it for a single axis)
-        code += ('#pragma omp parallel for ' + collapse_clause(len(axes)) +
-                 'reduction({rtype}: {oexpr})\n'.format(rtype=omptype, oexpr=clause_target))
-
-        # Reduction loops
-        for i, axis in enumerate(sorted(axes)):
-            sz = sym2cpp(inedge.data.subset.size()[axis])
-            code += 'for (int _i{i} = 0; _i{i} < {sz}; ++_i{i}) {{\n'.format(i=i, sz=sz)
-
-        # Input offset: per-axis stride = ARRAY stride × input subset STEP → strided input
-        # (a[0:2N:2]) walks right elements; subset begin folded into _in ptr by caller.
         in_offset = []
-        ictr, octr = 0, 0
+        octr = 0
         for i in range(input_dims):
+            stride = sym2cpp(input_data.strides[i] * inedge.data.subset[i][2])
             if i in axes:
-                result = '_i%d' % ictr
-                ictr += 1
+                if i in outer_red:
+                    in_offset.append('_i%d * %s' % (outer_red.index(i), stride))
             else:
-                result = '_o%d' % octr
+                in_offset.append('_o%d * %s' % (octr, stride))
                 octr += 1
-            in_offset.append('%s * %s' % (result, sym2cpp(input_data.strides[i] * inedge.data.subset[i][2])))
-        in_offset = ' + '.join(in_offset)
 
-        # Reduction expression
-        code += expr.format(i='%s[%s]' % (_IN, in_offset), o=outexpr, a=clause_target)
-        code += '\n'
+        count = functools.reduce(lambda a, b: a * b, [sizes[a] for a in group], 1)
+        call = '::dace::reduce::{seq}{fn}({base}, (long)({count}), (long)({stride}), {seed})'.format(
+            seq='seq::' if (outer_loops or reentered) else '',
+            fn=fname,
+            base=_IN if not in_offset else '%s + %s' % (_IN, ' + '.join(in_offset)),
+            count=sym2cpp(count),
+            stride=sym2cpp(strides[group[-1]]),
+            seed=seed_fmt.format(o=outexpr, t=output_data.dtype.ctype))
+        code += stmt.format(o=outexpr, call=call) + '\n'
 
-        # Closing braces
-        code += '}\n' * len(axes)
-
-        # Apply the accumulated value once (Div: divide the output by the product of the
-        # divisors). Inside the output loops, after the reduction loops have closed.
-        if div_accum is not None:
-            code += apply_expr.format(o=outexpr, a=clause_target) + '\n'
-
+        code += '}\n' * len(outer_red)
         if outer_loops:
             code += '}\n' * output_dims
 
-        # Make tasklet
         tnode = dace.nodes.Tasklet('reduce', {_IN: dace.pointer(input_data.dtype)},
                                    {_OUT: dace.pointer(output_data.dtype)},
                                    code,
                                    language=dace.Language.CPP)
 
-        # Rename outer connectors and add to node
         inedge._dst_conn = _IN
         outedge._src_conn = _OUT
         node.add_in_connector(_IN)
