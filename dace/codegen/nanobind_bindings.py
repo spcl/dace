@@ -714,7 +714,11 @@ def _external_memory_storages(sdfg):
     return sorted(storages, key=lambda s: s.name)
 
 
-def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str, gpu_check_call: str = '') -> Tuple[str, str]:
+def _user_call_binding(sdfg,
+                       arglist: Dict[str, dt.Data],
+                       init_call: str,
+                       gpu_check_call: str = '',
+                       ws_check_lead: str = '') -> Tuple[str, str]:
     """Generates the ``user_call`` method and its ``.def`` line from ``sdfg.user_args``.
 
     ``user_args`` is a structured promise: entries are argument names or
@@ -889,7 +893,7 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str, gpu_ch
 
     if extract:
         extract_block = '\n        '.join(extract)
-        body = (f'{extract_block}\n'
+        body = (f'{ws_check_lead}{extract_block}\n'
                 f'        {{\n'
                 f'            nb::gil_scoped_release _nogil;\n'
                 f'            init_impl({init_call});\n'
@@ -897,7 +901,7 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str, gpu_ch
                 f'        }}\n'
                 f'{gpu_check_call}'.rstrip('\n'))
     else:
-        body = (f'{{\n'
+        body = (f'{ws_check_lead}{{\n'
                 f'            nb::gil_scoped_release _nogil;\n'
                 f'            init_impl({init_call});\n'
                 f'            __program_{name}({program_args});\n'
@@ -981,6 +985,30 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
         gpu_check_method = ''
         gpu_check_call = ''
 
+    # External-memory guard: an SDFG with external (workspace) memory must not
+    # run before set_workspace() - the generated code would dereference a null
+    # workspace pointer (a segfault; ctypes runs into the same UB silently).
+    # One flag per external storage, set by set_workspace and reset with the
+    # state (exit_impl): the association dies with the state it was set on.
+    guard_storages = _external_memory_storages(sdfg)
+    if guard_storages:
+        ws_guard_members = '\n    '.join(f'bool m_ws_set_{s.name} = false;' for s in guard_storages)
+        ws_guard_checks = '\n        '.join(
+            f'if (!m_ws_set_{s.name})\n'
+            f'            throw std::runtime_error(\n'
+            f'                "SDFG \'{name}\': external memory (storage {s.name}) was not set; "\n'
+            f'                "call set_workspace() before calling.");' for s in guard_storages)
+        ws_guard_method = (f'\n    // External-memory guard; see set_workspace/exit_impl for the flag lifecycle.\n'
+                           f'    void check_workspace_set() const {{\n'
+                           f'        {ws_guard_checks}\n'
+                           f'    }}\n    {ws_guard_members}\n')
+        ws_check_lead = 'check_workspace_set();\n        '
+        ws_reset = '\n        ' + '\n        '.join(f'm_ws_set_{s.name} = false;' for s in guard_storages)
+    else:
+        ws_guard_method = ''
+        ws_check_lead = ''
+        ws_reset = ''
+
     # Bound-parameter order = user-facing positional order (arg_names first,
     # as the old interface's positional calls expect), rest in arglist order -
     # with the omittable symbols last, since defaulted parameters must follow
@@ -1011,7 +1039,7 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
 
     call_param_list = ', '.join(params + ['nb::kwargs'])
     init_param_list = ', '.join(init_params + ['nb::kwargs'])
-    user_call_method, user_call_def = _user_call_binding(sdfg, arglist, init_call, gpu_check_call)
+    user_call_method, user_call_def = _user_call_binding(sdfg, arglist, init_call, gpu_check_call, ws_check_lead)
     # The trailing nb::kwargs absorber needs an annotation too.
     call_def_args = ''.join(f', {a}' for a in nb_args + ['nb::arg("_extra_kwargs")'])
     init_def_args = ''.join(f', {a}' for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
@@ -1065,6 +1093,7 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     ws_set_entries = '\n        '.join(
         f'if (storage == "{s.name}") {{\n'
         f'            __dace_set_external_memory_{s.name}(m_state, reinterpret_cast<char *>(buffer.data()){init_sym_args});\n'
+        f'            m_ws_set_{s.name} = true;\n'
         f'            return;\n'
         f'        }}' for s in ext_storages)
 
@@ -1109,7 +1138,7 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
 
     if setup_stmts:
         setup_block = '\n        '.join(setup_stmts)
-        call_body = (f'{setup_block}\n'
+        call_body = (f'{ws_check_lead}{setup_block}\n'
                      f'        {{\n'
                      f'            nb::gil_scoped_release _nogil;\n'
                      f'            init_impl({init_call});\n'
@@ -1118,7 +1147,7 @@ def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
                      f'{gpu_check_call}'
                      f'        return {ret_expr};')
     else:
-        call_body = (f'// Reading ndarray fields (.data()) needs no Python API, so the whole\n'
+        call_body = (f'{ws_check_lead}// Reading ndarray fields (.data()) needs no Python API, so the whole\n'
                      f'        // init + program call runs with the GIL released, as ctypes did.\n'
                      f'        {{\n'
                      f'            nb::gil_scoped_release _nogil;\n'
@@ -1192,7 +1221,7 @@ struct DaceHandle_{name} {{
     // Honored by the compiled per-call GPU error check; inert when this module
     // has no GPU code (the check method is only emitted with a GPU target).
     bool m_gpu_error_check = true;
-{gpu_check_method}
+{gpu_check_method}{ws_guard_method}
     void require_state() const {{
         if (!m_state)
             throw std::runtime_error(
@@ -1229,7 +1258,7 @@ struct DaceHandle_{name} {{
     // The state counts as deallocated even on failure (old-interface behavior).
     int exit_impl() {{
         int rc = __dace_exit_{name}(m_state);
-        m_state = nullptr;
+        m_state = nullptr;{ws_reset}
         return rc;
     }}
 

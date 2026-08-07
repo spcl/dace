@@ -851,6 +851,65 @@ def test_nanobind_interface_callback_binding():
     assert 'm_sym_' not in code  # symbol values are never stored on the handle
 
 
+def test_nanobind_interface_unset_workspace_refused():
+    """An SDFG with external memory must refuse to run before set_workspace was
+    called - running anyway dereferences a null workspace pointer (silent UB
+    under ctypes). The requirement is per state: finalize() drops the
+    association, so a re-initialized handle must be refused again."""
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        N = dace.symbol('N')
+
+        @dace.program
+        def extmem_guard_probe(a: dace.float64[N]):
+            workspace = dace.ndarray([N], dace.float64, lifetime=dace.AllocationLifetime.External)
+            workspace[:] = a
+            workspace += 1
+            a[:] = workspace
+
+        csdfg = extmem_guard_probe.to_sdfg().compile()
+
+        n = 20
+        a = np.random.rand(n)
+        with pytest.raises(RuntimeError, match='[Ee]xternal memory .* was not set'):
+            csdfg(a=a, N=np.int32(n))
+
+        csdfg.initialize(a, N=np.int32(n))
+        wsp = np.random.rand(n)
+        csdfg.set_workspace(dace.StorageType.CPU_Heap, wsp, a=a, N=np.int32(n))
+        ref = a + 1
+        csdfg(a=a, N=np.int32(n))
+        assert np.allclose(a, ref)
+
+        # finalize() frees the state the workspace was set on: a fresh state
+        # must demand a fresh set_workspace.
+        csdfg.finalize()
+        with pytest.raises(RuntimeError, match='[Ee]xternal memory .* was not set'):
+            csdfg(a=a, N=np.int32(n))
+
+
+def test_nanobind_interface_workspace_guard_only_with_external_memory():
+    """The workspace guard is compiled in exactly when the SDFG has external
+    memory - a plain SDFG carries neither the flags nor the check."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    plain = dace.SDFG('ws_guard_free_probe')
+    plain.add_array('A', [10], dace.float64)
+    code = generate_bindings_code(plain)
+    assert 'was not set' not in code
+    assert 'm_ws_set_' not in code
+
+    ext = dace.SDFG('ws_guard_probe')
+    ext.add_array('A', [10], dace.float64)
+    ext.add_array('wsp', [10],
+                  dace.float64,
+                  transient=True,
+                  storage=dace.StorageType.CPU_Heap,
+                  lifetime=dace.AllocationLifetime.External)
+    code = generate_bindings_code(ext)
+    assert 'm_ws_set_CPU_Heap' in code
+    assert 'was not set' in code
+
+
 def test_nanobind_interface_raw_code_objects_build_ctypes_folder(tmp_path):
     """generate_program_folder with sdfg=None (raw helper code objects, as
     parse_state_struct_test's cuda_helper builds) can generate no bindings, so
