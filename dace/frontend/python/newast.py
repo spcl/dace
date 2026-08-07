@@ -1325,10 +1325,18 @@ class ProgramVisitor(ExtNodeVisitor):
                 arr.transient = False
                 self.outputs[arrname] = (None, Memlet.from_array(arrname, arr), [])
 
+        def _is_connected_view(state: SDFGState, vnode: dace.nodes.AccessNode) -> bool:
+            """ Checks whether the view is already connected to the data it views. """
+            if any(e.dst_conn == 'views' for e in state.in_edges(vnode)):
+                return True
+            return any(e.src_conn == 'views' for e in state.out_edges(vnode))
+
         def _views_to_data(state: SDFGState, nodes: List[dace.nodes.AccessNode]) -> List[dace.nodes.AccessNode]:
             new_nodes = []
             for vnode in nodes:
                 if vnode.data in self.views:
+                    if _is_connected_view(state, vnode):
+                        continue
                     if state.in_degree(vnode) == 0:
                         aname, m = self.views[vnode.data]
                         arr = self.sdfg.arrays[aname]
@@ -5542,6 +5550,13 @@ class ProgramVisitor(ExtNodeVisitor):
                 scalar = node_str
             else:
                 scalar = self.visit(node)
+                # Replacements return their results as a list of data names (a ufunc may have several
+                # outputs), but an index is a single value. Only a list/tuple display is a literal index
+                # list; a one-element list coming from anything else is a computed index and has to be
+                # unwrapped here, or it is mistaken for a literal list (i.e., for advanced indexing).
+                if (isinstance(scalar, (list, tuple)) and len(scalar) == 1
+                        and not isinstance(node, (ast.List, ast.Tuple))):
+                    scalar = scalar[0]
             if isinstance(scalar, str) and scalar in self.sdfg.arrays:
                 if isinstance(self.sdfg.arrays[scalar], data.Scalar):
                     return self.promote_scalar_to_symbol(scalar, key=node_str)
@@ -5753,6 +5768,32 @@ class ProgramVisitor(ExtNodeVisitor):
                               other_subset_str=other_subset))
         return tmp, other_subset
 
+    def _index_literal_to_constant(self, aname: str, indices: Union[List[Any], Tuple[Any, ...]]) -> numpy.ndarray:
+        """
+        Converts a list or tuple literal used as an advanced index (e.g., ``A[[0, 2, 4]]``) to a constant
+        integer array.
+
+        :param aname: The name of the array being indexed, used for error reporting.
+        :param indices: The elements of the literal, as returned by the subscript slice parser.
+        :return: A NumPy array with the contents of the literal.
+        :raise DaceSyntaxError: If an element is not an integer known at parse time.
+        """
+        values = []
+        for elem in indices:
+            if isinstance(elem, Number):
+                values.append(elem)
+                continue
+            # Elements are already parsed at this point, so only AST leftovers go back through the visitor.
+            value = symbolic.pystr_to_symbolic(self._parse_value(elem) if isinstance(elem, ast.AST) else str(elem))
+            if not value.is_Integer:
+                node = self.current_ast_stack[-1] if self.current_ast_stack else None
+                raise DaceSyntaxError(
+                    self, node, f'Element "{value}" of the index list used to index "{aname}" is not an integer '
+                    'known at parse time. Store the indices in an integer array and index with that array instead.')
+            values.append(int(value))
+
+        return numpy.array(values, dtype=dtypes.typeclass(int).type)
+
     def _compute_output_shape_from_advanced_indexing(self, aname: str, expr: MemletExpr) -> List[symbolic.SymbolicType]:
         """
         Computes the output shape of a slicing operation with advanced indexing.
@@ -5807,9 +5848,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise NameError(f'Array "{arrname}" used in indexing "{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
-                arrname = [v if isinstance(v, Number) else self._parse_value(v) for v in arrname]
-                carr = numpy.array(arrname, dtype=dtypes.typeclass(int).type)
-                shape = carr.shape
+                shape = self._index_literal_to_constant(aname, arrname).shape
 
             if chunk_shape is not None:
                 chunk_shape, *_ = broadcast_together(shape, chunk_shape)
@@ -5918,8 +5957,7 @@ class ProgramVisitor(ExtNodeVisitor):
                     raise NameError(f'Array "{idxarrname}" used in indexing "{aname}" not found')
                 shape = desc.shape
             else:  # Literal list or tuple, add as constant and use shape
-                idxarr = [v if isinstance(v, Number) else self._parse_value(v) for v in idxarrname]
-                carr = numpy.array(idxarr, dtype=dtypes.typeclass(int).type)
+                carr = self._index_literal_to_constant(aname, idxarrname)
                 cname = self.sdfg.find_new_constant(f'__ind{i}_{aname}')
                 self.sdfg.add_constant(cname, carr)
                 self.sdfg.arrays[cname] = self.sdfg.constants_prop[cname][0]

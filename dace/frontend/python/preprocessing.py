@@ -125,10 +125,14 @@ class RewriteSympyEquality(ast.NodeTransformer):
         left = astutils.evalnode(self.visit(node.left), self.globals)
         right = astutils.evalnode(self.visit(node.comparators[0]), self.globals)
         if (isinstance(left, sympy.Basic) or isinstance(right, sympy.Basic)):
+            # The result must stay an AST node: a NodeTransformer that returns a non-AST object from a
+            # list-valued field (e.g., ``BoolOp.values`` in "a == b or c == d") has it spliced into that
+            # list by ``ast.NodeTransformer.generic_visit``, and on a single-valued field it is planted in
+            # the tree. ``astutils.evalnode`` reads the value back out of the constant.
             if isinstance(node.ops[0], ast.Eq):
-                return sympy.Eq(left, right)
+                return astutils.create_constant(sympy.Eq(left, right), node)
             elif isinstance(node.ops[0], ast.NotEq):
-                return sympy.Ne(left, right)
+                return astutils.create_constant(sympy.Ne(left, right), node)
         return self.generic_visit(node)
 
     def visit_Constant(self, node):
@@ -156,7 +160,10 @@ class ConditionalCodeResolver(ast.NodeTransformer):
     def visit_If(self, node: ast.If) -> Any:
         node = self.generic_visit(node)
         try:
-            test = RewriteSympyEquality(self.globals_and_locals).visit(node.test)
+            # Rewrite a copy: the rewrite replaces nodes in-place, and the symbolic objects it leaves
+            # behind are only meant for the evaluation below. The original test has to survive intact
+            # for the cases where the condition turns out to be indeterminate.
+            test = RewriteSympyEquality(self.globals_and_locals).visit(astutils.copy_tree(node.test))
             result = astutils.evalnode(test, self.globals_and_locals)
 
             # Check symbolic conditions separately

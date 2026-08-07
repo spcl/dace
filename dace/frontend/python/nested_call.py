@@ -52,7 +52,10 @@ class NestedCall():
 
     def add_state(self, label=None):
         self.count += 1
-        state = self.sdfg.add_state(label=label)
-        self.sdfg.add_edge(self.last_state, state, dace.InterstateEdge())
+        # States must join the control flow region being parsed, not the top-level SDFG: inside a loop or
+        # branch the two differ, and adding them to the SDFG makes the states members of both graphs.
+        target = self.pv.cfg_target
+        state = target.add_state(label=label)
+        target.add_edge(self.last_state, state, dace.InterstateEdge())
         self.last_state = state
         return state

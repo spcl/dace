@@ -24,9 +24,17 @@ def _numpy_copy(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, a: str):
     """
     if a not in sdfg.arrays.keys():
         raise DaceSyntaxError(pv, None, "Prototype argument {a} is not SDFG data!".format(a=a))
-    # TODO: The whole AddTransientMethod class should be move in replacements.py
-    from dace.frontend.python.newast import _add_transient_data
-    name, desc = _add_transient_data(pv, sdfg, sdfg.arrays[a])
+    sample = sdfg.arrays[a]
+    if isinstance(sample, data.Array) and isinstance(sample, data.View):
+        # A slice (e.g. path[:, 1]) is an ArrayView, a concrete subclass that the
+        # generic transient dispatch below does not recognize (it keys on exact
+        # type). The view's own shape is already the sliced shape, so materialize
+        # the copy directly as a plain array of that shape and dtype.
+        name, desc = sdfg.add_transient(pv.get_target_name(), sample.shape, sample.dtype, find_new_name=True)
+    else:
+        # TODO: The whole AddTransientMethod class should be move in replacements.py
+        from dace.frontend.python.newast import _add_transient_data
+        name, desc = _add_transient_data(pv, sdfg, sample)
     rnode = state.add_read(a)
     wnode = state.add_write(name)
     state.add_nedge(rnode, wnode, Memlet.from_array(name, desc))

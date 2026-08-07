@@ -191,7 +191,11 @@ def _define_literal_ex(pv: ProgramVisitor,
 
 
 @oprepo.replaces('numpy.empty')
-def _numpy_empty(pv: ProgramVisitor, sdfg: SDFG, state: SDFGState, shape: Shape, dtype: dtypes.typeclass):
+def _numpy_empty(pv: ProgramVisitor,
+                 sdfg: SDFG,
+                 state: SDFGState,
+                 shape: Shape,
+                 dtype: dtypes.typeclass = dtypes.float64):
     """ Creates an unitialized array of the specificied shape and dtype. """
     return _define_local(pv, sdfg, state, shape, dtype)
 
