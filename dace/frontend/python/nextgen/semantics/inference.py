@@ -890,6 +890,14 @@ class InferenceService:
             return ParseMemlet(self._shim, defined, node, partial_boolean_index=True), index_types
         except UnsupportedFeatureError:
             raise
+        except InvalidProgram:
+            # A deliberate refusal, not a parse that happened to fail. Turning
+            # it into "unsupported" sends the access to a Python callback,
+            # which computes a DIFFERENT answer -- the whole reason the access
+            # was refused -- and reports nothing. Note this is narrower than
+            # DaceSyntaxError: the shared memlet parser raises that for
+            # spellings ("A.flat", "A.T") the caller does go on to handle.
+            raise
         except Exception as error:
             raise UnsupportedFeatureError(f'Unsupported access expression "{astutils.unparse(node)}": {error}',
                                           self.context.filename,

@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 from dace.frontend.python import astutils
+from dace.frontend.python.common import InvalidSubscript
 
 
 class AxisKind(enum.Enum):
@@ -311,13 +312,14 @@ def reverse_normalized(
     index, which then walks the axis from the top down.
 
     A memlet subset cannot express a reversal, which is why this is not a
-    subset property. Only slices with a compile-time negative step (and
-    compile-time bounds, since the element count depends on them) are
-    rewritten; everything else is returned unchanged, so an unsupported
-    spelling degrades exactly as it did before.
+    subset property. Only slices with a compile-time negative step are
+    rewritten; a step that is not a compile-time negative number is returned
+    unchanged, since nothing here claims to know its direction.
 
     :param constant_of: Resolves an index expression to a compile-time integer.
     :return: The rewritten subscript and the source axes now read in reverse.
+    :raises InvalidSubscript: If a negative-step slice has a bound this cannot
+                             evaluate, so its element count is unknown.
     """
     ndim = len(shape)
     elements = index_slots(node.slice)
@@ -336,9 +338,21 @@ def reverse_normalized(
             step = constant_of(element.step) if element.step is not None else None
             if step is not None and step < 0:
                 forward = _forward_slice(element, step, shape[axis], constant_of)
-                if forward is not None:
-                    replacements[position] = forward
-                    reversed_axes.add(axis)
+                if forward is None:
+                    # Left alone, the shared memlet parser applies FORWARD
+                    # conventions to it and returns a range with the wrong
+                    # element count -- from which an elementwise copy took the
+                    # destination's extent as authoritative and walked the
+                    # source down from a start nothing had checked, reading off
+                    # the end of the array. Refuse instead: a slice whose
+                    # element count is unknown cannot be lowered correctly.
+                    raise InvalidSubscript(
+                        None, element, f'Cannot determine how many elements the negative-step slice '
+                        f'"{astutils.unparse(element).strip()}" selects: its bounds are not compile-time values, and '
+                        'a reversed range needs the element count to form its indices. Use compile-time bounds, or '
+                        'express the reversal with an explicit map.')
+                replacements[position] = forward
+                reversed_axes.add(axis)
         axis += 1
 
     if not replacements:

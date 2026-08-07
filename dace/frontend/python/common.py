@@ -59,6 +59,22 @@ class InvalidOperandTypes(InvalidProgram, TypeError):
     """
 
 
+class InvalidSubscript(InvalidProgram, DaceSyntaxError):
+    """
+    A subscript that cannot be lowered correctly however it is spelled -- a
+    negative-step slice whose element count is not a compile-time value, whose
+    reversed indices there is consequently no way to form.
+
+    Both a :class:`DaceSyntaxError` (what a caller catching frontend refusals
+    already expects) and an :class:`InvalidProgram` (so the access-resolution
+    seam re-raises it instead of downgrading it to "unsupported", which would
+    send the subscript to a Python callback that computes a DIFFERENT answer).
+    The shared memlet parser raises plain ``DaceSyntaxError`` for spellings the
+    frontend does go on to handle another way, so the marker -- not the class
+    alone -- is what distinguishes a deliberate refusal.
+    """
+
+
 class InvalidArgumentValues(InvalidProgram, ValueError):
     """
     The argument VALUES of a call rule it out, whatever the operand types --
