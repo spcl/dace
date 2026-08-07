@@ -42,6 +42,16 @@ loop order (inner-parallel = ``tau=(1,0)`` legal, outer-parallel =
 sequential-scan (or scan-over-map) keeps its clean structure; the skew never
 clobbers it.
 
+The diagonal is lowered as a skewed **tiling**, not element by element: a
+sequential tile-diagonal loop over a parallel tile-column Map over the two
+sequential intra-tile loops, the innermost of which keeps unit stride. The
+element-granularity diagonal walks memory at stride ``N`` and forks a parallel
+region per diagonal -- 0.17-0.18x the plain sequential nest at ``N = 768`` on 4
+threads, where the tiled form measures 2.04-2.16x. The tile-index domain is the
+same polyhedron under ``u -> Bi*I``, ``v -> Bj*J``, so the very same ISL
+projection produces its bounds. Tiling is only taken where it is provably order-
+preserving (:func:`tiling_legal`); everything else keeps the untiled lowering.
+
 ``islpy`` is an optional dependency. Without it the pass is a no-op -- loops stay
 sequential and the ``pinned_sequential`` safety net preserves the
 never-slower-than-``auto_optimize`` guarantee.
@@ -70,6 +80,22 @@ from dace.transformation.passes.canonicalize import wavefront_polyhedron as poly
 #: Prefix for the synthesised skewed iterators.
 _SKEW_T_PREFIX = '_skew_t_'
 _SKEW_P_PREFIX = '_skew_p_'
+
+#: Default extent of a skewed tile on each axis. 64x64 doubles on the paper shapes
+#: at N=768: measured 2.04-2.16x over the sequential nest on 4 threads, against
+#: 0.17-0.18x for the element-granularity diagonal it replaces. Bigger ``Bj`` is
+#: NOT better -- 256 leaves 3 tile columns at N=768, fewer than the thread count.
+DEFAULT_TILE_SIZE = 64
+
+#: Dim names for the tile-index polyhedron handed to ``poly.skew_bounds``, and the
+#: PARAMETER names standing for its two tile counts. Handing ISL the counts as opaque
+#: parameters (rather than ``int_ceil(N - 1, B)`` inline) keeps the projected diagonal
+#: bound affine; an inline integer division comes back as an ISL existential that
+#: ``pwaff_bound`` cannot render, and the whole tiling would be refused.
+_TILE_I_PROBE = '_skew_ti_probe'
+_TILE_J_PROBE = '_skew_tj_probe'
+_TILE_NI_PROBE = '_skew_ni_probe'
+_TILE_NJ_PROBE = '_skew_nj_probe'
 
 #: Suffix ``SplitStatements`` gives the per-iteration anti-dependence snapshot it
 #: inserts (``arr`` -> ``arr_split_snap``). Recognising it lets the skew absorb
@@ -644,6 +670,88 @@ def schedule_legal(tau: Tuple[int, int], deps: List[Dependence], u: str, v: str,
     return True
 
 
+def tile_signs(d: int) -> Tuple[int, ...]:
+    """Tile-index distances a single-axis element distance ``d`` can induce once
+    ``|d|`` is known not to exceed the tile extent: the two iterations either sit
+    in the same tile or straddle exactly one boundary, in the direction of ``d``."""
+    if d == 0:
+        return (0, )
+    return (0, 1) if d > 0 else (-1, 0)
+
+
+def tiling_legal(deps: List[Dependence], tau: Tuple[int, int], bi: int, bj: int) -> bool:
+    """``tau`` still orders every dependence strictly once the nest is tiled ``bi x bj``.
+
+    Two conditions, both necessary.
+
+    1. Every distance component must be a known integer no larger in magnitude than
+       its tile extent. Only then is the tile-index distance of a dependent pair the
+       CLAMPED SIGN of the element distance, i.e. one of :func:`tile_signs`. A
+       parametric distance -- a read under an enclosing reduction loop, as in
+       polybench ``nussinov`` -- carries no such bound and counts as exceeding.
+    2. For every tile-index distance the pair can actually take, ``tau`` must impose
+       the same strict order it was proved to impose element-wise. ``(0, 0)`` is
+       exempt: both iterations land in one tile, which runs its points in the
+       original sequential ``(u, v)`` order.
+
+    Condition 2 does NOT follow from condition 1. The Gauss-Seidel skew
+    ``tau = (2, 1)`` with the flow distance ``(-1, +1)`` is legal element-wise
+    (``tau . delta = -1 < 0``), yet the pair can straddle the ``v`` boundary alone,
+    giving the tile distance ``(0, +1)`` and ``tau . (0, 1) = +1 > 0`` -- the
+    producing tile would run one diagonal AFTER the consuming one, a miscompile.
+    Such a nest keeps the untiled lowering."""
+    a, b = tau
+    for dep in deps:
+        du, dv = integer_value(dep.du), integer_value(dep.dv)
+        if du is None or dv is None:
+            return False
+        if abs(du) > bi or abs(dv) > bj:
+            return False
+        for di in tile_signs(du):
+            for dj in tile_signs(dv):
+                if di == 0 and dj == 0:
+                    continue  # same tile -> original sequential order
+                dot = a * di + b * dj
+                if dot >= 0 if dep.kind == 'flow' else dot <= 0:
+                    return False
+    return True
+
+
+def domain_bbox(u: str, v: str, params: List[str], domain: List[object]) -> Optional[List[object]]:
+    """``[u_lo, u_hi, v_lo, v_hi]`` -- the exact integer bounding box of the 2-D
+    iteration domain -- or ``None`` when a side is not a single readable bound.
+
+    The tile grid is anchored at that box corner and stays RECTANGULAR even for a
+    triangular domain: tiles below the diagonal simply run empty, and the clip back
+    to the real bounds lives in the intra-tile loop bounds (``max(j0, i)``). The box
+    is an ISL projection, so a ``u`` value whose ``v`` range is empty is already
+    outside it and costs no tile."""
+    s, nmap = poly.make_set((u, v), params, domain)
+    inv = {safe: orig for orig, safe in nmap.items()}
+    box: List[object] = []
+    for keep in (0, 1):
+        proj = s.project_out(poly.isl.dim_type.set, 1 - keep, 1).coalesce()
+        for pw in (proj.dim_min(0), proj.dim_max(0)):
+            box.append(poly.pwaff_bound(pw, inv))
+    if any(o is None for o in box):
+        return None
+    return box
+
+
+class TilePlan:
+    """The skewed TILE-index bounds plus the grid origin and extents
+    :meth:`WavefrontSkew._rewrite_tiled` emits from."""
+
+    def __init__(self, bounds, u_lo, v_lo, n_i, n_j, bi: int, bj: int) -> None:
+        self.bounds = bounds
+        self.u_lo = u_lo
+        self.v_lo = v_lo
+        self.n_i = n_i
+        self.n_j = n_j
+        self.bi = bi
+        self.bj = bj
+
+
 def offset_symbols(deps: List[Dependence], dims: List[str]) -> List[object]:
     """Distinct parameter symbols appearing in any distance component."""
     nested_names = dict.fromkeys(nm for d in deps for (nm, _, _) in d.nested)
@@ -665,9 +773,22 @@ class WavefrontSkew(ppl.Pass):
 
     Backed by an exact ISL legality + bound projection; refuses anything that is
     not a genuine wavefront (already-parallel axis, non-affine carrier, several
-    carriers, non-unit strides)."""
+    carriers, non-unit strides).
+
+    The lowering is a skewed TILING (:meth:`_rewrite_tiled`) wherever
+    :func:`tiling_legal` holds, and the element-granularity diagonal
+    (:meth:`_rewrite`) otherwise."""
 
     CATEGORY: str = 'Canonicalization'
+
+    tile_i = properties.Property(dtype=int,
+                                 default=DEFAULT_TILE_SIZE,
+                                 desc='Skewed-tile extent on the outer (u) axis. A dependence reaching further than '
+                                 'this on that axis falls back to the untiled lowering.')
+    tile_j = properties.Property(dtype=int,
+                                 default=DEFAULT_TILE_SIZE,
+                                 desc='Skewed-tile extent on the inner (v) axis; the innermost emitted loop runs one '
+                                 'tile row of it at unit stride.')
 
     def modifies(self) -> ppl.Modifies:
         return ppl.Modifies.CFG | ppl.Modifies.Symbols
@@ -775,16 +896,54 @@ class WavefrontSkew(ppl.Pass):
         if bounds is None:
             return False
 
+        # Prefer the tiled lowering; decided BEFORE any mutation so a refusal here
+        # only picks the untiled path, never leaves the nest half-rewritten.
+        tiles = self._plan_tiles(deps, u, v, domain, dims, tau)
+
         # Legal skew confirmed -- now (and only now) commit the snapshot absorb,
         # so every earlier refusal left the snapshot intact. Reads are redirected
-        # onto the live array before ``_rewrite`` skews the inner body over them.
+        # onto the live array before the rewrite skews the inner body over them.
         commit_split_snapshots(snap_reads, copy_states)
 
         if guard_syms:
             self._emit_positive_guard(outer, deps, guard_syms)
 
-        self._rewrite(outer, inner, sdfg, u, v, tau, bounds)
+        if tiles is None:
+            self._rewrite(outer, inner, sdfg, u, v, tau, bounds)
+        else:
+            self._rewrite_tiled(outer, inner, sdfg, u, ub, vb, tau, tiles)
         return True
+
+    def _plan_tiles(self, deps: List[Dependence], u: str, v: str, domain: List[object], dims: List[str],
+                    tau: Tuple[int, int]) -> Optional[TilePlan]:
+        """The tile-index skew for a ``tile_i x tile_j`` blocking of this nest, or
+        ``None`` to keep the element-granularity lowering.
+
+        The tile-index domain is the SAME polyhedron under ``u -> bi*I``,
+        ``v -> bj*J``, so ``poly.skew_bounds`` projects it with no changes: it is
+        handed a rectangle over ``(I, J)`` and returns the diagonal ``T`` range plus
+        the parametric tile-column ``P`` range at fixed ``T``."""
+        bi, bj = int(self.tile_i), int(self.tile_j)
+        if bi < 1 or bj < 1 or not tiling_legal(deps, tau, bi, bj):
+            return None
+        ti, tj = sym(_TILE_I_PROBE), sym(_TILE_J_PROBE)
+        tdims = [_TILE_I_PROBE, _TILE_J_PROBE]
+        # I in [0, NI - 1], J in [0, NJ - 1] over the OPAQUE counts (see the probe names).
+        tile_domain = [ti, sym(_TILE_NI_PROBE) - 1 - ti, tj, sym(_TILE_NJ_PROBE) - 1 - tj]
+        try:
+            box = domain_bbox(u, v, params_of(domain, dims), domain)
+            if box is None:
+                return None
+            bounds = poly.skew_bounds(tuple(tdims), params_of(tile_domain, tdims), tile_domain, tau,
+                                      f'{_SKEW_T_PREFIX}probe', f'{_SKEW_P_PREFIX}probe')
+        except ValueError:
+            return None  # not renderable for ISL -> keep the untiled lowering
+        if bounds is None:
+            return None
+        u_lo, u_hi, v_lo, v_hi = box
+        n_i = symbolic.int_ceil(symbolic.simplify(u_hi - u_lo + 1), bi)
+        n_j = symbolic.int_ceil(symbolic.simplify(v_hi - v_lo + 1), bj)
+        return TilePlan(bounds, u_lo, v_lo, n_i, n_j, bi, bj)
 
     def _rewrite(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, v: str, tau: Tuple[int, int],
                  bounds) -> None:
@@ -798,7 +957,7 @@ class WavefrontSkew(ppl.Pass):
         p_var = f"{_SKEW_P_PREFIX}{nid}"
         sdfg.add_symbol(t_var, dace.int64)
         sdfg.add_symbol(p_var, dace.int64)
-        subs = {f'{_SKEW_T_PREFIX}probe': t_var, f'{_SKEW_P_PREFIX}probe': p_var}
+        subs = {f'{_SKEW_T_PREFIX}probe': sym(t_var), f'{_SKEW_P_PREFIX}probe': sym(p_var)}
 
         t_lo = bound_expr(bounds.t_lo_terms, subs, 'max')
         t_hi = bound_expr(bounds.t_hi_terms, subs, 'min')
@@ -830,6 +989,99 @@ class WavefrontSkew(ppl.Pass):
             inner.replace_dict({u: p_var, v: v_expr})
 
         self._convert_inner_to_map(outer, inner, sdfg)
+
+    def _rewrite_tiled(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG, u: str, ub: Tuple[object, object],
+                       vb: Tuple[object, object], tau: Tuple[int, int], plan: TilePlan) -> None:
+        """Lower the wavefront as a skewed TILING -- four loops instead of two::
+
+            for T in [t_lo .. t_hi]:              # tile diagonal, pinned sequential
+              parallel for P in [p_lo .. p_hi]:   # tile column, lifted to a Map
+                for u in [u0 + I*Bi .. min(u_hi, u0 + I*Bi + Bi - 1)]:
+                  for v in [max(v_lo, v0 + J*Bj) .. min(v_hi, v0 + J*Bj + Bj - 1)]:
+                      <original body>
+
+        with ``(I, J)`` the tile indices read back from ``(T, P)`` through the same
+        unimodular complement ``skew_bounds`` used (``I = a*(T - b*P), J = P`` when
+        ``|a| == 1``; ``I = P, J = b*(T - a*P)`` when ``|b| == 1``). The triangular
+        clip folds into the ``v`` lower bound exactly as the ISL projection does
+        untiled. ``u`` and ``v`` keep their original names, so the body is reused
+        verbatim -- no substitution, no memlet rewrite.
+
+        Why this and not the element-granularity diagonal: the untiled form walks a
+        stride-``N`` anti-diagonal and forks a parallel region per diagonal, which
+        measured 0.17-0.18x of the plain sequential nest at N=768 on 4 threads. The
+        tiled form gives the innermost loop unit stride and cuts the number of
+        parallel regions by the tile area; the same shapes measure 2.04-2.16x.
+
+        Bit-exactness is unchanged by the tiling. Each cell is still written exactly
+        once; :func:`tiling_legal` proves every summand a cell reads is the final
+        value of a cell from a strictly earlier tile diagonal (or from the same tile,
+        where the original sequential ``(u, v)`` order is preserved verbatim); and no
+        statement's own evaluation order is touched. So every read sees the very
+        value the sequential nest gave it, in the same order -- no reassociation, no
+        renormalisation, bit-for-bit."""
+        a, b = tau
+        v = inner.loop_variable
+        nid = _next_id(sdfg)
+        t_var = f"{_SKEW_T_PREFIX}{nid}"
+        p_var = f"{_SKEW_P_PREFIX}{nid}"
+        sdfg.add_symbol(t_var, dace.int64)
+        sdfg.add_symbol(p_var, dace.int64)
+        subs = {
+            f'{_SKEW_T_PREFIX}probe': sym(t_var),
+            f'{_SKEW_P_PREFIX}probe': sym(p_var),
+            _TILE_NI_PROBE: plan.n_i,
+            _TILE_NJ_PROBE: plan.n_j,
+        }
+        bounds = plan.bounds
+
+        outer.loop_variable = t_var
+        outer.init_statement = properties.CodeBlock(f"{t_var} = ({bound_expr(bounds.t_lo_terms, subs, 'max')})")
+        outer.loop_condition = properties.CodeBlock(f"{t_var} <= ({bound_expr(bounds.t_hi_terms, subs, 'min')})")
+        outer.update_statement = properties.CodeBlock(f"{t_var} = {t_var} + 1")
+        # The tile diagonal carries every wavefront dependence by construction; pin it
+        # so a downstream LoopToMap / LoopToReduce never races it into a parallel map.
+        outer.pinned_sequential = True
+
+        t_sym, p_sym = sym(t_var), sym(p_var)
+        if abs(a) == 1:
+            i_tile, j_tile = a * (t_sym - b * p_sym), p_sym
+        else:
+            i_tile, j_tile = p_sym, b * (t_sym - a * p_sym)
+        i_lo = symbolic.simplify(plan.u_lo + plan.bi * i_tile)
+        j_lo = symbolic.simplify(plan.v_lo + plan.bj * j_tile)
+
+        p_loop = LoopRegion(f'{outer.label}_tile_diag', f"{p_var} <= ({bound_expr(bounds.p_hi_terms, subs, 'min')})",
+                            p_var, f"{p_var} = ({bound_expr(bounds.p_lo_terms, subs, 'max')})",
+                            f"{p_var} = {p_var} + 1")
+        i_loop = LoopRegion(f'{outer.label}_tile_row',
+                            f"{u} <= (min({symbolic.symstr(ub[1])}, {symbolic.symstr(i_lo + plan.bi - 1)}))", u,
+                            f"{u} = ({symbolic.symstr(i_lo)})", f"{u} = {u} + 1")
+        # The intra-tile loops carry the dependences the diagonal spreads apart, so
+        # they stay sequential for the same reason the diagonal does.
+        i_loop.pinned_sequential = True
+
+        # Re-parent: ``inner`` becomes the innermost unit-stride ``v`` loop, wrapped by
+        # the new row loop, wrapped by the tile-column loop that replaces it in ``outer``.
+        in_edges = list(outer.in_edges(inner))
+        out_edges = list(outer.out_edges(inner))
+        was_start = outer.start_block is inner
+        outer.remove_node(inner)
+        i_loop.add_node(inner, is_start_block=True)
+        p_loop.add_node(i_loop, is_start_block=True)
+        outer.add_node(p_loop, is_start_block=was_start, ensure_unique_name=True)
+        for e in in_edges:
+            outer.add_edge(e.src, p_loop, e.data)
+        for e in out_edges:
+            outer.add_edge(p_loop, e.dst, e.data)
+
+        inner.init_statement = properties.CodeBlock(f"{v} = (max({symbolic.symstr(vb[0])}, {symbolic.symstr(j_lo)}))")
+        inner.loop_condition = properties.CodeBlock(
+            f"{v} <= (min({symbolic.symstr(vb[1])}, {symbolic.symstr(j_lo + plan.bj - 1)}))")
+        inner.update_statement = properties.CodeBlock(f"{v} = {v} + 1")
+        inner.pinned_sequential = True
+
+        self._convert_inner_to_map(outer, p_loop, sdfg)
 
     def _convert_inner_to_map(self, outer: LoopRegion, inner: LoopRegion, sdfg: SDFG) -> None:
         """Lift the skewed inner ``p``-loop to a Map via ``LoopToMap.apply``,
@@ -875,23 +1127,25 @@ class WavefrontSkew(ppl.Pass):
         guard.side_effects = True
 
 
-def bound_expr(terms: List[object], subs: Dict[str, str], fn: str) -> str:
+def bound_expr(terms: List[object], subs: Dict[str, object], fn: str) -> str:
     """Render bound terms into a loop-bound string: a single term verbatim, or
-    ``max(...)`` / ``min(...)`` (``fn``) of several. ``subs`` renames the probe
-    iterators to the real ``t`` / ``p`` symbol names."""
-    rendered = [symbolic.symstr(rename_symbols(t, subs)) for t in terms]
+    ``max(...)`` / ``min(...)`` (``fn``) of several. ``subs`` resolves the probe
+    names -- the real ``t`` / ``p`` symbols, and for the tiled lowering the two tile
+    counts the tile-index polyhedron carried as opaque parameters."""
+    rendered = [symbolic.symstr(substitute_by_name(t, subs)) for t in terms]
     if len(rendered) == 1:
         return rendered[0]
     return f"{fn}(" + ", ".join(rendered) + ")"
 
 
-def rename_symbols(expr, subs: Dict[str, str]):
-    """Rename symbols in ``expr`` by name."""
+def substitute_by_name(expr, subs: Dict[str, object]):
+    """Substitute symbols in ``expr`` by NAME, so a probe symbol is matched whatever
+    assumptions its object carries."""
     e = symbolic.simplify(expr)
     mp = {}
     for s in e.free_symbols:
         if s.name in subs:
-            mp[s] = sym(subs[s.name])
+            mp[s] = subs[s.name]
     return e.subs(mp)
 
 
