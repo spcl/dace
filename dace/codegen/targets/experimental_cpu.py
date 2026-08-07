@@ -21,6 +21,7 @@ from pygments.token import Token
 from dace import data as dt
 from dace import dtypes, symbolic
 from dace.codegen import cppunparse
+from dace.codegen.codeobject import CODE_ANNOTATION
 from dace.codegen.common import sym2cpp
 from dace.config import Config
 from dace.codegen.dispatcher import DefinedType
@@ -55,6 +56,10 @@ IDENTIFIER_TOKENS = re.compile(r'[A-Za-z_]\w*')
 # token before an identifier introduced it, so the same tokens used as operators (``a * b``,
 # ``a > b``) read as declarations too -- the safe direction, see that method.
 DECLARATOR_TOKENS = frozenset({'*', '&', '>'})
+# Preprocessor lines :func:`deduplicate_includes` reasons about.
+INCLUDE_LINE = re.compile(r'^\s*#\s*include\s')
+PREPROCESSOR_IF = re.compile(r'^\s*#\s*if')
+PREPROCESSOR_ENDIF = re.compile(r'^\s*#\s*endif')
 
 
 def code_blocks_of(value) -> Tuple[CodeBlock, ...]:
@@ -156,6 +161,37 @@ def subscript_index_strings(slicenode: ast.AST) -> List[str]:
     return [ast.unparse(e) for e in index_expr_nodes(slicenode)]
 
 
+def deduplicate_includes(code: str) -> str:
+    """Drop repeated ``#include`` lines from assembled global code, keeping the FIRST of each.
+
+    A translation unit's global code is written by streams that cannot see one another -- the file
+    header (target/environment headers, then every SDFG's ``global_code``) and one write per tasklet
+    ``code_global`` (``cpp.unparse_tasklet``) -- so a header named by two writers arrives twice. This
+    is the one point that sees all of them.
+
+    Only repeats OUTSIDE preprocessor conditionals go: an include under ``#if`` is picked by the
+    branch it sits in, so it is neither dropped nor counted as the first occurrence. Lines compare
+    without the per-node ``////__DACE`` annotation that makes identical includes textually differ.
+    Non-include lines are untouched and first-occurrence order is kept -- config-dependent headers
+    need it.
+    """
+    seen: Set[str] = set()
+    depth = 0
+    kept: List[str] = []
+    for line in code.split('\n'):
+        if PREPROCESSOR_IF.match(line):
+            depth += 1
+        elif PREPROCESSOR_ENDIF.match(line):
+            depth = max(depth - 1, 0)
+        elif depth == 0 and INCLUDE_LINE.match(line):
+            key = CODE_ANNOTATION.sub('', line).strip()
+            if key in seen:
+                continue
+            seen.add(key)
+        kept.append(line)
+    return '\n'.join(kept)
+
+
 # NOTE: not registered with the target registry -- it is selected explicitly by
 # ``dace.codegen.codegen.generate_code`` when ``compiler.cpu.implementation`` is
 # ``experimental_readable``. Registering it would cause double instantiation.
@@ -215,6 +251,16 @@ class ExperimentalCPUCodeGen(CPUCodeGen):
         # emit_tasklet_body_block, which is the first point that knows whether that tasklet is emitted
         # brace-free (fuse the binding) or in its own `{ }` block (declare ahead of the block instead).
         self.const_pending: List[dict] = []
+
+    def get_generated_codeobjects(self):
+        # A split-nest / external translation unit assembles its global code the way the frame does --
+        # a re-emitted file header plus one write per tasklet ``code_global`` -- so a header named by
+        # two tasklets of the same nest arrives twice. The frame's own file is deduplicated where it
+        # is assembled (framecode.py, generate_code).
+        objects = super().get_generated_codeobjects()
+        for obj in objects:
+            obj.code = deduplicate_includes(obj.code)
+        return objects
 
     # -- map scope ------------------------------------------------------------
 
