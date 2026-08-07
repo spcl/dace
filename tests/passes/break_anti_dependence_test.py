@@ -608,7 +608,85 @@ def test_forward_reads_symbolic_offset_guard_is_strictly_positive():
     assert any(strict in g for g in guards), guards
 
 
+# ===========================================================================
+# Snapshot window: the copy covers the elements the redirected reads touch, not
+# the whole array. Proportional, so it only shows where the loop sweeps a slice.
+# ===========================================================================
+B = dace.symbol('B')
+NB = dace.symbol('NB')
+
+
+def _snapshot_copies(sdfg):
+    """Every ``name -> snap`` copy memlet the pass planted, in state order."""
+    return [
+        e.data for st in sdfg.all_states() for e in st.edges() if isinstance(e.dst, nodes.AccessNode)
+        and '_snap' in e.dst.data and e.data is not None and not e.data.is_empty()
+    ]
+
+
+def test_snapshot_copies_only_the_block_a_nested_loop_reads():
+    """A blocked inner sweep ``a[i] = a[i+1] + b[i]`` over ``a[t*B : (t+1)*B]``.
+
+    The snapshot state sits inside the outer loop, so a whole-array copy is paid once per
+    outer iteration -- O(NB x N) of memcpy for an O(N) sweep. Only the block is ever read
+    off the snapshot, so only the block is copied and ``N`` does not appear in the copy."""
+
+    @dace.program
+    def blocked(a: dace.float64[N], b: dace.float64[N]):
+        for t in range(NB):
+            for i in range(t * B, (t + 1) * B - 1):
+                a[i] = a[i + 1] + b[i]
+
+    sdfg = blocked.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    copies = _snapshot_copies(sdfg)
+    assert len(copies) == 1
+    assert 'N' not in {str(s) for s in copies[0].subset.free_symbols}, copies[0].subset
+
+    n, b_, nb = 16, 4, 4
+    rng = np.random.default_rng(21)
+    a0, b0 = rng.random(n), rng.random(n)
+    ref = a0.copy()
+    for t in range(nb):
+        for i in range(t * b_, (t + 1) * b_ - 1):
+            ref[i] = ref[i + 1] + b0[i]
+    got = a0.copy()
+    sdfg(a=got, b=b0.copy(), N=n, B=b_, NB=nb)
+    assert np.array_equal(got, ref)
+
+
+def test_forward_reads_snapshot_copies_only_the_swept_window():
+    """The per-edge policy shrinks the same way: a sweep of ``[4, N-4)`` reading ``a[i+1]``
+    copies the ``N - 8`` elements it reads, not the array."""
+
+    @dace.program
+    def windowed(a: dace.float64[N], d: dace.float64[N], x: dace.float64[N]):
+        for i in range(4, N - 4):
+            a[i] = x[i] * 2.0
+            d[i] = a[i] + a[i + 1]
+
+    sdfg = windowed.to_sdfg(simplify=True)
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
+    sdfg.validate()
+    copies = _snapshot_copies(sdfg)
+    assert len(copies) == 1
+    assert copies[0].subset.num_elements() == dace.symbolic.pystr_to_symbolic('N - 8')
+
+    n = 16
+    rng = np.random.default_rng(22)
+    x = rng.random(n)
+    ref_a, ref_d = np.zeros(n), np.zeros(n)
+    windowed.to_sdfg(simplify=True)(a=ref_a, d=ref_d, x=x.copy(), N=n)
+    got_a, got_d = np.zeros(n), np.zeros(n)
+    sdfg(a=got_a, d=got_d, x=x.copy(), N=n)
+    assert np.array_equal(got_a, ref_a)
+    assert np.array_equal(got_d, ref_d)
+
+
 if __name__ == '__main__':
+    test_snapshot_copies_only_the_block_a_nested_loop_reads()
+    test_forward_reads_snapshot_copies_only_the_swept_window()
     test_forward_reads_breaks_what_the_whole_array_policy_refuses()
     test_forward_reads_preserves_values()
     test_forward_reads_is_idempotent()

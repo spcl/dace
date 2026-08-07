@@ -67,6 +67,7 @@ from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArr
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
+from dace.transformation.passes.cpu_specialization import ChunkAntiDependence
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
@@ -989,6 +990,11 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
 
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
+
+    # cpu_specialize: trade the device-neutral anti-dependence snapshot for per-chunk
+    # seam buffers (sequential-within-chunk = CPU scheduling; matcher refuses GPU maps).
+    if break_anti_dependence and target == 'cpu':
+        s += [('cpu_specialize', ChunkAntiDependence())]
 
     # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
     # permissively, where the blocker is an algebraic side condition (TSVC s171's

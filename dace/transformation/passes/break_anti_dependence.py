@@ -14,7 +14,8 @@ recurrence and must stay sequential). The pass therefore renames only when, for
 the array's affine point accesses, every read/write pair is WAR or non-aliasing
 and at least one is WAR.
 
-It trades an extra array + an O(N) copy for parallelism, so it is meant to run
+It trades an extra array + a copy of the window the loop reads (see
+:meth:`BreakAntiDependence._snapshot_window`) for parallelism, so it is meant to run
 **optionally** (a tuning knob), not as part of the default pipeline.
 
 Two admission policies share the one classifier, selected by the ``forward_reads``
@@ -49,12 +50,13 @@ the split either way, distributed later by ``LoopFission``).
 Breaking is never declined because the copy looks expensive: the canonical form
 prefers the parallel version, and cost is the tuner's call, not this pass's.
 """
+import copy
 from functools import lru_cache
 from typing import Any, Dict, Optional, Set
 
 import sympy
 
-from dace import data, dtypes, properties, symbolic, Memlet
+from dace import data, dtypes, properties, subsets, symbolic, Memlet
 from dace.sdfg import SDFG, nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation import pass_pipeline as ppl
@@ -790,6 +792,51 @@ class BreakAntiDependence(ppl.Pass):
         guard.side_effects = True
         return guard
 
+    def _snapshot_window(self, loop: LoopRegion, name: str, sdfg: SDFG, read_subsets) -> Optional[Memlet]:
+        """The copy memlet for ``name -> snap`` restricted to the elements the
+        redirected reads actually touch, or ``None`` to fall back to a whole-array copy.
+
+        Only the redirected read edges ever source from the snapshot, so copying more
+        than the image of their subsets over the loop's iteration space is pure data
+        movement. The image is the standard memlet propagation
+        (:func:`~dace.sdfg.propagation.propagate_subset`), which over-approximates --
+        the copy can only come out too large, never too small.
+
+        The saving is proportional, not constant: on a flat loop that sweeps a whole
+        1-D array the window IS the array. It matters when the loop touches a slice --
+        a blocked/tiled inner loop over ``a[t*B : (t+1)*B]`` copied the entire array
+        once per outer iteration, an O(outer x N) memcpy for an O(N) sweep.
+
+        The snapshot descriptor keeps the FULL shape so the redirected reads keep
+        indexing it exactly as they indexed ``name`` -- no index rewriting, and the
+        pages outside the window are never touched, so the untouched tail costs
+        address space rather than memory.
+
+        Returns ``None`` (whole array) when the loop bounds are not parseable or when
+        the window would index by a symbol that only exists inside the loop -- the copy
+        state sits BEFORE the loop, where such a symbol is not defined.
+        """
+        from dace.sdfg import propagation
+        from dace.transformation.passes.analysis import loop_analysis
+        start = loop_analysis.get_init_assignment(loop)
+        end = loop_analysis.get_loop_end(loop)
+        stride = loop_analysis.get_loop_stride(loop)
+        if start is None or end is None or stride is None:
+            return None
+        desc = sdfg.arrays[name]
+        memlets = [Memlet(data=name, subset=copy.deepcopy(s)) for s in read_subsets]
+        window = propagation.propagate_subset(memlets, desc, [loop.loop_variable],
+                                              subsets.Range([(start, end, stride)])).subset
+        if window is None:
+            return None
+        # Symbols the loop DEFINES -- its iterator, nested map/loop iterators, and anything
+        # an interstate edge of the body assigns -- do not exist in the pre-loop state.
+        internal = self._loop_internal_symbols(loop)
+        internal.update(k for e in loop.all_interstate_edges() for k in (e.data.assignments or {}))
+        if {str(s) for s in window.free_symbols} & internal:
+            return None
+        return Memlet(data=name, subset=copy.deepcopy(window), other_subset=copy.deepcopy(window))
+
     def _snapshot_and_redirect(self, loop: LoopRegion, name: str, sdfg: SDFG, guards=None, array_guards=None):
         """Insert ``snap = name`` before ``loop`` and point the loop's
         *read-ahead* reads of ``name`` at ``snap``. Also plants runtime
@@ -873,9 +920,12 @@ class BreakAntiDependence(ppl.Pass):
                                      storage=desc.storage,
                                      find_new_name=True)
 
-        # Snapshot copy `name -> snap` in a fresh state right before the loop.
+        # Snapshot copy `name -> snap` in a fresh state right before the loop, over the
+        # window the redirected reads touch (see :meth:`_snapshot_window`).
+        read_subsets = [e.data.get_src_subset(e, st) or e.data.subset for st, e in to_move]
+        copy_mem = self._snapshot_window(loop, name, sdfg, read_subsets) or Memlet.from_array(name, desc)
         pre = loop.parent_graph.add_state_before(loop, label=f'{name}_snapshot')
-        pre.add_nedge(pre.add_read(name), pre.add_write(snap), Memlet.from_array(name, desc))
+        pre.add_nedge(pre.add_read(name), pre.add_write(snap), copy_mem)
 
         # Emit runtime positive-check tasklets for any symbolic guards.
         for expr in (guards or ()):
@@ -970,19 +1020,19 @@ class BreakAntiDependence(ppl.Pass):
             if not fwd_edges:
                 continue
 
-            # Anti-dependence is allowed by default: snapshot the FULL array before the loop
-            # and redirect only the read-ahead edges to the snapshot. With the swept sizes the
-            # array already tracks the loop, and the snapshot copy lowers to a parallel memcpy,
-            # so a whole-array copy is simple and cheap -- no footprint bookkeeping needed, and
-            # the break is never declined because the copy looked expensive.
+            # Snapshot before the loop and redirect only the read-ahead edges to it. The copy
+            # covers the window those edges read (see :meth:`_snapshot_window`), not the whole
+            # array. The break itself is never declined because the copy looked expensive.
             desc = sdfg.arrays[arr]
             snap, _ = sdfg.add_transient(f'{arr}_split_snap',
                                          desc.shape,
                                          desc.dtype,
                                          storage=desc.storage,
                                          find_new_name=True)
+            read_subsets = [e.data.get_src_subset(e, state) for _, e in fwd_edges]
+            copy_mem = self._snapshot_window(loop, arr, sdfg, read_subsets) or Memlet.from_array(arr, desc)
             pre = loop.parent_graph.add_state_before(loop, label=f'{arr}_split_snapshot')
-            pre.add_nedge(pre.add_read(arr), pre.add_write(snap), Memlet.from_array(arr, desc))
+            pre.add_nedge(pre.add_read(arr), pre.add_write(snap), copy_mem)
             # sorted: ``sym_guards`` is a set of sympy exprs (hashed via symbol-name strings). It is iterated
             # to EMIT tasklets into ``pre``, so its order fixes their node names/ids and the emitted C order.
             for expr in sorted(sym_guards, key=symbolic.symstr):
