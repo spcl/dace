@@ -3117,6 +3117,11 @@ class CPUCodeGen(TargetCodeGenerator):
                     map_header += f' reduction({op_str}:{clause_target})'
                     if declare is not None and declare not in declares:
                         declares.append(declare)
+                # ``simd`` too: the clause already sanctions reassociation inside the combining op, so
+                # vector partials are legal. No min/max, per ``dace/runtime/include/dace/reduction.h``.
+                if omp_reductions and all(op not in ('min', 'max') for op, _ct, _dn, _dec in omp_reductions):
+                    head, sep, rest = map_header.partition(' for')
+                    map_header = f'{head}{sep} simd{rest}'
                 # ``declare reduction`` directives must be in scope before the pragma; emit
                 # each unique one on its own line ahead of the ``parallel for``.
                 for declare in declares:
