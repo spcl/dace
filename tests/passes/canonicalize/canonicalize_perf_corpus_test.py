@@ -163,6 +163,11 @@ _WARMUP = int(os.environ.get('CANON_PERF_WARMUP', '2'))
 _MIN_REPS = int(os.environ.get('CANON_PERF_MIN_REPS', '5'))
 _BUDGET_MS = float(os.environ.get('CANON_PERF_BUDGET_MS', '20000'))
 _PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
+#: Per-ARM cap. The kernel cap alone is not enough: its alarm is spent on whichever arm is
+#: running when it fires, so a single slow arm both loses itself and leaves its siblings
+#: unbounded. A third of the kernel budget lets the typical seven-arm kernel finish while
+#: still catching an arm that has genuinely run away.
+_PER_ARM_TIMEOUT = int(os.environ.get('CANON_PERF_ARM_TIMEOUT', str(max(60, _PER_KERNEL_TIMEOUT // 3))))
 
 #: Where per-kernel result files live (one ``<suite>_<kernel>.json`` each).
 _RESULTS_DIR: str = os.environ.get('CANON_PERF_DIR',
@@ -878,6 +883,9 @@ def _measure_kernel(suite, name):
     from speedups instead of failing the whole kernel. Raises ``pytest.skip`` if
     nothing at all was measurable.
     """
+    # Mirrors the alarm the caller arms for this kernel, so the per-arm bound below can tighten
+    # that deadline but never extend past it.
+    deadline = time.monotonic() + _PER_KERNEL_TIMEOUT
     result: dict[str, Any] = dict(suite=suite,
                                   kernel=name,
                                   host=_HOST,
@@ -932,6 +940,13 @@ def _measure_kernel(suite, name):
                 # The compiler override has to span the whole arm: ``run_matches`` compiles too, and
                 # correctness must gate the very binary that gets timed.
                 arm_t0 = time.perf_counter()
+                # Bound EVERY arm, not just the kernel. The caller arms one alarm for the whole
+                # kernel, and the per-arm ``except`` below absorbs the _Timeout it raises -- so the
+                # alarm is spent on whichever arm happened to be running and every LATER arm then
+                # ran with no bound at all. Re-arming per arm restores the guarantee and keeps one
+                # pathological arm from consuming the budget its siblings needed. Clamped to the
+                # kernel's remaining time so this can only ever tighten the caller's deadline.
+                signal.alarm(max(1, int(min(_PER_ARM_TIMEOUT, deadline - time.monotonic()))))
                 with toolchain_env(_ARMS[label]):
                     s = CS.build(ctx, fn, arm_tag(label))
                     entry['correct'] = bool(CS.run_matches(ctx, s))
@@ -955,6 +970,9 @@ def _measure_kernel(suite, name):
                 entry['error'] = f'{type(e).__name__}: {str(e)[:120]}'
                 print(f'    {label}: FAILED {entry["error"]}', flush=True)
             pres['pipelines'][label] = entry
+        # Back to the KERNEL bound: the last arm left its own alarm armed, and it would
+        # otherwise fire while the speedups below are being computed and the record written.
+        signal.alarm(max(1, int(deadline - time.monotonic())))
         # Speedups vs baseline (best-of-N min): >1 means the candidate is faster.
         base = pres['pipelines'].get(BASELINE, {})
         b_min = base.get('min_ms') if base.get('correct') else None
