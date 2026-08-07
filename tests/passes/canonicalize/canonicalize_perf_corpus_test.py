@@ -153,6 +153,13 @@ REGRESSION_FACTOR = 6.0
 _MIN_TIMEABLE_MS = 0.5
 _REPS = int(os.environ.get('CANON_PERF_REPS', '7'))
 _WARMUP = int(os.environ.get('CANON_PERF_WARMUP', '2'))
+#: Rep-count floor and per-(kernel, arm) timing budget. ``_REPS`` is the CEILING now, not the flat
+#: count: ``_reps_for`` spends up to ``_BUDGET_MS`` of wall clock and stops, so a cheap kernel still
+#: gets the full ``_REPS`` while a 20s stencil gets ``_MIN_REPS`` instead of turning one kernel into
+#: two hours. The floor keeps a median meaningful; raise the budget to trade wall clock for tighter
+#: medians on the expensive tail.
+_MIN_REPS = int(os.environ.get('CANON_PERF_MIN_REPS', '5'))
+_BUDGET_MS = float(os.environ.get('CANON_PERF_BUDGET_MS', '20000'))
 _PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
 
 #: Where per-kernel result files live (one ``<suite>_<kernel>.json`` each).
@@ -671,6 +678,28 @@ def _pool_cupy():
         pass
 
 
+def _reps_for(est_ms: float) -> int:
+    """How many timed reps a kernel costing ``est_ms`` per call should get.
+
+    A FLAT rep count does not survive this corpus: it spans kernels from ~50us to ~20s, and the
+    expensive tail is where a flat count explodes. jacobi_2d at its paper shape (tsteps=1000,
+    N=2800) is ~20s per call, so 50 reps x 7 arms is ~2 wall-clock HOURS for one kernel -- measured,
+    not estimated: it and heat_3d together took 6.4h of a 10h sweep while the other 79 kernels
+    shared the rest.
+
+    Reps buy a tighter median, and what they buy falls off fast: run-to-run spread on a 20s kernel
+    is a fraction of a percent (it is one long steady-state loop nest, not a 50us kernel where timer
+    granularity and cache state dominate), so rep 6 through rep 50 re-confirm a number rep 5 already
+    had. Spending the budget on the cheap kernels, where the noise actually is, is strictly better
+    measurement per CPU-hour. The floor is never crossed, so even the most expensive kernel keeps
+    enough samples for a median to mean something, and the per-entry ``reps`` is recorded next to
+    every timing so a reader can see which regime produced it.
+    """
+    if est_ms <= 0:  # timer granularity: too fast to size, so it is cheap -- give it the full count
+        return _REPS
+    return max(_MIN_REPS, min(_REPS, int(_BUDGET_MS / est_ms)))
+
+
 def _time_all_reps(ctx, sdfg):
     """All timed repetitions for one compiled SDFG, in milliseconds.
 
@@ -680,7 +709,19 @@ def _time_all_reps(ctx, sdfg):
     """
     _pool_cupy()
     cs, kw = CS.compiled_call(ctx, sdfg)
-    with dace.profile(repetitions=_REPS, warmup=_WARMUP, print_results=False) as prof:
+    # One untimed call to size the rep count. It doubles as an extra warmup -- it faults in the
+    # output pages and warms the caches -- so it costs nothing that ``warmup`` was not already
+    # paying, and its own duration is discarded rather than pooled into the reported statistics.
+    t0 = time.perf_counter()
+    cs(**kw)
+    est_ms = (time.perf_counter() - t0) * 1000.0
+    reps = _reps_for(est_ms)
+    # Warmup is FULL calls, so on the expensive tail it is priced like reps: two of them on a 20s
+    # stencil cost 40s, as much as the entire rep floor. The call above has already warmed the
+    # caches and faulted the pages, which is what warmup is for, so once a kernel is expensive
+    # enough to be sized down the second warmup buys nothing but wall clock.
+    warmup = _WARMUP if reps > _MIN_REPS else min(_WARMUP, 1)
+    with dace.profile(repetitions=reps, warmup=warmup, print_results=False) as prof:
         cs(**kw)
     _report, times = prof.times[-1]
     return np.asarray(times, dtype=float)  # dace.profile reports per-call wall time in ms
@@ -874,16 +915,29 @@ def _measure_kernel(suite, name):
             try:
                 # The compiler override has to span the whole arm: ``run_matches`` compiles too, and
                 # correctness must gate the very binary that gets timed.
+                arm_t0 = time.perf_counter()
                 with toolchain_env(_ARMS[label]):
                     s = CS.build(ctx, fn, arm_tag(label))
                     entry['correct'] = bool(CS.run_matches(ctx, s))
                     if entry['correct']:
                         times = _time_all_reps(ctx, s)
                         entry.update(_aggregate(times))
+                        # Per-entry, because the count is adaptive now: the record-level ``reps`` is
+                        # only the ceiling, and an expensive kernel's real count is this one.
+                        entry['reps'] = int(times.size)
                         entry['times_ms'] = [round(float(x), 6) for x in times]
                         measured_any = True
+                # Per-arm wall clock, printed as it happens. A kernel writes its JSON only after ALL
+                # its arms finish, so without this an expensive one (jacobi_2d: >30min for 7 arms at
+                # the paper shape) is indistinguishable from a hang -- there is no partial output to
+                # read, and a job killed by its time limit leaves nothing at all behind for it.
+                print(
+                    f'    {label}: {time.perf_counter() - arm_t0:.1f}s '
+                    f'(reps={entry.get("reps", 0)}, min={entry.get("min_ms", "-")}ms)',
+                    flush=True)
             except Exception as e:
                 entry['error'] = f'{type(e).__name__}: {str(e)[:120]}'
+                print(f'    {label}: FAILED {entry["error"]}', flush=True)
             pres['pipelines'][label] = entry
         # Speedups vs baseline (best-of-N min): >1 means the candidate is faster.
         base = pres['pipelines'].get(BASELINE, {})
@@ -1039,24 +1093,27 @@ def export_csv(csv_path, results_dir=None):
             for label, entry in pres.get('pipelines', {}).items():
                 speedup = 1.0 if label == baseline else pres.get('speedup_vs_baseline', {}).get(label)
                 rows.append(
-                    dict(suite=r.get('suite'),
-                         kernel=r.get('kernel'),
-                         preset=preset,
-                         pipeline=label,
-                         correct=entry.get('correct'),
-                         min_ms=entry.get('min_ms'),
-                         median_ms=entry.get('median_ms'),
-                         mean_ms=entry.get('mean_ms'),
-                         std_ms=entry.get('std_ms'),
-                         speedup_vs_baseline=speedup,
-                         reps=r.get('reps'),
-                         omp=r.get('omp_num_threads'),
-                         host=r.get('host'),
-                         timestamp=r.get('timestamp'),
-                         error=entry.get('error', ''),
-                         reference_kind=den.get('kind', ''),
-                         reference_min_ms=den.get('min_ms'),
-                         speedup_vs_reference=pres.get('speedup_vs_reference', {}).get(label)))
+                    dict(
+                        suite=r.get('suite'),
+                        kernel=r.get('kernel'),
+                        preset=preset,
+                        pipeline=label,
+                        correct=entry.get('correct'),
+                        min_ms=entry.get('min_ms'),
+                        median_ms=entry.get('median_ms'),
+                        mean_ms=entry.get('mean_ms'),
+                        std_ms=entry.get('std_ms'),
+                        speedup_vs_baseline=speedup,
+                        # Prefer the arm's OWN count: with adaptive reps the record-level value is
+                        # just the ceiling, so reporting it would overstate the expensive kernels.
+                        reps=entry.get('reps', r.get('reps')),
+                        omp=r.get('omp_num_threads'),
+                        host=r.get('host'),
+                        timestamp=r.get('timestamp'),
+                        error=entry.get('error', ''),
+                        reference_kind=den.get('kind', ''),
+                        reference_min_ms=den.get('min_ms'),
+                        speedup_vs_reference=pres.get('speedup_vs_reference', {}).get(label)))
     os.makedirs(os.path.dirname(os.path.abspath(csv_path)) or '.', exist_ok=True)
     with open(csv_path, 'w', newline='') as f:
         w = csv.DictWriter(f, fieldnames=_CSV_FIELDS)

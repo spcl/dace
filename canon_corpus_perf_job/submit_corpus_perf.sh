@@ -26,7 +26,7 @@
 #SBATCH --account=g34
 #SBATCH --partition=normal
 #SBATCH --exclusive
-#SBATCH --time=08:00:00
+#SBATCH --time=11:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-task=1
@@ -101,15 +101,12 @@ export CANON_PERF_REPS="${REPS:-50}"
 # it reaches the pytest entry point too. ``CANON_PERF_ARMS=0`` in the caller's environment still
 # wins -- that is the documented smoke-run escape hatch on a box without a polyhedral clang.
 export CANON_PERF_ARMS="${CANON_PERF_ARMS:-1}"
-# gcc's parloops silently stops parallelizing above a target-specific thread count when
-# -floop-nest-optimize is on the same command line, which the per-arm probe catches as a launch
-# failure rather than letting it become a plain -O3 column under a polyhedral label. Measured on
-# this site's g++ 16.1.0 / Neoverse V2: parallelizes at every -ftree-parallelize-loops <= 40 and at
-# none >= 41. The flag is the REAL runtime width (parloops emits it as a literal num_threads), so
-# this caps the gcc-autopar arm to 40 threads while the other five arms run the full
-# OMP_NUM_THREADS -- deliberate, and visible in each result file's evidence string. Applied as a
-# min() against OMP_NUM_THREADS, so it is inert on a small box where the width is already lower.
-export CANON_PERF_GCC_AUTOPAR_HINT_CAP="${CANON_PERF_GCC_AUTOPAR_HINT_CAP:-40}"
+# NOTE the gcc autopar width is deliberately NOT pinned here. ``resolve_autopar_hint`` probes this
+# compiler and takes the largest width that actually emits a parallel region (40 on g++ 16.1.0 /
+# Neoverse V2, where 41 and above silently emit none while Graphite is on). Exporting
+# CANON_PERF_GCC_AUTOPAR_HINT_CAP would hardcode a site number the probe already discovers, and
+# would go stale the moment the compiler changes.
+#
 # The four DaCe arms lower gemv/gemm to OpenBLAS; numpy -- the figure's reference -- is OpenBLAS, so
 # expanding them to dace's shipped `pure` default instead compares a naive triple loop against a
 # tuned kernel and loses by 20-40x on the kernels that ARE one BLAS call (atax, bicg, covariance).
