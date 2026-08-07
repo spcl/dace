@@ -529,9 +529,16 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
 
         return _wrapped
 
+    # The callable a caller should use when it does NOT need flattening --
+    # a frontend that runs the original call source in the interpreter rather
+    # than marshalling arguments one by one across the C ABI. Async wrapping
+    # still applies: that is about awaiting the result, not about argument
+    # shape. Reachable as ``__dace_unflattened__`` on the returned wrapper.
+    unflattened = _wrap_async_callback(func)
+
     # Nothing to do, early exit
     if not node.keywords and not instructions_exist:
-        return _wrap_async_callback(func)
+        return unflattened
 
     keywords = [kw.arg for kw in node.keywords]
 
@@ -569,7 +576,9 @@ def flatten_callback(func: Callable, node: ast.Call, global_vars: Dict[str, Any]
 
             return cb_func
 
-    return _wrap_async_callback(make_cb(keywords, poscount, unflatten_instructions))
+    flattened = _wrap_async_callback(make_cb(keywords, poscount, unflatten_instructions))
+    flattened.__dace_unflattened__ = unflattened
+    return flattened
 
 
 class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):

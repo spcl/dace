@@ -307,3 +307,27 @@ class SDFGClosure:
                 new_name = data.find_new_name(cbname, self.callbacks.keys())
                 self.callbacks[new_name] = (cbname, cb, True)
                 self.array_mapping[id(cb)] = new_name
+
+
+def interpreter_callable(function: Any) -> Any:
+    """
+    The callable to bind for a preprocessing-detected callback.
+
+    Preprocessing hands frontends a *flattened* wrapper: keyword arguments and
+    Python literal structures are unpacked into a flat positional list, because
+    the stable frontend marshals callback arguments one at a time across the C
+    ABI. The nextgen frontend does not -- it outlines the original call SOURCE
+    and runs it in the interpreter, keywords and all -- so the flattened
+    wrapper, whose signature is ``(*all_args)``, rejects exactly the calls it is
+    handed (``cb_func() got an unexpected keyword argument 'd'``). Worse, that
+    ``TypeError`` is raised inside the callback, where it cannot cross back.
+
+    ``__dace_unflattened__`` is the same function without the argument
+    repacking, with async wrapping preserved (that is about awaiting the
+    result, not about argument shape). It is absent for callbacks that needed
+    no flattening, where the wrapper already IS the original.
+
+    :param function: The callable preprocessing recorded for the callback.
+    :return: The callable to invoke from interpreter-executed source.
+    """
+    return getattr(function, '__dace_unflattened__', function)

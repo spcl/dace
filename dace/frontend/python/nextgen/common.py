@@ -185,3 +185,24 @@ def registry_argument_value(value: Any) -> Any:
     except (TypeError, ValueError, AttributeError):
         return value
     return value
+
+
+def interpreter_callable(function: Any) -> Any:
+    """
+    The callable to bind for a preprocessing-detected callback.
+
+    Preprocessing hands frontends a *flattened* wrapper: keyword arguments and
+    Python literal structures are unpacked into a flat positional list, because
+    the stable frontend marshals callback arguments one at a time across the C
+    ABI. This frontend does not -- it outlines the original call SOURCE and runs
+    it in the interpreter, keywords and all -- so the flattened wrapper, whose
+    signature is ``(*all_args)``, rejects exactly the calls it is given
+    (``cb_func() got an unexpected keyword argument 'd'``). Worse, that
+    TypeError is raised inside the callback, where it cannot cross back.
+
+    ``__dace_unflattened__`` is the same function without the argument
+    repacking (async wrapping preserved, which is about awaiting the result
+    rather than argument shape). Absent for callbacks that needed no
+    flattening, where the wrapper already IS the original.
+    """
+    return getattr(function, '__dace_unflattened__', function)

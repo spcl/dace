@@ -21,7 +21,7 @@ from dace.sdfg.sdfg import InterstateEdge
 from dace.utils import prod
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import astutils
-from dace.frontend.python.common import closure_constant_descriptor
+from dace.frontend.python.common import closure_constant_descriptor, interpreter_callable
 from dace.frontend.python.nextgen.common import UnsupportedFeatureError
 from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 from dace.frontend.python.nextgen.semantics.values import StaticSequence
@@ -198,7 +198,7 @@ def _prepare_callee(
     closure = parse.closure
     for callback_name, (original, function, _) in closure.callbacks.items():
         state.emitter.root.callback_mapping.setdefault(callback_name, original)
-        state.context.callback_callables.setdefault(callback_name, function)
+        state.context.callback_callables.setdefault(callback_name, interpreter_callable(function))
     for constant_name, value in closure.closure_constants.items():
         descriptor = closure_constant_descriptor(value)
         if descriptor is not None:

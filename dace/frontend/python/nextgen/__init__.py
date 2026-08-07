@@ -13,6 +13,7 @@ from dace import data
 from dace.cli.progress import OptionalProgressBar
 from dace.sdfg.analysis.schedule_tree import treenodes as tn
 from dace.frontend.python import preprocessing
+from dace.frontend.python.common import interpreter_callable
 from dace.frontend.python.nextgen.canonical.passes import default_passes
 from dace.frontend.python.nextgen.common import (CanonicalViolationError, FrontendError, TreeVerificationError,
                                                  UnsupportedFeatureError)
@@ -71,7 +72,10 @@ def build_schedule_tree(name: str,
 
     # Stage 2: semantic context (single repository, shared with the tree root)
     context = ProgramContext(name, parsed_ast.filename, argtypes, parsed_ast.program_globals, constants or {})
-    context.callback_callables.update(callbacks or {})
+    context.callback_callables.update({
+        name: interpreter_callable(function)
+        for name, function in (callbacks or {}).items()
+    })
     for reference_name, (qualified_name, descriptor) in (closure_arrays or {}).items():
         container = context.register_closure_array(reference_name, qualified_name, descriptor)
         context.bind(reference_name, container)

@@ -34,12 +34,20 @@ from dace.frontend.python.nextgen.lowering.registry import LoweringState, rule
 @rule(OpaqueStmt)
 def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
     _warn_about_the_callback(statement, state)
+    # A compile-time sequence has no container to pass, so the temporary ANF
+    # hoisted it into would reach the interpreter as an undefined name. Put the
+    # sequence expression back where the temporary stands; the containers it
+    # names then become ordinary inputs below.
+    static_expansions = _static_expansions(statement, state)
+    referenced = {name for expression in static_expansions.values() for name in _referenced_names(expression)}
+
     source_to_repository: dict = {}
     input_names = []
-    for name in sorted(statement.inputs):
+    for name in sorted(set(statement.inputs) | referenced):
         binding = state.context.resolve(name)
         if binding is not None and binding.kind == 'container':
-            input_names.append(binding.container)
+            if binding.container not in input_names:
+                input_names.append(binding.container)
             source_to_repository[name] = binding.container
 
     output_names = []
@@ -69,6 +77,8 @@ def lower_opaque(statement: OpaqueStmt, state: LoweringState) -> None:
         source_to_repository[name] = output_names[-1]
 
     reconstituted = [_reconstitute_source(original, state) for original in statement.originals]
+    if static_expansions:
+        reconstituted = [_substitute_names(original, static_expansions) for original in reconstituted]
     code = '\n'.join(ast.unparse(original) for original in reconstituted)
     renamed = _rename_to_repository(reconstituted, source_to_repository)
     _register_free_globals(renamed, set(input_names) | set(output_names), state)
@@ -156,6 +166,68 @@ def _outline(renamed: list,
     if register:
         state.emitter.root.callback_mapping[function_name] = function_name
     return function_code, call_code
+
+
+def _static_expansions(statement: OpaqueStmt, state: LoweringState) -> dict:
+    """
+    The compile-time sequences among a statement's inputs, as the expressions
+    that produced them.
+
+    ``callback(a, [a, b])`` is A-normalized to ``__anf0 = [a, b]`` followed by
+    ``callback(a, __anf0)``, and a list of arrays binds as a compile-time
+    sequence rather than a container. There is consequently nothing to pass the
+    interpreter under the name ``__anf0``, and the callback fails with
+    ``NameError`` -- inside the callback, where it cannot propagate. Rebuilding
+    the literal restores what the user wrote, and its elements are containers
+    the callback can genuinely receive.
+
+    :return: Source name -> the expression to put in its place.
+    """
+    expansions = {}
+    for name in sorted(statement.inputs):
+        binding = state.context.resolve(name)
+        if binding is None or binding.kind != 'static':
+            continue
+        expression = _sequence_expression(state.context.static_values.get(name))
+        if expression is not None:
+            expansions[name] = expression
+    return expansions
+
+
+def _sequence_expression(sequence) -> Optional[ast.expr]:
+    """The list/tuple display a compile-time sequence denotes, or None if its
+    elements are not expressions this can rebuild."""
+    elements = getattr(sequence, 'elements', None)
+    if not elements:
+        return None
+    rebuilt = []
+    for element in elements:
+        if isinstance(element, ast.expr):
+            rebuilt.append(copy.deepcopy(element))
+        elif isinstance(element, (int, float, complex, bool, str)):
+            rebuilt.append(ast.Constant(value=element))
+        else:
+            return None
+    display = ast.Tuple if getattr(sequence, 'kind', 'list') == 'tuple' else ast.List
+    return ast.fix_missing_locations(display(elts=rebuilt, ctx=ast.Load()))
+
+
+def _referenced_names(expression: ast.expr) -> set:
+    """The names an expression reads."""
+    return {node.id for node in ast.walk(expression) if isinstance(node, ast.Name)}
+
+
+def _substitute_names(statement: ast.stmt, expansions: dict) -> ast.stmt:
+    """Replace each name in ``expansions`` with the expression it stands for."""
+
+    class _Substituter(ast.NodeTransformer):
+
+        def visit_Name(self, node: ast.Name) -> ast.expr:
+            if isinstance(node.ctx, ast.Load) and node.id in expansions:
+                return ast.copy_location(copy.deepcopy(expansions[node.id]), node)
+            return node
+
+    return ast.fix_missing_locations(_Substituter().visit(statement))
 
 
 def _declared_descriptor(name: str, statement: OpaqueStmt, state: LoweringState) -> Optional[data.Data]:
