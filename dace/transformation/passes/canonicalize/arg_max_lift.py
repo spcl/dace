@@ -155,7 +155,7 @@ that -- a forward arg-reduce scans every element -- so any loop containing a
 shape's parallel lift is
 :class:`~dace.transformation.passes.canonicalize.early_exit_to_find_index.EarlyExitToFindIndex`,
 which runs earlier in the canonicalize pipeline and rewrites the loop to a
-find-first Reduce(Min). A break loop still standing when ArgMaxLift runs is one
+chunked parallel find-first search. A break loop still standing when ArgMaxLift runs is one
 that pass already refused, and no Reduce/ArgReduce this pass emits could lift it
 correctly either -- so the refusal costs no parallelism ArgMaxLift could have
 delivered.

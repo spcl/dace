@@ -11,10 +11,10 @@ loop. Wall time scales with ``k`` because the loop returns as soon as
 the predicate fires.
 
 Variant B (on) -- the canonicalize-lifted form: ``EarlyExitToFindIndex``
-turns the break-loop into a parallel ``Map[i]`` + reduction over the
-predicate, finding the minimum index where the predicate fires. Wall
-time is ~constant (proportional to ``N``, not ``k``); the constant is
-the parallel scan + min-reduce.
+turns the break-loop into ONE parallel chunked search Map with a
+map-exit WCR(Min), finding the minimum index where the predicate fires.
+Threads scan chunks and skip any chunk starting past the best index
+published so far, so wall time tracks ``k / threads`` rather than ``N``.
 
 The crossover point (break position where B starts to win) reveals
 whether the lifted form is faster than the sequential form for the
@@ -61,8 +61,8 @@ def _build_seq_sdfg(suffix: str) -> dace.SDFG:
 
 
 def _build_parallel_sdfg(suffix: str, target: str = 'cpu') -> dace.SDFG:
-    """Variant B: canonicalize lifts ``EarlyExitToFindIndex`` -> parallel
-    Map + min-reduce."""
+    """Variant B: canonicalize lifts ``EarlyExitToFindIndex`` -> the parallel
+    chunked search Map with a WCR(Min) exit."""
     sdfg = _find_first_above.to_sdfg(simplify=True)
     sdfg.name = f'{sdfg.name}_par_{suffix}'
     canonicalize(sdfg, validate=True, target=target)

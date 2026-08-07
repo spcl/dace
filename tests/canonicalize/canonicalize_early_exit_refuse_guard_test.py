@@ -3,15 +3,15 @@
 :class:`~dace.transformation.passes.canonicalize.early_exit_to_find_index.EarlyExitToFindIndex`.
 
 The find-first lift reproduces every predicate array read at exactly
-``name[loop_var]`` (the per-iteration point read the phi Map can emit). Any other
+``name[loop_var]`` (the per-iteration point read the scan tasklet can emit). Any other
 subscript must be REFUSED so the loop stays a correct sequential ``LoopRegion``:
 
 * an offset ``a[i-1]`` / ``a[i+1]`` or coefficient -- otherwise the two reads
   collapse to one ``a[loop_var]`` (a silent miscompile of the exit index);
 * a gather / nested subscript ``a[idx[i]]`` -- otherwise the read rewrite emits a
   dangling ``__r_a]`` (a ``SyntaxError`` crash);
-* a multi-dim ``a[i, j]`` -- otherwise a 1-D point memlet lands on an N-D array
-  (a validate error).
+* a multi-dim ``a[i, j]`` -- otherwise a flat pointer read lands on an N-D array
+  (the wrong element).
 
 The genuine TSVC find-first shapes (a single ``name[i]`` read predicate) MUST
 still lift and optimize -- the refuse-guard must be precise, not blanket.
@@ -21,7 +21,7 @@ import pytest
 
 import dace
 from dace.sdfg.state import LoopRegion
-from dace.libraries.standard.nodes import Reduce
+from dace.sdfg import nodes as nd
 from dace.transformation.passes.canonicalize.early_exit_to_find_index import EarlyExitToFindIndex
 from dace.transformation.interstate import LoopToMap
 from tests.corpus.tsvc_2_5.tsvc_2_5 import (ext_break_find_first, ext_break_post_body, ext_break_capture)
@@ -33,8 +33,18 @@ def _num_loops(sdfg):
     return sum(1 for r in sdfg.all_control_flow_regions() if isinstance(r, LoopRegion) and r.loop_variable)
 
 
-def _num_reduces(sdfg):
-    return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
+def _num_search_maps(sdfg):
+    """Chunked find-first search Maps: a Map whose exit carries the ``min`` WCR that
+    collects the per-chunk first-hit index. That WCR is what keeps the search a
+    parallel Map, so counting it pins the canonical form as parallel."""
+    n = 0
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, nd.MapExit):
+                continue
+            if any(e.data.wcr is not None and 'min' in e.data.wcr for e in state.out_edges(node)):
+                n += 1
+    return n
 
 
 # ---------------------------------------------------------------------------
@@ -178,13 +188,13 @@ def pred_single_threshold(a: dace.float64[N], out: dace.float64[N], threshold: d
 
 def test_single_read_predicate_still_lifts():
     """``a[i] > threshold`` -- the TSVC find-first shape. The guard must NOT
-    refuse it: the pass fires (1 match), a find-first Reduce(Min) appears, and the
-    result is bit-exact (fire + no-fire)."""
+    refuse it: the pass fires (1 match), the parallel chunked search Map appears,
+    and the result is bit-exact (fire + no-fire)."""
     sdfg = pred_single_threshold.to_sdfg(simplify=True)
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
     assert res == 1, 'single name[i] read predicate must still lift'
     sdfg.validate()
-    assert _num_reduces(sdfg) == 1, 'find-first Reduce(Min) must be present'
+    assert _num_search_maps(sdfg) == 1, 'parallel chunked search Map must be present'
 
     n = 8
     for a in (
@@ -208,12 +218,12 @@ def test_single_read_predicate_still_lifts():
 
 def test_tsvc_ext_break_find_first_still_lifts():
     """TSVC ``s481`` (``ext_break_find_first``): ``if d[i] < 0: break`` then body.
-    Single ``d[i]`` read -> lifts to find-first Reduce + parallel body."""
+    Single ``d[i]`` read -> lifts to the chunked search Map + parallel body."""
     sdfg = ext_break_find_first.to_sdfg(simplify=True)
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
     assert res == 1, 'ext_break_find_first (s481) must lift'
     sdfg.validate()
-    assert _num_reduces(sdfg) == 1
+    assert _num_search_maps(sdfg) == 1
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
     assert _num_loops(sdfg) == 0, 'find-first body must fully parallelize'
@@ -241,7 +251,7 @@ def test_tsvc_ext_break_post_body_still_lifts():
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
     assert res == 1, 'ext_break_post_body (s482) must lift'
     sdfg.validate()
-    assert _num_reduces(sdfg) == 1
+    assert _num_search_maps(sdfg) == 1
 
     n = 12
     rng = np.random.default_rng(482)
@@ -265,7 +275,7 @@ def test_tsvc_ext_break_capture_still_lifts():
     res = EarlyExitToFindIndex().apply_pass(sdfg, {})
     assert res == 1, 'ext_break_capture (s332) must lift'
     sdfg.validate()
-    assert _num_reduces(sdfg) == 1
+    assert _num_search_maps(sdfg) == 1
 
     n = 8
     for a, kthr in (

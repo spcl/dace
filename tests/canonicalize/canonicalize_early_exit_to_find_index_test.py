@@ -30,6 +30,26 @@ def _num_reduces(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Reduce))
 
 
+def _search_map_entries(sdfg):
+    """MapEntry nodes of the chunked find-first search Maps: a Map whose exit carries
+    the ``min`` WCR that collects the per-chunk first-hit index. That WCR is what keeps
+    the search a parallel Map -- ``MapToForLoop(keep_reductions_parallel)`` refuses to
+    lower it -- so matching on it pins the canonical form as parallel, not merely
+    present."""
+    out = []
+    for state in sdfg.all_states():
+        for node in state.nodes():
+            if not isinstance(node, nd.MapExit):
+                continue
+            if any(e.data.wcr is not None and 'min' in e.data.wcr for e in state.out_edges(node)):
+                out.append(state.entry_node(node))
+    return out
+
+
+def _num_search_maps(sdfg):
+    return len(_search_map_entries(sdfg))
+
+
 def _num_maps(sdfg):
     return sum(1 for n, _ in sdfg.all_nodes_recursive() if isinstance(n, nd.MapEntry))
 
@@ -41,10 +61,10 @@ def _num_maps(sdfg):
 
 def test_tsvc_s481_break_then_body_post():
     """``for i: if d[i] < 0: break; a[i] += b[i] * c[i]``.
-    Lifts to Phase-1 indicator+Reduce(Min) + a Phase-2b body_post LoopRegion.
+    Lifts to the Phase-1 chunked search Map + a Phase-2b body_post LoopRegion.
     The pass emits the body as a LoopRegion for a downstream ``LoopToMap`` to
-    parallelize; after that lift the shape is 0 loops, 1 Reduce, 2 Maps
-    (phi build + body_post).
+    parallelize; after that lift the shape is 0 loops, 0 Reduces, 2 Maps
+    (chunked search + body_post), the search Map being the WCR(Min) one.
     """
 
     @dace.program
@@ -63,8 +83,9 @@ def test_tsvc_s481_break_then_body_post():
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
     assert _num_loops(sdfg) == 0
-    assert _num_reduces(sdfg) == 1
+    assert _num_reduces(sdfg) == 0
     assert _num_maps(sdfg) == 2
+    assert _num_search_maps(sdfg) == 1
 
     n = 16
     rng = np.random.default_rng(481)
@@ -87,7 +108,7 @@ def test_tsvc_s482_body_pre_then_break():
     Lifts to Phase-1 + a Phase-2a body_pre LoopRegion. The body_pre upper bound
     is ``min(exit_i + 1, N)`` so the last iteration before the break still runs
     its pre-check work. The downstream ``LoopToMap`` lifts the body_pre LoopRegion
-    to a Map (0 loops, 1 Reduce, 2 Maps).
+    to a Map (0 loops, 0 Reduces, 2 Maps: chunked search + body_pre).
     """
 
     @dace.program
@@ -104,8 +125,9 @@ def test_tsvc_s482_body_pre_then_break():
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
     assert _num_loops(sdfg) == 0
-    assert _num_reduces(sdfg) == 1
+    assert _num_reduces(sdfg) == 0
     assert _num_maps(sdfg) == 2
+    assert _num_search_maps(sdfg) == 1
 
     n = 16
     rng = np.random.default_rng(482)
@@ -129,7 +151,7 @@ def test_body_pre_and_body_post_combo_lifts():
     disjointness check accepts. Both halves must lift: ``body_pre``
     over ``[0, min(exit_i+1, N))`` and ``body_post`` over ``[0, exit_i)``.
     The pass emits each as a LoopRegion; the downstream ``LoopToMap`` lifts both
-    to Maps (0 loops, 1 Reduce, 3 Maps: indicator + pre + post)."""
+    to Maps (0 loops, 0 Reduces, 3 Maps: chunked search + pre + post)."""
 
     @dace.program
     def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N], e: dace.float64[N]):
@@ -147,9 +169,10 @@ def test_body_pre_and_body_post_combo_lifts():
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
     assert _num_loops(sdfg) == 0
-    assert _num_reduces(sdfg) == 1  # one Reduce(Min) for the argmin
+    assert _num_reduces(sdfg) == 0
+    assert _num_search_maps(sdfg) == 1  # one WCR(Min) search map for the argmin
     # phi/indicator + body_pre + body_post = 3 maps total
-    assert _num_maps(sdfg) == 3, f'expected 3 maps (indicator + pre + post); got {_num_maps(sdfg)}'
+    assert _num_maps(sdfg) == 3, f'expected 3 maps (search + pre + post); got {_num_maps(sdfg)}'
 
     n = 16
     rng = np.random.default_rng(0xCAFE)
@@ -214,8 +237,8 @@ def test_refuses_break_cond_array_modified_pre_and_post():
 
 
 def test_no_fire_runs_full_range():
-    """Corner: ``cond`` is never true → ``exit_i = N`` (sentinel via Reduce(Min)
-    identity = N). All body iterations must run."""
+    """Corner: ``cond`` is never true → ``exit_i = N`` (every chunk returns the
+    sentinel and the WCR(Min) keeps it). All body iterations must run."""
 
     @dace.program
     def kernel(a: dace.float64[N], b: dace.float64[N], c: dace.float64[N], d: dace.float64[N]):
@@ -777,10 +800,49 @@ def test_early_exit_lifts_both_simplify_modes(kernel, simplify):
     sdfg.apply_transformations_repeated(LoopToMap)
     sdfg.validate()
     assert _num_loops(sdfg) == 0, f'{kernel} (simplify={simplify}): break-loop + body must fully parallelize'
-    assert _num_reduces(sdfg) == 1, f'{kernel} (simplify={simplify}): exactly one find-first Reduce(Min)'
+    assert _num_reduces(sdfg) == 0, f'{kernel} (simplify={simplify}): no separate find-first Reduce'
+    assert _num_search_maps(sdfg) == 1, (f'{kernel} (simplify={simplify}): exactly one parallel chunked '
+                                         'search Map (WCR(Min) exit)')
     assert_explicit_dataflow(sdfg)  # invariant still holds after the full lift
 
     driver(sdfg)
+
+
+def test_search_stays_parallel_and_cancels_through_canonicalize():
+    """DESIGN RULING: the canonical early-exit form stays PARALLEL -- no sequential
+    fallback, no profitability gate -- and keeps its chunk-grained cancellation.
+
+    Runs the FULL canonicalize pipeline (where ``MapToForLoop`` lowers every other
+    Map to a LoopRegion) and pins the resulting shape and the emitted C++:
+
+    * exactly one search Map survives, with 0 residual sequential loops;
+    * it carries ``schedule(dynamic, 1)`` -- chunks are claimed roughly in index
+      order, which is what makes skipping the tail past the exit pay off;
+    * the chunk body reads the shared hint and skips the chunk when it starts past
+      it (the cancellation), publishing only a strictly better index;
+    * the min-reduce is an OpenMP ``reduction(min:...)`` clause, so no ``omp
+      critical`` (canonicalize never emits one) and no per-chunk atomic.
+    """
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+
+    sdfg = ee_s481.to_sdfg(simplify=True)
+    canonicalize(sdfg)
+    sdfg.validate()
+
+    assert _num_loops(sdfg) == 0, 'the lifted form must not fall back to a sequential loop'
+    entries = _search_map_entries(sdfg)
+    assert len(entries) == 1, f'expected exactly one search Map, got {len(entries)}'
+    scan_map = entries[0].map
+    assert scan_map.omp_schedule == dace.dtypes.OMPScheduleType.Dynamic
+    assert scan_map.omp_chunk_size == 1
+
+    code = '\n'.join(obj.clean_code for obj in sdfg.generate_code())
+    assert 'schedule(dynamic, 1)' in code
+    assert 'reduction(min:' in code
+    assert 'omp critical' not in code
+    assert '#pragma omp atomic read' in code and '#pragma omp atomic write' in code
+    assert 'if (__ee_lo < __ee_hint)' in code, 'chunk-grained cancellation guard missing'
+    assert 'if (__ee_res < __ee_hint)' in code, 'hint is published unconditionally'
 
 
 if __name__ == '__main__':

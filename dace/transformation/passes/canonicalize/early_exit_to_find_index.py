@@ -27,9 +27,15 @@ Rewrite shape:
 
 .. code-block:: python
 
-    # Phase 1: find first i where cond(i) holds
-    phi[i] = i if cond(i) else N            # parallel Map
-    exit_i = min(phi[0:N])                   # Reduce(Min) -> scalar -> symbol
+    # Phase 1: ONE parallel chunked pass finds the first i where cond(i) holds
+    hint = exit_buf = N
+    parallel_for c in range(NCHUNKS):        # schedule(dynamic, 1)
+        lo, hi = chunk_bounds(c)
+        if lo < hint:                        # chunk-grained cancellation
+            res = first i in [lo, hi) with cond(i), else N
+            if res < hint: hint = res        # publish, benign race
+        exit_buf min= res                    # map-exit WCR -> OMP reduction
+    exit_i = exit_buf
 
     # Phase 2a: body_pre runs at i in [0, min(exit_i+1, N))
     parallel_for i in range(min(exit_i+1, N)): body_pre(i)
@@ -40,6 +46,17 @@ Rewrite shape:
     # Phase 3 (s332-style): rebind true-branch scalar writes from exit_i
     if exit_i < N:
         <true_branch scalar writes>
+
+Phase 1 is a SINGLE parallel pass over the predicate: no ``phi`` indicator array
+and no separate min-reduce, so the search costs one predicate read per visited
+element instead of the three full ``O(N)`` sweeps (predicate, phi store, phi
+reload) the indicator+Reduce form paid. ``hint`` is a shared cancellation hint,
+read once per chunk and published only when a chunk found an earlier index: a
+chunk whose first index is already ``>= hint`` cannot hold the minimum, so
+skipping it is exact. Every value the hint ever holds is either ``N`` or a real
+firing index, hence always ``>= exit_i``; a lost update only costs cancellation,
+never correctness. Under ``schedule(dynamic, 1)`` chunks are claimed roughly in
+index order, so the tail past the exit is skipped outright.
 
 Soundness conditions (Tier-Cheap whole-array disjointness; see design doc):
 
@@ -63,9 +80,9 @@ Targets TSVC ``s481``, ``s482``, ``s332``. Refusals (with explicit messages):
 * Cond not a single iedge-bound predicate.
 * Predicate reads an array at anything other than exactly ``name[loop_var]`` --
   an offset ``a[i-1]`` / ``a[i+1]``, a coefficient ``a[2*i]``, a gather
-  ``a[idx[i]]``, or a multi-dim ``a[i, j]``. The phi Map can only reproduce the
-  per-iteration point read ``name[loop_var]``; any other subscript would be
-  silently collapsed to it (miscompile) or emit a dangling read (crash).
+  ``a[idx[i]]``, or a multi-dim ``a[i, j]``. The scan tasklet can only reproduce
+  the per-iteration point read ``name[loop_var]``; any other subscript would be
+  silently retargeted (miscompile) or emit a dangling read (crash).
 * A body half whose faithful re-emit would drop a live nested-region effect (a
   non-transient write, an interstate symbol binding, or a transient a kept state
   reads).
@@ -87,14 +104,19 @@ from dace.sdfg.state import (LoopRegion, SDFGState, ControlFlowRegion, Condition
 from dace.transformation import pass_pipeline as ppl
 from dace.transformation import transformation as xf
 from dace.transformation.passes.analysis import loop_analysis
-from dace.libraries.standard.nodes.reduce import Reduce
+from dace.codegen.cppunparse import pyexpr2cpp
 
-#: Prefix for the find-first indicator array.
-_PHI_PREFIX = '_findfirst_in_'
-#: Prefix for the Reduce output scalar.
+#: Prefix for the shared cancellation-hint scalar.
+_HINT_PREFIX = '_findfirst_hint_'
+#: Prefix for the WCR(Min) accumulator scalar.
 _EXIT_BUF_PREFIX = '_exit_i_buf_'
 #: Prefix for the synthesised exit-iteration symbol.
 _EXIT_SYM_PREFIX = '_exit_i_'
+#: Chunks the search splits its range into. Sized so the count stays independent of
+#: the (symbolic) range: enough chunks to load-balance a dynamic schedule and to make
+#: cancellation fine-grained, few enough that per-chunk overhead stays amortized. A
+#: range shorter than this degrades to one element per chunk -- still fully parallel.
+_CHUNK_COUNT = 256
 
 
 class _Match(NamedTuple):
@@ -230,12 +252,12 @@ class EarlyExitToFindIndex(ppl.Pass):
         # Refuse-lift guard (correctness): if the predicate still names an
         # unresolved body-local transient (a data container the frontend
         # produced for ``__tmp0 = a[i] > K`` that the resolver could not inline
-        # down to array subscripts + symbols + constants), the phi Map would
+        # down to array subscripts + symbols + constants), the scan tasklet would
         # emit a dangling read with no producer. Keep the loop sequential.
         if not self._cond_is_fully_resolved(cond_expr_str, sdfg):
             return None
 
-        # Refuse-lift guard (correctness): the phi Map (``_wire_expr_reads``)
+        # Refuse-lift guard (correctness): the scan tasklet (``_wire_chunk_reads``)
         # reproduces every predicate array read at exactly ``name[loop_var]`` --
         # the per-iteration point read. If the predicate reads an array at any
         # other subscript (an offset ``a[i-1]`` / ``a[i+1]``, a coefficient
@@ -479,9 +501,9 @@ class EarlyExitToFindIndex(ppl.Pass):
                             sdfg: SDFG) -> Optional[str]:
         """Render the value read from ``access``. A scalar reads as its name
         (resolved recursively); a NON-transient array reads as the
-        ``name[loop_var]`` subscript the phi Map can reproduce -- any other
-        subset, or a transient (loop-body-local) array the parent phi Map cannot
-        see, is refused (``None``)."""
+        ``name[loop_var]`` subscript the scan tasklet can reproduce -- any other
+        subset, or a transient (loop-body-local) array the parent Map cannot see,
+        is refused (``None``)."""
         name = access.data
         desc = sdfg.arrays.get(name)
         if desc is None:
@@ -537,7 +559,7 @@ class EarlyExitToFindIndex(ppl.Pass):
 
     def _cond_is_fully_resolved(self, cond_expr_str: str, sdfg: SDFG) -> bool:
         """Whether every data reference in the resolved predicate is wireable as
-        an explicit phi-Map in-connector (see :meth:`_wire_expr_reads`): an array
+        an explicit scan-Map in-connector (see :meth:`_wire_chunk_reads`): an array
         under a subscript, or a bare loop-invariant (non-transient) scalar. A
         bare transient (an unresolved ``__tmp0``) or a bare array has no wireable
         per-iteration producer, so the lift would dangle -- refuse instead."""
@@ -561,9 +583,9 @@ class EarlyExitToFindIndex(ppl.Pass):
     def _predicate_reads_are_point_at_loop_var(self, cond_expr_str: str, sdfg: SDFG, loop_var: str) -> bool:
         """Whether every array the resolved predicate reads is subscripted by
         exactly ``name[loop_var]`` -- a single dimension whose index is the loop
-        variable. This is the ONLY read shape the phi Map can reproduce (see
-        :meth:`_wire_expr_reads`, which wires each array at the per-iteration
-        point ``[loop_var]``).
+        variable on a 1-D container. This is the ONLY read shape the scan tasklet
+        can reproduce (see :meth:`_wire_chunk_reads`, which wires each array once
+        for the chunk and indexes it by the scan's running index).
 
         Returns ``False`` (refuse the lift) for any other subscript, because the
         wiring would then be wrong or crash:
@@ -587,8 +609,12 @@ class EarlyExitToFindIndex(ppl.Pass):
                 continue
             if not (isinstance(node.value, ast.Name) and node.value.id in sdfg.arrays):
                 continue
+            # A single index into an N-D array: the scan tasklet reads through a flat
+            # pointer, so only a 1-D container indexes correctly.
+            if len(sdfg.arrays[node.value.id].shape) != 1:
+                return False
             index = node.slice
-            # Multi-dim ``a[i, j]`` -- a Tuple index the phi Map cannot point-read.
+            # Multi-dim ``a[i, j]`` -- a Tuple index the scan tasklet cannot point-read.
             if isinstance(index, ast.Tuple):
                 return False
             # Gather / nested subscript ``a[idx[i]]`` -- a Subscript within the index.
@@ -671,7 +697,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         # nested inside a dropped region, plus loop-level edges *within this half*
         # that touch a nested region, are not replicated by the clone. Edges
         # leaving the half (into the cond block) carry the predicate gather and
-        # are reproduced by the phi Map, so they are deliberately ignored here.
+        # are reproduced by the scan tasklet, so they are deliberately ignored here.
         dropped_edges = []
         for b in dropped_blocks:
             dropped_edges.extend(self._region_interstate_edges(b))
@@ -732,7 +758,7 @@ class EarlyExitToFindIndex(ppl.Pass):
             if desc.transient:
                 cond_reads.update(self._trace_transient_to_source_arrays(name, body_pre_blocks, sdfg))
             elif isinstance(desc, data.Scalar):
-                # A bare loop-invariant scalar the cond reads (wired as a phi-Map
+                # A bare loop-invariant scalar the cond reads (wired as a scan-Map
                 # ``[0]`` connector): count it as a read so a body write to the
                 # same scalar trips the disjointness gate below.
                 cond_reads.add(name)
@@ -908,37 +934,32 @@ class EarlyExitToFindIndex(ppl.Pass):
     # ------------------------- rewrite -------------------------------
 
     def _rewrite(self, m: _Match, sdfg: SDFG):
-        """Replace the break-loop with Phase 1 (find-first Reduce) + Phase 2
+        """Replace the break-loop with Phase 1 (chunked parallel search) + Phase 2
         (parallel body Maps) + Phase 3 (true-branch scalar rebinds)."""
-        # Allocate the find-first symbol and output scalar.
+        # Allocate the find-first symbol, the shared hint and the WCR accumulator.
         idx = _next_id(sdfg)
         exit_sym = f'{_EXIT_SYM_PREFIX}{idx}'
         sdfg.add_symbol(exit_sym, dace.int64)
-        phi_name, _ = sdfg.add_array(f'{_PHI_PREFIX}{idx}', [m.iter_end - m.iter_start + 1],
-                                     dace.int64,
-                                     transient=True,
-                                     find_new_name=True)
+        hint_name, _ = sdfg.add_scalar(f'{_HINT_PREFIX}{idx}', dace.int64, transient=True, find_new_name=True)
         exit_buf_name, _ = sdfg.add_scalar(f'{_EXIT_BUF_PREFIX}{idx}', dace.int64, transient=True, find_new_name=True)
 
         parent = m.parent
-        # Phase 1: indicator Map + Reduce(Min).
-        s_phi = parent.add_state(m.loop.label + '_findfirst_phi')
-        s_reduce = parent.add_state(m.loop.label + '_findfirst_reduce')
-        parent.add_edge(s_phi, s_reduce, dace.InterstateEdge())
+        # Phase 1: sentinel init + the chunked search Map.
+        s_init = parent.add_state(m.loop.label + '_findfirst_init')
+        s_scan = parent.add_state(m.loop.label + '_findfirst_scan')
+        parent.add_edge(s_init, s_scan, dace.InterstateEdge())
 
         # Rewrite iedges so the original loop's predecessor edges flow into Phase 1.
         for ie in list(parent.in_edges(m.loop)):
-            parent.add_edge(ie.src, s_phi, ie.data)
+            parent.add_edge(ie.src, s_init, ie.data)
             parent.remove_edge(ie)
 
-        # Build the indicator Map.
-        self._emit_phi_map(s_phi, sdfg, phi_name, m)
-        # Build the Reduce(Min) state.
-        self._emit_reduce_min(s_reduce, sdfg, phi_name, exit_buf_name, m)
+        self._emit_search_init(s_init, hint_name, exit_buf_name, m)
+        self._emit_chunked_scan(s_scan, sdfg, hint_name, exit_buf_name, m, idx)
 
         # Phase 2a / 2b: body_pre and body_post Maps.
-        last_state = s_reduce
-        # iedge from reduce -> first phase 2 state binds exit_sym.
+        last_state = s_scan
+        # iedge from the search -> first phase 2 state binds exit_sym.
         sym_bound = False
 
         body_pre = self._emit_body_loop(parent,
@@ -987,66 +1008,121 @@ class EarlyExitToFindIndex(ppl.Pass):
         parent.remove_node(m.loop)
         sdfg.reset_cfg_list()
 
-    def _emit_phi_map(self, state: SDFGState, sdfg: SDFG, phi_name: str, m: _Match):
-        """Map: for i in [start, end+1): phi[i - start] = ITE(cond(i), i, N).
+    def _emit_search_init(self, state: SDFGState, hint_name: str, exit_buf_name: str, m: _Match):
+        """Seed both search scalars with the no-fire sentinel ``N``.
 
-        Every data container the predicate reads is wired as an explicit
-        in-connector with a memlet edge -- arrays through their ``[i]`` subscript
-        and loop-invariant scalars (e.g. ``threshold``) through a ``[0]`` memlet.
-        No sdfg.arrays name is left bare in the tasklet body; the
-        :meth:`_assert_explicit_dataflow` invariant enforces this (a bare,
-        unconnected ``__tmp0`` / ``threshold`` was the original miscompile)."""
-        N_expr = symbolic.symstr(m.iter_end + 1)
-        # The cond_expr uses ``i`` (the loop var); we keep that name in the Map.
-        loop_var = m.loop.loop_variable
-        inputs_map, new_expr = self._wire_expr_reads(m.cond_expr_str, sdfg, loop_var)
+        ONE tasklet writes both on purpose. ``hint`` must stay a data container --
+        the scan tasklet writes it through a pointer connector -- and a scalar fed
+        by a single-output tasklet is exactly what ``ScalarToSymbolPromotion``
+        promotes to a (read-only) symbol. A two-output producer fails that pass's
+        ``out_degree(tasklet) > 1`` test, so the hint keeps its storage.
+        ``exit_buf`` needs the seed anyway: it is the map-exit WCR(Min)
+        accumulator, and the OpenMP reduction combines the per-thread partials
+        with its incoming value."""
+        n_expr = symbolic.symstr(m.iter_end + 1)
+        tasklet = state.add_tasklet(f'{m.loop.label}_findfirst_init', {}, {
+            '__hint': None,
+            '__exit': None
+        }, f'__hint = {n_expr}\n__exit = {n_expr}')
+        state.add_edge(tasklet, '__hint', state.add_write(hint_name), None,
+                       mm.Memlet(data=hint_name, subset=subsets.Range([(0, 0, 1)])))
+        state.add_edge(tasklet, '__exit', state.add_write(exit_buf_name), None,
+                       mm.Memlet(data=exit_buf_name, subset=subsets.Range([(0, 0, 1)])))
 
-        # phi[i] = i if cond else N -- the GLOBAL index (i) or the
-        # sentinel ``N``. Post-Reduce min then gives exit_i directly in
-        # the original index space. Use the canonical 3-input ``ITE``
-        # form (not a Python ternary): ``LowerITEToFpFactor`` lowers it
-        # to ``c * t + (1 - c) * e`` at canonicalize time, so codegen
-        # never emits ``c ? t : e``.
-        tasklet_code = f'__out = ITE(({new_expr}), {loop_var}, ({N_expr}))'
-        self._assert_explicit_dataflow(tasklet_code, inputs_map, sdfg)
+    def _emit_chunked_scan(self, state: SDFGState, sdfg: SDFG, hint_name: str, exit_buf_name: str, m: _Match, idx: int):
+        """The single parallel search pass: one Map over ``_CHUNK_COUNT`` chunks,
+        each scanning its slice for the first firing index and min-reducing it into
+        ``exit_buf`` through a map-exit WCR.
 
-        outputs_map = {
-            '__out':
-            mm.Memlet(data=phi_name,
-                      subset=subsets.Range([(symbolic.pystr_to_symbolic(loop_var) - m.iter_start,
-                                             symbolic.pystr_to_symbolic(loop_var) - m.iter_start, 1)]))
-        }
+        The WCR keeps the Map a Map: ``MapToForLoop`` (``keep_reductions_parallel``)
+        refuses a map whose exit still carries one, so the canonical form never
+        round-trips through a sequential LoopRegion and keeps its dynamic schedule.
+        A ``Scalar`` accumulator makes CPU codegen emit an OpenMP
+        ``reduction(min:...)`` clause -- privatize + tree-combine, no atomic and no
+        critical section.
 
-        state.add_mapped_tasklet(
-            name=f'{m.loop.label}_phi_tasklet',
-            map_ranges={loop_var: f'{symbolic.symstr(m.iter_start)}:{N_expr}'},
-            inputs=inputs_map,
-            code=tasklet_code,
-            outputs=outputs_map,
+        The predicate is emitted as C++ (arrays read through pointer connectors, so
+        one connector serves the whole chunk) via the same unparser tasklet codegen
+        uses, and the cancellation hint is read/published with ``omp atomic``
+        read/write: relaxed word accesses, no lock, and no compiler-cached value."""
+        cvar = f'__ee_c{idx}'
+        n_expr = symbolic.symstr(m.iter_end + 1)
+        start_expr = symbolic.symstr(m.iter_start)
+        span = symbolic.simplify(m.iter_end + 1 - m.iter_start)
+        # Clamp to >= 1: an empty range would otherwise divide by a zero chunk width.
+        chunk = symbolic.pystr_to_symbolic(f'Max(1, {symbolic.symstr(symbolic.int_ceil(span, _CHUNK_COUNT))})')
+        chunk_expr = symbolic.symstr(chunk)
+        nchunks_expr = symbolic.symstr(symbolic.int_ceil(span, chunk))
+
+        inputs, pointer_dtypes, pred_expr = self._wire_chunk_reads(m.cond_expr_str, sdfg, m.loop.loop_variable)
+        self._assert_explicit_dataflow(pred_expr, inputs, sdfg)
+        inputs['__hint'] = mm.Memlet(data=hint_name, subset=subsets.Range([(0, 0, 1)]))
+
+        code = f'''long long __ee_lo = ({start_expr}) + (long long){cvar} * ({chunk_expr});
+long long __ee_hi = __ee_lo + ({chunk_expr});
+if (__ee_hi > ({n_expr})) __ee_hi = ({n_expr});
+long long __ee_res = ({n_expr});
+long long __ee_hint;
+#pragma omp atomic read
+__ee_hint = *__hint;
+if (__ee_lo < __ee_hint) {{
+    for (long long __ee_i = __ee_lo; __ee_i < __ee_hi; ++__ee_i) {{
+        if ({pyexpr2cpp(pred_expr)}) {{ __ee_res = __ee_i; break; }}
+    }}
+    if (__ee_res < __ee_hint) {{
+#pragma omp atomic write
+        *__hint = __ee_res;
+    }}
+}}
+__out = __ee_res;'''
+
+        tasklet, map_entry, _ = state.add_mapped_tasklet(
+            name=f'{m.loop.label}_findfirst_scan',
+            map_ranges={cvar: f'0:{nchunks_expr}'},
+            inputs=inputs,
+            code=code,
+            language=dtypes.Language.CPP,
+            outputs={
+                '__out': mm.Memlet(data=exit_buf_name, subset=subsets.Range([(0, 0, 1)]), wcr='lambda a, b: min(a, b)')
+            },
             external_edges=True,
         )
+        for conn, dtype in pointer_dtypes.items():
+            tasklet.in_connectors[conn] = dtypes.pointer(dtype)
+        tasklet.in_connectors['__hint'] = dtypes.pointer(dace.int64)
+        # Chunks handed out roughly in index order: once the exit is found the tail
+        # chunks read the hint and skip, which is where the cancellation pays off.
+        map_entry.map.omp_schedule = dtypes.OMPScheduleType.Dynamic
+        map_entry.map.omp_chunk_size = 1
 
-    def _wire_expr_reads(self, expr_str: str, sdfg: SDFG, loop_var: str) -> Tuple[Dict[str, mm.Memlet], str]:
-        """Rewrite ``expr_str`` so every data container it reads is referenced by
-        an ``__r_<name>`` in-connector, returning ``(inputs, rewritten_expr)``.
-        Arrays are read at ``[loop_var]`` (their per-iteration subscript);
-        scalars are read at ``[0]``. Symbols and constants are left untouched."""
+    def _wire_chunk_reads(self, expr_str: str, sdfg: SDFG,
+                          loop_var: str) -> Tuple[Dict[str, mm.Memlet], Dict[str, Any], str]:
+        """Rewrite ``expr_str`` so every data container it reads is referenced by an
+        ``__r_<name>`` connector, returning ``(inputs, pointer_dtypes, rewritten)``.
+
+        An array is wired ONCE for the whole chunk -- a full-extent memlet whose
+        connector is a pointer -- and its ``name[loop_var]`` subscript becomes
+        ``__r_name[__ee_i]``, the scan's running index. Loop-invariant scalars stay
+        value connectors read at ``[0]``. Symbols and constants are untouched."""
         # Fail loud, never silent: the matcher's
         # ``_predicate_reads_are_point_at_loop_var`` guard proves every array read
-        # is exactly ``name[loop_var]`` before emit. If a non-point read reached
-        # here the per-array rewrite below would collapse an offset/gather to a
-        # single ``name[loop_var]`` read -- exactly the miscompile the guard
-        # forbids -- so refuse loudly rather than emit wrong dataflow.
+        # is exactly ``name[loop_var]`` on a 1-D container before emit. If a
+        # non-point read reached here the per-array rewrite below would silently
+        # retarget an offset/gather to ``__r_name[__ee_i]`` -- exactly the
+        # miscompile the guard forbids -- so refuse loudly rather than emit wrong
+        # dataflow.
         if not self._predicate_reads_are_point_at_loop_var(expr_str, sdfg, loop_var):
             raise RuntimeError('EarlyExitToFindIndex: predicate reads an array at a subset other than '
                                f'``[{loop_var}]`` -- refuse-lift guard bypassed: {expr_str!r}')
         inputs: Dict[str, mm.Memlet] = {}
+        pointer_dtypes: Dict[str, Any] = {}
         new_expr = expr_str
-        point = subsets.Range([(symbolic.pystr_to_symbolic(loop_var), symbolic.pystr_to_symbolic(loop_var), 1)])
         for arr_name in sorted(self._read_arrays_from_expr(expr_str, sdfg)):
+            desc = sdfg.arrays[arr_name]
             in_conn = f'__r_{arr_name}'
-            inputs[in_conn] = mm.Memlet(data=arr_name, subset=_copy.deepcopy(point))
-            new_expr = re.sub(rf'\b{re.escape(arr_name)}\b\[[^\]]*\]', in_conn, new_expr)
+            inputs[in_conn] = mm.Memlet(data=arr_name, subset=subsets.Range.from_array(desc))
+            pointer_dtypes[in_conn] = desc.dtype
+            new_expr = re.sub(rf'\b{re.escape(arr_name)}\b\[[^\]]*\]', f'{in_conn}[__ee_i]', new_expr)
         for name in sorted(self._expr_names(new_expr)):
             desc = sdfg.arrays.get(name)
             if not isinstance(desc, data.Scalar):
@@ -1056,7 +1132,7 @@ class EarlyExitToFindIndex(ppl.Pass):
                 continue
             inputs[in_conn] = mm.Memlet(data=name, subset=subsets.Range([(0, 0, 1)]))
             new_expr = re.sub(rf'\b{re.escape(name)}\b', in_conn, new_expr)
-        return inputs, new_expr
+        return inputs, pointer_dtypes, new_expr
 
     def _assert_explicit_dataflow(self, code_str: str, in_connectors: Dict, sdfg: SDFG):
         """HARD INVARIANT: a tasklet may only read a data container through an
@@ -1076,21 +1152,6 @@ class EarlyExitToFindIndex(ppl.Pass):
         if offenders:
             raise RuntimeError(f'EarlyExitToFindIndex: tasklet reads data container(s) {offenders} by bare name '
                                f'without an in-connector -- explicit-dataflow invariant violated: {code_str!r}')
-
-    def _emit_reduce_min(self, state: SDFGState, sdfg: SDFG, phi_name: str, exit_buf_name: str, m: _Match):
-        N_expr = symbolic.symstr(m.iter_end + 1)
-        read = state.add_read(phi_name)
-        write = state.add_write(exit_buf_name)
-        # Identity = N (sentinel for "no fire"). For Min reduction this means
-        # if no phi[i] is < N, the reduction returns N -- exactly our
-        # "exit_i = N" semantics.
-        node = Reduce(name=f'{m.loop.label}_findfirst_reduce', wcr='lambda a, b: min(a, b)', axes=[0], identity=N_expr)
-        node.add_in_connector('_in')
-        node.add_out_connector('_out')
-        state.add_node(node)
-        size = symbolic.simplify(m.iter_end - m.iter_start + 1)
-        state.add_edge(read, None, node, '_in', mm.Memlet(data=phi_name, subset=subsets.Range([(0, size - 1, 1)])))
-        state.add_edge(node, '_out', write, None, mm.Memlet(data=exit_buf_name, subset=subsets.Range([(0, 0, 1)])))
 
     def _emit_body_loop(self, parent: ControlFlowRegion, sdfg: SDFG, body_blocks: List, m: _Match,
                         upper_str: str) -> Optional[LoopRegion]:
@@ -1167,7 +1228,7 @@ class EarlyExitToFindIndex(ppl.Pass):
         """Repeatedly fuse adjacent SDFGStates within ``region`` (only) via
         :class:`StateFusionExtended`, so a multi-state body collapses to the
         single-state per-iteration shape the parallelizer expects. Scoped to
-        ``region`` -- the phi/reduce states in the parent CFG are untouched."""
+        ``region`` -- the search states in the parent CFG are untouched."""
         from dace.transformation.interstate.state_fusion_with_happens_before import StateFusionExtended
         changed = True
         while changed:
@@ -1282,7 +1343,7 @@ def _next_id(sdfg: SDFG) -> int:
     used: Dict[int, None] = {}
     for sd in sdfg.all_sdfgs_recursive():
         for nm in sd.symbols.keys():
-            for prefix in (_PHI_PREFIX, _EXIT_BUF_PREFIX, _EXIT_SYM_PREFIX):
+            for prefix in (_HINT_PREFIX, _EXIT_BUF_PREFIX, _EXIT_SYM_PREFIX):
                 if nm.startswith(prefix):
                     tail = nm[len(prefix):]
                     if tail.isdigit():
