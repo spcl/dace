@@ -1,6 +1,7 @@
 // Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
-// Placeholder source for the `nanobind-static` target when a machine-cached copy of
-// libnanobind-static.a is linked instead of compiling nanobind's translation units
+// Placeholder source for nanobind's helper-library target (`nanobind-static-ps`, named by
+// nanobind after the options in ../CMakeLists.txt) when a machine-cached copy of its
+// archive is linked instead of compiling nanobind's translation units
 // (see DACE_NANOBIND_STATIC_LIB in ../CMakeLists.txt). Deliberately a file shipped with
 // DaCe rather than one generated at configure time: recorded builds (command_db) replay
 // into fresh build folders without running CMake, so every compiled source must exist

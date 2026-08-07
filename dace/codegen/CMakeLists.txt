@@ -310,10 +310,16 @@ if(DACE_ENABLE_NANOBIND)
   nanobind_add_module(${DACE_PROGRAM_NAME} NB_STATIC NOMINSIZE PROTECT_STACK ${DACE_CPP_FILES} ${DACE_OBJECTS})
   if(DACE_NANOBIND_STATIC_LIB)
     # Link a prebuilt, machine-cached copy of nanobind's helper archive instead of compiling its
-    # ~12 translation units per build folder. The `nanobind-static` target stays alive so its
+    # ~12 translation units per build folder. The helper target stays alive so its
     # PUBLIC/INTERFACE surface (include directories, compile options) keeps flowing into the
     # module's own translation units - only its sources are swapped for one empty stub, and the
     # real symbols come from the archive appended below.
+    #
+    # The target name is DERIVED BY NANOBIND from the options passed to nanobind_add_module
+    # above: NB_STATIC selects `nanobind-static` and PROTECT_STACK appends `-ps`. If that option
+    # list changes, this name and NANOBIND_STATIC_ARCHIVE on the Python side (compiler.py) must
+    # change with it - a mismatch here is a hard CMake error (unknown target), on the Python
+    # side it silently disables the archive cache.
     #
     # The archive is deliberately NOT keyed on any DaCe configuration: nanobind compiles the
     # helper library with its own fixed flags, so no configurable DaCe setting reaches these
@@ -323,7 +329,7 @@ if(DACE_ENABLE_NANOBIND)
     # The stub is a file shipped with DaCe, NOT one written here at configure time: recorded
     # builds (command_db) replay into fresh build folders without running CMake, so every
     # compiled source must exist at a configure-independent path.
-    set_target_properties(nanobind-static PROPERTIES SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tools/nanobind_stub.cpp)
+    set_target_properties(nanobind-static-ps PROPERTIES SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tools/nanobind_stub.cpp)
     target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_NANOBIND_STATIC_LIB})
   endif()
   target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_LIBS})

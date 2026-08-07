@@ -347,24 +347,35 @@ def build_cache_root() -> str:
     return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
 
 
+#: File name of nanobind's helper archive as our CMakeLists builds it. nanobind derives the
+#: library name from the options passed to ``nanobind_add_module()``: ``NB_STATIC`` selects
+#: ``nanobind-static`` and ``PROTECT_STACK`` appends ``-ps`` (the protected variant is compiled
+#: differently, so it deliberately gets its own name). Must be kept in sync with the option list
+#: in ``CMakeLists.txt`` (which also names the target in its stub-source swap) - a mismatch is
+#: silent: the archive is simply never published and every build compiles nanobind from source.
+NANOBIND_STATIC_ARCHIVE = 'libnanobind-static-ps.a'
+
+
 def nanobind_static_cache_path() -> str:
-    """Cache location of nanobind's prebuilt helper archive (``libnanobind-static.a``).
+    """Cache location of nanobind's prebuilt helper archive (:data:`NANOBIND_STATIC_ARCHIVE`).
 
     The archive is NOT keyed on any DaCe configuration: nanobind compiles its helper library with
     its own fixed flags, so nothing configurable in DaCe reaches those translation units. If a
     configuration that DOES influence the archive is ever introduced (e.g. passing extra flags into
     ``nanobind_add_module``), it MUST be folded into this path. The interpreter and nanobind
     versions are part of the path already - the archive embeds the active Python's ABI and the
-    active nanobind's sources, and several virtual environments share one cache root.
+    active nanobind's sources, and several virtual environments share one cache root. The file
+    name carries nanobind's option-derived variant suffix, so an archive cached under different
+    ``nanobind_add_module`` options is never picked up.
     """
     import nanobind
     tag = f'{getattr(nanobind, "__version__", "unknown")}-py{sys.version_info.major}.{sys.version_info.minor}'
-    return os.path.join(build_cache_root(), 'nanobind', tag, 'libnanobind-static.a')
+    return os.path.join(build_cache_root(), 'nanobind', tag, NANOBIND_STATIC_ARCHIVE)
 
 
 def publish_nanobind_static(build_folder: str, cache_path: str) -> None:
     """Copy a freshly built helper archive into the cache (atomic, first writer wins)."""
-    built = os.path.join(build_folder, 'libnanobind-static.a')
+    built = os.path.join(build_folder, NANOBIND_STATIC_ARCHIVE)
     if not cache_path or not os.path.isfile(built) or os.path.exists(cache_path):
         return
     staging = f'{cache_path}.{os.getpid()}'
