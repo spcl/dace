@@ -40,18 +40,32 @@ Soundness -- the lift is value-preserving when, for the loop ``L``, the guard
   it is safe, in parallel it is a read/write race) and is written ONLY through
   ``c``; every array read through ``c`` is never written in ``L``;
 * an array the guard reads and the body writes is touched at ONE point subset,
-  identical on both sides and injective-affine in the loop variable, so
-  hoisting all guard reads (phase 1) ahead of all body writes (phase 3) cannot
+  identical on both sides and an injective affine image of the iteration vector,
+  so hoisting all guard reads (phase 1) ahead of all body writes (phase 3) cannot
   reorder a real dependence;
-* the residual body -- with the cursor modelled by an injective affine index --
-  passes ``LoopToMap.can_be_applied`` non-permissively. This pass owns the proof
-  that the CURSOR-indexed accesses are disjoint; ``LoopToMap`` owns everything
-  else, so no dependence is waived by assumption.
+* the residual body -- with the cursor modelled by an affine index in the
+  outermost iterator -- passes ``LoopToMap.can_be_applied`` non-permissively.
+  This pass owns the proof that the CURSOR-indexed accesses are disjoint;
+  ``LoopToMap`` owns everything else, so no dependence is waived by assumption.
 
-Rewrite (``T`` = trip count; ``mask`` / ``rank`` are fresh ``T``-element
-transients and ``total`` a fresh scalar -- each with exactly ONE writer, which
-is what keeps state fusion from splitting a buffer across two access nodes and
-leaving the reader on the wrong one)::
+The match is a NEST, not a single loop: a chain of unit-stride rectangular loops
+whose innermost body holds the guard. TSVC ``s343`` is ``for i: for j: if ...``
+with the cursor carried across BOTH levels, so lifting only the inner loop leaves
+the three phases inside a sequential outer loop -- one fork/join pair per phase
+per outer iteration, and a ``Scan`` / ``Reduce`` that see an enclosing loop and so
+take their sequential expansion. Claiming the whole nest at once gives ``mask`` /
+``rank`` ONE DIMENSION PER LEVEL, which puts the phases at the nest's own nesting
+depth: three passes for the whole kernel instead of three per outer iteration, and
+a top-level ``Scan`` that takes the parallel ``inscan`` lowering. A default-strided
+array is row-major, so the buffers' flat order is the outermost-major order the
+sequential cursor advances in -- which is the order the ``Scan`` walks, and what
+makes a single scan over the whole nest the right prefix. A single-loop match is
+the one-level case of the same code.
+
+Rewrite (``mask`` / ``rank`` are fresh transients shaped by the levels' trip counts
+and ``total`` a fresh scalar -- each with exactly ONE writer, which is what keeps
+state fusion from splitting a buffer across two access nodes and leaving the reader
+on the wrong one)::
 
     BEFORE                                    AFTER
 
@@ -78,20 +92,30 @@ nothing out of bounds and publishes the untouched ``c_in``.
 
 Algorithm (pseudocode)::
 
-    for loop in every LoopRegion:
-        m = match(loop)                       # unit stride, one guard, one cursor bump,
-        if m is None: continue                # purity, alias and dependence gates, probe
-        mask, rank, total = fresh transients
-        emit phase 1 loop  (preamble copy + mask store)
+    for loop in every LoopRegion, outermost first:     # a claimed nest detaches its inner levels,
+        m = match(loop)                                # so the widest match wins and the levels
+        if m is None: continue                         # below it are never revisited
+        mask, rank, total = fresh transients, one dimension per level
+        emit phase 1 nest  (preamble copy + mask store at the iteration vector)
         emit Scan(SUM, exclusive, identity 0) and Reduce(+, identity 0) off one mask read
-        emit phase 3 loop  (loop copy + cursor rebind on the guard in-edge)
+        emit phase 3 nest  (nest copy + cursor rebind on the guard in-edge)
         publish c = c_in + K * total
-        force LoopToMap on phase 1 and phase 3 (the disjointness proof is ours)
+        force LoopToMap on the phase 1 / phase 3 roots (the disjointness proof is ours)
+
+Outermost-first is what makes the nest claim self-selecting: when a level breaks a
+gate -- the cursor is initialized inside it, its extent moves with an outer
+iterator, the probe refuses -- the outer match fails, the sweep walks on to the
+level below, and the narrower lift fires there. Correct either way, just with the
+phases back inside a sequential outer loop.
 
 Refusals -- each names the miscompile it prevents:
 
 * Non-unit stride / unanalyzable bounds -- ``rank`` is indexed by ``i - start``
   with unit steps; any other stride mis-indexes ``mask``.
+* A non-rectangular nest -- an inner bound that moves with an outer iterator has
+  no constant extent, so it cannot be a ``mask`` dimension.
+* A level that holds both a guard and an inner loop, or two inner loops -- the
+  shaped index models ONE path down to ONE guard.
 * Guard is not a single one-armed ``ConditionalBlock``, or the body is not a
   linear chain -- ``rank`` counts ONE guard; an ``else`` arm or a second guard
   would append on a path the mask does not model.
@@ -141,29 +165,44 @@ BASE_PREFIX = 'compaction_base_'
 COUNT_DTYPE = dtypes.int64
 
 
-class CompactionMatch(NamedTuple):
-    """A matched conditional-append loop and everything the rewrite touches.
+class NestLevel(NamedTuple):
+    """One unit-stride loop level of the matched compaction nest.
 
-    :param loop: The compaction loop itself.
-    :param parent: ``loop.parent_graph`` -- where the phase chain is spliced in.
-    :param sdfg: The SDFG owning ``loop``, where the transients are declared.
-    :param cond_block: The single one-armed guard inside the loop body.
-    :param cond_str: The guard condition, as a symbol-only Python expression.
-    :param cursor: Name of the loop-carried output cursor symbol.
-    :param step: The per-taken-iteration cursor increment ``K`` (loop-invariant).
-    :param start: First value of the loop variable.
-    :param trip: Number of iterations, ``end - start + 1``.
+    :param loop: The loop region at this level.
+    :param start: First value of its loop variable.
+    :param trip: Number of iterations at this level, ``end - start + 1``.
+    :param preamble: The blocks of its body that run before ``child``.
+    :param child: The next level's loop, or the guard at the innermost level.
     """
 
     loop: LoopRegion
+    start: symbolic.SymbolicType
+    trip: symbolic.SymbolicType
+    preamble: List[ControlFlowBlock]
+    child: ControlFlowBlock
+
+
+class CompactionMatch(NamedTuple):
+    """A matched conditional-append nest and everything the rewrite touches.
+
+    :param root: The outermost loop of the nest -- the block the rewrite replaces.
+    :param levels: The nest levels, outermost first; the last one holds the guard.
+    :param parent: ``root.parent_graph`` -- where the phase chain is spliced in.
+    :param sdfg: The SDFG owning ``root``, where the transients are declared.
+    :param cond_block: The single one-armed guard inside the innermost body.
+    :param cond_str: The guard condition, as a symbol-only Python expression.
+    :param cursor: Name of the loop-carried output cursor symbol.
+    :param step: The per-taken-iteration cursor increment ``K`` (nest-invariant).
+    """
+
+    root: LoopRegion
+    levels: Tuple[NestLevel, ...]
     parent: AbstractControlFlowRegion
     sdfg: SDFG
     cond_block: ConditionalBlock
     cond_str: str
     cursor: str
     step: symbolic.SymbolicType
-    start: symbolic.SymbolicType
-    trip: symbolic.SymbolicType
 
 
 @properties.make_properties
@@ -188,8 +227,7 @@ class LoopToStreamCompaction(ppl.Pass):
             for region in list(sd.all_control_flow_regions()):
                 if not (isinstance(region, LoopRegion) and region.loop_variable):
                     continue
-                # Stale-snapshot guard: an earlier rewrite in this sweep may have removed the block.
-                if region.parent_graph is None or region not in region.parent_graph.nodes():
+                if not self.is_attached(region, sd):
                     continue
                 m = self.match_loop(region, sd)
                 if m is None:
@@ -201,68 +239,117 @@ class LoopToStreamCompaction(ppl.Pass):
     # ----------------------------------- match -----------------------------------
 
     def match_loop(self, loop: LoopRegion, sdfg: SDFG) -> Optional[CompactionMatch]:
-        if loop.pinned_sequential:
-            return None  # an earlier pass pinned this loop; honour it
-        start, trip = self.loop_extent(loop)
-        if start is None:
-            return None  # unanalyzable bounds or non-unit stride -> mask indexing would be wrong
+        nest = self.match_nest(loop)
+        if nest is None:
+            return None  # not a rectangular unit-stride chain of loops down to one guard
+        levels, cond_block = nest
 
-        chain = self.body_chain(loop)
-        if chain is None:
-            return None  # branching loop body -> the guard is not the only append path
-        guards = [b for b in chain if isinstance(b, ConditionalBlock)]
-        if len(guards) != 1:
-            return None  # zero or several guards -> rank counts exactly one
-        cond_block = guards[0]
         if len(cond_block.branches) != 1 or cond_block.branches[0][0] is None:
             return None  # an else arm appends on a path the mask does not model
         cond_str = cond_block.branches[0][0].as_string.strip()
         branch = cond_block.branches[0][1]
 
-        pos = chain.index(cond_block)
-        preamble = chain[:pos]
-        for blk in chain[pos + 1:]:
-            if not (isinstance(blk, SDFGState) and blk.number_of_nodes() == 0):
-                return None  # a non-empty tail would run before phase 3's guard on the copy
-
         if not self.body_is_pure(loop, sdfg):
             return None  # break/continue/return, nested SDFG, side effect, WCR or stream
 
-        cursor = self.cursor_increment(loop, branch)
+        cursor = self.cursor_increment(loop, branch, levels)
         if cursor is None:
-            return None  # not exactly one loop-invariant cursor bump inside the guard
+            return None  # not exactly one nest-invariant cursor bump inside the guard
         cursor_name, step = cursor
 
-        if not self.cursor_is_isolated(loop, cond_block, preamble, cursor_name, cond_str):
+        if not self.cursor_is_isolated(levels, cursor_name, cond_str):
             return None  # the cursor reaches the bounds / preamble / guard -> mask is not computable
 
         if self.expression_reads_containers(cond_str, sdfg):
             return None  # the mask tasklet emits the guard as symbol-only code
 
-        for blk in preamble:
-            if isinstance(blk, SDFGState) and self.writes_nontransient(blk, sdfg):
-                return None  # phase 1 and phase 3 both re-run the preamble
+        for level in levels:
+            for blk in level.preamble:
+                if isinstance(blk, SDFGState) and self.writes_nontransient(blk, sdfg):
+                    return None  # phase 1 and phase 3 both re-run the preamble
 
         if not self.cursor_arrays_are_isolated(loop, cursor_name, sdfg):
             return None  # in-place compaction / the scatter would race its own input
 
-        if not self.guard_reads_survive_hoisting(loop, cond_block, preamble, sdfg):
+        if not self.guard_reads_survive_hoisting(loop, levels, sdfg):
             return None  # hoisting the guard reads ahead of the body writes reorders a dependence
 
         # Expensive last: model the cursor by an injective affine index and let LoopToMap rule on
         # every dependence this pass does NOT prove itself.
-        if not self.affine_cursor_probe(loop, sdfg, cursor_name, step, start):
+        if not self.affine_cursor_probe(loop, sdfg, cursor_name, step, levels):
             return None
 
-        return CompactionMatch(loop=loop,
+        return CompactionMatch(root=loop,
+                               levels=levels,
                                parent=loop.parent_graph,
                                sdfg=sdfg,
                                cond_block=cond_block,
                                cond_str=cond_str,
                                cursor=cursor_name,
-                               step=step,
-                               start=start,
-                               trip=trip)
+                               step=step)
+
+    def is_attached(self, region: AbstractControlFlowRegion, sdfg: SDFG) -> bool:
+        """Stale-snapshot guard: an earlier rewrite in this sweep may have detached a whole nest."""
+        cur: Optional[AbstractControlFlowRegion] = region
+        while cur is not sdfg:
+            parent = cur.parent_graph
+            if parent is None or cur not in parent.nodes():
+                return False
+            cur = parent
+        return True
+
+    def match_nest(self, loop: LoopRegion) -> Optional[Tuple[Tuple[NestLevel, ...], ConditionalBlock]]:
+        """Walk down a rectangular chain of unit-stride loops to the single guard."""
+        levels: List[NestLevel] = []
+        outer_vars: List[str] = []
+        cur = loop
+        while True:
+            if cur.pinned_sequential:
+                return None  # an earlier pass pinned this loop; honour it
+            start, trip = self.loop_extent(cur)
+            if start is None:
+                return None  # unanalyzable bounds or non-unit stride -> mask indexing would be wrong
+            if any(name in outer_vars for name in symbolic.symlist([start, trip])):
+                return None  # non-rectangular: the level has no constant extent to give mask a shape
+            chain = self.body_chain(cur)
+            if chain is None:
+                return None  # branching loop body -> the guard is not the only append path
+            guards = [b for b in chain if isinstance(b, ConditionalBlock)]
+            inner = [b for b in chain if isinstance(b, LoopRegion) and b.loop_variable]
+            if len(guards) == 1 and not inner:
+                child: ControlFlowBlock = guards[0]
+            elif not guards and len(inner) == 1:
+                child = inner[0]
+            else:
+                return None  # zero or several guards, or a level that both loops and guards
+            pos = chain.index(child)
+            for blk in chain[pos + 1:]:
+                if not (isinstance(blk, SDFGState) and blk.number_of_nodes() == 0):
+                    return None  # a non-empty tail would run before phase 3's guard on the copy
+            levels.append(NestLevel(loop=cur, start=start, trip=trip, preamble=chain[:pos], child=child))
+            outer_vars.append(cur.loop_variable)
+            if isinstance(child, ConditionalBlock):
+                return tuple(levels), child
+            cur = child
+
+    def nest_index(self, levels: Tuple[NestLevel, ...], loops: List[LoopRegion]) -> List[str]:
+        """The origin-shifted iteration vector, one component per level.
+
+        ``mask`` / ``rank`` carry one DIMENSION per level rather than a linearized index. Both are
+        the same buffer in memory -- a default-strided array is row-major, so its flat order is the
+        outermost-major order the cursor advances in, which is what the ``Scan`` walks. The shaped
+        form is what keeps the buffers analyzable: ``LoopToMap`` classifies a write as uniquely
+        indexed only when it matches ``a*i + b`` with a provably ``|a| >= 1``, and the linearized
+        ``mask[T1*i + j]`` has ``a = T1``, unprovable for a symbolic extent. Per-level dimensions
+        give every level ``a = 1``.
+        """
+        return [
+            symbolic.symstr(symbolic.pystr_to_symbolic(loop.loop_variable) - level.start)
+            for level, loop in zip(levels, loops)
+        ]
+
+    def point_subset(self, index: List[str]) -> subsets.Range:
+        return subsets.Range([(comp, comp, 1) for comp in index])
 
     def loop_extent(self, loop: LoopRegion) -> Tuple[Optional[symbolic.SymbolicType], Optional[symbolic.SymbolicType]]:
         """Return ``(start, trip)`` for a unit-stride loop, ``(None, None)`` otherwise."""
@@ -318,8 +405,8 @@ class LoopToStreamCompaction(ppl.Pass):
                     return False  # stream push order is observable
         return True
 
-    def cursor_increment(self, loop: LoopRegion,
-                         branch: ControlFlowRegion) -> Optional[Tuple[str, symbolic.SymbolicType]]:
+    def cursor_increment(self, loop: LoopRegion, branch: ControlFlowRegion,
+                         levels: Tuple[NestLevel, ...]) -> Optional[Tuple[str, symbolic.SymbolicType]]:
         """Find the unique ``c = c + K`` interstate assignment; it must live inside ``branch``."""
         assigned: Dict[str, int] = {}
         bumps: List[Tuple[str, symbolic.SymbolicType, bool]] = []
@@ -342,26 +429,31 @@ class LoopToStreamCompaction(ppl.Pass):
             return None  # the cursor is assigned elsewhere in the loop as well
         if step == 0:
             return None  # a zero bump is not an append cursor
-        invariant = {loop.loop_variable, *assigned}
+        invariant = {*(level.loop.loop_variable for level in levels), *assigned}
         if any(str(s) in invariant for s in step.free_symbols):
             return None  # a data-dependent or iteration-dependent step breaks c_in + K*rank[i]
         return name, step
 
-    def cursor_is_isolated(self, loop: LoopRegion, cond_block: ConditionalBlock, preamble: List[ControlFlowBlock],
-                           cursor: str, cond_str: str) -> bool:
-        """The mask must be computable without the cursor."""
-        meta = [loop.loop_condition.as_string, loop.init_statement.as_string, loop.update_statement.as_string, cond_str]
+    def cursor_is_isolated(self, levels: Tuple[NestLevel, ...], cursor: str, cond_str: str) -> bool:
+        """The mask must be computable without the cursor, at every level of the nest."""
+        meta = [cond_str]
+        for level in levels:
+            meta += [
+                level.loop.loop_condition.as_string, level.loop.init_statement.as_string,
+                level.loop.update_statement.as_string
+            ]
         for code in meta:
             if cursor in self.expression_names(code):
                 return False
-        for blk in preamble:
-            if isinstance(blk, SDFGState) and cursor in blk.free_symbols:
-                return False
-        for blk in [*preamble, cond_block]:
-            for edge in loop.in_edges(blk):
-                for rhs in edge.data.assignments.values():
-                    if cursor in self.expression_names(rhs):
-                        return False
+        for level in levels:
+            for blk in level.preamble:
+                if isinstance(blk, SDFGState) and cursor in blk.free_symbols:
+                    return False
+            for blk in [*level.preamble, level.child]:
+                for edge in level.loop.in_edges(blk):
+                    for rhs in edge.data.assignments.values():
+                        if cursor in self.expression_names(rhs):
+                            return False
         return True
 
     def cursor_arrays_are_isolated(self, loop: LoopRegion, cursor: str, sdfg: SDFG) -> bool:
@@ -396,31 +488,31 @@ class LoopToStreamCompaction(ppl.Pass):
                 return False  # the gathered source is rewritten inside the loop
         return True
 
-    def guard_reads_survive_hoisting(self, loop: LoopRegion, cond_block: ConditionalBlock,
-                                     preamble: List[ControlFlowBlock], sdfg: SDFG) -> bool:
+    def guard_reads_survive_hoisting(self, loop: LoopRegion, levels: Tuple[NestLevel, ...], sdfg: SDFG) -> bool:
         """Phase 1 runs every guard read before every body write; that must not reorder a dependence."""
         guard_reads: Dict[str, subsets.Subset] = {}
-        for blk in [*preamble, cond_block]:
-            for edge in loop.in_edges(blk):
-                for read in edge.data.get_read_memlets(sdfg.arrays):
-                    if read.data in guard_reads and guard_reads[read.data] != read.subset:
-                        return False  # two distinct guard reads of one array -> no single point
-                    guard_reads[read.data] = read.subset
-        for blk in preamble:
-            if not isinstance(blk, SDFGState):
-                continue
-            for node in blk.data_nodes():
-                if blk.out_degree(node) == 0:
+        for level in levels:
+            for blk in [*level.preamble, level.child]:
+                for edge in level.loop.in_edges(blk):
+                    for read in edge.data.get_read_memlets(sdfg.arrays):
+                        if read.data in guard_reads and guard_reads[read.data] != read.subset:
+                            return False  # two distinct guard reads of one array -> no single point
+                        guard_reads[read.data] = read.subset
+            for blk in level.preamble:
+                if not isinstance(blk, SDFGState):
                     continue
-                for edge in blk.out_edges(node):
-                    if edge.data.is_empty() or edge.data.data != node.data:
+                for node in blk.data_nodes():
+                    if blk.out_degree(node) == 0:
                         continue
-                    if node.data in guard_reads and guard_reads[node.data] != edge.data.subset:
-                        return False
-                    guard_reads[node.data] = edge.data.subset
+                    for edge in blk.out_edges(node):
+                        if edge.data.is_empty() or edge.data.data != node.data:
+                            continue
+                        if node.data in guard_reads and guard_reads[node.data] != edge.data.subset:
+                            return False
+                        guard_reads[node.data] = edge.data.subset
         if not guard_reads:
             return True
-        loop_var = symbolic.pystr_to_symbolic(loop.loop_variable)
+        loop_vars = [symbolic.pystr_to_symbolic(level.loop.loop_variable) for level in levels]
         for state in loop.all_states():
             for edge in state.edges():
                 if edge.data.is_empty() or edge.data.data is None:
@@ -432,43 +524,55 @@ class LoopToStreamCompaction(ppl.Pass):
                     continue
                 if edge.data.subset != guard_reads[name]:
                     return False  # the body overwrites an element the guard read at another index
-                if not self.subset_is_injective_point(edge.data.subset, loop_var):
+                if not self.subset_is_injective_point(edge.data.subset, loop_vars):
                     return False  # two iterations share the element -> the hoist changes the value read
         return True
 
-    def subset_is_injective_point(self, subset: subsets.Subset, loop_var: symbolic.SymbolicType) -> bool:
-        """A single point whose index is ``a * loop_var + b`` with ``a != 0`` in exactly one dimension."""
+    def subset_is_injective_point(self, subset: subsets.Subset, loop_vars: List[symbolic.SymbolicType]) -> bool:
+        """A single point that is an injective affine image of the nest's iteration vector.
+
+        Injective here means: every iterator carries exactly one dimension with a nonzero integer
+        coefficient, and no dimension mixes two iterators -- so distinct iteration vectors land on
+        distinct elements, dimension by dimension.
+        """
         if not isinstance(subset, subsets.Range):
             return False
-        carrying = 0
+        carried: List[symbolic.SymbolicType] = []
         for begin, end, step in subset.ranges:
             if symbolic.simplify(begin - end) != 0 or symbolic.simplify(step - 1) != 0:
                 return False
-            if loop_var not in begin.free_symbols:
+            here = [var for var in loop_vars if var in begin.free_symbols]
+            if not here:
                 continue
-            lead = begin.coeff(loop_var, 1)
-            if symbolic.simplify(begin - (lead * loop_var + begin.coeff(loop_var, 0))) != 0:
+            if len(here) != 1:
+                return False  # two iterators in one index -> not separably injective
+            lead = begin.coeff(here[0], 1)
+            if symbolic.simplify(begin - (lead * here[0] + begin.coeff(here[0], 0))) != 0:
                 return False  # non-affine in the loop variable
             if not lead.is_Integer or lead == 0:
                 return False
-            carrying += 1
-        return carrying == 1
+            carried.append(here[0])
+        return all(sum(1 for var in carried if var == outer) == 1 for outer in loop_vars)
 
     def affine_cursor_probe(self, loop: LoopRegion, sdfg: SDFG, cursor: str, step: symbolic.SymbolicType,
-                            start: symbolic.SymbolicType) -> bool:
+                            levels: Tuple[NestLevel, ...]) -> bool:
         """Ask ``LoopToMap`` about the residual body with the cursor modelled as an injective affine index.
 
-        The real phase-3 cursor ``c_in + K * rank[i]`` hits a SUBSET of the elements the affine model
-        ``K * (i - start)`` hits, and only on taken iterations, so a disjointness verdict on the model
-        carries over. Everything the cursor does not index is judged by ``LoopToMap`` itself, without
-        the permissive waiver.
+        The model is the OUTERMOST level's index, ``K * (i - start)``: the probe's job is to judge
+        the accesses this pass does NOT reason about, and the cursor-indexed ones are exactly the
+        ones it does -- ``cursor_arrays_are_isolated`` has already established that an array reached
+        through the cursor is written only through it and never read in the nest, so no other access
+        can alias it and ``LoopToMap``'s verdict on the model index is not load-bearing. Keeping the
+        model affine in one iterator with an integer coefficient is what keeps it CLASSIFIABLE; a
+        linearized inner index would carry a symbolic coefficient and refuse every symbolic extent.
         """
         from dace.transformation.interstate.loop_to_map import LoopToMap
         probe_sdfg = copy.deepcopy(sdfg)
         probe_loop = self.locate_corresponding(probe_sdfg, loop)
         if probe_loop is None:
             return False
-        model = symbolic.symstr(step * (symbolic.pystr_to_symbolic(loop.loop_variable) - start))
+        outer = levels[0]
+        model = symbolic.symstr(step * (symbolic.pystr_to_symbolic(outer.loop.loop_variable) - outer.start))
         for edge in probe_loop.all_interstate_edges(recursive=False):
             if cursor in edge.data.assignments:
                 del edge.data.assignments[cursor]
@@ -525,37 +629,35 @@ class LoopToStreamCompaction(ppl.Pass):
     # ---------------------------------- rewrite ----------------------------------
 
     def rewrite(self, m: CompactionMatch) -> None:
-        sdfg, parent, loop = m.sdfg, m.parent, m.loop
-        mask_name, _ = sdfg.add_array(MASK_PREFIX + loop.label, [m.trip],
-                                      COUNT_DTYPE,
-                                      transient=True,
-                                      find_new_name=True)
-        idx_name, _ = sdfg.add_array(IDX_PREFIX + loop.label, [m.trip], COUNT_DTYPE, transient=True, find_new_name=True)
-        total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + loop.label, COUNT_DTYPE, transient=True, find_new_name=True)
-        base_sym = BASE_PREFIX + loop.label
+        sdfg, parent, root = m.sdfg, m.parent, m.root
+        shape = [level.trip for level in m.levels]
+        mask_name, _ = sdfg.add_array(MASK_PREFIX + root.label, shape, COUNT_DTYPE, transient=True, find_new_name=True)
+        idx_name, _ = sdfg.add_array(IDX_PREFIX + root.label, shape, COUNT_DTYPE, transient=True, find_new_name=True)
+        total_name, _ = sdfg.add_scalar(TOTAL_PREFIX + root.label, COUNT_DTYPE, transient=True, find_new_name=True)
+        base_sym = BASE_PREFIX + root.label
         while base_sym in sdfg.symbols:
             base_sym += '_'
         sdfg.add_symbol(base_sym, sdfg.symbols.get(m.cursor, COUNT_DTYPE))
 
-        in_edges = list(parent.in_edges(loop))
-        out_edges = list(parent.out_edges(loop))
-        was_start = parent.start_block is loop
+        in_edges = list(parent.in_edges(root))
+        out_edges = list(parent.out_edges(root))
+        was_start = parent.start_block is root
 
-        entry = parent.add_state(loop.label + '_compaction_entry', is_start_block=was_start)
-        mask_loop = self.clone_loop(m, '_compaction_mask')
-        scan = parent.add_state(loop.label + '_compaction_scan')
-        scatter_loop = self.clone_loop(m, '_compaction_scatter')
-        exit_state = parent.add_state(loop.label + '_compaction_exit')
-        self.build_mask_loop(m, mask_loop, mask_name)
-        self.build_scatter_loop(m, scatter_loop, idx_name, base_sym)
+        entry = parent.add_state(root.label + '_compaction_entry', is_start_block=was_start)
+        mask_nest = self.clone_loop(m, '_compaction_mask')
+        scan = parent.add_state(root.label + '_compaction_scan')
+        scatter_nest = self.clone_loop(m, '_compaction_scatter')
+        exit_state = parent.add_state(root.label + '_compaction_exit')
+        self.build_mask_loop(m, mask_nest, mask_name)
+        self.build_scatter_loop(m, scatter_nest, idx_name, base_sym)
 
-        parent.add_edge(entry, mask_loop, dace.InterstateEdge(assignments={base_sym: m.cursor}))
-        parent.add_edge(mask_loop, scan, dace.InterstateEdge())
-        parent.add_edge(scan, scatter_loop, dace.InterstateEdge())
+        parent.add_edge(entry, mask_nest, dace.InterstateEdge(assignments={base_sym: m.cursor}))
+        parent.add_edge(mask_nest, scan, dace.InterstateEdge())
+        parent.add_edge(scan, scatter_nest, dace.InterstateEdge())
         live_out = f'({base_sym}) + ({symbolic.symstr(m.step)}) * {total_name}'
-        parent.add_edge(scatter_loop, exit_state, dace.InterstateEdge(assignments={m.cursor: live_out}))
+        parent.add_edge(scatter_nest, exit_state, dace.InterstateEdge(assignments={m.cursor: live_out}))
 
-        self.emit_scan_and_count(scan, mask_name, idx_name, total_name, m.trip)
+        self.emit_scan_and_count(scan, mask_name, idx_name, total_name, shape)
 
         for edge in in_edges:
             parent.remove_edge(edge)
@@ -563,18 +665,26 @@ class LoopToStreamCompaction(ppl.Pass):
         for edge in out_edges:
             parent.remove_edge(edge)
             parent.add_edge(exit_state, edge.dst, edge.data)
-        parent.remove_node(loop)
+        parent.remove_node(root)
         sdfg.reset_cfg_list()
 
-        self.parallelize(mask_loop, sdfg, permissive=False)
-        self.parallelize(scatter_loop, sdfg, permissive=True)
+        self.parallelize(mask_nest, sdfg, permissive=False)
+        self.parallelize(scatter_nest, sdfg, permissive=True)
 
     def clone_loop(self, m: CompactionMatch, suffix: str) -> LoopRegion:
-        """Copy the matched loop into the parent region; ownership is what makes it editable."""
-        loop = copy.deepcopy(m.loop)
-        loop.label = m.loop.label + suffix
+        """Copy the matched nest into the parent region; ownership is what makes it editable."""
+        loop = copy.deepcopy(m.root)
+        loop.label = m.root.label + suffix
         m.parent.add_node(loop, ensure_unique_name=True)
         return loop
+
+    def clone_path(self, m: CompactionMatch, root: LoopRegion) -> Tuple[List[LoopRegion], ControlFlowBlock]:
+        """Re-find the nest levels and the guard inside a clone -- identity does not survive the copy."""
+        loops = [root]
+        while len(loops) < len(m.levels):
+            loops.append(next(b for b in loops[-1].nodes() if isinstance(b, LoopRegion) and b.loop_variable))
+        guard = next(b for b in loops[-1].nodes() if b.label == m.cond_block.label)
+        return loops, guard
 
     def rename_iterator(self, loop: LoopRegion, sdfg: SDFG, suffix: str) -> str:
         """Give a phase copy its own iterator: LoopToMap refuses a counter another block still names."""
@@ -588,34 +698,37 @@ class LoopToStreamCompaction(ppl.Pass):
         loop.loop_variable = new_name
         return new_name
 
-    def build_mask_loop(self, m: CompactionMatch, loop: LoopRegion, mask_name: str) -> None:
-        """Phase 1: the loop with its guard replaced by a store of the guard's value."""
-        itervar = self.rename_iterator(loop, m.sdfg, loop.label)
-        guard = next(b for b in loop.nodes() if b.label == m.cond_block.label)
-        store = loop.add_state(loop.label + '_store', is_start_block=loop.start_block is guard)
-        for edge in list(loop.in_edges(guard)):
-            loop.remove_edge(edge)
-            loop.add_edge(edge.src, store, edge.data)
-        for block in [b for b in loop.nodes() if b is not store and self.reaches(loop, guard, b)]:
-            loop.remove_node(block)
-        index = f'({itervar}) - ({symbolic.symstr(m.start)})'
-        tasklet = store.add_tasklet(loop.label + '_mask', {}, {'__out'}, f'__out = ({m.cond_str})')
+    def build_mask_loop(self, m: CompactionMatch, root: LoopRegion, mask_name: str) -> None:
+        """Phase 1: the nest with its guard replaced by a store of the guard's value."""
+        loops, guard = self.clone_path(m, root)
+        for loop in loops:
+            self.rename_iterator(loop, m.sdfg, loop.label)
+        inner = loops[-1]
+        store = inner.add_state(root.label + '_store', is_start_block=inner.start_block is guard)
+        for edge in list(inner.in_edges(guard)):
+            inner.remove_edge(edge)
+            inner.add_edge(edge.src, store, edge.data)
+        for block in [b for b in inner.nodes() if b is not store and self.reaches(inner, guard, b)]:
+            inner.remove_node(block)
+        index = self.nest_index(m.levels, loops)
+        tasklet = store.add_tasklet(root.label + '_mask', {}, {'__out'}, f'__out = ({m.cond_str})')
         write = store.add_write(mask_name)
-        store.add_edge(tasklet, '__out', write, None,
-                       mm.Memlet(data=mask_name, subset=subsets.Range([(index, index, 1)])))
+        store.add_edge(tasklet, '__out', write, None, mm.Memlet(data=mask_name, subset=self.point_subset(index)))
 
-    def build_scatter_loop(self, m: CompactionMatch, loop: LoopRegion, idx_name: str, base_sym: str) -> None:
-        """Phase 3: the loop verbatim, with the cursor rebound from the scan on the guard's in-edge."""
-        itervar = self.rename_iterator(loop, m.sdfg, loop.label)
-        guard = next(b for b in loop.nodes() if b.label == m.cond_block.label)
-        index = f'({itervar}) - ({symbolic.symstr(m.start)})'
+    def build_scatter_loop(self, m: CompactionMatch, root: LoopRegion, idx_name: str, base_sym: str) -> None:
+        """Phase 3: the nest verbatim, with the cursor rebound from the scan on the guard's in-edge."""
+        loops, guard = self.clone_path(m, root)
+        for loop in loops:
+            self.rename_iterator(loop, m.sdfg, loop.label)
+        inner = loops[-1]
+        index = ', '.join(self.nest_index(m.levels, loops))
         binding = f'({base_sym}) + ({symbolic.symstr(m.step)}) * {idx_name}[{index}]'
-        edges = loop.in_edges(guard)
+        edges = inner.in_edges(guard)
         if not edges:
             # No preamble: the guard is the body's first block, so there is no edge to bind on.
             # Dropping the rebinding would leave the cursor at its stale carried value.
-            bind = loop.add_state(loop.label + '_bind', is_start_block=True)
-            loop.add_edge(bind, guard, dace.InterstateEdge(assignments={m.cursor: binding}))
+            bind = inner.add_state(root.label + '_bind', is_start_block=True)
+            inner.add_edge(bind, guard, dace.InterstateEdge(assignments={m.cursor: binding}))
             return
         for edge in edges:
             edge.data.assignments[m.cursor] = binding
@@ -635,8 +748,12 @@ class LoopToStreamCompaction(ppl.Pass):
         return False
 
     def emit_scan_and_count(self, state: SDFGState, mask: str, rank: str, total: str,
-                            trip: symbolic.SymbolicType) -> None:
+                            shape: List[symbolic.SymbolicType]) -> None:
         """Phase 2: ``rank = exclusive_scan(mask)`` and ``total = sum(mask)``, off one mask read.
+
+        The whole shaped buffer is one span: ``Scan`` sizes its loop from the subset's element
+        count and walks the (default-strided, hence row-major) storage, which is the outermost-major
+        order the sequential cursor advances in.
 
         Every buffer here has exactly ONE writer. A partial second write to ``mask`` -- padding a
         spare slot to carry the total, say -- survives this pass but not state fusion, which splits
@@ -645,7 +762,7 @@ class LoopToStreamCompaction(ppl.Pass):
         from dace.libraries.standard.nodes.reduce import Reduce
         from dace.libraries.standard.nodes.scan import (INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME, Scan, ScanOp)
         read = state.add_read(mask)
-        span = subsets.Range([(0, trip - 1, 1)])
+        span = subsets.Range([(0, extent - 1, 1) for extent in shape])
 
         scan = Scan(name=state.label + '_scan', op=ScanOp.SUM, exclusive=True, identity=0)
         state.add_node(scan)
@@ -653,7 +770,7 @@ class LoopToStreamCompaction(ppl.Pass):
         state.add_edge(scan, OUTPUT_CONNECTOR_NAME, state.add_write(rank), None,
                        mm.Memlet(data=rank, subset=copy.deepcopy(span)))
 
-        count = Reduce(name=state.label + '_count', wcr='lambda a, b: a + b', axes=[0], identity=0)
+        count = Reduce(name=state.label + '_count', wcr='lambda a, b: a + b', axes=list(range(len(shape))), identity=0)
         count.add_in_connector('_in')
         count.add_out_connector('_out')
         state.add_node(count)

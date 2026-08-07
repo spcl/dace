@@ -2,9 +2,11 @@
 """Tests for :class:`~dace.transformation.passes.canonicalize.loop_to_stream_compaction.LoopToStreamCompaction`.
 
 Covers the TSVC conditional-append kernels ``s341`` / ``s342`` / ``s343``, two synthetic
-compactions (cursor bumped AFTER the writes, and a stride-2 cursor), the numerical contract
-against an executable numpy oracle -- including the live-out cursor value and the zero-trip
-loop -- and one test per refusal in the pass's contract.
+compactions (cursor bumped AFTER the writes, and a stride-2 cursor), the whole-nest claim
+(``s343``'s cursor is carried across both levels, so the phases leave the sequential outer
+loop) and its refusal on a triangular nest, the numerical contract against an executable
+numpy oracle -- including the live-out cursor value and the zero-trip loop -- and one test
+per refusal in the pass's contract.
 
 The pass runs inside the canonicalize pipeline's ``loop_to_x`` stage, so every test drives the
 full pipeline: a refusal that only holds when the pass is run in isolation is not a refusal.
@@ -16,8 +18,8 @@ import dace
 from dace.sdfg import nodes as nd
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize import canonicalize
-from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (LoopToStreamCompaction, MASK_PREFIX,
-                                                                               TOTAL_PREFIX)
+from dace.transformation.passes.canonicalize.loop_to_stream_compaction import (LoopToStreamCompaction, IDX_PREFIX,
+                                                                               MASK_PREFIX, TOTAL_PREFIX)
 
 N = dace.symbol('N', dtype=dace.int64)
 M = dace.symbol('M', dtype=dace.int64)
@@ -38,6 +40,25 @@ def num_loops(sdfg: dace.SDFG) -> int:
 
 def omp_parallel_for(sdfg: dace.SDFG) -> int:
     return sum(part.clean_code.count('#pragma omp parallel for') for part in sdfg.generate_code())
+
+
+def nest_claimed(sdfg: dace.SDFG, levels: int) -> bool:
+    """True iff ``mask`` carries one dimension per nest level -- the whole-nest claim."""
+    return any(len(sdfg.arrays[name].shape) == levels for name in sdfg.arrays if name.startswith(MASK_PREFIX))
+
+
+def phases_under_a_loop(sdfg: dace.SDFG) -> bool:
+    """True if a loop re-enters a phase -- one fork/join pair per phase per outer iteration."""
+    buffers = [name for name in sdfg.arrays if name.startswith((MASK_PREFIX, IDX_PREFIX))]
+    for state in sdfg.all_states():
+        if not any(node.data in buffers for node in state.data_nodes()):
+            continue
+        region = state.parent_graph
+        while region is not None and region is not sdfg:
+            if isinstance(region, LoopRegion) and region.loop_variable:
+                return True
+            region = region.parent_graph
+    return False
 
 
 def build(program) -> dace.SDFG:
@@ -165,11 +186,19 @@ def test_s342_cursor_on_the_read_side():
         assert np.array_equal(got, want)
 
 
-def test_s343_inner_loop_lifts_outer_stays_sequential():
-    """The cursor is carried across OUTER iterations; only the inner compaction is lifted."""
+def test_s343_lifts_the_whole_nest():
+    """The cursor is carried across BOTH levels, so the nest is claimed whole.
+
+    ``mask`` / ``rank`` carry one dimension per level and nothing re-enters a phase, so the
+    kernel costs three passes instead of three per outer iteration -- and the extents stay
+    SYMBOLIC, which the per-level shape is what buys: a linearized ``mask[M*i + j]`` would
+    leave ``LoopToMap`` unable to prove ``|M| >= 1`` and refuse both the probe and phase 1.
+    """
     sdfg = build(s343_kernel)
     assert lifted(sdfg)
-    assert num_loops(sdfg) == 1  # the outer loop keeps the cross-iteration carry
+    assert nest_claimed(sdfg, 2)
+    assert not phases_under_a_loop(sdfg)
+    assert num_loops(sdfg) == 0  # no sequential residue: both phases are Maps
     assert num_maps(sdfg) >= 2
     assert omp_parallel_for(sdfg) >= 2
 
@@ -182,6 +211,84 @@ def test_s343_inner_loop_lifts_outer_stays_sequential():
         got = np.zeros(m * m)
         sdfg(aa=aa.copy(), bb=bb.copy(), flat=got, M=m)
         assert np.array_equal(got, want)
+
+
+MM = 24
+
+
+@dace.program
+def s343_static_kernel(aa: dace.float64[MM, MM], bb: dace.float64[MM, MM], flat: dace.float64[MM * MM],
+                       kout: dace.int64[1]):
+    k = -1
+    for i in range(MM):
+        for j in range(MM):
+            if bb[j, i] > 0.0:
+                k = k + 1
+                flat[k] = aa[j, i]
+    kout[0] = k
+
+
+def test_s343_static_extents_lift_the_whole_nest():
+    """Literal extents take the same whole-nest path, and publish the live-out cursor from it.
+
+    ``total`` is a ``Reduce`` over the shaped mask, so the cursor the nest leaves behind counts
+    every taken iteration of BOTH levels.
+    """
+    sdfg = build(s343_static_kernel)
+    assert lifted(sdfg)
+    assert nest_claimed(sdfg, 2)
+    assert not phases_under_a_loop(sdfg)
+    assert num_maps(sdfg) >= 2
+    assert omp_parallel_for(sdfg) >= 2
+
+    rng = np.random.default_rng(3431)
+    for scale in (1.0, -1.0, 0.25):
+        aa = rng.standard_normal((MM, MM))
+        bb = rng.standard_normal((MM, MM)) * scale
+        want = np.zeros(MM * MM)
+        want_k = oracle_s343(aa, bb, want)
+        got = np.zeros(MM * MM)
+        got_k = np.zeros(1, dtype=np.int64)
+        sdfg(aa=aa.copy(), bb=bb.copy(), flat=got, kout=got_k)
+        assert np.array_equal(got, want)
+        assert int(got_k[0]) == want_k
+
+
+@dace.program
+def triangular_nest(bb: dace.float64[MM, MM], flat: dace.float64[MM * MM], kout: dace.int64[1]):
+    k = -1
+    for i in range(MM):
+        for j in range(i + 1):
+            if bb[j, i] > 0.0:
+                k = k + 1
+                flat[k] = bb[j, i]
+    kout[0] = k
+
+
+def oracle_triangular(bb, flat):
+    k = -1
+    for i in range(bb.shape[0]):
+        for j in range(i + 1):
+            if bb[j, i] > 0.0:
+                k = k + 1
+                flat[k] = bb[j, i]
+    return k
+
+
+def test_triangular_nest_is_not_claimed_whole():
+    """A level whose extent moves with an outer iterator cannot be a ``mask`` dimension."""
+    sdfg = build(triangular_nest)
+    assert not nest_claimed(sdfg, 2)
+
+    rng = np.random.default_rng(3432)
+    bb = rng.standard_normal((MM, MM))
+    want = np.zeros(MM * MM)
+    want_k = oracle_triangular(bb, want)
+    got = np.zeros(MM * MM)
+    got_k = np.zeros(1, dtype=np.int64)
+    sdfg(bb=bb.copy(), flat=got, kout=got_k)
+    assert np.array_equal(got, want)
+    assert int(got_k[0]) == want_k
 
 
 @dace.program
