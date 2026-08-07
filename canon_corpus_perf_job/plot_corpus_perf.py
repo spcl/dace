@@ -83,14 +83,16 @@ DENOM_PHRASE = {
 #: Arm plotting order: the six comparison arms, then the sequential denominator arm, then the
 #: labels older sweeps on disk used. Unknown labels are appended alphabetically, so a renamed or
 #: added arm still plots -- the series come from the DATA, this list only fixes order and colour.
+#: Each autopar arm is immediately followed by its ``-default`` twin (same flags minus the forcing
+#: knob), so the forced/unforced pair reads side by side in every figure and table.
 ARM_ORDER = ('dace-autoopt-gcc', 'dace-autoopt-llvm', 'dace-canon-gcc', 'dace-canon-llvm', 'dace-simplify+gcc-autopar',
-             'dace-simplify+llvm-autopar', 'seq-cpp', 'auto-opt', 'auto-opt+llvm', 'canon', 'canon+gcc', 'canon+llvm',
-             'gcc-autopar', 'llvm-autopar', 'canon-serial+gcc-autopar', 'canon-serial+llvm-autopar', 'gcc-graphite',
-             'clang-polly')
-#: The arm labels the current job writes. A record carrying none of them predates the six-arm table:
-#: its numbers were taken under different flags and are reported as stale rather than plotted next
-#: to fresh ones.
-CURRENT_ARMS = ARM_ORDER[:7]
+             'dace-simplify+gcc-autopar-default', 'dace-simplify+llvm-autopar', 'dace-simplify+llvm-autopar-default',
+             'seq-cpp', 'auto-opt', 'auto-opt+llvm', 'canon', 'canon+gcc', 'canon+llvm', 'gcc-autopar', 'llvm-autopar',
+             'canon-serial+gcc-autopar', 'canon-serial+llvm-autopar', 'gcc-graphite', 'clang-polly')
+#: The arm labels the current job writes. A record carrying none of them predates the eight-arm
+#: table: its numbers were taken under different flags and are reported as stale rather than plotted
+#: next to fresh ones.
+CURRENT_ARMS = ARM_ORDER[:9]
 #: The harness's own "too fast to time reliably" floor. Not applied by default (dropping data is the
 #: reader's call, not the plotter's) but kernels below it are counted, since a ratio between two
 #: sub-millisecond timings is per-call overhead, not a speedup.
