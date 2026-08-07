@@ -311,26 +311,47 @@ if(DACE_ENABLE_NANOBIND)
   if(DACE_NANOBIND_STATIC_LIB)
     # Link a prebuilt, machine-cached copy of nanobind's helper archive instead of compiling its
     # ~12 translation units per build folder. The helper target stays alive so its
-    # PUBLIC/INTERFACE surface (include directories, compile options) keeps flowing into the
-    # module's own translation units - only its sources are swapped for one empty stub, and the
-    # real symbols come from the archive appended below.
+    # PUBLIC/INTERFACE surface (include directories, compile options, defines) keeps flowing
+    # into the module's own translation units - only its sources are swapped for one empty stub,
+    # and the real symbols come from the cached archive linked additionally.
     #
-    # The target name is DERIVED BY NANOBIND from the options passed to nanobind_add_module
-    # above: NB_STATIC selects `nanobind-static` and PROTECT_STACK appends `-ps`. If that option
-    # list changes, this name and NANOBIND_STATIC_ARCHIVE on the Python side (compiler.py) must
-    # change with it - a mismatch here is a hard CMake error (unknown target), on the Python
-    # side it silently disables the archive cache.
+    # Nothing here assumes the helper's NAME: nanobind derives it from the options passed to
+    # nanobind_add_module above (NB_STATIC selects `nanobind-static`, PROTECT_STACK appends
+    # `-ps`, ...), because each variant is COMPILED DIFFERENTLY. The target is therefore
+    # discovered from what the module really links, and a cached candidate (the flag carries
+    # every archive in the cache, one per variant) is accepted only if its file name matches
+    # that target - a leftover archive of another variant must never be linked. No match simply
+    # compiles the helper from source; publishing then heals the cache under the new name.
     #
     # The archive is deliberately NOT keyed on any DaCe configuration: nanobind compiles the
     # helper library with its own fixed flags, so no configurable DaCe setting reaches these
     # translation units. If a configuration that DOES influence them is ever introduced (e.g.
-    # forwarding extra flags into nanobind_add_module), the cache path on the Python side
-    # (compiler.nanobind_static_cache_path) MUST start keying on it.
+    # forwarding configurable flags into nanobind_add_module), the cache path on the Python
+    # side (compiler.nanobind_static_cache_dir) MUST start keying on it.
     # The stub is a file shipped with DaCe, NOT one written here at configure time: recorded
     # builds (command_db) replay into fresh build folders without running CMake, so every
     # compiled source must exist at a configure-independent path.
-    set_target_properties(nanobind-static-ps PROPERTIES SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tools/nanobind_stub.cpp)
-    target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_NANOBIND_STATIC_LIB})
+    get_target_property(DACE_NB_LINKED_LIBS ${DACE_PROGRAM_NAME} LINK_LIBRARIES)
+    set(DACE_NB_HELPER "")
+    foreach(DACE_NB_LINKED_LIB ${DACE_NB_LINKED_LIBS})
+      if(DACE_NB_LINKED_LIB MATCHES "^nanobind")
+        set(DACE_NB_HELPER ${DACE_NB_LINKED_LIB})
+      endif()
+    endforeach()
+    set(DACE_NB_CACHED_ARCHIVE "")
+    foreach(DACE_NB_CANDIDATE ${DACE_NANOBIND_STATIC_LIB})
+      get_filename_component(DACE_NB_CANDIDATE_NAME ${DACE_NB_CANDIDATE} NAME)
+      if(DACE_NB_HELPER AND DACE_NB_CANDIDATE_NAME STREQUAL
+         "${CMAKE_STATIC_LIBRARY_PREFIX}${DACE_NB_HELPER}${CMAKE_STATIC_LIBRARY_SUFFIX}")
+        set(DACE_NB_CACHED_ARCHIVE ${DACE_NB_CANDIDATE})
+      endif()
+    endforeach()
+    if(DACE_NB_CACHED_ARCHIVE)
+      set_target_properties(${DACE_NB_HELPER} PROPERTIES SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/tools/nanobind_stub.cpp)
+      target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_NB_CACHED_ARCHIVE})
+    else()
+      message(STATUS "No cached nanobind helper archive matches target '${DACE_NB_HELPER}'; compiling it from source.")
+    endif()
   endif()
   target_link_libraries(${DACE_PROGRAM_NAME} PRIVATE ${DACE_LIBS})
   # Keep the historical library file name; the import machinery resolves

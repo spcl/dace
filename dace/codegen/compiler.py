@@ -347,47 +347,57 @@ def build_cache_root() -> str:
     return os.path.join(root, f'dace_build_cache_{getpass.getuser()}')
 
 
-#: File name of nanobind's helper archive as our CMakeLists builds it. nanobind derives the
-#: library name from the options passed to ``nanobind_add_module()``: ``NB_STATIC`` selects
-#: ``nanobind-static`` and ``PROTECT_STACK`` appends ``-ps`` (the protected variant is compiled
-#: differently, so it deliberately gets its own name). Must be kept in sync with the option list
-#: in ``CMakeLists.txt`` (which also names the target in its stub-source swap) - a mismatch is
-#: silent: the archive is simply never published and every build compiles nanobind from source.
-NANOBIND_STATIC_ARCHIVE = 'libnanobind-static-ps.a'
+#: Glob for nanobind's helper archive. nanobind derives the library NAME from the options passed
+#: to ``nanobind_add_module()`` (e.g. ``NB_STATIC`` selects ``nanobind-static``, ``PROTECT_STACK``
+#: appends ``-ps`` - variants are compiled differently, so each deliberately gets its own name).
+#: The name is therefore never assumed anywhere: publishing discovers it from what the build
+#: actually produced, and the CMake side verifies a cached candidate against the helper target it
+#: really links before swapping it in (a non-matching candidate is ignored, costing only the
+#: cache benefit). This keeps the cache working - or at worst, harmlessly inactive - when the
+#: option list or nanobind's naming scheme changes.
+NANOBIND_STATIC_GLOB = 'libnanobind*.a'
 
 
-def nanobind_static_cache_path() -> str:
-    """Cache location of nanobind's prebuilt helper archive (:data:`NANOBIND_STATIC_ARCHIVE`).
+def nanobind_static_cache_dir() -> str:
+    """Cache directory of nanobind's prebuilt helper archive(s).
 
-    The archive is NOT keyed on any DaCe configuration: nanobind compiles its helper library with
-    its own fixed flags, so nothing configurable in DaCe reaches those translation units. If a
-    configuration that DOES influence the archive is ever introduced (e.g. passing extra flags into
-    ``nanobind_add_module``), it MUST be folded into this path. The interpreter and nanobind
-    versions are part of the path already - the archive embeds the active Python's ABI and the
-    active nanobind's sources, and several virtual environments share one cache root. The file
-    name carries nanobind's option-derived variant suffix, so an archive cached under different
-    ``nanobind_add_module`` options is never picked up.
+    The archives are NOT keyed on any DaCe configuration: nanobind compiles its helper library
+    with its own fixed flags, so nothing configurable in DaCe reaches those translation units. If
+    a configuration that DOES influence them is ever introduced (e.g. forwarding configurable
+    flags into ``nanobind_add_module``), it MUST be folded into this path. The interpreter and
+    nanobind versions are part of the path already - the archive embeds the active Python's ABI
+    and the active nanobind's sources, and several virtual environments share one cache root.
+    Within the directory each option-derived variant lives under its own discovered name; the
+    CMake-side verification picks the one matching the current build, so stale variants can
+    coexist without ever being linked.
     """
     import nanobind
     tag = f'{getattr(nanobind, "__version__", "unknown")}-py{sys.version_info.major}.{sys.version_info.minor}'
-    return os.path.join(build_cache_root(), 'nanobind', tag, NANOBIND_STATIC_ARCHIVE)
+    return os.path.join(build_cache_root(), 'nanobind', tag)
 
 
-def publish_nanobind_static(build_folder: str, cache_path: str) -> None:
-    """Copy a freshly built helper archive into the cache (atomic, first writer wins)."""
-    built = os.path.join(build_folder, NANOBIND_STATIC_ARCHIVE)
-    if not cache_path or not os.path.isfile(built) or os.path.exists(cache_path):
-        return
-    staging = f'{cache_path}.{os.getpid()}'
-    try:
-        os.makedirs(os.path.dirname(cache_path), exist_ok=True)
-        shutil.copyfile(built, staging)
-        os.rename(staging, cache_path)
-    except OSError:
+def publish_nanobind_static(build_folder: str, cache_dir: str) -> None:
+    """Copy a freshly built helper archive into the cache (atomic, first writer wins).
+
+    The archive is discovered by pattern, never by an assumed name (see
+    :data:`NANOBIND_STATIC_GLOB`). An already-cached name is left alone - in particular, when the
+    cached archive was linked, the build folder holds only the tiny stub archive under that very
+    name, which must not overwrite the real one.
+    """
+    for built in glob.glob(os.path.join(build_folder, NANOBIND_STATIC_GLOB)):
+        cache_path = os.path.join(cache_dir, os.path.basename(built))
+        if os.path.exists(cache_path):
+            continue
+        staging = f'{cache_path}.{os.getpid()}'
         try:
-            os.remove(staging)
+            os.makedirs(cache_dir, exist_ok=True)
+            shutil.copyfile(built, staging)
+            os.rename(staging, cache_path)
         except OSError:
-            pass
+            try:
+                os.remove(staging)
+            except OSError:
+                pass
 
 
 #: A PREDICTION of CMake's ``CMAKE_CXX_FLAGS_<CONFIG>`` defaults, only ever used to build the
@@ -689,11 +699,15 @@ def configure_and_compile(
         # archive is compiled against the active Python's headers and the
         # active nanobind's sources - several virtual environments share one
         # cache root. Advisory like every cache here: a missing archive just
-        # builds (and then publishes) it.
+        # builds (and then publishes) it. Every cached variant is offered as
+        # a candidate; the CMake side links the one matching the helper
+        # target it actually builds, and ignores the rest (variant names
+        # encode HOW nanobind was compiled - see NANOBIND_STATIC_GLOB).
         if CACHES_SUPPORTED:
-            nanobind_static_cache = nanobind_static_cache_path()
-            if os.path.isfile(nanobind_static_cache):
-                cmake_command.append('-DDACE_NANOBIND_STATIC_LIB="{}"'.format(nanobind_static_cache))
+            nanobind_static_cache = nanobind_static_cache_dir()
+            candidates = sorted(glob.glob(os.path.join(nanobind_static_cache, NANOBIND_STATIC_GLOB)))
+            if candidates:
+                cmake_command.append('-DDACE_NANOBIND_STATIC_LIB="{}"'.format(';'.join(candidates)))
 
     # Get required environments are retrieve the CMake information
     with open(os.path.join(program_folder, "dace_environments.csv"), "r") as f:

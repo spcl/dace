@@ -4,6 +4,7 @@ each test asserts the cache ENGAGES -- a declined header or unreplayed recording
 correct build save for wall-clock time.
 """
 import contextlib
+import glob
 import json
 import os
 import shutil
@@ -164,6 +165,29 @@ def test_caches_disabled_still_builds(tmp_path):
         with dace.config.set_temporary('compiler', 'configure_cache', value=False):
             with dace.config.set_temporary('compiler', 'command_cache', value=False):
                 build_and_check(tmp_path, 'nocaches')
+
+
+def test_wrongly_named_nanobind_archive_is_ignored(tmp_path, monkeypatch):
+    """A cached helper archive whose name does not match the helper target the module really links
+    must be ignored, never linked: nanobind names each variant after HOW it was compiled, so a
+    leftover of another variant (older DaCe options, changed nanobind naming) is not
+    interchangeable. The planted candidate is garbage on purpose -- linking it would fail the
+    build, so a passing build proves it was ignored -- and the build must then heal the cache by
+    publishing the real archive under its own name."""
+    monkeypatch.setattr(compiler, 'build_cache_root', lambda: str(tmp_path / 'cache'))
+    cache_dir = None
+    with pytest.MonkeyPatch.context() as mp:
+        mp.delenv('DACE_compiler_interface', raising=False)
+        with dace.config.set_temporary('compiler', 'interface', value='nanobind'):
+            with dace.config.set_temporary('compiler', 'precompiled_header', value=False):
+                cache_dir = compiler.nanobind_static_cache_dir()
+                os.makedirs(cache_dir)
+                with open(os.path.join(cache_dir, 'libnanobind-static-stale.a'), 'wb') as fh:
+                    fh.write(b'not an archive')
+                build_and_check(tmp_path, 'staletolerant')
+    published = sorted(os.path.basename(p) for p in glob.glob(os.path.join(cache_dir, 'libnanobind*.a')))
+    assert len(published) == 2 and 'libnanobind-static-stale.a' in published, \
+        f'the build did not publish the real archive next to the stale one: {published}'
 
 
 @pytest.mark.gpu
