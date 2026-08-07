@@ -83,7 +83,11 @@ enables the table -- it needs no CLI coupling and is read at import, before pyte
 """
 import os
 
-os.environ.setdefault("OMP_NUM_THREADS", "4")
+# 72 == one CSCS node's 288 cores over the 4 ranks the submit script requests, i.e. the width
+# every measurement in this harness is meant to run at. Set BEFORE anything reads it, and
+# before any OpenMP runtime can be loaded, so a bare run does not silently time 4 threads and
+# report it under the same arm labels as a batch run.
+os.environ.setdefault("OMP_NUM_THREADS", "72")
 os.environ.setdefault("MPI4PY_RC_INITIALIZE", "0")
 os.environ.setdefault("OMPI_MCA_pml", "ob1")
 os.environ.setdefault("OMPI_MCA_btl", "self,vader")
@@ -123,6 +127,17 @@ from tests.corpus import corpus_suite as CS
 from tests.corpus.npbench import npbench
 from tests.corpus.polybench import polybench as PB
 from tests.corpus.polybench import polybench_numpy as PBN
+
+#: The CPU set this process started with, captured before anything can load an OpenMP runtime.
+#:
+#: Loading the spack OpenBLAS (threads=openmp, so libgomp) under OMP_PROC_BIND=close binds the
+#: calling thread and collapses the PROCESS affinity mask to a single core -- measured here: 288
+#: cpus before the ctypes load, 1 cpu after. In-process that is harmless, since libgomp still binds
+#: its team across the places it captured at init. A SPAWNED CHILD, however, inherits the shrunken
+#: mask and its own libgomp then sees exactly one place, so all OMP_NUM_THREADS threads land on one
+#: core -- measured as a 20x regression on every libgomp arm (autoopt-gcc 2.10ms -> 41.08ms) while
+#: sequential and libomp arms were untouched. Children restore this set before measuring anything.
+_FULL_AFFINITY = frozenset(os.sched_getaffinity(0)) if hasattr(os, 'sched_getaffinity') else frozenset()
 
 #: ``canonicalize`` keyword bag; ``Any`` because it is a heterogeneous kwargs splat, not a mapping.
 _CPU: dict[str, Any] = dict(target='cpu',
@@ -347,7 +362,10 @@ _CLANG = os.environ.get('CANON_PERF_CLANG_CXX', 'clang++')
 #: one arm runs narrower than the other five and its speedup column is understated by roughly the
 #: width ratio. That is why the cap is recorded into the evidence string rather than applied
 #: silently -- a narrower arm is a legitimate measurement only if the reader can see the width.
-_THREADS = os.environ.get('OMP_NUM_THREADS', '4')
+#: Falls back to 72 -- one CSCS node's 288 cores over the 4 ranks the submit script requests --
+#: so a bare run matches the width the batch job measures at instead of silently timing 4
+#: threads and reporting it under the same label.
+_THREADS = os.environ.get('OMP_NUM_THREADS', '72')
 #: The hint is the FULL runtime width by default, so the arm asks gcc for the parallelism the job
 #: actually runs with. The cap exists because of a MEASURED suppression: on g++ 15.2 (x86), with
 #: Graphite in the same command line, parloops stops parallelizing a 4096x4096 affine nest somewhere
@@ -964,7 +982,7 @@ def run_arm(ctx, label: str, deadline: float) -> dict:
     return entry
 
 
-def arms_worker(suite: str, name: str, preset: str, labels: list[str], budget: float) -> dict:
+def arms_worker(suite: str, name: str, preset: str, labels: list[str], budget: float, affinity: frozenset) -> dict:
     """Child entry point: rebuild the dataset and measure ``labels``. Runs in a SPAWNED process.
 
     Spawned rather than forked on purpose -- a fork inherits the parent's already-mapped OpenMP
@@ -975,6 +993,10 @@ def arms_worker(suite: str, name: str, preset: str, labels: list[str], budget: f
     process boundary; re-deriving it costs one allocation and one reference computation per child,
     which is far below the co-residency penalty it avoids.
     """
+    if affinity and hasattr(os, 'sched_setaffinity'):
+        # BEFORE the dataset is built, because CS.make loads OpenBLAS and would otherwise re-shrink
+        # the mask this is undoing. Without it every thread of this child shares one core.
+        os.sched_setaffinity(0, set(affinity))
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_Timeout()))
     ctx = CS.make(suite, name, preset)
     deadline = time.monotonic() + budget
@@ -1007,7 +1029,8 @@ def measure_arms(ctx, preset: str, labels: list[str], deadline: float) -> dict:
         try:
             with _child_env(env):
                 with mp.Pool(1) as pool:
-                    out.update(pool.apply(arms_worker, (ctx['suite'], ctx['name'], preset, group, budget)))
+                    out.update(
+                        pool.apply(arms_worker, (ctx['suite'], ctx['name'], preset, group, budget, _FULL_AFFINITY)))
         except Exception as e:
             # Never lose a family to a crashed child: fall back to measuring it here. The numbers
             # are then co-resident-contaminated, which is why it says so rather than staying quiet.
