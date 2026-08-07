@@ -778,7 +778,11 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     return None
                 if producer_edge.data.wcr is not None:
                     return None
-                if producer_edge.data.dst_subset is None:
+                # `compute_reduced_intermediate()` sizes the new intermediate from this subset
+                #  and `compute_offset_subset()` walks it dimension by dimension, so a subset
+                #  that is not a `Range` (an `Indices` is one) has neither `size()` nor
+                #  `min_element()` to offer and would raise instead of refusing.
+                if not isinstance(producer_edge.data.dst_subset, subsets.Range):
                     return None
 
                 _, reduced_inter_shape, _ = self.compute_reduced_intermediate(
@@ -868,7 +872,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     if inner_consumer_edge.data.is_empty():
                         return None
                     consumer_subset = inner_consumer_edge.data.src_subset
-                    if consumer_subset is None:
+                    # As for the producer side: `apply()` feeds this very subset to
+                    #  `compute_offset_subset()`, which indexes it per dimension.
+                    if not isinstance(consumer_subset, subsets.Range):
                         return None
 
                     # The consumer still uses the original symbols of the second Map, so we must rename them.
@@ -1996,7 +2002,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
             return view
 
         # This is the node that defines the view.
-        defining_node = dace.sdfg.utils.get_last_view_node(state, view)
+        defining_node = mfhelper.resolve_view_source(state, view)
         if not isinstance(defining_node, nodes.AccessNode):
             return None
         assert not self.is_view(defining_node, sdfg)

@@ -690,12 +690,34 @@ def _outer_data_of_boundary_edge(
     return _dealias(state, endpoints[0])
 
 
+def resolve_view_source(
+    state: dace.SDFGState,
+    view_node: nodes.AccessNode,
+) -> Optional[nodes.AccessNode]:
+    """The AccessNode that `view_node` ultimately views, or `None` if that is undecidable.
+
+    `sdutils.get_view_edge()` reports every ambiguous View shape it has no rule for by
+    returning `None` -- except one: a View with no incoming data edge and more than one
+    outgoing edge falls through to an unguarded `in_edges[0]` and raises `IndexError`
+    (`dace/sdfg/utils.py`). That escapes the `can_be_applied()` safety nets, which do not
+    list `IndexError`, so it is refused here instead. The shape only occurs on a malformed
+    state -- `SDFG.validate()` raises the very same `IndexError` on it -- so refusing it
+    costs no valid SDFG.
+
+    :param state: The state in which the View is.
+    :param view_node: The View AccessNode to resolve.
+    """
+    if state.out_degree(view_node) > 1 and not any(not e.data.is_empty() for e in state.in_edges(view_node)):
+        return None
+    return sdutils.get_last_view_node(state, view_node)
+
+
 def _dealias(state: dace.SDFGState, node: nodes.AccessNode) -> Optional[str]:
     """The name of the array `node` ultimately refers to, resolving Views."""
     desc = node.desc(state.sdfg)
     if not isinstance(desc, dace.data.View):
         return node.data
-    viewed = sdutils.get_last_view_node(state, node)
+    viewed = resolve_view_source(state, node)
     return None if viewed is None else viewed.data
 
 
