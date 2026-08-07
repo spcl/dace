@@ -660,7 +660,7 @@ def _external_memory_storages(sdfg):
     return sorted(storages, key=lambda s: s.name)
 
 
-def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tuple[str, str]:
+def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str, gpu_check_call: str = '') -> Tuple[str, str]:
     """Generates the ``user_call`` method and its ``.def`` line from ``sdfg.user_args``.
 
     ``user_args`` is a structured promise: entries are argument names or
@@ -840,11 +840,15 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
                 f'            nb::gil_scoped_release _nogil;\n'
                 f'            init_impl({init_call});\n'
                 f'            __program_{name}({program_args});\n'
-                f'        }}')
+                f'        }}\n'
+                f'{gpu_check_call}'.rstrip('\n'))
     else:
-        body = (f'nb::gil_scoped_release _nogil;\n'
-                f'        init_impl({init_call});\n'
-                f'        __program_{name}({program_args});')
+        body = (f'{{\n'
+                f'            nb::gil_scoped_release _nogil;\n'
+                f'            init_impl({init_call});\n'
+                f'            __program_{name}({program_args});\n'
+                f'        }}\n'
+                f'{gpu_check_call}'.rstrip('\n'))
 
     method = (f'\n    // Structured fast-path entry point (SDFG.user_args); see the Python\n'
               f'    // wrapper\'s user_bind_call() for the contract.\n'
@@ -856,11 +860,19 @@ def _user_call_binding(sdfg, arglist: Dict[str, dt.Data], init_call: str) -> Tup
     return method, def_line
 
 
-def generate_bindings_code(sdfg, statestruct=None) -> str:
+def generate_bindings_code(sdfg, statestruct=None, gpu_backend=None) -> str:
     """Returns the C++ source of the nanobind module for ``sdfg``.
 
     :param statestruct: The frame generator's state-struct field declarations;
                         used to bake the pointer-field names into the module.
+    :param gpu_backend: ``'cuda'``/``'hip'`` when the CUDA target emitted its
+                        init/exit pair for this program (which is exactly when
+                        ``__dace_gpu_last_error`` exists), ``None`` otherwise.
+                        Gates the per-call read of the SDFG's own GPU error
+                        record; declaring the accessor without the target
+                        would be a link error, so the caller passes the code
+                        objects' truth rather than a storage/schedule
+                        heuristic.
     """
     from dace.codegen.targets.cpp import mangle_dace_state_struct_name
 
@@ -882,6 +894,38 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     sig_decl = sdfg.signature(with_types=True, arglist=arglist)
     init_decl = sdfg.init_signature()
     init_call = sdfg.init_signature(for_call=True)
+
+    # GPU error record (mirrors the ctypes interface): after every program call
+    # read - and thereby clear - the error the generated code recorded for THIS
+    # SDFG, via the accessor the CUDA target exports alongside its init/exit
+    # pair. The process-global CUDA last-error slot is deliberately never
+    # consulted: it is per-host-thread and shared with every other GPU user in
+    # the process, so it can carry third-party state.
+    if gpu_backend is not None:
+        be = gpu_backend
+        gpu_runtime_include = ('\n#include <cuda_runtime.h>' if be == 'cuda' else '\n#include <hip/hip_runtime.h>')
+        gpu_check_decl = f'\nint __dace_gpu_last_error({state_t} *__state);'
+        gpu_check_method = f'''
+    // Raise the error the generated code recorded for this SDFG, if any (the
+    // read clears the record, so a failure is delivered exactly once).
+    void check_gpu_error() {{
+        if (!m_gpu_error_check || !m_state) return;
+        const int __err = __dace_gpu_last_error(m_state);
+        if (__err != 0)
+            throw std::runtime_error(
+                "An error was detected when calling \\"{name}\\": " +
+                std::string({be}GetErrorString(static_cast<{be}Error_t>(__err))) +
+                ". Consider enabling synchronous debugging mode (environment "
+                "variable: DACE_compiler_cuda_syncdebug=1) to see where the "
+                "issue originates from.");
+    }}
+'''
+        gpu_check_call = '        check_gpu_error();\n'
+    else:
+        gpu_runtime_include = ''
+        gpu_check_decl = ''
+        gpu_check_method = ''
+        gpu_check_call = ''
 
     # Bound-parameter order = user-facing positional order (arg_names first,
     # as the old interface's positional calls expect), rest in arglist order -
@@ -913,7 +957,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 
     call_param_list = ', '.join(params + ['nb::kwargs'])
     init_param_list = ', '.join(init_params + ['nb::kwargs'])
-    user_call_method, user_call_def = _user_call_binding(sdfg, arglist, init_call)
+    user_call_method, user_call_def = _user_call_binding(sdfg, arglist, init_call, gpu_check_call)
     # The trailing nb::kwargs absorber needs an annotation too.
     call_def_args = ''.join(f', {a}' for a in nb_args + ['nb::arg("_extra_kwargs")'])
     init_def_args = ''.join(f', {a}' for a in init_nb_args + ['nb::arg("_extra_kwargs")'])
@@ -1006,6 +1050,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
     # symbols. The _DacePyBuffer helper is emitted only when a setup statement
     # actually uses it (a symbol-only setup block does not).
     pybuffer_helper = _PYBUFFER_HELPER if any('_DacePyBuffer' in s for s in setup_stmts + init_setup) else ''
+
     if setup_stmts:
         setup_block = '\n        '.join(setup_stmts)
         call_body = (f'{setup_block}\n'
@@ -1014,6 +1059,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
                      f'            init_impl({init_call});\n'
                      f'            __program_{name}({program_args});\n'
                      f'        }}\n'
+                     f'{gpu_check_call}'
                      f'        return {ret_expr};')
     else:
         call_body = (f'// Reading ndarray fields (.data()) needs no Python API, so the whole\n'
@@ -1023,6 +1069,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
                      f'            init_impl({init_call});\n'
                      f'            __program_{name}({program_args});\n'
                      f'        }}\n'
+                     f'{gpu_check_call}'
                      f'        return nb::none();')
 
     if init_setup:
@@ -1042,7 +1089,7 @@ def generate_bindings_code(sdfg, statestruct=None) -> str:
 #include <cstdint>
 #include <optional>
 #include <stdexcept>
-#include <string>
+#include <string>{gpu_runtime_include}
 
 // DaCe runtime types used in the extern "C" program signature, the argument
 // casts, and the nb::ndarray scalar types: dace::uint, dace::complex64/128
@@ -1072,7 +1119,7 @@ extern "C" {{
 struct {state_t};{struct_fwd_block}
 {state_t} *__dace_init_{name}({init_decl});
 int __dace_exit_{name}({state_t} *__state);
-void __program_{name}({program_params});
+void __program_{name}({program_params});{gpu_check_decl}
 {ext_decls}
 }}
 
@@ -1086,7 +1133,10 @@ namespace dace {{ namespace generated {{ namespace {type_ns} {{
 // independent.
 struct DaceHandle_{name} {{
 {pybuffer_helper}    {state_t} *m_state = nullptr;
-
+    // Honored by the compiled per-call GPU error check; inert when this module
+    // has no GPU code (the check method is only emitted with a GPU target).
+    bool m_gpu_error_check = true;
+{gpu_check_method}
     void require_state() const {{
         if (!m_state)
             throw std::runtime_error(
@@ -1162,6 +1212,9 @@ NB_MODULE({name}, m) {{
             return fields;
         }})
         .def_prop_ro("has_gpu_code", [](DaceHandle_{name} &) {{ return {has_gpu}; }})
+        .def_prop_rw("gpu_error_check",
+                     [](DaceHandle_{name} &h) {{ return h.m_gpu_error_check; }},
+                     [](DaceHandle_{name} &h, bool v) {{ h.m_gpu_error_check = v; }})
         .def_prop_ro("return_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({return_names_def}); }})
         .def_prop_ro("callback_names", [](DaceHandle_{name} &) {{ return nb::make_tuple({callback_names_def}); }})
         .def_prop_ro("state_pointer", [](DaceHandle_{name} &h) {{

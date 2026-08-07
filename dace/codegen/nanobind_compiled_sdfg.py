@@ -8,7 +8,6 @@ Loading (importlib under the ``dace.generated.*`` namespace) lives in
 from typing import Union, List, Any, Tuple, Dict, Optional, Callable
 from types import ModuleType
 import pathlib
-import warnings
 
 import ctypes
 
@@ -71,9 +70,9 @@ class NanobindCompiledSDFG:
            path - every argument is either listed or inferred, verified at
            code generation - and it bypasses hooks, ``do_not_execute``,
            callback wrapping and return handling (return-value SDFGs are
-           refused at code generation). The GPU last-error check still runs
-           and honors :attr:`gpu_error_check`. ``__call__()`` never
-           dispatches to it.
+           refused at code generation). The GPU error-record check runs
+           inside the compiled binding and honors :attr:`gpu_error_check`.
+           ``__call__()`` never dispatches to it.
     :note: Marshalling of Python callbacks is done in Python.
     :note: There is no caching of the "previous call arguments", i.e.
            ``CompiledSDFG._lastargs``. This means that the symbolic sizes must be
@@ -117,10 +116,12 @@ class NanobindCompiledSDFG:
         # compiled with a non-empty ``user_args`` (see user_bind_call).
         self._user_call: Optional[Any] = getattr(self._handle, 'user_call', None)
 
-        # Static per module; cached for the per-call GPU error check.
+        # Static per module; used to translate __dace_exit codes in _get_error_text.
         self._has_gpu_code: bool = bool(self._handle.has_gpu_code)
-        # See the ``gpu_error_check`` property. Read directly on the (GPU-only) call path.
-        self._gpu_error_check: bool = bool(gpu_error_check)
+        # The per-call GPU error check runs inside the compiled binding (it
+        # reads the SDFG's own error record there); only the toggle lives on
+        # the handle. See the ``gpu_error_check`` property.
+        self._handle.gpu_error_check = bool(gpu_error_check)
 
     @property
     def sdfg(self) -> "dace.SDFG":
@@ -143,17 +144,22 @@ class NanobindCompiledSDFG:
 
     @property
     def gpu_error_check(self) -> bool:
-        """Whether each call on a GPU SDFG checks the GPU runtime's last error afterwards.
+        """Whether each call on a GPU SDFG raises the error its generated code recorded.
 
-        Parity with the ctypes ``fast_call`` ``do_gpu_check``. Defaults to the
-        constructor argument (``True``); set to ``False`` to skip the check (a
-        small speedup). Has no effect on a CPU-only SDFG.
+        Parity with the ctypes ``fast_call`` ``do_gpu_check``, and the same
+        mechanism: the compiled binding reads the SDFG's OWN error record
+        (``__dace_gpu_last_error``) after each program call - never the
+        process-global CUDA last-error slot, which is shared with every other
+        GPU user in the process. The read is a plain in-library call, so
+        disabling it buys next to nothing; the toggle is kept for parity.
+        Defaults to the constructor argument (``True``). Has no effect on a
+        CPU-only SDFG (the check is not even compiled in there).
         """
-        return self._gpu_error_check
+        return bool(self._handle.gpu_error_check)
 
     @gpu_error_check.setter
     def gpu_error_check(self, value: bool) -> None:
-        self._gpu_error_check = bool(value)
+        self._handle.gpu_error_check = bool(value)
 
     def user_bind_call(self, *args: Any) -> None:
         """Execute the compiled SDFG through the structured ``SDFG.user_args`` signature.
@@ -175,8 +181,6 @@ class NanobindCompiledSDFG:
             raise ValueError(f"SDFG '{self._sdfg.name}' was compiled without user_args; "
                              "user_bind_call is unavailable (set SDFG.user_args and recompile).")
         self._user_call(*args)
-        if self._has_gpu_code and self._gpu_error_check:
-            self._check_gpu_error()
 
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         """Execute the compiled SDFG.
@@ -212,8 +216,6 @@ class NanobindCompiledSDFG:
             result = None
             if self.do_not_execute is False:
                 result = self._handle(*args, **kwargs)
-                if self._has_gpu_code and self._gpu_error_check:
-                    self._check_gpu_error()
             return result
 
         # Handle positional arguments and move them into `kwargs`.
@@ -236,26 +238,7 @@ class NanobindCompiledSDFG:
             result = self._call_handle_with_hooks(kwargs)
         elif self.do_not_execute is False:
             result = self._handle(**kwargs)
-        if self._has_gpu_code and self._gpu_error_check:
-            self._check_gpu_error()
         return result
-
-    def _check_gpu_error(self) -> None:
-        """Raises if the GPU runtime recorded an error during the last call.
-
-        Note failing to obtain the runtime only warns. It is also important that this
-        function is not thread safe.
-        """
-        from dace.codegen import common  # Circular import; the CPU hot path never pays it.
-        try:
-            lasterror = common.get_gpu_runtime().get_last_error_string()
-        except RuntimeError as ex:
-            warnings.warn(f'Could not get last error from GPU runtime: {ex}')
-            return
-        if lasterror is not None:
-            raise RuntimeError(f'An error was detected when calling "{self._sdfg.name}": {lasterror}. '
-                               'Consider enabling synchronous debugging mode (environment variable: '
-                               'DACE_compiler_cuda_syncdebug=1) to see where the issue originates from.')
 
     def _call_handle_with_hooks(self, kwargs: Dict[str, Any]) -> Any:
         """Runs the handle inside the registered compiled-SDFG call hooks.

@@ -2110,6 +2110,62 @@ def test_nanobind_interface_gpu_return_binding():
     assert 'nb::cast<nb::ndarray<double, nb::device::cuda>>(__return__obj, false)' in code
 
 
+def test_nanobind_interface_gpu_error_record_binding():
+    """With a GPU target present, the binding reads the SDFG's OWN error record
+    (``__dace_gpu_last_error``, present exactly when the CUDA target emitted its
+    init/exit pair) after each program call, instead of consulting the
+    process-global CUDA last-error slot - that slot is per-host-thread and
+    shared with every other GPU user in the process, so it can carry
+    third-party state (mirrors the ctypes interface's mechanism)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('gpu_error_record_probe')
+    sdfg.add_array('A', [10], dace.float64, storage=dace.StorageType.GPU_Global)
+    sdfg.arrays['A'].optional = False
+
+    with set_temporary('compiler', 'cuda', 'backend', value='cuda'):
+        code = generate_bindings_code(sdfg, gpu_backend='cuda')
+    assert f'int __dace_gpu_last_error(' in code
+    assert code.count('check_gpu_error();') >= 1, 'the record is never consulted after a program call'
+    assert 'cudaGetErrorString' in code
+    assert 'def_prop_rw("gpu_error_check"' in code
+
+
+def test_nanobind_interface_gpu_error_record_absent_on_cpu():
+    """A CPU-only module must not reference the GPU error record: the symbol
+    only exists when a GPU target emitted its init/exit pair, so an undue
+    declaration would be a link error. The ``gpu_error_check`` toggle is
+    uniformly present (inert without GPU code)."""
+    from dace.codegen.nanobind_bindings import generate_bindings_code
+
+    sdfg = dace.SDFG('cpu_no_gpu_error_probe')
+    sdfg.add_array('A', [10], dace.float64)
+    code = generate_bindings_code(sdfg)
+    assert '__dace_gpu_last_error' not in code
+    assert 'GetErrorString' not in code
+    assert 'def_prop_rw("gpu_error_check"' in code
+
+
+def test_nanobind_interface_gpu_error_check_toggle():
+    """E2E (CPU): the wrapper's ``gpu_error_check`` is backed by the compiled
+    handle, so the compiled code - not Python - honors the toggle."""
+
+    @dace.program
+    def gpu_check_toggle_probe(A: dace.float64[10]):
+        A += 1.0
+
+    with set_temporary('compiler', 'interface', value='nanobind'):
+        sdfg = gpu_check_toggle_probe.to_sdfg()
+        csdfg = sdfg.compile()
+    assert csdfg.gpu_error_check is True
+    assert csdfg._handle.gpu_error_check is True
+    csdfg.gpu_error_check = False
+    assert csdfg._handle.gpu_error_check is False
+    a = np.ones(10)
+    csdfg(A=a)
+    assert np.allclose(a, 2.0)
+
+
 def test_nanobind_interface_return_allocation_module_choice():
     """The in-binding allocation imports CuPy only for GPU_Global returns and
     NumPy for host returns - a CPU-only module must never touch cupy (its
@@ -2152,11 +2208,12 @@ def test_nanobind_interface_gpu_return_values():
 
 
 def test_nanobind_interface_gpu_error_check(monkeypatch):
-    """After a call on a GPU SDFG the GPU runtime's last error is checked
-    (ctypes parity: fast_call's do_gpu_check): an error raises, a
-    runtime-lookup failure only warns."""
+    """The GPU error check lives in the compiled binding (it reads the SDFG's
+    own error record there, mirroring the ctypes mechanism): its exception
+    propagates unchanged through the wrapper, and the wrapper NEVER consults
+    the process-global GPU runtime slot - that slot is shared with every other
+    GPU user in the process and can carry third-party state."""
     import types
-    import warnings as warnings_mod
     from dace.codegen import common
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
@@ -2168,51 +2225,41 @@ def test_nanobind_interface_gpu_error_check(monkeypatch):
     class FakeHandle:
         has_gpu_code = True
         return_names = ()
-        is_single_value_ret = False
         callback_names = ()
+        pending_error = None
 
         def __call__(self, *args, **kwargs):
             calls.append(kwargs)
+            if self.pending_error is not None:
+                # What the compiled check_gpu_error() throw surfaces as.
+                raise RuntimeError(f'An error was detected when calling "gpu_error_probe": {self.pending_error}')
 
     handle = FakeHandle()
     stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: handle, __file__='<stub>')
     csdfg = NanobindCompiledSDFG(sdfg, stub_module, ['A'])
 
-    class FakeRuntime:
+    # The wrapper must never reach for the process-global slot on any path.
+    def forbidden_runtime():
+        raise AssertionError('the wrapper consulted the process-global GPU runtime slot')
 
-        def __init__(self, err):
-            self._err = err
+    monkeypatch.setattr(common, 'get_gpu_runtime', forbidden_runtime)
 
-        def get_last_error_string(self):
-            return self._err
-
-    # No pending error: the call goes through.
-    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime(None))
+    # No recorded error: the call goes through, without touching the runtime.
     csdfg(A=object())
     assert len(calls) == 1
 
-    # A pending error raises, naming the error and the syncdebug hint.
-    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime('illegal memory access'))
+    # A recorded error raises from the binding and propagates unchanged.
+    handle.pending_error = 'illegal memory access'
     with pytest.raises(RuntimeError, match='illegal memory access'):
         csdfg(A=object())
 
-    # Failure to obtain the runtime degrades to a warning, not an error.
-    def broken_runtime():
-        raise RuntimeError('no runtime available')
 
-    monkeypatch.setattr(common, 'get_gpu_runtime', broken_runtime)
-    with warnings_mod.catch_warnings(record=True) as caught:
-        warnings_mod.simplefilter('always')
-        csdfg(A=object())
-    assert any('Could not get last error' in str(w.message) for w in caught)
-
-
-def test_nanobind_interface_gpu_error_check_disabled(monkeypatch):
-    """gpu_error_check disables the post-call GPU error check (replacing ctypes'
-    fast_call(do_gpu_check=False)): it defaults to the constructor argument and
-    is settable through the property."""
+def test_nanobind_interface_gpu_error_check_disabled():
+    """The gpu_error_check toggle (replacing ctypes' fast_call(do_gpu_check))
+    is honored by the compiled binding, so the wrapper's only job is to keep
+    the handle's property in sync: the constructor argument and the property
+    setter must both write through."""
     import types
-    from dace.codegen import common
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
 
     sdfg = dace.SDFG('gpu_error_disable_probe')
@@ -2221,36 +2268,31 @@ def test_nanobind_interface_gpu_error_check_disabled(monkeypatch):
     class FakeHandle:
         has_gpu_code = True
         return_names = ()
-        is_single_value_ret = False
         callback_names = ()
+        gpu_error_check = None  # written by the wrapper
 
         def __call__(self, *args, **kwargs):
             pass
 
-    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: FakeHandle(), __file__='<stub>')
+    handle = FakeHandle()
+    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: handle, __file__='<stub>')
 
-    class FakeRuntime:
-
-        def get_last_error_string(self):
-            return 'illegal memory access'
-
-    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime())
-
-    # Default (constructor arg True): a pending error raises.
+    # Default (constructor arg True) reaches the handle.
     csdfg = NanobindCompiledSDFG(sdfg, stub_module, ['A'])
+    assert handle.gpu_error_check is True
     assert csdfg.gpu_error_check is True
-    with pytest.raises(RuntimeError, match='illegal memory access'):
-        csdfg(A=object())
 
-    # Disabled through the property: the same pending error is ignored.
+    # The property writes through and reads back from the handle.
     csdfg.gpu_error_check = False
+    assert handle.gpu_error_check is False
     assert csdfg.gpu_error_check is False
-    csdfg(A=object())  # does not raise
 
-    # Disabled through the constructor argument.
-    csdfg2 = NanobindCompiledSDFG(sdfg, stub_module, ['A'], gpu_error_check=False)
+    # The constructor argument reaches the handle too.
+    handle2 = FakeHandle()
+    stub_module2 = types.SimpleNamespace(make_compiled_sdfg=lambda: handle2, __file__='<stub>')
+    csdfg2 = NanobindCompiledSDFG(sdfg, stub_module2, ['A'], gpu_error_check=False)
+    assert handle2.gpu_error_check is False
     assert csdfg2.gpu_error_check is False
-    csdfg2(A=object())  # does not raise
 
 
 def test_nanobind_interface_finalize_exit_code_binding():
@@ -2739,8 +2781,10 @@ def test_nanobind_interface_user_bind_call_requires_user_args():
 
 
 def test_nanobind_interface_user_bind_call_gpu_error_check(monkeypatch):
-    """user_bind_call keeps the GPU last-error check, gated by the
-    gpu_error_check property like every other call path."""
+    """user_bind_call keeps the GPU error-record check: it runs inside the
+    compiled user_call (gated there by the gpu_error_check toggle), so its
+    exception propagates through the wrapper, which itself never consults the
+    process-global GPU runtime slot."""
     import types
     from dace.codegen import common
     from dace.codegen.nanobind_compiled_sdfg import NanobindCompiledSDFG
@@ -2751,25 +2795,29 @@ def test_nanobind_interface_user_bind_call_gpu_error_check(monkeypatch):
     class FakeHandle:
         has_gpu_code = True
         return_names = ()
-        is_single_value_ret = False
         callback_names = ()
+        gpu_error_check = None  # written by the wrapper
+        pending_error = None
 
         def user_call(self, *args):
-            pass
+            if self.gpu_error_check and self.pending_error is not None:
+                raise RuntimeError(f'An error was detected when calling "uargs_gpu_error_probe": '
+                                   f'{self.pending_error}')
 
-    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: FakeHandle(), __file__='<stub>')
+    handle = FakeHandle()
+    stub_module = types.SimpleNamespace(make_compiled_sdfg=lambda: handle, __file__='<stub>')
 
-    class FakeRuntime:
+    def forbidden_runtime():
+        raise AssertionError('the wrapper consulted the process-global GPU runtime slot')
 
-        def get_last_error_string(self):
-            return 'illegal memory access'
-
-    monkeypatch.setattr(common, 'get_gpu_runtime', lambda: FakeRuntime())
+    monkeypatch.setattr(common, 'get_gpu_runtime', forbidden_runtime)
 
     csdfg = NanobindCompiledSDFG(sdfg, stub_module, ['A'])
+    handle.pending_error = 'illegal memory access'
     with pytest.raises(RuntimeError, match='illegal memory access'):
         csdfg.user_bind_call((object(), ))
 
+    # The toggle reaches the handle, where the compiled check honors it.
     csdfg.gpu_error_check = False
     csdfg.user_bind_call((object(), ))  # does not raise
 

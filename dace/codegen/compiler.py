@@ -138,7 +138,14 @@ def generate_program_folder(
         os.makedirs(bindings_folder, exist_ok=True)
         bindings_name = f'{sdfg.name}_nanobind.cpp'
         statestruct = next((getattr(obj, 'statestruct', None) for obj in code_objects if obj.title == 'Frame'), None)
-        bindings_code = nanobind_bindings.generate_bindings_code(sdfg, statestruct=statestruct)
+        # The GPU error record accessor exists exactly when the CUDA target emitted its code
+        # object, so the binding's per-call check is gated on that - not on a storage or
+        # schedule heuristic, which would declare a symbol the library may not have.
+        gpu_backend = None
+        if any(obj.title == 'CUDA' for obj in code_objects):
+            from dace.codegen import common
+            gpu_backend = common.get_gpu_backend()
+        bindings_code = nanobind_bindings.generate_bindings_code(sdfg, statestruct=statestruct, gpu_backend=gpu_backend)
         bindings_path = os.path.join(bindings_folder, bindings_name)
         if not identical_file_exists(bindings_path, bindings_code):
             with open(bindings_path, 'w') as bindings_file:
