@@ -1149,8 +1149,12 @@ def test_nanobind_interface_scalar_callback():
         assert np.allclose(B, A * 3.0)
 
 
-def test_nanobind_interface_bool_scalar_binds_as_uint8():
-    """A bool scalar arg binds as uint8_t (nanobind's bool caster rejects numpy.bool_)."""
+def test_nanobind_interface_bool_scalar_binds_via_caster():
+    """A bool scalar arg binds through the emitted dace_bool caster: nanobind's
+    own bool caster accepts only an exact Python bool, and the integer-caster
+    detour (uint8_t) died with nanobind 2.14 (integer conversion narrowed to
+    __index__) x numpy 2.5 (numpy.bool_ lost __index__). The caster is emitted
+    only when a bool scalar is actually bound."""
     from dace.codegen.nanobind_bindings import generate_bindings_code
 
     sdfg = dace.SDFG('bool_scalar_bind_probe')
@@ -1162,13 +1166,24 @@ def test_nanobind_interface_bool_scalar_binds_as_uint8():
     state.add_edge(r, None, w, None, sdfg.make_array_memlet('flag'))
 
     code = generate_bindings_code(sdfg)
-    # The nanobind binding param is uint8_t (nanobind's `bool` caster rejects
-    # numpy.bool_), cast back to bool for the kernel call. The kernel's own
-    # extern-C declaration still takes `bool flag` - that is correct - so this
-    # asserts the binding param specifically, not the whole TU.
-    assert 'uint8_t flag' in code
-    assert 'static_cast<bool>(flag)' in code
-    assert 'bool flag' not in code.split('nb::object call(')[1].split(') {')[0]
+    # The binding param goes through the custom caster, cast back to bool for
+    # the kernel call. The kernel's own extern-C declaration still takes
+    # `bool flag` - that is correct - so this asserts the binding param
+    # specifically, not the whole TU.
+    assert 'dace_bool flag' in code
+    assert 'static_cast<bool>(flag.value)' in code
+    assert 'struct type_caster<dace_bool>' in code
+
+    # The call() signature itself must not take the parameter as a plain bool
+    # (nanobind's bool caster would then reject numpy.bool_ again).
+    call_signature = code.split('nb::object call(')[1].split(') {')[0]
+    assert 'dace_bool flag' in call_signature
+    assert ' bool flag' not in call_signature
+
+    # No bool scalar bound -> no caster emitted.
+    plain = dace.SDFG('bool_scalar_free_probe')
+    plain.add_array('A', [10], dace.float64)
+    assert 'dace_bool' not in generate_bindings_code(plain)
 
 
 def test_nanobind_interface_bool_scalar_numpy_input():
