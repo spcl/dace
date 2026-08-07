@@ -381,6 +381,151 @@ def test_unroll_reduction_11_accs_value_and_reduce():
     assert (_nmaps(sdfg) + _nreduces(sdfg)) >= 1, 'the multi-accumulator unrolled reduction must lift to a map/reduce'
 
 
+# --- rerolled reductions reach an OpenMP reduction clause, and the unsound folds are refused ---
+#
+# Both hand-unrolled reduction shapes re-roll into the SAME single-accumulator loop:
+#   (a) one dependent chain    -- ``dot = dot + (a[i]*b[i] + a[i+1]*b[i+1] + ...)`` (TSVC s352)
+#   (b) k partial accumulators -- ``s0 += a[i]*b[i]; s1 += a[i+1]*b[i+1]; ...; c = s0 + s1 + ...``
+# Shape (b) is only sound because the dropped lanes keep their pre-loop value and re-enter through
+# the post-loop fold; the refusal tests below pin the cases where that does not hold.
+#
+# Value gates use rtol 1e-12: re-rolling reassociates WITHIN the reduction's combining op, which is
+# the sanctioned FP-reordering scope (bit-exactness is kept everywhere else).
+_RTOL = 1e-12
+
+
+def _has_reduction_clause(sdfg):
+    return any('reduction(' in c.clean_code for c in sdfg.generate_code())
+
+
+@dace.program
+def unrolled_dot_partial_accumulators(a: dace.float64[N], b: dace.float64[N], c: dace.float64[1]):
+    s0 = 0.0
+    s1 = 0.0
+    s2 = 0.0
+    s3 = 0.0
+    s4 = 0.0
+    for i in range(0, N - 4, 5):
+        s0 = s0 + a[i] * b[i]
+        s1 = s1 + a[i + 1] * b[i + 1]
+        s2 = s2 + a[i + 2] * b[i + 2]
+        s3 = s3 + a[i + 3] * b[i + 3]
+        s4 = s4 + a[i + 4] * b[i + 4]
+    c[0] = s0 + s1 + s2 + s3 + s4
+
+
+@dace.program
+def unrolled_max_partial_accumulators(a: dace.float64[N], c: dace.float64[1]):
+    m0 = a[0]
+    m1 = a[1]
+    for i in range(0, N - 1, 2):
+        m0 = max(m0, a[i])
+        m1 = max(m1, a[i + 1])
+    c[0] = max(m0, m1)
+
+
+@dace.program
+def partial_accumulators_read_out_separately(a: dace.float64[N], c: dace.float64[2]):
+    s0 = 0.0
+    s1 = 0.0
+    for i in range(0, N - 1, 2):
+        s0 = s0 + a[i]
+        s1 = s1 + a[i + 1]
+    c[0] = s0
+    c[1] = s1
+
+
+@dace.program
+def partial_accumulators_combined_with_another_op(a: dace.float64[N], c: dace.float64[1]):
+    s0 = 1.0
+    s1 = 1.0
+    for i in range(0, N - 1, 2):
+        s0 = s0 + a[i]
+        s1 = s1 + a[i + 1]
+    c[0] = s0 * s1
+
+
+def test_dot_chain_reduction_reaches_a_reduction_clause():
+    """Shape (a): the collapsed dependent chain must reach an OpenMP ``reduction(...)`` clause.
+
+    Left as a plain carried accumulator the loop is latency-bound (one serialized FP add per
+    element); the clause is what buys per-thread partial accumulators.
+    """
+    n = 255  # 5 | n, so the lanes cover every element
+    rng = np.random.default_rng(41)
+    a, b = rng.standard_normal(n), rng.standard_normal(n)
+    sdfg = unrolled_dot_product.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    c = np.zeros(2)
+    sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
+    assert np.allclose(c[0], float(np.dot(a, b)), rtol=_RTOL, atol=0)
+    assert _has_reduction_clause(sdfg) or _nreduces(sdfg) >= 1, 'the rerolled chain stayed a serial accumulator'
+
+
+def test_partial_accumulator_reduction_reaches_a_reduction_clause():
+    """Shape (b): ``k`` partial accumulators re-roll onto lane 0 and reach the same clause."""
+    n = 253  # not a multiple of 5 -- the unaligned tail must stay outside the loop
+    rng = np.random.default_rng(42)
+    a, b = rng.standard_normal(n), rng.standard_normal(n)
+    sdfg = unrolled_dot_partial_accumulators.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    c = np.zeros(1)
+    sdfg(a=a.copy(), b=b.copy(), c=c, N=n)
+    assert np.allclose(c[0], float(np.dot(a[:250], b[:250])), rtol=_RTOL, atol=0)
+    assert _has_reduction_clause(sdfg) or _nreduces(sdfg) >= 1, 'the partial accumulators stayed serial'
+
+
+def test_partial_accumulator_max_reduction_is_rerolled():
+    """Shape (b) over ``max``: the frontend names a ``max`` call's inputs ``__in_a``/``__in_b``,
+    not the ``__in1``/``__in2`` of a binop, so the fold must be recognized by connector."""
+    n = 64
+    rng = np.random.default_rng(43)
+    a = rng.standard_normal(n)
+    sdfg = unrolled_max_partial_accumulators.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    c = np.zeros(1)
+    sdfg(a=a.copy(), c=c, N=n)
+    assert np.allclose(c[0], float(np.max(a)), rtol=_RTOL, atol=0)
+
+
+def test_partial_accumulators_read_out_separately_are_not_rerolled():
+    """Each lane's accumulator is its OWN result here, not a term of one fold.
+
+    Collapsing onto lane 0 would make ``c[0]`` the whole sum and leave ``c[1]`` at its
+    initializer -- the re-roll must refuse.
+    """
+    n = 16
+    rng = np.random.default_rng(44)
+    a = rng.standard_normal(n)
+    sdfg = partial_accumulators_read_out_separately.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    c = np.zeros(2)
+    sdfg(a=a.copy(), c=c, N=n)
+    assert np.allclose(c, [np.sum(a[0::2]), np.sum(a[1::2])], rtol=_RTOL,
+                       atol=0), (f'lane accumulators were folded into one: {c}')
+
+
+def test_partial_accumulators_combined_with_another_op_are_not_rerolled():
+    """The lanes accumulate with ``+`` but are combined with ``*``.
+
+    Moving lane 1's additions into lane 0 changes the product, so the re-roll must refuse.
+    """
+    n = 16
+    rng = np.random.default_rng(45)
+    a = rng.standard_normal(n)
+    sdfg = partial_accumulators_combined_with_another_op.to_sdfg(simplify=True)
+    canonicalize(sdfg, validate=True)
+    sdfg.validate()
+    c = np.zeros(1)
+    sdfg(a=a.copy(), c=c, N=n)
+    assert np.allclose(c[0], (1.0 + np.sum(a[0::2])) * (1.0 + np.sum(a[1::2])), rtol=_RTOL,
+                       atol=0), (f'a non-fold combine was treated as a reduction: {c[0]}')
+
+
 @dace.program
 def unrolled_lanes_read_different_arrays(a: dace.float64[N], b: dace.float64[N], d: dace.float64[N],
                                          c: dace.float64[N]):
