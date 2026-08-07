@@ -426,7 +426,30 @@ _AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 _GCC_AUTOPAR_FLAGS = os.environ.get(
     'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={_AUTOPAR_HINT} -floop-parallelize-all '
     '-fgraphite-identity')
-_LLVM_AUTOPAR_FLAGS = os.environ.get('CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp -mllvm -polly -mllvm -polly-parallel')
+#: ``-polly-omp-backend=LLVM`` is NOT optional here, and it is the difference between this column
+#: measuring Polly and measuring an OpenMP runtime fight. Polly defaults to ``GNU``, which emits
+#: ``GOMP_parallel_loop_runtime_start``/``GOMP_parallel_end`` -- **libgomp** -- while the very same
+#: command line links ``-fopenmp``, i.e. clang's **libomp**. Both runtimes then live in one process,
+#: each spins up its own ``OMP_NUM_THREADS`` pool, and they burn cores against each other: measured
+#: ~34x on this box, symmetric (it punishes whichever pair is co-resident, not clang). This arm is
+#: ``blas=pure``, so Polly's own backend choice is the ONLY thing that pulls libgomp in -- nothing
+#: else to blame and nothing else to fix. Verified on the same source, same flags, backend the only
+#: variable: ``GNU`` -> ``GOMP_parallel_end GOMP_loop_runtime_next GOMP_loop_end_nowait``,
+#: ``LLVM`` -> ``__kmpc_fork_call __kmpc_dispatch_init_ __kmpc_dispatch_next_``.
+#:
+#: ``-polly-process-unprofitable`` + ``-polly-parallel-force`` are what make this arm the SYMMETRIC
+#: counterpart of the gcc one, and without them the column is not a Polly measurement at all. Polly's
+#: cost model declines a single 1-D loop -- it reports "No profitable polyhedral optimization found"
+#: and emits NO parallel region -- and tsvc is overwhelmingly 1-D loops, so the arm was timing purely
+#: sequential code (measured: 1.20x over ``seq-cpp``, i.e. parity, with zero ``__kmpc_fork_call`` in
+#: the built object for s000/s111/s112/s1111). The gcc arm has carried ``-floop-parallelize-all`` --
+#: precisely "parallelize regardless of profitability" -- from the start, so leaving these off held
+#: the two auto-parallelizers to different standards inside one table. Verified on the arm's own
+#: generated code: arm flags alone -> 0 fork calls, adding both -> 1 fork call and 2 outlined
+#: subfunctions.
+_LLVM_AUTOPAR_FLAGS = os.environ.get(
+    'CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp -mllvm -polly -mllvm -polly-parallel '
+    '-mllvm -polly-omp-backend=LLVM -mllvm -polly-process-unprofitable -mllvm -polly-parallel-force')
 
 #: What the four DaCe arms lower BLAS/LAPACK/linalg library nodes to. Overridable so a box with no
 #: OpenBLAS can still run the sweep (``CANON_PERF_DACE_BLAS=pure``), but NOT defaulted to ``pure``:
@@ -434,9 +457,14 @@ _LLVM_AUTOPAR_FLAGS = os.environ.get('CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp 
 _DACE_BLAS = os.environ.get('CANON_PERF_DACE_BLAS', 'OpenBLAS')
 
 #: ``GOMP_parallel`` as an UNDEFINED SYMBOL of the probe object is a stronger engagement proof than
-#: any diagnostic: it means the compiler really emitted a parallel region. Covers both
-#: auto-parallelizers (gcc emits ``GOMP_parallel``, Polly ``GOMP_parallel_loop_runtime_start``).
+#: any diagnostic: it means the compiler really emitted a parallel region.
 _AUTOPAR_MARKER = 'GOMP_parallel'
+#: The same proof for the Polly arm, which pins ``-polly-omp-backend=LLVM`` and therefore emits
+#: libomp's ``__kmpc_fork_call`` rather than any ``GOMP_`` symbol. Kept as a SEPARATE constant, not
+#: folded into a substring both runtimes match: the marker is what stops the two arms silently
+#: swapping runtimes, so a marker that accepted either would be checking nothing. If Polly ever
+#: reverts to the GNU backend, this probe fails loudly instead of quietly re-creating the conflict.
+_LLVM_AUTOPAR_MARKER = '__kmpc_fork_call'
 #: The polyhedral half of each external arm, reported by its own dump/remark flag. Required
 #: *alongside* the autopar marker: an arm credited with Graphite that only ran ``-ftree-parallelize``
 #: is mislabelled, and mislabelled is indistinguishable from fabricated once it is a bar in a plot.
@@ -454,7 +482,7 @@ ARMS = (
     Arm('dace-simplify+gcc-autopar', serialize, _GCC, _GCC_AUTOPAR_FLAGS,
         '-fopt-info-loop -fdump-tree-graphite-details=stderr', (_GRAPHITE_MARKER, _AUTOPAR_MARKER)),
     Arm('dace-simplify+llvm-autopar', serialize, _CLANG, _LLVM_AUTOPAR_FLAGS, '-Rpass-analysis=polly-scops',
-        (_POLLY_MARKER, _AUTOPAR_MARKER)),
+        (_POLLY_MARKER, _LLVM_AUTOPAR_MARKER)),
     Arm('seq-cpp', serialize, _GCC, '', '', ()),
 )
 
