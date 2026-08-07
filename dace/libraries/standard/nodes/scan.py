@@ -48,7 +48,7 @@ from dace.transformation.transformation import ExpandTransformation
 import enum
 
 # CUB env is imported lazily inside ``ExpandCUDA.expansion`` to break the
-# ``dace.libraries.standard.nodes.scan`` ↔ ``dace.libraries.sort.environments.cub``
+# ``dace.libraries.standard.nodes.scan`` <-> ``dace.libraries.sort.environments.cub``
 # circular import (cub.py pulls in standard.environments, which loads this module).
 from dace.libraries.standard.environments.cpu import CPU as CPUEnv
 
@@ -281,15 +281,22 @@ class ExpandPure(ExpandTransformation):
 
 @library.expansion
 class ExpandCPU(ExpandTransformation):
-    """OpenMP 5.0 parallel scan via the vendored ``dace::scan`` runtime header.
+    """PARALLEL-schedule scan: OpenMP 5.0 ``inscan`` via the vendored ``dace::scan``
+    runtime header.
 
     Emits a single call into ``dace::scan::{inclusive,exclusive}_{sum,product,min,max}``
-    -- templated header-only routines that wrap ``#pragma omp parallel for simd
-    reduction(inscan, op:acc)`` + ``#pragma omp scan {inclusive,exclusive}(acc)``.
-    GCC 10+ / Clang 11+ / ICX 2021+ implement OpenMP 5.0's ``scan`` directive as a
-    two-level chunked scan: phase-1 per-thread sequential scans, phase-2 small
-    parallel-prefix over per-chunk totals, phase-3 parallel offset adjustment.
-    Work O(2N), depth O(N/P + log P) -- the canonical multi-core CPU prefix scan.
+    or ``dace::scan::strided_inclusive_*``. Each wraps ``#pragma omp parallel for
+    simd reduction(inscan, op:acc)`` + ``#pragma omp scan {inclusive,exclusive}(acc)``,
+    which GCC 10+ / Clang 11+ / ICX 2021+ lower to a two-level chunked scan:
+    per-thread sequential scans, a small prefix over the chunk totals, then a
+    parallel offset pass. Work O(2N), depth O(N/P + log P).
+
+    The chunking makes the floating-point association implementation-defined and
+    dependent on the team size, so results MOVE WITH ``OMP_NUM_THREADS``. Callers
+    that need a reproducible scan want the SEQUENTIAL shape instead --
+    :class:`ExpandPure`, a plain loop with no pragma and no call into the header.
+    A stride-``s`` scan also opens ``s`` regions here, one per residue class,
+    since a residue class is the widest span one ``inscan`` loop can cover.
     """
 
     environments = [CPUEnv]
@@ -297,6 +304,13 @@ class ExpandCPU(ExpandTransformation):
     @staticmethod
     def expansion(node: "Scan", state: dace.SDFGState, sdfg: dace.SDFG) -> nodes.Tasklet:
         in_desc, _out_desc, _in_edge, _out_edge = _validate_inputs_and_outputs(node, state, sdfg)
+        # SCOPE decides the shape, not ``node.schedule``: that is storage-derived, so a Scan
+        # nested in a parallel map (directly, or one level down through a NestedSDFG) arrives
+        # carrying ``CPU_Multicore``. A re-entered node opens no region of its own.
+        from dace.transformation.auto.auto_optimize import libnode_is_sequential
+        if libnode_is_sequential(node, state, sdfg):
+            # Already inside an OpenMP region or a loop: take the sequential naked-loop shape.
+            return ExpandPure.expansion(node, state, sdfg)
         if _is_length_one(node, state):
             return _degenerate_single_element_tasklet(node, in_desc)
         n_expr = _resolve_length(node, state, sdfg)
@@ -353,7 +367,7 @@ class ExpandCUDA(ExpandTransformation):
     call, so concurrent launches on different streams cannot race on the pool.
     """
 
-    # Populated lazily in :meth:`expansion` (and below) to dodge the sort↔standard cycle.
+    # Populated lazily in :meth:`expansion` (and below) to dodge the sort<->standard cycle.
     environments = []
 
     @staticmethod
@@ -536,7 +550,9 @@ class Scan(nodes.LibraryNode):
                       desc="Per-element stride for the scan recurrence. Default ``1`` is the "
                       "contiguous case (``out[i+1] = out[i] OP in[i]``). Values ``s > 1`` express "
                       "``out[i+s] = out[i] OP in[i]``: the ``s`` residue classes mod ``s`` form "
-                      "independent scans (CPU expansion runs them in parallel via OpenMP). "
+                      "independent scans. The parallel CPU expansion runs one OpenMP 5.0 "
+                      "``inscan`` loop per residue class, indexing the strided space in place "
+                      "(no packed copy), so a stride-``s`` scan opens ``s`` parallel regions. "
                       "The expansion emits a runtime ``s > 0`` ``std::abort()`` check; passing a "
                       "non-positive stride at runtime terminates the program before the scan "
                       "starts. Exclusive strided scans (``exclusive=True`` with ``stride > 1``) "

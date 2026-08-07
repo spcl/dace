@@ -2,9 +2,10 @@
 """End-to-end numerical verification of the ``Scan`` libnode with ``stride > 1``.
 
 The libnode expansion runs ``s`` independent inclusive scans, one per residue class
-modulo ``s``. Each class is a closed scan (writes only to indices ``≡ k (mod s)``
-strictly forward and reads only those indices plus the class's seed at position
-``k``), so the ``s`` classes have no cross-dependence and run in parallel.
+modulo ``s``. Each class is a closed scan (writes only to indices congruent to
+``k (mod s)`` strictly forward and reads only those indices plus the class's seed
+at position ``k``), so the ``s`` classes have no cross-dependence. The parallel
+runtime scans each class with its own OpenMP 5.0 ``inscan`` loop.
 
 This test confirms the result is bit-identical to a sequential strided-scan
 oracle for several ``(n, s)`` and both supported CPU implementations.
@@ -16,6 +17,7 @@ avoid killing the test runner.
 import os
 import subprocess
 import sys
+import tempfile
 import textwrap
 
 import numpy as np
@@ -46,7 +48,7 @@ def _build_scan_sdfg(n: int, stride: int, op: ScanOp, implementation: str) -> da
 
 def _residue_class_scan_oracle(arr_in: np.ndarray, stride: int, op: ScanOp) -> np.ndarray:
     """Reference: ``out[j] = OP_running(arr_in[j_first], ..., arr_in[j])`` within each
-    residue class ``j ≡ k (mod stride)``. The libnode produces the same values."""
+    residue class ``j`` congruent to ``k (mod stride)``. The libnode produces the same values."""
     n = arr_in.shape[0]
     out = np.zeros_like(arr_in)
     if op is ScanOp.SUM:
@@ -167,3 +169,143 @@ def test_negative_stride_aborts_at_runtime():
 
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))
+
+
+def _scan_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
+    """``rows`` independent length-``n`` scans, one per iteration of a parallel Map."""
+    sdfg = dace.SDFG('scan_inside_parallel_map')
+    sdfg.add_array('arr_in', [rows, n], dace.float64)
+    sdfg.add_array('arr_out', [rows, n], dace.float64)
+    state = sdfg.add_state('scan_map')
+    me, mx = state.add_map('rows', {'r': f'0:{rows}'}, schedule=dace.dtypes.ScheduleType.CPU_Multicore)
+    a_in = state.add_read('arr_in')
+    a_out = state.add_write('arr_out')
+    node = Scan('Scan', op=ScanOp.SUM, exclusive=False)
+    node.implementation = 'CPU'
+    state.add_node(node)
+    state.add_memlet_path(a_in, me, node, dst_conn=INPUT_CONNECTOR_NAME, memlet=dace.Memlet(f'arr_in[r, 0:{n}]'))
+    state.add_memlet_path(node, mx, a_out, src_conn=OUTPUT_CONNECTOR_NAME, memlet=dace.Memlet(f'arr_out[r, 0:{n}]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_scan_in_parallel_map_lowers_to_sequential_form():
+    """A Scan inside a parallel Map must take the SEQUENTIAL naked-loop shape.
+
+    The parallel expansion opens its own OpenMP region and the runtime header has
+    no nesting check, so the shape is chosen statically from the schedule. Assert
+    on the generated code: no call into the ``dace::scan`` parallel entry points,
+    and no ``inscan`` reduction, inside the map body.
+    """
+    sdfg = _scan_in_map_sdfg(n=64, rows=4)
+    code = ''.join(o.clean_code for o in sdfg.generate_code())
+    assert 'reduction(inscan' not in code, 'inscan region emitted inside a parallel Map'
+    assert '::dace::scan::inclusive_' not in code, 'parallel scan entry point called inside a parallel Map'
+
+
+def test_scan_in_parallel_map_is_numerically_correct():
+    """The sequential shape selected inside the Map still computes every row's scan."""
+    n, rows = 64, 4
+    rng = np.random.default_rng(20260807)
+    arr_in = rng.uniform(-1.0, 1.0, size=(rows, n))
+    arr_out = np.zeros_like(arr_in)
+    _scan_in_map_sdfg(n, rows)(arr_in=arr_in.copy(), arr_out=arr_out)
+    assert np.allclose(arr_out, np.cumsum(arr_in, axis=1))
+
+
+def test_parallel_entry_point_called_inside_a_team_is_correct():
+    """Directly calling the parallel entry point from inside an existing OpenMP
+    region is not a shape the expansion emits, but it must still be CORRECT:
+    OpenMP's nested default gives the inner region a one-thread team, so the
+    values are right and only the speedup is lost."""
+    src = textwrap.dedent("""
+        #include <cstdio>
+        #include <vector>
+        #include <omp.h>
+        #include <dace/scan.hpp>
+        int main() {
+            const long n = 4096;
+            std::vector<double> in(n, 1.0), out(n, 0.0);
+            #pragma omp parallel num_threads(4)
+            {
+                #pragma omp single
+                dace::scan::inclusive_sum(in.data(), in.data() + n, out.data());
+            }
+            std::printf("%s\\n", (out[0] == 1.0 && out[n - 1] == (double)n) ? "OK" : "BAD");
+            return 0;
+        }
+    """)
+    root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    include = os.path.join(root, 'dace', 'runtime', 'include')
+    with tempfile.TemporaryDirectory() as tmp:
+        cpp, exe = os.path.join(tmp, 'p.cpp'), os.path.join(tmp, 'p')
+        with open(cpp, 'w') as fh:
+            fh.write(src)
+        build = subprocess.run(['g++', '-std=c++17', '-O2', '-fopenmp', '-I', include, '-o', exe, cpp],
+                               capture_output=True,
+                               text=True)
+        if build.returncode != 0:
+            pytest.skip(f'probe did not build: {build.stderr[-300:]}')
+        run = subprocess.run([exe], capture_output=True, text=True, timeout=120)
+    assert run.stdout.strip() == 'OK', f'nested direct call gave wrong values: {run.stdout!r}'
+
+
+def _scan_in_nested_sdfg_in_map_sdfg(n: int, rows: int) -> dace.SDFG:
+    """``rows`` independent length-``n`` scans, each computed by a Scan libnode one level
+    down inside a NestedSDFG, with the NestedSDFG itself inside a CPU_Multicore Map.
+
+    The adversarial case for scope resolution: ``state.entry_node(node)`` on the Scan's OWN
+    state returns ``None`` -- the Map lives in the OUTER SDFG, one nested-SDFG boundary away --
+    so a scope walk that only looks at the immediately enclosing state misses it.
+    """
+    inner = dace.SDFG('scan_row_inner')
+    inner.add_array('ri', [n], dace.float64)
+    inner.add_array('ro', [n], dace.float64)
+    ist = inner.add_state()
+    node = Scan('Scan', op=ScanOp.SUM, exclusive=False)
+    node.implementation = 'CPU'
+    ist.add_node(node)
+    ist.add_edge(ist.add_read('ri'), None, node, INPUT_CONNECTOR_NAME, dace.Memlet(f'ri[0:{n}]'))
+    ist.add_edge(node, OUTPUT_CONNECTOR_NAME, ist.add_write('ro'), None, dace.Memlet(f'ro[0:{n}]'))
+
+    sdfg = dace.SDFG('scan_in_nested_sdfg_in_map')
+    sdfg.add_array('arr_in', [rows, n], dace.float64)
+    sdfg.add_array('arr_out', [rows, n], dace.float64)
+    state = sdfg.add_state('rows')
+    entry, exit_ = state.add_map('rows', {'r': f'0:{rows}'}, schedule=dace.dtypes.ScheduleType.CPU_Multicore)
+    nested = state.add_nested_sdfg(inner, {'ri'}, {'ro'})
+    state.add_memlet_path(state.add_read('arr_in'),
+                          entry,
+                          nested,
+                          dst_conn='ri',
+                          memlet=dace.Memlet(f'arr_in[r, 0:{n}]'))
+    state.add_memlet_path(nested,
+                          exit_,
+                          state.add_write('arr_out'),
+                          src_conn='ro',
+                          memlet=dace.Memlet(f'arr_out[r, 0:{n}]'))
+    sdfg.validate()
+    return sdfg
+
+
+def test_scan_in_nested_sdfg_inside_parallel_map_lowers_to_sequential_form():
+    """The documented gap: a Scan inside a NestedSDFG must take the SEQUENTIAL shape when the
+    NestedSDFG itself sits inside a parallel Map, even though the Scan's own state has no
+    entry node to walk. Neither the ``inscan`` region nor the parallel entry point may leak
+    into the generated code.
+    """
+    sdfg = _scan_in_nested_sdfg_in_map_sdfg(n=64, rows=4)
+    code = ''.join(o.clean_code for o in sdfg.generate_code())
+    assert 'reduction(inscan' not in code, 'inscan region emitted inside a NestedSDFG in a parallel Map'
+    assert '::dace::scan::inclusive_' not in code, (
+        'parallel scan entry point called inside a NestedSDFG in a parallel Map')
+
+
+def test_scan_in_nested_sdfg_inside_parallel_map_is_numerically_correct():
+    """The sequential shape selected one nesting level down still computes every row's scan."""
+    n, rows = 64, 4
+    rng = np.random.default_rng(20260807)
+    arr_in = rng.uniform(-1.0, 1.0, size=(rows, n))
+    arr_out = np.zeros_like(arr_in)
+    _scan_in_nested_sdfg_in_map_sdfg(n, rows)(arr_in=arr_in.copy(), arr_out=arr_out)
+    assert np.allclose(arr_out, np.cumsum(arr_in, axis=1))
