@@ -107,11 +107,65 @@ def test_normalize_is_idempotent(suite, name):
     assert CS.run_matches(ctx, sdfg), f'double-normalize changed {suite}:{name} output vs reference'
 
 
+def _build_slice_wcr_scatter() -> dace.SDFG:
+    """Per-instance scatter trapped in a 2-state NestedSDFG, surfacing as a multi-element
+    WCR at the boundary -- the ``symm`` shape ``extract_slice_wcr`` targets (see the
+    ``NormalizeWCR`` module docstring and ``_extract_slice_wcr``/``_find_inner_scatter``).
+
+    An outer map over ``i`` wraps a NestedSDFG with a write-only output connector
+    ``c_out`` (out but not in). Inside the nsdfg -- 2 states: an unrelated no-op state,
+    then the scatter state -- a single-param inner map over ``k`` writes
+    ``c_out[k] = row[k] * 2`` through a WCR edge landing DIRECTLY on the inner map's exit
+    (subset ``k``, one element, no intervening AccessNode): exactly the shape
+    ``_find_inner_scatter`` looks for. At the nsdfg boundary the ``NestedSDFG -> MapExit``
+    edge for ``c_out`` widens that to the whole row, ``dest[i, 0:N]`` with a ``+`` WCR
+    (``num_elements() == N > 1``, ``dst`` a ``MapExit``) -- the trapped multi-element WCR
+    the test's ``before`` count structurally guarantees (it is set directly on this edge's
+    memlet, not derived). Every tasklet input traces to a top-level source read directly
+    at the outer map entry (``row`` <- ``A``), the precondition ``_extract_slice_wcr``'s
+    ``plan`` resolution requires; the ``dest`` AccessNode is fed straight off the outer
+    MapExit, satisfying the ``dest_an`` lookup.
+    """
+    N = 8
+    sdfg = dace.SDFG('slice_wcr_' + uuid.uuid4().hex[:8])
+    sdfg.add_array('A', [N], dace.float64)
+    sdfg.add_array('dest', [N, N], dace.float64)
+    state = sdfg.add_state('outer', is_start_block=True)
+
+    body = dace.SDFG('body')
+    body.add_array('row', [N], dace.float64)
+    body.add_array('c_out', [N], dace.float64)  # WRITE-ONLY output connector
+    noop = body.add_state('noop', is_start_block=True)
+    istate = body.add_state_after(noop, 'scatter')
+
+    ime, imx = istate.add_map('inner', {'k': f'0:{N}'})
+    t = istate.add_tasklet('scale', {'_r': dace.float64}, {'__out': dace.float64}, '__out = _r * 2.0')
+    istate.add_memlet_path(istate.add_read('row'), ime, t, dst_conn='_r', memlet=dace.Memlet('row[k]'))
+    istate.add_memlet_path(t,
+                           imx,
+                           istate.add_write('c_out'),
+                           src_conn='__out',
+                           memlet=dace.Memlet(data='c_out', subset='k', wcr='lambda x, y: x + y'))
+
+    outer_me, outer_mx = state.add_map('outer_scatter', {'i': f'0:{N}'})
+    n = state.add_nested_sdfg(body, {'row': dace.float64}, {'c_out': dace.float64})
+    state.add_memlet_path(state.add_read('A'), outer_me, n, dst_conn='row', memlet=dace.Memlet(f'A[0:{N}]'))
+    state.add_memlet_path(n,
+                          outer_mx,
+                          state.add_write('dest'),
+                          src_conn='c_out',
+                          memlet=dace.Memlet(data='dest', subset=f'i, 0:{N}', wcr='lambda x, y: x + y'))
+    sdfg.validate()
+    return sdfg
+
+
 def test_symm_slice_wcr_extracted_to_single_element():
-    """symm's ``C[0:i,j]`` slice WCR (a per-instance scatter trapped in a 2-state nsdfg,
-    surfacing as a multi-element WCR at the boundary) is extracted to an outer
-    single-element ``C[k,j]`` WCR; no multi-element WCR survives and the value matches."""
-    ctx = CS.make('poly', 'symm', 'S')
+    """A hand-built ``symm``-shape fixture (see ``_build_slice_wcr_scatter``): a
+    per-instance scatter trapped in a 2-state nsdfg, surfacing as a multi-element WCR at
+    the boundary, is extracted to an outer single-element WCR; no multi-element WCR
+    survives and the value matches a numpy reference computed from the fixture's own
+    semantics (``dest[i, k] = A[k] * 2`` for every ``i``)."""
+    N = 8
     seen = {}
 
     def norm(sdfg):
@@ -124,11 +178,19 @@ def test_symm_slice_wcr_extracted_to_single_element():
         seen['after_single'] = len(_wcr_edges(sdfg, single=True))
         return sdfg
 
-    sdfg = CS.build(ctx, norm, 'nnrslice_' + uuid.uuid4().hex[:8])
-    assert seen['before'] >= 1, 'symm baseline should carry the C[0:i,j] slice WCR'
+    sdfg = norm(_build_slice_wcr_scatter())
+    sdfg.validate()
+
+    assert seen['before'] >= 1, 'fixture should carry the dest[i, 0:N] slice WCR'
     assert seen['after_slice'] == 0, f'slice WCR not fully extracted: {seen["after_slice"]} remain'
     assert seen['after_single'] >= 1, 'expected a single-element scatter WCR after extraction'
-    assert CS.run_matches(ctx, sdfg), 'slice-WCR extraction changed symm output vs reference'
+
+    rng = np.random.default_rng(5)
+    A = rng.uniform(-2.0, 2.0, N)
+    dest = np.zeros((N, N))
+    sdfg(A=A.copy(), dest=dest)
+    ref = np.tile(A * 2.0, (N, 1))
+    assert np.allclose(dest, ref), 'slice-WCR extraction changed the fixture output vs reference'
 
 
 def test_azimint_naive_structure_after_normalize():
@@ -409,6 +471,41 @@ def test_readwrite_redundant_interior_wcr_should_be_cleared():
     sdfg = _build_readwrite_redundant_interior_wcr()
     NormalizeWCR().apply_pass(sdfg, {})
     assert not _body_wcr_edges(sdfg), 'interior WCR should become a read-modify-write, no body WCR'
+
+
+def test_canonicalize_emits_reduction_clause_for_indirect_read_reduction():
+    """s4115 shape: the reduction_to_wcr_map band outlines the loop body, trapping the WCR
+    inside the loop_body nsdfg with a plain nsdfg-to-MapExit edge. The NormalizeWCR re-run at
+    the end of that band hoists it to the exit chain, so codegen emits a reduction clause
+    instead of a per-iteration atomic on the shared scalar."""
+    N = dace.symbol('N')
+
+    @dace.program
+    def indirect_read_reduction(a: dace.float64[N], b: dace.float64[N], ip: dace.int32[N], sum_out: dace.float64[1]):
+        sum_val = 0.0
+        for i in range(N):
+            sum_val = sum_val + a[i] * b[ip[i]]
+        sum_out[0] = sum_val
+
+    from dace.transformation.passes.canonicalize.pipeline import canonicalize
+    sdfg = indirect_read_reduction.to_sdfg(simplify=False)
+    canonicalize(sdfg)
+    sdfg.validate()
+
+    assert not _write_only_scalar_wcr_conns(sdfg), 'WCR still trapped inside a nested SDFG body'
+    code = sdfg.generate_code()[0].clean_code
+    assert 'reduce_atomic' not in code
+    assert 'reduction(+:' in code.replace(' ', '')
+
+    n = 4096
+    rng = np.random.default_rng(1234)
+    a = rng.random(n)
+    b = rng.random(n)
+    ip = rng.integers(0, n, n).astype(np.int32)
+    out = np.zeros(1)
+    sdfg(a=a.copy(), b=b.copy(), ip=ip.copy(), sum_out=out, N=n)
+    # Reduction result: association-order tolerance sanctioned for OMP tree reductions.
+    assert np.allclose(out, np.sum(a * b[ip]), rtol=1e-12, atol=1e-12)
 
 
 if __name__ == '__main__':
