@@ -425,6 +425,16 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
         dtypes.ReductionType.Bitwise_Xor,
     )
 
+    #: Real-only: a complex operand has neither an ordering nor a boolean conversion, so C++ has no
+    #: ``<`` / ``&&`` for it and OpenMP no ``min`` / ``max`` reduction. ``+`` and ``*`` are the only
+    #: reductions defined on complex -- the same policy ``dace::reduce::detail::real_seed`` asserts.
+    REAL_ONLY_REDUCTIONS = (
+        dtypes.ReductionType.Min,
+        dtypes.ReductionType.Max,
+        dtypes.ReductionType.Logical_And,
+        dtypes.ReductionType.Logical_Or,
+    )
+
     @staticmethod
     def contiguous_tail(raxes, sizes, strides):
         """Longest suffix of ``raxes`` that is one contiguous walk: consecutive indices whose strides
@@ -475,6 +485,14 @@ class ExpandReduceOpenMP(pm.ExpandTransformation):
                                  'or complex operands in C++, and OpenMP has no reduction for them either. '
                                  'Use a logical reduction (&&, ||) or an integer dtype.' %
                                  (node.wcr, elemtype, outedge.data.data))
+
+        if redtype in ExpandReduceOpenMP.REAL_ONLY_REDUCTIONS:
+            for elemtype, name in ((input_data.dtype, inedge.data.data), (output_data.dtype, outedge.data.data)):
+                if numpy.issubdtype(elemtype.type, numpy.complexfloating):
+                    raise ValueError('Reduction "%s" is not defined for complex data type %s (on "%s"). '
+                                     'A complex operand has no ordering and no boolean conversion, so C++ has '
+                                     'no "<" / "&&" for it and OpenMP no min/max reduction. Only sum and '
+                                     'product are defined on complex.' % (node.wcr, elemtype, name))
 
         if redtype not in ExpandReduceOpenMP._REDUCTION_TYPE_TO_RUNTIME:
             warnings.warn('Reduction type not supported for "%s"' % node.wcr)

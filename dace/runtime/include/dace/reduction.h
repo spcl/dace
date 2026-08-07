@@ -619,8 +619,9 @@ struct wcr_fixed<REDTYPE, T, EnableIfScalar<T> > {
 //////////////////////////////////////////////////////////////////////////
 // dace::reduce -- the CPU lowering of the ``Reduce`` library node.
 //
-// Two shapes, mirroring ``dace/scan.hpp``: ``dace::reduce::<op>`` is the PARALLEL one (an OpenMP
-// ``reduction`` clause), ``dace::reduce::seq::<op>`` the SEQUENTIAL one (naked loop, no pragma).
+// Two shapes, mirroring ``dace/scan.hpp``'s blocked three-phase scan: ``dace::reduce::<op>`` is
+// the PARALLEL one (an OpenMP ``reduction`` clause), ``dace::reduce::seq::<op>`` the SEQUENTIAL
+// one (naked loop, no pragma).
 // CONTRACT: the parallel entries carry no runtime nesting check -- ``ExpandReduceOpenMP`` picks the
 // shape statically from the node's SCOPE. An external caller already inside its own ``omp`` region
 // gets OpenMP's nested default, a one-thread team: correct, slower.
@@ -663,6 +664,20 @@ struct is_reducible<float8_e4m3fn> : std::true_type {};
 template <>
 struct is_reducible<float8_e5m2> : std::true_type {};
 
+// The reducible set MINUS the complex types, which have neither an ordering nor a boolean
+// conversion: ``min`` / ``max`` and ``&&`` / ``||`` are defined on exactly this set. Only ``+`` and
+// ``*`` are defined on a complex operand, matching the OpenMP reductions declared below.
+template <typename T>
+struct is_real : is_reducible<T> {};
+template <>
+struct is_real<complex64> : std::false_type {};
+template <>
+struct is_real<complex128> : std::false_type {};
+
+// ``&`` / ``|`` / ``^`` exist for an integral operand only, in C++ and in OpenMP alike.
+template <typename T>
+struct is_bitwise : std::integral_constant<bool, std::is_integral<T>::value> {};
+
 #ifdef _OPENMP
 // Complex needs a user-defined reduction (OpenMP has none for a class type), and only ``+`` / ``*``.
 #pragma omp declare reduction(+ : complex64 : omp_out += omp_in) initializer(omp_priv = complex64(0))
@@ -673,7 +688,9 @@ struct is_reducible<float8_e5m2> : std::true_type {};
 
 namespace detail {
 
-/// Returns ``seed``; the single place an unsupported element type is refused.
+/// Returns ``seed``; the single place an unsupported element type is refused. Every entry point
+/// runs its seed through one of these three before touching the data, so an out-of-policy element
+/// type is a NAMED static assertion rather than whatever the op's operator noise happens to be.
 template <typename T, typename U>
 inline T checked_seed(T seed) {
   static_assert(is_reducible<T>::value && is_reducible<U>::value,
@@ -682,10 +699,42 @@ inline T checked_seed(T seed) {
   return seed;
 }
 
-/// Left-to-right fold of ``n`` elements of ``in`` taken ``s`` apart, seeded with ``seed``.
+/// ``min`` / ``max`` and the logical ops: the reducible set minus complex.
+template <typename T, typename U>
+inline T real_seed(T seed) {
+  static_assert(is_real<T>::value && is_real<U>::value,
+                "dace::reduce: min/max and the logical reductions need a real element type. "
+                "dace::complex64 / complex128 have no ordering and no boolean conversion -- only "
+                "sum and product are defined for them.");
+  return checked_seed<T, U>(seed);
+}
+
+/// ``&`` / ``|`` / ``^``: integral operands only.
+template <typename T, typename U>
+inline T bitwise_seed(T seed) {
+  static_assert(is_bitwise<T>::value && is_bitwise<U>::value,
+                "dace::reduce: the bitwise reductions need an integral element type. No bitwise "
+                "operator exists for a floating-point or complex operand.");
+  return checked_seed<T, U>(seed);
+}
+
+/// The element, as an operand of the accumulator's type. Two complex types of DIFFERENT width do
+/// not combine -- ``std::complex<double> + std::complex<float>`` matches no ``operator+`` -- so that
+/// pair alone is widened here. Every other in-policy pair combines on its own and is passed through
+/// untouched, which keeps a narrow accumulator over wider input rounding exactly where it did.
+template <typename T, typename U>
+inline auto operand(const U &x) {
+  if constexpr (is_reducible<T>::value && !is_real<T>::value && !is_real<U>::value && !std::is_same<T, U>::value)
+    return T(x);
+  else
+    return x;
+}
+
+/// Left-to-right fold of ``n`` elements of ``in`` taken ``s`` apart, seeded with ``seed``. The
+/// caller has already run ``seed`` through its op's policy check.
 template <typename T, typename U, typename Op>
 inline T fold(const U *in, long n, long s, T seed, Op op) {
-  T acc = checked_seed<T, U>(seed);
+  T acc = seed;
   if (s == 1) {
     for (long i = 0; i < n; ++i) acc = op(acc, in[i]);
   } else {
@@ -703,10 +752,10 @@ inline T sum(const U *in, long n, long s, T seed) {
   T acc = detail::checked_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(+ : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc + in[i]);
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc + detail::operand<T, U>(in[i]));
   } else {
 #pragma omp parallel for reduction(+ : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc + in[i * s]);
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc + detail::operand<T, U>(in[i * s]));
   }
   return acc;
 }
@@ -716,10 +765,10 @@ inline T product(const U *in, long n, long s, T seed) {
   T acc = detail::checked_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(* : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc * in[i]);
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc * detail::operand<T, U>(in[i]));
   } else {
 #pragma omp parallel for reduction(* : acc)
-    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc * in[i * s]);
+    for (long i = 0; i < n; ++i) acc = static_cast<T>(acc * detail::operand<T, U>(in[i * s]));
   }
   return acc;
 }
@@ -728,7 +777,7 @@ inline T product(const U *in, long n, long s, T seed) {
 // reassociating comparisons, and clang warns about the transformation it refused. Measured free.
 template <typename T, typename U>
 inline T min(const U *in, long n, long s, T seed) {
-  T acc = detail::checked_seed<T, U>(seed);
+  T acc = detail::real_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for reduction(min : acc)
     for (long i = 0; i < n; ++i) acc = std::min<T>(acc, static_cast<T>(in[i]));
@@ -741,7 +790,7 @@ inline T min(const U *in, long n, long s, T seed) {
 
 template <typename T, typename U>
 inline T max(const U *in, long n, long s, T seed) {
-  T acc = detail::checked_seed<T, U>(seed);
+  T acc = detail::real_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for reduction(max : acc)
     for (long i = 0; i < n; ++i) acc = std::max<T>(acc, static_cast<T>(in[i]));
@@ -756,7 +805,7 @@ inline T max(const U *in, long n, long s, T seed) {
 // literal that clang reports as a signedness change on signed ``T``. Same identity, spelled -1.
 template <typename T, typename U>
 inline T bitwise_and(const U *in, long n, long s, T seed) {
-  T acc = detail::checked_seed<T, U>(seed);
+  T acc = detail::bitwise_seed<T, U>(seed);
 #pragma omp declare reduction(dace_band : T : omp_out = static_cast<T>(omp_out &omp_in)) initializer(omp_priv = static_cast<T>(-1))
   if (s == 1) {
 #pragma omp parallel for simd reduction(dace_band : acc)
@@ -770,7 +819,7 @@ inline T bitwise_and(const U *in, long n, long s, T seed) {
 
 template <typename T, typename U>
 inline T bitwise_or(const U *in, long n, long s, T seed) {
-  T acc = detail::checked_seed<T, U>(seed);
+  T acc = detail::bitwise_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(| : acc)
     for (long i = 0; i < n; ++i) acc = static_cast<T>(acc | in[i]);
@@ -783,7 +832,7 @@ inline T bitwise_or(const U *in, long n, long s, T seed) {
 
 template <typename T, typename U>
 inline T bitwise_xor(const U *in, long n, long s, T seed) {
-  T acc = detail::checked_seed<T, U>(seed);
+  T acc = detail::bitwise_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(^ : acc)
     for (long i = 0; i < n; ++i) acc = static_cast<T>(acc ^ in[i]);
@@ -796,7 +845,7 @@ inline T bitwise_xor(const U *in, long n, long s, T seed) {
 
 template <typename T, typename U>
 inline T logical_and(const U *in, long n, long s, T seed) {
-  T acc = detail::checked_seed<T, U>(seed);
+  T acc = detail::real_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(&& : acc)
     for (long i = 0; i < n; ++i) acc = static_cast<T>(acc && in[i]);
@@ -809,7 +858,7 @@ inline T logical_and(const U *in, long n, long s, T seed) {
 
 template <typename T, typename U>
 inline T logical_or(const U *in, long n, long s, T seed) {
-  T acc = detail::checked_seed<T, U>(seed);
+  T acc = detail::real_seed<T, U>(seed);
   if (s == 1) {
 #pragma omp parallel for simd reduction(|| : acc)
     for (long i = 0; i < n; ++i) acc = static_cast<T>(acc || in[i]);
@@ -826,47 +875,49 @@ namespace seq {
 
 template <typename T, typename U>
 inline T sum(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a + b); });
+  return detail::fold(in, n, s, detail::checked_seed<T, U>(seed),
+                      [](T a, U b) { return static_cast<T>(a + detail::operand<T, U>(b)); });
 }
 
 template <typename T, typename U>
 inline T product(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a * b); });
+  return detail::fold(in, n, s, detail::checked_seed<T, U>(seed),
+                      [](T a, U b) { return static_cast<T>(a * detail::operand<T, U>(b)); });
 }
 
 template <typename T, typename U>
 inline T min(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return std::min<T>(a, static_cast<T>(b)); });
+  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return std::min<T>(a, static_cast<T>(b)); });
 }
 
 template <typename T, typename U>
 inline T max(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return std::max<T>(a, static_cast<T>(b)); });
+  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return std::max<T>(a, static_cast<T>(b)); });
 }
 
 template <typename T, typename U>
 inline T bitwise_and(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a & b); });
+  return detail::fold(in, n, s, detail::bitwise_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a & b); });
 }
 
 template <typename T, typename U>
 inline T bitwise_or(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a | b); });
+  return detail::fold(in, n, s, detail::bitwise_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a | b); });
 }
 
 template <typename T, typename U>
 inline T bitwise_xor(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a ^ b); });
+  return detail::fold(in, n, s, detail::bitwise_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a ^ b); });
 }
 
 template <typename T, typename U>
 inline T logical_and(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a && b); });
+  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a && b); });
 }
 
 template <typename T, typename U>
 inline T logical_or(const U *in, long n, long s, T seed) {
-  return detail::fold(in, n, s, seed, [](T a, U b) { return static_cast<T>(a || b); });
+  return detail::fold(in, n, s, detail::real_seed<T, U>(seed), [](T a, U b) { return static_cast<T>(a || b); });
 }
 
 }  // namespace seq

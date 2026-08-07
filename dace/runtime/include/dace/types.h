@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <complex>
+#include <limits>  // std::numeric_limits (specialized for the low-precision structs at the bottom)
 #include <type_traits>
 #include <bit>  // std::bit_cast (C++20)
 
@@ -348,5 +349,58 @@ namespace dace
         Exchange = 13
     };
 }
+
+#if !defined(__CUDACC__) && !defined(__HIPCC__)
+// ``std::numeric_limits`` for the low-precision structs. Without these the PRIMARY template answers
+// ``max() == lowest() == infinity() == T()``, i.e. ZERO, for every one of them -- so a consumer that
+// picks a min/max reduction identity that way (``dace/scan.hpp``, ``libraries/tileops``) silently
+// folds into zero instead of failing. Values are the IEEE binary16 / bfloat16 / OCP e5m2 / OCP
+// e4m3fn ones; e4m3fn is the FINITE format, so it alone has no infinity.
+#define DACE_LP_LIMITS(TYPE, DIGITS, DIG10, MAXDIG10, MINEXP, MINEXP10, MAXEXP, MAXEXP10, INF, IEC, MAXV, MINV,     \
+                       EPSV, DENV)                                                                                  \
+    template <>                                                                                                     \
+    struct numeric_limits<::dace::TYPE> {                                                                           \
+        static constexpr bool is_specialized = true, is_signed = true, is_integer = false;                          \
+        static constexpr bool is_exact = false, has_infinity = INF, has_quiet_NaN = true;                           \
+        static constexpr bool has_signaling_NaN = false, is_bounded = true, is_modulo = false;                      \
+        static constexpr bool is_iec559 = IEC, traps = false, tinyness_before = false;                              \
+        static constexpr int radix = 2, digits = DIGITS, digits10 = DIG10, max_digits10 = MAXDIG10;                 \
+        static constexpr int min_exponent = MINEXP, min_exponent10 = MINEXP10;                                      \
+        static constexpr int max_exponent = MAXEXP, max_exponent10 = MAXEXP10;                                      \
+        static constexpr float_round_style round_style = round_to_nearest;                                          \
+        static constexpr ::dace::TYPE min() noexcept { return ::dace::TYPE(MINV); }                                 \
+        static constexpr ::dace::TYPE max() noexcept { return ::dace::TYPE(MAXV); }                                 \
+        static constexpr ::dace::TYPE lowest() noexcept { return ::dace::TYPE(-(MAXV)); }                           \
+        static constexpr ::dace::TYPE epsilon() noexcept { return ::dace::TYPE(EPSV); }                             \
+        static constexpr ::dace::TYPE round_error() noexcept { return ::dace::TYPE(0.5f); }                         \
+        static constexpr ::dace::TYPE denorm_min() noexcept { return ::dace::TYPE(DENV); }                          \
+        static constexpr ::dace::TYPE quiet_NaN() noexcept { return ::dace::TYPE(__builtin_nanf("")); }             \
+        static constexpr ::dace::TYPE signaling_NaN() noexcept { return ::dace::TYPE(__builtin_nanf("")); }         \
+        static constexpr ::dace::TYPE infinity() noexcept {                                                         \
+            return INF ? ::dace::TYPE(__builtin_huge_valf()) : ::dace::TYPE();                                      \
+        }                                                                                                           \
+    }
+namespace std {
+DACE_LP_LIMITS(half, 11, 3, 5, -13, -4, 16, 4, true, true, 6.5504e+4f, 6.103515625e-05f, 9.765625e-04f,
+               5.9604644775390625e-08f);
+DACE_LP_LIMITS(bfloat16, 8, 2, 4, -125, -37, 128, 38, true, false, 3.38953139e+38f, 1.17549435e-38f, 7.8125e-03f,
+               9.18354962e-41f);
+DACE_LP_LIMITS(float8_e5m2, 3, 1, 2, -13, -4, 16, 4, true, false, 5.7344e+4f, 6.103515625e-05f, 2.5e-01f,
+               1.52587890625e-05f);
+DACE_LP_LIMITS(float8_e4m3fn, 4, 1, 3, -5, -1, 9, 2, false, false, 4.48e+2f, 1.5625e-02f, 1.25e-01f, 1.953125e-03f);
+}  // namespace std
+#undef DACE_LP_LIMITS
+
+// The finite bounds are the whole point of the specializations; pin their bit patterns so a typo in
+// a literal above cannot pass as a plausible-looking value.
+static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::max()) == 0x7BFF &&
+              std::bit_cast<uint16_t>(std::numeric_limits<dace::half>::denorm_min()) == 0x0001, "half limits");
+static_assert(std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::max()) == 0x7F7F &&
+              std::bit_cast<uint16_t>(std::numeric_limits<dace::bfloat16>::denorm_min()) == 0x0001, "bf16 limits");
+static_assert(std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e5m2>::max()) == 0x7B &&
+              std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e5m2>::denorm_min()) == 0x01, "e5m2 limits");
+static_assert(std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e4m3fn>::max()) == 0x7E &&
+              std::bit_cast<uint8_t>(std::numeric_limits<dace::float8_e4m3fn>::denorm_min()) == 0x01, "e4m3fn limits");
+#endif
 
 #endif  // __DACE_TYPES_H
