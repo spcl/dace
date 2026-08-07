@@ -6,7 +6,7 @@ an index of the form ``arr[idx[f(i)]]`` -- the write slot is data-dependent
 through an index array ``idx`` read at a (possibly strided) function of the loop
 variable. ``LoopToMap`` refuses such loops by default because two iterations may
 write the same slot; the user's contract is that ``idx`` is a permutation (no
-duplicates → no write-write race), and ``LoopToMap``'s ``permissive`` mode lifts
+duplicates -> no write-write race), and ``LoopToMap``'s ``permissive`` mode lifts
 the loop under that assumption.
 
 This pass operationalises that contract end-to-end:
@@ -205,8 +205,40 @@ def detect_scatter_loops_and_idx_arrays(sdfg: SDFG):
     return scatter_loops, idx_arrays
 
 
+def scatter_target_arrays(sdfg: SDFG, idx_name: str) -> Set[str]:
+    """Names of the arrays ``idx_name`` scatters into, across ``sdfg``'s own scatter loops.
+
+    The scatter guard sizes its value-indexed tag array by these arrays' domains (see
+    :func:`~dace.transformation.passes.scatter_conflict_guard.scatter_index_domain`), so the
+    answer must come from the same detector that decides ``idx_name`` needs guarding.
+
+    Top-level only: a nested SDFG names the same array through its own connector, which does not
+    resolve against ``sdfg.arrays``, and the guard itself is emitted at the top level.
+
+    :param sdfg: The SDFG to scan.
+    :param idx_name: The scatter index array.
+    :returns: The set of scattered-into array names (empty if ``idx_name`` drives no scatter).
+    """
+    targets: Set[str] = set()
+    for region in sdfg.all_control_flow_regions():
+        if not (isinstance(region, LoopRegion) and region.loop_variable):
+            continue
+        targets |= _scatter_idx_targets_for_loop(region, sdfg).get(idx_name, set())
+    return targets
+
+
 def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
     """Return the scatter index-array names driving an indirect WRITE in ``region``.
+
+    Names only; see :func:`_scatter_idx_targets_for_loop` for the scan and for which arrays
+    each index writes through.
+    """
+    return set(_scatter_idx_targets_for_loop(region, sdfg))
+
+
+def _scatter_idx_targets_for_loop(region: LoopRegion, sdfg: SDFG) -> dict[str, Set[str]]:
+    """Map each scatter index-array name driving an indirect WRITE in ``region`` to the arrays
+    it writes through.
 
     Recognises the three lowered forms an ``out[idx[f(i)]] = ...`` scatter takes,
     where ``f(i)`` is any expression referencing the loop variable (a bare
@@ -225,11 +257,12 @@ def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
 
     :param region: The candidate loop region.
     :param sdfg: The SDFG owning ``region``'s arrays.
-    :returns: The set of ``idx`` array names (empty if ``region`` is not a scatter).
+    :returns: ``{idx array name: set of arrays scattered into}`` (empty if ``region`` is not a
+              scatter).
     """
     loop_var = region.loop_variable
     bindings = _collect_indirect_bindings(region, sdfg)
-    loop_arrays: Set[str] = set()
+    loop_arrays: dict[str, Set[str]] = {}
     for state in region.all_states():
         for node in state.data_nodes():
             if state.in_degree(node) == 0:
@@ -244,11 +277,13 @@ def _scatter_idx_arrays_for_loop(region: LoopRegion, sdfg: SDFG) -> Set[str]:
                 for sym in e.data.subset.free_symbols:
                     arr = bindings.get(str(sym))
                     if arr is not None:
-                        loop_arrays.add(arr)
+                        loop_arrays.setdefault(arr, set()).add(node.data)
                 # Form 2: index array inline-subscripted inside the write subset.
-                loop_arrays |= _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg)
+                for arr in _inline_indirect_idx_arrays(e.data.subset, loop_var, sdfg):
+                    loop_arrays.setdefault(arr, set()).add(node.data)
         # Form 3: nested-SDFG data-dependent write.
-        loop_arrays |= _nested_dynamic_scatter_idx_arrays(state, sdfg, loop_var)
+        for arr, tgts in _nested_dynamic_scatter_idx_arrays(state, sdfg, loop_var).items():
+            loop_arrays.setdefault(arr, set()).update(tgts)
     return loop_arrays
 
 
@@ -346,7 +381,7 @@ def _inline_indirect_idx_arrays(subset, loop_var: str, sdfg: SDFG) -> Set[str]:
     return arrays
 
 
-def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> Set[str]:
+def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> dict[str, Set[str]]:
     """Integer index-array names driving a nested-SDFG data-dependent write in ``state``.
 
     Matches the shape a ``dace.map`` scatter (``dst[idx[i]] = ...``) lowers to: a
@@ -360,11 +395,11 @@ def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> Set[
     :param state: The loop-body state to scan.
     :param sdfg: The SDFG owning ``state``'s arrays.
     :param loop_var: The loop variable the index read must reference.
-    :returns: The set of integer index-array names found (empty if none).
+    :returns: ``{index array name: set of arrays scattered into}`` (empty if none).
     """
     from dace.libraries.sort.nodes._helpers import is_integer_dtype
 
-    arrays: Set[str] = set()
+    arrays: dict[str, Set[str]] = {}
     for node in state.data_nodes():
         desc = sdfg.arrays.get(node.data)
         if desc is None or desc.transient:
@@ -387,7 +422,7 @@ def _nested_dynamic_scatter_idx_arrays(state, sdfg: SDFG, loop_var: str) -> Set[
                 if ie.data is None or ie.data.subset is None:
                     continue
                 if loop_var in {str(sym) for sym in ie.data.subset.free_symbols}:
-                    arrays.add(ie.src.data)
+                    arrays.setdefault(ie.src.data, set()).add(node.data)
     return arrays
 
 
@@ -480,4 +515,6 @@ def _wrap_loop_in_dispatcher(parent, loop: LoopRegion, condition_expr: str, loop
         pass
 
 
-__all__ = ['ScatterToGuardedMaps', 'detect_scatter_idx_arrays', 'detect_scatter_loops_and_idx_arrays']
+__all__ = [
+    'ScatterToGuardedMaps', 'detect_scatter_idx_arrays', 'detect_scatter_loops_and_idx_arrays', 'scatter_target_arrays'
+]

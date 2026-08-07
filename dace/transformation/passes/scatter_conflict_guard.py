@@ -2,17 +2,20 @@
 """Runtime guard: abort if a scatter index array has duplicates.
 
 Permissive ``LoopToMap`` lifts an indirect write ``out[idx[i]] = ...`` into a parallel
-scatter Map *assuming* ``idx`` is a permutation (duplicates → write-write races). This
-pass checks that contract at runtime with an opaque ``ScatterConflictCheck`` libnode
-(sort a copy + count adjacent-equal → host ``int64`` count); an interstate edge binds the
-count to a symbol, and a trap tasklet ``std::abort()``s if it is positive.
+scatter Map *assuming* ``idx`` is a permutation (duplicates -> write-write races). This
+pass checks that contract at runtime with an opaque ``ScatterConflictCheck`` libnode (tag each
+written slot with its writer, then verify the tags -> host ``int64`` count); an interstate edge
+binds the count to a symbol, and a trap tasklet ``std::abort()``s if it is positive.
 
-- Opaque libnode → the tile vectorizer never looks inside it, so the guard leaves the
+- Opaque libnode -> the tile vectorizer never looks inside it, so the guard leaves the
   scatter Map it guards fully vectorizable. Only Maps are tiled; the guard is a libnode +
   a top-level trap tasklet, neither a Map.
-- Host scalar out on every backend (CPU + CUDA) → the symbol bind + trap run on the host
+- Host scalar out on every backend (CPU + CUDA) -> the symbol bind + trap run on the host
   wherever ``idx`` lives.
 - Emitted at the earliest CFG point where ``idx`` is fully defined.
+- The check's tag array is a real transient sized by the scattered array's domain (see
+  :func:`scatter_index_domain`), persistent so DaCe allocates it in ``__dace_init`` rather
+  than on every call inside the program body.
 - Abort-only; the sequential-scatter fallback is the caller's, outside the SDFG.
 """
 from typing import Iterable, Optional, Set
@@ -31,19 +34,21 @@ from dace.transformation.passes.analysis import loop_analysis
 #: Prefix for the collision-count scalar the guard allocates (one per guarded idx).
 _COUNT_PREFIX = '_scatter_guard_count_'
 
+#: Prefix for the tag array the conflict check indexes by idx VALUE (one per guarded idx).
+_OWNER_PREFIX = '_scatter_guard_owner_'
+
 
 @properties.make_properties
 @xf.explicit_cf_compatible
 class GuardScatterConflicts(ppl.Pass):
-    """Insert a sort-based runtime guard for each named scatter index array.
+    """Insert a tag-and-verify runtime guard for each named scatter index array.
 
     :param idx_names: Names of integer arrays whose values must be a permutation
-        (no duplicates) at runtime. The pass emits, for each name, a sort of the
-        array plus an adjacent-equal-pair scan that calls ``std::abort()`` on
-        violation. Emission point is the earliest CFG state where the array is
-        fully defined: the SDFG's entry if the array has no internal writes; the
-        topologically-latest state with an in-degree-positive AccessNode of the
-        array otherwise.
+        (no duplicates) at runtime. The pass emits, for each name, a tag-and-verify
+        duplicate scan that calls ``std::abort()`` on violation. Emission point is the
+        earliest CFG state where the array is fully defined: the SDFG's entry if the
+        array has no internal writes; the topologically-latest state with an
+        in-degree-positive AccessNode of the array otherwise.
     """
 
     CATEGORY: str = 'Optimization Preparation'
@@ -197,7 +202,7 @@ def insert_scatter_guard(sdfg: SDFG,
                          idx_name: str,
                          emit_trap: bool = True,
                          elide_if_injective: bool = True) -> Optional[str]:
-    """Emit a sort+compare+abort guard for ``idx_name`` at the earliest legal CFG point.
+    """Emit a tag+verify+abort guard for ``idx_name`` at the earliest legal CFG point.
 
     :param sdfg: The SDFG to mutate in place.
     :param idx_name: The integer array whose runtime values must be all distinct.
@@ -211,7 +216,7 @@ def insert_scatter_guard(sdfg: SDFG,
         compile-time injectivity analysis (:func:`scatter_index_is_provably_injective`).
         If it proves ``idx_name``'s runtime values are all distinct, no guard is emitted
         at all (a plain scatter with no runtime check): the runtime ``ScatterConflictCheck``
-        would inevitably find a zero duplicate-count, so the three O(n) passes it runs are
+        would inevitably find a zero duplicate-count, so the O(n) passes it runs are
         pure overhead. Pass ``False`` to force a guard regardless (e.g. structural tests).
     :returns: ``None`` when ``emit_trap=True`` OR when the guard was elided as provably
               conflict-free; the duplicate-count symbol name
@@ -269,9 +274,10 @@ def _build_guard_states(sdfg: SDFG,
     """Build (but do not splice) the guard states: check, [trap].
 
     ``check`` runs the opaque ``ScatterConflictCheck`` libnode over ``idx_name`` into the
-    ``int64`` host collision count. ``trap`` (emitted iff ``emit_trap``) reads the count via
-    the ``trap_sym`` interstate binding and ``std::abort()``s if positive; a count (not a
-    boolean) gives a free duplicate-pair diagnostic on abort.
+    ``int64`` host collision count, with a domain-sized tag array wired in when derivable.
+    ``trap`` (emitted iff ``emit_trap``) reads the count via the ``trap_sym`` interstate
+    binding and ``std::abort()``s if positive; a count (not a boolean) gives a free
+    duplicate-pair diagnostic on abort.
 
     :returns: ``(check_state, trap_state, count_name, trap_sym)``.
     """
@@ -282,7 +288,7 @@ def _build_guard_states(sdfg: SDFG,
     trap_sym = f"__scatter_guard_check_{count_name}"
     sdfg.add_symbol(trap_sym, dtypes.int64)
 
-    # check: opaque ScatterConflictCheck libnode (sort a copy + count adjacent-equal) -> host
+    # check: opaque ScatterConflictCheck libnode (tag each written slot, verify the tags) -> host
     # count. A library node, so the tile vectorizer never looks through it -> the guard leaves
     # the scatter Map fully vectorizable.
     check_state = sdfg.add_state(f"_scatter_guard_check_{idx_name}")
@@ -294,6 +300,7 @@ def _build_guard_states(sdfg: SDFG,
                          mm.Memlet(data=idx_name, subset=subsets.Range([(0, n_expr - 1, 1)])))
     check_state.add_edge(check_node, ScatterConflictCheck.OUTPUT_CONNECTOR_NAME, count_write, None,
                          mm.Memlet(data=count_name, subset='0'))
+    _wire_owner_scratch(sdfg, idx_name, check_state, check_node)
 
     # trap: top-level tasklet reading only ``trap_sym`` (bound to the count on the incoming
     # edge), so no connectors. ``side_effects`` keeps DeadDataflowElimination from pruning it --
@@ -309,6 +316,75 @@ def _build_guard_states(sdfg: SDFG,
     return check_state, trap_state, count_name, trap_sym
 
 
+def scatter_index_domain(sdfg: SDFG, idx_name: str) -> Optional[symbolic.SymbolicType]:
+    """Exclusive upper bound on ``idx_name``'s runtime values, or ``None`` when unknown.
+
+    A scatter ``a[idx[i]] = ...`` only stays in bounds while every ``idx`` value is below ``a``'s
+    extent, so the scattered array's (possibly symbolic) domain bounds ``idx`` -- no runtime
+    ``max(idx)`` sweep needed to size the conflict check's value-indexed tag array. The scatter
+    targets come from the same detector that decides an index array needs guarding at all, so the
+    set is exactly the arrays this ``idx`` writes through.
+
+    Returns ``None`` -- "size it at runtime" -- when no target is found (e.g. the loop was already
+    lifted, or the scatter lives in a nested SDFG) or when a target is not a 1-D Array, since only
+    a 1-D target pins the bound to a single extent.
+
+    :param sdfg: The SDFG owning ``idx_name``.
+    :param idx_name: The scatter index array.
+    :returns: The symbolic domain bound, or ``None``.
+    """
+    # Local import: ``scatter_to_guarded_maps`` imports this module at load time, so importing it
+    # back at module level would cycle.
+    from dace.transformation.passes.scatter_to_guarded_maps import scatter_target_arrays
+
+    sizes = set()
+    for target in scatter_target_arrays(sdfg, idx_name):
+        desc = sdfg.arrays.get(target)
+        if not isinstance(desc, data.Array) or len(desc.shape) != 1:
+            return None
+        sizes.add(str(desc.shape[0]))
+    if not sizes:
+        return None
+    if len(sizes) == 1:
+        return symbolic.pystr_to_symbolic(next(iter(sizes)))
+    # Several targets: the tag array must span the widest of them.
+    return symbolic.pystr_to_symbolic('Max(' + ', '.join(sorted(sizes)) + ')')
+
+
+def _wire_owner_scratch(sdfg: SDFG, idx_name: str, check_state: SDFGState, check_node: nodes.LibraryNode) -> None:
+    """Give the conflict check a DaCe-owned tag array sized by the scatter target's domain.
+
+    Without it the libnode sweeps ``idx`` for its maximum and ``new``s a buffer from that on every
+    call -- an allocation DaCe cannot see, inside the timed body. As a transient it is allocated
+    once in ``__dace_init`` (``Persistent``), which is legal exactly when the size's symbols are
+    SDFG parameters, the same eligibility rule
+    :func:`~dace.transformation.auto.auto_optimize.make_transients_persistent` uses; the size is
+    then fixed at init, so as with every persistent transient the caller must not grow those
+    symbols between calls to one compiled SDFG. Sizes that fail the rule fall back to ``SDFG``
+    lifetime (allocated at program entry instead of at init).
+
+    Storage is pinned to host memory: the check runs in host code on every backend.
+    A no-op when the domain is not derivable -- the libnode then keeps its runtime-sized buffer.
+    """
+    # Inline import: the ``sort`` library eagerly pulls in its environments; keep it off the
+    # module-load path (mirrors ``_build_guard_states`` above).
+    from dace.libraries.sort.nodes.scatter_conflict_check import ScatterConflictCheck
+
+    domain = scatter_index_domain(sdfg, idx_name)
+    if domain is None:
+        return
+    lifetime = (dtypes.AllocationLifetime.Persistent
+                if set(symbolic.symlist(domain)) <= set(sdfg.free_symbols) else dtypes.AllocationLifetime.SDFG)
+    owner_name, _ = sdfg.add_array(f"{_OWNER_PREFIX}{idx_name}", [domain],
+                                   dtypes.int64,
+                                   transient=True,
+                                   storage=dtypes.StorageType.CPU_Heap,
+                                   lifetime=lifetime)
+    check_node.add_out_connector(ScatterConflictCheck.SCRATCH_CONNECTOR_NAME)
+    check_state.add_edge(check_node, ScatterConflictCheck.SCRATCH_CONNECTOR_NAME, check_state.add_write(owner_name),
+                         None, mm.Memlet(data=owner_name, subset=subsets.Range([(0, domain - 1, 1)])))
+
+
 def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, check_state: SDFGState, trap_state: Optional[SDFGState],
                            count_name: str, trap_sym: str, def_states: Set[SDFGState], original_start) -> None:
     """Splice ``check -> [trap] -> downstream`` in at the earliest legal CFG point.
@@ -317,8 +393,8 @@ def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, check_state: SDFGState, tr
     trap`` when a trap is emitted, else onto the edge out of ``check`` (the caller then
     dispatches on the symbol, e.g. a parallel-vs-sequential ``ConditionalBlock``).
 
-    - ``def_states`` empty (``idx_name`` has no internal writes) → the chain becomes the start.
-    - Otherwise → inserted right after the topologically-latest top-level definer state.
+    - ``def_states`` empty (``idx_name`` has no internal writes) -> the chain becomes the start.
+    - Otherwise -> inserted right after the topologically-latest top-level definer state.
     """
     if trap_state is not None:
         sdfg.add_edge(check_state, trap_state, dace.InterstateEdge(assignments={trap_sym: count_name}))
@@ -349,4 +425,6 @@ def _splice_guard_into_cfg(sdfg: SDFG, idx_name: str, check_state: SDFGState, tr
 # the Pass class. Callers that already know which idx arrays need guarding
 # typically use ``insert_scatter_guard`` directly; callers driving a batch via
 # the Pass pipeline use ``GuardScatterConflicts``.
-__all__ = ['GuardScatterConflicts', 'insert_scatter_guard', 'scatter_index_is_provably_injective']
+__all__ = [
+    'GuardScatterConflicts', 'insert_scatter_guard', 'scatter_index_domain', 'scatter_index_is_provably_injective'
+]
