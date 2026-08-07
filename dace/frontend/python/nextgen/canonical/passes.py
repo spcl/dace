@@ -29,7 +29,7 @@ Pass order matters and is fixed by :func:`default_passes`:
 import ast
 import builtins
 import operator
-from typing import List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from dace.frontend.python import astutils, iterators
 from dace.frontend.python.nextgen.canonical import cpa
