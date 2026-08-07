@@ -141,6 +141,11 @@ test_cases: Dict[str, Tuple[DaceProgram, int, int, Dict[str, int], dc.symbolic.S
 }
 
 
+# The tiled_mmm cases take minutes of pure sympy on a slow runner with coverage enabled. CI's
+# default --timeout=300 with --timeout_method=thread cannot cancel a test: on expiry it KILLS the
+# whole xdist worker, which surfaces as a spurious "worker crashed / node down" failure attributed
+# to whatever the worker was running. Give the analysis the time it legitimately needs.
+@pytest.mark.timeout(900)
 @pytest.mark.parametrize('test_name', list(test_cases.keys()))
 def test_operational_intensity(test_name: str):
     test, c, l, assumptions, correct = test_cases[test_name]

@@ -29,7 +29,7 @@ def private_cache(tmp_path, monkeypatch):
     per-test build would change the recording key and defeat the replay under test. Covered below.
 
     Under the nanobind interface the fixture also warms the helper-archive cache: the first build
-    into a cold cache publishes ``libnanobind-static.a``, which ADDS a flag to every later build's
+    into a cold cache publishes nanobind's helper archive, which ADDS a flag to every later build's
     cmake command -- and with it a second recording key, so the cache only converges on the second
     build of a shape. Warming keeps the keys stable, preserving the "second build replays" semantics
     these tests assert. The warmup's own recordings are dropped so the first measured build still
