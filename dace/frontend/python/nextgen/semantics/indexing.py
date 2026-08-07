@@ -105,20 +105,42 @@ class IndexPlan:
         return kept
 
     @property
+    def advanced_group(self) -> List[int]:
+        """
+        The slot positions NumPy treats as one advanced-indexing group.
+
+        An integer index JOINS the group whenever any array index is present:
+        NumPy broadcasts a scalar against the index arrays, so it is an
+        advanced index too. That is what makes ``A[:5, ind, jnd, ..., 1:3, 4]``
+        a *separated* group -- the trailing ``4`` belongs to it, and slices
+        stand between it and the arrays -- which moves the chunk to the front.
+
+        With no array index there is no group at all; ``A[0, 1]`` is ordinary
+        basic indexing and its axes simply drop.
+        """
+        arrays = [position for position, slot in enumerate(self.slots) if slot.kind is AxisKind.ADVANCED]
+        if not arrays:
+            return []
+        integers = [position for position, slot in enumerate(self.slots) if slot.kind is AxisKind.DROP]
+        return sorted(arrays + integers)
+
+    @property
     def separated(self) -> bool:
         """
-        Whether the advanced indices are split apart, which moves the chunk to
-        the front of the result.
+        Whether the advanced-indexing group is split apart, which moves the
+        chunk to the front of the result.
 
         Only a slice, an ``Ellipsis`` (which expands to slices) or a
         ``newaxis`` separates. An integer index between two index arrays does
-        not: NumPy treats it as part of the same advanced group.
+        not, being a member of the group rather than a break in it, so
+        ``A[:, ind, 0, jnd]`` is ``(8, 3)`` where ``A[:, ind, :, jnd]`` is
+        ``(3, 8, 4)``.
         """
-        advanced = [position for position, slot in enumerate(self.slots) if slot.kind is AxisKind.ADVANCED]
-        if len(advanced) < 2:
+        group = self.advanced_group
+        if len(group) < 2:
             return False
         return any(self.slots[position].kind in (AxisKind.KEEP, AxisKind.NEWAXIS)
-                   for position in range(advanced[0], advanced[-1]))
+                   for position in range(group[0], group[-1]))
 
     def result_layout(self) -> List[ResultAxis]:
         """
@@ -129,20 +151,19 @@ class IndexPlan:
         subset, and map-range placement are all this list with a different
         value substituted per entry.
         """
-        advanced = [position for position, slot in enumerate(self.slots) if slot.kind is AxisKind.ADVANCED]
+        group = self.advanced_group
         separated = self.separated
-        first_advanced = advanced[0] if advanced else None
 
         entries: List[ResultAxis] = []
         for position, slot in enumerate(self.slots):
-            if slot.kind is AxisKind.ADVANCED:
-                # The chunk is emitted once, at the first advanced slot, and
-                # only when the group is contiguous; otherwise it is prepended
-                # below.
-                if not separated and position == first_advanced:
-                    entries.append(ResultAxis(CHUNK))
-                continue
-            if slot.kind is AxisKind.DROP:
+            # The chunk is emitted once, in place at the head of the group, and
+            # only when the group is unbroken; otherwise it is prepended below.
+            # The head may be an integer slot, since integers are members of
+            # the group -- so this is checked before the slot kind, not inside
+            # the ADVANCED branch.
+            if group and not separated and position == group[0]:
+                entries.append(ResultAxis(CHUNK))
+            if slot.kind in (AxisKind.ADVANCED, AxisKind.DROP):
                 continue
             if slot.kind is AxisKind.NEWAXIS:
                 entries.append(ResultAxis(NEWAXIS))

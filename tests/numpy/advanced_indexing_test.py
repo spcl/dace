@@ -7,6 +7,8 @@ import dace
 import numpy as np
 import pytest
 
+from dace.frontend.python.nextgen.common import FrontendError
+
 N = dace.symbol('N')
 M = dace.symbol('M')
 
@@ -194,20 +196,31 @@ def test_index_intarr_nd():
 
 
 def test_index_boolarr_rhs():
+    """
+    A boolean mask on the right-hand side selects however many elements happen
+    to satisfy it, so the result's size is only known while the program runs.
 
-    @dace.program
-    def indexing_test(A: dace.float64[20, 30]):
-        return A[A > 15]
+    That is usable *inside* a program -- reducing it needs no allocation the
+    caller must make -- but it cannot be returned: a compiled program's caller
+    allocates the return value before the call.
+    """
 
     A = np.ndarray((20, 30), dtype=np.float64)
     for i in range(20):
         A[i, :] = np.arange(0, 30)
-    regression = A[A > 15]
 
-    # Right-hand side boolean array indexing is unsupported
-    with pytest.raises(IndexError):
-        res = indexing_test(A)
-        assert np.allclose(regression, res)
+    @dace.program
+    def reduce_masked(A: dace.float64[20, 30]):
+        return np.sum(A[A > 15])
+
+    assert np.allclose(reduce_masked(A), np.sum(A[A > 15]))
+
+    @dace.program
+    def return_masked(A: dace.float64[20, 30]):
+        return A[A > 15]
+
+    with pytest.raises(FrontendError, match='data-dependent-shaped return values'):
+        return_masked.to_sdfg()
 
 
 def test_index_multiboolarr():
@@ -439,7 +452,6 @@ def test_multidim_tuple_multidim_index():
         indexing_test.to_sdfg()
 
 
-@pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_multidim_tuple_multidim_index_write():
     with pytest.raises(IndexError, match='could not be broadcast together'):
 
@@ -489,7 +501,6 @@ def test_combining_basic_and_advanced_indexing():
     assert np.allclose(res, ref)
 
 
-@pytest.mark.skip("Combined basic and advanced indexing with writes is not supported")
 def test_combining_basic_and_advanced_indexing_write():
 
     @dace.program
@@ -500,13 +511,13 @@ def test_combining_basic_and_advanced_indexing_write():
     A = np.random.rand(n, n, n, n, n, n, n)
     indices = np.random.randint(0, n, size=(3, 3)).astype(np.int32)
     indices2 = np.random.randint(0, n, size=(3, 3, 3)).astype(np.int32)
+
     ref = np.copy(A)
-    A[:5, indices, indices2, ..., 1:3, 4] = 2
+    ref[:5, indices, indices2, ..., 1:3, 4] = 2
 
-    # Advanced indexing dimensions should be prepended to the shape
-    res = indexing_test(A, indices, indices2)
+    indexing_test(A, indices, indices2)
 
-    assert np.allclose(res, ref)
+    assert np.allclose(A, ref)
 
 
 def test_combining_basic_and_advanced_indexing_with_newaxes():
@@ -583,9 +594,9 @@ if __name__ == '__main__':
     test_multidim_tuple_index(True)
     test_multidim_tuple_index_longer()
     test_multidim_tuple_multidim_index()
-    # test_multidim_tuple_multidim_index_write()
+    test_multidim_tuple_multidim_index_write()
     test_advanced_index_broadcasting()
     test_combining_basic_and_advanced_indexing()
-    # test_combining_basic_and_advanced_indexing_write()
+    test_combining_basic_and_advanced_indexing_write()
     test_combining_basic_and_advanced_indexing_with_newaxes()
     test_combining_basic_and_advanced_indexing_with_newaxes_2()
