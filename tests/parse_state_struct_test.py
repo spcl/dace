@@ -82,15 +82,19 @@ def test_preallocate_transients_in_state_struct(cuda_helper):
     A = np.random.randn(3, 3).astype(np.float32)
     B = np.random.randn(3, 5).astype(np.float32)
     compiledsdfg = sdfg.compile()
-    compiledsdfg._initialize(tuple())
+    # The public initialize() works on both interfaces; the ctypes-internal
+    # _initialize(tuple()) does not exist on the nanobind interface.
+    compiledsdfg.initialize(A=A)
 
     state_struct = compiledsdfg.get_state_struct()
 
     # copy the B array into the transient ptr
     ptr = getattr(state_struct, f'__{sdfg.cfg_id}_persistent_transient')
     cuda_helper.host_to_gpu(ptr, B.copy())
-    result = np.zeros_like(B)
-    compiledsdfg(A=A, __return=result)
+    # Take the returned array instead of passing a __return buffer: explicit
+    # return buffers are refused on the nanobind interface unless the module
+    # was compiled with compiler.nanobind_allow_return_override.
+    result = compiledsdfg(A=A)
 
     assert np.allclose(result, A @ B)
 
