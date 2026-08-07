@@ -24,7 +24,6 @@ def test_inline_lambda_tasklet():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_inline_lambda_scalar():
 
     @dace.program
@@ -40,7 +39,6 @@ def test_inline_lambda_scalar():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_inline_lambda_array():
 
     @dace.program
@@ -55,7 +53,6 @@ def test_inline_lambda_array():
     assert np.allclose(A, B + C)
 
 
-@pytest.mark.skip('Syntax is not yet supported')
 def test_lambda_global():
     f = lambda a, b: a + b
 
@@ -106,8 +103,8 @@ def test_lambda_nested_call():
 
 if __name__ == '__main__':
     test_inline_lambda_tasklet()
-    # test_inline_lambda_scalar()
-    # test_inline_lambda_array()
-    # test_lambda_global()
+    test_inline_lambda_scalar()
+    test_inline_lambda_array()
+    test_lambda_global()
     # test_lambda_call_jit()
     # test_lambda_nested_call()

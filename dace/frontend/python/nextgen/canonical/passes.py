@@ -376,6 +376,119 @@ def _tasklet_arguments(node: ast.expr) -> dict:
     return arguments
 
 
+class InlineLambdas(_BodyTransformer):
+    """
+    Replace calls to a locally bound lambda with its body.
+
+    ``f = lambda a, b: a + b`` followed by ``f(B, C)`` is beta-reduced to
+    ``B + C``, and the binding itself dropped. A lambda is not canonical, so
+    without this both the binding and every call through it become interpreter
+    callbacks -- which is merely slow at statement level, but outright
+    unsupported inside a dataflow scope, where ``A[i] = f(B[i], C[i])`` has
+    nowhere to put a callback.
+
+    Deliberately conservative. Only a name assigned a lambda EXACTLY ONCE in
+    the function is inlined (a conditional rebinding has no single body to
+    substitute), only plain positional parameters are handled (no defaults,
+    ``*args`` or keywords), and the binding is removed only once nothing refers
+    to the name any more -- a lambda passed on as a value still needs it.
+    """
+    name = 'inline-lambdas'
+
+    def apply(self, tree: ast.FunctionDef, context) -> ast.FunctionDef:
+        self.context = context
+        definitions = self._collect(tree)
+        if not definitions:
+            return tree
+        _LambdaSubstituter(definitions).visit(tree)
+        _drop_unused_bindings(tree, definitions)
+        return tree
+
+    def _collect(self, tree: ast.FunctionDef) -> Dict[str, ast.Lambda]:
+        """Names bound exactly once, to an inlinable lambda."""
+        assignment_counts: Dict[str, int] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign, ast.NamedExpr)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    for name in ast.walk(target):
+                        if isinstance(name, ast.Name):
+                            assignment_counts[name.id] = assignment_counts.get(name.id, 0) + 1
+            elif isinstance(node, (ast.For, ast.comprehension)):
+                for name in ast.walk(node.target):
+                    if isinstance(name, ast.Name):
+                        assignment_counts[name.id] = assignment_counts.get(name.id, 0) + 1
+
+        definitions: Dict[str, ast.Lambda] = {}
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name)
+                    and isinstance(node.value, ast.Lambda)):
+                continue
+            name = node.targets[0].id
+            if assignment_counts.get(name) == 1 and _is_inlinable_lambda(node.value):
+                definitions[name] = node.value
+        return definitions
+
+
+def _is_inlinable_lambda(node: ast.Lambda) -> bool:
+    """Whether a lambda takes only plain positional parameters."""
+    arguments = node.args
+    return not (arguments.posonlyargs or arguments.vararg or arguments.kwonlyargs or arguments.kwarg
+                or arguments.defaults or arguments.kw_defaults)
+
+
+def _drop_unused_bindings(tree: ast.FunctionDef, definitions: Dict[str, ast.Lambda]) -> None:
+    """Remove ``name = lambda ...`` statements whose name nothing reads now."""
+    still_read = {node.id for node in ast.walk(tree) if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)}
+    removable = {name for name in definitions if name not in still_read}
+    if not removable:
+        return
+
+    class _Remover(ast.NodeTransformer):
+
+        def visit_Assign(self, node: ast.Assign):
+            if (len(node.targets) == 1 and isinstance(node.targets[0], ast.Name) and node.targets[0].id in removable
+                    and isinstance(node.value, ast.Lambda)):
+                return None
+            return node
+
+    _Remover().visit(tree)
+
+
+class _LambdaSubstituter(ast.NodeTransformer):
+    """Beta-reduce calls to the collected lambdas, innermost first."""
+
+    def __init__(self, definitions: Dict[str, ast.Lambda]) -> None:
+        self.definitions = definitions
+
+    def visit_Call(self, node: ast.Call) -> ast.expr:
+        self.generic_visit(node)
+        if not isinstance(node.func, ast.Name) or node.func.id not in self.definitions:
+            return node
+        if node.keywords or any(isinstance(argument, ast.Starred) for argument in node.args):
+            return node
+        definition = self.definitions[node.func.id]
+        parameters = [argument.arg for argument in definition.args.args]
+        if len(parameters) != len(node.args):
+            return node
+        bindings = dict(zip(parameters, node.args))
+        substituted = _substitute_parameters(astutils.copy_tree(definition.body), bindings)
+        return ast.copy_location(substituted, node)
+
+
+def _substitute_parameters(body: ast.expr, bindings: Dict[str, ast.expr]) -> ast.expr:
+    """Replace a lambda's parameter reads with the call's argument expressions."""
+
+    class _Substituter(ast.NodeTransformer):
+
+        def visit_Name(self, node: ast.Name) -> ast.expr:
+            if isinstance(node.ctx, ast.Load) and node.id in bindings:
+                return ast.copy_location(astutils.copy_tree(bindings[node.id]), node)
+            return node
+
+    return ast.fix_missing_locations(_Substituter().visit(body))
+
+
 class DesugarStatements(_BodyTransformer):
     """
     Desugar statement forms that have direct canonical equivalents:
@@ -1094,6 +1207,7 @@ def default_passes() -> List[_BodyTransformer]:
     return [
         RecognizeExplicitDataflow(),
         DetectAccumulations(),
+        InlineLambdas(),
         DesugarStatements(),
         NormalizeLoops(),
         ANFTransform(),

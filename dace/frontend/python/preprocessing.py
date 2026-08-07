@@ -1037,8 +1037,13 @@ class GlobalResolver(astutils.ExtNodeTransformer, astutils.ASTHelperMixin):
                     for v in node.value.elts[gslice]:
                         visited_cst = self._visit_potential_constant(v, True)
                         visited_list.elts.append(visited_cst)
-                    node.value = visited_list
-                    return node
+                    # The sliced list IS the result: returning the subscript
+                    # with its slice still attached leaves the slice to be
+                    # applied again on re-visit. A non-negative bound hides
+                    # that, being idempotent (``[1,2,0][0:3]`` is itself), but
+                    # one counted from the end shrinks every time --
+                    # ``[1,2,0,100][0:-1]`` walking down to ``[]``.
+                    return visited_list
                 else:
                     return self._visit_potential_constant(node.value.elts[gslice], True)
             else:  # Catch-all
