@@ -161,6 +161,14 @@ _WARMUP = int(os.environ.get('CANON_PERF_WARMUP', '2'))
 #: gets the full ``_REPS`` while a 20s stencil gets ``_MIN_REPS`` instead of turning one kernel into
 #: two hours. The floor keeps a median meaningful; raise the budget to trade wall clock for tighter
 #: medians on the expensive tail.
+#: Upper bound on a SINGLE call at the paper shape. A paper-size kernel is meant to be a realistic
+#: unit of work, not a batch job: one call past this is a sizing bug in the corpus, not a slow
+#: machine, and the corpus should be re-shaped rather than the sweep left to absorb it. Enforced
+#: from the probe call ``_time_all_reps`` already makes, so it costs nothing extra and the kernel is
+#: still REPORTED (with reps=1 and an ``over_budget`` flag) rather than dropped -- a silent hole in
+#: the table would hide the very thing this is meant to surface. Set CANON_PERF_MAX_CALL_MS=180000
+#: for a 3-minute budget instead.
+_MAX_CALL_MS = float(os.environ.get('CANON_PERF_MAX_CALL_MS', '60000'))
 _MIN_REPS = int(os.environ.get('CANON_PERF_MIN_REPS', '5'))
 _BUDGET_MS = float(os.environ.get('CANON_PERF_BUDGET_MS', '20000'))
 _PER_KERNEL_TIMEOUT = int(os.environ.get('CANON_PERF_TIMEOUT', '600'))
@@ -769,6 +777,14 @@ def _time_all_reps(ctx, sdfg):
     t0 = time.perf_counter()
     cs(**kw)
     est_ms = (time.perf_counter() - t0) * 1000.0
+    if est_ms > _MAX_CALL_MS:
+        # One call already blew the budget, so there is nothing to learn from four more of them.
+        # Report the single sample and say so: the fix belongs in the kernel's paper shape.
+        print(
+            f'      OVER BUDGET: one call took {est_ms / 1000:.1f}s > {_MAX_CALL_MS / 1000:.0f}s '
+            f'-- reporting reps=1; this kernel\'s paper size needs lowering',
+            flush=True)
+        return np.asarray([est_ms], dtype=float), True
     reps = _reps_for(est_ms)
     # Warmup is FULL calls, so on the expensive tail it is priced like reps: two of them on a 20s
     # stencil cost 40s, as much as the entire rep floor. The call above has already warmed the
@@ -778,7 +794,8 @@ def _time_all_reps(ctx, sdfg):
     with dace.profile(repetitions=reps, warmup=warmup, print_results=False) as prof:
         cs(**kw)
     _report, times = prof.times[-1]
-    return np.asarray(times, dtype=float)  # dace.profile reports per-call wall time in ms
+    # dace.profile reports per-call wall time in ms
+    return np.asarray(times, dtype=float), False
 
 
 #: What each corpus's timed reference ACTUALLY is. They are NOT interchangeable denominators:
@@ -926,8 +943,13 @@ def run_arm(ctx, label: str, deadline: float) -> dict:
             sdfg = CS.build(ctx, _PIPELINES[label], arm_tag(label))
             entry['correct'] = bool(CS.run_matches(ctx, sdfg))
             if entry['correct']:
-                times = _time_all_reps(ctx, sdfg)
+                times, over_budget = _time_all_reps(ctx, sdfg)
                 entry.update(_aggregate(times))
+                if over_budget:
+                    # Travels with the number so a reader never takes a one-sample timing for a
+                    # best-of-N, and so the offending kernel is findable in the result files.
+                    entry['over_budget'] = True
+                    entry['budget_ms'] = _MAX_CALL_MS
                 # Per-entry, because the count is adaptive: the record-level ``reps`` is a ceiling.
                 entry['reps'] = int(times.size)
                 entry['times_ms'] = [round(float(x), 6) for x in times]
