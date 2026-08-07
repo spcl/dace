@@ -146,7 +146,7 @@ def test_split_statements_refuses_the_in_place_body():
     for node, state in aliased:
         assert SplitStatements._independent_output_groups(state, node) is None
     before = sdfg.hash_sdfg()
-    SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {})
+    SplitStatements().apply_pass(sdfg, {})
     assert sdfg.hash_sdfg() == before
 
 

@@ -495,7 +495,125 @@ def test_break_anti_dependence_pure_positive_subs_doesnt_break_indirected():
     assert _nmaps(sdfg) >= 1 and _nloops(sdfg) == 0
 
 
+# ===========================================================================
+# forward_reads: break ONE read-ahead edge of an array whose other reads are true
+# dependences. The loop stays sequential; what it buys is that the read-ahead no
+# longer binds two otherwise-independent statements, so fission can distribute them.
+# ===========================================================================
+K = dace.symbol('K')
+
+
+@dace.program
+def _mixed_carry_and_read_ahead(a: dace.float64[N], d: dace.float64[N], x: dace.float64[N]):
+    """``a`` carries a recurrence AND is read ahead by a second, independent statement."""
+    for i in range(1, N - 1):
+        a[i] = a[i - 1] + x[i]
+        d[i] = a[i + 1]
+
+
+def _snaps(sdfg):
+    return sorted(nm for nm in sdfg.arrays if '_split_snap' in nm)
+
+
+def test_forward_reads_breaks_what_the_whole_array_policy_refuses():
+    """``a[i]=a[i-1]+x[i]; d[i]=a[i+1]``: one read of ``a`` is a true recurrence, the other is a
+    read-ahead. The whole-array policy disqualifies the array on the first RAW pair, because its
+    goal is a loop that maps. ``forward_reads`` breaks the read-ahead edge alone."""
+    whole = _mixed_carry_and_read_ahead.to_sdfg(simplify=True)
+    assert BreakAntiDependence().apply_pass(whole, {}) is None
+    assert not _snaps(whole)
+
+    sdfg = _mixed_carry_and_read_ahead.to_sdfg(simplify=True)
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
+    assert len(_snaps(sdfg)) == 1
+    sdfg.validate()
+
+
+def test_forward_reads_preserves_values():
+    n = 12
+    rng = np.random.default_rng(11)
+    a0, x = rng.random(n), rng.random(n)
+
+    ref_a, ref_d = a0.copy(), np.zeros(n)
+    _mixed_carry_and_read_ahead.to_sdfg(simplify=True)(a=ref_a, d=ref_d, x=x.copy(), N=n)
+
+    sdfg = _mixed_carry_and_read_ahead.to_sdfg(simplify=True)
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
+    got_a, got_d = a0.copy(), np.zeros(n)
+    sdfg(a=got_a, d=got_d, x=x.copy(), N=n)
+    assert np.array_equal(got_a, ref_a)
+    assert np.array_equal(got_d, ref_d)
+
+
+def test_forward_reads_is_idempotent():
+    """Once the read-ahead edge sits on the snapshot there is no read-ahead of the live array
+    left, so a second application finds nothing and adds no second copy."""
+    sdfg = _mixed_carry_and_read_ahead.to_sdfg(simplify=True)
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
+    before = sdfg.hash_sdfg()
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
+    assert sdfg.hash_sdfg() == before
+    sdfg.validate()
+
+
+def test_forward_reads_leaves_a_same_index_read_on_the_live_array():
+    """``a[i]=x[i]; d[i]=a[i]+a[i+1]`` -- only ``a[i+1]`` moves.
+
+    ``a[i]`` is the value the SIBLING statement just wrote this iteration; redirecting it to the
+    pre-loop snapshot would read the stale original.
+    """
+
+    @dace.program
+    def s1244(a: dace.float64[N], d: dace.float64[N], x: dace.float64[N]):
+        for i in range(N - 1):
+            a[i] = x[i] * 2.0
+            d[i] = a[i] + a[i + 1]
+
+    n = 12
+    rng = np.random.default_rng(12)
+    x = rng.random(n)
+    ref_a, ref_d = np.zeros(n), np.zeros(n)
+    s1244.to_sdfg(simplify=True)(a=ref_a, d=ref_d, x=x.copy(), N=n)
+
+    sdfg = s1244.to_sdfg(simplify=True)
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
+    got_a, got_d = np.zeros(n), np.zeros(n)
+    sdfg(a=got_a, d=got_d, x=x.copy(), N=n)
+    assert np.array_equal(got_a, ref_a)
+    assert np.array_equal(got_d, ref_d)
+
+
+def test_forward_reads_symbolic_offset_guard_is_strictly_positive():
+    """The mixed shape needs ``offset >= 1``, not the ``offset >= 0`` the whole-array policy emits.
+
+    A sibling statement writes ``a[i]`` earlier in the SAME iteration, so an offset that turns out
+    to be 0 at runtime aliases that just-written live value; redirecting it to the stale snapshot
+    would be a silent miscompile, and the guard has to trap instead.
+    """
+
+    @dace.program
+    def sym_mixed(a: dace.float64[N], d: dace.float64[N], x: dace.float64[N]):
+        for i in range(N - K - 1):
+            a[i] = x[i] * 2.0
+            d[i] = a[i] + a[i + K]
+
+    sdfg = sym_mixed.to_sdfg(simplify=True)
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
+    guards = [
+        n.code.as_string for st in sdfg.all_states() for n in st.nodes()
+        if isinstance(n, nodes.Tasklet) and n.name.startswith('_break_antidep_guard_')
+    ]
+    assert guards, 'a symbolic offset must carry a runtime guard'
+    strict = dace.symbolic.symstr(dace.symbolic.pystr_to_symbolic('K') - 1)
+    assert any(strict in g for g in guards), guards
+
+
 if __name__ == '__main__':
+    test_forward_reads_breaks_what_the_whole_array_policy_refuses()
+    test_forward_reads_preserves_values()
+    test_forward_reads_is_idempotent()
+    test_forward_reads_leaves_a_same_index_read_on_the_live_array()
+    test_forward_reads_symbolic_offset_guard_is_strictly_positive()
     test_break_anti_dependence_read_ahead_parallelizes()
     test_break_anti_dependence_read_behind_refused()
     test_break_anti_dependence_out_of_place_noop()

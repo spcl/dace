@@ -24,6 +24,7 @@ import dace
 from dace.sdfg import nodes
 from dace.sdfg.state import LoopRegion
 from dace.transformation.passes.canonicalize.pipeline import canonicalize
+from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
 from dace.transformation.passes.canonicalize.split_statements import SplitStatements
 
 N = dace.symbol('N')
@@ -281,12 +282,10 @@ def test_forward_read_anti_dependence_snapshots_and_stays_bit_exact():
 
 
 # ===========================================================================
-# The per-edge forward-read break inside ``SplitStatements`` -- one fixture per shape.
-# These shapes used to be pinned white-box against
-# ``BreakAntiDependence._break_mixed_forward_reads``; that duplicate implementation was
-# deleted and the fixtures retargeted here, onto the path the canonicalize pipeline
-# actually runs. Hand-built single-compute-state loops -- the frontend leaves slice
-# states, which yield no single compute state.
+# The per-edge forward-read break -- one fixture per shape. These live with
+# ``BreakAntiDependence(forward_reads=True)``, which owns the rewrite; ``SplitStatements``
+# distributes and breaks nothing. Hand-built single-compute-state loops -- the frontend
+# leaves slice states, which yield no single compute state.
 # ===========================================================================
 def _mixed_loop(name):
     """A ``for i in range(N - 1)`` loop with one (empty) body state."""
@@ -309,7 +308,7 @@ def _split_snaps(sdfg):
     return [nm for nm in sdfg.arrays if '_split_snap' in nm]
 
 
-def test_split_statements_mixed_forward_read_redirected_to_snapshot():
+def test_forward_reads_mixed_forward_read_redirected_to_snapshot():
     """s1244 ``d[i] = a[i] + a[i+1]``: only the read-ahead ``a[i+1]`` moves to the
     snapshot; the same-index ``a[i]`` keeps its live-array (RAW) value.
 
@@ -328,7 +327,7 @@ def test_split_statements_mixed_forward_read_redirected_to_snapshot():
     body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + 1]'))
     body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
 
-    assert SplitStatements().apply_pass(sdfg, {}) == 1
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
     snap, = _split_snaps(sdfg)
     assert sdfg.arrays[snap].transient
     pre = _pre_state(sdfg, loop)
@@ -337,7 +336,7 @@ def test_split_statements_mixed_forward_read_redirected_to_snapshot():
     assert next(e for e in body.in_edges(tr) if e.dst_conn == 'a0').src.data == 'A'
 
 
-def test_split_statements_copy_forward_read_preserves_destination_subset():
+def test_forward_reads_copy_forward_read_preserves_destination_subset():
     """``Bout[i] = a[i+1]`` is an access-node copy: redirecting its source to the snapshot
     must keep the destination subset ``Bout[i]``, or the sink is written at ``None``."""
     sdfg, loop, body = _mixed_loop('split_mixed_copy')
@@ -351,7 +350,7 @@ def test_split_statements_copy_forward_read_preserves_destination_subset():
     wBout = body.add_write('Bout')
     body.add_edge(wA, None, wBout, None, dace.Memlet(data='A', subset='i + 1', other_subset='i'))
 
-    assert SplitStatements().apply_pass(sdfg, {}) == 1
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
     snap, = _split_snaps(sdfg)
     in_e = next(e for e in body.in_edges(wBout) if e.data is not None)
     assert in_e.src.data == snap
@@ -361,7 +360,7 @@ def test_split_statements_copy_forward_read_preserves_destination_subset():
     assert next(e for e in body.out_edges(rAb) if e.data is not None).data.data == 'A'
 
 
-def test_split_statements_symbolic_forward_offset_snapshots_with_guard():
+def test_forward_reads_symbolic_forward_offset_snapshots_with_guard():
     """``d[i] = a[i] + a[i + K]`` with symbolic ``K``: snapshot AND plant the runtime
     positivity guard that makes the rename sound.
 
@@ -382,7 +381,7 @@ def test_split_statements_symbolic_forward_offset_snapshots_with_guard():
     body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + K]'))
     body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
 
-    assert SplitStatements().apply_pass(sdfg, {}) == 1
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) == 1
     snap, = _split_snaps(sdfg)
     assert next(e for e in body.in_edges(tr) if e.dst_conn == 'a1').src.data == snap
     pre = _pre_state(sdfg, loop)
@@ -399,18 +398,18 @@ def test_split_statements_symbolic_forward_offset_snapshots_with_guard():
     assert not guards[0].in_connectors and not guards[0].out_connectors
 
 
-def test_split_statements_symbolic_behind_offset_is_recurrence_noop():
+def test_forward_reads_symbolic_behind_offset_is_recurrence_noop():
     """``a[i - K]`` is a read-behind RAW recurrence, not an anti-dependence -> no snapshot."""
     sdfg, _loop, body = _mixed_loop('split_mixed_symK_behind')
     sdfg.add_array('A', [N], dace.float64)
     th = body.add_tasklet('h', {'x'}, {'y'}, 'y = x * 0.5')
     body.add_edge(body.add_read('A'), None, th, 'x', dace.Memlet('A[i - K]'))
     body.add_edge(th, 'y', body.add_access('A'), None, dace.Memlet('A[i]'))
-    assert SplitStatements().apply_pass(sdfg, {}) is None
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
     assert not _split_snaps(sdfg)
 
 
-def test_split_statements_same_index_only_is_noop():
+def test_forward_reads_same_index_only_is_noop():
     """``c[i] = a[i]`` (offset 0) reads the value a sibling just wrote this iteration;
     redirecting it to the stale snapshot would be a silent miscompile."""
     sdfg, _loop, body = _mixed_loop('split_mixed_same')
@@ -421,11 +420,11 @@ def test_split_statements_same_index_only_is_noop():
     body.add_edge(body.add_read('B'), None, tw, 'b', dace.Memlet('B[i]'))
     body.add_edge(tw, 'a', wA, None, dace.Memlet('A[i]'))
     body.add_edge(wA, None, body.add_write('C'), None, dace.Memlet(data='A', subset='i', other_subset='i'))
-    assert SplitStatements().apply_pass(sdfg, {}) is None
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
     assert not _split_snaps(sdfg)
 
 
-def test_split_statements_reverse_stride_forward_read_is_not_snapshotted():
+def test_forward_reads_reverse_stride_forward_read_is_not_snapshotted():
     """Reverse stride flips what ``a[i + 1]`` means: with ``i`` decreasing it is the value
     the PREVIOUS iteration wrote (RAW), not a read-ahead. Snapshotting it silently computes
     the wrong ``D`` -- so the split must refuse, and the values must match the un-split run."""
@@ -460,7 +459,7 @@ def test_split_statements_reverse_stride_forward_read_is_not_snapshotted():
         assert np.allclose(ref[k], got[k]), f"reverse-stride split diverged on '{k}'"
 
 
-def test_split_statements_transient_write_not_snapshotted():
+def test_forward_reads_transient_write_not_snapshotted():
     """Only non-transient (global) arrays are snapshot candidates."""
     sdfg, _loop, body = _mixed_loop('split_mixed_transient')
     sdfg.add_array('A', [N], dace.float64, transient=True)
@@ -471,7 +470,7 @@ def test_split_statements_transient_write_not_snapshotted():
     tr = body.add_tasklet('r', {'a1'}, {'d'}, 'd = a1')
     body.add_edge(wA, None, tr, 'a1', dace.Memlet('A[i + 1]'))
     body.add_edge(tr, 'd', body.add_write('D'), None, dace.Memlet('D[i]'))
-    assert SplitStatements().apply_pass(sdfg, {}) is None
+    assert BreakAntiDependence(forward_reads=True).apply_pass(sdfg, {}) is None
     assert not _split_snaps(sdfg)
 
 

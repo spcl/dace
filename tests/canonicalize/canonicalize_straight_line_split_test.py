@@ -123,7 +123,7 @@ def test_straight_line_body_splits_by_output():
     groups = SplitStatements._independent_output_groups(body, node)
     assert groups == [{'a': None}, {'b': None}]
 
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) == 1
+    assert SplitStatements().apply_pass(sdfg, {}) == 1
     clones = _nsdfgs(body)
     assert len(clones) == 2
     by_output = {tuple(sorted(c.out_connectors)): c for c in clones}
@@ -139,7 +139,7 @@ def test_split_preserves_values():
     """The real gate: the split body computes exactly what the unsplit body computes."""
     ref_a, ref_b = _run(carry_plus_independent('split_carry_ref')[0])
     sdfg = carry_plus_independent('split_carry_cand')[0]
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) == 1
+    assert SplitStatements().apply_pass(sdfg, {}) == 1
     got_a, got_b = _run(sdfg)
     assert np.allclose(got_a, ref_a)
     assert np.allclose(got_b, ref_b)
@@ -148,9 +148,9 @@ def test_split_preserves_values():
 def test_split_is_idempotent():
     """Every clone is single-output, so a second run has nothing left to partition."""
     sdfg, body, _node = carry_plus_independent('split_carry_idem')
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) == 1
+    assert SplitStatements().apply_pass(sdfg, {}) == 1
     before = sdfg.hash_sdfg()
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) is None
+    assert SplitStatements().apply_pass(sdfg, {}) is None
     assert sdfg.hash_sdfg() == before
     sdfg.validate()
 
@@ -165,7 +165,7 @@ def test_empty_memlet_ordering_edge_does_not_merge_groups():
     """
     sdfg, body, node = carry_plus_independent('split_carry_order', ordering_edge=True)
     assert SplitStatements._independent_output_groups(body, node) == [{'a': None}, {'b': None}]
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) == 1
+    assert SplitStatements().apply_pass(sdfg, {}) == 1
     assert len(_nsdfgs(body)) == 2
     sdfg.validate()
 
@@ -173,7 +173,7 @@ def test_empty_memlet_ordering_edge_does_not_merge_groups():
 def test_ordering_edge_split_preserves_values():
     ref_a, ref_b = _run(carry_plus_independent('split_order_ref', ordering_edge=True)[0])
     sdfg = carry_plus_independent('split_order_cand', ordering_edge=True)[0]
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) == 1
+    assert SplitStatements().apply_pass(sdfg, {}) == 1
     got_a, got_b = _run(sdfg)
     assert np.allclose(got_a, ref_a)
     assert np.allclose(got_b, ref_b)
@@ -192,7 +192,7 @@ def test_shared_scalar_temp_is_recomputed_per_clone():
     """
     sdfg, body, node = carry_plus_independent('split_shared_temp', private_temp=False)
     assert SplitStatements._independent_output_groups(body, node) == [{'a': None}, {'b': None}]
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) == 1
+    assert SplitStatements().apply_pass(sdfg, {}) == 1
     b_clone = next(c for c in _nsdfgs(body) if tuple(c.out_connectors) == ('b', ))
     # Recomputed, not materialized: the clone still derives the temp from ``x`` itself.
     assert 'x' in b_clone.in_connectors
@@ -203,7 +203,7 @@ def test_shared_scalar_temp_is_recomputed_per_clone():
 def test_shared_scalar_temp_preserves_values():
     ref_a, ref_b = _run(carry_plus_independent('split_shared_ref', private_temp=False)[0])
     sdfg = carry_plus_independent('split_shared_cand', private_temp=False)[0]
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) == 1
+    assert SplitStatements().apply_pass(sdfg, {}) == 1
     got_a, got_b = _run(sdfg)
     assert np.allclose(got_a, ref_a)
     assert np.allclose(got_b, ref_b)
@@ -232,7 +232,7 @@ def test_rmw_read_by_another_group_is_refused():
     sdfg, body, node = cross_group_rmw('split_cross_rmw')
     assert SplitStatements._independent_output_groups(body, node) is None
     before = sdfg.hash_sdfg()
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) is None
+    assert SplitStatements().apply_pass(sdfg, {}) is None
     assert sdfg.hash_sdfg() == before
 
 
@@ -281,7 +281,7 @@ def test_s2710_shaped_guarded_rmw_stays_refused():
     sdfg, body, node = guarded_rmw('split_guarded_rmw')
     assert SplitStatements._independent_output_groups(body, node) is None
     before = sdfg.hash_sdfg()
-    assert SplitStatements(break_anti_dependence=False).apply_pass(sdfg, {}) is None
+    assert SplitStatements().apply_pass(sdfg, {}) is None
     assert sdfg.hash_sdfg() == before
 
 
