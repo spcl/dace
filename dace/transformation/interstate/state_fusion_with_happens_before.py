@@ -130,6 +130,9 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._connections_to_make = []
+        # The mode the LAST ``can_be_applied`` ran in, so ``apply``'s recorder replay below can
+        # ask the same question the matcher answered. See ``apply``.
+        self._matched_permissive = False
 
     @property
     def connections_to_make(self):
@@ -300,6 +303,7 @@ class StateFusionExtended(transformation.MultiStateTransformation):
     def can_be_applied(self, graph, expr_index, sdfg, permissive=False):
         # We keep the recorded connections alive, such that `apply()` can use them later.
         self.connections_to_make.clear()
+        self._matched_permissive = permissive
         try:
             if self.check_fusible(graph, sdfg, permissive):
                 return True
@@ -827,7 +831,11 @@ class StateFusionExtended(transformation.MultiStateTransformation):
         # This will populate `self.connections_to_make`. A False verdict means the recorder stopped
         # early, so that list is INCOMPLETE -- wiring a partial set of happens-before edges drops an
         # ordering (a silent miscompile), so decline instead. Nothing is mutated before this point.
-        if not self.can_be_applied(graph, 0, sdfg):
+        # Replayed in the mode the MATCH was made in. Hardcoding the strict mode here turned every
+        # permissive-only match into a silent no-op -- the driver counts an application either way,
+        # so ``apply_transformations_repeated`` re-matched the same pair forever (measured on 31
+        # corpus kernels under ``permissive=True``).
+        if not self.can_be_applied(graph, self.expr_index, sdfg, permissive=self._matched_permissive):
             return
 
         # Remove interstate edge(s)
