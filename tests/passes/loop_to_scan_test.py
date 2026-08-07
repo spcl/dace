@@ -1,10 +1,12 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """Tests for :class:`~dace.transformation.passes.loop_to_scan.LoopToScan`."""
+import re
+
 import numpy as np
 import pytest
 
 import dace
-from dace.libraries.standard.nodes.scan import Scan
+from dace.libraries.standard.nodes.scan import Scan, in_connector, init_connector, out_connector
 from dace.sdfg.state import ConditionalBlock, LoopRegion
 from dace.transformation.passes.insert_unit_copy_assign_tasklets import InsertAssignTaskletsForUnitCopies
 from dace.transformation.passes.lift_preprocess import LiftPreprocess
@@ -1867,8 +1869,10 @@ def test_multi_slot_same_array_five_carries():
     """Five INDEPENDENT prefix sums carried in one loop body writing distinct
     constant slots of ONE array (TSVC-2.5 ``scan_multi_5carry`` / cloudsc
     ``pfsqrf`` flat shape): ``acc[r, i] = acc[r, i-1] + delta[r, i]`` for
-    ``r=0..4``. Lifts to five Scan libnodes (one per slot) via the dedicated
-    multi-slot rewrite -- bit-exact vs the sequential oracle."""
+    ``r=0..4``. Lifts to ONE five-chain Scan libnode via the dedicated multi-slot
+    rewrite -- five independent carries in a single OpenMP region, each slot's
+    pre-loop seed on its own ``_scan_init`` connector so no seed-add Map survives
+    -- bit-exact vs the sequential oracle."""
 
     @dace.program
     def multi_slot(acc: dace.float64[5, N], delta: dace.float64[5, N]):
@@ -1884,8 +1888,23 @@ def test_multi_slot_same_array_five_carries():
     res = LoopToScan().apply_pass(sdfg, {})
     sdfg.validate()
     assert res == 1, f'expected one multi-slot loop rewrite; got {res}'
-    assert _num_scan_nodes(sdfg) == 5, f'expected five per-slot Scan libnodes; got {_num_scan_nodes(sdfg)}'
+    assert _num_scan_nodes(sdfg) == 1, f'expected ONE fused Scan libnode; got {_num_scan_nodes(sdfg)}'
+    scan = next(n for n, _ in sdfg.all_nodes_recursive() if isinstance(n, Scan))
+    assert scan.chains == 5, f'expected five scan chains on the fused libnode; got {scan.chains}'
+    for c in range(5):
+        assert in_connector(c) in scan.in_connectors, f'chain {c} input connector missing'
+        assert out_connector(c) in scan.out_connectors, f'chain {c} output connector missing'
+        assert init_connector(c) in scan.in_connectors, f'chain {c} seed rides no init connector'
     assert _carried_writes_in_loops(sdfg, 'acc') == 0, 'a per-slot recurrence write to `acc` survived'
+
+    # The point of the fusion: ONE fork/join and ONE ``omp scan`` directive carrying
+    # all five accumulators, not five regions with five rounds of intermediate traffic.
+    src = "\n".join(c.clean_code for c in sdfg.generate_code())
+    assert len(re.findall(r'#\s*pragma\s+omp\s+parallel', src)) == 1, \
+        f'expected ONE parallel region; got {len(re.findall(r"#\s*pragma\s+omp\s+parallel", src))}\n{src}'
+    scan_pragmas = re.findall(r'#\s*pragma\s+omp\s+scan\s+inclusive\(([^)]*)\)', src)
+    assert len(scan_pragmas) == 1, f'expected ONE omp scan directive; got {len(scan_pragmas)}'
+    assert len(scan_pragmas[0].split(',')) == 5, f'expected five inscan list items; got {scan_pragmas[0]!r}'
 
     n = 24
     rng = np.random.default_rng(909)

@@ -54,7 +54,7 @@ from dace.transformation.passes.analysis import loop_analysis
 # Re-export the supported associative ops via :class:`ScanOp`; the matcher recognises
 # the same four ops the libnode expansions cover.
 from dace.libraries.standard.nodes.scan import (Scan, ScanOp, INPUT_CONNECTOR_NAME, OUTPUT_CONNECTOR_NAME,
-                                                INIT_CONNECTOR_NAME)
+                                                INIT_CONNECTOR_NAME, in_connector, out_connector, init_connector)
 
 #: Map AST BinOp class -> ScanOp.
 _BINOP_TO_SCAN_OP = {
@@ -2959,10 +2959,12 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: Li
     one body, and chaining ``_rewrite`` reroutes the shared loop's out-edges
     once per slot. Instead: mutate every slot's write to its OWN 1-D delta buffer
     in place (severing that slot's carry), leaving a single carry-free delta-build
-    loop; then emit a per-slot ``Scan`` + seed-add chain after it. The slots are
-    disjoint (distinct constant ``other_indices``), so each seed-add reads the
-    still-live external seed ``acc[r, iter_start]`` and writes only ``acc[r, >
-    iter_start]`` -- never clobbering another slot's seed.
+    loop; then emit ONE multi-chain ``Scan`` after it -- one chain per slot, all in
+    a single state. The slots are disjoint (distinct constant ``other_indices``), so
+    every chain reads the still-live external seed ``acc[r, iter_start + k_r]``
+    through its own ``_scan_init`` connector and writes only ``acc[r, > iter_start]``
+    -- never clobbering another slot's seed, and never needing a ``_scan_out``
+    transient or a seed-add Map.
     """
     import dace
     out_name = matched[0].out_name
@@ -2983,22 +2985,19 @@ def _rewrite_multi_slot(parent: ControlFlowRegion, loop: LoopRegion, matched: Li
         slots.append((info, delta_buf))
 
     # The loop body is now a pure delta-build (no carry) -- a follow-up LoopToMap
-    # lifts it. Chain a Scan + seed-add per slot after it, then reroute the loop's
-    # original out-edges past the last apply state.
+    # lifts it. All slots that share a combining op ride ONE multi-chain ``Scan``
+    # (one OpenMP region for the whole group); a mixed-op slot set splits into one
+    # group per op, never into a sequential fallback.
     out_edges = list(parent.out_edges(loop))
-    prev = loop
+    groups: Dict[ScanOp, List[tuple]] = {}
     for info, delta_buf in slots:
-        scan_buf, _ = sdfg.add_array(f'{_SCAN_BUF_PREFIX}{out_name}', [trip],
-                                     out_desc.dtype,
-                                     transient=True,
-                                     find_new_name=True)
+        groups.setdefault(info.op, []).append((info, delta_buf))
+    prev = loop
+    for group in groups.values():
         s_scan = parent.add_state(loop.label + '_scan')
         parent.add_edge(prev, s_scan, dace.InterstateEdge())
-        s_apply = parent.add_state(loop.label + '_scan_apply')
-        parent.add_edge(s_scan, s_apply, dace.InterstateEdge())
-        _emit_scan(s_scan, sdfg, info, delta_buf, scan_buf, trip)
-        _emit_seed_add(s_apply, sdfg, info, scan_buf, trip)
-        prev = s_apply
+        _emit_multi_chain_scan(s_scan, sdfg, group, trip)
+        prev = s_scan
     for e in out_edges:
         parent.remove_edge(e)
         parent.add_edge(prev, e.dst, e.data)
@@ -3682,20 +3681,69 @@ def _emit_seed_add(state: SDFGState, sdfg: SDFG, info: _Scan, scan_buf: str, tri
     )
 
 
-def _build_subset(desc: data.Array, scan_axis: int, scan_expr, other_indices: List[Any]) -> subsets.Range:
-    """Synthesize an N-D single-point subset on ``desc`` with ``scan_expr`` on ``scan_axis``
-    and the loop-invariant exprs from ``other_indices`` on the rest. Used both for the
-    delta read in the build map and the seed/output writes in the apply map.
+def _build_subset(desc: data.Array, scan_axis: int, scan_expr, other_indices: List[Any], scan_hi=None) -> subsets.Range:
+    """Synthesize an N-D subset on ``desc`` covering ``scan_expr`` (a single point, or
+    ``scan_expr .. scan_hi`` when ``scan_hi`` is given) on ``scan_axis`` and the
+    loop-invariant exprs from ``other_indices`` on the rest. Used for the delta read in
+    the build map, the seed/output writes in the apply map, and the multi-chain Scan's
+    per-chain carrier slice.
     """
     other_map = {axis: expr for axis, expr in other_indices}
     rng = []
     for axis_idx in range(len(desc.shape)):
         if axis_idx == scan_axis:
-            rng.append((scan_expr, scan_expr, 1))
+            rng.append((scan_expr, scan_expr if scan_hi is None else scan_hi, 1))
         else:
             ex = other_map[axis_idx]
             rng.append((ex, ex, 1))
     return subsets.Range(rng)
+
+
+def _emit_multi_chain_scan(state: SDFGState, sdfg: SDFG, group: List[tuple], trip: Any):
+    """One multi-chain ``Scan`` for a group of independent same-op slot scans.
+
+    Chain ``c`` reads slot ``c``'s delta buffer, takes that slot's pre-loop seed
+    ``out[iter_start + k_r, ...]`` through ``_scan_init_c``, and writes the inclusive
+    result straight into ``out[iter_start + k_w .. + trip - 1, ...]``. No ``_scan_out``
+    transient and no seed-add Map: folding the seed into the accumulator is also what
+    keeps the association ``((seed OP d0) OP d1) OP ...``, i.e. the sequential order,
+    instead of the seed-add's ``seed OP (d0 OP d1 OP ...)``.
+
+    Each seed rides its own scalar transient so the state keeps a clean ``out`` read ->
+    seed scalar -> init connector path (see :func:`_emit_scan_with_init_direct`). The
+    seed slots sit strictly below every chain's write range, and the slots occupy
+    distinct constant ``other_indices``, so no chain can observe another's write.
+    """
+    node = Scan(name=f'{state.label}_op', op=group[0][0].op, exclusive=False, chains=len(group))
+    state.add_node(node)
+    out_write = state.add_write(group[0][0].out_name)
+    for chain, (info, delta_buf) in enumerate(group):
+        out_desc = sdfg.arrays[info.out_name]
+        write_start = symbolic.simplify(info.iter_start + info.k_w)
+        seed_axis_expr = symbolic.simplify(info.iter_start + info.k_r)
+        seed_name, _ = sdfg.add_scalar(f'{_SEED_SCALAR_PREFIX}{info.out_name}',
+                                       out_desc.dtype,
+                                       transient=True,
+                                       find_new_name=True)
+        seed_an = state.add_access(seed_name)
+        node.add_in_connector(init_connector(chain))
+        state.add_edge(
+            state.add_read(info.out_name), None, seed_an, None,
+            mm.Memlet(data=info.out_name,
+                      subset=_build_subset(out_desc, info.scan_axis, seed_axis_expr, info.other_indices),
+                      other_subset=subsets.Range([(0, 0, 1)])))
+        state.add_edge(seed_an, None, node, init_connector(chain),
+                       mm.Memlet(data=seed_name, subset=subsets.Range([(0, 0, 1)])))
+        state.add_edge(state.add_read(delta_buf), None, node, in_connector(chain),
+                       mm.Memlet(data=delta_buf, subset=subsets.Range([(0, trip - 1, 1)])))
+        state.add_edge(
+            node, out_connector(chain), out_write, None,
+            mm.Memlet(data=info.out_name,
+                      subset=_build_subset(out_desc,
+                                           info.scan_axis,
+                                           write_start,
+                                           info.other_indices,
+                                           scan_hi=symbolic.simplify(write_start + trip - 1))))
 
 
 def _rewrite_scalar_carry(parent: ControlFlowRegion, loop: LoopRegion, info: _ScalarCarryScan, sdfg: SDFG):

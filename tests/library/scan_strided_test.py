@@ -241,7 +241,7 @@ def test_parallel_entry_point_called_inside_a_team_is_correct():
         cpp, exe = os.path.join(tmp, 'p.cpp'), os.path.join(tmp, 'p')
         with open(cpp, 'w') as fh:
             fh.write(src)
-        build = subprocess.run(['g++', '-std=c++17', '-O2', '-fopenmp', '-I', include, '-o', exe, cpp],
+        build = subprocess.run(['g++', '-std=c++20', '-O2', '-fopenmp', '-I', include, '-o', exe, cpp],
                                capture_output=True,
                                text=True)
         if build.returncode != 0:
