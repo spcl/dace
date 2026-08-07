@@ -31,15 +31,19 @@ spack_prefix() {
     printf '%s\n' "$out"
 }
 
-spack_prefix gcc@16.1.0 >/dev/null
-spack_prefix llvm@22.1.7 >/dev/null
-OPENBLAS_DIR=$(spack_prefix openblas threads=openmp)
-export OPENBLAS_DIR
+# Variant pins because both packages are installed twice: the other gcc@16.1.0 is ~graphite (kills
+# the autopar arms) and the other llvm@22.1.5 is ~mlir. Per-COMPILER OpenBLAS: %clang links libomp,
+# %gcc links libgomp, so no arm's BLAS drags the other OpenMP runtime into its process.
+spack_prefix gcc@16.1.0 +graphite >/dev/null
+spack_prefix llvm@22.1.5 +mlir >/dev/null
+CANON_PERF_OPENBLAS_GCC=$(spack_prefix openblas threads=openmp %gcc)
+CANON_PERF_OPENBLAS_LLVM=$(spack_prefix openblas threads=openmp %clang)
+export CANON_PERF_OPENBLAS_GCC CANON_PERF_OPENBLAS_LLVM
 
-spack load gcc@16.1.0
-spack load llvm@22.1.7
+spack load gcc@16.1.0 +graphite
+spack load llvm@22.1.5 +mlir
 g++ --version | head -1 | grep -q '16\.1\.0' || die "g++ on PATH is not 16.1.0: $(g++ --version | head -1)"
-clang++ --version | head -1 | grep -q '22\.1\.7' || die "clang++ on PATH is not 22.1.7"
+clang++ --version | head -1 | grep -q '22\.1\.5' || die "clang++ on PATH is not 22.1.5"
 
 # Polly must EMIT a region, not merely accept the flag: a clang without Polly takes it silently.
 # BOTH measured llvm arms are proven here, each on the shape it needs: forced Polly parallelizes a
@@ -61,7 +65,8 @@ polly_probe dace-simplify+llvm-autopar-default nest
 echo "== preflight OK"
 echo "   $(g++ --version | head -1)"
 echo "   $(clang++ --version | head -1)"
-echo "   openblas: $OPENBLAS_DIR"
+echo "   openblas gcc arms:  $CANON_PERF_OPENBLAS_GCC"
+echo "   openblas llvm arms: $CANON_PERF_OPENBLAS_LLVM"
 
 case "$MODE" in
 smoke)
