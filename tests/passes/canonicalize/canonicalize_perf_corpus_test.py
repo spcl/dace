@@ -92,6 +92,8 @@ os.environ.setdefault("UCX_VFS_ENABLE", "n")
 import contextlib
 import csv
 import datetime
+import functools
+import importlib
 import json
 import math
 import re
@@ -1009,14 +1011,43 @@ def _regressions(result):
     return out
 
 
-def has_current_arms(path: str) -> bool:
-    """True when ``path`` already holds a measurement of EVERY currently registered arm.
+@functools.lru_cache(maxsize=None, typed=True)
+def expected_paper_shape(suite: str, name: str, preset: str) -> tuple[tuple[str, int], ...] | None:
+    """The dataset shape ``(suite, name)`` SHOULD have at ``preset``, or ``None`` if not checkable.
+
+    Cheap on purpose -- it reads the kernel module's ``paper_sizes`` constant and allocates nothing
+    -- because it runs inside the resume check, once per kernel, before anything is built.
+
+    Only polybench's ``paper`` preset is answerable this way; the other suites derive their shapes
+    inside ``make_inputs``, which allocates the arrays and computes the reference, and calling that
+    just to decide whether to skip would cost more than the measurement it is trying to avoid.
+    ``None`` therefore means "cannot tell", and the caller leaves such a record alone.
+    """
+    if suite != 'poly' or preset != 'paper':
+        return None
+    kernels = PB.collect(name)
+    if not kernels:
+        return None
+    row = PB.paper_size_row(importlib.import_module(kernels[0].modpath))
+    return tuple(sorted((str(k), int(v)) for k, v in row.items()))
+
+
+def has_current_arms(path: str, suite: str = '', name: str = '') -> bool:
+    """True when ``path`` already holds a CURRENT measurement of every registered arm.
 
     Plain file existence is NOT enough. The results directory carries files written before the arm
     table existed -- two pipelines, a different thread count, unpinned flags -- and skipping those
     would have the sweep silently report stale two-column data under a six-arm heading. A preset
     whose dataset failed to build carries no pipelines and is left alone: re-running it would only
     fail the same way, every sweep.
+
+    Neither is the arm set alone enough, which is the failure this second check exists to stop: a
+    record can hold all seven arms and still be stale because the KERNEL changed under it. Editing a
+    ``paper_sizes`` row leaves every arm present and every number measured at the old shape, so the
+    sweep would skip it forever and the table would mix shapes without saying so -- exactly what
+    happened when the stencil ``tsteps`` were levelled. Comparing the recorded shape against the one
+    the corpus declares today makes a size edit invalidate its own results, with no ``--force`` to
+    remember and no stale row surviving into the figure.
     """
     try:
         with open(path) as f:
@@ -1028,8 +1059,15 @@ def has_current_arms(path: str) -> bool:
         pres = (record.get('presets') or {}).get(preset)
         if pres is None:
             return False
-        if not pres.get('error') and not want <= set(pres.get('pipelines') or {}):
+        if pres.get('error'):
+            continue
+        if not want <= set(pres.get('pipelines') or {}):
             return False
+        expect = expected_paper_shape(suite, name, preset) if suite and name else None
+        if expect is not None:
+            got = pres.get('shape') or {}
+            if tuple(sorted((str(k), int(v)) for k, v in got.items())) != expect:
+                return False
     return True
 
 
@@ -1071,7 +1109,7 @@ def test_autopar_input_is_sequential(suite, name):
 @pytest.mark.parametrize("suite,name", CS.kernels())
 def test_speedup(suite, name):
     path = _result_path(suite, name)
-    if not _FORCE and os.path.exists(path) and has_current_arms(path):
+    if not _FORCE and os.path.exists(path) and has_current_arms(path, suite, name):
         pytest.skip(f"already measured: {os.path.relpath(path)} "
                     f"(delete it or set CANON_PERF_FORCE=1 to re-run)")
 
@@ -1314,13 +1352,20 @@ def print_summary() -> None:
 def _run_sweep(only: str = '', force: bool = False, suite: str = '', shard: tuple = (0, 1), limit: int = 0) -> None:
     """Measure every selected kernel, skipping those already measured with the CURRENT arm table.
 
-    ``suite`` restricts to one corpus tag and ``shard=(i, n)`` keeps every ``n``-th kernel
-    starting at ``i`` -- the same fan-out primitive ``tests.corpus.measure_parallelization``
-    takes, so a batch job shards both facets the same way. ``limit`` keeps the first N of EACH
-    corpus BEFORE sharding, for smoke runs.
+    ``suite`` restricts to a COMMA-SEPARATED set of corpus tags (``poly,np``) and ``shard=(i, n)``
+    keeps every ``n``-th kernel starting at ``i`` -- the same fan-out primitive
+    ``tests.corpus.measure_parallelization`` takes, so a batch job shards both facets the same way.
+    ``limit`` keeps the first N of EACH corpus BEFORE sharding, for smoke runs.
+
+    A SET rather than one tag because the corpora have very different cost profiles: polybench and
+    npbench are a few hundred big kernels that divide by numpy, while tsvc/tsvc25 are ~200 small
+    ones that divide by ``seq-cpp``. Splitting them into separate jobs lets each get a time limit
+    and a results directory that suit it, and keeps a long polybench sweep from eating the wall
+    clock the tsvc kernels needed. One tag still works, so every existing caller is unaffected.
     """
     os.makedirs(_RESULTS_DIR, exist_ok=True)
-    kernels = [(s, n) for s, n in CS.kernels() if (not suite or s == suite) and (not only or only in n)]
+    want = {t.strip() for t in suite.split(',') if t.strip()}
+    kernels = [(s, n) for s, n in CS.kernels() if (not want or s in want) and (not only or only in n)]
     if limit:
         # Per corpus, not off the pooled head: the pool is ordered poly, np, tsvc, tsvc25, so a
         # pooled truncation is 30 polybench kernels before it reaches another corpus, and a smoke
@@ -1336,7 +1381,7 @@ def _run_sweep(only: str = '', force: bool = False, suite: str = '', shard: tupl
     kernels = kernels[shard[0]::shard[1]]
     for i, (suite, name) in enumerate(kernels, 1):
         path = _result_path(suite, name)
-        if not force and os.path.exists(path) and has_current_arms(path):
+        if not force and os.path.exists(path) and has_current_arms(path, suite, name):
             print(f"[{i}/{len(kernels)}] skip {suite}:{name} (all {len(_PIPELINES)} arms already measured)", flush=True)
             continue
         print(f"[{i}/{len(kernels)}] measure {suite}:{name} ...", flush=True)
@@ -1365,7 +1410,10 @@ if __name__ == '__main__':
                     help='write a Markdown speedup table (default <dir>/speedup_table.md)')
     ap.add_argument('--force', action='store_true', help='re-measure even if a result file exists')
     ap.add_argument('--only', metavar='SUBSTR', help='only kernels whose name contains SUBSTR')
-    ap.add_argument('--suite', metavar='TAG', default='', help='only one corpus (poly, np, tsvc, tsvc25)')
+    ap.add_argument('--suite',
+                    metavar='TAGS',
+                    default='',
+                    help='only these corpora, comma-separated (poly, np, tsvc, tsvc25); default all')
     ap.add_argument('--shard', metavar='I/N', default='0/1', help='only every N-th selected kernel starting at I')
     ap.add_argument('--limit', metavar='N', type=int, default=0, help='only the first N kernels of each corpus')
     ap.add_argument('--dir', metavar='PATH', help=f'results directory (default {_RESULTS_DIR})')

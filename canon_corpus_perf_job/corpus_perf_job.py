@@ -65,6 +65,16 @@ from pathlib import Path
 #: The four in-repo corpora. Deliberately not ``measure_parallelization``'s ``all``, which also
 #: selects the out-of-tree ``hpcagent`` corpus.
 SUITES = ('poly', 'np', 'tsvc', 'tsvc25')
+#: Named corpus groups for ``--suites``. The two halves answer different questions and cost very
+#: different amounts, so they are worth running as separate jobs: ``array`` divides by numpy and is
+#: a few hundred large kernels, ``loops`` divides by ``seq-cpp`` and is ~200 small ones. Split, each
+#: gets a time limit and a results directory that fit it, and a slow polybench sweep can no longer
+#: consume the wall clock the tsvc kernels needed.
+SUITE_GROUPS = {
+    'array': ('poly', 'np'),
+    'loops': ('tsvc', 'tsvc25'),
+    'all': SUITES,
+}
 #: Ranks per node the submit script requests.
 RANKS_PER_NODE = 4
 #: Free space one rank's build scratch is assumed to need. A shard's objects and shared libraries
@@ -204,6 +214,24 @@ def drive(cmd: list[str], repo: Path) -> int:
     return subprocess.call(cmd, cwd=str(repo))
 
 
+def selected_suites(spec: str) -> tuple[str, ...]:
+    """Corpus tags for ``--suites``: a group name (``array``/``loops``/``all``) or an explicit list.
+
+    Order follows :data:`SUITES` regardless of how the spec was written, so the pooled kernel list a
+    rank shards is identical for ``poly,np`` and ``np,poly`` -- the shard is positional, so a spec
+    that reordered the pool would hand every rank a different set and silently break resumption
+    against results an earlier spelling produced.
+    """
+    if spec in SUITE_GROUPS:
+        return SUITE_GROUPS[spec]
+    want = {t.strip() for t in spec.split(',') if t.strip()}
+    unknown = want - set(SUITES)
+    if unknown:
+        raise SystemExit(f'unknown corpus {sorted(unknown)}; pick from {list(SUITES)} '
+                         f'or a group {list(SUITE_GROUPS)}')
+    return tuple(s for s in SUITES if s in want) or SUITES
+
+
 def measure(rank: int, size: int, args: argparse.Namespace, repo: Path, out: Path) -> int:
     """Run the selected facets over this rank's shard; return the worst driver exit code."""
     worst = 0
@@ -218,19 +246,22 @@ def measure(rank: int, size: int, args: argparse.Namespace, repo: Path, out: Pat
         # This driver has no pooled mode, so the same shard rule is applied to each corpus in turn.
         # It counts loops and maps statically rather than timing anything, so splitting a kernel's
         # measurements across nodes costs nothing here -- unlike the perf facet below.
-        for suite in SUITES:
+        for suite in selected_suites(args.suites):
             cmd = [
                 sys.executable, '-m', PARALLELISM_DRIVER, suite, *shard, '--csv',
                 str(out / f'parallelism_rank{rank:04d}.csv'), *limit
             ]
             worst = max(worst, drive(cmd + (['--check'] if args.check else []), repo))
     if args.facet in ('perf', 'both'):
-        # ONE invocation and no ``--suite``: the driver pools all four corpora and keeps
-        # ``kernels[rank::size]``, so every arm of a kernel is timed by this rank, on this node.
-        # Per-rank Markdown because every rank renders the shared result dir, and one shared path
-        # would have the ranks overwriting each other's table mid-write.
+        # ONE invocation for ALL selected corpora, not one per corpus: the driver pools them and
+        # keeps ``kernels[rank::size]``, so every arm of a kernel is timed by this rank, on this
+        # node, and the shard stays balanced across the whole selection. Sharding each corpus
+        # separately would give every rank a slice of every corpus and defeat the point of
+        # splitting them into separate jobs. Per-rank Markdown because every rank renders the
+        # shared result dir, and one shared path would have the ranks overwriting each other's
+        # table mid-write.
         cmd = [
-            sys.executable, '-m', PERF_DRIVER, *shard, '--markdown',
+            sys.executable, '-m', PERF_DRIVER, *shard, '--suite', ','.join(selected_suites(args.suites)), '--markdown',
             str(out / 'ranks' / f'speedup_rank{rank:04d}.md'), *limit
         ]
         cmd += ['--force'] if args.force else []
@@ -277,6 +308,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument('--facet', choices=('parallelism', 'perf', 'both'), default='both', help='which measurement to run')
     ap.add_argument('--preset', default='paper', help='corpus_suite dataset preset to time (default paper)')
+    ap.add_argument('--suites',
+                    default='all',
+                    help="corpora to measure: a group (array=poly+np, loops=tsvc+tsvc25, all) or an "
+                    "explicit comma-separated list. Use with --out to keep each half's results "
+                    "in its own directory (default all)")
     ap.add_argument('--out', default=None, help=f'results directory (default {DEFAULT_OUT})')
     ap.add_argument('--limit',
                     type=int,
