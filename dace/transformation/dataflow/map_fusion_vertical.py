@@ -7,6 +7,8 @@ import itertools
 import dace
 from dace import data, dtypes, properties, subsets, symbolic, transformation
 from dace.sdfg import SDFG, SDFGState, graph, nodes, propagation
+from dace.sdfg.analysis import cfg as cfg_analysis
+from dace.sdfg.state import ReturnBlock
 from dace.transformation.dataflow import map_fusion_helper as mfhelper
 from dace.sdfg.type_inference import infer_expr_type
 from ordered_set import OrderedSet
@@ -2157,10 +2159,9 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         parameters (e.g. a data container used as index) make coverage undecidable
         and are refused.
 
-        :note: Writes are unioned across states, which over-approximates conditional
-            control flow (a write behind a branch counts). This is conservative in the
-            permissive direction only for bodies whose alternative branches each fully
-            define the intermediate anyway.
+        Only writes that happen on *every* execution of the nest count as evidence, see
+        `_unconditionally_executed_states()`, and every subset comparison that cannot be
+        decided counts against fusing, see `_subset_definitely_covers()`.
 
         :param nsdfg: The NestedSDFG that produces the intermediate.
         :param producer_leaf_edge: The edge connecting the NestedSDFG to the first
@@ -2178,8 +2179,21 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         full_range = subsets.Range.from_array(intermediate_desc)
 
         # Only whole-array claims are handled here; partial claims use the regular machinery.
-        if not (full_range.covers(claimed) and claimed.covers(full_range)):
-            return True
+        #  The two `covers()` uses of this function point in OPPOSITE directions, and
+        #  `Subset.covers()` answers a rank mismatch by RETURNING a (truthy) `ValueError`
+        #  instance instead of raising, so no result may be used as a plain bool; see
+        #  `_subset_definitely_covers()`. Here an undecidable answer must not reach the
+        #  permissive `return True` below, so the "partial claim" exit is taken only when the
+        #  ranks match AND the claim is positively shown not to be the whole array. An inner
+        #  descriptor of a different rank -- a Scalar or a shape-(1,) Array against a 2D
+        #  intermediate -- therefore falls through into the strict body check, which can only
+        #  succeed on positive evidence. In the loop below the direction is reversed: an
+        #  undecidable answer must not reach the accepting `return True`, so only a proven
+        #  cover ends the search and everything else keeps looking (and finally refuses).
+        if claimed.dims() == full_range.dims():
+            if not (self._subset_definitely_covers(full_range, claimed)
+                    and self._subset_definitely_covers(claimed, full_range)):
+                return True
 
         inner_sdfg = nsdfg.sdfg
         inner_data = producer_leaf_edge.src_conn
@@ -2189,7 +2203,7 @@ class MapFusionVertical(transformation.SingleStateTransformation):
         # Symbols a translated inner write may legitimately reference.
         allowed_symbols = set(map(str, sdfg.symbols)) | set(map(str, first_map_exit.map.params))
 
-        for inner_state in inner_sdfg.states():
+        for inner_state in self._unconditionally_executed_states(inner_sdfg):
             for inner_node in inner_state.nodes():
                 if not (isinstance(inner_node, nodes.AccessNode) and inner_node.data == inner_data):
                     continue
@@ -2201,17 +2215,78 @@ class MapFusionVertical(transformation.SingleStateTransformation):
                     else:
                         write_subset = inner_edge.data.other_subset
                     if write_subset is None:
-                        # No subset means the whole container is written.
-                        write_subset = subsets.Range.from_array(inner_node.desc(inner_sdfg))
+                        # A missing subset does NOT mean that the whole container is written.
+                        #  For a copy the transferred shape comes from `Memlet.subset` and the
+                        #  absent other side only means "based at index zero", see
+                        #  `memlet_copy_to_absolute_strides()`; and on a Memlet that was never
+                        #  initialized (`_is_data_src` is still `None`) `dst_subset` reports
+                        #  `None` for a perfectly ordinary single element write. Neither proves
+                        #  anything about coverage, so this edge is simply not evidence.
+                        continue
                     write_subset = copy.deepcopy(write_subset)
                     if isinstance(write_subset, subsets.Indices):
                         write_subset = subsets.Range.from_indices(write_subset)
                     symbolic.safe_replace(mapping=nsdfg.symbol_mapping, replace_callback=write_subset.replace)
                     if not set(map(str, write_subset.free_symbols)).issubset(allowed_symbols):
                         return False
-                    if write_subset.covers(full_range):
+                    if self._subset_definitely_covers(write_subset, full_range):
                         return True
         return False
+
+    @staticmethod
+    def _subset_definitely_covers(outer: subsets.Subset, inner: subsets.Subset) -> bool:
+        """Strict version of `outer.covers(inner)` that is `True` only on positive proof.
+
+        `Subset.covers()` does not raise on a dimensionality mismatch, it RETURNS a
+        `ValueError` instance, and that instance is truthy -- so `if a.covers(b)` silently
+        reads a rank mismatch as "covered". `SubsetUnion.covers()` folds such instances
+        through `any()`, turning them into a real `True`. This wrapper reports covering only
+        for two plain `Range`s (`Indices` is a `Range`) of equal rank whose `covers()`
+        returned the literal `True`; everything else, undecidable or merely unusual, is
+        reported as "does not cover".
+
+        :param outer: The subset that should cover.
+        :param inner: The subset that should be covered.
+        """
+        if not (isinstance(outer, subsets.Range) and isinstance(inner, subsets.Range)):
+            return False
+        if outer.dims() != inner.dims():
+            return False
+        return outer.covers(inner) is True
+
+    @staticmethod
+    def _unconditionally_executed_states(inner_sdfg: SDFG) -> List[SDFGState]:
+        """The states of `inner_sdfg` that every execution of it passes through.
+
+        A write only proves that a container is defined if that write really happens. A write
+        inside a `ConditionalBlock` branch does not happen when the other branch is taken, and
+        one inside a `LoopRegion` does not happen when the loop runs zero times, so neither may
+        be used as evidence. The criterion here is deliberately crude but sound: a state
+        qualifies only if it is a direct node of the SDFG's root region -- so that no
+        `ConditionalBlock` and no `LoopRegion` encloses it -- and it dominates every sink of
+        that root region, so that no interstate branch can reach the end of the SDFG around it.
+        A `ReturnBlock` anywhere disqualifies the whole SDFG, because a return nested inside a
+        region leaves before any later root level state runs. False refusals are acceptable
+        here, false accepts are not.
+
+        :param inner_sdfg: The SDFG whose unconditionally executed states are wanted.
+        """
+        if any(isinstance(block, ReturnBlock) for block in inner_sdfg.all_control_flow_blocks()):
+            return []
+        root_blocks = inner_sdfg.nodes()
+
+        # The single state body, by far the common case, needs no dominator computation.
+        if len(root_blocks) == 1:
+            return [root_blocks[0]] if isinstance(root_blocks[0], SDFGState) else []
+
+        sinks = [block for block in root_blocks if inner_sdfg.out_degree(block) == 0]
+        if len(sinks) == 0:
+            return []
+        all_dominators = cfg_analysis.all_dominators(inner_sdfg)
+        return [
+            block for block in root_blocks
+            if isinstance(block, SDFGState) and all(block is sink or block in all_dominators[sink] for sink in sinks)
+        ]
 
     def _updated_inner_strides_of_nested_sdfg(
         self,
