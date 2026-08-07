@@ -22,6 +22,9 @@ from dace.transformation.passes.analysis import loop_analysis
 def _check_range(subset, a, itersym, b, step):
     found = False
     for rb, re, _ in subset.ndrange():
+        # ``ndrange()`` yields plain ints as well as sympy expressions, and an int has no ``match``
+        # -- a fixed-slot write such as a scalar's ``[0]`` would raise instead of failing the test.
+        rb, re = sp.sympify(rb), sp.sympify(re)
         if rb != 0:
             m = rb.match(a * itersym + b)
             if m is None:
@@ -254,6 +257,49 @@ def _dim_provably_disjoint(idx1, idx2, itersym, step=1, start=0) -> bool:
     if not diff.is_Integer:
         return True
     return sp.Integer(diff) % g != 0
+
+
+def carried_local_transients(loop: LoopRegion, candidates: Set[str]) -> Set[str]:
+    """ Among ``candidates`` -- transients that appear ONLY inside ``loop`` -- the ones an iteration
+        can READ before it writes them, so their value comes from the PREVIOUS iteration.
+
+        :func:`LoopToMap.apply` privatizes every loop-local transient into the loop-body NestedSDFG,
+        giving each iteration a private copy. That is sound only when the iteration writes the
+        transient before it reads it; one that is read first is a loop-carried dependency and
+        privatizing it silently drops the carry (``if c: t = x`` / ``use(t)`` keeps ``t`` from the
+        last iteration that took the branch). Such a transient is reported here so it re-enters the
+        ordinary write-index analysis, which refuses the lift: a carrier is written at a fixed slot,
+        never at ``a*i+b``.
+
+        A write inside a ``ConditionalBlock`` counts only when the conditional is exhaustive (has an
+        else arm) and every branch writes -- the partially-guarded write IS the carry shape. A write
+        inside a nested ``LoopRegion`` counts: treating a nested loop as possibly-empty would report
+        every scratch array CloudSC fills in one inner ``jl`` loop and reads back in the next, and
+        refuse the outer loops this pass exists to parallelize.
+    """
+    carried: Set[str] = set()
+
+    def scan(region: ControlFlowRegion, written: Set[str]) -> None:
+        for block in cfg_analysis.blockorder_topological_sort(region, recursive=False, ignore_nonstate_blocks=False):
+            if isinstance(block, SDFGState):
+                for dn in block.data_nodes():
+                    if (dn.data in candidates and dn.data not in written and block.in_degree(dn) == 0
+                            and block.out_degree(dn) > 0):
+                        carried.add(dn.data)
+                written |= {dn.data for dn in block.data_nodes() if dn.data in candidates and block.in_degree(dn) > 0}
+            elif isinstance(block, ConditionalBlock):
+                per_branch = []
+                for _cond, body in block.branches:
+                    branch_written = set(written)
+                    scan(body, branch_written)
+                    per_branch.append(branch_written)
+                if per_branch and any(cond is None for cond, _ in block.branches):
+                    written |= set.intersection(*per_branch)
+            elif isinstance(block, ControlFlowRegion):
+                scan(block, written)
+
+    scan(loop, set())
+    return carried
 
 
 def loop_varying_symbols(loop: LoopRegion) -> Set[str]:
@@ -624,6 +670,18 @@ class LoopToMap(xf.MultiStateTransformation):
         # Add non-transient nodes from loop state
         for state in loop_states:
             other_access_nodes |= set(n.data for n in state.data_nodes() if not sdfg.arrays[n.data].transient)
+        # A transient living ONLY in the loop is exempt from the analysis below because ``apply``
+        # gives every iteration a private copy -- sound only while each iteration writes it before
+        # reading it (see :func:`carried_local_transients`). Screening to the ones actually read
+        # from elsewhere keeps the block-order walk off most loops.
+        local_transients = {
+            n.data
+            for state in loop_states
+            for n in state.data_nodes()
+            if sdfg.arrays[n.data].transient and state.in_degree(n) == 0 and state.out_degree(n) > 0
+        } - other_access_nodes
+        if local_transients:
+            other_access_nodes |= carried_local_transients(self.loop, local_transients)
 
         # read_and_write_sets() walks every state/edge of the loop and is only needed from here
         # on (the per-array write analysis below). Computing it lazily -- after the cheaper
@@ -980,16 +1038,15 @@ class LoopToMap(xf.MultiStateTransformation):
                         if e.data.data and e.data.data in sdfg.arrays:
                             write_set.add(e.data.data)
 
-        # Add headers of any nested loops and conditional blocks
-        nodelist = list(self.loop.nodes())
-        while nodelist:
-            node = nodelist.pop()
-            if isinstance(node, (LoopRegion, ConditionalBlock)):
-                code_blocks = node.get_meta_codeblocks()
-                free_syms = {s for c in code_blocks for s in c.get_free_symbols()}
-                free_syms = {s for s in free_syms if s in sdfg.arrays.keys()}
-                read_set |= set(free_syms)
-                nodelist.extend(node.nodes())
+        # Add headers of any nested loops and conditional blocks, at EVERY depth: a walk that
+        # recurses only into LoopRegion / ConditionalBlock stops at a ConditionalBlock's branch,
+        # which is a plain ControlFlowRegion. A container a header below that point reads then
+        # stayed a free symbol of the body, which ``add_nested_sdfg`` types ``int`` -- truncating
+        # CloudSC's float64 ``yrecldp_rlmin`` threshold to 0 and flipping the branch it guards.
+        for block in self.loop.all_control_flow_blocks():
+            if isinstance(block, (LoopRegion, ConditionalBlock)):
+                free_syms = {s for c in block.get_meta_codeblocks() for s in c.get_free_symbols()}
+                read_set |= {s for s in free_syms if s in sdfg.arrays}
 
         # Add data from edges
         for edge in self.loop.all_interstate_edges():
