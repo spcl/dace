@@ -2,7 +2,7 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 #
 # ONE job for the four in-repo corpora (polybench 30, npbench 24, tsvc 151, tsvc_2_5 72 = 277
-# kernels) at the ``paper`` preset, over the SIX comparison arms of the paper table. X nodes x 4
+# kernels) at the ``paper`` preset, over the EIGHT comparison arms of the paper table. X nodes x 4
 # ranks. It only pins the environment and fans the ranks out; corpus_perf_job.py picks
 # each rank's kernels and drives the measurement.
 #
@@ -14,8 +14,8 @@
 # (--preset/--facet/--limit/--check/--force/--out). Without SLURM it falls back to mpirun, and
 # without mpirun to a single rank, so the same script is the local smoke test.
 #
-# ONE flag picks the measured table: CANON_PERF_ARMS=1, the six arms plus the ``seq-cpp``
-# denominator. See README.md for the arm x SDFG x compiler x baseline matrix.
+# ONE flag picks the measured table: CANON_PERF_ARMS=1, the eight comparison arms plus the
+# ``seq-cpp`` denominator, nine in all. See README.md for the arm x SDFG x compiler x baseline matrix.
 #
 # Env: PYTHON (interpreter), OUT_DIR (results, default next to the scripts), OMP_NUM_THREADS (default cores/ranks-per-node),
 # REPS (best-of repetitions, default 50), DACE_JOB_SCRATCH (build scratch root), ACCOUNT /
@@ -34,9 +34,6 @@
 
 set -euo pipefail
 
-spack load gcc@16.1.0
-spack load llvm@22.1.7
-
 NODES="${1:-1}"
 RANKS_PER_NODE=4
 # The job folder is named OUTRIGHT rather than derived from BASH_SOURCE, because under sbatch
@@ -49,10 +46,14 @@ HERE=$(pwd)
 
 # Both toolchains come from spack, and a batch script inherits none of the interactive module
 # environment, so without these the arms fall back to whatever /usr/bin holds -- a different
-# compiler than the one the run is supposed to be measuring. Sourcing spack's setup first because
-# `spack load` is a shell function, not an executable, so it does not exist in a bare bash.
-if command -v spack >/dev/null 2>&1 || [ -n "${SPACK_ROOT:-}" ]; then
-    [ -n "${SPACK_ROOT:-}" ] && [ -f "$SPACK_ROOT/share/spack/setup-env.sh" ] && . "$SPACK_ROOT/share/spack/setup-env.sh"
+# compiler than the one the run is supposed to be measuring. The setup script MUST be sourced first
+# and NOTHING may `spack load` above this point: `spack load` is a shell function, and the bare
+# `bin/spack` a plain `sbatch`/`bash` finds instead exits 1 under `set -e` and kills the job.
+export SPACK_ROOT="${SPACK_ROOT:-/capstor/scratch/cscs/ybudanaz/aarch64/spack}"
+if [ -f "$SPACK_ROOT/share/spack/setup-env.sh" ]; then
+    . "$SPACK_ROOT/share/spack/setup-env.sh"
+fi
+if command -v spack >/dev/null 2>&1; then
     spack load gcc@16.1.0
     spack load llvm@22.1.7
 fi
@@ -97,16 +98,15 @@ export PYTHONHASHSEED=0
 # 277 kernels at 50 reps is ~9 minutes of timed work against hours of compiling -- so this buys
 # tighter medians almost for free.
 export CANON_PERF_REPS="${REPS:-50}"
-# The whole point of the job: the six-arm table, not the two-pipeline default. Read at import, so
+# The whole point of the job: the nine-arm table, not the two-pipeline default. Read at import, so
 # it reaches the pytest entry point too. ``CANON_PERF_ARMS=0`` in the caller's environment still
 # wins -- that is the documented smoke-run escape hatch on a box without a polyhedral clang.
 export CANON_PERF_ARMS="${CANON_PERF_ARMS:-1}"
-# Per-kernel wall-clock cap. The default 600s is a fraction too tight for the heaviest stencils
-# even after the tsteps levelling -- heat_3d measured 680s for its seven arms -- and the alarm fires
-# on whichever arm is running when it expires, leaving that arm unmeasured for a reason that has
-# nothing to do with the arm. Raised so a legitimately slow kernel completes; it is still a cap, so
-# a genuinely hung kernel cannot eat the job.
-export CANON_PERF_TIMEOUT="${CANON_PERF_TIMEOUT:-1800}"
+# Per-kernel wall-clock cap, and it has to clear the NINE arms: CANON_PERF_MAX_CALL_MS caps one
+# timed call at 180s, so nine arms are 1620s of timing alone before a single build. The alarm fires
+# on whichever arm is running when it expires, so a cap sized for fewer arms loses a late arm for a
+# reason that has nothing to do with that arm. It is still a cap: a hung kernel cannot eat the job.
+export CANON_PERF_TIMEOUT="${CANON_PERF_TIMEOUT:-2400}"
 # NOTE the gcc autopar width is deliberately NOT pinned here. ``resolve_autopar_hint`` probes this
 # compiler and takes the largest width that actually emits a parallel region (40 on g++ 16.1.0 /
 # Neoverse V2, where 41 and above silently emit none while Graphite is on). Exporting
@@ -121,7 +121,8 @@ export CANON_PERF_TIMEOUT="${CANON_PERF_TIMEOUT:-1800}"
 # Arm.blas docstring. Ask spack for the prefix rather than hardcoding a hash, and fall back to
 # whatever is already on the path so a non-spack box still runs.
 if [ -z "${OPENBLAS_DIR:-}" ] && command -v spack >/dev/null 2>&1; then
-    OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || true)"
+    # ``threads=openmp`` is part of the spec: a pthreads build collapses threads and measured 24x.
+    OPENBLAS_DIR="$(spack location -i openblas threads=openmp 2>/dev/null || true)"
     [ -d "$OPENBLAS_DIR" ] && export OPENBLAS_DIR
 fi
 for d in "${OPENBLAS_DIR:-}/lib" "${OPENBLAS_DIR:-}/lib64"; do
@@ -139,7 +140,7 @@ export DACE_cache_distaware=1
 # corpus failure rather than a missing search path. Ask each compiler where its own runtime lives
 # instead of guessing a prefix: -print-file-name answers with the absolute path when it resolves and
 # echoes the argument back unchanged when it does not, hence the leading-slash test. Both runtimes
-# go on the path because the six arms span both toolchains (clang links libomp, gcc libgomp).
+# go on the path because the nine arms span both toolchains (clang links libomp, gcc libgomp).
 omp_runtime_dir() {
     lib="$("$1" -print-file-name="$2" 2>/dev/null || true)"
     case "$lib" in
@@ -233,5 +234,7 @@ else
     "${JOB[@]}"
 fi
 
-# Every rank has exited by here, so the gather is a plain re-export of what they wrote.
-"$PY" "$HERE/corpus_perf_job.py" --out "$OUT" --aggregate "${@:2}"
+# Every rank has exited by here, so the gather is a plain re-export of what they wrote. ARMS=0 for
+# this step ONLY: the exported 1 reaches the gather's own subprocess and re-probes all nine
+# toolchains to copy numbers, so a post-sweep probe failure would cost the finished run its outputs.
+CANON_PERF_ARMS=0 "$PY" "$HERE/corpus_perf_job.py" --out "$OUT" --aggregate "${@:2}"

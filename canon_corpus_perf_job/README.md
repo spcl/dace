@@ -1,7 +1,7 @@
 # Corpus perf job
 
-ONE job: four in-repo corpora, six arms, TWO figures (the corpora split into two denominator
-groups, see below). Three files, nothing else.
+ONE job: four in-repo corpora, eight comparison arms plus the `seq-cpp` denominator, TWO figures
+(the corpora split into two denominator groups, see below). Three files, nothing else.
 
 | file | what it does |
 |:--|:--|
@@ -11,7 +11,7 @@ groups, see below). Three files, nothing else.
 
 (`cloudsc/` next door is an unrelated job.)
 
-## The six arms
+## The eight arms
 
 One row per column of the figure. Every arm is built from the SAME base flag string
 (`-ffp-contract=fast` included) and adds only its own flags, runs at the same `OMP_NUM_THREADS`, is
@@ -24,13 +24,19 @@ the same kernel.
 | `dace-autoopt-llvm` | `auto_optimize` | `clang++` | DaCe | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
 | `dace-canon-gcc` | `canonicalize` | `g++` | DaCe | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
 | `dace-canon-llvm` | `canonicalize` | `clang++` | DaCe | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
-| `dace-simplify+gcc-autopar` | post-`SimplifyPass`, emitted SEQUENTIAL | `g++` | GCC autopar + Graphite | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
-| `dace-simplify+llvm-autopar` | post-`SimplifyPass`, emitted SEQUENTIAL | `clang++` | Polly autopar | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
+| `dace-simplify+gcc-autopar` | post-`SimplifyPass`, emitted SEQUENTIAL | `g++` | GCC autopar + Graphite, FORCED (`-floop-parallelize-all`) | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
+| `dace-simplify+gcc-autopar-default` | post-`SimplifyPass`, emitted SEQUENTIAL | `g++` | GCC autopar + Graphite, gcc's own cost model | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
+| `dace-simplify+llvm-autopar` | post-`SimplifyPass`, emitted SEQUENTIAL | `clang++` | Polly autopar, FORCED (`-polly-parallel-force`) | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
+| `dace-simplify+llvm-autopar-default` | post-`SimplifyPass`, emitted SEQUENTIAL | `clang++` | Polly autopar, Polly's own cost model | poly/np: corpus reference. tsvc/tsvc25: `seq-cpp` |
 | `seq-cpp` | post-`SimplifyPass`, emitted SEQUENTIAL | `g++` | nothing (`-O3`, no autopar, no polyhedral flags) | not a comparison arm: it IS the tsvc/tsvc25 denominator |
 
 Graphite is folded into the gcc autopar arm and Polly into the llvm one. A polyhedral pass that
 restructures a nest nobody then parallelizes answers no question the figure asks, so each external
 arm is one column that has to prove BOTH of its passes ran.
+
+Each auto-parallelizer appears twice because the gap between forced and default is itself a result:
+forcing takes Polly from 1.209x to 7.572x (unforced it declines flat 1-D loops and times sequential
+code) while gcc barely moves, 8.058x to 8.088x.
 
 The per-kernel JSON also carries `speedup_vs_baseline`, against `dace-autoopt-gcc`. That is the
 pipeline-vs-pipeline number and the CI regression assertion; the figure uses the per-corpus
@@ -118,7 +124,7 @@ every result JSON under `arms`.
 
 The perf facet writes one JSON per kernel and skips kernels that already have a complete one, so a
 killed sweep resumes by re-submitting. Delete a kernel's JSON to re-measure just it, or pass
-`--force` to re-measure everything. Records written by the pre-six-arm labels are recognized as
+`--force` to re-measure everything. Records written by superseded arm labels are recognized as
 stale and re-measured. The parallelism facet is cheap and always re-runs; it appends, so delete
 `parallelism_rank*.csv` before a clean re-run.
 
@@ -131,7 +137,7 @@ cmake/compiler child inherits. Do not vary them between compared arms.
 |:--|:--|
 | `DACE_compiler_cpu_args` | the ONE base flag string. `-ffp-contract=` must be explicit (gcc defaults to `fast`, clang to `on`, so omitting it makes the compiler columns incomparable); `-ffast-math` is rejected, since associative math lets each compiler reassociate reductions differently |
 | `OMP_NUM_THREADS` | cores / 4, so 4 ranks do not oversubscribe. Identical for every arm, and gcc's `-ftree-parallelize-loops` is derived from it. `OMP_PROC_BIND=close`, `OMP_PLACES=cores` |
-| `CANON_PERF_ARMS` | `1` = the six arms (the job). `0` before submitting drops to the two g++ DaCe pipelines, for a smoke run on a box without a polyhedral clang |
+| `CANON_PERF_ARMS` | `1` = all nine arms (the job). `0` before submitting drops to the two g++ DaCe pipelines, for a smoke run on a box without a polyhedral clang. The aggregate step is run with `0` on purpose: it only re-exports JSON, and re-probing nine toolchains there would let a late probe failure cost a finished sweep its outputs |
 | `DACE_cache_distaware` | `1`, plus a per-rank build folder; without it ranks load libraries other ranks are still writing |
 | `DACE_JOB_SCRATCH` | build scratch root. Defaults to `/dev/shm/dace-corpus-perf` when /dev/shm holds 4 GiB per rank on the node, else `$HOME/.cache/dace-corpus-perf` with a loud warning that compiles are now disk-bound. `TMPDIR` is placed under it. NEVER `/tmp` -- the small shared tmpfs, and filling it has faked corpus failures here; a `/tmp` scratch is refused outright |
 | `PYTHONHASHSEED=0` | DaCe determinism |
@@ -207,7 +213,7 @@ Default prefix is `<results>/corpus_speedup_<preset>`; each figure appends its o
 * Miscompiled arms, errored arms and kernels whose denominator cannot be verified are dropped and
   counted, never replaced by 1.0. A partial or killed sweep plots what exists and reports what is
   absent; nothing plottable writes no figure, prints the reason and exits non-zero.
-* Result files predating the six-arm labels (e.g. `tests/passes/canonicalize/perf_results/`) are
+* Result files predating the current arm labels (e.g. `tests/passes/canonicalize/perf_results/`) are
   reported as STALE and refused, not mixed in. `--denominator baseline` is the mode that reads them,
   against their own baseline arm, and says so in the figure.
 * `--preset` `--suite` `--arm` `--min-ms` `--sort` `--yscale` subset or rescale; `--results` is
