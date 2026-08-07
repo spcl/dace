@@ -393,21 +393,31 @@ def _expand_over_loop(subset: subsets.Subset,
     sequence first ``coeff*start + off``, last ``coeff*end + off``, step ``coeff*loop_stride``.
     So a strided read (``a[2*k]``) and a strided loop (``range(0, N, 2)``) both fold into one
     strided reduce subset. Only ascending integer read coeff; symbolic/zero/negative refused
-    (left to LoopToMap)."""
+    (left to LoopToMap).
+
+    ``loop_var`` is matched by NAME and the analysis then uses the instance the index
+    actually carries. ``symbol._hashable_content`` includes the dtype, so a loop variable
+    minted from ``sdfg.symbols`` is a different sympy object than the default-typed one
+    ``pystr_to_symbolic`` puts in the parsed index; containment/``diff``/``has`` all answer by
+    identity, so the mismatch silently calls the reduction axis independent and copies it
+    through unwidened -- the ``Reduce`` then reads one element at the freed iteration
+    variable (``B[jl, jm]``) and a strided read keeps step 1."""
     if not isinstance(subset, subsets.Range):
         return None
+    loop_var_name = str(loop_var)
     ranges = []
     for rb, re_, rs in subset.ndrange():
         if rb != re_ or rs != 1:
             return None
         rb_sym = symbolic.pystr_to_symbolic(str(rb))
-        if loop_var not in rb_sym.free_symbols:
+        ivar = next((s for s in rb_sym.free_symbols if str(s) == loop_var_name), None)
+        if ivar is None:
             ranges.append((rb, re_, 1))  # axis independent of reduction
             continue
         # read index = coeff*loop_var + off (affine)
-        coeff = symbolic.simplify(sympy.diff(rb_sym, loop_var))
-        off = symbolic.simplify(rb_sym - coeff * loop_var)
-        if coeff.has(loop_var) or off.has(loop_var):
+        coeff = symbolic.simplify(sympy.diff(rb_sym, ivar))
+        off = symbolic.simplify(rb_sym - coeff * ivar)
+        if coeff.has(ivar) or off.has(ivar):
             return None  # non-linear
         if not (coeff.is_integer and coeff.is_positive):
             return None  # only ascending integer read stride
@@ -496,19 +506,23 @@ def _extract_any_pattern(cond, const_rhs: int, target: str, sdfg: SDFG, loop_var
     if len(sym_args) != len(sdfg.arrays[array].shape):
         return None
 
-    # Exactly one axis must depend on the loop variable (linearly, offset ∉ sym).
+    # Exactly one axis must depend on the loop variable (linearly, offset free of sym).
+    # Located by NAME, then measured against the instance the index carries -- see
+    # ``_expand_over_loop`` for why identity-based ``has``/subtraction answers wrongly.
+    loop_var_name = str(loop_var_sym)
     axis_for_iter = None
     offset = None
     for i, a in enumerate(sym_args):
-        if a.has(loop_var_sym):
+        ivar = next((s for s in a.free_symbols if str(s) == loop_var_name), None)
+        if ivar is not None:
             if axis_for_iter is not None:
                 return None
             axis_for_iter = i
             try:
-                off = symbolic.simplify(a - loop_var_sym)
+                off = symbolic.simplify(a - ivar)
             except Exception:
                 return None
-            if off.has(loop_var_sym):
+            if off.has(ivar):
                 return None
             offset = off
     if axis_for_iter is None:
@@ -798,8 +812,15 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
         # ``Subscript`` carries the head plus indices, so a 1-D access has two args.
         if len(sdfg.arrays[array].shape) != 1 or len(arr_call.args) != 2:
             return None
-        offset = symbolic.simplify(arr_call.args[1] - loop_var_sym)
-        if offset.has(loop_var_sym):
+        # By NAME, then measured against the instance the index carries (see ``_expand_over_loop``).
+        # A loop-invariant index (``B[3]``) has no such symbol and is refused: repeating one element
+        # N times is not a fold over an array axis.
+        index = arr_call.args[1]
+        ivar = next((s for s in index.free_symbols if str(s) == str(loop_var_sym)), None)
+        if ivar is None:
+            return None
+        offset = symbolic.simplify(index - ivar)
+        if offset.has(ivar):
             return None
 
         return _Reduction(
@@ -819,15 +840,15 @@ def _extract(loop: LoopRegion, sdfg: SDFG, permissive: bool = False) -> Optional
     # max/min idempotent -> the conditional is redundant at wcr level
     # (``acc = max(acc, arr[i])`` correct whether or not the guard fires). Both lifts
     # consume the resulting ``_Reduction`` as-is.
-    info = _extract_branched_minmax(loop, sdfg, loop_var_sym, start, end)
+    info = _extract_branched_minmax(loop, sdfg, loop_var_sym, start, end, stride)
     if info is not None:
         return info
 
     return None
 
 
-def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.Symbol, start,
-                             end) -> Optional[_Reduction]:
+def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.Symbol, start, end,
+                             stride) -> Optional[_Reduction]:
     """Match ``for i: if arr[i] <cmp> accum: accum = arr[i]`` where the frontend lowers
     the masked update into:
 
@@ -948,7 +969,9 @@ def _extract_branched_minmax(loop: LoopRegion, sdfg: SDFG, loop_var_sym: sympy.S
         return None
 
     wcr = _CALL_TO_WCR["max"] if cmp_is_gt else _CALL_TO_WCR["min"]
-    expanded = _expand_over_loop(array_subset, loop_var_sym, start, end)
+    # ``stride`` must reach the widening: dropping it folds every element in ``[start, end]``,
+    # including the ones a strided loop skips, which silently changes the min/max.
+    expanded = _expand_over_loop(array_subset, loop_var_sym, start, end, stride)
     if expanded is None:
         return None
     return _Reduction(wcr, accum_name, accum_subset, array_name, expanded)

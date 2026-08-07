@@ -146,6 +146,11 @@ def test_frontend_augassign_length1_array_is_lifted():
 
     Matcher-only -- that arm is decided in ``_extract``. The frontend-staged, embedded-loop
     emit it produces is swept over both modes by ``test_frontend_augassign_array_slice_is_lifted``.
+
+    Compiles and RUNS the lifted SDFG: ``validate()`` alone accepts a lift that left the
+    consumed loop variable free, because a free symbol is only fatal inside a NestedSDFG --
+    at top level it survives until ``SDFG.arglist`` raises at codegen. Shape assertions on
+    their own therefore cannot tell a correct lift from a broken one.
     """
     prefer = _MATCHER_ONLY_MODE
     sdfg = _frontend_augassign_len1.to_sdfg(simplify=True)
@@ -157,6 +162,13 @@ def test_frontend_augassign_length1_array_is_lifted():
 
     assert lifted and lifted >= 1
     _assert_single_sum_reduce_identity_none(sdfg, prefer)
+
+    n = 12
+    rng = np.random.default_rng(21)
+    b = rng.standard_normal(n)
+    a = np.zeros(1)
+    sdfg(A=a, B=b.copy(), N=n)
+    assert np.isclose(a[0], b.sum()), f'lifted reduction diverged from the oracle: {a[0]} vs {b.sum()}'
 
 
 @dace.program
@@ -170,6 +182,10 @@ def test_frontend_augassign_array_slice_is_lifted(prefer):
 
     Exercises the multi-element-accumulator path: the reduction's output
     memlet must target the single slice ``C[3:4]``, not ``[0:0]``.
+
+    Compiles and RUNS the result (see ``test_frontend_augassign_length1_array_is_lifted`` for
+    why shape assertions alone cannot reject a lift that freed the loop variable), and pins
+    that every OTHER slot of ``C`` is left untouched.
     """
     sdfg = _frontend_augassign_slice.to_sdfg(simplify=True)
     sdfg.validate()
@@ -187,6 +203,14 @@ def test_frontend_augassign_array_slice_is_lifted(prefer):
         (out_edge, ) = state.out_edges(red)
         assert out_edge.data.data == "C"
         assert str(out_edge.data.subset) in {"3", "3:4", "3:3"}
+
+    n, m = 12, 8
+    rng = np.random.default_rng(22)
+    b = rng.standard_normal(n)
+    c = np.zeros(m)
+    sdfg(C=c, B=b.copy(), N=n, M=m)
+    assert np.isclose(c[3], b.sum()), f'lifted reduction diverged from the oracle: {c[3]} vs {b.sum()}'
+    assert np.allclose(np.delete(c, 3), 0.0), f'the lift wrote outside the accumulator slot: {c}'
 
 
 @dace.program
@@ -230,11 +254,18 @@ def test_per_row_inner_reduction_multidim_is_lifted(prefer):
     assert np.allclose(acc, b.sum(axis=1))
 
 
-def _build_interstate_reduction_sdfg(offset_expr: str):
-    """Loop body = 2 empty states + interstate edge ``{accum: accum + B[<offset>]}``."""
+def _build_interstate_reduction_sdfg(offset_expr: str, iv_dtype=None):
+    """Loop body = 2 empty states + interstate edge ``{accum: accum + B[<offset>]}``.
+
+    :param iv_dtype: When given, DECLARE the loop variable with this dtype. Left ``None`` the
+                     symbol is never added, so it resolves to the default type -- the only
+                     difference between the dtype-mismatch test and its control.
+    """
     sdfg = dace.SDFG(f"interstate_sum_{offset_expr.replace(' ', '').replace('-', 'm')}")
     sdfg.add_symbol("accum", dace.float64)
     sdfg.add_array("B", [N], dace.float64)
+    if iv_dtype is not None:
+        sdfg.add_symbol("i", iv_dtype)
 
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
@@ -259,6 +290,34 @@ def test_interstate_edge_direct_index_is_lifted(prefer):
     assert lifted == 1
     assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a + b")
+
+
+def test_interstate_edge_lifts_with_non_default_dtype_loop_variable():
+    """The loop variable's DECLARED dtype must not decide whether the lift fires.
+
+    ``symbol._hashable_content`` folds the dtype into sympy identity, so the ``i`` taken from
+    ``sdfg.symbols`` (``int64`` here) is a different object than the default-typed ``i`` that
+    ``pystr_to_symbolic`` leaves in the parsed index ``B[i]``. Subtracting one from the other
+    kept BOTH spellings, the ``offset.has(loop_var_sym)`` guard then saw the loop variable in
+    what should have been a constant offset, and ``_extract`` refused a reduction it should
+    lift -- a predicate answering False because two spellings differ, not because the shape
+    was unsafe. ``test_interstate_edge_direct_index_is_lifted`` is the control: same fixture,
+    only the declared dtype differs.
+    """
+    prefer = _MATCHER_ONLY_MODE
+    sdfg = _build_interstate_reduction_sdfg("i", iv_dtype=dace.int64)
+    sdfg.validate()
+    assert _count_loops(sdfg) == 1
+
+    lifted = LoopToReduce(prefer=prefer).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert lifted == 1, 'a non-default-typed loop variable must not block the lift'
+    assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
+    _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a + b")
+    # ... and it folds the whole iteration space, not one element at a freed symbol.
+    ((red, state), ) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert str(state.in_edges(red)[0].data.subset) == '0:N'
 
 
 def _build_conditional_minmax_sdfg(cond_expr: str):
@@ -332,7 +391,7 @@ def test_conditional_interstate_lt_lifts_to_min():
 
 
 def test_conditional_interstate_unrelated_array_is_not_lifted():
-    """Guard compares a different array than the assignment — reject (in ``_extract``)."""
+    """Guard compares a different array than the assignment -- reject (in ``_extract``)."""
     prefer = _MATCHER_ONLY_MODE
     sdfg = dace.SDFG("interstate_cond_mismatched")
     sdfg.add_symbol("accum", dace.float64)
@@ -457,13 +516,18 @@ def test_tasklet_body_boolop_or_is_lifted():
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a | b")
 
 
-def _build_any_pattern_sdfg(assign_const: str = "1", guard: str = "B[i] == 1"):
+def _build_any_pattern_sdfg(assign_const: str = "1", guard: str = "B[i] == 1", iv_dtype=None):
     """Mirrors FOR_l_600_c_600 (tmp_call_13): a LoopRegion whose body is a
     ConditionalBlock on an array element, with a constant-RHS assignment to
-    a symbol."""
+    a symbol.
+
+    :param iv_dtype: When given, DECLARE the loop variable with this dtype (see
+                     ``_build_interstate_reduction_sdfg``)."""
     sdfg = dace.SDFG(f"any_pattern_{assign_const}")
     sdfg.add_symbol("tmp_call_13", dace.int32)
     sdfg.add_array("B", [N], dace.int32)
+    if iv_dtype is not None:
+        sdfg.add_symbol("i", iv_dtype)
     pre = sdfg.add_state("pre", is_start_block=True)
     loop = LoopRegion("loop", condition_expr="i < N", loop_var="i", initialize_expr="i = 0", update_expr="i = i + 1")
     sdfg.add_node(loop)
@@ -513,6 +577,28 @@ def test_all_pattern_lifts_to_and_in_permissive(prefer):
     assert lifted == 1
     assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
     _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a & b")
+
+
+def test_any_pattern_lifts_with_non_default_dtype_loop_variable():
+    """Same dtype-identity hazard as the interstate path, on the permissive any/all matcher.
+
+    ``_extract_any_pattern`` located the reduction axis with ``a.has(loop_var_sym)``. Against
+    an ``int64``-declared ``i`` that answered False for EVERY axis, so the matcher bailed at
+    ``axis_for_iter is None`` and the lift never fired.
+    ``test_any_pattern_lifts_to_or_in_permissive`` is the default-dtype control.
+    """
+    prefer = _MATCHER_ONLY_MODE
+    sdfg = _build_any_pattern_sdfg(assign_const="1", guard="B[i] == 1", iv_dtype=dace.int64)
+    sdfg.validate()
+
+    lifted = LoopToReduce(permissive=True, prefer=prefer).apply_pass(sdfg, {})
+    sdfg.validate()
+
+    assert lifted == 1, 'a non-default-typed loop variable must not block the any/all lift'
+    assert _count_loops(sdfg) == _expected_loop_count_after_lift(prefer, 0, 1)
+    _assert_lifted_with_wcr(sdfg, prefer, "lambda a, b: a | b")
+    ((red, state), ) = [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+    assert str(state.in_edges(red)[0].data.subset) == '0:N'
 
 
 def test_any_pattern_symbol_bridge_via_tmp_scalar(prefer):
@@ -705,6 +791,45 @@ def test_branched_min_is_lifted():
     sdfg.validate()
     lifted = _prep_and_lift(sdfg, prefer)
     assert lifted >= 1
+
+
+@dace.program
+def _strided_branched_min(a: dace.float64[N], result: dace.float64[N]):
+    x = a[1]
+    for i in range(1, N, 2):
+        if a[i] < x:
+            x = a[i]
+    result[0] = x
+
+
+def test_strided_branched_min_folds_only_visited_elements():
+    """A STRIDED branched min must fold only the elements the loop actually visits.
+
+    ``_extract_branched_minmax`` widened the per-iteration read but let ``_expand_over_loop``'s
+    ``loop_stride`` fall back to its default of 1, so ``range(1, N, 2)`` produced the reduce
+    subset ``a[1:N]`` instead of ``a[1:N:2]`` and every skipped even slot silently entered the
+    fold. Unlike the leaked-symbol failures this one is a pure VALUE bug -- the SDFG stays
+    valid and compiles clean -- so the fixture parks the global minimum on the even slots the
+    loop never reads: a correct fold returns the odd-slot minimum, the unstrided one returns
+    ``-100``.
+    """
+    sdfg = _strided_branched_min.to_sdfg(simplify=True)
+    sdfg.validate()
+    lifted = _prep_and_lift(sdfg, 'reduce-libnode')
+    sdfg.validate()
+    assert lifted >= 1
+
+    steps = sorted(
+        str(rng[2]) for red, state in [(n, g) for n, g in sdfg.all_nodes_recursive() if isinstance(n, Reduce)]
+        for rng in state.in_edges(red)[0].data.subset.ndrange())
+    assert steps == ['2'], f'the reduce must read only the stride-2 slots; got {steps}'
+
+    n = 16
+    a = np.array([-100.0 if k % 2 == 0 else float(k) for k in range(n)])
+    result = np.zeros(n)
+    sdfg(a=a.copy(), result=result, N=n)
+    assert np.isclose(result[0], a[1:n:2].min()), (f'the lifted strided min folded elements the loop never visits: '
+                                                   f'got {result[0]}, expected {a[1:n:2].min()}')
 
 
 # ---- s4115: gather + sum reduction ---------------------------------------
