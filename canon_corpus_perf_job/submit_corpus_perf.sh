@@ -26,13 +26,16 @@
 #SBATCH --account=g34
 #SBATCH --partition=normal
 #SBATCH --exclusive
-#SBATCH --time=04:00:00
+#SBATCH --time=08:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=4
 #SBATCH --gpus-per-task=1
 #SBATCH --cpus-per-task=72
 
 set -euo pipefail
+
+spack load gcc@16.1.0
+spack load llvm@22.1.7
 
 NODES="${1:-1}"
 RANKS_PER_NODE=4
@@ -98,6 +101,29 @@ export CANON_PERF_REPS="${REPS:-50}"
 # it reaches the pytest entry point too. ``CANON_PERF_ARMS=0`` in the caller's environment still
 # wins -- that is the documented smoke-run escape hatch on a box without a polyhedral clang.
 export CANON_PERF_ARMS="${CANON_PERF_ARMS:-1}"
+# gcc's parloops silently stops parallelizing above a target-specific thread count when
+# -floop-nest-optimize is on the same command line, which the per-arm probe catches as a launch
+# failure rather than letting it become a plain -O3 column under a polyhedral label. Measured on
+# this site's g++ 16.1.0 / Neoverse V2: parallelizes at every -ftree-parallelize-loops <= 40 and at
+# none >= 41. The flag is the REAL runtime width (parloops emits it as a literal num_threads), so
+# this caps the gcc-autopar arm to 40 threads while the other five arms run the full
+# OMP_NUM_THREADS -- deliberate, and visible in each result file's evidence string. Applied as a
+# min() against OMP_NUM_THREADS, so it is inert on a small box where the width is already lower.
+export CANON_PERF_GCC_AUTOPAR_HINT_CAP="${CANON_PERF_GCC_AUTOPAR_HINT_CAP:-40}"
+# The four DaCe arms lower gemv/gemm to OpenBLAS; numpy -- the figure's reference -- is OpenBLAS, so
+# expanding them to dace's shipped `pure` default instead compares a naive triple loop against a
+# tuned kernel and loses by 20-40x on the kernels that ARE one BLAS call (atax, bicg, covariance).
+# dace defaults library.blas to `pure` while lapack and linalg already default to OpenBLAS, so BLAS
+# is the odd one out and has to be asked for. The serialize arms stay `pure` on purpose -- see the
+# Arm.blas docstring. Ask spack for the prefix rather than hardcoding a hash, and fall back to
+# whatever is already on the path so a non-spack box still runs.
+if [ -z "${OPENBLAS_DIR:-}" ] && command -v spack >/dev/null 2>&1; then
+    OPENBLAS_DIR="$(spack location -i openblas 2>/dev/null || true)"
+    [ -d "$OPENBLAS_DIR" ] && export OPENBLAS_DIR
+fi
+for d in "${OPENBLAS_DIR:-}/lib" "${OPENBLAS_DIR:-}/lib64"; do
+    [ -d "$d" ] && export LD_LIBRARY_PATH="$d${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+done
 export MPI4PY_RC_INITIALIZE=0
 export OMPI_MCA_pml=ob1
 export OMPI_MCA_btl=self,vader

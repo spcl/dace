@@ -1,6 +1,8 @@
 # Copyright 2019-2026 ETH Zurich and the DaCe authors. All rights reserved.
 """ Automatic optimization routines for SDFGs. """
 
+import os
+
 import dace
 import sympy
 from dace.sdfg import infer_types
@@ -382,7 +384,22 @@ def find_fast_library(device: dtypes.DeviceType) -> List[str]:
         if openblas.OpenBLAS.is_installed():
             result.append('OpenBLAS')
 
-        return result + ['pure']
+        # Same order as canonicalize's ``canonicalize_fast_library_priority``, deliberately: the two
+        # pipelines are compared column against column, so a node that lowers to a tuned expansion
+        # under one and to the serial ``pure`` loop under the other measures the priority list rather
+        # than the pipeline. Everything past the vendor BLAS was previously missing here, which left
+        # a tensor transpose/contraction or a threaded reduction falling through to ``pure`` under
+        # auto_optimize while canonicalize took the fast form.
+        #
+        # HPTT needs its own install (gated on HPTT_ROOT); TTGT is transpose+GEMM with no external
+        # dependency; ``OpenMP`` covers Reduce/ArgReduce and ``CPU`` the OpenMP-5 Scan / radix sort /
+        # ScatterConflictCheck. ``apply_cpu_library_parallelism`` below still has the last word on the
+        # scope-dependent types, so a node nested in a parallel map keeps its sequential expansion.
+        if 'HPTT_ROOT' in os.environ:
+            result.append('HPTT')
+        result.append('TTGT')
+
+        return result + ['OpenMP', 'CPU', 'pure']
 
     return ['pure']
 

@@ -111,6 +111,8 @@ import pytest
 
 import dace
 from dace.sdfg import nodes
+from dace.libraries.blas.environments.openblas import (OPENBLAS_PARALLEL_NAMES, OpenBLAS, _openblas_threading_flavor,
+                                                       _standalone_libopenblas)
 from dace.transformation.auto.auto_optimize import auto_optimize
 from dace.transformation.passes.canonicalize import canonicalize
 from dace.transformation.passes.canonicalize.finalize import finalize_for_target
@@ -199,6 +201,36 @@ class Arm(NamedTuple):
     flags: str
     probe_flags: str
     markers: tuple[str, ...]
+    #: Which implementation the BLAS/LAPACK/linalg library nodes expand to for THIS arm.
+    #:
+    #: Per-arm rather than process-wide because the arms ask different questions. A DaCe pipeline
+    #: arm is competing with numpy, and numpy calls OpenBLAS -- expanding gemv/gemm to DaCe's
+    #: ``pure`` nested maps instead measures a naive triple loop against a tuned kernel and loses by
+    #: 20-40x on exactly the kernels that are one BLAS call (atax, bicg, covariance). ``dace``'s
+    #: shipped default for ``library.blas`` is ``pure`` while ``lapack`` and ``linalg`` already
+    #: default to ``OpenBLAS``, so BLAS is the odd one out and every DaCe arm must say so explicitly.
+    #:
+    #: The serialize arms keep ``pure`` deliberately, and that is NOT an oversight: they exist to
+    #: measure what gcc's parloops and Polly do to sequential affine loops. An OpenBLAS call is
+    #: neither affine nor sequential -- it is a multithreaded library call the auto-parallelizer
+    #: cannot see into -- so lowering their gemms to OpenBLAS would make all three arms report the
+    #: same OpenBLAS number and measure nothing about either compiler. It would also silently
+    #: destroy ``seq-cpp``, whose whole meaning is "one thread", since a threads=openmp OpenBLAS
+    #: runs on OMP_NUM_THREADS regardless of the map schedule.
+    blas: str = 'pure'
+    #: ``compiler.cpu.implementation`` for THIS arm: which CPU code generator emits its C++.
+    #:
+    #: Split on purpose. ``auto_optimize`` is the established pipeline and is measured on the
+    #: generator it was tuned against (``legacy``); ``canonicalize`` is the new pipeline and is
+    #: measured on the new one (``experimental_readable``) -- so the canon-vs-autoopt column
+    #: compares each pipeline as it is actually meant to be shipped, rather than forcing one of them
+    #: through a generator it was never developed against.
+    #:
+    #: The serialize arms stay on ``experimental_readable`` regardless of that split: they need its
+    #: ``__restrict__`` on the emitted array parameters, because neither gcc's parloops nor Polly can
+    #: disambiguate memory without it, and both would silently decline to parallelize -- which is the
+    #: exact failure their probes exist to catch.
+    codegen: str = 'experimental_readable'
 
 
 def untransformed(sdfg: dace.SDFG) -> dace.SDFG:
@@ -261,8 +293,13 @@ _BASE_ARGS = os.environ.get(
 #: different thread count, ``-polly-vectorizer``, another GCC) is a sweep, not an edit.
 _GCC = os.environ.get('CANON_PERF_GCC_CXX', 'g++')
 _CLANG = os.environ.get('CANON_PERF_CLANG_CXX', 'clang++')
-#: gcc's auto-parallelizer takes its thread count as a compile-time flag. It is a HEURISTIC input,
-#: not the runtime width: the emitted GOMP_parallel still runs on OMP_NUM_THREADS threads.
+#: gcc's auto-parallelizer takes its thread count as a compile-time flag, and that flag IS the
+#: runtime width, not a heuristic hint: parloops emits the count as a literal ``num_threads``
+#: argument (``mov w2, <N>; bl GOMP_parallel``), so it does NOT widen to OMP_NUM_THREADS at run
+#: time. Consequence for the table: whenever ``_AUTOPAR_HINT`` is capped below ``_THREADS``, this
+#: one arm runs narrower than the other five and its speedup column is understated by roughly the
+#: width ratio. That is why the cap is recorded into the evidence string rather than applied
+#: silently -- a narrower arm is a legitimate measurement only if the reader can see the width.
 _THREADS = os.environ.get('OMP_NUM_THREADS', '4')
 #: The hint is the FULL runtime width by default, so the arm asks gcc for the parallelism the job
 #: actually runs with. The cap exists because of a MEASURED suppression: on g++ 15.2 (x86), with
@@ -274,6 +311,17 @@ _THREADS = os.environ.get('OMP_NUM_THREADS', '4')
 #: register an autopar arm whose probe object has no GOMP_parallel undefined symbol, which turns
 #: suppression into a launch failure rather than a fabricated column. Set
 #: CANON_PERF_GCC_AUTOPAR_HINT_CAP to fall back to a working width if a toolchain trips it.
+#:
+#: MEASURED AGAIN on g++ 16.1.0 / aarch64 Neoverse V2 (2026-08-06), which tripped it and stopped a
+#: sweep at OMP_NUM_THREADS=72. Bisected on the probe nest: parallelizes at every hint <= 40 and at
+#: NO hint >= 41, so ``submit_corpus_perf.sh`` pins the cap to 40 there. Two refinements over the
+#: x86 note above. First, the trigger is specifically ``-floop-nest-optimize``, not Graphite in
+#: general: at hint=72, ``-fgraphite-identity`` alone still emits GOMP_parallel and
+#: ``-floop-nest-optimize`` alone still suppresses it. Dropping it would buy the full 72 threads at
+#: the cost of the isl scheduling that makes this arm polyhedral at all, so the cap is preferred and
+#: the arm keeps its full flag set. Second, ``--param parloops-min-per-thread`` does not override
+#: the suppression at any value down to 1, so the numeric coincidence with the 4096-iteration probe
+#: nest is not the cost model talking.
 _AUTOPAR_HINT_CAP = int(os.environ.get('CANON_PERF_GCC_AUTOPAR_HINT_CAP', _THREADS))
 _AUTOPAR_HINT = min(int(_THREADS), _AUTOPAR_HINT_CAP)
 #: Graphite is folded into the gcc autopar arm and Polly into the llvm one -- the user's table has
@@ -283,6 +331,11 @@ _GCC_AUTOPAR_FLAGS = os.environ.get(
     'CANON_PERF_GCC_AUTOPAR_FLAGS', f'-fopenmp -ftree-parallelize-loops={_AUTOPAR_HINT} -floop-parallelize-all '
     '-fgraphite-identity -floop-nest-optimize')
 _LLVM_AUTOPAR_FLAGS = os.environ.get('CANON_PERF_LLVM_AUTOPAR_FLAGS', '-fopenmp -mllvm -polly -mllvm -polly-parallel')
+
+#: What the four DaCe arms lower BLAS/LAPACK/linalg library nodes to. Overridable so a box with no
+#: OpenBLAS can still run the sweep (``CANON_PERF_DACE_BLAS=pure``), but NOT defaulted to ``pure``:
+#: the figure's headline comparison is against numpy, and numpy is OpenBLAS.
+_DACE_BLAS = os.environ.get('CANON_PERF_DACE_BLAS', 'OpenBLAS')
 
 #: ``GOMP_parallel`` as an UNDEFINED SYMBOL of the probe object is a stronger engagement proof than
 #: any diagnostic: it means the compiler really emitted a parallel region. Covers both
@@ -298,10 +351,10 @@ _POLLY_MARKER = 'SCoP begins here'
 #: ``flags`` is a plain DaCe pipeline built by the named compiler and claims no external pass; an
 #: arm with flags credits external passes and therefore must prove every one of them ran.
 ARMS = (
-    Arm(BASELINE, _autoopt, _GCC, '', '', ()),
-    Arm('dace-autoopt-llvm', _autoopt, _CLANG, '', '', ()),
-    Arm('dace-canon-gcc', _canon, _GCC, '', '', ()),
-    Arm('dace-canon-llvm', _canon, _CLANG, '', '', ()),
+    Arm(BASELINE, _autoopt, _GCC, '', '', (), _DACE_BLAS, 'legacy'),
+    Arm('dace-autoopt-llvm', _autoopt, _CLANG, '', '', (), _DACE_BLAS, 'legacy'),
+    Arm('dace-canon-gcc', _canon, _GCC, '', '', (), _DACE_BLAS, 'experimental_readable'),
+    Arm('dace-canon-llvm', _canon, _CLANG, '', '', (), _DACE_BLAS, 'experimental_readable'),
     Arm('dace-simplify+gcc-autopar', serialize, _GCC, _GCC_AUTOPAR_FLAGS,
         '-fopt-info-loop -fdump-tree-graphite-details=stderr', (_GRAPHITE_MARKER, _AUTOPAR_MARKER)),
     Arm('dace-simplify+llvm-autopar', serialize, _CLANG, _LLVM_AUTOPAR_FLAGS, '-Rpass-analysis=polly-scops',
@@ -347,6 +400,19 @@ def arm_tag(label: str) -> str:
     return ''.join(ch for ch in label if ch.isalnum())
 
 
+def blas_note(arm: Arm) -> str:
+    """This arm's BLAS lowering, plus the resolved library when it is not ``pure``.
+
+    Goes into the evidence string so a result file records WHICH libopenblas produced its numbers --
+    the threading flavor in particular, since a ``threads=pthreads`` build times very differently
+    from the ``threads=openmp`` one while computing the same answer."""
+    if arm.blas == 'pure':
+        return 'pure (naive maps, no vendor kernel)'
+    lib, _ = _standalone_libopenblas()
+    code, config, _ = _openblas_threading_flavor()
+    return f'{arm.blas} -> {lib or "?"} [parallel={OPENBLAS_PARALLEL_NAMES.get(code, code)}] {config or ""}'.strip()
+
+
 def probe_arm(arm: Arm) -> str:
     """Compile a known SCoP with this arm's REAL flags; return the lines proving its passes engaged.
 
@@ -369,7 +435,7 @@ def probe_arm(arm: Arm) -> str:
             raise RuntimeError(f"arm {arm.label}: {exe} rejected {arm.flags!r} "
                                f"(exit {proc.returncode}): {out.strip()[:400]}")
         if not arm.markers:  # a plain DaCe arm: compiling with the base flags is the whole claim
-            return f'{os.path.basename(exe)} (base flags only, no external pass claimed)'
+            return f'{os.path.basename(exe)} (base flags only, no external pass claimed); blas={blas_note(arm)}'
         # Undefined symbols of the object, so an arm can be proven by what the compiler EMITTED
         # rather than by a diagnostic it happened to print.
         syms = subprocess.run(['nm', '-u', obj], capture_output=True, text=True, timeout=300)
@@ -382,28 +448,43 @@ def probe_arm(arm: Arm) -> str:
                                f"{marker!r} on a known-good loop nest -- that pass is not in this build. "
                                f"Refusing to report plain -O3 timings under this label.")
         proof.append(hit)
-    return f'{os.path.basename(exe)} {arm.flags}: ' + ' | '.join(proof)
+    return f'{os.path.basename(exe)} {arm.flags}: ' + ' | '.join(proof) + f'; blas={blas_note(arm)}'
 
 
 @contextlib.contextmanager
 def toolchain_env(arm: Arm) -> Iterator[None]:
     """Build+time the enclosed arm on ``arm``'s pinned toolchain; restore the caller's on exit.
 
-    Pins all three backend axes together, per arm rather than process-wide: the compiler, the flag
-    string (the shared base plus only this arm's own), and the CPU code generator -- the autopar
-    arms depend on the experimental generator's ``__restrict__``, since neither GCC's
-    auto-parallelizer nor Polly can disambiguate memory without it, and a stray config file
-    selecting ``legacy`` would silently halve those two columns.
+    Pins every backend axis together, per arm rather than process-wide: the compiler, the flag string
+    (the shared base plus only this arm's own), the CPU code generator, and how library nodes lower
+    (BLAS/LAPACK/linalg via config, Reduce/ArgReduce via class attribute).
+
+    The code generator is per arm, not global: ``auto_optimize`` is measured on ``legacy`` and
+    ``canonicalize`` on ``experimental_readable``, each on the generator it is developed against. The
+    serialize arms pin ``experimental_readable`` for a different reason -- they need its
+    ``__restrict__``, since neither GCC's auto-parallelizer nor Polly can disambiguate memory without
+    it, and a stray config file selecting ``legacy`` would silently halve those two columns.
 
     Goes through ``DACE_*`` environment rather than ``Config.set`` deliberately: ``Config.get``
     consults the environment FIRST, so a config write would be silently ignored under the submit
     script, which exports ``DACE_compiler_cpu_args``.
     """
-    keys = ('DACE_compiler_cpu_executable', 'DACE_compiler_cpu_args', 'DACE_compiler_cpu_implementation')
+    keys = ('DACE_compiler_cpu_executable', 'DACE_compiler_cpu_args', 'DACE_compiler_cpu_implementation',
+            'DACE_library_blas_default_implementation', 'DACE_library_lapack_default_implementation',
+            'DACE_library_linalg_default_implementation')
     saved = {k: os.environ.get(k) for k in keys}
     os.environ['DACE_compiler_cpu_executable'] = arm.executable
     os.environ['DACE_compiler_cpu_args'] = f'{_BASE_ARGS} {arm.flags}'.strip()
-    os.environ['DACE_compiler_cpu_implementation'] = 'experimental_readable'
+    os.environ['DACE_compiler_cpu_implementation'] = arm.codegen
+    # Spans the TRANSFORM, not just the build: ``CS.build`` runs the arm's pipeline inside this
+    # context, and ``serialize`` calls ``expand_library_nodes()`` there -- so a library node is
+    # lowered under whichever implementation is live at that moment, and setting this any later
+    # would expand every gemv to ``pure`` before the setting was ever read.
+    for lib in ('blas', 'lapack', 'linalg'):
+        os.environ[f'DACE_library_{lib}_default_implementation'] = arm.blas
+    # ``dace.libraries.standard`` has no ``library.*`` config key, so Reduce/ArgReduce are pinned on
+    # the node classes. Saved and restored like the env vars: these are process-global class
+    # attributes, so leaking one would silently re-lower the NEXT arm's reductions.
     try:
         yield
     finally:
@@ -424,13 +505,23 @@ def resolve_autopar_hint(arm: Arm) -> Arm:
     ``-floop-parallelize-all`` nor ``--param parloops-min-per-thread`` overrides it. The cliff moves
     with the compiler build, so it cannot be defaulted around with a fixed cap.
 
-    The width is a HEURISTIC input, not the runtime width -- the emitted parallel region still runs
-    on ``OMP_NUM_THREADS`` threads -- so lowering it costs nothing measurable and keeps the arm
-    honest. Probes descending widths and takes the first that emits a parallel region; raising is
-    left to the caller when none does.
+    The width is NOT a free knob, and an earlier revision of this docstring had it backwards: it is
+    the arm's REAL runtime width. parloops emits the number as a literal ``num_threads`` argument
+    (``mov w2, <N>; bl GOMP_parallel`` on aarch64, verified by disassembling the probe object), so
+    the region does NOT widen to ``OMP_NUM_THREADS``. Every step down therefore costs real
+    parallelism and understates this one column against the other five. That is why the search walks
+    a fine ladder near the top and why the chosen width is printed and recorded: a narrower arm is a
+    legitimate measurement only when the reader can see how narrow.
+
+    The ladder is dense above 32 because the cliff is sharp, not gradual: on g++ 16.1 / Neoverse V2
+    the largest width that still parallelizes is exactly 40 (41 emits nothing), so a coarse
+    72 -> 48 -> 32 descent silently gives up 8 of the 40 threads it could have had.
+
+    Probes descending widths and takes the first that emits a parallel region; raising is left to the
+    caller when none does.
     """
     hint = _AUTOPAR_HINT
-    for candidate in [w for w in (hint, 48, 32, 24, 16, 8, 4) if w <= hint]:
+    for candidate in [w for w in (hint, 64, 56, 48, 44, 40, 36, 32, 24, 16, 8, 4) if w <= hint]:
         probe = arm._replace(
             flags=arm.flags.replace(f'-ftree-parallelize-loops={hint}', f'-ftree-parallelize-loops={candidate}'))
         try:
@@ -440,7 +531,9 @@ def resolve_autopar_hint(arm: Arm) -> Arm:
         if candidate != hint:
             print(f'NOTE: {arm.label} parallelizes at -ftree-parallelize-loops={candidate}, not '
                   f'{hint}: this g++ build suppresses parloops above that width when Graphite is on. '
-                  f'Runtime width is unchanged at OMP_NUM_THREADS={_THREADS}.')
+                  f'That number is baked into the object as the region\'s num_threads, so THIS arm '
+                  f'runs on {candidate} threads while every other arm runs on {_THREADS} -- its '
+                  f'speedup column is understated by roughly {int(_THREADS) / candidate:.2f}x.')
         _EVIDENCE[probe.label] = evidence
         return probe
     return arm
@@ -465,9 +558,20 @@ def register_arms(arms: tuple[Arm, ...]) -> dict[str, str]:
                            f'no longer evaluate the same expression. Got: {_BASE_ARGS!r}')
     # The gcc autopar width is resolved against THIS compiler before anything is probed for real:
     # the Graphite suppression cliff moves between g++ builds, and a width past it turns the arm
-    # into plain -O3. Only the compile-time heuristic moves; the runtime width stays OMP_NUM_THREADS.
+    # into plain -O3.
     arms = tuple(
         resolve_autopar_hint(a) if a.executable == _GCC and '-ftree-parallelize-loops=' in a.flags else a for a in arms)
+    # An arm that ASKS for OpenBLAS and silently gets ``pure`` is the same class of fabrication the
+    # autopar probe exists to prevent: the label credits a tuned kernel and the number is a naive
+    # triple loop. Detection is the same code the build uses, so this cannot pass here and fail there.
+    wants_blas = sorted({arm.blas for arm in arms} - {'pure'})
+    if wants_blas and not OpenBLAS.is_installed():
+        raise RuntimeError(f'arms {[a.label for a in arms if a.blas != "pure"]} ask for '
+                           f'{wants_blas} but no OpenBLAS resolves. DaCe would expand every gemv/gemm '
+                           'to its naive `pure` maps and the DaCe columns would lose to numpy by '
+                           '20-40x for that reason alone. Point OPENBLAS_DIR at the install (or put '
+                           'libopenblas.so on LD_LIBRARY_PATH); set CANON_PERF_DACE_BLAS=pure to '
+                           'measure the naive expansion on purpose.')
     evidence = {arm.label: probe_arm(arm) for arm in arms}
     _PIPELINES.clear()  # a registration is the WHOLE table: every arm's toolchain is pinned, none implicit
     _ARMS.clear()
