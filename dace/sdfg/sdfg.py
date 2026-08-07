@@ -1511,8 +1511,20 @@ class SDFG(ControlFlowRegion):
         res_free, res_defined, res_before = result
         if with_contents:
             read_set, write_set = self.read_and_write_sets()
+            extents = set()
             for name in (read_set | write_set) & self.arrays.keys():
-                res_free |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
+                extents |= {str(s) for s in self.arrays[name].used_symbols(all_symbols)}
+            extents -= res_free
+            if extents:
+                # A transient sized by its enclosing map parameter (``t[_loop_it_0]`` under ``map
+                # _loop_it_0``) is allocated where that parameter is defined, so its extent is no
+                # argument; the block analysis already dropped it and this must not put it back.
+                scope_syms = set()
+                for state in self.all_states():
+                    for node in state.nodes():
+                        if isinstance(node, nd.EntryNode):
+                            scope_syms |= node.new_symbol_names(state)
+                res_free |= extents - scope_syms
             res_free -= res_defined  # drop symbols defined inside (e.g. loop vars)
         return res_free, res_defined, res_before
 

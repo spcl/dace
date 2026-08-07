@@ -178,13 +178,16 @@ def is_assumption_guard_block(block) -> bool:
 
 
 def _signed_integer_free_symbols(sdfg: SDFG) -> List[str]:
-    """Sorted names of the SDFG's signed-integer free symbols.
+    """Sorted names of the SDFG's signed-integer argument symbols.
 
-    ``free_symbols`` is exactly the externally-supplied set (symbols defined by
-    interstate assignments / nested-SDFG mappings are excluded), i.e. the values
-    a caller passes in -- the ones canonicalization assumed nonnegative.
+    ``used_symbols(all_symbols=False)`` is the set ``arglist`` builds the signature from, i.e. the
+    values a caller passes in -- the ones canonicalization assumed nonnegative. ``free_symbols``
+    is NOT that set: it unions every registered ``sdfg.symbols`` key, so it also names symbols a
+    map defines inside a scope (a transient sized by its enclosing map parameter registers one on
+    inlining), and guarding those put them in the signature -- ``Missing program argument``.
     """
-    return sorted(s for s in sdfg.free_symbols if sdfg.symbols.get(s) in _SIGNED_INTEGER_DTYPES)
+    args = sdfg.used_symbols(all_symbols=False)
+    return sorted(s for s in args if sdfg.symbols.get(s) in _SIGNED_INTEGER_DTYPES)
 
 
 def collect_assumptions(sdfg: SDFG) -> List:
@@ -198,13 +201,13 @@ def collect_assumptions(sdfg: SDFG) -> List:
       reasons under (see [[feedback_symbols_nonnegative_canonicalization]]).
     * **Recorded by the passes** -- every relation a rewrite stashed via
       :func:`~dace.transformation.passes.canonicalize.tracked_assumptions.record_assumption`,
-      kept only when all of its symbols are free symbols so it is evaluable at the
-      entry state (a symbol defined by an interstate assignment is not in scope
-      there). Parallelizations that keep a sequential fallback specialize with an
-      ``if (cond) parallel else sequential`` branch instead of recording an
+      kept only when all of its symbols are argument symbols so it is evaluable at
+      the entry state (a symbol defined by an interstate assignment or by a map is
+      not in scope there). Parallelizations that keep a sequential fallback specialize
+      with an ``if (cond) parallel else sequential`` branch instead of recording an
       assumption here, so only genuine no-fallback preconditions reach the trap.
     """
-    free = dict.fromkeys(sdfg.free_symbols)
+    free = dict.fromkeys(sdfg.used_symbols(all_symbols=False))
     assumptions: List = [symbolic.pystr_to_symbolic(s) >= 0 for s in _signed_integer_free_symbols(sdfg)]
     for relation in tracked_assumptions(sdfg):
         if all(s.name in free for s in relation.free_symbols) and relation not in assumptions:
