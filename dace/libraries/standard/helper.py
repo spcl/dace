@@ -66,22 +66,90 @@ def collapse_shape_and_strides(
 
 
 def is_parallel_cpu_transfer_size(num_elements: dace.symbolic.SymbolicType) -> bool:
-    """Whether a contiguous CPU transfer of ``num_elements`` should take the mapped (parallel) path.
+    """Whether a CPU transfer of ``num_elements`` takes the parallel element map.
 
-    ``True`` only when the count is a compile-time constant ``>=`` the configurable
-    ``compiler.cpu.parallel_transfer_min_elements`` (default 1024). Symbolic (unknown) size stays
-    serial -- we don't fork an OpenMP region for a size that may be tiny at runtime; an element
-    map schedules parallel regardless, so this guard is what keeps a small/unknown transfer a
-    single libc call.
+    Parallel is the DEFAULT, and the only carve-out an expansion may make: a count PROVABLY below
+    ``compiler.cpu.parallel_transfer_min_elements`` (default 1024) keeps the single libc call.
+    Every symbol is assumed big enough and no symbol outranks another, so an undecidable
+    comparison answers ``True`` -- reading "unknown" as "small" is what single-threaded every
+    dynamically sized bulk copy.
 
-    :param num_elements: total contiguous element count (constant or symbolic).
-    :returns: ``True`` to route to the mapped expansion, ``False`` to keep the single libc call.
+    :param num_elements: total element count (constant or symbolic).
+    :returns: ``True`` unless the count is provably below the threshold.
     """
-    try:
-        threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
-        return int(dace.symbolic.simplify(num_elements)) >= threshold
-    except (TypeError, ValueError):
+    threshold = int(dace.Config.get('compiler', 'cpu', 'parallel_transfer_min_elements'))
+    return dace.symbolic.ask('negative', dace.symbolic.simplify(num_elements - threshold)) is not True
+
+
+# --------------------------------------------------------------------------------------------
+# Fork/join cost model. NOT consumed by the expansions: the canonical form of a bulk transfer is
+# the parallel element map on every device, and sequentializing a re-entered one is a CPU
+# SPECIALIZATION. This is the single implementation of that rule for the cpu_specialization band.
+# --------------------------------------------------------------------------------------------
+
+#: An enclosing loop of provably fewer than this many trips pays the fork/join of a library node
+#: inside it few enough times to ignore, so it does not count as re-entry.
+REENTRY_SHORT_LOOP_TRIPS = 8
+
+
+def is_short_loop(loop) -> bool:
+    """Whether ``loop`` provably runs fewer than :data:`REENTRY_SHORT_LOOP_TRIPS` ascending trips.
+
+    :param loop: the :class:`~dace.sdfg.state.LoopRegion` to measure.
+    :returns: ``True`` only when the trip count is provably short; an unanalyzable, descending or
+              symbolic-length loop answers ``False``.
+    """
+    from dace.transformation.passes.analysis import loop_analysis
+    start = loop_analysis.get_init_assignment(loop)
+    end = loop_analysis.get_loop_end(loop)
+    stride = loop_analysis.get_loop_stride(loop)
+    if start is None or end is None or stride is None:
         return False
+    if dace.symbolic.ask('positive', dace.symbolic.simplify(stride)) is not True:
+        return False
+    trips = dace.symbolic.int_floor(end - start, stride) + 1
+    return dace.symbolic.ask('negative', dace.symbolic.simplify(trips - REENTRY_SHORT_LOOP_TRIPS)) is True
+
+
+def is_reentered_cpu_transfer(node: nodes.LibraryNode, state: dace.SDFGState) -> bool:
+    """Whether an enclosing parallel map or long loop re-enters ``node``, so its own OpenMP region
+    would be re-opened on every entry.
+
+    Same scope walk (:func:`~dace.transformation.helpers.get_parent_map_and_loop_scopes`) as
+    :func:`~dace.transformation.auto.auto_optimize.libnode_is_sequential`, but TRIP-COUNT aware: a
+    parallel enclosing map is always a hazard (nested parallelism), while an enclosing loop counts
+    only when it is not provably short -- pinning every loop-nested transfer sequential throws
+    away real parallelism around a handful of trips.
+
+    :param node: the library node to classify.
+    :param state: the state containing ``node``.
+    :returns: ``True`` if an enclosing parallel map or a not-provably-short loop re-enters ``node``.
+    """
+    from dace.sdfg.state import LoopRegion
+    from dace.transformation.helpers import get_parent_map_and_loop_scopes
+    for scope in get_parent_map_and_loop_scopes(state.sdfg, node, state):
+        if isinstance(scope, nodes.MapEntry):
+            if scope.map.schedule != dtypes.ScheduleType.Sequential:
+                return True
+        elif isinstance(scope, LoopRegion) and not is_short_loop(scope):
+            return True
+    return False
+
+
+def cpu_transfer_parallelizes(node: nodes.LibraryNode, state: dace.SDFGState,
+                              num_elements: dace.symbolic.SymbolicType) -> bool:
+    """Whether a CPU transfer of ``num_elements`` at ``node`` keeps its own OpenMP region.
+
+    Both reasons to take it away: provably too small to amortize a fork/join, or re-entered by an
+    enclosing parallel map / long loop that pays that fork/join again on every entry. Cheap size
+    check first, so the scope walk is skipped for a transfer that is small either way.
+
+    :param node: the library node to classify.
+    :param state: the state containing ``node``.
+    :param num_elements: total element count of the transfer (constant or symbolic).
+    :returns: ``True`` to keep the parallel element map, ``False`` to sequentialize it.
+    """
+    return is_parallel_cpu_transfer_size(num_elements) and not is_reentered_cpu_transfer(node, state)
 
 
 def auto_dispatch(node: nodes.LibraryNode, parent_state: dace.SDFGState,

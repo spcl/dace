@@ -282,8 +282,15 @@ def generate_code(sdfg: SDFG, validate=True) -> List[CodeObject]:
         # only these nodes -- RewriteCopyForLayout needs the shared pass's other callers unexpanded.
         if config.Config.get('compiler', 'cpu', 'codegen_params', 'explicit_copy') == 'on':
             from dace.libraries.standard.nodes.copy_node import CopyLibraryNode
+            from dace.transformation.passes.cpu_specialization import SpecializeCpuTransfers
             from dace.transformation.passes.insert_explicit_copies import InsertExplicitCopies
             InsertExplicitCopies().apply_pass(sdfg, {})
+            # These copies are BORN here, after every optimization band has run, so the CPU
+            # specialization verdict on them has to be taken here too: a copy an enclosing map or
+            # loop re-enters must not open a parallel region per entry (npbench stockham_fft enters
+            # one 349,525 times), and a sequential contiguous one is a single memcpy. Host-resident
+            # transfers only, so a GPU graph passing through is untouched.
+            SpecializeCpuTransfers().apply_pass(sdfg, {})
             sdfg.expand_library_nodes(predicate=lambda n: isinstance(n, CopyLibraryNode))
             infer_types.infer_connector_types(sdfg)
             infer_types.set_default_schedule_and_storage_types(sdfg, None)

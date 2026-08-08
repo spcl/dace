@@ -419,11 +419,26 @@ required:
                         title: Parallel copy/memset element threshold
                         description: >
                             A contiguous CPU copy or memset (CopyLibraryNode /
-                            MemsetLibraryNode) whose element count is a compile-time
-                            constant at or above this value expands to an OpenMP element
-                            map (parallel across threads at top level); a smaller -- or a
-                            symbolic, unknown-at-compile-time -- size expands to a single
-                            std::memcpy / std::memset.
+                            MemsetLibraryNode) expands to a parallel element map by
+                            default; only an element count PROVABLY below this value
+                            expands to a single std::memcpy / std::memset. A symbolic,
+                            unknown-at-compile-time size is assumed big enough and takes
+                            the parallel map.
+
+                    parallel_min_work_per_region:
+                        type: int
+                        default: 1024
+                        title: Parallel region break-even work
+                        description: >
+                            Elements a single OpenMP region must process to pay for its
+                            fork/join. The cpu_specialize band sequentializes a parallel
+                            map whose work per entry is PROVABLY below this, and a map
+                            re-entered by an enclosing loop whose work per entry does not
+                            outgrow the number of entries (both read with every symbol set
+                            to this value, since all symbols are assumed equally big). A
+                            symbolic count on its own is assumed big enough and stays
+                            parallel. 0 disables the cost model, leaving only the
+                            nested-parallelism rule.
 
                     implementation:
                         type: str

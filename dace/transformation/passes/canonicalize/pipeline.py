@@ -67,7 +67,8 @@ from dace.transformation.passes.scalar_fission import ArrayFission, PrivatizeArr
 from dace.transformation.passes.parallelization_prep import (BestEffortLoopPeeling, ShortLoopUnroll,
                                                              DEFAULT_UNROLL_LIMIT)
 from dace.transformation.passes.break_anti_dependence import BreakAntiDependence
-from dace.transformation.passes.cpu_specialization import ChunkAntiDependence
+from dace.transformation.passes.cpu_specialization import (ChunkAntiDependence, SequentializeParallelScopes,
+                                                           SpecializeCpuTransfers)
 from dace.transformation.passes.canonicalize.empty_state_elimination import EmptyStateElimination
 from dace.transformation.passes.dead_state_elimination import DeadStateElimination
 from dace.transformation.passes.canonicalize.hoist_iv_updates import HoistInductionVariableUpdates
@@ -991,11 +992,6 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # parallelize: the canonical (fissioned / normalized) loops -> parallel maps.
     s += [('parallelize', PatternMatchAndApplyRepeated([LoopToMap()]))]
 
-    # cpu_specialize: trade the device-neutral anti-dependence snapshot for per-chunk
-    # seam buffers (sequential-within-chunk = CPU scheduling; matcher refuses GPU maps).
-    if break_anti_dependence and target == 'cpu':
-        s += [('cpu_specialize', ChunkAntiDependence())]
-
     # parallelize_guarded: loops that ``LoopToMap`` refused but would accept
     # permissively, where the blocker is an algebraic side condition (TSVC s171's
     # symbolic-stride in-place update ``a[i*inc] = a[i*inc] + b[i]``, injective iff
@@ -1078,6 +1074,19 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     s += [('post_l2m', InsertAssignTaskletsAtMapBoundary())]
     s += _inline_single_state('post_l2m')
     s += _structural_cleanup('post_l2m')
+
+    # cpu_specialize: trade the device-neutral anti-dependence snapshot for per-chunk
+    # seam buffers (sequential-within-chunk = CPU scheduling; matcher refuses GPU maps).
+    #
+    # Placed HERE, not directly after ``parallelize``. ``LoopToMap`` leaves the map body as an
+    # un-inlined NestedSDFG and the snapshot copy in its own predecessor state, so the read that
+    # decides the rewrite (``snap[i + 1]``) is not visible at the map's own state and the copy is
+    # not adjacent to it. The ``post_l2m`` band above is where the pipeline ALREADY inlines the
+    # body and fuses the copy state in -- which is exactly the flat, single-state canonical form
+    # the pass documents. Matching it before that band would mean reimplementing InlineSDFG's
+    # traversal inside the matcher.
+    if break_anti_dependence and target == 'cpu':
+        s += [('cpu_specialize', ChunkAntiDependence())]
 
     # coalesce: prepare the graph for maximal map fusion now that the DOALL
     # loops have become maps -- see ``_coalesce`` for the per-step rationale.
@@ -1422,6 +1431,22 @@ def _build_stages(unroll_limit: int = DEFAULT_UNROLL_LIMIT,
     # a Map-parameter-indexed slot (so a same-slot fold that continues a live prior -- nussinov's
     # ``_priv_table`` -- is left alone). It does not attempt full cross-nested-SDFG liveness, so a
     # fresh accumulator whose WCR is already AccessNode-sourced before that pass is not covered.
+
+    # cpu_specialize (terminal band): the canonical form is the maximally parallel one, so the
+    # decision to make a scope sequential again belongs to the target, not to canonicalization.
+    # ``SequentializeParallelScopes`` is the single home of that CPU fork/join cost model: it pins
+    # a map whose work per region cannot pay for a ``#pragma omp parallel`` (and every scope nested
+    # in a parallel map, which would fork a team per outer iteration).
+    # ``SpecializeCpuTransfers`` then gives the transfers it just sequentialized their single
+    # ``memcpy`` / ``memset`` back, so the parallel-by-default copy expansion costs nothing when
+    # the cost model refuses it.
+    #
+    # Placed at the very END, after fuse / collapse / the terminal LoopToMap: the verdict must be
+    # read off the FINAL map shapes (fusion and collapse change the work per region by orders of
+    # magnitude), and a schedule set earlier would also block the map fusion stages, which only
+    # fuse maps with equal schedules.
+    if target == 'cpu':
+        s += [('cpu_specialize', SequentializeParallelScopes()), ('cpu_specialize', SpecializeCpuTransfers())]
 
     # assume_constraints (LAST): make the assumptions the pipeline relied on
     # explicit and runtime-checked, by prepending a side-effecting

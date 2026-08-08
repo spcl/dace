@@ -117,13 +117,14 @@ def select_copy_implementation(node: "CopyLibraryNode", parent_state: dace.SDFGS
     if is_devicelevel_gpu(parent_state.sdfg, parent_state, node):
         return 'MappedTasklet'
 
-    # 4. Host CPU-resident multi-element copy: same-shape/contiguous/same-layout is one exact
-    # memcpy (MemcpyCPU) -- satisfies ExpandMemcpyCPU's contiguity precondition, so it always
-    # expands cleanly. Falls through to MappedTasklet only when size is KNOWN at compile time
-    # >= ``compiler.cpu.parallel_transfer_min_elements`` (OpenMP-parallel at top level, sequential
-    # if nested); a small or symbolic size keeps the single memcpy -- no forking for a size that
-    # may be tiny at runtime. Non-contiguous, mixed-layout, mismatched-shape (transpose), or
-    # rank-changing copies also fall through (MappedTasklet rejects transposes, walks reshapes 1-D).
+    # 4. Host CPU-resident multi-element copy: the DEFAULT is the parallel element map
+    # (MappedTasklet), so this falls through unless the count is PROVABLY below
+    # ``compiler.cpu.parallel_transfer_min_elements``. Only then does a same-shape/contiguous/
+    # same-layout copy become one exact memcpy (MemcpyCPU, whose contiguity precondition the same
+    # conditions satisfy). ``memcpy`` for a large or symbolic count is a CPU SPECIALIZATION of a
+    # Sequential contiguous map, not an expansion default. Non-contiguous, mixed-layout,
+    # mismatched-shape (transpose), or rank-changing copies also fall through (MappedTasklet
+    # rejects transposes, walks reshapes 1-D).
     host_storages = CPU_RESIDENT_STORAGES | {dtypes.StorageType.Default}
     same_shape = (len(inp.shape) == len(out.shape)
                   and not any(symbolic.inequal_symbols(a, b) for a, b in zip(in_subset.size(), out_subset.size())))
@@ -289,8 +290,11 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
     """Element-wise mapped tasklet expansion.
 
     Schedule from storages: ``Sequential`` for thread-level (Register/Register,
-    Register<->GPU_Shared) or any in-kernel copy; ``GPU_Device`` if any side is GPU storage
-    at host level; else ``Default``.
+    Register<->GPU_Shared) or any in-kernel copy; ``GPU_Device`` if any side is GPU storage at
+    host level; else ``Default``, the device-neutral parallel form -- post-expansion schedule
+    inference binds it to the library node's own schedule, which is where the CPU specialization
+    band writes its Sequential verdict. Only a PROVABLY sub-threshold count is sequentialized
+    here, because no fork/join can pay for itself at that size on any device.
 
     :param node: the :class:`CopyLibraryNode` being expanded.
     :param parent_state: state containing ``node``.
@@ -314,8 +318,10 @@ def _make_mapped_tasklet_expansion(node: "CopyLibraryNode",
         schedule = dtypes.ScheduleType.Sequential
     elif inp.storage in GPU_RESIDENT_STORAGES or out.storage in GPU_RESIDENT_STORAGES:
         schedule = dtypes.ScheduleType.GPU_Device
-    else:
+    elif is_parallel_cpu_transfer_size(ctx.in_subset.num_elements()):
         schedule = dtypes.ScheduleType.Default
+    else:
+        schedule = dtypes.ScheduleType.Sequential
 
     ctx.sdfg.schedule = dtypes.ScheduleType.Default
 
@@ -515,8 +521,9 @@ class ExpandAuto(ExpandTransformation):
 @library.expansion
 class ExpandMappedTasklet(ExpandTransformation):
     """Mapped element-wise tasklet ``_cpy_out = _cpy_in`` over the collapsed copy shape. Schedule
-    from endpoint storages: ``Sequential`` for Register/Register<->GPU_Shared (thread-level),
-    ``GPU_Device`` if any side is GPU, else ``Default``. Raises across the CPU/GPU boundary."""
+    from endpoint storages: ``Sequential`` for Register/Register<->GPU_Shared (thread-level) and
+    for a provably sub-threshold count, ``GPU_Device`` if any side is GPU, else ``Default`` (the
+    parallel form). Raises across the CPU/GPU boundary."""
     environments = []
 
     @staticmethod
@@ -782,15 +789,17 @@ class ExpandSharedMemoryCollective(ExpandTransformation):
 class CopyLibraryNode(nodes.LibraryNode):
     """Library node representing a data copy between two access nodes.
 
+    The DEFAULT lowering of a bulk copy is the parallel element map on every device; ``memcpy`` is
+    a CPU specialization of a ``Sequential`` contiguous map, not an expansion default.
+
     Each implementation name describes the C++ it emits: ``MappedTasklet`` (element-wise tasklet,
     schedule from storages; also handles rank-mismatch reshapes via a 1-D walker when both
-    endpoints are packed-same-layout with contiguous subsets; a statically-large contiguous CPU
-    copy routes here too, so the element map parallelizes across OpenMP threads at top level),
-    ``Tasklet`` (bare assignment, no map), ``MemcpyCPU`` (single ``std::memcpy`` for a small or
-    symbolic-size contiguous CPU copy), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` /
-    ``cudaMemcpy2DAsync``), ``MemcpyCUDANDStrided`` (Sequential map of ``cudaMemcpyAsync``),
-    ``SharedMemoryCollective`` (``dace::CopyND`` + ``__syncthreads()``; the only remaining
-    ``dace::CopyND`` user).
+    endpoints are packed-same-layout with contiguous subsets; every contiguous CPU copy that is
+    not provably sub-threshold routes here too), ``Tasklet`` (bare assignment, no map),
+    ``MemcpyCPU`` (single ``std::memcpy``, reached only for a provably sub-threshold contiguous
+    CPU copy), ``MemcpyCUDA1D``/``2D`` (one ``cudaMemcpyAsync`` / ``cudaMemcpy2DAsync``),
+    ``MemcpyCUDANDStrided`` (Sequential map of ``cudaMemcpyAsync``), ``SharedMemoryCollective``
+    (``dace::CopyND`` + ``__syncthreads()``; the only remaining ``dace::CopyND`` user).
 
     Design rationale: the libnode does NOT accept dynamic (Scalar) input connectors -- subset
     expressions must use symbols already in scope at construction time. This keeps the contract

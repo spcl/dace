@@ -61,6 +61,18 @@ def _diff(a, b):
     return symbolic.simplify(symbolic.pystr_to_symbolic(f'({a}) - ({b})'))
 
 
+def _exact(bound):
+    """The exact expression of a tiled range bound.
+
+    ``StripMining`` (under ``MapTiling``) writes range bounds as :class:`~dace.symbolic.SymExpr`
+    pairs (exact, over-approximated). Reusing one verbatim in a fresh range leaves a ``SymExpr``
+    where downstream symbol replacement (``TrivialMapElimination`` on the single-iteration seam
+    map) sympifies the substitution value and fails. The seam index must be the exact chunk end,
+    so take ``.expr``.
+    """
+    return bound.expr if isinstance(bound, symbolic.SymExpr) else bound
+
+
 def _clone_contents(src: SDFGState, dst: SDFGState) -> None:
     """Copy every node and edge of ``src`` into the empty state ``dst``.
 
@@ -231,7 +243,7 @@ class ChunkAntiDependence(ppl.Pass):
         me.map.range = subsets.Range([(lo + 1, hi, 1)])
         self._tile(state, sdfg, me)
         inner_lo, inner_hi, _ = me.map.range[0]
-        me.map.range = subsets.Range([(inner_lo, inner_hi - 1, 1)])
+        me.map.range = subsets.Range([(_exact(inner_lo), _exact(inner_hi) - 1, 1)])
         for n in state.data_nodes():
             if n.data == snap:
                 n.data = arr
@@ -245,7 +257,8 @@ class ChunkAntiDependence(ppl.Pass):
         tail_entry.map.range = subsets.Range([(lo + 1, hi, 1)])
         self._tile(tail, sdfg, tail_entry)
         t_lo, t_hi, _ = tail_entry.map.range[0]
-        tail_entry.map.range = subsets.Range([(t_hi, t_hi, 1)])
+        seam_idx = _exact(t_hi)
+        tail_entry.map.range = subsets.Range([(seam_idx, seam_idx, 1)])
 
     def apply_pass(self, sdfg: SDFG, _pipeline_results: Dict[str, Any]) -> Optional[int]:
         """Rewrite every CPU snapshot-broken read-ahead map; returns how many, or ``None``."""

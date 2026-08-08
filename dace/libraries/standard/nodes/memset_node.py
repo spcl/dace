@@ -7,6 +7,7 @@ from dace import library, nodes
 from dace.codegen.common import sym2cpp
 from dace.sdfg.scope import is_devicelevel_gpu
 from dace.transformation.transformation import ExpandTransformation
+from dace.utils import prod
 from .. import environments
 
 from dace.libraries.standard.helper import (CURRENT_STREAM_NAME, CPU_RESIDENT_STORAGES, GPU_RESIDENT_STORAGES,
@@ -69,10 +70,10 @@ def _make_memset_tasklet(node: "MemsetLibraryNode", parent_state: dace.SDFGState
 def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.SDFGState) -> str:
     """Resolve an ``'Auto'`` ``MemsetLibraryNode`` implementation to a concrete one.
 
-    ``'pure'``: device scope (no ``cudaMemsetAsync`` from a kernel), non-contiguous subsets, or a
-    statically-large contiguous CPU zero (element map parallelizes across OpenMP at top level).
-    ``'CUDA'``: host-issued GPU-destination contiguous memset. Else ``'CPU'`` (single
-    ``std::memset``), including small/symbolic-size contiguous CPU zero.
+    ``'pure'``: device scope (no ``cudaMemsetAsync`` from a kernel), non-contiguous subsets, or any
+    contiguous CPU zero that is not provably sub-threshold -- the parallel element map is the
+    default. ``'CUDA'``: host-issued GPU-destination contiguous memset. Else ``'CPU'`` (single
+    ``std::memset``), reached only for a provably sub-threshold contiguous CPU zero.
 
     :param node: The memset library node being expanded.
     :param parent_state: The state containing ``node`` (owning SDFG is ``parent_state.sdfg``).
@@ -95,10 +96,9 @@ def select_memset_implementation(node: "MemsetLibraryNode", parent_state: dace.S
     if out.storage == dace.dtypes.StorageType.GPU_Global:
         return 'CUDA'
 
-    # CPU main-memory contiguous zero: only a size KNOWN at compile time to be large (static
-    # count >= parallel_transfer_min_elements) takes the element map ('pure', OpenMP-parallel at
-    # top level); small/symbolic size keeps a single memset ('CPU') -- no forking for a size that
-    # may be tiny at runtime. Register / non-main-memory storages also stay serial.
+    # CPU main-memory contiguous zero: the element map ('pure') is the DEFAULT, taken unless the
+    # count is PROVABLY below parallel_transfer_min_elements, which keeps a single memset ('CPU').
+    # A symbolic count is assumed big. Register / non-main-memory storages also stay serial.
     allowed = CPU_RESIDENT_STORAGES | {dace.dtypes.StorageType.Default}
     if out.storage in allowed and is_parallel_cpu_transfer_size(out_subset.num_elements()):
         return 'pure'
@@ -117,6 +117,10 @@ class ExpandAuto(ExpandTransformation):
 
 @library.expansion
 class ExpandPure(ExpandTransformation):
+    """Mapped element-wise zeroing. ``GPU_Device`` for GPU_Global output, else ``Default`` -- the
+    device-neutral parallel form, which post-expansion schedule inference binds to the library
+    node's own schedule (where the CPU specialization band writes its Sequential verdict). Only a
+    provably sub-threshold count is sequentialized here."""
     environments = []
 
     @staticmethod
@@ -129,8 +133,12 @@ class ExpandPure(ExpandTransformation):
         map_params = [f"__i{i}" for i in range(len(map_lengths))]
         map_rng = {i: f"0:{s}" for i, s in zip(map_params, map_lengths)}
         outputs = {inner_out: dace.memlet.Memlet(f"{out_name}[{','.join(map_params)}]")}
-        schedule = (dace.dtypes.ScheduleType.GPU_Device
-                    if out.storage == dace.dtypes.StorageType.GPU_Global else dace.dtypes.ScheduleType.Default)
+        if out.storage == dace.dtypes.StorageType.GPU_Global:
+            schedule = dace.dtypes.ScheduleType.GPU_Device
+        elif is_parallel_cpu_transfer_size(prod(map_lengths)):
+            schedule = dace.dtypes.ScheduleType.Default
+        else:
+            schedule = dace.dtypes.ScheduleType.Sequential
         state.add_mapped_tasklet(f"{node.label}_tasklet",
                                  map_rng,
                                  dict(),
