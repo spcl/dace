@@ -126,9 +126,23 @@ export CANON_PERF_TIMEOUT="${CANON_PERF_TIMEOUT:-2400}"
 # build (links libgomp), so no arm's BLAS drags the other OpenMP runtime into its process. The
 # harness switches OPENBLAS_DIR per arm from these two. ``threads=openmp`` stays in both specs: a
 # pthreads build collapses threads and measured 24x.
+# The compiler is PINNED to the exact version each arm compiles with. A bare ``%gcc`` went
+# ambiguous the moment openblas was built for both gcc@14.2.0 and gcc@16.1.0, and because the
+# lookup was ``2>/dev/null || true`` it failed SILENTLY -- the gcc arms would have run with no
+# OPENBLAS_DIR at all, which is a wrong measurement that still produces numbers. Ambiguity is now
+# fatal here rather than empty.
 if command -v spack >/dev/null 2>&1; then
-    CANON_PERF_OPENBLAS_GCC="${CANON_PERF_OPENBLAS_GCC:-$(spack location -i openblas threads=openmp %gcc 2>/dev/null || true)}"
-    CANON_PERF_OPENBLAS_LLVM="${CANON_PERF_OPENBLAS_LLVM:-$(spack location -i openblas threads=openmp %clang 2>/dev/null || true)}"
+    openblas_prefix() {
+        local out
+        if ! out=$(spack location -i openblas threads=openmp %"$1" 2>&1); then
+            echo "FATAL: cannot resolve openblas threads=openmp %$1" >&2
+            echo "$out" >&2
+            exit 1
+        fi
+        echo "$out"
+    }
+    CANON_PERF_OPENBLAS_GCC="${CANON_PERF_OPENBLAS_GCC:-$(openblas_prefix "${CANON_PERF_GCC_SPEC:-gcc@16.1.0}")}"
+    CANON_PERF_OPENBLAS_LLVM="${CANON_PERF_OPENBLAS_LLVM:-$(openblas_prefix "${CANON_PERF_LLVM_SPEC:-llvm@22.1.5}")}"
     [ -d "$CANON_PERF_OPENBLAS_GCC" ] && export CANON_PERF_OPENBLAS_GCC || unset CANON_PERF_OPENBLAS_GCC
     [ -d "$CANON_PERF_OPENBLAS_LLVM" ] && export CANON_PERF_OPENBLAS_LLVM || unset CANON_PERF_OPENBLAS_LLVM
 fi

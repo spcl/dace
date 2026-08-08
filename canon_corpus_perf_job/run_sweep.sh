@@ -36,8 +36,10 @@ spack_prefix() {
 # %gcc links libgomp, so no arm's BLAS drags the other OpenMP runtime into its process.
 spack_prefix gcc@16.1.0 +graphite >/dev/null
 spack_prefix llvm@22.1.5 +mlir >/dev/null
-CANON_PERF_OPENBLAS_GCC=$(spack_prefix openblas threads=openmp %gcc)
-CANON_PERF_OPENBLAS_LLVM=$(spack_prefix openblas threads=openmp %clang)
+# Pinned to the exact compiler VERSION each arm builds with: openblas now exists for both
+# gcc@14.2.0 and gcc@16.1.0, so a bare %gcc is ambiguous and resolves to nothing.
+CANON_PERF_OPENBLAS_GCC=$(spack_prefix openblas threads=openmp %gcc@16.1.0)
+CANON_PERF_OPENBLAS_LLVM=$(spack_prefix openblas threads=openmp %llvm@22.1.5)
 export CANON_PERF_OPENBLAS_GCC CANON_PERF_OPENBLAS_LLVM
 
 spack load gcc@16.1.0 +graphite
